@@ -1,6 +1,7 @@
-//! Where a switch stands in a shell file: named, or used. One table over
-//! the shapes the shipped guards write and the shapes an attacker would,
-//! and one case that moves a guard's own operand out of its comment.
+//! Where a switch stands in a shell or a Rust file: named, or used. One
+//! table per language over the shapes the shipped packages write and the
+//! shapes an attacker would, and one case that moves a guard's own operand
+//! out of its comment.
 
 use kendex_core::model::ItemKind;
 use kendex_core::quality::{AuditInput, AuditResult, Content, Publisher, audit};
@@ -152,6 +153,7 @@ fn non_shell_calls_keep_bypass_switches_as_code() {
             "spawn(\"claude\",[\"--dangerously-skip-permissions\"])\n",
         ),
         ("scripts/run.py", "run(\"--no-verify\")\n"),
+        ("src/run.rs", "fn main() { run(\"--no-verify\"); }\n"),
         ("scripts/run.txt", "run(\"--no-verify\")\n"),
         ("SKILL.md", "run(\"--no-verify\")\n"),
     ];
@@ -159,6 +161,171 @@ fn non_shell_calls_keep_bypass_switches_as_code() {
         let result = skill(&[(path, text)]);
         assert_eq!(rules(&result.findings), ["safety-bypass"], "{path}");
         assert!(result.mentions.is_empty(), "{path}");
+    }
+}
+
+/// One row per shape of Rust text: the file, its text, the rules that
+/// fire, the rules that read a mention instead. A comment names its text
+/// and so does test code; a string literal in shipped code is what the
+/// package runs or emits, and so is every line of a file the reader
+/// cannot lex to its end.
+const RUST_ROWS: &[(&str, &str, &[&str], &[&str])] = &[
+    (
+        "src/run.rs",
+        "// refuses --no-verify\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "/// --dangerously-skip-permissions turns prompts off\n//! and --no-verify skips hooks\n",
+        &[],
+        &["safety-bypass", "safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "/* a\n /* b */ --no-verify\n*/\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "let a = 1; // --no-verify\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "run(\"--no-verify\"); // ok\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "let s = \"// --no-verify\";\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "const H: &str = \"\n// --no-verify\n\";\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "let s = r#\"a\" // \"#; run(\"--no-verify\");\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "let s = br#\"a\" // \"#; run(\"--no-verify\");\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "let q = '\"'; // --no-verify\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "fn f<'a>(x: &'a str) -> &'a str { x } // --no-verify\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { run(\"--no-verify\"); }\n}\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(test)]\nmod t {\n    fn f() { let c = '}'; }\n    fn h() { run(\"--no-verify\"); }\n}\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(test)]\nmod t {\n    const S: &str = \"}\";\n    fn f() { run(\"--no-verify\"); }\n}\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(test)]\nfn t<'a>(x: &'a str) { run(\"--no-verify\"); }\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(test)]\nuse std::fmt;\nfn g() { run(\"--no-verify\"); }\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(test)]\nmod t { fn f() {} } fn g() { run(\"--no-verify\"); }\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(not(test))]\nfn g() { run(\"--no-verify\"); }\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "// #[cfg(test)]\nfn g() { run(\"--no-verify\"); }\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "// --no-verify\n/* never closed\n",
+        &["safety-bypass"],
+        &[],
+    ),
+    (
+        "src/run.rs",
+        "#[cfg(test)]\nmod t {\n    // --no-verify\n    fn f() { run(\"--no-verify\"); }\n",
+        &["safety-bypass", "safety-bypass"],
+        &[],
+    ),
+    (
+        "tests/rust/main.rs",
+        "let flag = \"--dangerously-skip-permissions\".to_owned();\n",
+        &[],
+        &["safety-bypass"],
+    ),
+    (
+        "src/run.rs",
+        "// never rm -rf /\n",
+        &["dangerous-commands"],
+        &[],
+    ),
+];
+
+#[test]
+fn a_rust_line_names_a_switch_in_a_comment_or_test_code_and_uses_it_elsewhere() {
+    for (path, text, flagged, named) in RUST_ROWS {
+        let result = skill(&[(path, text)]);
+        assert_eq!(
+            rules(&result.findings),
+            *flagged,
+            "{path} {text:?}: {:#?}",
+            result.findings
+        );
+        assert_eq!(
+            rules(&result.mentions),
+            *named,
+            "{path} {text:?}: {:#?}",
+            result.mentions
+        );
     }
 }
 
@@ -258,6 +425,13 @@ const LAUNCH_ROWS: &[(&str, bool)] = &[
         "check launch \\\n  \"claude --dangerously-skip-permissions\"",
         false,
     ),
+    (
+        "[ \"$arg\" = --dangerously-skip-permissions ] && bypass=1",
+        false,
+    ),
+    ("[[ $arg == --dangerously-skip-permissions ]]", false),
+    ("test \"$arg\" = --dangerously-skip-permissions", false),
+    ("[ \"$(claude --dangerously-skip-permissions)\" = x ]", true),
     ("claude --dangerously-skip-permissions", true),
     ("\"$LAUNCH\" --dangerously-skip-permissions", true),
     ("claude \\\n  --dangerously-skip-permissions", true),

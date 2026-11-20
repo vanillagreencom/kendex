@@ -612,7 +612,7 @@ printf '#!/usr/bin/env bash\n[ "${GH_TOKEN:-}" = ghs_PROJECTBOT ] || { echo "To 
 chmod +x "$TMP_ROOT/authbin/gh"
 routed() { # SUBJECT... — run in a project whose only credential is its .env.local
   local rc=0
-  (cd "$TMP_ROOT/project" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u GH_CONFIG_DIR -u KENDEX_ENV_FILE \
+  (cd "$TMP_ROOT/project" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO -u GH_CONFIG_DIR -u KENDEX_ENV_FILE -u GH_REVIEW_REPLY_ACCOUNT_IDS \
     PATH="$TMP_ROOT/authbin:$PATH" "$@" 7 >"$TMP_ROOT/stdout" 2>"$TMP_ROOT/stderr") || rc=$?
   printf 'rc=%s %s' "$rc" "$(sed "s/$HEAD/{head}/g" "$TMP_ROOT/stdout" | paste -s -d '|' - | sed 's/|/ | /g')"
 }
@@ -622,6 +622,20 @@ assert_eq "$(routed "$GITHUB_SH" check-review-replies)" "$FAILED | unreasoned-de
   "the router reads with the project's bot token"
 assert_eq "$(routed "$CHECKER"; printf ' %s' "$(first_err)")" "rc=2  check-review-replies: repo-unresolved pr=7" \
   "the command file alone, with no token selected, reaches no verdict"
+
+printf '[env]\nGH_REVIEW_REPLY_ACCOUNT_IDS = "2002"\n' >"$TMP_ROOT/project/kendex.settings.toml"
+git -C "$TMP_ROOT/project" add kendex.settings.toml
+git -C "$TMP_ROOT/project" -c user.name=fixture -c user.email=fixture@example.invalid \
+  -c core.hooksPath=/dev/null commit -qm settings
+world
+viewer_set '{"login":"third-checker","databaseId":7007}'
+automation_answers app
+assert_eq "$(routed "$GITHUB_SH" check-review-replies)" "$PASSED" \
+  "the router loads declared automation ids from committed settings"
+mutant_copy_edit "$TMP_ROOT/allowlist" '  GH_REVIEW_REPLY_ACCOUNT_IDS' '  GH_REPO' lib/settings-names.sh >/dev/null
+assert_eq "$(routed "$TMP_ROOT/allowlist/skills/github/scripts/github.sh" check-review-replies)" \
+  "$FAILED | untracked-claim count=1 | suppressed-findings count=2 | suppressed-entry $SUPP_FIRST | suppressed-entry $SUPP_SECOND" \
+  "must-fail: an undeclared settings name cannot grant reply standing"
 
 echo "=== must-fail control ==="
 # One planted defect proves the suite goes red: the checker's copy with the

@@ -1,27 +1,23 @@
 # Small Workflow
 
-The tier for a change inside one subsystem and within the `small` ceiling in [references/narrow-change.conf](../references/narrow-change.conf).
-
-**A subsystem** is what the harness-ci skill's `scripts/change-class` counts as one for the `small` class; its `--help` `small` entry is the definition. The filing rule, the project-management skill's [SKILL.md](../../project-management/SKILL.md) § Disposition **One landing per subsystem**, and the launch read, [oversee.md](oversee.md) § Lane directive step 2, apply it to an item's Location paths before a diff exists.
-
-It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review and publication, under the bounds in § 3. [oversee.md](oversee.md) § Item Tier picks the tier; a `micro` item runs [micro.md](micro.md) and every other item runs [start.md](start.md).
+The tier for a change inside one subsystem and within the `small` ceiling, `small_max_production` in [change-scope's narrow-change.conf](../../change-scope/references/narrow-change.conf). It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review and publication under the bounds in § 3 and § 4. [oversee.md](oversee.md) § Item Tier assigns the tier through `orch-runtime tier`. A `micro` item runs [micro.md](micro.md); every other item runs [start.md](start.md).
 
 | Command | Flow |
 |---------|------|
 | `small [ISSUE_ID]` (from a worktree) | § 1 → § 5 |
 | `small github OWNER/REPO#N` (from a worktree) | normalize to `ISSUE_ID=issue-N`, then § 1 → § 5 |
-| `small [ISSUE_ID]` (from the main checkout) | [start.md](start.md) from its opening main-checkout lane-host read through § 4 Prepare Worktree, then § 1 → § 5 here in `[WT_PATH]`, in place of start.md § 5 |
+| `small [ISSUE_ID]` (from the main checkout) | [start.md](start.md) from its opening lane-host read through § 4 Prepare Worktree, then § 1 → § 5 here in `[WT_PATH]`, in place of start.md § 5 |
 
-The runner is a lane in the item's worktree, or a session that prepared one from the main checkout by the route above.
+The runner is a lane in the item's worktree, or a session that prepared one from the main checkout by the route above. A lane never waits on the overseer for a step this workflow permits ([skill-rules.md § Lane asks](../references/skill-rules.md#lane-asks)).
 
-A lane never waits on the overseer for a step this workflow permits: [skill-rules.md § Coordination](../references/skill-rules.md#coordination), Lane asks.
+The admission that launched the run reads the tier once, and the tier floors the run: `--floor small` below carries it. Each later check reads the branch's range against change-scope's rules, never a line count. A fix inside the admitted paths keeps the tier.
 
 ## 1. Open The Session
 
-Run [start-worktree.md](start-worktree.md) § 1, which records the tier as `standard`, on a handoff resume too. Then record it as `small`, which is what bounds § 3 and § 4:
+Run [start-worktree.md](start-worktree.md) § 1, on a handoff resume too. It records the tier as `standard`. Then record `small`, which bounds § 3 and § 4:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier small
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"small"}'
 ```
 
 Where that § 1's step 3 stamped a handoff record, continue from the first entry of the record's `remaining` list instead of § 2-5.
@@ -31,30 +27,30 @@ Where that § 1's step 3 stamped a handoff record, continue from the first entry
 Run [start-worktree.md](start-worktree.md) § 2 through its step 4. Then check the branch against its class:
 
 ```bash
-.agents/skills/orch/scripts/item-tier --floor small --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime tier --floor small --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH]
 ```
 
-`[BASE_BRANCH]` is `resolve-base-branch [WORKTREE_PATH]`. `tier=small` runs [start-worktree.md](start-worktree.md) § 2.1, which follows the repository's `pr-order` setting under this tier too, then continues at § 3 below. Any other answer, or a non-zero exit, escapes (§ Escape).
+`[BASE_BRANCH]` is what `resolve-base-branch [WORKTREE_PATH]` prints. A line opening `tier=small` runs [start-worktree.md](start-worktree.md) § 2.1, then continues at § 3 below. Any other `tier=` answer, or a refusal at exit 1 or 2, escapes (§ Escape).
 
 ## 3. Review
 
 Run [start-worktree.md](start-worktree.md) § 3 under these bounds:
 
-- **Panel.** The first-cycle panel is the domains the diff touches, by [review-pr.md](review-pr.md) § 2 Prepare Reviewers, and holds three reviewers at most. The external lane counts as one of the three: its findings enter the fix set like any reviewer's. Resolve review-pr.md § 2.1 before writing a panel, and record its answer as `"external": true` or `false` beside `agents`, so with the lane requested two domain reviewers remain. `workflow-state` refuses a `first_panel`, `rereview_panel` or `verification_panel` with no `external` marker as `panel-external`, and a larger one as `panel-bound`. Trim a larger panel in this order: `reviewer-error` where review-pr.md § 2 always carries it, then the reviewers whose findings the pass verifies, then the domains with the most changed production lines. The same trim applies to the verification panel [review-pr-comments.md](review-pr-comments.md) writes.
-- **QA.** [review-pr.md](review-pr.md) § 5 drops `needs-review` when the change is not visible in the UI or in the CLI output, recording `qa_decision` with the rationale `small tier: nothing visible`. `needs-safety-audit`, `needs-perf-test` and `needs-ui-review` follow review-pr.md § 5 unchanged.
-- **Fix rounds.** [review-pr.md § At The Cap](review-pr.md#at-the-cap) states the default bound. For this item `workflow-state cap REVIEW_MAX_CYCLES --issue [ISSUE_ID]` holds it at 1 even where a project setting raises it, and holds a setting of 0 as set. A QA fix round follows review-pr.md § 7 Converged unchanged; this bound does not count it.
-- **Findings.** A wording, naming or index finding is answered by reply and starts no fix push: [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow).
-- **Validation.** The implement round consumes the existing `dev-validate-run` route and result as [dev-implement.md § 5 Validate](../../dev/workflows/dev-implement.md#5-validate) sets out. A fix round validates its own range, as [dev-fix.md](dev-fix.md) delegates it. No step reruns a green battery on an unchanged tree.
+- **Panel.** [review-pr.md](review-pr.md) § 2 Prepare Reviewers chooses the first-cycle panel from the domains the diff touches. The panel holds three reviewers at most. The external lane counts as one of the three. Resolve review-pr.md § 2.1 before writing a panel. Record its answer as `"external": true` or `false` beside `agents`; with the lane requested, two domain reviewers remain. Trim a larger panel in this order: `reviewer-error` where review-pr.md § 2 always carries it, then the reviewers whose findings the pass verifies, then the domains with the most changed production lines. Apply the same trim to the verification panel [review-pr-comments.md](review-pr-comments.md) writes.
+- **QA.** [review-pr.md](review-pr.md) § 5 Verdict Pass records the QA routing. There, drop `needs-review` with the reason `small tier: nothing visible` when the change is not visible in the UI or in the CLI output. `needs-safety-audit`, `needs-perf-test` and `needs-ui-review` follow that routing unchanged.
+- **Fix rounds.** [review-pr.md § At The Cap](review-pr.md#at-the-cap) states the bound. For this item, `orch-runtime state cap REVIEW_MAX_CYCLES --item [ISSUE_ID]` answers 1 even where a project setting raises it, and keeps a setting of 0. A QA fix round follows review-pr.md § 7 Converged unchanged, and this bound does not count it.
+- **Findings.** Answer a wording, naming or index finding by reply, with no fix push ([finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow)).
+- **Validation.** No step runs a green validation again on an unchanged tree.
 
 Before § 4, repeat the § 2 check on the tree the review left. `tier=small` continues; anything else escapes.
 
 ## 4. Submit
 
-`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication), which stops an item with an open post-merge box. Keep § 3's local validation and internal review. Report its pushed commit and take the direct-delivery finalize route below.
+`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication). Keep § 3's local validation and internal review, report the pushed commit, and take start-worktree.md § 5's direct-delivery route.
 
-Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]` reads a cap of 2 for this item. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
+Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most. For this item, `orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]` answers 2 even where a project setting raises it, and keeps a lower setting. At that cap, [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
 
-Whenever HEAD differs from the head the last § 2 check measured, repeat that check before the lane's next push and before [submit-pr.md](submit-pr.md) § 6.1 Merge Gates; a step that pushes before it returns, such as ci-fix, is checked on its return. `tier=small` continues; anything else escapes.
+Whenever `HEAD` differs from the head the last § 2 check read, repeat that check before the lane's next push and before [submit-pr.md](submit-pr.md) § 6.1 Merge Gates. Check a step that pushes before it returns, such as ci-fix, on its return. `tier=small` continues; anything else escapes.
 
 ## 5. Finalize
 
@@ -62,4 +58,4 @@ Run [start-worktree.md](start-worktree.md) § 5.
 
 ## Escape
 
-A branch whose changed paths select a tier wider than `small` ends this run. The run stops where it stands and reports the `item-tier` line. The item relaunches at the class that line names, on the branch it left, by the route [micro.md](micro.md) § Escape gives a lane. That session's [start-worktree.md](start-worktree.md) § 1 records the tier as `standard`, which lifts this workflow's bounds.
+A branch whose range selects a tier wider than `small` ends this run. The run stops where it stands and reports the `orch-runtime tier` line. The item relaunches at the class that line names, on the branch it left, by the route [micro.md](micro.md) § Escape gives a lane.

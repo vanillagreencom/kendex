@@ -10,6 +10,7 @@ import json
 import errno
 import os
 from pathlib import Path
+import stat
 import sys
 import subprocess
 import tempfile
@@ -22,11 +23,12 @@ def mailbox_directive_receipt:
   .kind == "directive" and ((.id | type) == "string") and (.id | test("^[A-Za-z0-9._-]+$"));
 def objects($box):
   [$box.raw[] | (fromjson? // empty) | objects] as $all
-  | [$all[] | select(.kind == "tracker-posted" or .kind == "tracker-failed")] as $posted
+  | [$all[] | select(owner_private)] as $private
   | [range(0; $box.raw | length) as $i
       | ($box.raw[$i] | (fromjson? // empty) | objects)
       | owner_tracker_public
-      | owner_tracker_record($posted)
+      | owner_tracker_record($private)
+      | owner_ask_reserved($private)
       | {line: $box.numbers[$i], envelope: .}];
 '''
 READ_JQ = OBJECTS_JQ + r'''
@@ -82,12 +84,21 @@ class StoreRefusal(ValueError):
 
 
 def validate_mailbox(box):
-    """The path rule shared by lane-mail and in-process mailbox readers."""
+    """The path rule shared by lane-mail and in-process mailbox readers.
+
+    Only a missing path reads as absent. Any other lstat error, such as a
+    folder the reader cannot search, raises for the caller's unreadable
+    refusal: pathlib's is_symlink and exists return False for it on 3.14.
+    """
     for path in (box.parent, box, box / "to-overseer.jsonl", box / "to-lane.jsonl",
                  box / "to-overseer.jsonl.numbering", box / "to-lane.jsonl.numbering",
                  box / "to-lane.cursor", box / "to-lane.cursor.lock", box / "to-lane.watch"):
+        try:
+            mode = os.lstat(path).st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            continue
         directory = path in (box.parent, box)
-        if path.is_symlink() or path.exists() and not (path.is_dir() if directory else path.is_file()):
+        if not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)):
             raise StoreRefusal("mailbox-unsafe", path)
 
 

@@ -69,7 +69,7 @@ class OwnerUnanswered(MailWorld):
 
         at(-900)
         asks = [self.mail(self.home, "ask", "question %d" % n, "--to", "owner", "--options", "yes,no",
-                          "--recommend", "yes") for n in range(4)]
+                          "--recommend", "yes", "--effect", "none") for n in range(4)]
         at(-800)
         replied = self.owner("answered by ref", "--directive", "--delivery-id", next(key))
         self.mail(self.home, "notice", "reply", "--to", "owner", "--ref", replied)
@@ -110,7 +110,7 @@ class OwnerUnanswered(MailWorld):
         at(-254)
         self.threaded("follow-up an ask does not answer", "C8:1.0", "C8:2.0")
         at(-253)
-        self.mail(self.home, "ask", "about the root", "--to", "owner", "--options", "yes,no", "--recommend", "yes",
+        self.mail(self.home, "ask", "about the root", "--to", "owner", "--options", "yes,no", "--recommend", "yes", "--effect", "none",
                   "--ref", asked)
         # Each pair case has its own channel, so no other text is near. A
         # pair is judged on the Slack stamps in the delivery ids, which the
@@ -394,6 +394,17 @@ class OwnerUnanswered(MailWorld):
                         case.test_table()
                 finally:
                     case.doCleanups()
+
+    def test_a_progress_notice_leaves_a_request_listed(self):
+        """A progress notice on a request's ref is no answer; a final notice on it is."""
+        plain, self.env = self.env, self.clocked(-60)
+        text = "voice-request: caller=owner operation=op-1 conversation=conv-1 provenance=call"
+        request = self.owner(text, "--directive", "--delivery-id", "C1:1.0")
+        self.mail(self.home, "notice", "looking it up", "--to", "owner", "--ref", request, "--progress")
+        self.env = plain
+        self.assertEqual(self.check(), [text])
+        self.mail(self.home, "notice", "the answer", "--to", "owner", "--ref", request)
+        self.assertEqual(self.check(), [])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=small
+changed-path: path=skills/x/SKILL.md
+harness-note: cause=product-source-or-unreadable-ownership path=skills/x/SKILL.md
+class: class=small measured=true cause=instruction-file path=skills/x/SKILL.md glob=*/SKILL.md measured-class=micro

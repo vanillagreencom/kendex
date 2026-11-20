@@ -4,9 +4,6 @@
 # in with `include_str!` and asserted to hold no carriage return, and the
 # authoring golden digest is over those same bytes.
 * -text
-skills/orch/tests/fixtures/oversee-watch/merged-verifying-before.txt text eol=lf
-skills/orch/scripts/oversee-watch text eol=lf
-.agents/skills/orch/scripts/oversee-watch text eol=lf
 hooks/jarvis-memory-note.sh text eol=lf
 tools/guard text eol=lf
 tools/catalog-release-check text eol=lf
@@ -26,35 +23,18 @@ skills/orch/tests/fixtures/oversee-watch/pi-qol-idle.txt text eol=lf
 skills/orch/tests/fixtures/oversee-watch/codex-rate-limit-switch.txt text eol=lf
 skills/orch/tests/fixtures/oversee-watch/pi-import-confirm.txt text eol=lf whitespace=-blank-at-eol
 skills/orch/tests/fixtures/oversee-watch/pi-tree-confirm.txt text eol=lf whitespace=-blank-at-eol
-skills/orch/scripts/open-terminal text eol=lf
-skills/orch/scripts/lanes text eol=lf
-skills/orch/scripts/lane-host text eol=lf
+skills/agent-runtime/tests/rust/fixtures/pi-idle.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+skills/agent-runtime/tests/rust/fixtures/pi-working.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+skills/agent-runtime/tests/rust/fixtures/pi-status-idle.txt text eol=lf
+skills/agent-runtime/tests/rust/fixtures/pi-status-working.txt text eol=lf
 skills/orch/scripts/lane-host-ssh text eol=lf
-skills/orch/scripts/lane-close text eol=lf
-skills/orch/scripts/pane-write text eol=lf
-skills/orch/scripts/lib/lane-state.sh text eol=lf
-skills/orch/scripts/lib/lane-capabilities.sh text eol=lf
-skills/orch/scripts/lib/cloud-close-log.sh text eol=lf
-skills/orch/scripts/lib/lane-host-slots.sh text eol=lf
-skills/orch/scripts/lib/lane-claims.sh text eol=lf
-skills/orch/scripts/lib/pane-write.sh text eol=lf
 skills/mailbox/scripts/lane-mail text eol=lf
 skills/mailbox/scripts/lib/mailbox-append.sh text eol=lf
 skills/mailbox/scripts/lib/file-lock.sh text eol=lf
 skills/mailbox/scripts/lib/lane-mail-store.py text eol=lf
-skills/orch/scripts/refresh-ci-proof text eol=lf
-skills/orch/scripts/oversee-watch text eol=lf
-skills/orch/scripts/lib/verifying.sh text eol=lf
 skills/linear/scripts/commands/issues.sh text eol=lf
 skills/linear/scripts/lib/issue-validation.sh text eol=lf
 skills/linear/scripts/lib/common.sh text eol=lf
-skills/orch/scripts/lib/pr-watch-pass.sh text eol=lf
-.agents/skills/orch/scripts/oversee-watch text eol=lf
-.agents/skills/orch/scripts/lib/pr-watch-pass.sh text eol=lf
-skills/orch/scripts/lib/account-wall.sh text eol=lf
-skills/orch/scripts/lib/lane-launch.sh text eol=lf
-skills/orch/scripts/lib/overseer-launch.sh text eol=lf
-skills/orch/scripts/lib/lane-relaunch.sh text eol=lf
 skills/jarvis/scripts/jarvis-session text eol=lf
 skills/jarvis/scripts/lib/session-backend.sh text eol=lf
 skills/jarvis/scripts/lib/session.py text eol=lf
@@ -90,8 +70,6 @@ refresh/lib/landing.sh text eol=lf
 refresh/kendex-refresh.yml text eol=lf
 skills/review-gate/templates/kendex-refresh.yml text eol=lf
 .agents/skills/review-gate/templates/kendex-refresh.yml text eol=lf
-skills/orch/tests/fixtures/ci-wait/request-only-checks.json text eol=lf
-skills/orch/tests/fixtures/ci-wait/runs-request-only-active.json text eol=lf
 tools/release-previous-tag text eol=lf
 skills/harness-ci/templates/ci.yml text eol=lf
 .agents/skills/harness-ci/templates/ci.yml text eol=lf
@@ -106,7 +84,7 @@ skills/harness-ci/scripts/change-class text eol=lf
 .github/actions/change-class/classify text eol=lf
 skills/harness-ci/scripts/lib/change-class.sh text eol=lf
 .agents/skills/harness-ci/scripts/lib/change-class.sh text eol=lf
-skills/orch/tests/fixtures/mail-read-base.json text eol=lf
+skills/mailbox/tests/fixtures/mail-read-base.json text eol=lf
 skills/youtube-publish/scripts/youtube-publish.py text eol=lf
 skills/youtube-publish/tests/fixtures/api.json text eol=lf
 skills/github/tests/fixtures/pr-watch-before.txt text eol=lf
@@ -124,7 +102,6 @@ skills/jarvis/scripts/lib/op_fifo.py text eol=lf
 skills/jarvis/scripts/lib/op_tty.py text eol=lf
 .agents/skills/jarvis/scripts/lib/op_tty.py text eol=lf
 skills/jarvis/SKILL.md text eol=lf
-skills/slack/tests/fixtures/mailbox-pre-read-events/** text eol=lf
 skills/jarvis/scripts/lib/watch.py text eol=lf
 .agents/skills/jarvis/scripts/lib/watch.py text eol=lf
 tools/lib/skill-requirements.awk text eol=lf
@@ -134,3 +111,9 @@ skills/reviewer/scripts/review-depth text eol=lf
 .agents/skills/reviewer/scripts/review-depth text eol=lf
 skills/jarvis/scripts/lib/task.py text eol=lf
 .agents/skills/jarvis/scripts/lib/task.py text eol=lf
+
+skills/agent-runtime/tests/rust/fixtures/claude-idle.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+skills/agent-runtime/tests/rust/fixtures/codex-idle.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+skills/agent-runtime/tests/rust/fixtures/copilot-idle.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+
+skills/orch/tests/fixtures/oversee-watch/codex-api-error-live.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof

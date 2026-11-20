@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import sessionBridge, { pasteAndSubmitToPane, resolveOwnTmuxPaneByParentChain, type ExecLike } from "../extensions/session-bridge.ts";
@@ -89,11 +90,12 @@ describe("tmux pane dispatch", () => {
 	});
 
 	test("delivers text to the pane program in normal and copy mode", async () => {
-		fs.mkdirSync("tmp", { recursive: true });
-		const directory = fs.mkdtempSync(path.resolve("tmp/tmux-dispatch-"));
-		const socket = path.basename(directory);
+		// A Unix socket path fits 104 bytes on macOS: a deep checkout's
+		// own folder would not hold one.
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tmux-dispatch-"));
+		const socket = path.join(directory, "tmux.sock");
 		const received = path.join(directory, "received");
-		const tmux = (...args: string[]) => execFileSync("tmux", ["-L", socket, ...args], { encoding: "utf8" });
+		const tmux = (...args: string[]) => execFileSync("tmux", ["-S", socket, ...args], { encoding: "utf8" });
 		try {
 			const pane = tmux("-f", "/dev/null", "new-session", "-d", "-P", "-F", "#{pane_id}", `cat >> '${received}'`).trim();
 			for (const mode of ["legacy-copy", "copy", "normal"]) {

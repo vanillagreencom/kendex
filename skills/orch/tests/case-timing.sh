@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # bash-runtime: 3.2
 # Surface: shared assertion timing and run-all case reports.
-# Inputs: lib/assertions.sh, run-all.sh, scripts/lib/lane-process.sh.
 # The job-log reading consumes the case records as a machine-readable format.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

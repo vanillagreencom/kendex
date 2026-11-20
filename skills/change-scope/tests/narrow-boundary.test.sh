@@ -1,0 +1,388 @@
+#!/usr/bin/env bash
+# This package's narrow-change.conf boundary group against what the micro-tier
+# measurement reads and runs.
+#
+# Each measurement script states its own boundary as `# measures-with:` lines
+# naming catalog paths: the files whose edit changes the range measured, the
+# settings the measurement reads, or the ceilings it compares against. The
+# group the conf opens with `# [boundary]` must be exactly that union, read
+# both ways: a declared path no boundary glob covers, a boundary glob no
+# declared path backs, and a boundary glob that also covers a catalog file no
+# declaration names, are each drift. A declared file's `source` and `.`
+# lines are read too, each resolved to one catalog path whatever its
+# spelling: a file one of them loads that no declaration names, a path
+# naming no catalog file, and a line the resolver cannot bring to one path
+# are each drift. The static read sees the libraries; the declaration
+# carries dependencies that reach execution outside source statements.
+#
+# Every drift line starts with a key and the path or glob it names.
+set -euo pipefail
+# shellcheck source=lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../commit-guards/scripts/lib/common.sh
+. "$TEST_DIR/../../commit-guards/scripts/lib/common.sh"
+# shellcheck source=../../commit-guards/scripts/lib/comment-text.sh
+. "$TEST_DIR/../../commit-guards/scripts/lib/comment-text.sh"
+GG_TMP="$SANDBOX"
+
+CATALOG="$(cd "$TEST_DIR/../.." && pwd)"
+
+# The measurement scripts under CATALOG: every file under a package's
+# scripts/ carrying a `# measures-with:` line, as catalog-relative paths.
+measurement_scripts() { # CATALOG
+  (cd -- "$1" && grep -rlE '^# measures-with: ' -- */scripts 2>/dev/null | sort) || true
+}
+
+# The union of every measurement script's declared boundary.
+boundary_declared() { # CATALOG
+  local script
+  while IFS= read -r script; do
+    [ -n "$script" ] || continue
+    sed -n 's/^# measures-with: //p' "$1/$script"
+  done <<<"$(measurement_scripts "$1")"
+}
+
+# Every `source` or `.` in command position is resolved to one catalog path,
+# whatever the spelling of its word: quoted, split-quoted, unquoted, braced,
+# relative or absolute. The word is read as the shell reads it, quotes
+# removed. It resolves when it is a literal path with no expansion, or a
+# directory variable the file itself assigns followed by a literal path. A
+# variable the file owns is one it assigns its own directory
+# (`$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)`, or with `$0`), or a
+# literal path under such a variable. A relative path resolves against the
+# file's own catalog directory, an absolute one only where it lies under the
+# catalog, and `..` is folded either way. A word that cannot be brought to one
+# catalog path — a variable the file does not own, a command substitution, a
+# variable alone — is never skipped: it is reported naming the line.
+# Single-quoted text, heredoc bodies and comments are read as text, never as
+# a loader. The one loader the walk admits unresolved is SOURCE_EXEMPTION
+# below, matched on the file and the whole line.
+#
+# kendex-env.sh reads the project's settings files, which are no catalog
+# file, through a variable naming each in turn.
+SOURCE_EXEMPTION='skills/change-scope/scripts/lib/kendex-env.sh|source "$file" >&2'
+
+# One line per shell loader in FILE: `path <catalog path>` where its word
+# resolves, `unsupported <line number>` where it does not. Other source
+# languages still join the boundary but carry no shell loaders.
+sourced_paths() { # CATALOG CATALOG_PATH FILE
+  local exempt="" family
+  family="$(gg_comment_family "$2" "$3")" || { echo 'language-error'; return; }
+  [ "$family" = hash-shell ] || return 0
+  [ "${SOURCE_EXEMPTION%%|*}" != "$2" ] || exempt="${SOURCE_EXEMPTION#*|}"
+  awk -v root="$1" -v dir="${2%/*}" -v exempt="$exempt" '
+    function norm(p,   n, i, parts, out, k, res) {
+      n = split(p, parts, "/"); k = 0
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (parts[i] == "..") { if (k > 0) k--; continue }
+        out[++k] = parts[i]
+      }
+      res = ""
+      for (i = 1; i <= k; i++) res = res (i > 1 ? "/" : "") out[i]
+      return res
+    }
+    # The line as the loader search reads it, the same length as the line:
+    # single-quoted text blanked and a comment cut. The quoting state is
+    # carried to the next line as a stack, because a double-quoted `$(...)`
+    # opens a context of its own whose quotes nest inside the outer ones.
+    function code(line,   i, c, prev, out, top) {
+      out = ""; prev = " "
+      if (depth == 0) st[depth = 1] = "N"
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1); top = st[depth]
+        if (insq) { if (c == "\047") { insq = 0; out = out c } else out = out "\001"; prev = c; continue }
+        if (c == "\\") { out = out substr(line, i, 2); i++; prev = "x"; continue }
+        if (c == "$" && substr(line, i + 1, 1) == "(") { st[++depth] = "N"; out = out "$("; i++; prev = "("; continue }
+        if (top == "D") { if (c == "\"") depth--; out = out c; prev = c; continue }
+        if (c == "\047") { insq = 1; out = out c; prev = c; continue }
+        if (c == "\"") { st[++depth] = "D"; out = out c; prev = c; continue }
+        if (c == "(") st[++depth] = "N"
+        if (c == ")" && depth > 1) depth--
+        if (c == "#" && prev ~ /[[:space:](&;|]/) break
+        out = out c; prev = c
+      }
+      return out
+    }
+    # The shell word at the start of s, quotes removed; "" with bad set
+    # where it holds an expansion no literal path can stand for.
+    function word(s,   i, c, w, q) {
+      w = ""; bad = 0; q = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q == "\047") { if (c == "\047") q = ""; else { if (c == "$") bad = 1; w = w c }; continue }
+        if (c == "\\") { w = w substr(s, i + 1, 1); i++; continue }
+        if (c == "`" || (c == "$" && substr(s, i + 1, 1) == "(")) { bad = 1; w = w c; continue }
+        if (q == "\"") { if (c == "\"") q = ""; else w = w c; continue }
+        if (c == "\047" || c == "\"") { q = c; continue }
+        if (c ~ /[[:space:]&;)|<>]/) break
+        w = w c
+      }
+      return w
+    }
+    function resolve(w,   ref, rest) {
+      if (bad || w == "") return ""
+      if (w ~ /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\/[^$]+$/) {
+        ref = w; sub(/^\$\{?/, "", ref); sub(/[}\/].*/, "", ref)
+        rest = w; sub(/^[^\/]*/, "", rest)
+        return (ref in dirs) ? norm(dirs[ref] rest) : ""
+      }
+      if (index(w, "$") > 0) return ""
+      if (substr(w, 1, 1) != "/") return norm(dir "/" w)
+      if (index(w, root "/") == 1) return norm("skills/" substr(w, length(root) + 2))
+      return ""
+    }
+    heredoc != "" {
+      t = $0; if (strip) sub(/^\t+/, "", t)
+      if (t == heredoc) heredoc = ""
+      next
+    }
+    {
+      text = code($0)
+      if (!insq && st[depth] != "D" && match(text, /<<-?[[:space:]]*["\047]?[A-Za-z_][A-Za-z0-9_]*/) && substr(text, RSTART, 3) != "<<<") {
+        tag = substr(text, RSTART, RLENGTH); strip = (tag ~ /^<<-/)
+        sub(/^<<-?[[:space:]]*["\047]?/, "", tag); heredoc = tag
+      }
+    }
+    text ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$\(cd "\$\(dirname "(\$\{BASH_SOURCE\[0\]\}|\$0)"\)" && pwd\)"/ {
+      name = text; sub(/^[[:space:]]*/, "", name); sub(/=.*/, "", name)
+      dirs[name] = dir
+      next
+    }
+    text ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$[A-Za-z_][A-Za-z0-9_]*\/[^"$]*"[[:space:]]*$/ {
+      name = text; sub(/^[[:space:]]*/, "", name); sub(/=.*/, "", name)
+      ref = text; sub(/^[^$]*\$/, "", ref); rest = ref
+      sub(/\/.*/, "", ref); sub(/^[A-Za-z0-9_]*/, "", rest); sub(/"[[:space:]]*$/, "", rest)
+      if (ref in dirs) dirs[name] = norm(dirs[ref] rest)
+      next
+    }
+    match(text, /(^|[!(&{;|]|[[:space:]](if|then|do|else|while|until))[[:space:]]*(source|\.)([[:space:]]|$)/) {
+      whole = $0; sub(/^[[:space:]]+/, "", whole); sub(/[[:space:]]+$/, "", whole)
+      if (exempt != "" && whole == exempt) next
+      rest = substr($0, RSTART + RLENGTH)
+      sub(/^[[:space:]]+/, "", rest)
+      path = resolve(word(rest))
+      if (path != "") print "path " path
+      else print "unsupported " NR
+    }' "$3"
+}
+
+# The shared language reader selects shell files by extension or shebang.
+# Python documentation can contain the same text without loading a file.
+language_rows=0
+while IFS='|' read -r name shebang quote expected; do
+  language_rows=$((language_rows + 1))
+  language_file="$SANDBOX/$name"
+  printf '%s\n' "$shebang" "$quote" 'source ../../orch/scripts/lib/copilot-session.sh' "$quote" >"$language_file"
+  assert_eq "the include walk reads $name under its source language" "$expected" \
+    "$(sourced_paths "$SANDBOX" "skills/change-scope/scripts/$name" "$language_file")"
+done <<'LANGUAGES'
+helper.sh|||path skills/orch/scripts/lib/copilot-session.sh
+shell-helper|#!/usr/bin/env bash||path skills/orch/scripts/lib/copilot-session.sh
+helper.py|#!/usr/bin/env python3|"""|
+python-helper|#!/usr/bin/env python3|"""|
+LANGUAGES
+require_rows narrow-boundary-languages "$language_rows"
+
+# Removing the language check must expose the Python text as a false include.
+sed -n '/^sourced_paths() {/,/^}/p' "$TEST_DIR/narrow-boundary.test.sh" >"$SANDBOX/reader"
+awk '
+  /^sourced_paths\(\) \{/ { sub(/^sourced_paths/, "sourced_paths_control") }
+  $0 == "  [ \"$family\" = hash-shell ] || return 0" { hits++; print "  :"; next }
+  { print }
+  END { exit hits == 1 ? 0 : 3 }
+' "$SANDBOX/reader" >"$SANDBOX/reader-control.sh"
+if cmp -s "$SANDBOX/reader" "$SANDBOX/reader-control.sh"; then
+  echo 'narrow-boundary: control=unchanged' >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$SANDBOX/reader-control.sh"
+assert_eq "a reader without the language check misreads Python documentation" \
+  "path skills/orch/scripts/lib/copilot-session.sh" \
+  "$(sourced_paths_control "$SANDBOX" skills/change-scope/scripts/helper.py "$SANDBOX/helper.py")"
+
+boundary_drift() { # CATALOG CONF
+  local catalog="$1" conf="$2" declared globs files path glob kind loaded hit
+  declared="$(boundary_declared "$catalog" | sort -u)"
+  globs="$(boundary_globs "$conf")"
+  # Without either side there is nothing to hold the other to, so each
+  # absence is the one line reported.
+  if [ -z "$declared" ]; then
+    echo "no-declaration catalog=$catalog"
+    return
+  fi
+  if [ -z "$globs" ]; then
+    echo "no-boundary-group conf=$conf"
+    return
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ ! -f "$catalog/${path#skills/}" ]; then
+      echo "missing path=$path"
+      continue
+    fi
+    while IFS=' ' read -r kind loaded; do
+      case "$kind" in
+        '') ;;
+        path)
+          if [ ! -f "$catalog/${loaded#skills/}" ]; then
+            echo "unresolved-source file=$path source=$loaded"
+          elif ! grep -qxF -- "$loaded" <<<"$declared"; then
+            echo "undeclared-source file=$path source=$loaded"
+          fi ;;
+        unsupported) echo "unsupported-source file=$path line=$loaded" ;;
+        *) echo "reader-broken file=$path kind=$kind" ;;
+      esac
+    done <<<"$(sourced_paths "$catalog" "$path" "$catalog/${path#skills/}")"
+    hit=false
+    while IFS= read -r glob; do
+      [ -n "$glob" ] || continue
+      # shellcheck disable=SC2254
+      case "$path" in $glob) hit=true; break ;; esac
+    done <<<"$globs"
+    [ "$hit" = true ] || echo "uncovered path=$path"
+  done <<<"$declared"
+  files="$(cd -- "$catalog" && find . -type f | sed 's|^\./|skills/|' | sort)"
+  while IFS= read -r glob; do
+    [ -n "$glob" ] || continue
+    hit=false
+    while IFS= read -r path; do
+      # shellcheck disable=SC2254
+      case "$path" in $glob) hit=true; break ;; esac
+    done <<<"$declared"
+    if [ "$hit" = false ]; then
+      echo "unbacked glob=$glob"
+      continue
+    fi
+    # The first catalog file the glob covers that no declaration names.
+    while IFS= read -r path; do
+      # shellcheck disable=SC2254
+      case "$path" in $glob) ;; *) continue ;; esac
+      grep -qxF -- "$path" <<<"$declared" && continue
+      echo "wider glob=$glob path=$path"
+      break
+    done <<<"$files"
+  done <<<"$globs"
+}
+
+REAL_CONF="$CATALOG/change-scope/references/narrow-change.conf"
+
+# The extractor's floor, with the classifier it must find: a reader finding
+# neither has broken, not found a tree with no measurement.
+scripts="$(measurement_scripts "$CATALOG")"
+assert_eq "the classifier declares its measurement dependencies" \
+  "change-scope/scripts/change-scope" "$scripts"
+
+assert_eq "the boundary group agrees with the measurement's declarations" "" \
+  "$(boundary_drift "$CATALOG" "$REAL_CONF")"
+
+# The derived set carries what no invocation-syntax walk reaches, and leaves
+# out what the measurement runs for a reason outside the rule.
+declared="$(boundary_declared "$CATALOG")"
+assert_eq "the shared branch measurement is carried" "1" \
+  "$(grep -cxF 'skills/change-scope/scripts/lib/branch-growth.sh' <<<"$declared")"
+assert_eq "the Linear CLI read for the allowance is not" "0" \
+  "$(grep -cxF 'skills/linear/scripts/linear.sh' <<<"$declared" || true)"
+
+# One planted drift per rule, each on a fresh copy of the dependencies, each
+# answering exactly the line that rule prints. @CATALOG@ and @CONF@ stand for
+# the copy's catalog and conf, @LAST_LINE@ for the line an edit appended.
+# label | the edit | the drift expected
+fixture_rows=0
+while IFS='|' read -r label edit expected; do
+  fixture_rows=$((fixture_rows + 1))
+  fixture="$SANDBOX/catalog-$fixture_rows"
+  mkdir -p "$fixture/change-scope/references" "$fixture/orch" "$fixture/bot-instructions"
+  cp -R "$CATALOG/change-scope/scripts" "$fixture/change-scope/scripts"
+  cp "$REAL_CONF" "$fixture/change-scope/references/narrow-change.conf"
+  # orch's libraries stand beside the fixture so a spelled source of one
+  # resolves to a catalog file and is named undeclared, never unresolved.
+  cp -R "$CATALOG/orch/scripts" "$fixture/orch/scripts"
+  cp -R "$CATALOG/bot-instructions/scripts" "$fixture/bot-instructions/scripts"
+  conf="$fixture/change-scope/references/narrow-change.conf"
+  measured="$fixture/change-scope/scripts/change-scope"
+  case "$edit" in
+    declare-extra)
+      printf '%s\n' '# measures-with: skills/orch/scripts/resolve-base-branch' >>"$measured" ;;
+    drop-conf-row)
+      grep -vxF 'path *skills/change-scope/scripts/lib/branch-growth.sh' "$conf" >"$conf.new"
+      mv "$conf.new" "$conf" ;;
+    add-conf-row)
+      awk '{ print } /^path \*skills\/change-scope\/scripts\/change-scope$/ { print "path *skills/orch/runtime/src/ops/lane.rs" }' \
+        "$conf" >"$conf.new"
+      mv "$conf.new" "$conf" ;;
+    source-other-skill)
+      # Another skill's library of the same name as a declared one: a
+      # check matching the name alone takes it for this package's.
+      mkdir -p "$fixture/linear/scripts/lib"
+      cp "$CATALOG/change-scope/scripts/lib/kendex-env.sh" "$fixture/linear/scripts/lib/kendex-env.sh"
+      printf '%s\n' 'source "$SCRIPT_DIR/../../linear/scripts/lib/kendex-env.sh"' >>"$measured" ;;
+    source-nowhere)
+      printf '%s\n' 'source "$SCRIPT_DIR/lib/not-there.sh"' >>"$measured" ;;
+    source-unknown-variable)
+      printf '%s\n' 'source "$OTHER_SKILL_LIB/kendex-env.sh"' >>"$measured" ;;
+    source-spelled-*)
+      # One new dependency, lib/copilot-session.sh, in the spelling the row
+      # names; each must resolve to that one catalog path.
+      case "$edit" in
+        source-spelled-quoted) spelled='source "$SCRIPT_DIR/../../orch/scripts/lib/copilot-session.sh"' ;;
+        source-spelled-split-quoted) spelled='source "$SCRIPT_DIR"/../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-unquoted) spelled='true; . $SCRIPT_DIR/../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-braced) spelled='source ${SCRIPT_DIR}/../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-relative) spelled='source ../../orch/scripts/lib/copilot-session.sh' ;;
+        source-spelled-absolute) spelled="source $fixture/orch/scripts/lib/copilot-session.sh" ;;
+        *) echo "unknown spelling $edit" >&2; exit 1 ;;
+      esac
+      printf '%s\n' "$spelled" >>"$measured" ;;
+    source-substitution)
+      printf '%s\n' 'source "$(dirname "$0")/lib/copilot-session.sh"' >>"$measured" ;;
+    source-bare-variable)
+      printf '%s\n' 'source "$file" >&2' >>"$measured" ;;
+    declare-missing)
+      printf '%s\n' '# measures-with: skills/orch/scripts/gone' >>"$measured"
+      awk '{ print } /^path \*skills\/change-scope\/scripts\/change-scope$/ { print "path *skills/orch/scripts/gone" }' \
+        "$conf" >"$conf.new"
+      mv "$conf.new" "$conf" ;;
+    no-declaration)
+      grep -v '^# measures-with: ' "$measured" >"$measured.new"
+      mv "$measured.new" "$measured" ;;
+    widen-row)
+      cp "$measured" "$measured.orig"
+      sed 's|^path \*skills/change-scope/scripts/change-scope$|path *skills/change-scope/scripts/change-scope*|' \
+        "$conf" >"$conf.new"
+      mv "$conf.new" "$conf" ;;
+    no-boundary-group)
+      grep -v '^# \[boundary\]' "$conf" >"$conf.new"
+      mv "$conf.new" "$conf" ;;
+    *) echo "unknown edit $edit" >&2; exit 1 ;;
+  esac
+  assert_eq "the control's edit changed its file" "changed" \
+    "$(if cmp -s "$conf" "$REAL_CONF" && cmp -s "$measured" "$CATALOG/change-scope/scripts/change-scope"; then echo same; else echo changed; fi)"
+  expected="${expected//@CATALOG@/$fixture}"
+  expected="${expected//@CONF@/$conf}"
+  expected="${expected//@LAST_LINE@/$(grep -c '' "$measured")}"
+  assert_eq "$label" "$expected" "$(boundary_drift "$fixture" "$conf")"
+done <<'FIXTURES'
+a dependency declared without its conf row is named|declare-extra|uncovered path=skills/orch/scripts/resolve-base-branch
+a conf row dropped while the declaration still carries it is named|drop-conf-row|uncovered path=skills/change-scope/scripts/lib/branch-growth.sh
+a boundary row no declaration backs is named|add-conf-row|unbacked glob=*skills/orch/runtime/src/ops/lane.rs
+a library sourced without a declaration is named, spelled quoted|source-spelled-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled split-quoted|source-spelled-split-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled unquoted|source-spelled-unquoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled braced|source-spelled-braced|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled relative|source-spelled-relative|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+a library sourced without a declaration is named, spelled absolute|source-spelled-absolute|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/copilot-session.sh
+another skill's library of the same name is named|source-other-skill|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/linear/scripts/lib/kendex-env.sh
+a library that is not in the catalog is named|source-nowhere|unresolved-source file=skills/change-scope/scripts/change-scope source=skills/change-scope/scripts/lib/not-there.sh
+a library under a variable the script does not own is reported|source-unknown-variable|unsupported-source file=skills/change-scope/scripts/change-scope line=@LAST_LINE@
+a loader through a command substitution is reported|source-substitution|unsupported-source file=skills/change-scope/scripts/change-scope line=@LAST_LINE@
+a bare variable no exemption names is reported|source-bare-variable|unsupported-source file=skills/change-scope/scripts/change-scope line=@LAST_LINE@
+a declared file that is not there is named|declare-missing|missing path=skills/orch/scripts/gone
+a catalog whose scripts declare nothing is named|no-declaration|no-declaration catalog=@CATALOG@
+a conf with no boundary group is named|no-boundary-group|no-boundary-group conf=@CONF@
+a boundary row covering a file no declaration names is named|widen-row|wider glob=*skills/change-scope/scripts/change-scope* path=skills/change-scope/scripts/change-scope.orig
+FIXTURES
+require_rows narrow-boundary-fixtures "$fixture_rows"
+
+report narrow-boundary

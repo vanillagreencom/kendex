@@ -59,7 +59,8 @@ quiet_repo() { # REPO
 # A main checkout whose committed FILE assigns the key `main-value`, or leaves
 # it out where MAIN is `-`, its origin, and an issue worktree whose branch
 # commits `branch-value` to the same file. The pre-push and pre-commit hooks,
-# shared by every worktree, record what the resolver answers from the worktree.
+# shared by every worktree, record what the resolver answers from the worktree
+# for COMMIT_GUARDS_CHANGELOG_PATHS, or for the key a row writes to hook.key.
 build() { # ROOT SETTINGS-FILE MAIN
   local root="$1" file="$2" main="$1/main" wt="$1/trees/topic"
   mkdir -p "$main"
@@ -86,15 +87,21 @@ build() { # ROOT SETTINGS-FILE MAIN
 set -euo pipefail
 cat >/dev/null
 source "$SETTINGS_LIB"
-gg_setting COMMIT_GUARDS_CHANGELOG_PATHS built-in-default >"$root/hook.read"
+key=COMMIT_GUARDS_CHANGELOG_PATHS
+[[ ! -f "$root/hook.key" ]] || key="\$(cat "$root/hook.key")"
+gg_setting "\$key" built-in-default >"$root/hook.read"
 HOOK
   chmod +x "$main/.git/hooks/pre-push"
   cp "$main/.git/hooks/pre-push" "$main/.git/hooks/pre-commit"
 }
 
-# The row's package copy, made once, its script path on stdout.
+# The row's package copy, made once beside a copy of commit-guards, whose
+# resolver the hooks run, its script path on stdout.
 package_copy() { # ROOT
-  [[ -d "$1/pkg/worktree" ]] || { mkdir -p "$1/pkg" && cp -R "$PACKAGE_DIR" "$1/pkg/worktree"; }
+  [[ -d "$1/pkg/worktree" ]] || {
+    mkdir -p "$1/pkg" && cp -R "$PACKAGE_DIR" "$1/pkg/worktree" &&
+      cp -R "$PACKAGE_DIR/../commit-guards" "$1/pkg/commit-guards"
+  }
   printf '%s' "$1/pkg/worktree/scripts/worktree"
 }
 
@@ -125,7 +132,13 @@ cut_copy() { # ROOT SED-EXPRESSION
 # pre-commit hook, in place of the push. The `unfixed` word is the must-fail
 # control's world, a package copy with one rule cut. The fixture names no WORKTREE_SYMLINKS, so the
 # worktree has no private env file or untracked settings file of its own, and
-# an override reaches the hook only through the environment.
+# an override reaches the hook only through the environment. `key:NAME`, the
+# row's first word, makes NAME the key the overrides set and the hook reads.
+# `copy` runs the package copy; `no-cg` takes commit-guards from beside it
+# and `gh-sibling` puts a copy of github there. The
+# `*-unread` words cut the line adding that sibling's names to worktree's
+# list, and the `*-unguarded` words cut the check that its list file stands.
+# A want that starts with `rc=` is the whole expected outcome.
 ROWS='the hook reads the branch'"'"'s committed value, not the main checkout'"'"'s|kendex.settings.toml|main-value|-|-|branch-value
 the nested settings file is kept out of the hook the same way|.kendex/settings.toml|main-value|-|-|branch-value
 must-fail: with the unexport cut, the hook reads the main checkout'"'"'s value|kendex.settings.toml|main-value|unfixed|-|main-value
@@ -137,7 +150,16 @@ a private env file the tracked settings name, not .env.local, keeps its override
 an untracked settings file is a local override and stays exported|kendex.settings.toml|main-value|untracked-nested:nested-value|-|nested-value
 an untracked override equal to the committed value stays exported|kendex.settings.toml|main-value|untracked-nested:main-value|-|main-value
 a key a sourced library exports at run time stays exported|kendex.settings.toml|-|helper|-|helper-value
-the fold'"'"'s commit hook reads the branch'"'"'s committed value, not the main checkout'"'"'s|kendex.settings.toml|main-value|fold|-|branch-value'
+the fold'"'"'s commit hook reads the branch'"'"'s committed value, not the main checkout'"'"'s|kendex.settings.toml|main-value|fold|-|branch-value
+a package copy beside commit-guards hands the hook a private env file override of its key|kendex.settings.toml|main-value|copy local:local-value|-|local-value
+must-fail: with commit-guards'"'"' names left out of the list, the override never reaches the hook|kendex.settings.toml|main-value|cg-unread local:local-value|-|branch-value
+a package copy with no commit-guards beside it hands the hook worktree'"'"'s names alone|kendex.settings.toml|main-value|no-cg local:local-value|-|branch-value
+must-fail: with the presence check cut, a copy with no commit-guards stops at its load|kendex.settings.toml|main-value|no-cg cg-unguarded local:local-value|-|rc=1 read=-
+github'"'"'s names reach the hook where the github package stands beside worktree|kendex.settings.toml|main-value|key:GH_ISSUE_PATTERN local-export:gh-pattern|-|gh-pattern
+a package copy beside github hands the hook a private env file override of github'"'"'s key|kendex.settings.toml|main-value|key:GH_ISSUE_PATTERN gh-sibling local-export:gh-pattern|-|gh-pattern
+must-fail: with github'"'"'s names left out of the list, github'"'"'s key never reaches the hook|kendex.settings.toml|main-value|key:GH_ISSUE_PATTERN gh-sibling gh-unread local-export:gh-pattern|-|built-in-default
+a package copy with no github beside it leaves github'"'"'s key out|kendex.settings.toml|main-value|key:GH_ISSUE_PATTERN copy local-export:gh-pattern|-|built-in-default
+must-fail: with the presence check cut, a copy with no github stops at its load|kendex.settings.toml|main-value|gh-unguarded local:local-value|-|rc=1 read=-'
 
 echo "=== worktree push hands its hooks the branch's settings ==="
 n=0
@@ -147,11 +169,13 @@ while IFS='|' read -r label file main_value edit caller want; do
   build "$root" "$file" "$main_value"
   script="$WORKTREE_SCRIPT"
   op=(push topic --no-rebase --set-upstream)
+  key=COMMIT_GUARDS_CHANGELOG_PATHS
   for word in $edit; do
     case "$word" in
       -) ;;
-      local:*) printf 'COMMIT_GUARDS_CHANGELOG_PATHS="%s"\n' "${word#*:}" >>"$root/main/.env.local" ;;
-      local-export:*) printf 'export COMMIT_GUARDS_CHANGELOG_PATHS="%s"\n' "${word#*:}" >>"$root/main/.env.local" ;;
+      key:*) key="${word#*:}"; printf '%s' "$key" >"$root/hook.key" ;;
+      local:*) printf '%s="%s"\n' "$key" "${word#*:}" >>"$root/main/.env.local" ;;
+      local-export:*) printf 'export %s="%s"\n' "$key" "${word#*:}" >>"$root/main/.env.local" ;;
       envfile:*)
         printf 'KENDEX_ENV_FILE = ".env.private"\n' >>"$root/main/kendex.settings.toml"
         cp "$root/main/.env.local" "$root/main/.env.private"
@@ -168,6 +192,19 @@ while IFS='|' read -r label file main_value edit caller want; do
         ;;
       fold) op=(push topic --prepare-base) ;;
       unfixed) script="$(cut_copy "$root" 's/|| export -n "\${COMMITTED_UNEXPORT\[@\]}"$/|| : cut/')" ;;
+      copy) script="$(package_copy "$root")" ;;
+      no-cg)
+        script="$(package_copy "$root")"
+        rm -rf -- "${root:?}/pkg/commit-guards"
+        ;;
+      gh-sibling)
+        script="$(package_copy "$root")"
+        cp -R "$PACKAGE_DIR/../github" "$root/pkg/github"
+        ;;
+      cg-unread) script="$(cut_copy "$root" 's/^  WORKTREE_SETTINGS_NAMES+=("\${commit_guards_settings_names\[@\]}")$/  : cut/')" ;;
+      gh-unread) script="$(cut_copy "$root" 's/^  WORKTREE_SETTINGS_NAMES+=("\${github_settings_names\[@\]}")$/  : cut/')" ;;
+      cg-unguarded) script="$(cut_copy "$root" 's/^if \[\[ -f "\$COMMIT_GUARDS_NAMES_LIB" \]\]; then$/if : cut; then/')" ;;
+      gh-unguarded) script="$(cut_copy "$root" 's/^if \[\[ -f "\$GITHUB_NAMES_LIB" \]\]; then$/if : cut; then/')" ;;
       # The phase-two unset loop sits between the tracked snapshot and the
       # first loop that reads it; the clearing loop is the one that reads
       # compgen -e inside committed_settings_keys.
@@ -180,8 +217,9 @@ while IFS='|' read -r label file main_value edit caller want; do
   else
     (cd "$root/main" && COMMIT_GUARDS_CHANGELOG_PATHS="$caller" "$script" "${op[@]}" >"$root/out" 2>&1) || rc=$?
   fi
-  [[ "$rc" == 0 ]] || sed 's/^/        push: /' "$root/out"
-  assert_eq "rc=$rc read=$(cat "$root/hook.read" 2>/dev/null || printf -- -)" "rc=0 read=$want" "$label"
+  [[ "$want" == rc=* ]] || want="rc=0 read=$want"
+  [[ "$rc" == 0 || "$want" != rc=0* ]] || sed 's/^/        push: /' "$root/out"
+  assert_eq "rc=$rc read=$(cat "$root/hook.read" 2>/dev/null || printf -- -)" "$want" "$label"
 done <<<"$ROWS"
 
 echo

@@ -72,7 +72,7 @@ fn check_project_writes_in(
         if let Some(item) = marker(caller.as_ref())? {
             return Ok(lane_refusal(item));
         }
-        // orch's open-terminal exports the launch root inside the pane shell.
+        // orch's lane launch sets the launch root in the lane's environment.
         // A later cd changes the destination but preserves this lane origin.
         if let Some(origin) = env.lane_origin()
             && let Some(item) = kendex_core::lane::marked_worktree(origin)?

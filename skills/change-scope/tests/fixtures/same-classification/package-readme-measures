@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=micro
+changed-path: path=skills/review-gate/README.md
+harness-note: cause=product-source-or-unreadable-ownership path=skills/review-gate/README.md
+class: class=micro measured=true cause=production-within-micro production=12

@@ -1,0 +1,1565 @@
+//! The account listing: every account the owner configures on this
+//! machine and the accounts its caller names, each measured through its own
+//! credential at the usage endpoint behind the cache, and under a provider
+//! every account the provider holds a credential for, read through its
+//! `accounts` verb. A listing measures an account the owner excluded or
+//! retired like any other, with that word as a flag on its row, and judges
+//! nothing: the judge refuses by the words.
+//!
+//! The network layer is the one impure part: `curl` as `PATH` finds it,
+//! the bearer handed over on its stdin and never on its argument vector,
+//! which is world-readable on Linux. A request that could not be run reads
+//! `unreachable`; one an endpoint refused is recorded in the account's
+//! usage record until its window passes, so no caller on the host posts
+//! the refused request again, and a usage 429 is answered from the last
+//! figure the record holds while that figure is younger than five hours.
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use crate::clock;
+use crate::harness::Harness;
+use crate::host::{self, Place};
+use serde_json::{Map, Value, json};
+
+use super::cache::{self, FigureRead, REFUSAL_WINDOW_S, Refusal};
+use super::renewal;
+use super::usage::{
+    self, CopilotLogin, Credential, FIVE_HOURS_S, ROUNDING_STEP, Rounding, same_reset,
+};
+use super::{AccountRow, Reads, TAG, WINDOWS, grant};
+use super::{Env, wall};
+use crate::settings::{AccountSettings, CopilotPool};
+
+const COPILOT_CREDITS_URL: &str = "https://api.github.com/copilot_internal/user";
+pub(super) const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
+/// A request's own bound is curl's `--max-time 10`; the runner's covers
+/// the start.
+const REQUEST_BOUND: Duration = Duration::from_secs(15);
+const RETRY_WAIT_MAX_S: u64 = 5;
+/// One `secret-tool search` before the Secret Service reads absent.
+const KEYRING_BOUND: Duration = Duration::from_secs(5);
+
+/// The listing: one row per account in the record shape the judge reads,
+/// and the lines a reader prints beside the rows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listing {
+    pub rows: Vec<Value>,
+    /// The cause the provider's `accounts` verb failed with, or could not
+    /// be run with: the listing is this machine's reading, and a pool only
+    /// the provider measures is unjudged.
+    pub provider_failure: Option<String>,
+    pub notes: Vec<String>,
+}
+
+/// One listing's reading state: the settings, the cache's place, the clock
+/// and the lines said beside the rows. A provider's reader measures its
+/// rows through it as this machine's are measured.
+pub struct Ctx<'a> {
+    settings: &'a Env<'a>,
+    pub accounts: &'a AccountSettings,
+    /// The account records' root; the usage cache is `usage/` under it.
+    account_state: PathBuf,
+    pub usage_dir: PathBuf,
+    /// The age a cached figure is served within: the TTL, or the caller's
+    /// own pass interval where that is longer; 0 declines every cached
+    /// figure.
+    pub serve_max_age: u64,
+    pub now: u64,
+    today: String,
+    pub notes: Vec<String>,
+    retry_spent: bool,
+}
+
+impl<'a> Ctx<'a> {
+    /// The state of one listing at `now`, or the cause the account records'
+    /// root could not be resolved with.
+    pub fn new(
+        settings: &'a Env<'a>,
+        accounts: &'a AccountSettings,
+        now: u64,
+    ) -> Result<Ctx<'a>, String> {
+        let account_state = settings.account_state.get().map_err(|e| e.to_string())?;
+        let usage_dir = account_state.join("usage");
+        let serve_max_age = if accounts.usage_ttl == 0 {
+            0
+        } else {
+            accounts.usage_ttl.max(accounts.usage_max_age)
+        };
+        Ok(Ctx {
+            settings,
+            accounts,
+            account_state,
+            usage_dir,
+            serve_max_age,
+            now,
+            today: super::today(now),
+            notes: Vec::new(),
+            retry_spent: false,
+        })
+    }
+}
+
+/// A provider's reading, read by its caller before the listing: the
+/// provider's name, the pool its kind declares, its finished rows, the
+/// cause its read failed with, and the lines said beside them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Provider {
+    pub host: String,
+    pub pool: String,
+    pub rows: Vec<Value>,
+    pub failure: Option<String>,
+    pub notes: Vec<String>,
+}
+
+/// The listing at `now`, with a provider's reading beside this machine's
+/// where the caller read one, and `named`, a pick's `(harness, directory)`,
+/// measured as that harness's account where the directory stands and
+/// nothing else lists it; or the cause where it could not be read whole: a
+/// home that cannot be listed.
+pub fn list(
+    settings: &Env,
+    accounts: &AccountSettings,
+    provider: Option<Provider>,
+    named: Option<(Harness, &str)>,
+    now: u64,
+) -> Result<Listing, String> {
+    let mut ctx = Ctx::new(settings, accounts, now)?;
+    let host_pool = provider.as_ref().map_or("plan", |p| p.pool.as_str());
+    let mut rows = Vec::new();
+    let found = discover(&mut ctx, named)?;
+    for account in &found {
+        let pool = local_pool(account.harness, host_pool);
+        let mut row = measure(&mut ctx, account);
+        row["configured"] = json!(account.configured);
+        finish(&ctx, &mut row, &pool);
+        rows.push(row);
+    }
+    let provider_failure = match provider {
+        Some(provider) => {
+            rows.extend(provider.rows);
+            ctx.notes.extend(provider.notes);
+            provider.failure
+        }
+        None => None,
+    };
+    // A stated entry for a Copilot CLI home, this machine's or a
+    // provider's, states that home's fallback reading and names no Pi root.
+    let copilot_homes: Vec<String> = rows
+        .iter()
+        .filter(|r| r["harness"] == json!(Harness::Copilot))
+        .filter_map(|r| r["config_dir"].as_str().map(wall::canon))
+        .collect();
+    for entry in &accounts.copilot_pool {
+        if copilot_homes.contains(&wall::canon(&entry.dir)) {
+            continue;
+        }
+        let root = Found {
+            harness: Harness::Pi,
+            dir: entry.dir.clone(),
+            configured: true,
+        };
+        let mut row = measure(&mut ctx, &root);
+        finish(&ctx, &mut row, "copilot");
+        rows.push(row);
+    }
+    Ok(Listing {
+        rows,
+        provider_failure,
+        notes: ctx.notes,
+    })
+}
+
+/// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: by its alias, or by its
+/// directory name with or without the leading dot. The one rule; the
+/// judge refuses by it.
+pub fn excluded(settings: &AccountSettings, alias: &str, config_dir: &str) -> bool {
+    settings
+        .exclude
+        .iter()
+        .any(|name| super::names(alias, config_dir, name))
+}
+
+/// The `AGENT_RUNTIME_ACCOUNT_RETIRE` date the account is stated to end on, matched
+/// as the exclusion is.
+pub fn retire_date(settings: &AccountSettings, alias: &str, config_dir: &str) -> Option<String> {
+    settings
+        .retire
+        .iter()
+        .find(|r| super::names(alias, config_dir, &r.name))
+        .map(|r| r.date.clone())
+}
+
+/// The directory's own name without its leading dot, overlaid by the
+/// owner's `AGENT_RUNTIME_ACCOUNT_ALIASES` entry whose key names the directory. A
+/// label only: launching names the directory, never the alias.
+pub fn alias(settings: &AccountSettings, config_dir: &str) -> String {
+    settings
+        .aliases
+        .iter()
+        .find(|a| super::lane_named(config_dir, &a.name))
+        .map(|a| a.alias.clone())
+        .unwrap_or_else(|| super::base(config_dir).trim_start_matches('.').to_owned())
+}
+
+// --- the accounts this machine lists ----------------------------------------------------------
+
+struct Found {
+    harness: Harness,
+    dir: String,
+    /// Whether the owner configured the account: the chooser picks among
+    /// configured accounts alone.
+    configured: bool,
+}
+
+const HARNESSES: [Harness; 3] = [Harness::Claude, Harness::Codex, Harness::Copilot];
+
+/// The accounts this machine lists, the owner's statement and nothing
+/// found by looking: each `AGENT_RUNTIME_ACCOUNT_DIRS` entry, absolute or relative to
+/// `HOME` (so one tracked line names the same accounts on every machine),
+/// an account of the harness its files name; beside them, measured but no
+/// candidate, the account a set `CODEX_HOME` names, a set `COPILOT_HOME`,
+/// and `named`, the directory a pick names where it stands and nothing
+/// else lists it. With the setting unset no account is configured, and the
+/// listing says so.
+fn discover(ctx: &mut Ctx, named: Option<(Harness, &str)>) -> Result<Vec<Found>, String> {
+    let accounts = ctx.accounts;
+    if accounts.account_dirs.is_empty() {
+        ctx.notes.push(format!(
+            "accounts-unconfigured key={}",
+            crate::settings::ACCOUNT_DIRS_KEY
+        ));
+    }
+    let mut configured: Vec<Found> =
+        configured(&accounts.account_dirs, ctx.settings.home, &mut ctx.notes)?
+            .into_iter()
+            .map(|(harness, dir)| Found {
+                harness,
+                dir,
+                configured: true,
+            })
+            .collect();
+    let mut found: Vec<Found> = Vec::new();
+    for harness in HARNESSES {
+        found.extend(configured.extract_if(.., |f| f.harness == harness));
+    }
+    let homes = [
+        accounts
+            .codex_home
+            .as_deref()
+            .map(|h| (Harness::Codex, usage::home_account(h))),
+        ctx.settings
+            .copilot_home
+            .map(|h| (Harness::Copilot, h.to_owned())),
+    ];
+    for (harness, dir) in homes.into_iter().flatten() {
+        if !found.iter().any(|f| f.dir == dir) {
+            found.push(Found {
+                harness,
+                dir,
+                configured: false,
+            });
+        }
+    }
+    let named = named.and_then(|(harness, dir)| {
+        (HARNESSES.contains(&harness)
+            && !found
+                .iter()
+                .any(|f| wall::canon(&f.dir) == wall::canon(dir)))
+        .then_some((harness, dir))
+    });
+    if let Some((harness, dir)) = named
+        && usage::is_dir(Path::new(dir))?
+    {
+        found.push(Found {
+            harness,
+            dir: dir.to_owned(),
+            configured: false,
+        });
+    }
+    Ok(found)
+}
+
+/// The accounts the owner configured, `account_dirs` as the setting lists
+/// them, each with the harness its files name: an entry absolute or under
+/// `home`, one under no home said in `notes` and left out, each directory
+/// once. The chooser picks among these alone. A directory whose files
+/// cannot be read refuses.
+pub fn configured(
+    account_dirs: &[String],
+    home: Option<&str>,
+    notes: &mut Vec<String>,
+) -> Result<Vec<(Harness, String)>, String> {
+    let mut configured: Vec<(Harness, String)> = Vec::new();
+    for entry in account_dirs {
+        let relative = entry.strip_prefix("~/").unwrap_or(entry);
+        let dir = match (entry.starts_with('/'), home) {
+            (true, _) => entry.clone(),
+            (false, Some(home)) => Path::new(home).join(relative).display().to_string(),
+            (false, None) => {
+                notes.push(format!(
+                    "account-dir-unresolved entry={entry} cause=home-unset"
+                ));
+                continue;
+            }
+        };
+        if configured.iter().any(|(_, d)| *d == dir) {
+            continue;
+        }
+        let harness = kind_of(&dir)
+            .map_err(|cause| format!("account-dir-unreadable path={dir} cause={cause}"))?;
+        configured.push((harness, dir));
+    }
+    Ok(configured)
+}
+
+/// The harness whose account a configured directory holds, by its files:
+/// Copilot's `config.json` or Codex's `auth.json` with no Claude
+/// `.credentials.json` beside it, else Claude.
+fn kind_of(dir: &str) -> Result<Harness, String> {
+    let holds = |name: &str| usage::exists(&Path::new(dir).join(name));
+    let credentials = holds(".credentials.json")?;
+    Ok(if holds("config.json")? && !credentials {
+        Harness::Copilot
+    } else if holds("auth.json")? && !credentials {
+        Harness::Codex
+    } else {
+        Harness::Claude
+    })
+}
+
+fn local_pool(harness: Harness, host_pool: &str) -> String {
+    match harness {
+        Harness::Claude if host_pool == "cloud-credit" => "cloud-credit".to_owned(),
+        Harness::Copilot => "copilot".to_owned(),
+        Harness::Claude | Harness::Codex | Harness::Pi => "plan".to_owned(),
+    }
+}
+
+// --- one account measured ---------------------------------------------------------------------
+
+pub enum Usage {
+    /// A usage body the endpoint answered, parsed by its harness.
+    Body(Value),
+    /// The provider's row, its windows as it stated them.
+    Provider(Value),
+    /// The owner's stated Copilot pool.
+    Stated { used: u64, granted: u64 },
+}
+
+pub struct Reading {
+    pub status: String,
+    pub detail: String,
+    pub plan: String,
+    pub usage: Option<Usage>,
+    pub age: Option<u64>,
+    /// The rate's anchor and the seconds from it to the figure.
+    pub prior: Option<(Value, u64)>,
+    /// The anchor before `prior` and the seconds from it to `prior`: the
+    /// pair the last measured rate stands on, its age that of `prior`.
+    pub rated_from: Option<(Value, u64)>,
+    /// The fall of the weekly figure the account's record holds.
+    pub fall: Option<cache::Fall>,
+}
+
+impl Reading {
+    fn refused(status: &str, detail: String) -> Reading {
+        Reading {
+            status: status.to_owned(),
+            detail,
+            plan: String::new(),
+            usage: None,
+            age: None,
+            prior: None,
+            rated_from: None,
+            fall: None,
+        }
+    }
+
+    /// The owner's stated pool: the share used rounded up, so a pool one
+    /// credit short of its grant never reads as having more, and 100 at or
+    /// past the grant.
+    fn stated(entry: &CopilotPool, why: &str) -> Reading {
+        Reading {
+            status: "ok".to_owned(),
+            detail: format!(
+                "Copilot pool: {} of {} credits used, as AGENT_RUNTIME_COPILOT_POOL states; {why}",
+                entry.used, entry.granted
+            ),
+            plan: String::new(),
+            usage: Some(Usage::Stated {
+                used: entry.used,
+                granted: entry.granted,
+            }),
+            age: None,
+            prior: None,
+            rated_from: None,
+            fall: None,
+        }
+    }
+}
+
+/// One local account's row: its credential read, its usage answered from
+/// its record or fetched under the host-wide lock.
+fn measure(ctx: &mut Ctx, account: &Found) -> Value {
+    let dir = account.dir.as_str();
+    let harness = account.harness;
+    let alias = alias(ctx.accounts, dir);
+    let row = |ctx: &Ctx, reading: Reading| {
+        emit(
+            ctx,
+            &Emit {
+                alias: &alias,
+                harness,
+                dir,
+                through: "local",
+                reading,
+                words: None,
+            },
+        )
+    };
+    // A Copilot account whose own login yields no reading: the owner's
+    // stated pool where one is stated, else no credential.
+    let unread = |ctx: &Ctx, why: &str| {
+        let canon = wall::canon(dir);
+        let stated = ctx
+            .accounts
+            .copilot_pool
+            .iter()
+            .find(|e| wall::canon(&e.dir) == canon);
+        let reading = match stated {
+            Some(entry) => Reading::stated(entry, &format!("copilot login unread: {why}")),
+            None => Reading::refused(
+                "no_credentials",
+                format!(
+                    "copilot login unread: {why}, and AGENT_RUNTIME_COPILOT_POOL states no reading for this account"
+                ),
+            ),
+        };
+        let through = if stated.is_some() { "stated" } else { "local" };
+        emit(
+            ctx,
+            &Emit {
+                alias: &alias,
+                harness,
+                dir,
+                through,
+                reading,
+                words: None,
+            },
+        )
+    };
+    let mut renewed = false;
+    let (token, account_id, plan) = match harness {
+        Harness::Copilot | Harness::Pi => match copilot_token(harness, dir) {
+            Ok(token) => (token, String::new(), String::new()),
+            Err(why) => return unread(ctx, &why),
+        },
+        Harness::Claude | Harness::Codex => match usage::credential(harness, dir) {
+            Credential::Missing(path) => {
+                return row(
+                    ctx,
+                    Reading::refused("no_credentials", format!("no credential file at {path}")),
+                );
+            }
+            Credential::Invalid(_) => {
+                return row(
+                    ctx,
+                    Reading::refused("error", "credential file is not valid JSON".to_owned()),
+                );
+            }
+            Credential::NoToken { path, plan } => {
+                let mut reading =
+                    Reading::refused("no_credentials", format!("no access token in {path}"));
+                reading.plan = plan;
+                return row(ctx, reading);
+            }
+            Credential::Token {
+                token,
+                expires_ms,
+                refresh_expires_ms,
+                plan,
+                account_id,
+            } => {
+                if harness == Harness::Claude && usage::expired(refresh_expires_ms, ctx.now) {
+                    let mut reading = Reading::refused(
+                        "expired",
+                        "refresh token expired; sign in again".to_owned(),
+                    );
+                    reading.plan = plan;
+                    return row(ctx, reading);
+                }
+                if usage::expired(expires_ms, ctx.now) {
+                    match renewed_token(ctx, harness, dir) {
+                        Ok(token) => {
+                            renewed = true;
+                            (token, account_id, plan)
+                        }
+                        Err(reading) => {
+                            let mut reading = *reading;
+                            reading.plan = plan;
+                            return row(ctx, reading);
+                        }
+                    }
+                } else {
+                    (token, account_id, plan)
+                }
+            }
+        },
+    };
+    let mut reading = usage_reading(ctx, harness, dir, &token, &account_id, renewed);
+    reading.plan = match (harness, &reading.usage) {
+        (Harness::Copilot | Harness::Pi, Some(Usage::Body(body))) => body
+            .get("copilot_plan")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        (Harness::Copilot | Harness::Pi, _) => String::new(),
+        _ => plan,
+    };
+    let mut row = row(ctx, reading);
+    // A Pi root's statement is the reading its owner relies on until its own
+    // login measures the pool: a refused, unanswered or empty answer keeps
+    // it, where a Copilot CLI home reads the error.
+    if harness == Harness::Pi && row["headroom_pct"].is_null() {
+        let status = row["status"].as_str().unwrap_or("error");
+        let why = match row["detail"].as_str() {
+            Some(detail) => format!("{status}: {detail}"),
+            None => status.to_owned(),
+        };
+        return unread(ctx, &why);
+    }
+    if renewed {
+        row["refreshable"] = json!(true);
+    }
+    row
+}
+
+/// A Copilot account's token from its stored login: a Pi root's
+/// `auth.json` entry; for a Copilot CLI home `config.json`'s own, or the
+/// Secret Service item Copilot CLI keeps a keyring login in, read through
+/// `secret-tool search` under the item's `:github` username and then the
+/// older one, without unlocking anything. `Err` is the keyed reason and
+/// where the login was sought.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the listing's read of a Copilot keyring login, `secret-tool search`, through the one runner under its tag, bounded; it acts on nothing"
+)]
+fn copilot_token(harness: Harness, dir: &str) -> Result<String, String> {
+    let stored = if harness == Harness::Pi {
+        usage::pi_copilot_login(dir)
+    } else {
+        usage::copilot_login(dir)
+    };
+    let login = match stored {
+        CopilotLogin::Token(token) => return Ok(token),
+        CopilotLogin::Unread { reason, place } => return Err(format!("{reason} in {place}")),
+        CopilotLogin::Keyring(login) => login,
+    };
+    let users = [
+        format!("https://github.com:{login}:github"),
+        format!("https://github.com:{login}"),
+    ];
+    for user in &users {
+        let out = host::run_tagged_in(
+            TAG,
+            "secret-tool",
+            Path::new("secret-tool"),
+            "keyring",
+            &["search", "service", "copilot-cli", "username", user],
+            Place::default(),
+            KEYRING_BOUND,
+        );
+        let out = match out {
+            Ok(out) => out,
+            Err(e) => {
+                let cause = e.to_string();
+                let place = if cause.contains("os error 2") {
+                    "the Secret Service: no secret-tool on PATH".to_owned()
+                } else if cause.contains("no answer within") {
+                    format!(
+                        "the Secret Service: secret-tool search outlasted {}s for username={user}",
+                        KEYRING_BOUND.as_secs()
+                    )
+                } else {
+                    format!(
+                        "the Secret Service: secret-tool search failed for username={user}: {cause}"
+                    )
+                };
+                return Err(format!("keyring-absent in {place}"));
+            }
+        };
+        let err_line = host::stderr_text(&out)
+            .lines()
+            .find(|l| l.starts_with("secret-tool: "))
+            .map(str::to_owned);
+        if !out.status.success() {
+            return Err(format!(
+                "keyring-absent in the Secret Service: secret-tool search exited {} for username={user}{}",
+                out.status.code().unwrap_or(-1),
+                err_line.map(|e| format!(": {e}")).unwrap_or_default()
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        if let Some(secret) = stdout.lines().find_map(|l| l.strip_prefix("secret = ")) {
+            if !secret.is_empty() {
+                return Ok(secret.to_owned());
+            }
+        } else if stdout.lines().any(|l| l.starts_with("label = ")) {
+            let place = format!("the Secret Service item service=copilot-cli username={user}");
+            return Err(
+                if err_line.as_deref() == Some("secret-tool: Cannot get secret of a locked object")
+                {
+                    format!("keyring-locked in {place}")
+                } else {
+                    format!(
+                        "keyring-refused in {place}: {}",
+                        err_line.unwrap_or_else(|| {
+                            "secret withheld with no secret-tool error line".to_owned()
+                        })
+                    )
+                },
+            );
+        }
+    }
+    Err(format!(
+        "keyring-empty in the Secret Service items service=copilot-cli username={} and {}",
+        users[0], users[1]
+    ))
+}
+
+/// The live token of an account whose access token expired: the refusal
+/// its record holds for the token endpoint, else the renewal under the
+/// credentials lock. A refusal the endpoint answered is recorded for its
+/// window, so no caller on the host posts the refused grant again; one
+/// this machine raised on its own posted nothing, and nothing stops the
+/// next listing from posting.
+fn renewed_token(ctx: &mut Ctx, harness: Harness, dir: &str) -> Result<String, Box<Reading>> {
+    let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
+    if !credential_newer(harness, dir, &path)
+        && let Some(record) = cache::read(&path, harness.name(), dir)
+        && let Some((refusal, age)) = cache::refusal(&record, "token", ctx.now)
+    {
+        let mut reading = Reading::refused(&refusal.status, refusal.detail.clone());
+        reading.age = Some(age);
+        return Err(Box::new(reading));
+    }
+    let refused = match renewal::renew(ctx.accounts, harness, dir, ctx.now) {
+        Ok(token) => return Ok(token),
+        Err(refused) => refused,
+    };
+    let detail = format!(
+        "access token expired and could not be renewed: {}",
+        refused.cause
+    );
+    if let Some(code) = refused.code {
+        let refusal = Refusal {
+            endpoint: "token".to_owned(),
+            status: refused.status.clone(),
+            code: Some(code.to_string()),
+            detail: detail.clone(),
+            expires_at: ctx.now + refusal_window(refused.retry_after.as_deref()),
+        };
+        if let Err(cause) = cache::write_refusal(&path, harness.name(), dir, refusal, ctx.now) {
+            ctx.notes.push(format!(
+                "refusal-unrecorded dir={} cause={cause}",
+                ctx.usage_dir.display()
+            ));
+        }
+    }
+    Err(Box::new(Reading::refused(&refused.status, detail)))
+}
+
+/// A refusal's window: the answer's own Retry-After where it named
+/// seconds, else the default. A Retry-After written as an HTTP date names
+/// no seconds to wait out, and a window nobody can read is never zero.
+fn refusal_window(retry_after: Option<&str>) -> u64 {
+    retry_after
+        .and_then(|r| r.parse::<u64>().ok())
+        .filter(|w| *w > 0)
+        .unwrap_or(REFUSAL_WINDOW_S)
+}
+
+/// The account's usage: its record's figure where fresh enough, its
+/// record's live refusal, else one request under the host-wide lock, the
+/// record read again inside it so a caller that waited takes what the
+/// holder brought back instead of posting its own. A credential newer than
+/// the record is another login's figure, judged at each read, since the
+/// holder's answer makes the record newer than the login it read; a login
+/// this listing renewed itself is the same account, so its record stands.
+fn usage_reading(
+    ctx: &mut Ctx,
+    harness: Harness,
+    dir: &str,
+    token: &str,
+    account_id: &str,
+    renewed: bool,
+) -> Reading {
+    let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
+    let record = |ctx: &mut Ctx| -> Option<Reading> {
+        if !renewed && credential_newer(harness, dir, &path) {
+            return None;
+        }
+        let record = cache::read(&path, harness.name(), dir)?;
+        match cache::figure(&record, harness, Some(ctx.serve_max_age), ctx.now) {
+            FigureRead::Served(figure) => return Some(served(figure, "ok", String::new())),
+            FigureRead::Reset(reset) => ctx
+                .notes
+                .push(format!("usage-cache-reset account={dir} resets-at={reset}")),
+            FigureRead::Miss => {}
+        }
+        let (refusal, age) = cache::refusal(&record, "usage", ctx.now)?;
+        Some(refused_reading(&record, harness, &refusal, age, ctx.now))
+    };
+    if let Some(reading) = record(ctx) {
+        return reading;
+    }
+    let url = match harness {
+        Harness::Claude => ctx.accounts.claude_usage_url.clone(),
+        Harness::Copilot | Harness::Pi => COPILOT_CREDITS_URL.to_owned(),
+        Harness::Codex => ctx.accounts.codex_usage_url.clone(),
+    };
+    let usage_dir = ctx.usage_dir.clone();
+    let (reading, notice) = cache::under_refresh_lock(&usage_dir, || {
+        if let Some(reading) = record(ctx) {
+            return reading;
+        }
+        fetch(ctx, harness, dir, &path, &url, token, account_id)
+    });
+    if let Some(notice) = notice {
+        ctx.notes.push(notice);
+    }
+    reading
+}
+
+/// Whether the credential file is newer than the record: a renewed login
+/// makes the figure another login's.
+fn credential_newer(harness: Harness, dir: &str, record: &Path) -> bool {
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (
+        modified(Path::new(&usage::credential_path(harness, dir))),
+        modified(record),
+    ) {
+        (Some(credential), Some(record)) => credential > record,
+        (_, _) => false,
+    }
+}
+
+fn served(figure: Box<cache::Figure>, status: &str, detail: String) -> Reading {
+    let figure = *figure;
+    let (prior, rated_from) = spans(figure.prior, figure.rated_from, figure.fetched_at);
+    Reading {
+        status: status.to_owned(),
+        detail,
+        plan: String::new(),
+        usage: Some(Usage::Body(figure.usage)),
+        age: Some(figure.age),
+        prior,
+        rated_from,
+        fall: figure.fall,
+    }
+}
+
+/// A sample and the seconds from it to the sample after it.
+type Span = Option<(Value, u64)>;
+
+/// The record's anchor and the anchor before it as [`Reading`] carries
+/// them, the figure stamped `figure_at`.
+fn spans(
+    prior: Option<cache::Prior>,
+    rated_from: Option<cache::Prior>,
+    figure_at: u64,
+) -> (Span, Span) {
+    let rated_from = rated_from
+        .zip(prior.as_ref())
+        .map(|(from, to)| (from.usage, to.fetched_at.saturating_sub(from.fetched_at)));
+    let prior = prior.map(|p| (p.usage, figure_at.saturating_sub(p.fetched_at)));
+    (prior, rated_from)
+}
+
+/// A recorded refusal as the account's reading: a 429 answered from the
+/// last figure beside it while that figure is younger than five hours and no consumed bucket reset arrived; any other refusal, and a
+/// 429 with no such figure, reported as the record states it with no
+/// windows and the record's own age.
+fn refused_reading(
+    record: &cache::Record,
+    harness: Harness,
+    refusal: &Refusal,
+    age: u64,
+    now: u64,
+) -> Reading {
+    if refusal.status == "rate_limited"
+        && let FigureRead::Served(figure) = cache::figure(record, harness, Some(FIVE_HOURS_S), now)
+    {
+        return served(
+            figure,
+            "rate_limited",
+            format!("{}; these are the last figures it gave", refusal.detail),
+        );
+    }
+    let mut reading = Reading::refused(&refusal.status, refusal.detail.clone());
+    reading.age = Some(age);
+    reading
+}
+
+/// One request to the usage endpoint: a refusal recorded in the account's
+/// record for its window, an answer recorded as the figure with the one it
+/// displaced beside it. A 429 with no kept figure to answer from is asked
+/// once more, after its window or five seconds whichever is shorter, by the
+/// first such account of the listing alone: a cold account refused once
+/// leaves every caller with nothing to decide on, and the retry is the one
+/// request posted inside the window the refusal recorded.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the listing's one bounded wait before its one retry of a refused cold account, on the refusal's own window"
+)]
+fn fetch(
+    ctx: &mut Ctx,
+    harness: Harness,
+    dir: &str,
+    path: &Path,
+    url: &str,
+    token: &str,
+    account_id: &str,
+) -> Reading {
+    let Some(mut answer) = request(harness, url, token, account_id) else {
+        return Reading::refused("unreachable", "usage query could not be run".to_owned());
+    };
+    if answer.code == Some(429) {
+        let refused = refused_answer(ctx, harness, dir, path, url, token, &answer);
+        if refused.usage.is_some() || ctx.retry_spent {
+            return refused;
+        }
+        ctx.retry_spent = true;
+        let window = refusal_window(answer.retry_after.as_deref());
+        std::thread::sleep(Duration::from_secs(window.min(RETRY_WAIT_MAX_S)));
+        answer = match request(harness, url, token, account_id) {
+            Some(answer) => answer,
+            None => {
+                let mut refused = refused;
+                refused
+                    .detail
+                    .push_str(", and the one retry could not be run");
+                return refused;
+            }
+        };
+    }
+    if answer.code.is_some_and(|c| !(200..300).contains(&c)) {
+        return refused_answer(ctx, harness, dir, path, url, token, &answer);
+    }
+    if answer.body.is_empty() {
+        return Reading::refused(
+            "unreachable",
+            format!(
+                "usage query answered HTTP {} with no body",
+                answer.code.unwrap_or(0)
+            ),
+        );
+    }
+    let Ok(usage) = serde_json::from_str::<Value>(&answer.body) else {
+        return Reading::refused("error", "usage response was not a JSON object".to_owned());
+    };
+    if !usage.is_object() {
+        return Reading::refused("error", "usage response was not a JSON object".to_owned());
+    }
+    let written = cache::write_figure(path, harness.name(), dir, usage.clone(), ctx.now);
+    let (prior, rated_from) = spans(written.prior, written.rated_from, ctx.now);
+    Reading {
+        status: "ok".to_owned(),
+        detail: String::new(),
+        plan: String::new(),
+        usage: Some(Usage::Body(usage)),
+        age: Some(0),
+        prior,
+        rated_from,
+        fall: written.fall,
+    }
+}
+
+/// The usage endpoint's answer for one account's credential, or `None`
+/// where the request could not be run.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the listing's one request to a usage endpoint, `curl` as PATH finds it, through the one runner under its tag, the bearer on its stdin; it acts on nothing"
+)]
+fn request(harness: Harness, url: &str, token: &str, account_id: &str) -> Option<usage::Answer> {
+    let mut args: Vec<&str> = vec![
+        "-s",
+        "--max-time",
+        "10",
+        "-D",
+        "-",
+        "-w",
+        "\n%{http_code}",
+        url,
+    ];
+    let beta = format!("anthropic-beta: {CLAUDE_OAUTH_BETA}");
+    let account = format!("chatgpt-account-id: {account_id}");
+    let config = match harness {
+        Harness::Claude => {
+            args.extend(["-H", &beta]);
+            format!("header = \"Authorization: Bearer {token}\"\n")
+        }
+        Harness::Copilot | Harness::Pi => {
+            args.extend(["-H", "Accept: application/json"]);
+            format!("header = \"Authorization: token {token}\"\n")
+        }
+        Harness::Codex => {
+            if !account_id.is_empty() {
+                args.extend(["-H", &account]);
+            }
+            format!("header = \"Authorization: Bearer {token}\"\n")
+        }
+    };
+    args.extend(["-K", "-"]);
+    let out = host::run_tagged_fed(
+        TAG,
+        "curl",
+        Path::new("curl"),
+        "usage",
+        &args,
+        Place::default(),
+        config.as_bytes(),
+        REQUEST_BOUND,
+    )
+    .ok()
+    .filter(|out| out.status.success())?;
+    Some(usage::answer(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// An endpoint's refusal as the account's reading, recorded for its
+/// window: a 401 or 403 the profile confirms as an ended plan reads
+/// `plan_ended`, and a 429 is answered from the figure kept beside the
+/// record while that figure is younger than five hours.
+fn refused_answer(
+    ctx: &mut Ctx,
+    harness: Harness,
+    dir: &str,
+    path: &Path,
+    url: &str,
+    token: &str,
+    answer: &usage::Answer,
+) -> Reading {
+    let code = answer.code.unwrap_or(0);
+    let mut status = usage::refusal_status(code, "refused");
+    let mut detail = format!("usage query refused with HTTP {code}");
+    if harness == Harness::Claude
+        && matches!(code, 401 | 403)
+        && let Some(ended) = plan_ended(url, token)
+    {
+        status = "plan_ended".to_owned();
+        detail = ended;
+    }
+    let refusal = Refusal {
+        endpoint: "usage".to_owned(),
+        status: status.clone(),
+        code: Some(code.to_string()),
+        detail: detail.clone(),
+        expires_at: ctx.now + refusal_window(answer.retry_after.as_deref()),
+    };
+    if let Err(cause) = cache::write_refusal(path, harness.name(), dir, refusal, ctx.now) {
+        ctx.notes.push(format!(
+            "refusal-unrecorded dir={} cause={cause}",
+            ctx.usage_dir.display()
+        ));
+    }
+    if status == "rate_limited"
+        && let Some(record) = cache::read(path, harness.name(), dir)
+        && let FigureRead::Served(figure) =
+            cache::figure(&record, harness, Some(FIVE_HOURS_S), ctx.now)
+    {
+        return served(
+            figure,
+            "rate_limited",
+            format!("{detail}; these are the last figures it gave"),
+        );
+    }
+    Reading::refused(&status, detail)
+}
+
+/// Whether Claude's profile confirms an ended plan behind a usage 401 or
+/// 403: a free organization whose subscription is canceled and no Max
+/// account. The stored `subscriptionType` can survive cancellation and
+/// auth status does not expose the subscription, so the profile is asked.
+/// An unread or contradictory profile proves no cause.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the listing's one request to the Claude profile endpoint behind a usage refusal, `curl` as PATH finds it, through the one runner under its tag, the bearer on its stdin; it acts on nothing"
+)]
+fn plan_ended(usage_url: &str, token: &str) -> Option<String> {
+    let base = usage_url.rsplit_once('/').map_or("", |(base, _)| base);
+    let url = format!("{base}/profile");
+    let beta = format!("anthropic-beta: {CLAUDE_OAUTH_BETA}");
+    let config = format!("header = \"Authorization: Bearer {token}\"\n");
+    let out = host::run_tagged_fed(
+        TAG,
+        "curl",
+        Path::new("curl"),
+        "profile",
+        &[
+            "-s",
+            "--max-time",
+            "10",
+            "-D",
+            "-",
+            "-w",
+            "\n%{http_code}",
+            &url,
+            "-H",
+            &beta,
+            "-K",
+            "-",
+        ],
+        Place::default(),
+        config.as_bytes(),
+        REQUEST_BOUND,
+    )
+    .ok()
+    .filter(|out| out.status.success())?;
+    let answer = usage::answer(&String::from_utf8_lossy(&out.stdout));
+    if !answer.code.is_some_and(|c| (200..300).contains(&c)) {
+        return None;
+    }
+    let profile: Value = serde_json::from_str(&answer.body).ok()?;
+    let org = profile.get("organization")?;
+    let kind = org.get("organization_type")?.as_str()?;
+    let status = org.get("subscription_status")?.as_str()?;
+    let max = profile.pointer("/account/has_claude_max")?;
+    (kind == "claude_free" && status == "canceled" && *max == Value::Bool(false))
+        .then(|| format!("plan ended: {kind}, subscription {status}"))
+}
+
+// --- the row ----------------------------------------------------------------------------------
+
+pub struct Emit<'a> {
+    pub alias: &'a str,
+    pub harness: Harness,
+    pub dir: &'a str,
+    pub through: &'a str,
+    pub reading: Reading,
+    pub words: Option<Map<String, Value>>,
+}
+
+fn buckets_of(harness: Harness, usage: &Usage) -> Value {
+    match usage {
+        Usage::Body(body) => usage::parse_body(harness, body, Rounding::Rounded),
+        Usage::Provider(buckets) => buckets.clone(),
+        Usage::Stated { used, granted } => {
+            let pct = if used >= granted {
+                100
+            } else {
+                (used * 100).div_ceil(*granted)
+            };
+            json!({
+                "monthly_pct": pct,
+                "credits": {"unit": "AIC", "unlimited": false, "used": used, "granted": granted,
+                            "remaining": granted.saturating_sub(*used)},
+                "unlimited": false,
+                "resets": {"monthly": Value::Null},
+            })
+        }
+    }
+}
+
+/// One account's record: the reading's windows, the binding window and
+/// its rate against the record's anchor, the weekly wall a harness banner
+/// stated held at 100 until its reset or a fall after it, and the owner's
+/// words as flags.
+pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
+    let Reading {
+        status,
+        detail,
+        plan,
+        usage,
+        age,
+        prior,
+        rated_from,
+        fall,
+    } = &e.reading;
+    let mut status = status.clone();
+    let mut detail = detail.clone();
+    let mut buckets = usage
+        .as_ref()
+        .map(|u| buckets_of(e.harness, u))
+        .unwrap_or_else(|| json!({}));
+    usage::utc_resets(&mut buckets);
+    if wall_overlay(ctx, e.dir, fall.as_ref(), &mut buckets)
+        .and_then(|()| session_overlay(ctx, e.dir, &mut buckets))
+        .is_err()
+    {
+        buckets = json!({});
+        status = "error".to_owned();
+        detail = "wall record unreadable".to_owned();
+    }
+    let num = |key: &str| buckets.get(key).and_then(Value::as_f64);
+    let known: Vec<f64> = WINDOWS.iter().filter_map(|w| num(w.field)).collect();
+    let credit_unit = buckets.pointer("/credits/unit").and_then(Value::as_str);
+    if status == "ok" && known.is_empty() && credit_unit != Some("usd") {
+        status = "no_usage_data".to_owned();
+    }
+    let measured = status == "ok" || status == "rate_limited";
+    let largest = known.iter().cloned().fold(f64::MIN, f64::max);
+    // A tie binds the longer window: the first at the largest figure.
+    let bind = WINDOWS
+        .iter()
+        .find(|w| num(w.field) == Some(largest))
+        .map(|w| w.bucket);
+    let headroom = (measured && !known.is_empty()).then_some(100.0 - largest);
+    let resets = buckets.get("resets").cloned().unwrap_or_else(|| json!({}));
+    let reset_of = |key: &str| resets.get(key).cloned().unwrap_or(Value::Null);
+    let binding_bucket = if measured { bind } else { None };
+    let retire_date = retire_date(ctx.accounts, e.alias, e.dir);
+    let retired = retire_date
+        .as_deref()
+        .is_some_and(|d| d <= ctx.today.as_str());
+    let credits = buckets.get("credits").filter(|c| !c.is_null()).map(|c| {
+        let mut c = c.clone();
+        c["measured_at"] = json!(clock::iso_utc(ctx.now.saturating_sub(age.unwrap_or(0))));
+        c
+    });
+    if status == "no_usage_data" && detail.is_empty() {
+        detail = "authenticated, but the usage response carried no weekly, monthly or model window"
+            .to_owned();
+    }
+    let mut row = json!({
+        "alias": e.alias,
+        "harness": e.harness,
+        "config_dir": e.dir,
+        "retire_date": retire_date,
+        "measured_through": e.through,
+        "status": status,
+        "refreshable": false,
+        "plan": if plan.is_empty() { Value::Null } else { Value::from(plan.as_str()) },
+        "weekly_pct": num("weekly_pct"),
+        "model_pct": num("model_pct"),
+        "model_label": buckets.get("model_label").cloned().unwrap_or(Value::Null),
+        "model_buckets": buckets.get("model_buckets").cloned().unwrap_or_else(|| json!([])),
+        "monthly_pct": num("monthly_pct"),
+        "credits": credits,
+        "unlimited": buckets.get("unlimited") == Some(&Value::Bool(true)),
+        "headroom_pct": headroom,
+        "binding_bucket": binding_bucket,
+        "binding_resets_at": binding_bucket.map_or(Value::Null, reset_of),
+        "usage_age_s": age,
+        "resets": {"weekly": reset_of("weekly"), "model": reset_of("model"),
+                   "monthly": reset_of("monthly")},
+        "detail": if detail.is_empty() { Value::Null } else { Value::from(detail.as_str()) },
+        "excluded": excluded(ctx.accounts, e.alias, e.dir),
+        "retired": retired,
+    });
+    if matches!(e.harness, Harness::Copilot | Harness::Pi) {
+        row["credits_used"] = buckets.get("credits_used").cloned().unwrap_or(Value::Null);
+    }
+    if let Some(words) = &e.words {
+        for (key, value) in words {
+            row[key] = value.clone();
+        }
+    }
+    binding_and_rate(&mut row, e.harness, prior.as_ref(), rated_from.as_ref());
+    // Carried only while ahead, so a row with no spent window keeps the
+    // shape every reader of it parses.
+    if let Some(until) = buckets
+        .get("session_spent_until")
+        .and_then(Value::as_str)
+        .filter(|s| clock::epoch_secs(s).is_some_and(|at| at > ctx.now))
+    {
+        row["session_spent_until"] = json!(until);
+    }
+    integral(&mut row);
+    row
+}
+
+/// The 5-hour window the harness's own session-limit report spent
+/// ([`wall::session_wall_path`]), held as `session_spent_until` while its
+/// reset is ahead, the later of it and the reading's own; an unreadable
+/// record is the error, as [`wall_overlay`]'s is.
+fn session_overlay(ctx: &Ctx, dir: &str, buckets: &mut Value) -> Result<(), String> {
+    let path = wall::session_wall_path(&ctx.account_state, dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let record: wall::AccountWall = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if record.config_dir != wall::canon(dir) || record.resets_at <= ctx.now {
+        return Ok(());
+    }
+    let read = buckets
+        .get("session_spent_until")
+        .and_then(Value::as_str)
+        .and_then(clock::epoch_secs);
+    if read.is_none_or(|at| at < record.resets_at) {
+        if !buckets.is_object() {
+            *buckets = json!({});
+        }
+        buckets["session_spent_until"] = json!(clock::iso_utc(record.resets_at));
+    }
+    Ok(())
+}
+
+/// Every integral figure spelled as an integer, the form the record's
+/// shell readers parse (`^[0-9]{1,3}$`) and the roster line prints.
+fn integral(value: &mut Value) {
+    match value {
+        Value::Number(n) => {
+            if let Some(f) = n.as_f64()
+                && n.as_i64().is_none()
+                && f.fract() == 0.0
+                && f.abs() < 9.0e15
+            {
+                *value = Value::from(f as i64);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(integral),
+        Value::Object(map) => map.values_mut().for_each(integral),
+        Value::Null | Value::Bool(_) | Value::String(_) => {}
+    }
+}
+
+/// The weekly wall a harness banner stated for the account, held at 100
+/// and resetting at the recorded reset while that reset is ahead: with no
+/// record, a record naming another account or a reset already passed the
+/// reading stands. A reading that shows room while the wall stands is no
+/// evidence the wall is gone, since the record exists for the usage
+/// endpoint that does not report it; a fall from a figure read at or after
+/// the wall's sighting is, since only a reset lowers a weekly figure inside
+/// its window. A record nobody can read is the error: a wall nobody can
+/// read is no evidence the account has room.
+fn wall_overlay(
+    ctx: &Ctx,
+    dir: &str,
+    fall: Option<&cache::Fall>,
+    buckets: &mut Value,
+) -> Result<(), String> {
+    let path = wall::account_wall_path(&ctx.account_state, dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let record: wall::AccountWall = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if record.config_dir != wall::canon(dir) || record.resets_at <= ctx.now {
+        return Ok(());
+    }
+    // A record naming no sighting cannot order a fall after it.
+    if let Some(seen) = record.seen_at
+        && fall.is_some_and(|f| f.from_at >= seen)
+    {
+        return Ok(());
+    }
+    if !buckets.is_object() {
+        *buckets = json!({});
+    }
+    buckets["weekly_pct"] = json!(100);
+    if !buckets.get("resets").is_some_and(Value::is_object) {
+        buckets["resets"] = json!({});
+    }
+    buckets["resets"]["weekly"] = json!(clock::iso_utc(record.resets_at));
+    Ok(())
+}
+
+/// The binding window (`wall`) and the rate the record's anchor exposes:
+/// measured where both samples are at least a minute apart, neither is an
+/// unlimited pool, the figure rose by more than [`ROUNDING_STEP`], and the
+/// prior's window is the one judged now (same bucket, its
+/// label in the normalized spelling, its reset within five minutes). A
+/// figure within that step of the anchor reads the rate the record last
+/// measured on the same window, `rated_from` to the anchor, its age the
+/// anchor's, where that pair measures one and its own prediction stands: a
+/// held rate whose span since the anchor predicts a rise of more than two
+/// steps, where none past one came, is a stopped burn, and reads none.
+fn binding_and_rate(
+    row: &mut Value,
+    harness: Harness,
+    prior: Option<&(Value, u64)>,
+    rated_from: Option<&(Value, u64)>,
+) {
+    let ended = row["status"] == json!("plan_ended");
+    let measured = matches!(row["status"].as_str(), Some("ok" | "rate_limited"));
+    let headroom = row["headroom_pct"].as_f64();
+    let bucket = row["binding_bucket"].as_str().map(str::to_owned);
+    let binding: Option<(String, Option<String>, f64, Value)> = match (ended, headroom, bucket) {
+        (true, _, _) => Some(("plan".to_owned(), None, 100.0, Value::Null)),
+        (false, Some(headroom), Some(bucket)) if measured => {
+            let label = (bucket == "model")
+                .then(|| {
+                    row["model_buckets"]
+                        .as_array()?
+                        .iter()
+                        .max_by(|a, b| {
+                            a["pct"]
+                                .as_f64()
+                                .unwrap_or(0.0)
+                                .total_cmp(&b["pct"].as_f64().unwrap_or(0.0))
+                        })
+                        .and_then(|b| b["label"].as_str().map(str::to_owned))
+                })
+                .flatten();
+            Some((
+                bucket,
+                label,
+                100.0 - headroom,
+                row["binding_resets_at"].clone(),
+            ))
+        }
+        (false, _, _) => None,
+    };
+    let Some((bucket, label, pct, resets_at)) = binding else {
+        row["wall"] = Value::Null;
+        row["usage_rate_state"] = json!("one-sample");
+        row["usage_rate_pct_per_min"] = Value::Null;
+        row["projected_wall_minutes"] = Value::Null;
+        return;
+    };
+    row["wall"] = json!(pct);
+    row["binding_bucket"] = json!(bucket);
+    row["binding_resets_at"] = resets_at.clone();
+    // The judged window's figure in an earlier sample, and whether that
+    // sample is an unlimited pool.
+    let figure_in = |sample: &Value| -> (Option<f64>, bool) {
+        let mut prior_buckets = usage::parse_body(harness, sample, Rounding::Rounded);
+        usage::utc_resets(&mut prior_buckets);
+        let candidates: Vec<(Option<String>, Option<f64>, Value)> = if bucket == "model" {
+            prior_buckets["model_buckets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|b| {
+                    (
+                        b["label"].as_str().map(str::to_owned),
+                        b["pct"].as_f64(),
+                        b["resets_at"].clone(),
+                    )
+                })
+                .collect()
+        } else {
+            let key = WINDOWS
+                .iter()
+                .find(|w| w.bucket == bucket)
+                .map_or("", |w| w.field);
+            vec![(
+                None,
+                prior_buckets[key].as_f64(),
+                prior_buckets["resets"][bucket.as_str()].clone(),
+            )]
+        };
+        let norm = |l: &Option<String>| l.as_deref().map(super::norm);
+        let pct = candidates
+            .iter()
+            .find(|(l, _, reset)| norm(l) == norm(&label) && same_reset(reset, &resets_at))
+            .and_then(|(_, p, _)| *p);
+        (pct, prior_buckets["unlimited"] == json!(true))
+    };
+    // An unlimited pool reads 0 percent used, so a pair with an unlimited
+    // side measures the switch, not a spend.
+    let unlimited_now = row["unlimited"] == json!(true);
+    let ((prior_pct, unlimited), elapsed) =
+        prior.map_or(((None, unlimited_now), 0), |(s, secs)| {
+            let (pct, unlimited) = figure_in(s);
+            ((pct, unlimited || unlimited_now), *secs)
+        });
+    let delta = prior_pct.map(|p| pct - p);
+    let mut state = rate_state(delta, elapsed, unlimited);
+    let mut rated = delta.filter(|_| state == "measured").map(|d| (d, elapsed));
+    // Within one step of the anchor the figure measures nothing new, so the
+    // rate last measured on this window stands rather than the set burn.
+    if !unlimited
+        && delta.is_some_and(|d| (0.0..=ROUNDING_STEP).contains(&d))
+        && let Some((from, span)) = rated_from
+    {
+        let (from_pct, from_unlimited) = figure_in(from);
+        let kept = from_pct.zip(prior_pct).map(|(from, to)| to - from);
+        let unrefuted =
+            kept.is_some_and(|k| k * elapsed as f64 <= 2.0 * ROUNDING_STEP * *span as f64);
+        if rate_state(kept, *span, from_unlimited) == "measured" && unrefuted {
+            state = "measured";
+            rated = kept.map(|d| (d, *span));
+        }
+    }
+    row["usage_rate_state"] = json!(state);
+    match rated {
+        Some((d, elapsed)) => {
+            row["usage_rate_pct_per_min"] = json!(d * 60.0 / elapsed as f64);
+            row["projected_wall_minutes"] =
+                json!(((100.0 - pct) * elapsed as f64 / (d * 60.0)).ceil());
+        }
+        None => {
+            row["usage_rate_pct_per_min"] = Value::Null;
+            row["projected_wall_minutes"] = Value::Null;
+        }
+    }
+}
+
+/// The rate state of a rise `delta` over `elapsed` seconds.
+fn rate_state(delta: Option<f64>, elapsed: u64, unlimited: bool) -> &'static str {
+    match delta {
+        _ if unlimited => "unlimited",
+        None => "one-sample",
+        Some(_) if elapsed < 60 => "samples-too-close",
+        Some(d) if d <= 0.0 => "not-increasing",
+        Some(d) if d <= ROUNDING_STEP => "within-rounding",
+        Some(_) => "measured",
+    }
+}
+
+/// The row's verdict and pool: its own reading judged against
+/// `AGENT_RUNTIME_ACCOUNT_MAX_PCT` by the judge's rule ([`Reads`]), its
+/// figures restated where a grant or a Codex balance is what it spends.
+pub fn finish(ctx: &Ctx, row: &mut Value, pool: &str) {
+    row["pool"] = json!(pool);
+    row["verdict"] = json!("unmeasured");
+    let Some(parsed) = AccountRow::parse(row, ctx.accounts) else {
+        return;
+    };
+    let grant = grant(&parsed, ctx.accounts.cloud_credit_floor as f64, ctx.now);
+    let reads = Reads::of(
+        &parsed,
+        row["wall"].as_f64(),
+        f64::from(ctx.accounts.max_pct),
+        grant.as_ref(),
+        ctx.accounts.codex_credit_floor as f64,
+    );
+    row["verdict"] = json!(reads.verdict());
+    match (reads, grant) {
+        (Reads::Grant(verdict), Some(grant)) => {
+            if let Some(share) = grant.share {
+                row["headroom_pct"] = json!(share);
+                integral(&mut row["headroom_pct"]);
+                row["binding_bucket"] = json!("credits");
+                row["binding_resets_at"] = Value::Null;
+            }
+            if verdict != "room" {
+                row["refusal"] = json!({"cause": pool, "retry_at": Value::Null});
+            }
+        }
+        (Reads::Credits, _) => {
+            row["binding_bucket"] = json!("credits");
+            row["usage_rate_state"] = json!("credits");
+            row["usage_rate_pct_per_min"] = Value::Null;
+            row["projected_wall_minutes"] = Value::Null;
+        }
+        (Reads::PlanEnded | Reads::Grant(_) | Reads::Wall(_), _) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::Judged;
+
+    #[test]
+    fn a_tie_binds_the_longer_window_and_the_rate_reads_the_same_window_alone() {
+        let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
+        let state = Judged::of("state", Ok(PathBuf::new()));
+        let env = Env {
+            accounts: &accounts,
+            account_state: &state,
+            home: None,
+            copilot_home: None,
+            controller_preference: "",
+        };
+        let read = accounts.get().unwrap();
+        let ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();
+        let body = |session: u64, weekly: u64| {
+            json!({"five_hour": {"utilization": session, "resets_at": "2027-01-15T05:00:00Z"},
+                   "seven_day": {"utilization": weekly, "resets_at": "2027-01-20T00:00:00Z"}})
+        };
+        let emit_with = |prior: Option<(Value, u64)>| {
+            emit(
+                &ctx,
+                &Emit {
+                    alias: "a",
+                    harness: Harness::Claude,
+                    dir: "/h/.a",
+                    through: "local",
+                    reading: Reading {
+                        status: "ok".to_owned(),
+                        detail: String::new(),
+                        plan: "max".to_owned(),
+                        usage: Some(Usage::Body(body(40, 40))),
+                        age: Some(0),
+                        prior,
+                        rated_from: None,
+                        fall: None,
+                    },
+                    words: None,
+                },
+            )
+        };
+        let row = emit_with(None);
+        assert_eq!(row["binding_bucket"], json!("weekly"));
+        assert_eq!(row["wall"], json!(40));
+        assert_eq!(row["usage_rate_state"], json!("one-sample"));
+        let row = emit_with(Some((body(10, 20), 600)));
+        assert_eq!(row["usage_rate_state"], json!("measured"));
+        assert_eq!(row["usage_rate_pct_per_min"], json!(2));
+        assert_eq!(row["projected_wall_minutes"], json!(30));
+        let row = emit_with(Some((body(10, 40), 600)));
+        assert_eq!(row["usage_rate_state"], json!("not-increasing"));
+        let row = emit_with(Some((body(10, 20), 30)));
+        assert_eq!(row["usage_rate_state"], json!("samples-too-close"));
+    }
+
+    /// A Copilot pool answered unlimited reads 0 percent used, so a pair
+    /// with an unlimited side would rate the switch itself: an unlimited
+    /// sample then an 85 percent one, a minute apart, would project a wall
+    /// within minutes. Each pair with an unlimited side leaves the rate
+    /// unread; two counted samples are still measured.
+    #[test]
+    fn a_copilot_pair_with_an_unlimited_side_leaves_the_rate_unread() {
+        let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
+        let state = Judged::of("state", Ok(PathBuf::new()));
+        let env = Env {
+            accounts: &accounts,
+            account_state: &state,
+            home: None,
+            copilot_home: None,
+            controller_preference: "",
+        };
+        let read = accounts.get().unwrap();
+        let ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();
+        let counted = |used: u64| {
+            json!({"copilot_plan": "business", "quota_reset_date_utc": "2027-02-01",
+                   "quota_snapshots": {"premium_interactions":
+                       {"unlimited": false, "entitlement": 100, "remaining": 100 - used}}})
+        };
+        let unlimited = json!({"copilot_plan": "business", "quota_reset_date_utc": "2027-02-01",
+            "quota_snapshots": {"premium_interactions": {"unlimited": true, "entitlement": 100}}});
+        let emit_with = |now: &Value, prior: &Value| {
+            emit(
+                &ctx,
+                &Emit {
+                    alias: "c",
+                    harness: Harness::Copilot,
+                    dir: "/h/.c",
+                    through: "local",
+                    reading: Reading {
+                        status: "ok".to_owned(),
+                        detail: String::new(),
+                        plan: "business".to_owned(),
+                        usage: Some(Usage::Body(now.clone())),
+                        age: Some(0),
+                        prior: Some((prior.clone(), 60)),
+                        rated_from: None,
+                        fall: None,
+                    },
+                    words: None,
+                },
+            )
+        };
+        let rows: [(&str, &Value, &Value); 3] = [
+            ("unlimited, then 85 percent", &counted(85), &unlimited),
+            ("85 percent, then unlimited", &unlimited, &counted(85)),
+            ("unlimited twice", &unlimited, &unlimited),
+        ];
+        for (name, now, prior) in rows {
+            let row = emit_with(now, prior);
+            assert_eq!(row["usage_rate_state"], json!("unlimited"), "{name}: {row}");
+            assert_eq!(row["usage_rate_pct_per_min"], Value::Null, "{name}: {row}");
+            assert_eq!(row["projected_wall_minutes"], Value::Null, "{name}: {row}");
+        }
+        let row = emit_with(&counted(85), &counted(70));
+        assert_eq!(row["usage_rate_state"], json!("measured"), "{row}");
+        assert_eq!(row["usage_rate_pct_per_min"], json!(15), "{row}");
+    }
+}

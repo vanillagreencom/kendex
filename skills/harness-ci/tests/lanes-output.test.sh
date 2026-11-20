@@ -6,11 +6,12 @@
 # lanes its diff selects, and the nightly full run runs every lane. A
 # workflow that does not ask, a ci.yml copied before the default, keeps its
 # lanes once a refresh delivers the render.
-# Inputs: harness-ci scripts, orch measurement and the change-class action.
+# Inputs: harness-ci scripts, the change-scope classifier and the change-class action.
 # Render causes are covered by render-claims.test.sh.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 
 ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CLASSIFY="$ROOT/.github/actions/change-class/classify"
@@ -244,7 +245,8 @@ base_unreadable="$(git -C "$repo" rev-parse HEAD)"
 
 # NAME|BASE|PATHS|LINES|HEAD/ENV EDIT|EVENT|LANE ROOT|STATUS|DOCS|CLASS|LANES/CAUSE|VERDICTS|CLASS-ONLY
 # `none` owns no declared lanes, so the aggregate answer must keep checks on.
-# CLASS-ONLY checks the review-depth caller, which requests --output /dev/null.
+# CLASS-ONLY checks the class-only caller review-depth, which runs
+# change-scope for the class alone.
 declared_rows() {
   cat <<'ROWS'
 no-declaration|default|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
@@ -308,7 +310,7 @@ declared_case() { # COMMAND ROW
   fi
   if [ -n "$class_only" ]; then
     assert_class "$name: class-only consumer" "$class_only" \
-      --event "$event" --base "$base" --head HEAD --repo "$repo" --output /dev/null
+      --event "$event" --base "$base" --head HEAD --repo "$repo"
   fi
 }
 rows=0
@@ -354,7 +356,7 @@ unread-ci-input|unreadwide|.github/dependabot.yml .github/workflows/ci.yml|-|lan
 unread-quoted|unreadquote|.github/workflows/a"b.yml|-|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=".github/workflows/a\"b.yml" claim=none
 ROWS
 }
-unread_case() { # ROW [LOCAL COMMAND], through the action at ACTION_ROOT
+unread_case() { # ROW, through the action at ACTION_ROOT
   local name base_name paths environment expected other base_var base
   IFS='|' read -r name base_name paths environment expected other <<<"$1"
   base_var="base_$base_name"
@@ -362,17 +364,15 @@ unread_case() { # ROW [LOCAL COMMAND], through the action at ACTION_ROOT
   write_row "$name" "$base" "$paths" 3
   [ "$environment" = - ] || export HARNESS_CI_UNREAD_PATHS="$environment"
   run_action merge_group "$base" "$SANDBOX/default" true
-  run_local "${2:-$CHANGE_CLASS}" merge_group "$base" "$SANDBOX/default" true
+  run_local "${LOCAL_COMMAND:-$CHANGE_CLASS}" merge_group "$base" "$SANDBOX/default" true
   unset HARNESS_CI_UNREAD_PATHS
   assert_eq "$name: lane verdicts" "$expected" "$(verdicts)"
   assert_eq "$name: other lane's cause" "lane: name=other $other" \
     "$(sed -n '/^lane: name=other /p' "$SANDBOX/action-stderr")"
-  assert_eq "$name: local lane verdicts" "$expected" "$(verdicts "$SANDBOX/local-output")"
-  assert_eq "$name: local other lane's cause" "lane: name=other $other" \
-    "$(sed -n '/^lane: name=other /p' "$SANDBOX/local-stderr")"
-  assert_eq "$name: local authoritative unread declaration" \
-    "$(sed -n '/^unread-paths:/p' "$SANDBOX/action-stderr" | tail -n 1)" \
-    "$(sed -n '/^unread-paths:/p' "$SANDBOX/local-stderr" | tail -n 1)"
+  assert_eq "$name: local per-lane evidence" "$expected" "$(verdicts "$SANDBOX/local-output")"
+  assert_eq "$name: local and action causes agree" \
+    "$(sed -n '/^lane: /p' "$SANDBOX/action-stderr")" \
+    "$(sed -n '/^lane: /p' "$SANDBOX/local-stderr")"
 }
 rows=0
 while IFS= read -r row; do
@@ -380,19 +380,17 @@ while IFS= read -r row; do
   unread_case "$row"
 done < <(unread_rows)
 require_rows unread-paths "$rows"
-# Restoring the local log's omission must turn the unread path into an
-# unclaimed path, even though the action still honors the declaration.
+# The local carrier must include the base declaration in its lane evidence.
 local_unread_mutant="$(mutant local-unread-omitted change-class \
-  '      printf '\''%s\n'\'' "$unread_line"; } >"$work/class-log"' \
-  '      :; } >"$work/class-log"')"
+  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n%s\n'\'' "$queue_line" "$per_push_line" "$unread_line"; } >"$work/class-log"' \
+  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n'\'' "$queue_line" "$per_push_line"; } >"$work/class-log"')"
 control_status=0
-(PASS=0; FAIL=0
-  unread_case "$(unread_rows | sed -n '/^only-unread|/p')" "$local_unread_mutant"
-  [ "$FAIL" -eq 0 ]) >"$SANDBOX/local-unread-control.log" 2>&1 || control_status=$?
-assert_eq "must-fail: the local unread row rejects the omitted declaration" 1 "$control_status"
-assert_eq "the local control reaches the unclaimed fallback" \
-  'lane: name=other verdict=true cause=unclaimed-path path=.github/dependabot.yml claim=none' \
-  "$(sed -n '/^lane: name=other /p' "$SANDBOX/local-stderr")"
+(PASS=0; FAIL=0; LOCAL_COMMAND="$local_unread_mutant"
+  unread_case "$(unread_rows | sed -n '/^only-unread|/p')"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/local-unread-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: local unread evidence rejects an omitted declaration" 1 "$control_status"
+assert_eq "the local carrier control reaches the unclaimed fallback" \
+  lane_check=true,lane_other=true,lane_mac=false "$(verdicts "$SANDBOX/local-output")"
 # The control ignores the declaration and must reach the unclaimed fallback.
 unread_mutant="$(mutant unread-ignored lib/change-class.sh \
   '  unread_list_match "$1" "$unread_globs" || return 0' '  return 0')"
@@ -429,32 +427,20 @@ for setting in -s -u; do
       shopt -q extglob && printf -- -s || printf -- -u
     )"
 done
-# An unread-paths line relayed from a tool that reads the head, here the
-# review-bot check naming a manifest key that holds a newline, never stands
-# for change-class's own: the base declares nothing, so the manifest the
-# head check refuses still runs every lane. The manifest is on the shipped
-# queue list, which keeps its fallback on its own, so the case also runs at
-# a copy that drops that rule: the record alone must hold there.
-git -C "$repo" checkout -q -B row "$base_default"
-printf '[bot-instructions]\nschema = 1\n[bot-instructions.repo]\nname = "r"\nsummary = "s"\n[bot-instructions.doctrine."x\\nunread-paths: * "]\n' >"$repo/kendex.toml"
-git -C "$repo" add -A
-git -C "$repo" commit -qm forged-record
+# A workflow on the shipped queue list keeps its fallback whatever glob
+# matches it. The control drops that rule: the workflow then reads unread
+# beside the declared file, and no lane runs.
 queue_mutant="$(mutant unread-queue-ignored lib/change-class.sh \
   '  ! unread_list_match "$1" "$queue_globs" || return 0' -)"
 mkdir -p "$SANDBOX/queue-root"
 ln -s "${queue_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/queue-root/skills"
-for root in shipped queue-rule-dropped; do
-  action_root="$ROOT"
-  [ "$root" = shipped ] || action_root="$SANDBOX/queue-root"
-  ACTION_ROOT="$action_root" run_action merge_group "$base_default" "$SANDBOX/default" true
-  assert_eq "a forged record, $root: the head relays it" true \
-    "$(grep -q '^unread-paths: \* ' "$SANDBOX/action-stderr" && echo true || echo false)"
-  assert_eq "a forged record, $root: lane verdicts" \
-    lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
-  assert_eq "a forged record, $root: other lane's cause" \
-    "lane: name=other verdict=true cause=unclaimed-path path=kendex.toml claim=none" \
-    "$(sed -n '/^lane: name=other /p' "$SANDBOX/action-stderr")"
-done
+control_status=0
+(PASS=0; FAIL=0; ACTION_ROOT="$SANDBOX/queue-root"
+  unread_case "$(unread_rows | sed -n '/^unread-ci-input|/p')"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/queue-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: the ci-input row rejects a dropped queue rule" 1 "$control_status"
+assert_eq "the queue control reaches no lane" \
+  lane_check=false,lane_other=false,lane_mac=false "$(verdicts)"
 
 # The pre-declaration library contract takes eight arguments and writes no
 # declared file. The control restores the unconditional evidence read.

@@ -46,7 +46,7 @@ text.write_text("Historical producer notice.\n")
 command("notice", "--item", "overseer", "--to", "owner", "--file", str(text))
 text.write_text("Historical producer ask?\n")
 command("ask", "--item", "overseer", "--to", "owner", "--file", str(text),
-        "--options", "yes,no", "--recommend", "no")
+        "--options", "yes,no", "--reserved")
 text.write_text("Historical producer directive.\n")
 command("send", "--item", "overseer", "--directive", "--file", str(text))
 produced = equivalent()

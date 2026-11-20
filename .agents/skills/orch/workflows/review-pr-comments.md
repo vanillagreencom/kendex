@@ -1,95 +1,119 @@
 # PR Comment Triage Workflow
 
-Route PR review comments to domain agents, fix the valid ones, reply to and resolve every thread.
+Route a pull request's review comments to domain agents, fix the valid ones, and reply to and resolve every thread.
 
 | Command | Behavior |
 |---------|----------|
-| `review-pr-comments` | Full triage: analyze, fix, create issues, reply |
-| `review-pr-comments [PR-number]` \| `[BRANCH_NAME]` | A specific PR |
-| `review-pr-comments --dry-run [N]` | §§ 1-5 only: triage report, no side effects |
+| `review-pr-comments` | Full triage: analyze, fix, file issues, reply |
+| `review-pr-comments [PR-number]` \| `[BRANCH_NAME]` | A specific pull request |
+| `review-pr-comments --dry-run [N]` | §§ 1-5 only: the triage report, no side effects |
 | (from submit-pr) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 8) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number; `pr_number`.
+**Caller context** (via `⤵`):
 
-Resolve `ORCH_DECISION_MODE` once for this post-PR workflow:
+- `worktree`.
+- `lifecycle`: `"managed"` (return at § 8) or `"self"` (default).
+- `issue_id`: the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
+- `pr_number`.
+
+**Decision mode.** Resolve it once for this workflow:
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
 ```
 
-**Standalone init** (`lifecycle: "self"`): `gh pr view --json number -q .number` gives `PR_NUMBER`, and `git-context issue-from-branch .` gives `ISSUE_ID` when the branch carries an issue id. When it does not, `ISSUE_ID` is `pr-[PR_NUMBER]`, the same repository-local fallback key [`ci-fix.md` § 1](ci-fix.md) and [`merge-pr.md` § 3](merge-pr.md) use; a branch with no issue id is ordinary, not a stop. Except under `--dry-run`, when `workflow-state exists --json [ISSUE_ID]` reports false, resolve `WT_PATH`, read the branch with `git-context branch`, and run `workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`, since the round-start prune reads the worktree from state.
+**Standalone init** (`lifecycle: "self"`):
 
-**Dry-run recurrence context.** Under `--dry-run`, check `workflow-state exists --json [ISSUE_ID]` once the key is resolved from caller context or standalone init. Carry the result into §§ 3–5 without writing state:
+1. `gh pr view --json number -q .number` gives `PR_NUMBER`.
+2. `git-context issue-from-branch .` gives `ISSUE_ID` when the branch carries an issue id. Otherwise `ISSUE_ID` is `pr-[PR_NUMBER]`, the repository-local key [ci-fix.md](ci-fix.md) § 1 and [merge-pr.md](merge-pr.md) § 3 use. A branch with no issue id is ordinary, not a stop.
+3. Except under `--dry-run`, when `orch-runtime state exists --item [ISSUE_ID]` reports false: resolve `WT_PATH`, read the branch with `git-context branch`, and run `orch-runtime state init --item [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`. The round-start prune reads the worktree from state.
+
+**Dry run.** Under `--dry-run`, run `orch-runtime state exists --item [ISSUE_ID]` once the key resolves, and carry the answer into §§ 3-5. Write no state:
 
 | State exists | Recurrence handling |
 |---|---|
-| `true` | Read the existing recurrence records as § 5 requires. |
-| `false` | Report `unavailable: workflow state absent`. Skip the state-dependent recurrence lookup. History remains unknown, never empty or zero. |
+| `true` | Read the existing recurrence records as § 5 requires |
+| `false` | Report `unavailable: workflow state absent` and skip the recurrence lookup. History stays unknown, never empty or zero |
 
-Both commands below write to that state, so the key must resolve and the state must exist before either runs. Except under `--dry-run`, this triage pass is a continuing action:
+**Continuing action.** Except under `--dry-run`, this triage pass is a continuing action and clears a standing stop. First the key must resolve and the state must exist:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [ISSUE_ID]
 ```
 
-On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries once and logs `Retry`; a repeated failure records the named stop `github-read-failed` per [SKILL.md § The Cycle](../SKILL.md#the-cycle). `ask` presents `Retry` | `Skip step` | `Abort`, with `Retry` recommended.
+**GitHub read failures.** On a `gh` or `github.sh` failure, report the error. `auto-recommended` retries once and logs `Retry`. A second failure records the named stop `github-read-failed` per [SKILL.md § The Cycle](../SKILL.md#the-cycle). `ask` presents `Retry` | `Skip step` | `Abort`, with `Retry` recommended.
 
 ## 1. Fetch And Parse
 
-Triage what exists on the PR. The one bounded bot wait is [Copilot work in flight on the current head](../references/copilot-wait.md): run it before the `pr-data` read below. Skip that Copilot wait while the pull request is draft; triage its existing human threads. Other bots do not hold this read. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
+Triage what stands on the pull request once Copilot's work on the current head has settled.
+
+**Current-head Copilot wait.** Run it through [Waiter launch](../references/waiter-launch.md) before the `pr-data` read. Skip it while the pull request is a draft, which `env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json isDraft --jq .isDraft` reads. `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` answers in `[WORKTREE_PATH]`. The wait requests and records nothing under either gate mode, so it runs under `--dry-run` too:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/orch-runtime copilot-wait --repo [OWNER/REPO] --pr [PR_NUMBER]
+```
+
+Its bound is `ORCH_COPILOT_HOLD_SECS`, counted from the wait's own start. Route its reply's `result` by this table here, at § 6.3 and at § 7.2. An expiry is a `state` in a reply that exits 0, so route the `state`, never the exit.
+
+| Reply | Route |
+|---|---|
+| `status` `complete`, `state` `none` | No Copilot work on the head: continue the calling read |
+| `state` `settled` | Continue the calling read. It reads the review `review` names, where it names one, with the threads and bodies |
+| `state` `expired` | Report `run`, `started_at` and `waited`, then continue the calling read under the existing gate. The expiry grants no approval |
+| `status` `unreadable` | Report its `reason` and `detail`, and stop the calling read, which takes the failure rule above. A failed read is never `none` |
+| A refusal: a nonzero exit with a keyed `orch-runtime:` line | Report it and stop the calling read |
+
+The wait reads no lane mail between its reads. A lane idle between completion polls takes its mail by its harness's route in [watch-delivery.md § Lane mailbox monitor](../references/watch-delivery.md#lane-mailbox-monitor). A Codex lane holds its turn through the poll, so its mail waits for its next turn ([codex-runtime.md § Lane mailbox](../references/codex-runtime.md#lane-mailbox)).
+
+No other bot holds this read. A Copilot thread posted after it holds the merge as [gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing) states for each gate mode. Bot prose is never a gate: emoji reactions, sticky comments and checklist text carry no gating weight.
+
+**Read the pull request:**
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]"
 ```
 
-The JSON carries `threads` (inline) and `comments` (PR-level). It is read without `--actionable`, which drops outdated threads: [submit-pr.md](submit-pr.md) § 3 and [thread-read.md](../references/thread-read.md) count them with `pr-threads --unresolved`, so each one needs a reply and a resolve here.
+Read it without `--actionable`, which drops the outdated threads the Filter below keeps.
 
-**Baseline for re-runs.** Find the prior summary comment this run's GitHub identity posted, a person or a GitHub App installation alike, and use its `updated_at` as `SUMMARY_TS`; `{}` means no prior summary, so there is no `SUMMARY_TS`:
+**Baseline for re-runs.** Find the prior summary comment this run's GitHub identity posted, whether a person or a GitHub App installation. Use its `updated_at` as `SUMMARY_TS`. `{}` means no prior summary and no `SUMMARY_TS`:
 
 ```bash
 .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --pattern "Recommendations.*Processed" --self
 ```
 
-**Filter.** From PR-level `comments`, exclude noise bots (`dependabot`, `github-actions`, `renovate`, `codecov`, tracker sync bots; a match ignores a trailing `[bot]`, which pr-data's logins lack), anything created before `SUMMARY_TS` on a re-run, and status updates with no actionable content. From `threads`, exclude resolved threads only: every unresolved inline thread, whatever its author and outdated ones included, gets a § 6.3 reply and resolve, and a noise-bot thread gets `Declined: [REASON]`. Keep every reviewer comment — human or bot — on such a thread.
+**Filter.**
 
-**Bot review summaries.** Derive bot logins from the authors present in the data (anything ending in `[bot]`) and fetch each one's summary comment, one command per bot with the literal login:
+- From PR-level `comments`, leave out noise bots, anything created before `SUMMARY_TS` on a re-run, and status updates with no actionable content. The noise bots are `dependabot`, `github-actions`, `renovate`, `codecov` and tracker sync bots. A match ignores a trailing `[bot]`, which pr-data's logins lack.
+- From `threads`, leave out resolved threads only. Every unresolved inline thread, whatever its author, outdated ones included, gets a § 6.3 reply and resolve. A noise-bot thread gets `Declined: [REASON]`. Keep every reviewer comment on such a thread, human or bot.
+
+**Bot review summaries.** Take the bot logins from the authors in the data (anything ending in `[bot]`). Fetch each one's summary comment, one command per bot with the literal login:
 
 ```bash
 .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --author "[BOT_LOGIN]" --review-summary
 ```
 
-`--review-summary` picks, in order: the "View job" sticky, the review-section comment, then that bot's earliest comment. No bot having posted yet → continue with the human and inline comments that exist.
+With no bot posted yet, continue with the human and inline comments that exist.
 
-**Extract** per item: `thread_id`/`comment_id`, `author`, `body`, `path`, `line`, `url`, and `source` (`inline` or `pr-level`). Bot review summaries additionally get a `section` and a keyword-derived source type — architectural, documentation, security, testing, performance, or plain suggestion — plus `blocking: true` for security items and `false` when the text says non-blocking or optional. Skip anything the bot labels an inline comment: those are already captured as review threads, with the bot username as `author`. Never filter bot inline threads out.
+**Extract** per item: `thread_id` or `comment_id`, `author`, `body`, `path`, `line`, `url`, and `source` (`inline` or `pr-level`). A bot review summary also gets a `section`, and a source type from its keywords: architectural, documentation, security, testing, performance or plain suggestion. Security items get `blocking: true`; items the text calls non-blocking or optional get `false`. Skip what the bot labels an inline comment, since the review threads already carry it with the bot as `author`. Never filter bot inline threads out.
 
-**Issue context.** `issue_id` from the caller, else the `ISSUE_ID` the standalone init above resolved, which falls back to `pr-[PR_NUMBER]` and so always has a value. Resolve `WT_PATH` as `git-context repo-root "[DIR]"`, `[DIR]` being `worktree exists`/`worktree path` when they match and `.` otherwise.
+**Issue context.** `issue_id` comes from the caller, else from standalone init, which always gives a value. Resolve `WT_PATH` as `git-context repo-root "[DIR]"`. `[DIR]` is `worktree exists` / `worktree path` when they match, and `.` otherwise. Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-
-Then gather decisions:
-
-```bash
-.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
-.agents/skills/decider/scripts/decisions search "[KEYWORDS_OF_THE_CHANGED_AREA]"
-```
-
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. Read each full record and apply [decider’s status meanings](../../decider/SKILL.md#decider) before using it as policy. Verify each before injecting it, one command per path:
-
-```bash
-test -f [DECISION_FILE_PATH]
-```
-
-A failed check omits the path and carries `decision index lookup failed for [DECISION_ID]` instead.
+**Decisions.** Run [review-pr.md § 1.1 Decision Context](review-pr.md#11-decision-context) with `[ISSUE_ID]`. § 3's delegation carries each verified decision and each failed lookup in its own line form.
 
 ## 2. Detect Domains
 
-Map each comment to a domain from its source type and file path. Domain-to-agent routing is project-configurable: the source types above name their own reviewer domain, a path maps through the project's component conventions, `docs/**` goes to the documentation reviewer, and a comment with no file path goes to the architecture reviewer.
+Map each comment to a domain from its source type and file path. The project configures the domain-to-agent routing:
+
+- A source type names its own reviewer domain.
+- A path maps through the project's component conventions.
+- `docs/**` goes to the documentation reviewer.
+- A comment with no file path goes to the architecture reviewer.
 
 ## 3. Analyze
 
-Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this native batch, using § 1's inline, PR-level and review-body identities and this invocation's `--dry-run` status. Bind its token as `[TRIAGE_REVIEW_ROUND_ID]` for the domain and synthesis reports below. § 5 supplies acceptance, disposition and completion.
+This pass is a [Record verified findings](../schemas/workflow-state.md#record-verified-findings) batch. Admit it with § 1's inline, PR-level and review-body identities and this run's `--dry-run` status. Bind its round token as `[TRIAGE_REVIEW_ROUND_ID]` for the domain and synthesis reports. § 5 supplies acceptance, disposition and completion.
 
-Apply [Delegation](../references/skill-rules.md#delegation) before selecting domain, architecture, or fix agents on every pass. Delegate to the mapped domain agents in parallel.
+On every pass, apply [Delegation](../references/skill-rules.md#delegation) before you select domain, architecture or fix agents. Delegate to the mapped domain agents in parallel.
 
 <delegation_format>
 Analyze these PR review comments for your domain.
@@ -135,23 +159,37 @@ URL: [URL]
    </output_format>
 </delegation_format>
 
-Collect each agent's report path and its bound review-round token for § 5.
+Collect each agent's report path with its bound round token for § 5.
 
 ## 4. Synthesize
 
 **Skip if** the comments came from a single domain.
 
-Delegate to the architecture reviewer with the domain report paths, this batch's `[TRIAGE_REVIEW_ROUND_ID]`, and the same recurrence-history context and lookup instruction as § 3, asking for cross-cutting findings only: issues spanning domains, dependencies between suggestions (`dependency: #A blocks #B (reason)`), gaps at domain boundaries, and conflicts between domain recommendations (flag both, resolve neither). It must not modify or overrule domain findings — only add its own, in the same JSON schema at `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json`, returning the same `Report:`/`Verdict:` pair. It copies the supplied token into `qa_metadata.review_round_id`, or uses `null` under `--dry-run`. Add the returned path and its bound token to the set.
+Delegate to the architecture reviewer with the domain report paths, `[TRIAGE_REVIEW_ROUND_ID]`, and § 3's recurrence-history line and lookup instruction. Ask for cross-cutting findings only:
+
+- issues that span domains;
+- dependencies between suggestions (`dependency: #A blocks #B (reason)`);
+- gaps at domain boundaries;
+- conflicts between domain recommendations: flag both, resolve neither.
+
+The reviewer must not modify or overrule a domain finding. It writes its own findings in the same schema at `[WORKTREE_PATH]/tmp/review-arch-synthesis-YYYYMMDD-HHMMSS.json`, copies the token into `qa_metadata.review_round_id` (`null` under `--dry-run`), and returns the same `Report:` / `Verdict:` pair. Add the returned path and its token to the set.
 
 ## 5. Triage Report
 
-Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) acceptance to each domain and synthesis report with its assigned `[TRIAGE_REVIEW_ROUND_ID]`. Complete that contract after the disposition below and before § 6, using this native batch's identities and dry-run status.
-
-Read every report and aggregate across agents preserving attribution. Keep every review-body item with its source identity and verified reply draft through § 6.3; do not deduplicate it away. Deduplicate other items by (location, description), keeping the first and noting all sources. `blockers[]` and `category: "fix"` suggestions are fix items; `category: "issue"` suggestions defer to § 6.2; `questions[]` are auto-answered in § 7, except review-body items, which § 6.3 dispositions. Show verified body declines in SKIPPING with their draft reason. These reply-only items never enter the fix set.
-
-**Recurrence before the cap.** A finding sharing a root cause with one a prior pass patched is dispositioned by [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence), which allows `structural-close` or `freeze` and no further patch round. Check it here, ahead of § 6.1's round cap. Apply the Dry-run recurrence context above: when history is unavailable, report that status in the triage output and leave recurrence unverified. Otherwise read both records with the command that section states, before any item below is dispositioned. A finding sharing a cause in `patched_causes` is the recurrence this rule ends, and one sharing a cause in `frozen_causes` is `declined` without re-triaging.
-
-Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), carries a root cause § Recurrence dispositions (→ `RECURRENCE`, never an auto-fix), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
+1. Accept each domain and synthesis report under [Record verified findings](../schemas/workflow-state.md#record-verified-findings) with its assigned `[TRIAGE_REVIEW_ROUND_ID]`. Complete that contract after the disposition below and before § 6, with this batch's identities and dry-run status.
+2. Read every report and aggregate across agents, keeping attribution. Keep every review-body item, with its source identity and verified reply draft, through § 6.3. Never deduplicate one away. Deduplicate other items by location and description, keeping the first and noting every source.
+3. Route each kind:
+   - `blockers[]` and `category: "fix"` suggestions are fix items.
+   - `category: "issue"` suggestions go to § 6.2.
+   - § 7 answers `questions[]`, except review-body items, which § 6.3 answers.
+   - Show verified body declines under SKIPPING with their draft reason. These reply-only items never enter the fix set.
+4. **Recurrence before the cap.** [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) dispositions a finding that shares a root cause with one a prior pass patched. It allows `structural-close` or `freeze` and no further patch round. Check it here, before § 6.1's cap. When the dry-run history is unavailable, report that status in the triage output and leave recurrence unverified. Otherwise read both records, with the command that section states, before you disposition any item. A finding sharing a cause in `patched_causes` is the recurrence this rule ends. One sharing a cause in `frozen_causes` is `declined` without re-triage.
+5. Auto-fix every valid item, and never prompt for a selection. Skip an item only when it:
+   - contradicts an active decision (cite the decision id);
+   - is too vague to act on;
+   - is out of the pull request's scope (an issue);
+   - carries a root cause § Recurrence dispositions (`RECURRENCE`, never an auto-fix);
+   - cannot affect real usage (a one-line decline, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -198,99 +236,108 @@ Pri: 🔴 P1  🟠 P2  🟡 P3  🟤 P4
 
 </output_format>
 
-Omit empty sections and proceed straight to § 6 — no user prompt.
+Omit empty sections and go straight to § 6, with no user prompt.
 
 ## 6. Apply Fixes And Loop
 
-The `fix set` is every § 5 row marked Fixing plus every `structural-close` row: a structural close IS a fix round, one whose item names the generating surface rather than the site, and cutting surface the Done-when does not require is a close. `freeze` and `declined` rows are `reply-only` — they never join the delegation, the commit, or the push.
+The **fix set** is every § 5 row marked Fixing plus every `structural-close` row. A structural close is a fix round whose item names the generating surface in place of the site. Cutting surface the Done-when does not need is a close. `freeze` and `declined` rows are reply-only: they never join the delegation, the commit or the push.
 
-**Every pass owes both of these before it answers a thread** — fix-only, reply-only, mixed, `freeze`, `declined` alike. The subsections below run in the order they appear and the single `reply step` is the last of them, so a pass reading straight through owes nothing it has not already done:
+Before it answers a thread, every pass owes two things, whether it fixes, replies or both. The subsections run in order and the `reply step` comes last, so a pass that reads straight through has done both:
 
-1. Every class issue a reply names exists. § 6.2 files each `freeze` row's class issue; a `declined` row names the issue its frozen cause carries.
-2. Every cause a reply closes is recorded — a `freeze` row's in `frozen_causes`, an applied item's in `patched_causes`. A cause the store does not carry is one the next pass re-triages in place of declining it. Write the file its shape below names, then bind the path.
+1. Every class issue a reply names exists. § 6.2 files each `freeze` row's class issue. A `declined` row names the issue its frozen cause carries.
+2. Every cause a reply closes is recorded: a `freeze` row's in `frozen_causes`, an applied item's in `patched_causes`. The next pass re-triages a cause the record lacks instead of declining it. Write the cause file in its shape with the harness file tool, then record it:
 
-```json
-{"cause": "[ONE_LINE]", "issue": "[CLASS_ISSUE_ID]"}
-{"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]", "location": "[LOCATION]", "owner": "[OWNER]"}
-```
+   ```json
+   {"cause": "[ONE_LINE]", "issue": "[CLASS_ISSUE_ID]"}
+   ```
 
-Copy `[LOCATION]` from the fixed item's header as written. Copy `[OWNER]` from its `Owner:` line as written; omit the `owner` key when the item has no such line.
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"frozen-cause","file":"[WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json"}'
+   ```
 
-```bash
-.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.frozen_causes [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json
-```
+   ```json
+   {"cause": "[ONE_LINE]", "commit": "[COMMIT_SHA]", "location": "[LOCATION]", "owner": "[OWNER]"}
+   ```
 
-```bash
-.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.patched_causes [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"patched-cause","file":"[WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json"}'
+   ```
+
+   Copy `[LOCATION]` from the fixed item's header as written, and `[OWNER]` from its `Owner:` line as written. Omit the `owner` key when the item has no such line.
 
 ### 6.1 Delegate Fixes
 
-**Skip the delegation and the push if** the `fix set` is empty; the pass still owes every thread its answer at the `reply step` below.
+**Skip the delegation and the push if** the fix set is empty. The pass still answers every thread at the `reply step`.
 
-Read the round budget first. The cap governs what may be pushed, so it decides before the fix round, never after one:
-
-```bash
-.agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]
-```
-
-It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `pr_comment_review.iterations`. An `at-cap` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR. Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. The **fix set** is what the rest of this section groups, records and delegates: the items marked Fixing, and **at the cap only the cap-exempt ones — a defect this diff itself introduces or arms and Step 0 does not exclude**. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`. **Then the exception**, the only fix delegation and the only push this pass makes; a fix the verification pass below triggers is part of it. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
-
-**Delegate the fix set.** Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) and record the head the verification pass below diffs against, once per fix set:
+**Round budget.** The cap decides before the fix round, never after:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]
 ```
 
-Group the `fix set` by `agent`. Before stamping each group's round, read the target PR and bind `[PR_OPEN]` by [dev-fix.md § 2](dev-fix.md#2-delegate) step 4:
+- `below`: the fix set below is the items marked Fixing.
+- `at-cap`: ordinary fix rounds end on this pull request. The cap is a ruling point. No ordinary fix round starts past it until the overseer has ruled, judging with the reply's `count` and `limit`, and recorded one `ruling` row for the item in the fleet log ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). At the cap the disposition still runs in full; only the fix stops. Every thread is analyzed and gets its reply and resolve, on this pass and every later one. The fix set holds only the cap-exempt items: a defect this diff itself introduces or arms that Step 0 does not exclude. Run three steps in order:
+  1. **File first.** Run § 6.2 for every item that clears its bar, with its return recorded as `→ § 6.1` in place of § 6.2's `→ § 6.3`.
+  2. **Then the exception.** The cap-exempt fix set is this pass's only fix delegation and only push. A fix the verification pass below triggers belongs to it.
+  3. **Then reply** by § 6.3's table: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, and `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then go to § 6.3 with § 6.2 already done.
 
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] [PR_NUMBER] --json state
-```
+**Delegate the fix set.**
 
-Run [dev-fix.md § 2's base-freshness gate](dev-fix.md#2-delegate) before stamping this direct fix round. Apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this group's proposed fix classes, writing its requests as `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from the original review items or exact receipt-origin check names:
+1. Ensure the worktree exists (`worktree exists` / `worktree path`). Create it with `--pr [PR_NUMBER]` when missing. Record the head the verification pass diffs against, once per fix set:
 
-```bash
-.agents/skills/orch/scripts/workflow-state findings query [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"base","worktree":"[WORKTREE_PATH]"}'
+   ```
 
-Save the exact result with the harness file tool as `[WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json`. Take the [finding-specific design read](../references/design-review.md#inputs-and-actions), carrying that JSON in the existing ask/status, before any `new-round-id`, pruning or delegation-time write. Carry the same JSON in this group's delegation below. This direct path owns its read even when dev-fix has not run. Only after that route resolves, stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+2. Group the fix set by `agent`. Run the groups one after another, and take steps 3 to 12 for each group.
+3. Read the pull request and bind `[PR_OPEN]` as [dev-fix.md § 2](dev-fix.md#2-delegate) step 4 does:
 
-```bash
-.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] [PR_NUMBER] --json state
+   ```
 
-Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
+4. Run [dev-fix.md § 2](dev-fix.md#2-delegate)'s base-freshness gate before stamping this round.
+5. Apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this group's proposed fix classes. Write the requests to `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from the original review items, or from exact receipt-origin check names:
 
-```bash
-.agents/skills/orch/scripts/round-prune [ISSUE_ID]
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime state findings query --item [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
+   ```
 
-```bash
-.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
-```
+   A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `result`, the `{prior, classes}` object, unchanged with the harness file tool as `[WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json`. Take the [finding-specific design read](../references/design-review.md#inputs-and-actions), with that JSON in the ask or status, before the round's `begin-round`, prune or delegation time. This path owns the read even when dev-fix has not run. Carry the same JSON in the group's delegation.
 
-Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`. Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
+6. Stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). First reconcile the standing dev round, as [dev-start.md § 2](dev-start.md#2-delegate) does, with `{"op": "reconcile-round", "round_id": "[PRIOR_DEV_ROUND_ID]"}` through the command below. Its admitted runs then close before the new round supersedes it.
+7. Mint the round: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "dev"}`, run it, and take `[DEV_ROUND_ID]` from the reply's `.result.report.round_id`. With several groups, the request adds `"group": {"n": [N], "of": [GROUPS]}`. It may also carry an `exception`: the known failures the round may end with. This side grants the exception, and the receipt only cites it:
 
-Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
+   ```
 
-When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
+8. Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune. Write `[WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "dev"}`, run it, then stamp the delegation time:
 
-```bash
-.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
+   ```
 
-A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4 with `[SOURCE]` bound to `pr-comments`. A nonzero exit names a usage or environment failure. Report it and stop.
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"dev"}'
+   ```
 
-⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
+9. Write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`. The delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states.
+10. Persist the group's items: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`. Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action or fixture that reaches the finding: a command a person runs, a file a shipped writer emits, or a test in the tree. An item with no reach is a `Declined:` reply, not a fix; disposition it per [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar).11. Decide whether this round may add protected files. [dev-round.md § Protected additions](../schemas/dev-round.md#protected-additions) is the one scope definition, and the default is none. When the list is non-empty, pass the exact repository-relative paths to the writer as one blank-separated `--adds` value. Render the same list after `Adds:` in the delegation: `Adds: tools/one-helper.sh`, or `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates paths, so no path holding whitespace can be authorized. Check for one first.
 
-Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry. The key is the one carrier: the artifact's own path is addressed by `dev_round_id`, which the stamp above has already overwritten.
+    ```bash
+    .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
+    ```
 
-```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
-```
+    A nonzero exit names a usage or environment failure: report it and stop. A chosen cut follows [dev-fix.md § 2](dev-fix.md#2-delegate) step 4 with `[SOURCE]` `pr-comments`.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, and `Labels:` as [dev-fix.md § 2](dev-fix.md#2-delegate) fills it.
+12. Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry. An absent field renders none. The stamp already moved `dev_round_id`, so the state key is the one carrier:
+
+    ```bash
+    .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /near_ceiling
+    ```
+
+    Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, and `Labels:` as [dev-fix.md § 2](dev-fix.md#2-delegate) fills it. Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix. The agent owns its own process.
 
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-fix.md
@@ -303,6 +350,7 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
+Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json
 [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 
@@ -315,14 +363,14 @@ Recommendation: "[RECOMMENDATION]"
 [If the finding has an owner: "Owner: [OWNER]"]
 </delegation_format>
 
-**Accept the round** on **A** (the round-scoped artifact) and **B** (git completion), never the return message:
+**Accept the round** on **A**, the round-scoped artifact, and **B**, git completion, never on the return message:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /dev_round_id
 ```
 
 ```bash
-.agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
+.agents/skills/orch/scripts/orch-runtime dev-return --text check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
 ```
 
 ```bash
@@ -330,35 +378,64 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" log -1 --oneline
 ```
 
-Apply the fix-round acceptance in [`dev-fix.md` § 2](dev-fix.md), which is canonical: the stalled-round route stated ahead of its A×B table, then the table itself, including exact-commit binding on accept, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
+1. Route the verdict by [dev-fix.md § 2](dev-fix.md#2-delegate) step 5, which owns the acceptance table. That covers:
+   - its stalled-round route, with `reconcile-round` before `orch-runtime round --text recover` and the prune on a `redelegate` line;
+   - exact-commit binding on accept;
+   - the stage close through [dev-start.md § Close The Round's Stages](dev-start.md#close-the-rounds-stages);
+   - the bounded git re-read on `accept` with B failing;
+   - the report-only tail nudge on `wait` with B passing;
+   - the `retry` row, which never re-runs the fix.
+2. A group that is not the last ends `hand-over`. Its Check B is a commit past the round's base and a clean worktree, with no tracker validation. Its handoff notes go to the next group. The last group's acceptance validates the combined work.
+3. On accept: mark the applied items for reply, put the items the agent skipped on the skipped list with their reason, and make the blocked items issue candidates for § 6.2.
 
-**Verify before the push.** Every accepted fix round gets one focused pass over its diff, `[PRE_SHA]...HEAD`, by [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review)'s rule for a fix diff no reviewer has seen, whatever `REVIEW_MAX_EXTERNAL_ROUNDS` reads. Its panel is that section's scoped panel over this diff: the reviewers whose domains it touches, and the domain reviewers § 2 routed the applied items to, whose defect classes the round fixed. A panel holding every `first_panel` reviewer carries that section's `domain_reasons`, or `workflow-state` refuses it as `panel-copy`:
+**Verify before the push.** Every accepted fix round gets one focused pass over its diff, `[PRE_SHA]...HEAD`, whatever `REVIEW_MAX_EXTERNAL_ROUNDS` reads. The pass follows [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review)'s rule for a fix diff no reviewer has seen.
 
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] verification_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "pr-comments fix round: [DOMAINS]"}'
-```
+1. The panel is that section's scoped panel over this diff: the reviewers whose domains it touches, and the domain reviewers § 2 routed the applied items to. This pass runs no external review. Record the panel. One holding every `first_panel` reviewer carries `domain_reasons`:
 
-Delegate and collect it as review-pr.md § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`, then shut its reviewers down and clear their state with review-pr.md § 5's first write. Its blockers and `category == "fix"` suggestions re-enter § 5's disposition flow as findings of this pass; what survives joins this pass's `fix set` as a defect this diff introduces. Its `category == "issue"` suggestions go to § 6.2, as § 5 routes the triage reports' own; at the cap, where § 6.2 has already run, it runs once more for them after this pass. One verification pass runs per push: the fix it triggers joins the same push without a second pass, and the next external round reviews it.
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"verification","agents":[PANEL_AGENTS_JSON],"reason":"pr-comments fix round: [DOMAINS]","external":false}'
+   ```
 
-**Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head. A pass with nothing to push skips this command:
+2. Delegate and collect it as [review-pr.md](review-pr.md) § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`. Close its review stage with the `outcome` word [review-pr.md § 3.3](review-pr.md#33-present) computes from this pass's panel and accepted artifacts. Then shut its reviewers down and clear their state with review-pr.md § 5's first write.
+3. Its blockers and `category == "fix"` suggestions re-enter § 5's disposition as findings of this pass. What survives joins this pass's fix set as a defect this diff introduces. Its `category == "issue"` suggestions go to § 6.2. At the cap, where § 6.2 already ran, run it once more for them.
+4. One verification pass runs per push. The fix it triggers joins the same push without a second pass, and the next external round reviews it.
 
-Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed; after § 6.3 has no new threads and §§ 7–8 finish, an armed standalone triage enters [merge-pr.md](merge-pr.md) from its entry point, while an armed managed triage returns that recorded decision with its § 8 result so the caller's merge stage owns the canonical lifecycle.
+**Push.** Push a fix round only once every configured reviewer has reported on the current head. A pass with nothing to push skips this step.
 
-```bash
-git -C "[WORKTREE_PATH]" push origin HEAD
-```
+1. Read the pull request and record whether `autoMergeRequest` is armed:
 
-With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, publish through `.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]` in place of that command, routing its exit code and `sha-reconcile:` line by `worktree-push --help`, so [submit-pr.md](submit-pr.md) § 2 step 1 pushes next and GitHub receives one combined head. That push may rebase this round's fix commits, whose SHAs come from the dev return and sit in no record it rewrites: resolve each through workflow state's `.rebase_map`, following the chain until no key matches, before § 6.3's `Fixed in` reply and § 8's `pr_comment_review.fixes` entry use it, and a chain ending in `dropped` puts no SHA in the reply and the `dropped:[COMMIT_SHA]` marker in the entry.
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] [PR_NUMBER] --json number,state,autoMergeRequest
+   ```
 
-**A round ends with the description matching its head.** The PR body describes the commits actually on the PR head and names every issue § 6.2 filed this round; nothing else regenerates it after round one, so rebuild it per [`submit-pr.md` § 2](submit-pr.md) step 3 and post it with `pr-edit-body` until both hold.
+2. With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, publish through the branch-publication owner. Write `[WORKTREE_PATH]/tmp/triage-push-[ISSUE_ID].json` with the harness file tool as `{"op": "record-push", "mode": "branch", "worktree": "[WORKTREE_PATH]"}`, run it, and route its exit and reply as [merge-pr-restack.md](merge-pr-restack.md) step 3 does. [submit-pr.md](submit-pr.md) § 2 step 1 pushes next, so GitHub receives one combined head:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/triage-push-[ISSUE_ID].json
+   ```
+
+   That push may rebase this round's fix commits, whose SHAs come from the dev return. Before § 6.3's `Fixed in` reply or § 8's `fix` entry uses one, resolve it through workflow state's `rebase_map`. Follow the chain until no key matches. A chain ending in `dropped` puts no SHA in the reply and `dropped:[COMMIT_SHA]` in the entry.
+
+3. With any other `pr_order`, push directly:
+
+   ```bash
+   git -C "[WORKTREE_PATH]" push origin HEAD
+   ```
+
+4. After § 6.3 finds no new thread and §§ 7-8 finish, an armed standalone triage enters [merge-pr.md](merge-pr.md) at its entry point. An armed managed triage returns the recorded `autoMergeRequest` with its § 8 result, so the caller's merge stage owns the lifecycle.
+
+**The description matches the head.** At the end of a round, the pull request body describes the commits on the head and names every issue § 6.2 filed this round. Nothing else regenerates it after the first round. Rebuild it per [submit-pr.md](submit-pr.md) § 2 step 3, and post it with `pr-edit-body` until both hold.
 
 ### 6.2 Create Issues
 
-**Skip if** nothing clears the filing bar in [references/finding-disposition.md](../../reviewer/references/finding-disposition.md). Blocked items, skipped items, `category: "issue"` suggestions, and each `freeze` row's class issue that clear it go into an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`, with `source: "pr-comments"` and `tracker.type` set to the resolved `TRACKER` (plus `tracker.repository` for GitHub items), then apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
+**Skip if** nothing clears the filing bar in [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar).
+
+1. Put what clears the bar in an audit-input file at `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json`, per `.agents/skills/project-management/schemas/audit-issues-input.md`: the blocked items, skipped items, `category: "issue"` suggestions and each `freeze` row's class issue. Set `source: "pr-comments"`, `tracker.type` to `TRACKER`, and `tracker.repository` for GitHub items.
+2. Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`.
 
 ### 6.3 Re-Triage Or Exit
 
-**Reply step.** Reply to and resolve every inline thread this pass handled, never deferring one to § 7. For `source_type: "review-body"`, collect § 6.3's replies for every retained report item in one `Dispositions at [BODY_REVIEW_HEAD]` PR comment. Use the full source-reviewed SHA § 7.2 saved in this pass's context. This publication owner keeps that marker unchanged across any body or thread fix push, including a rebase. A reconciled fix SHA belongs in reply text and never replaces the marker. This rule applies to every outcome below, including mixed passes. Open each line with its original `source_id` (`file:line`), per `check-review-replies --help`. Post it with `post-comment --body-file`; record each item in `pr_comment_review.replied` with its `source_id` and `source_type`. These items use neither `post-reply` nor `resolve-thread`; continue to this section's single `iterations` increment.
+**Reply step.** Reply to and resolve every inline thread this pass handled, and defer none to § 7. This holds for every outcome, mixed passes included.
 
 | Outcome | Reply body |
 |---------|------------|
@@ -368,11 +445,9 @@ With workflow state `pr_order` reading `open-first-returned` or `push-first-retu
 | Already fixed | Review-body: `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]`, using its verified fix SHA; otherwise the finding's `draft_response` |
 | Question or verified decline | Review-body: its retained `draft_response`, in `Declined: [VERIFIED_DECISION_FLOW_REASON]` form; otherwise the finding's `draft_response` |
 
-A `Tracked:` reply names the issue it filed, and a decline is a decline — say so. Resolving a thread is not a reply.
+A `Tracked:` reply names the issue it filed, and a decline says it is one. Resolving a thread is not a reply. `[REASON]` takes one of the forms [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) sets out.
 
-`[REASON]` takes one of the forms [../references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Decision flow sets out.
-
-Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_ID].md` and bind that path as `[BODY_FILE]`.
+**Inline threads.** Write `[REPLY_BODY]` with the harness file tool to `tmp/pr-reply-[THREAD_ID].md`, bind it as `[BODY_FILE]`, and run each of these per thread:
 
 ```bash
 .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" --body-file [BODY_FILE] --pr "[PR_NUMBER]"
@@ -383,32 +458,39 @@ Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_I
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"reply","source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
 ```
 
-PR-level comments and human-only threads stay deferred to § 7.
+**Review-body items** (`source_type: "review-body"`). Collect the replies for every retained item into one PR comment. Its first line is `Dispositions at [BODY_REVIEW_HEAD]`, the full source-reviewed SHA § 7.2 saved in this pass's context. Keep that marker unchanged across any fix push, a rebase included. A reconciled fix SHA belongs in the reply text and never replaces it. Open each line with the item's original `source_id` (`file:line` or `review:<ID>`), per `check-review-replies --help`. Write the comment to a file with the harness file tool, and post it with `github.sh post-comment [PR_NUMBER] --body-file [BODY_FILE]`. Record each item with the `reply` entry above, with the item's token as its `source_id`. These items take neither `post-reply` nor `resolve-thread`.
 
-This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Run [the bounded current-head Copilot wait](../references/copilot-wait.md) before the `pr-data` read below, except while the pull request is draft. This is the one exception to checking once without waiting for bots to re-review. Then check for comments that arrived while fixes were being applied and loop or exit.
+PR-level comments and human-only threads stay for § 7.
 
-```bash
-.agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
-```
+**Re-triage.** This section counts the pass and decides whether to loop. The cap is § 6.1's alone.
 
-This is the only writer of `pr_comment_review.iterations` in any workflow: one triage pass advances the counter by exactly one, and a caller that runs this workflow writes neither it nor § 8's result arrays.
+1. Run § 1's current-head Copilot wait, except while the pull request is a draft, and route its reply by § 1's table. This is the one wait on bots in this section.
+2. Count the pass. This is the only writer of `pr_comment_review.iterations` in any workflow. One triage pass adds exactly one, and a caller of this workflow writes neither it nor § 8's arrays:
 
-```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{known: (.pr_review_baseline.last_threads // [])}'
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"counted","counter":"external"}'
+   ```
 
-```bash
-.agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
-```
+3. Check once, without waiting for bots to re-review, for comments that arrived while the fixes ran:
 
-A thread is new when its `threads[].id` is not in `known`. No new threads → § 7. Otherwise update the baseline and loop to § 1, at the cap as below it: the next pass analyzes the new threads and posts their dispositions, and § 6.1 is where the fix and the push stop:
+   ```bash
+   STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {known: (.pr_review_baseline.last_threads // [])}' <<<"$STATE_READ"
+   ```
 
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{"last_threads":[UNRESOLVED_THREAD_IDS]}'
-```
+   ```bash
+   .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
+   ```
+
+4. A thread is new when its `threads[].id` is not in `known`. No new thread: § 7. Otherwise update the baseline and loop to § 1, at the cap as below it. The next pass analyzes and answers the new threads, and § 6.1 is where the fix and the push stop:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"baseline","last_threads":[UNRESOLVED_THREAD_IDS]}'
+   ```
+
+A Copilot thread posted after this read routes as § 1 states.
 
 ---
 
@@ -416,82 +498,87 @@ A thread is new when its `threads[].id` is not in `known`. No new threads → §
 
 ### 7.1 Post Remaining Replies
 
-**Backstop only** — inline threads handled per-pass in § 6.3 are already replied to and resolved. This covers PR-level comments, human-only threads, and anything per-pass handling missed. Skip any `source_id` already in `pr_comment_review.replied`.
+**Backstop only.** § 6.3 already answered and resolved the inline threads each pass handled. This step covers PR-level comments, human-only threads and anything a pass missed. Skip any `source_id` already in `pr_comment_review.replied`.
 
-Review-body items, including `questions[]` and `already_fixed`, stay in § 6.3's head-bound disposition comment and never use this plain-reply path. Other reply bodies are § 6.3's table, which is where the `questions[]` § 5 routes here are answered — the Question row, the finding's own `draft_response`. Such a question is not a finding, so it takes no disposition and its answer is never a `Declined:`. Two clauses this step adds: a skip that contradicts a recorded decision spells its `[REASON]` as `contradicts [DECISION_ID]`, and an issue named by `Tracked:` exists before the reply is posted.
-
-Write every reply body with the harness file-write tool to `tmp/pr-reply-[SOURCE_ID].md` and bind that path as `[BODY_FILE]`. Use `post-reply --body-file [BODY_FILE]` for threads and `post-comment --body-file [BODY_FILE]` for PR-level comments. Number lists `1.` `2.` `3.`, never `#N`.
-
-**Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise: tag the bot with the reason and a re-review request, dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[REASON]"`, and resolve the thread. Tag a human reviewer the same way, but never dismiss their review.
-
-Auto-resolve every thread where a reply was posted; keep open only threads awaiting a human response.
+1. Review-body items, their `questions[]` and `already_fixed` included, stay in § 6.3's head-bound disposition comment and never take this route.
+2. Other reply bodies follow § 6.3's table. A `questions[]` item § 5 routed here takes the Question row: its own `draft_response`. A question is not a finding, takes no disposition, and is never answered `Declined:`.
+3. A skip that contradicts a recorded decision spells its `[REASON]` `contradicts [DECISION_ID]`. File the issue a `Tracked:` reply names before you post the reply.
+4. Write each reply body with the harness file tool to `tmp/pr-reply-[SOURCE_ID].md`, and bind it as `[BODY_FILE]`. Use `github.sh post-reply [ID] --body-file [BODY_FILE]` for a thread and `github.sh post-comment [PR_NUMBER] --body-file [BODY_FILE]` for a PR-level comment. Number lists `1.` `2.` `3.`, never `#N`.
+5. **Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise, tag the bot with the reason and a re-review request. Dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[REASON]"`, and resolve the thread. Tag a human reviewer the same way, and never dismiss a human's review.
+6. Resolve every thread a reply was posted to. Keep open only the threads awaiting a human answer.
 
 ### 7.2 Copilot Head Route
 
-Run [the current-head Copilot wait](../references/copilot-wait.md) before the body check, any review request or any head notice in this step. Keep `[COPILOT_WAIT]` for the head routing below. Skip this wait when the step's skip rule below holds.
+**Skip if** workflow state `pr_order` reads `open-first-returned`, `push-first` or `push-first-returned`: send no notice and no request. For `push-first-returned`, first complete [submit-pr.md § 2](submit-pr.md#2-push-and-submit) step 4's **Push-first ready head** block, a head already ready included. That block changes the order to `push-first-pushed` before this step's call. The other skipped orders still hold the lane's `Review:` line pending and take submit-pr's publication route.
 
-**Skip if** workflow state `pr_order` reads `open-first-returned`, `push-first` or `push-first-returned`, with no notice and no request. For `push-first-returned`, complete [submit-pr.md § 2 step 4](submit-pr.md#2-push-and-submit)'s ready-head request route first, including an already ready head with no request recorded. It changes the order to `push-first-pushed` before this wait. Other skipped orders still have the lane's `Review:` line pending and use submit's publication route. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
+Copilot reads a head again only on a review request. So a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs.
 
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
-```
+1. Run § 1's current-head Copilot wait and route it by § 1's table. Keep its reply as `[COPILOT_WAIT]`.
+2. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Run [the review call](../references/gates.md#the-review-call) once, from `[WORKTREE_PATH]`, with `[MARK_READY]` `false`, and keep its reply as `[REVIEW_READ]`. A call whose `head` differs from `[COPILOT_WAIT]`'s runs the wait again, then the call.
+3. A refusal ends this step: report its keyed line. A reply whose `status` is `unreadable` ends it too, with or without a `mode`. Report its `reason` and `detail`. A `pending` reply whose `reason` opens `head-moved` restarts this § 7.2 from its Copilot wait.
+4. Under either gate mode, bind the reply's `head` as `[HEAD_SHA]` before any approval-only exit. Then read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
 
-A non-zero exit is no mode: report it and end this step. In both `off` and `approval`, bind the head before any approval-only exit:
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state, .body] | @tsv'
+   ```
 
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
-```
+**Body findings.** Copilot writes a finding on code the diff left unchanged only in its review body, under `Previously missed` or `Suppressed comments`. No thread carries it, and an `APPROVED` review can carry one too. Run the one reader of those bodies at two points:
 
-A non-zero exit, which is reported, ends this step. If this head differs from `[COPILOT_WAIT]`'s head, restart the current-head wait. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
+- after binding the head and the reviews, before any approval-only exit or route selection;
+- again before a `copilot-approved-on-rerequest` or `copilot-declined-unchanged` notice, or the `timeout` row's `copilot-fallback` notice.
 
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state, .body] | @tsv'
-```
-
-**Body findings.** Copilot writes a finding on code the diff left unchanged only in its review body, under `Previously missed` or `Suppressed comments`, and no thread carries it. An `APPROVED` review can carry them too. After binding the head and reviews, before any approval-only exit or route selection, and again before a `copilot-approved-on-rerequest`, `copilot-declined-unchanged` or `copilot-fallback` notice, run the one reader of those bodies, so a body finding is answered before the lane waits on CI rather than at the merge gate after it:
+A body finding is then answered before the lane waits on CI, not at the merge gate:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
 ```
 
-A `head=` other than `[HEAD_SHA]` restarts this § 7.2 from its current-head wait and head/reviews reads. On exit `1` with `suppressed-entry` lines, save `[HEAD_SHA]` as `[BODY_REVIEW_HEAD]` in the new pass's context before looping to § 2. Carry that saved head with each entry's original source identity through analysis, reporting and publication; later head reads and fix pushes never replace it. Each entry is an item: `source_type: "review-body"`, `source_id: "[file:line]"`, and the finding's text from the review at `[BODY_REVIEW_HEAD]` in the reviews read above. This pass uses §§ 5–6, including Recurrence before the cap, the fix set, verification and cause records; § 6.3 posts its body replies and counts the pass once. After § 6.3 completes that pass, restart this § 7.2 from its current-head wait, head/reviews reads and route selection, including the body check again. The pushed head's body findings enter their own pass with that head saved as its source. Keep handled body items with their source-reviewed heads for the skip decision and notices. Complete § 8 before returning to the caller with the current head and whether the pass pushed; discard every route selected before the pass. Other exit `1` rules use the reply rewrite in [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates). Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out, and no step ends on an approved head, before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
+- A `head=` other than `[HEAD_SHA]` restarts this § 7.2 from its Copilot wait, review call and reviews read.
+- Exit `1` with `suppressed-entry` lines: save `[HEAD_SHA]` as `[BODY_REVIEW_HEAD]` in the new pass's context, then loop to § 2.
+  - Each entry is an item: `source_type: "review-body"`, `source_id` the entry's token, and the finding's text from the review at `[BODY_REVIEW_HEAD]` in the reviews read.
+  - Carry that head with each entry's source identity through analysis, reporting and publication. A later head read or fix push never replaces it.
+  - The pass runs §§ 5-6, Recurrence before the cap, the fix set, verification and cause records included. § 6.3 posts its body replies and counts the pass once.
+  - After § 6.3, restart this § 7.2 from its Copilot wait, review call, reviews read and route selection, the body check included. A pushed head's body findings take their own pass, with that head as their source.
+  - Keep the handled body items with their source-reviewed heads for the skip decision and the notices.
+  - Complete § 8 before returning to the caller with the current head and whether the pass pushed. Discard every route selected before the pass.
+- Exit `1` with any other rule's line: rewrite the replies by [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates).
+- Exit `2` reached no verdict: report its first stderr line and send nothing.
+- Before an exit `0`, no notice this step sends goes out, and no step ends on an approved head. Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, add one line per body finding with its `path:line` and the URL of the comment that answered it. Add one line naming the id of each Copilot review at `[HEAD_SHA]` from the reviews read.
 
-`off` ends this step only after the body check exits `0`, per [Gate-mode routing](../references/gates.md#gate-mode-routing). On `approval`, skip the remaining approval routing only if neither a thread nor a review-body item this triage handled is Copilot's and the body check exits `0`.
+**Routes.**
 
-A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends this step after the body check's exit `0`: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
+1. `off` ends this step once the body check exits `0`, per [Gate-mode routing](../references/gates.md#gate-mode-routing).
+2. Under `approval`, end the step once the body check exits `0` when neither a thread nor a review-body item this triage handled is Copilot's.
+3. A reviews line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends this step after the body check's exit `0`: the head is approved.
+4. Otherwise every Copilot thread is answered and resolved by now. The route is whether the head moved since the last head Copilot read, the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line:
+   - **Head unmoved.** Copilot read this head, so each answer stands on code it saw. Send the notice below with the first line `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, add one line per thread that `github.sh pr-threads [PR_NUMBER]` lists with `author` `copilot-pull-request-reviewer`. Each line gives the thread's `id`, its location and the reply that answered it, a decline's reason included. Request no Copilot re-review. The overseer approves the head under [copilot-head-notices.md](../references/copilot-head-notices.md).
+   - **Head moved**, by a push for any reviewer's thread or body finding. Route `[REVIEW_READ]`'s `request` by [Copilot requests](../references/gates.md#copilot-requests). `requested` or `existing` takes the wait below. `fallback` starts no wait and takes that section's fallback route. This step sends none of the notices the reply's `notices` names.
 
-- **Head unmoved.** Copilot read this head, so each answer stands on code it saw. Send the notice below, first line `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, one line per thread `github.sh pr-threads [PR_NUMBER]` lists with `author` `copilot-pull-request-reviewer` gives its `id`, its location and the reply that answered it, a decline's reason included. Request no Copilot re-review. The overseer approves the head under [copilot-head-notices.md](../references/copilot-head-notices.md).
-- **Head moved**, by a push for any reviewer's thread or body finding. If `[COPILOT_WAIT]` names `[HEAD_SHA]` with a `run` other than `none`, that in-flight run counts as the request: record the head below, send no second request, and start the existing approval wait. Otherwise, unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded with no work observed gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
+**The wait on a moved head.** Wait on the head through [the review wait](../references/gates.md#the-review-call), run so that a silent head ends `timeout`, never `proceeded`:
 
-  Only the route that needs a new request runs this command:
+```bash
+env PR_REVIEW_ON_TIMEOUT=block .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request "[WORKTREE_PATH]/tmp/verify-review-request-[ISSUE_ID].json"
+```
 
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
-  ```
+On a `complete` reply, compare its `head` with `[HEAD_SHA]`. A different head restarts this § 7.2 from its Copilot wait. Otherwise read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review:
 
-  For a new request, route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait. On `fallback`, record the head and start no wait. Under `cause=refused`, send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] [CAUSE]`, `[CAUSE]` and the line under it as that section sets, which asks for the overseer's fallback approval; under `cause=off` send nothing, since the caller's approval wait sends it.
+| Verdict | Copilot's review at `[HEAD_SHA]` | Then |
+|---------|----------------------------------|------|
+| `comments` | any | Update the baseline and loop to § 1 for each open thread this triage has not answered, as § 6.3 does; this section then routes the head again. The call answers `comments` while any thread stands open: where every open thread is one § 7.1 keeps open for a human, every repeat answers `comments` until the human answers, so end this step and leave the head to the caller's own review wait |
+| `approved` | `APPROVED` | Run the body check; on its exit `0`, send the notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
+| `approved` | none, or not `APPROVED` | No notice from this step: another reviewer approved the head, and no hold of [Copilot requests](../references/gates.md#copilot-requests) stands |
+| `copilot-error` | error answer | Route as [Copilot requests](../references/gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer's approval |
+| `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
+| `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |
+| any other | any | No notice: the caller's own review wait routes it |
 
-  ```bash
-  .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'
-  ```
+**Notice.** In a lane, write the notice with the harness file tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it:
 
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --on-timeout block --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
-  ```
+```bash
+.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md
+```
 
-  Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the wait again. On any other answer, bind the head again; if it changed, restart this § 7.2 from its current-head wait. Otherwise read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
-
-  | Answer | Copilot's review at `[HEAD_SHA]` | Then |
-  |--------|----------------------------------|------|
-  | `comments` | any | Update the baseline and loop to § 1 for the new thread as § 6.3 does; this section then routes the head again |
-  | `approved` | `APPROVED` | Run the body check above; on its exit `0`, notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
-  | `approved` | none or not `APPROVED` | No notice: another reviewer approved the head |
-  | `copilot-error` | error answer | Route as [Copilot requests](../references/gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer approval |
-  | `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
-  | `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |
-  | any other | any | No notice: the caller's own approval wait routes it |
-
-**Notice.** In a lane, write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md`. Outside a lane no overseer reads a notice, and the caller's own approval wait decides the head.
+Outside a lane no overseer reads a notice, and the caller's own review wait decides the head.
 
 ### 7.3 Present And Await
 
@@ -521,11 +608,11 @@ Under `ask` only: awaiting your response to ask questions, override skipped item
 
 </output_format>
 
-`auto-recommended` logs `Continue`, clears any stop, and goes to § 8 without a question, while `ask` stops here and a managed run returns the pending choice to its caller rather than continuing because its lifecycle is managed.
+- `auto-recommended` logs `Continue`, clears any stop, and goes to § 8 with no question.
+- `ask` stops here. A managed run returns the pending choice to its caller instead of continuing.
+- A request to fix a skipped item delegates that one item through § 6.1, pushes, and returns here. A confirmation clears any stop and goes to § 8.
 
-A request to fix a skipped item delegates that single item via § 6.1, pushes, and returns here. Confirmation clears any stop and goes to § 8.
-
-**Standalone only**: post the cumulative summary as a PR comment when there were fixes or created issues, written to a file first, and on the Linear issue too when `TRACKER` is `linear`.
+**Standalone only.** When the triage fixed anything or created issues, write the cumulative summary to a file and post it as a PR comment. When `TRACKER` is `linear`, post it on the Linear issue too:
 
 ```markdown
 ## Recommendations Processed
@@ -542,28 +629,30 @@ A request to fix a skipped item delegates that single item via § 6.1, pushes, a
 
 ## 8. Update State And Return
 
-One tool call per block — each append runs per item. A fix and a skip entry carry the finding's own text, so each is written to a file with the harness file-write tool and bound by path:
+Run one tool call per block, one append per item. A fix entry and a skip entry carry the finding's own text, so write each to a file with the harness file tool and bind it by path. A fix:
 
 ```json
 {"description": "[DESC]", "location": "[LOC]", "commit": "[SHA]", "source": "[SOURCE]"}
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.fixes [WORKTREE_PATH]/tmp/state-fix-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"fix","file":"[WORKTREE_PATH]/tmp/state-fix-[ISSUE_ID].json"}'
 ```
+
+A skip:
 
 ```json
 {"description": "[DESC]", "reason": "[REASON]"}
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.skipped [WORKTREE_PATH]/tmp/state-skipped-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"skip","file":"[WORKTREE_PATH]/tmp/state-skipped-[ISSUE_ID].json"}'
 ```
 
 An issue id is not finding text and stays inline:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] pr_comment_review.issues_created "[CREATED_ISSUE_ID]"
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"issue","id":"[CREATED_ISSUE_ID]","origin":"triage"}'
 ```
 
-**Managed**: return to the parent workflow's next section. **Standalone**: return `.post_pr_stop` when present; otherwise the triage session is complete.
+**Managed**: return to the parent workflow's next section, with the recorded `autoMergeRequest` where § 6.1 pushed. **Standalone**: return `.post_pr_stop` when present; otherwise the triage session is complete.

@@ -1,7 +1,7 @@
 //! The Copilot file that switches off the hooks one Copilot home and one
 //! project would run.
 //!
-//! The orch skill's `open-terminal` refuses a Copilot fleet lane whose
+//! The orch skill's lane launch refuses a Copilot fleet lane whose
 //! turn-end and compaction hooks would never run. It asks this verb for the
 //! home the lane runs under, the lane's worktree and the hook documents
 //! those hooks are registered in, so the settings layers, their order, which
@@ -9,7 +9,7 @@
 //! `kendex_core::harness::copilot::settings::hooks_switched_off_by`.
 //!
 //! The answer is one JSON object on stdout, `{"switched_off_by": PATH}` or
-//! `{"switched_off_by": null}`, and `open-terminal` reads that key: a
+//! `{"switched_off_by": null}`, and the lane launch reads that key: a
 //! settings layer that switches every hook off, else the first named
 //! document whose own `disableAllHooks` is on. Like the reader, it reports
 //! what the files on disk configure, never what a run did. A settings file

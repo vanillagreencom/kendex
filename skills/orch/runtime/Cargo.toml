@@ -1,0 +1,176 @@
+[package]
+name = "orch-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Repository orchestration runtime: workflow records, their domain operations and the standing scheduler"
+license = "MIT"
+publish = false
+# The integration tests live in the package's top-level tests/, which kendex
+# leaves out of every render, so the one harness is named by path and
+# autodiscovery is off.
+autotests = false
+
+# This crate is its own Cargo workspace: it ships inside a catalog skill and
+# builds from a rendered install, where no parent workspace exists.
+[workspace]
+
+[lib]
+name = "orch_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "orch-runtime"
+path = "src/main.rs"
+
+[dependencies]
+# The sibling skill, resolved the same way in the catalog and in a rendered
+# install with the required agent-runtime package present.
+agent-runtime = { path = "../../agent-runtime/runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+clap = { version = "4.6", features = ["derive"] }
+# The reset a usage-limit banner names, resolved in the zone it names or the
+# runner's own, with the fall-back hour's two instants.
+jiff = "0.2"
+# The tracker's issue pattern a branch is matched against, GH_ISSUE_PATTERN.
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "integration"
+path = "../tests/rust/main.rs"
+
+[[test]]
+name = "effects"
+path = "../tests/rust/effects.rs"
+
+[[test]]
+name = "approve"
+path = "../tests/rust/approve.rs"
+
+[[test]]
+name = "item"
+path = "../tests/rust/item.rs"
+
+[[test]]
+name = "review_artifact"
+path = "../tests/rust/review_artifact.rs"
+
+[[test]]
+name = "verify"
+path = "../tests/rust/verify.rs"
+
+[[test]]
+name = "ci_proof"
+path = "../tests/rust/ci_proof.rs"
+
+[[test]]
+name = "lane"
+path = "../tests/rust/lane.rs"
+
+[[test]]
+name = "controller"
+path = "../tests/rust/controller.rs"
+
+[[test]]
+name = "watch_core"
+path = "../tests/rust/watch_core.rs"
+
+[[test]]
+name = "watch_reads"
+path = "../tests/rust/watch_reads.rs"
+
+[[test]]
+name = "watch_observe"
+path = "../tests/rust/watch_observe.rs"
+
+[[test]]
+name = "watch_mail"
+path = "../tests/rust/watch_mail.rs"
+
+[[test]]
+name = "wake"
+path = "../tests/rust/wake.rs"
+
+[[test]]
+name = "admission"
+path = "../tests/rust/admission.rs"
+
+[[test]]
+name = "watch_report"
+path = "../tests/rust/watch_report.rs"
+
+[[test]]
+name = "validate"
+path = "../tests/rust/validate.rs"
+
+[[test]]
+name = "queue_watch"
+path = "../tests/rust/queue_watch.rs"
+
+[[test]]
+name = "send"
+path = "../tests/rust/send.rs"
+
+[[test]]
+name = "accounts"
+path = "../tests/rust/accounts.rs"
+
+[[test]]
+name = "walk"
+path = "../tests/rust/walk.rs"
+
+[[test]]
+name = "reconcile_items"
+path = "../tests/rust/reconcile_items.rs"
+
+[[test]]
+name = "state"
+path = "../tests/rust/state.rs"
+
+[[test]]
+name = "push"
+path = "../tests/rust/push.rs"
+
+[[test]]
+name = "turnend"
+path = "../tests/rust/turnend.rs"
+
+[[test]]
+name = "turnend_role"
+path = "../tests/rust/turnend_role.rs"
+
+[[test]]
+name = "turnend_controller"
+path = "../tests/rust/turnend_controller.rs"
+
+[[test]]
+name = "turnend_rows"
+path = "../tests/rust/turnend_rows.rs"
+
+[[test]]
+name = "turnend_copilot"
+path = "../tests/rust/turnend_copilot.rs"
+
+[[test]]
+name = "turnend_model"
+path = "../tests/rust/turnend_model.rs"
+
+[[test]]
+name = "lane_model"
+path = "../tests/rust/lane_model.rs"
+
+[[test]]
+name = "tier"
+path = "../tests/rust/tier.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+print_stdout = "deny"
+print_stderr = "deny"

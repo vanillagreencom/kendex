@@ -33,6 +33,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 - Before changing the release feed, signing, digests or self-replace: `docs/architecture/updates.md`.
 - Before changing CI, the review gate, the merge route or consumer refresh: `docs/architecture/merge-rail.md`.
 - Before changing repository effects, the arming record or a package's declared checks: `docs/architecture/repo-effects.md`.
+- Before changing what orch, agent-runtime or mailbox does for another, or a launch, delivery, stop, record write, mail send or cursor move that crosses between them: `docs/architecture/orchestration.md`.
 - Before adding an event, notice, badge, toast or dialog to the desktop app: `docs/architecture/attention.md`.
 - Before reversing a choice a principle doc cites: `docs/decisions/INDEX.md`, found by keyword with the decider skill's `decisions search`.
 - When changing what a catalog may declare: `docs/authoring/README.md`, the product reference the app shows.

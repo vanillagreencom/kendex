@@ -1,381 +1,194 @@
 # Lane directive
 
-Read the matching section when [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) cannot select or launch a lane. Read Recovery relaunch when [oversee.md](../workflows/oversee.md#recovery-relaunch) recovers a dead, walled or handed-off lane. Native command help owns refusal fields and declared defaults; this reference supplies their conditional remedies.
+Read the matching section when [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) cannot choose an account or launch a lane. Read § Recovery relaunch when [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch) brings back a dead, walled or handed-off lane. A refusal prints `orch-runtime: KEY field=value ...` on stderr. A launch that failed after it was recorded carries the key as its observation's `cause`. [settings.md](settings.md) holds the settings named here.
 
 ## No lane has room
 
-On `lanes pick` exit 3, read `lanes list`, wait only when its lanes are over the threshold, and report every `expired`, `plan_ended`, `unreachable`, `refused`, `no_credentials`, `no_usage_data` or `error` lane, and every `rate_limited` lane with a null `headroom_pct`, to the operator.
+The account judge is `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]`; `--lane [CONFIG_DIR]` judges one named account. A request with `judge_account: true` checks its named account through the same judge.
 
-Which of these statuses a failed Codex renewal takes, and its remedy, is stated once, in the `lanes` script header under "Why a Codex token is renewed by the Codex CLI".
+Read `.result.answer`. `lane` names the account in `.result.record.config_dir`. `unjudged` is never a verdict: repair what `.result.record.cause` names. `cloud-repo-unset` is a cloud-session account with no access to this checkout's repository under `ORCH_LANE_CLOUD_REPOS`. Any other answer refuses; on a walled one, read the roster. The 5-hour window is no wall for a running lane, but a spent one admits no start on its account until its reset: the window at 100, or the harness's own session-limit report on a lane there. Its refusal's `projected_window` names the `session` bucket and its `resets_at`.
 
-An `expired` lane is one whose login is proven dead, or a Codex lane whose failed renewal that section lists as `expired`; its `detail` names why, and it is the only one of these an operator answers by logging in again, or by the command its `detail` names.
+```bash
+.agents/skills/orch/scripts/orch-runtime lane roster
+```
 
-A `plan_ended` lane reads `walled` with no reset, so it is never waited on: its plan ended or its organization disabled subscription access, and only the owner restoring the plan or that access, or taking the account out of the fleet, brings it back.
+Wait only for an account over the threshold whose `status` is `ok`. Answer any other status as the table says, and report it to the operator:
 
-A `rate_limited` lane met an endpoint answering HTTP 429.
+| Status | Remedy |
+|---|---|
+| `expired` | Log in again, or run the command `detail` names. |
+| `plan_ended` | Never wait on it: it has no reset. Only the owner brings it back, by restoring the plan or the access, or by taking the account out of the fleet. |
+| `rate_limited` | Where `headroom_pct` is null, launch on another account. Never log in again. |
+| `unreachable`, `refused` | Launch on another account. Never log in again. |
+| `no_credentials`, `no_usage_data` | Report it; launch on another account. |
+| `error` | Repair the step `detail` names. A Claude account's missing OAuth client id needs `AGENT_RUNTIME_CLAUDE_CLIENT_ID`, set once per host. |
 
-A usage refresh refused while the host holds an eligible figure is reported on that figure, with its age in `usage_age_s`, and judged on it like an `ok` lane.
+The judge can still refuse an account with roster room on its `projected_headroom_pct`, which charges each fleet lane live on the account. Wait for a lane on that account to close, or launch on another account.
 
-The figure must be younger than the 5-hour session window.
+The judge keeps room on a seat for its overseer. A seat is the account this fleet's overseer runs on, or a provider row marked `seat=1`. A `none` answer's `seats` names each seat it left out, with its `need` and `projected_headroom_pct`. Wait until that projected room passes `need`, or launch on another account.
 
-A consumed bucket reset ends eligibility before that age limit.
+A Codex account past its plan windows can still have room on its credits. A walled one reopens at `binding_resets_at`.
 
-A live recorded refusal still blocks a new request after the reset and reports no usable figure, with null `headroom_pct`.
+### Pi picks
 
-A token renewal refused with 429, or a usage 429 with no eligible figure, carries no window.
+The judge reads a Pi pick on a `github-copilot/` model on the Copilot pool, from the lane host's `accounts` row for the Pi root ([lane-host.md § Provider protocol](../schemas/lane-host.md#provider-protocol)). Run `orch-runtime lane pick --fleet --harness pi --native-model [MODEL] --lane [PI_ROOT]`.
 
-An `unreachable` one met an endpoint answering 5xx, an endpoint it could not reach, or a credentials lock another tool held.
+- An `unmeasured` answer whose `refusal.cause` is `provider-unmeasured` means no reading measured the pool. Never wait it out. Repair the provider's read, whose row `orch-runtime lane roster` shows, or state the pool in `AGENT_RUNTIME_COPILOT_POOL`.
+- A walled pool reopens at its `binding_resets_at`. A walled stated pool moves only when the owner restates it: report it to the operator.
 
-Both leave the login untested, so the answer is another lane and never a re-login.
-
-A `refused` one met a usage endpoint answering another code outside 2xx, 401 and 403 included; `detail` carries the code, and it is not a re-login either, since the code names no cause `lanes` judges.
-
-Where an endpoint answered, `detail` carries the code and the lane is left alone until the recorded window passes.
-
-An `error` lane failed a step on this machine, a renewal's included.
-
-Every Claude account `error` for a missing OAuth client id needs `ORCH_LANES_CLAUDE_CLIENT_ID`, set once per host.
-
-Two more causes of exit 3 are not a reset to wait for.
-
-An account `lanes list` shows with room can be counted `walled` on its projection: its `claims` in the same spending pool, each charged its burn on the binding bucket and on the 5-hour session window up to that window's reset, carry `projected_headroom_pct` to the threshold.
-
-Claude and Codex windows count only plan claims.
-
-A missing claim pool means plan.
-
-API and cloud grants have no in-flight burn.
-
-It returns as those live plan lanes end, so wait for a lane on it to close.
-
-A refusal carrying `seats=` above 0 names each window-account overseer seat it left out on a `lanes: pick-seat-omitted` line.
-
-It returns, ranked last, when its projected room rises above `ORCH_OVERSEER_SEAT_RESERVE_PCT`; wait for that room or launch on another account.
-
-A Copilot pool pick, through Copilot or Pi, never omits an overseer seat; its pool reading and monthly claim burn bound the pick.
-
-A Codex account past its plan windows is not walled while its credit balance is above `ORCH_LANE_CODEX_CREDIT_FLOOR`, its reading has credits, and it has reached neither its overage limit nor its spend control: `lanes list` shows the balance as its HEADROOM, and `lanes list --json` and the `account` event carry `verdict=room` and `binding_bucket=credits`.
-
-A Codex exit 3 that counts such an account walled means one of those failed; `lanes pick --lane [DIR] --harness codex` names its `credits=` balance and the `credit-floor=` it was held to.
-
-Its windows still reopen at `binding_resets_at`, so wait for that reset as for any wall.
-
-A pi pick on a `github-copilot/` model is judged on the Copilot pool, which `lanes list` never shows: read the table the refused `lanes pick --harness pi` printed, or `lanes pick --lane [DIR] --harness pi --model [MODEL] --json`.
-
-The pool is read live from the lane host's `accounts` row for the Pi root ([lane-host.md](../schemas/lane-host.md), `harness=pi`). `ORCH_LANE_COPILOT_POOL` is the override, judged only for a Pi root no row reads. `copilot-pool-unstated` (exit 5) means no read measured any pool; its `fix=` line names the read that failed and the repair: store the seat on the provider, repair the provider's read its row's `status=` and `detail=` name, check `lanes host-accounts --harness pi --no-cache`, or state the override.
-
-Never wait it out. `copilot-pool-unread` (exit 1) is a failed or busy `accounts` read: ask again.
-
-A pool the host read that is walled reopens at its `binding_resets_at`, like a Claude window.
-
-A walled stated reading moves only when the owner restates it: report it to the operator.
-
-A pi pick on a `pi-claude/` model is a claude pick on the Claude seats and is read as one.
-
-A pi pick on an `anthropic/` model reads only the provider's API-credit rows.
-
-It spends the grant with the earliest expiry above the shared `ORCH_LANE_CLOUD_CREDIT_FLOOR`.
-
-Read `lanes host-accounts --harness pi --json` for that provider reading.
-
-A refused API grant has `cause=api-credit` and no retry time.
-
-An unread API row names its `detail` and refuses the pick.
-
-A local host reads no API credit. `pick-provider-unmeasured` (exit 5) also names a pi model with no provider or another provider, which nothing measures: answer it as `lane-provider-unmeasured` below.
+A Pi pick on a `pi-claude/` model is a Claude pick on the Claude seats. A Pi pick on an `anthropic/` model spends an API-credit grant; a refused grant (`cause=api-credit`) has no retry time, and a local host reads no API credit. An `unmeasured` answer with no `refusal` is a model whose provider nothing bills: launch on a model of a billed provider.
 
 ## Lane preference
 
-A repository with a cloud grant lists its Claude cloud entry first and Codex on its own accounts as the fallback.
+`ORCH_LANE_PREFERENCE` lists `harness[@host]:model:effort` entries in order, under the grammar of [kendex.settings.toml.example](../kendex.settings.toml.example). The walk, `.agents/skills/orch/scripts/orch-runtime lane walk --fleet`, judges each entry's account and takes the first entry the judge gives an account. An entry with `@host` is judged on that host; one without it on `ORCH_LANE_HOST`.
 
-Set the entries in [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet.
+| Option | Use |
+|---|---|
+| `--lane [DIR]` | Judge every entry on one account, a directory or a listed alias. |
+| `--replaces [ITEM_KEY]` | On a relaunch: leave that lane's charge out and take no cloud session. |
+| `--source-harness [HARNESS]`, `--source-flags [WORDS]` | Pass over an entry whose harness cannot carry the asking session's permission posture. |
 
-A cloud lane declares `land=handoff` and cannot merge.
+Read `.result.answer`:
 
-A `disarmed` line from `pr-watch` launches a landing lane on the fleet's lane host through [Recovery relaunch](#recovery-relaunch), with `/orch merge-pr N` ([KEN-3276](https://linear.app/vanillagreen/issue/KEN-3276)).
+- `lane`: the launch request takes `.result.chosen`.
+- `none`: every entry was passed over. No reset answers the entries `.result.unread` names: repair the readings they name.
+- `held`: the final, `:last` entry is a last choice, and an earlier entry had room or was unread (`.result.room`). Wait as § No lane has room says.
 
-This uses another lane launch and that account's allowance for CI, review and merge.
-
-Early stops with no recorded cause belong to [KEN-3461](https://linear.app/vanillagreen/issue/KEN-3461).
-
-A pushed commit with no pull request belongs to [KEN-3035](https://linear.app/vanillagreen/issue/KEN-3035).
-
-`ORCH_LANE_PREFERENCE` uses the grammar in [kendex.settings.toml.example](../kendex.settings.toml.example) § Fleet. Unset or empty leaves the caller's route unchanged. An explicit model in `--cmd` or `--launch-flags` also keeps that route. Otherwise, a harness launch walks the entries through `lanes pick` on each eligible entry's harness, host and model. An entry with `@host` uses that host. An entry without it uses the caller's `--host`, or the resolved `ORCH_LANE_HOST`. A cloud-credit entry needs credit above `ORCH_LANE_CLOUD_CREDIT_FLOOR`, an unlocked grant before its expiry, and an account listed for the repository in `ORCH_LANE_CLOUD_REPOS`. It spends no plan window. A selected cloud-session entry still requires `--brief-file` and tmux. The launcher delivers that brief as the cloud task and replaces a model-free command template with the cloud launch. Permission eligibility uses `ol_entry_permitted`. It follows [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) and admits Pi's native no-approval posture for lane launches. A cross-harness caller still needs one transferable full-bypass posture. Pi extensions can ask for confirmation; excluding the question tool does not suppress those prompts. Overseer succession keeps its Pi refusals. Exit 3 means no room and tries the next entry. Exits 4, 5 and 7 mean the entry is unread: keep its keyed `lanes:` line and try the next entry without asking it the room question. Exits 1, 6, 8 and any other failed status stop the launch as `lane-resolution-failed entry= exit=`. The same split applies to a failed room question. A walk that selects nothing refuses `lane-unavailable` with `walk=` naming the list and, when present, `unread=` listing unread entries. Repair the readings their keyed lines name; a reset does not answer them. A final entry marked `:last` is a last choice, such as a costlier or reserved seat: before the walk reaches it, each earlier entry that exited 3 is asked again at `--max-pct 100` until one has room, which `lanes` answers with room for any projected room or Codex credit above `ORCH_LANE_CODEX_CREDIT_FLOOR`, its seat reserve and unmeasured refusal unchanged. Any earlier unread entry also holds the marked entry, with `last-choice=` and `unread=`. Where one has room, the launch refuses `lane-unavailable` with `last-choice=` naming the marked entry and `room=` the earlier one, which stays walled at the threshold: wait as [§ No lane has room](#no-lane-has-room) says. A walk with no marked entry asks nothing again. The fleet record carries the chosen `preference_entry` beside `model`. Each later tmux batch item and each `--wait-slot` rejudgment repeats the walk from the original caller input and rebuilds the command and its harness checks before creating the worktree.
-
-A Codex entry can return an account on its credits, `binding_bucket=credits`, only when no Codex account has plan room: plan allowance resets and credits do not, so `lanes pick` ranks every account with plan room first.
-
-The walk takes that account as the entry's pick.
-
-The credits are already bought, so spending them is no overage.
-
-A model-free `--cmd` is an argument template starting with the plain harness name.
-
-The launcher replaces that name, model and effort with the chosen entry and quotes the remaining arguments, leaving a bare `{brief}` for brief-file delivery.
-
-The shared overseer flag builder preserves or transfers the caller's permissions and supplies the chosen harness's question-tool and compaction settings.
-
-Other arguments must suit the chosen harness.
-
-Use an explicit model for arbitrary shell commands.
-
-Invalid entries refuse `invalid-preference` before any pick; a template starting with another command refuses `preference-command-invalid` before any window opens.
+The request carries the chosen `harness`, `model`, `effort` and `account`, the `class` with its `class_reason`, and the entry's `host` where it is not `local`. A request naming an `account` names its `model` and its `effort`. A request naming neither `account` nor `model` runs the harness's default.
 
 ## Launch gate
 
-`open-terminal` refuses foreign GitHub repositories and, with `LINEAR_TEAM` configured, foreign Linear team keys as `item-foreign repo=[REPO] route=peer-mail`, where a launch into a repository the overseer's `ORCH_CONNECTED_REPOS` lists also admits the overseer checkout's own team; route their prioritized tracker issues with `lane-mail peer send --repo [REPO]`, or ask the live registered Jarvis session, else the owner, with a launch recommendation when no repository overseer runs. A `--state-dir` launch from another repository's checkout goes ahead only where the overseer's checkout lists that repository in `ORCH_CONNECTED_REPOS` ([README § Setup](../README.md#setup)), and otherwise refuses as `overseer-foreign`, or as `overseer-unjudged` where the binding cannot be judged, its refusal text naming each cause; one whose fleet names no overseer repository binds to its own checkout's repository and goes ahead.
+The runtime judges a launch request in one transition before it writes anything; the transition's effect then prepares and opens the lane.
 
-After applying [§ Lane preference](#lane-preference), `open-terminal` refuses a lane launch on a harness its flag table names that names no model, and one that names no effort where that harness has an effort flag, one keyed refusal per missing half, because a harness default changes without notice.
+### Before anything is written
 
-A model class stands where the gate needs a model id in an `ORCH_LANE_PREFERENCE` entry and in `lanes pick --model`. `kendex tier-model` classifies each before `lanes pick` matches a window: a claude class resolves to its family alias, and a codex or copilot class to no model, the harness default, until codex list evidence reaches the launch.
+A transition refusal exits 1 with `ok: false` and records nothing. Fix what the key and its fields name, then send the request again. These keys need more:
 
-A lane entry therefore names an exact id or a claude class; one naming a codex or copilot class refuses as `launch-model-missing`, naming its `class`.
+- `obligation-conflict`: report the contradiction to root (§ Obligation lineage). Never rewrite the binding.
+- `lane-live`, `harness-live`, `harness-unreadable`: end the lane first (§ Recovery relaunch). A launch never starts a second session beside one.
+- `launch-blocked`, `launch-blocked-unread`, `overseer-unjudged`, `cap-unreadable`: never launch around it.
+- `overseer-foreign`: launch from that repository's fleet, or list it in `ORCH_CONNECTED_REPOS`, as `route` says.
+- `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
+- `item-ineligible`: the item is a container; launch its unblocked children.
+- `launch-overlap`: launch once that lane stops, or name the file in `in_scope` where the brief adds to it append-only.
+- `join-unreachable`: the holder is hosted or a cloud session. Launch once that lane stops.
+- `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder stops.
+- `tier-narrower`: brief the judged cycle.
+- `lane-repo-conflict`: leave `repo` out of the `admit-paths` request; the lane's own is judged.
+- `launch-class-missing`: name both `class` and `class_reason`, under [skill-rules.md § Model class](skill-rules.md#model-class). A relaunch naming neither keeps the record's.
+- `launch-class-missed`: launch at `standard` or above.
+- `launch-model-missing`, `launch-effort-missing`: name the model and effort the account was judged on.
+- `permission-unrepresentable`: name a spelling the harness takes, or leave `permission` out to run the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture.
+- `account-spent`, `account-walled`, `account-reserved`, `account-retired`, `account-unmeasured`, `account-unjudged`: read the answer as § No lane has room does. Then choose another account, never the same one, through [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) step 3.
+- `cap-reached`: § Caps.
 
-A codex or copilot exact id is a supported form and warns nothing; a claude exact id warns once as deprecated.
+### A joined launch
 
-The harness-default answer serves overseer entries only. `lanes --help` (`--model`) gives the warnings and refusals.
+A first launch whose touched set meets a live lane of the same repository before that lane's review joins it. The reply's `op` is `joined`. Nothing is launched and no slot is charged. The brief reaches the holder's mailbox, and the holder ships both items.
 
-The fleet record carries the class in `preference_entry` beside the resolved `model`.
+### After the lane is recorded `preparing`
 
-A `--cmd` or `--launch-flags` model reaches the harness as written, so it names a model, the managed alias `kendex tier-model claude --model [CLASS] --json` selects after overrides, or an exact id, never the class itself.
+The effect's refusal settles the launch intent `failed` and records the lane `stopped`, with the key as the observation's `cause`. Under `--effect-exit` the reply's `settled` intent carries that observation; `.agents/skills/orch/scripts/orch-runtime state inspect --fleet` shows it. Fix what it names before retrying. If a failed cloud launch leaves an item worktree claim, resolve that claim with its owner before sending the request again. These causes need more:
 
-`open-terminal` reads the model and the effort out of the one text the launch runs: the `--cmd` command where there is one, `--launch-flags` where there is not. It refuses a launch that names either nowhere, and refuses `--launch-flags` beside `--cmd`, which are appended to no command and reach nothing. A preference walk on a named lane asks each pick with `--projected`; how it checks that lane for each entry is `open-terminal --help` under `--lane`. It uses the successful pick at launch. Account checks use `lanes pick --native-model` for the selector the harness runs. This preserves a resolved alias without applying class overrides again. An explicit-model launch judges the named lane on that model again, so a lane picked without `--model` can be refused here. A hosted launch, `--relaunch` included, is judged on the provider's reading of that window where its `accounts` row for the account carries one, and on this machine's reading otherwise; only an account nothing measured then turns on whether the provider holds it, per `open-terminal --help` § `--host`. It still names a model and an effort. Each refusal has its own answer:
+- `bypass-refused`: the account's owner removes the recorded `skipDangerousModePermissionPrompt: false`, or the lane launches without the bypass word.
+- `harness-binary-missing`: install the harness, or name it in `AGENT_RUNTIME_HARNESS_BINARIES` as `harness=/absolute/path`.
+- `permission-mismatch`: drop the bypass word, or name a narrower one.
+- `home-relative`, `no-context-reader`: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup). Repair what `file` names.
+- `tmux-session-unresolved`, `tmux-session-missing`: § Tmux session.
+- `session-owned-elsewhere`, `session-store-unreadable`: the same request meets the same refusal. Repair the store, or report the session to the operator.
 
-- `launch-model-missing` and `launch-effort-missing` (naming `harness`, `lane` and the `spellings` that harness takes, and `class` where a preference entry's class ran no model): the launch made only part of the choice of lane, model and effort. Add the missing word to the text the launch runs, or name an exact id or a claude class in the entry; never let the harness pick.
-- `launch-question-tool-missing` (naming `harness` and one `word` per word): the `--cmd` command leaves that harness's question tool on. Add the words, in order, to the command; [skill-rules.md § Coordination](skill-rules.md#coordination) lists them.
-- `launch-unattended-missing` (naming `harness`, with the text printed on the refusal's last line): neither the brief file nor the `--cmd` command of a lane naming a harness carries the unattended words. Add the text, whole, to the brief file; [skill-rules.md § Coordination](skill-rules.md#coordination) names them.
-- `launch-flags-unreachable` (naming the `flags`): the launch passed `--launch-flags` beside `--cmd`, which appends no launch flags to either an explicit-model or model-free template, so those words would have gated and been recorded while the harness ran its own default. Move them inside the `--cmd` command, or drop `--cmd`.
-- `lane-model-walled` (naming `lane`, `model`, `pct`, `bucket` and `projected-headroom`): that account's deciding window, with the expected burn of the lanes already live on it, is at or above the threshold. `bucket` is the window whose projected room is the smaller: the 5-hour `session` window where those lanes spend it before it resets, otherwise the shared or model window that binds. `pct` is that window's reading and `projected-headroom` the room left after that burn. Where `pct` is under the threshold, the live lanes decided it, as [§ No lane has room](#no-lane-has-room) says. For a Codex account with a credit reading, the `lanes: pick-lane-walled` line above it names the `credits=` balance and the `credit-floor=`: the balance was at or under the floor, or the reading has no credits or reached its overage limit or spend control. Re-run [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) step 3 with `--model`, never retry the same lane. A hosted relaunch meets it too: the window belongs to the account, so resuming would spend the sandbox start to open on a usage banner.
-- `lane-model-unreadable` (appending `status` and `detail` after `step=windows`): no window of that account measures the model, or its usage could not be read. For a Copilot CLI account, the `fix=` line names `ORCH_LANE_COPILOT_POOL=<dir>=<used>/<granted>` where the stored login does not read, or a provider `accounts` row with `harness=copilot` and `monthly-pct`. For a pi launch on a `github-copilot/` model, neither the lane host's `harness=pi` row nor `ORCH_LANE_COPILOT_POOL` reads a pool for that Pi root, and the `fix=` line names the repair. An unread window is never an empty one, so the answer is the same re-pick.
-- `lane-credit-refused` (naming `lane`, `cause` and `retry-at`): the cloud or Anthropic API grant is at or below its shared credit floor, locked or expired; an unread cloud grant uses this refusal too. `cause=cloud-credit` or `cause=api-credit` identifies the allowance. `retry-at=none` means the grant has no known retry time; a plan reset cannot reopen it. Pick another eligible account or host. An unread Anthropic grant reports `lane-provider-unmeasured` instead and needs its provider reading repaired.
-- `lane-provider-unmeasured` (naming `harness` and `model`): no reading measures the pi account, named lane or `auto`. For `anthropic/`, repair the provider's `harness=pi` API row; its `status` and `detail` name the failed reading. A local host supplies no API reading. Other supported provider forms are `pi-claude/<model>` and `github-copilot/<model>`. A bare `--model` can take `--provider` beside it.
-- `host-pi-claude-seat` (naming `host` and `model`): a hosted pi launch on a `pi-claude/` model, refused before any pick or host work because the host protocol hands a Pi lane its account as its Pi root and carries no Claude seat. Launch it with `--host local`, or on a `github-copilot/` model.
-- `host-credential-dead`: the account read expired, and the provider reports holding that same account. The expired copy is this machine's, which could not be renewed, or the provider's where its `accounts` row reports `expired`; `lanes list` names which in its THROUGH column. For this machine's copy, renew the login here for that config dir; a provider that re-seeds the host from that directory at every `create` sends the dead copy again. On this machine's reading it is reported for claude and codex lanes, the ones whose local credential `lanes` reads an unrenewable expiry from; a codex lane's `detail` names the codex command that renews it. For the provider's copy, renew the credential the provider holds. A relaunch onto that same account proceeds instead, on the copy the provider installed.
-- `lane-claims-unreadable` (naming the `lane`): the in-flight claim store could not be read, so the lanes already on the account could not be charged; `--lane auto` refuses on it too. Fix the claims directory the keyed `lanes:` line above names, or set `OVERSEE_WATCH_STATE_DIR`.
-- `lane-judge-failed`: the judge refused before it answered, a malformed `--lane-max-pct` among the causes. The keyed `lanes:` line above it names which.
+### Harness gate
 
-A fleet launch, one naming `--state-dir`, meets one more gate, which admits a harness only where the lane runs with its own compaction off and a harness adapter can name its window:
+The harness gate (agent-runtime `effects/prepare/gate.rs`) admits only a lane whose compaction is off and whose turns its hooks record. A `cause` from it is repaired as the lane's harness says; a hosted Pi or Copilot lane meets the gate on the host's own files:
 
-- `launch-compaction-missing` (naming `harness` and one `word` per word): the `--cmd` command leaves that harness's own compaction on. Add the words, in order; [skill-rules.md § Coordination](skill-rules.md#coordination) lists them.
-- `unsupported-for-oversee` (naming `harness`, `none` for a launch naming none): no adapter reads that harness, or, with `reason=no-window-read`, the Pi carrier installed sends no `context_window`, the window its turn-end and tool-call payloads give the lane-mail-check hook. The gate proves that field installed and nothing about a lane's shell: a lane's own pre-panel check, which no payload reaches, takes its window from this session's context record or Pi's model registry ([review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers)). Launch on claude, codex, or a Pi with the current pi-hooks. A copilot fleet item is refused with `reason=no-context-hooks` (naming the `item`) where neither its worktree's project hook scope nor the lane's `COPILOT_HOME` global one holds all three of `lane-mail-check`, `lane-mail-compact` and `lane-mail-start`: commit them on the base the worktree is made from, or install them in that global scope through kendex, then launch again with `--relaunch`, since the worktree stands. With the hooks in place, it is refused with `reason=hooks-disabled` (naming the `item` and the `file`) where `disableAllHooks` is true in a Copilot settings file of that home or worktree that no later file sets false, or in the `.json` document of one of those three hooks in the scope that holds them, as `kendex hooks-off` reads them: set it false there, then launch again with `--relaunch`. It is refused with `reason=hooks-unjudged` (naming `exit`) where that query could not answer, a missing kendex, one too old to take `--hook-document`, or a file it cannot read or parse as commented JSON included: install or repair kendex, then launch again with `--relaunch`. It is refused with `reason=no-context-reader` where that home cannot be made to run the `kendex-lane-context` Copilot extension, its context reader; `file` and `detail` name where and why, and `detail=disabled` is an `enabledFeatureFlags.EXTENSIONS` the operator set false, which the launch never overrides: there the lane is admitted only on the fallback reader, the session record its account's status line writes, and `cause=` names what failed in that status line ([copilot-runtime.md](copilot-runtime.md#account-setup)). `detail=pending-unwritable` names in `file` the directory under the launch's HOME where the extension marks a reading on its way, which could not be made or written. It is refused with `reason=relative-home` (naming `home`) where the lane's `COPILOT_HOME` is no absolute path, before any worktree is made: set it to an absolute path, then launch again. One refused with `reason=hosted` launches locally ([skill-rules.md](skill-rules.md#coordination), Compaction).
-- `compaction-on` and `pi-settings-unreadable` (naming the `file`): Pi would compact the lane, or its settings file could not be read. Set Pi's `compaction.enabled` to `false`, or repair the file.
-- `pi-carrier-unreadable` (naming the `file`): the host's pi-hooks carrier file could not be read.
-- `pi-mail-wake-missing` (naming `root`, `scope`, `location`, `update` and `retry`): the selected pi-hooks lists no lane mail wake. Repair that install on the lane machine using [pi-runtime.md § Lane mailbox wake](pi-runtime.md#lane-mailbox-wake-pi), including its project repair route for linked worktrees. A hosted `pane=local` retry needs `--relaunch` because `create` already owns the item. Provider-owned pane recovery follows [Recovery relaunch](#recovery-relaunch).
+- Pi: [pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi). Pi needs automatic compaction off in its settings, no project setting turning it on, and an installed pi-hooks carrier that supplies `context_window` and wakes on mail. Its causes are `compaction-on`, `pi-settings-unreadable`, `pi-carrier-unreadable`, `pi-carrier-unresolved`, `pi-selection-unresolved`, `pi-mail-wake-missing`, `pi-mail-wake-off` and `unsupported-for-oversee harness=pi`. After the repair, send the item's `launch-lane` request again, as `retry=launch-lane` says.
+- Copilot: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup). Install the three lane-mail hooks through kendex, switch them back on, or repair kendex.
+- `host-pi-claude-seat`: launch the Pi lane locally, or on a `github-copilot/` or `anthropic/` model.
+- `home-unresolved`: name the account.
 
-A hosted Pi lane's settings and carrier are its host's, read after `create`, so the host keeps the item a Pi refusal leaves.
+### Hosted launch
 
-A `pane=local` lane can launch again with `--relaunch` after the fix.
+A launch record that the provider's `create` did not leave whole (`marker-failed`, `host-gitfile-unread`, `host-gitfile-invalid`, `host-runtime-unbuilt`): report it to the provider's owner.
 
-Provider-owned pane recovery follows [Recovery relaunch](#recovery-relaunch).
+A provider step that gave no answer holds the launch open, with a `note` ending `-unknown`. The provider may hold the item's worktree. A repeated launch request reconciles the open launch. To start a fresh one, close the held launch through [lane-reach.md § Lane close](lane-reach.md#lane-close) and confirm the sandbox is gone. A sandbox the provider acknowledged stays charged to the cap until a close confirms it gone. If create refuses before acknowledging the sandbox, check its ownership with the provider before retrying.
 
-`host-accounts-unanswered` is a notice, not a refusal: nothing said which accounts the host holds, so the launch is judged on this machine's reading as an unhosted one is. A keyed `lanes:` line above the notice names a provider failure, with the provider's own message above that line; no line above it means the read of the answer failed on this machine. Fix what that line names, or read the launch's outcome as a local measurement.
+### Cloud launch
+
+A cloud launch held as `cloud-create-unknown`, `worktree-create-unknown` or `worktree-push-unknown` has no process left to answer it, and its intent stays open. Read it with `orch-runtime state inspect --fleet`. Where its observation or `CloudCreate` phase carries `answer_by`, wait until that time, then check claude.ai/code for a session on the item's branch. Check again immediately before relaunching the item. A close that answers `intent-open` leaves the launch standing: wait for its owner to end and reconcile it, and do not launch beside it. Settle the lane with the runtime close, which supersedes the held launch:
+
+```json
+{"op": "close-owned-resources", "item": "[ITEM_KEY]", "terminal": {"verdict": "[completed|canceled]", "source": "[SOURCE]"}}
+```
+
+Use `terminal` where the item is finished. To relaunch it, use the `no_landing` ground of § Recovery relaunch.
 
 ## Brief file
 
-A `--cmd` launch's brief travels as a file.
+Write the brief with the harness's file tool under the checkout's `tmp/`, and name its absolute path as the request's `brief_file`. Keep the file until the launch settles. A launch with no `brief_file` starts the lane on the start workflow for its item, which continues from the item's handoff record.
 
-Write it under `tmp/` with the harness's file tool, pass it as `--brief-file [BRIEF_PATH]`, and put `{brief}` in the `--cmd` command where the brief goes, bare and outside every quote. `open-terminal` supplies the shell quoting.
-
-Local GUI and tmux launches save a copy of the brief in the worktree's git directory.
-
-The shell reads that copy when the command runs, so brief newlines never enter terminal input.
-
-Worktree removal deletes the saved copy.
-
-Only a hosted terminal launch quotes the brief text inline for the remote shell behind the provider's prefix.
-
-Each route preserves the brief's text, less trailing newlines.
-
-An apostrophe, a double quote, `$` or a backtick in the brief reaches the harness as written.
-
-A brief typed inline in `--cmd` is the caller's own shell text: two apostrophes in a single-quoted brief balance each other, and the harness receives the words between them split and altered, or the shell runs them.
-
-Each refusal below comes before any worktree or window:
-
-- `cmd-unbalanced-quote` (naming `item`): the `--cmd` command leaves a quote open. Move the brief to a file, as above.
-- `brief-quoted` (naming `item`): the command puts `{brief}` inside a quote or behind a backslash. The launcher supplies shell quoting, so additional quoting can split or expand the brief. Write `{brief}` bare.
-- `brief-unreferenced` (naming `option=--brief-file`): no `--cmd` command carries `{brief}`, so the file would reach no harness. Pass a `--cmd` command with `{brief}` where the brief goes; a launch without `--cmd` renders its own brief and takes no file.
-- `brief-file-missing` (naming `option=--cmd`): the command carries `{brief}` with no `--brief-file`. Pass the file.
-- `brief-file-unreadable` (naming `path`): the path is not a readable file. Write the brief and pass that path.
-- `brief-file-empty` (naming `path`): the file holds only whitespace, so the harness would start with nothing to do. Write the brief into it.
+The brief opens the lane's workflow, `/orch start [ITEM]` or the tier's verb, in the form its harness takes ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A first launch reads the tier the brief states, by its verb or its one `item-tier` line; a relaunch keeps the record's. The launch closes a local or hosted lane's brief with the unattended words, the lane mailbox monitor's arm line for Claude Code and Copilot CLI ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)), and the output-mode sentence of [skill-rules.md § Lane Output](skill-rules.md#lane-output). A cloud launch's brief takes the cloud session words in place of the unattended words.
 
 ## Obligation lineage
 
-The root launch or continuity directive supplies the evidenced original obligation and accepted parent mapping. Its nullable four-field object is [workflow-state.md `lanes[].obligation`](../schemas/workflow-state.md#oversee-state). For `open-terminal`, write that object or JSON `null` to a file under `tmp/` and pass `--obligation-file [PATH]` beside `--state-dir`. The existing locked lane-record writer binds it once and refuses a conflicting supplied object. Missing or null input preserves a known binding. A legacy record without an accepted mapping remains unknown; never reconstruct it from a title, current parent or checkout repository.
+The root launch or continuity directive supplies the item's original obligation and its accepted parent mapping: the object of [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state) `lanes[].obligation`. Carry it as the `launch-lane` request's `obligation`.
 
-Keep the binding through same-item launches, retries, relaunches, wakes, park/resume, account/model recovery and context handoff. Reparenting does not rewrite the original parent. A replacement item needs the predecessor's complete object supplied explicitly in its launch file; its current item key stays separate. A cross-fleet transfer needs its accepted preserved mapping when no retained record reaches the successor. Report a contradiction to root rather than enriching or rewriting a known binding. A genuinely separate obligation needs a new tracker item or an explicit root disposition.
+- A record that binds none takes the stated object. A request naming none keeps the record's binding.
+- A first launch naming `repo` and no `obligation` records the item as its own parent: a fresh item.
+- A record with no accepted mapping stays unknown. Never reconstruct one from a title, a current parent or the checkout's repository.
+- A surface-2 record carries the binding as [oversee.md § Lane record](../workflows/oversee.md#lane-record) writes it.
 
-`oversee-cycle record` copies the exact lane binding to `cycle.obligation`, with null for unknown lineage. A retained previous cycle stays that delivery's snapshot. The retained record namespace/key plus `launched_at` remains the supported launch identity; changing a native session or account adds no obligation attempt. Fleet derives ready from the original item's first launchable Linear-state event through its existing history reader. Kendex adds no ready timestamp or backfill. Existing `cycle.stages` remains partial observed evidence independently of full-validation counts; missing coverage stays unknown, and replayed snapshots add no work.
+Keep the binding through same-item launches, retries, relaunches, park and resume, account or model recovery, and context handoff. Reparenting does not rewrite the original parent. A replacement item names its predecessor's complete object as its launch request's `obligation`, or in its surface-2 record; its own item key stays separate. A cross-fleet transfer carries its accepted mapping where no retained record reaches the successor. Report a contradiction to root; never rewrite a known binding. A separate obligation needs a new tracker item or an explicit root disposition.
 
 ## Caps
 
-The launch cap refuses a launch before its worktree; a `--relaunch` meets it only where it adds a lane to that cap.
+The transition counts its cap before it writes anything. A `claude-cloud` request counts against `ORCH_OVERSEER_CLOUD_LANES`; every other kind, a cloud session's landing lane included, counts against `ORCH_OVERSEER_LANES`. No cap bounds the lanes on one account. The reply's `admission` lists each charge with its `reason`. A relaunch leaves its own record's charge out, so it replaces the lane it holds.
 
-It counts `running`, `preparing` and `parked` records by their declared kind. `claude-cloud` uses `ORCH_OVERSEER_CLOUD_LANES`; every other kind, a cloud session's landing lane included, uses `ORCH_OVERSEER_LANES`.
+- `cap-reached`: send the request again once a lane that cap counts closes. Write no counting loop.
+- `cap-unreadable`: fix the source it names; never launch around it.
 
-A parked lane keeps its slot, and its resume adds no lane.
-
-No cap bounds the lanes on one account: `lanes pick` chooses the account by its headroom.
-
-- `cap-reached`: `setting` names the cap reached. Launch once a lane counted by that cap closes.
-- `cap-unreadable`, `cap-lock-unopenable`, `cap-lock-failed`, `cap-reserve-failed`, `claim-unrecorded`: fix what the line names; never launch around it.
-
-A launch queued behind the cap, such as a chain script, passes `--wait-slot`, which waits for room; the overseer writes no counting loop. `--over-cap` admits one deliberate exception, recorded as the lane record's `over_cap`.
+A request's `over_cap` admits one deliberate launch past its cap; the record keeps the word.
 
 ## Tmux session
 
-Every lane window opens in one tmux session, named in the record's `window` as `SESSION:WINDOW`: `ORCH_TMUX_SESSION` when set, else the session the state records as `tmux.session`, else the launching pane's session.
-
-The first tmux launch records the session it opened in, `ORCH_TMUX_SESSION` or the pane's, once tmux confirms it exists.
-
-A launch with no live pane and neither refuses as `tmux-session-unresolved`, and a named session tmux does not hold refuses as `tmux-session-missing` with its source.
-
-A detached launch chain with `ORCH_TMUX_SESSION` set needs no `$TMUX`: it reaches that session on the person's own tmux server, the socket tmux derives from their uid.
-
-One with neither refuses as `tmux-missing`, so set `ORCH_TMUX_SESSION` for such a chain.
+Every lane window opens in one session on the fleet's tmux server: the one `AGENT_RUNTIME_TMUX_SESSION` names, else the fleet state's `tmux.session`, which the first confirmed launch records. kendex creates no session. A launch that resolves no session, or names one the server does not hold, refuses: set `AGENT_RUNTIME_TMUX_SESSION`, or create that session.
 
 ## Recovery relaunch
 
-### Source-only recovery
+A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
 
-A standing source-only handoff retains its phase scope. Read the native standing record and the retained artifact named by its first `remaining` entry, then load the successor's required current protocol and obtain native admission. Follow [start.md § 0](../workflows/start.md#0-resume-from-a-handoff) and [start-worktree.md § 1 step 3](../workflows/start-worktree.md#1-open-the-session): the standing record replaces implementation preparation and resumes that same entry through the existing-state branch.
+1. End the lane. The record must not be in flight, and no recorded harness or detached turn may still run. End it through its own close-out, [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver), or the runtime close in step 2.
+2. Where the lane still stands, run the runtime close. It retires the attempt and keeps the item's work, the worktree and its validation runs among it. Write the request with the harness file tool:
 
-Apply [Source-only continuation](oversee-events.md#source-only-continuation) to retained reads, changed bindings, costs, opinion status and missing artifacts. The successor completes only the root-authorized pending action. A missing or unread standing record keeps the existing stop-and-report route; it grants no standard-start restart, fresh allowance, helper, opinion replay or next phase. Merely receiving an independent prerequisite does not grant continuation of a stopped phase.
+   ```json
+   {"op": "close-owned-resources", "item": "[ITEM_KEY]", "no_landing": {"reason": "[REASON]", "source": "overseer"}}
+   ```
 
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --fleet --effect-exit --request [REQUEST_FILE]
+   ```
 
-Before a manual stop for recovery, require a local lane or a host named by an absolute provider executable path.
+   Exit 0 is a confirmed stop. Exit 3 is a failed close, its cause in the observation. Exit 75 is a close still open; a repeat of the same request settles it. The close stops the harness only on proof that it is idle or gone: a working lane fails `not-idle`. A lane holding an unanswered ask fails `ask-unanswered` while its harness runs: answer the ask ([lane-reach.md § Asks and mailboxes](lane-reach.md#asks-and-mailboxes)). Add `"interrupt": true` inside `no_landing` only for an unusable session, as after a model switch; it waives only the idle proof. An open close lists what still stands in its observation's `remaining`. A `pane` row marked `unaddressable: true` names a pane with no tmux server: find it with `tmux list-panes -a`, end what it runs by hand, and report the open intent to the operator.
 
-Read the saved host capability line from the saved recovery checkout.
+3. Compose the relaunch request from the record, and send it as § Launch gate's request is sent:
 
-A provider whose line omits `pane` keeps the local-pane default.
+| Field | Value |
+|---|---|
+| `item`, `harness`, `tracker`, `repo`, `model`, `effort`, `permission` | The record's, or the replacement's choice. |
+| `mail_root` | The record's; a hosted record's `checkout`. |
+| `host`, `kind` | Together, where the replacement runs where the record's lane ran. A request naming neither opens a window on this machine and records a local lane. |
+| `account` | The account `lane walk --fleet --replaces [ITEM_KEY]` or `lane pick --fleet --replaces [ITEM_KEY]` chose. |
+| `class`, `class_reason` | Both, or neither to keep the record's. |
+| `refresh` | `true` for a refresh lane: a relaunch without it drops the record's `refresh`. |
+| `brief_file` | The continuation (§ Brief file). |
 
-For `pane=verb`, give the launcher ownership without a manual prior stop.
+The confirmed launch writes `harness`, `account`, `model` and `effort` from the request, each null where the request names none: carry each one the replacement keeps. Left out, `tracker`, `repo`, `over_cap`, `permission`, `obligation` and `desktop` keep the record's value. A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
 
-An unavailable capability read leaves the harness, window and record untouched.
+A relaunch is not judged by the [Ancestor gate](skill-rules.md#ancestor-gate) or the file-overlap hold; it keeps the record's touched sets and tier. A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.
 
-Local and absolute static SSH provider recovery keep their existing route.
+### Resume or fresh
 
-Automatic recovery through a relative provider executable path is deferred to KEN-3996.
+A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt. A switched harness or account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`. A hosted relaunch always starts fresh. A fresh start continues through the handoff record: its brief is the `start` brief ([start.md § 0](../workflows/start.md#0-resume-from-a-handoff)), and a harness switch's brief also carries the transcript sentence of [handoff.md § 2](../workflows/handoff.md#2-launch). The brief carries the continuation either way, so paste nothing into the pane after a relaunch.
 
-The watch reports `relative-provider-deferred:KEN-3996` before capability admission, provider stop, marker creation or dispatch.
+### Parked record
 
-Keep that lane's harness, window and record.
-
-Do not stop it by hand for that recovery.
-
-Fresh launches with relative providers remain available.
-
-A provider-owned replacement (`pane=verb`) completes setup before required prior retirement.
-
-The launcher prepares the provider, marker, command and dormant window, then confirms prior stop before remote start.
-
-Setup failure keeps the prior harness and complete running record.
-
-A busy preparation fails for an explicit retry without replacing that record or its checkpoint.
-
-A compatible saved selection completes its already started replacement record.
-
-Fresh launch retries retain their wait and marker checkpoints.
-
-A failed provider stop during cleanup keeps the window and current record.
-
-A dead or walled terminal lane uses native resume.
-
-A tmux relaunch replaces the item's existing window in the resolved session, for local and hosted `pane=local` lanes.
-
-A Linear key identifies the item, so replacement needs only the same name.
-
-A GitHub window requires the repository and worktree identity the launcher records on it.
-
-An untagged GitHub window remains open and emits window-preserved.
-
-With no replaceable match, the launcher opens a new window.
-
-Start with the [handoff.md](../workflows/handoff.md) § 2 terminal command.
-
-Add `--relaunch`, the selected `--lane`, the chosen `--launch-flags` and `--state-dir [OVERSEE_STATE_DIR]`.
-
-Keep the tracker, repository, harness, and item arguments, and `--lane-refresh` for a refresh lane, since a relaunch without it removes the lane's refresh record, and `--live-display` for a lane whose record holds `live_display: true`, since a relaunch without it clears the three display names from the lane and removes that declaration.
-
-Local relaunches and hosted Claude, Codex and Pi relaunches need no `--cmd`.
-
-Hosted Codex and Pi select a matching session on the host, or run the `start` brief in the same call when none exists.
-
-A `--cmd` relaunch follows [§ Lane preference](#lane-preference), with no session lookup, harness-switch check or `start` template.
-
-On a hosted `pane=local` lane, it requires successful `lane-host stop` of the prior recorded harness before `create --relaunch`.
-
-A `pane=verb` custom command prepares in the foreground before required prior stop.
-
-The new command reaches a fresh session.
-
-A relaunch that matches a session resumes that session's own workflow at its recorded tier: a `small` lane keeps running small.md under its bounds, and a `micro` lane micro.md.
-
-A relaunch that matches no session, or takes the `start` template by a route below, renders it and runs the standard cycle on the branch the tier's run left, its [start-worktree.md](../workflows/start-worktree.md) § 1 recording the tier as `standard`.
-
-A relaunch of an item whose handoff record stands looks for no session: the launcher reports `session-retired` and renders the `start` template, whose [start.md](../workflows/start.md) § 0 continues from the record; a record the launcher cannot read refuses as `handoff-unreadable`.
-
-The launcher asks from the lane's worktree, where the lane wrote the record.
-
-A hosted relaunch without `--cmd` waits for accepted preparation, then asks the remote worktree's handoff judge through its SSH target.
-
-A standing record requires a successful `lane-host stop` before the fresh start.
-
-The successor inherits the remote state directory the judge selected, so it reads and stamps that record even when an older launch used a configured directory.
-
-No standing record keeps the host's native resume-or-fresh selection.
-
-A failed read or stop refuses launch.
-
-A compatible saved selection checkpoint completes the already started harness's record without stopping it again.
-
-A changed native/custom command route restarts through the preparation owner under [lane-host.md § Provider protocol](../schemas/lane-host.md#provider-protocol).
-
-A record carrying `host` adds `--host [HOST]`: the provider keeps its tree.
-
-A hosted Claude relaunch runs the `start` brief when `claude --continue` exits 1 for no session.
-
-Hosted no-command Claude, Codex and Pi relaunches require a harness screen or Claude's brief check, including a fresh start after a harness switch.
-
-A readable pane with no recognized harness screen is `harness-screen-missing`, not launched.
-
-A failed provider capture reports `host-capture-failed` instead.
-
-Under a fleet, cleanup stops an untaken provider-owned replacement before it closes the window and records `stopped`.
-
-A confirmed replacement survives a later record-write failure.
-
-On the legacy SSH pane route, a foreground launch writes `stopped` only after a successful close.
-
-The background job writes it once cleanup reaches window close, even if that close fails.
-
-When changing harnesses, supply the new brief required by [handoff.md § 2](../workflows/handoff.md#2-launch) through `--brief-file` and `--cmd`.
-
-Without a custom command, a relaunch whose lane record names another harness as the last one to run the lane renders the `start` template directly, reported as `harness-switched`.
-
-A hosted harness switch requires a successful stop of that recorded harness before the fresh start.
-
-Relaunch identity during preparation follows the `lanes` contract in [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state).
-
-A record whose status is `parked` ([oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait)) takes the same command: the launcher starts the stopped sandbox through `lane-host start` before its `create --relaunch`, requires the provider's `sandbox-started` line, and refuses as `host-start-failed` with the record still parked when the provider does not answer it, so a resume is never reported on a sandbox nothing confirmed up; a confirmed start rewrites the record `stopped` before the create, so a create that fails after it leaves a stopped record a plain relaunch recovers.
-
-Its retained PR identity follows [workflow-state.md](../schemas/workflow-state.md#oversee-state); confirmed start does not authorize terminal close while that PR is OPEN.
-
-The resumed harness continues the transcript on the disk the park kept; a parked record keeps its fleet slot, so its relaunch replaces the lane it holds and never meets `cap-reached` ([§ Caps](#caps)).
-
-A hosted relaunch is judged on the account's usage window like any other launch, read from the provider's `accounts` row where that row carries one, and is refused as `lane-model-walled` when that window is at or above the threshold; `open-terminal --help` § `--host` holds what the provider's answer decides: that window where its row carries a reading, and, for an account nothing measured, whether the provider holds it.
-
-A relaunch the provider reports holding the account for proceeds there, reported as `host-relaunch-credential`, and the resumed session reports its own usage banner, which [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) reads as `usage-limit`.
-
-A local relaunch of an unmerged item whose rebase onto the base conflicts aborts that rebase and starts the session on the tree as it stands, reported as `relaunch-unrebased`: the restack stays the lane's.
-
-The launcher delivers the continuation line in the resumed command itself and keeps a merged item's tree as it stands, so nothing is pasted into the pane after the resume.
-
-An actual hosted Codex resume is the exception: it stays promptless and reports `resume-lineless`.
-
-Only that notice requires a continuation paste.
-
-Automatic account recovery passes `--continue-resume`, so the launcher delivers that continuation after it confirms a resume.
-
-A fresh start carries its brief and needs no paste.
-
-Paste the resumed lane's continuation through [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane), Pane paste, the way a walled lane gets its nudge.
+A `parked` record ([oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait)) is relaunched with the same request. The launch asks the provider's `start` for the stopped sandbox before its `create`. The relaunch moves the parked pull request into `pending_pr` ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), so an OPEN pull request still prevents the terminal close. A parked record holds no slot without a live identity or a reservation, so its relaunch can meet `cap-reached`.

@@ -20,9 +20,10 @@
 //!
 //! A test is read one step further. Its shell file hands stubs and
 //! assertions the launch lines it checks, so in a file under a test
-//! directory three shapes are data: a quoted string an assignment takes
-//! as its value, a quoted string `echo` or `printf` prints, and every
-//! argument of a function the tests define, each where the command's
+//! directory four shapes are data: a quoted string an assignment takes
+//! as its value, a quoted string `echo` or `printf` prints, every
+//! argument of a function the tests define, and every operand of `[`,
+//! `[[` or `test`, which compare and run nothing, each where the command's
 //! output reaches no other command. Every other string and word counts:
 //! one handed to any program the tests do not define, to a command whose
 //! name is quoted or expanded, or to a command piped on.
@@ -53,6 +54,10 @@ const HOLDS: &[&str] = &[
     "continue", "break", ":", "true", "false", "[", "[[", "test", "case", "esac", "fi", "done",
     "}",
 ];
+
+/// Commands that compare their operands and run none of them: in a test,
+/// what they are handed is data.
+const COMPARES: &[&str] = &["[", "[[", "test"];
 
 /// Words that open a command and are not its name: the next word is.
 const KEYWORDS: &[&str] = &[
@@ -635,9 +640,10 @@ pub fn defined_functions(sources: &[&str]) -> BTreeSet<String> {
 }
 
 /// Byte ranges of this line a test hands over as data: the quoted value
-/// of an assignment, each quoted string `echo` or `printf` prints, and
-/// each argument of one of `helpers`, the functions the tests define —
-/// where the command's output reaches no other command, and where it
+/// of an assignment, each quoted string `echo` or `printf` prints, each
+/// argument of one of `helpers`, the functions the tests define, and each
+/// operand of `[`, `[[` or `test` — where the command's output reaches no
+/// other command, and where it
 /// stands on the line or in a substitution whose output is itself data.
 /// What such a function then does with its argument is not read: a stub
 /// records it, an assertion compares it, and a helper that launches the
@@ -650,12 +656,16 @@ pub fn fixture_spans(line: &str, helpers: &BTreeSet<String>) -> Vec<(usize, usiz
         .map(|(at, command)| (command.id, at))
         .collect();
     // What a command hands over as data, if anything: its printed strings
-    // alone, or every argument of a function the tests define.
+    // alone, or every argument of a function the tests define or of a
+    // comparison.
     let carries = |command: &Simple| match command.head {
         _ if command.piped => None,
         Some(Head::Named(start, end)) => {
             let word = &line[start..end];
-            match (SPEAKS.contains(&word), helpers.contains(word)) {
+            match (
+                SPEAKS.contains(&word),
+                helpers.contains(word) || COMPARES.contains(&word),
+            ) {
                 (_, true) => Some(true),
                 (true, false) => Some(false),
                 (false, false) => None,

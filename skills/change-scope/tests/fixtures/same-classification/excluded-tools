@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=tools/guard
+harness-note: cause=product-source-or-unreadable-ownership path=tools/guard
+class: class=standard measured=true cause=excluded-path path=tools/guard glob=tools/*

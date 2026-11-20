@@ -42,7 +42,7 @@ class Producer(unittest.TestCase):
         self.packages = self.root / "producer"
         for name in ("jarvis", "mailbox", "slack"):
             shutil.copytree(REPO / "skills" / name / "scripts", self.packages / name / "scripts")
-        for name in ("orch", "github"):
+        for name in ("orch", "github", "agent-runtime"):
             self.packages.joinpath(name).symlink_to(REPO / "skills" / name, target_is_directory=True)
         self.scripts = self.packages / "jarvis/scripts"
         # The public status dependency starts healthy; cases supply recorded
@@ -62,7 +62,7 @@ class Producer(unittest.TestCase):
         self.executable("kendex", '#!/bin/sh\ncat "$REGISTRY"\n')
         self.module = load(self.scripts / "lib/watch.py")
         self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_MAIN_HOST="", JARVIS_LOG_DIR=str(self.root / "log"),
-                             JARVIS_WAKE_SETTLE_SECS="15")
+                             JARVIS_WAKE_SETTLE_SECS="15", JARVIS_VOICE_REMIND_SECS="0")
 
     def project(self, name):
         return make_project(self.root / name)
@@ -440,7 +440,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
     def test_mail_pass_markers_restore_and_unreachable(self):
         self.mail(self.home, "notice", "owner message", "--to", "owner")
-        ask = self.mail(self.peer, "ask", "question", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+        ask = self.mail(self.peer, "ask", "question", "--to", "owner", "--recommend", "yes", "--effect", "none", "--options", "yes,no")
         ask_id = ask.stdout.split("id=", 1)[1].split()[0]
         self.mail(self.peer, "send", "peer answer", "--re", ask_id)
         self.mail(self.home, "send", "already delivered at home", "--directive")
@@ -664,12 +664,93 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             self.assertNotIn("EVENT mail ", watch.log.read_text()[len(before):])
             step(watch, 1, reminder, True, 0, [fourth])
 
+    def test_an_open_voice_request_is_reminded_each_period(self):
+        # A voice request a progress notice leaves open is reminded each
+        # period until its final reply; a plain owner note beside it once.
+        windows = self.root / "windows"
+        helper = self.scripts / "owner-unanswered"
+        helper.rename(self.scripts / "owner-unanswered-real")
+        helper.write_text('printf "%s\\n" "$*" >> ' + shlex.quote(str(windows)) +
+                          '\nexec "$BASH" "${BASH_SOURCE[0]%/*}/owner-unanswered-real" "$@"\n')
+        self.settings["JARVIS_VOICE_REMIND_SECS"] = "120"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                ThreadPoolExecutor(max_workers=1) as passes:
+            pending = Future()
+
+            def started():
+                watch = self.watch()
+                watch.next_presence["local"] = 10 ** 9
+                return watch
+
+            def check(now, submits, reminded):
+                """One _poll at now and, where it starts a check, the poll that accepts it: the ids reminded."""
+                before = watch.log.read_text() if watch.log.exists() else ""
+                watch._poll(passes, pending, now)
+                submitted = watch.unanswered_pending is not None
+                if submitted:
+                    watch.unanswered_pending.result(timeout=60)
+                    watch._poll(passes, pending, now)
+                added = watch.log.read_text()[len(before):] if watch.log.exists() else ""
+                self.assertEqual((submitted, re.findall(r"^EVENT owner-unanswered id=(\S+) ", added, re.M)),
+                                 (submits, reminded), now)
+
+            def saved():
+                memory = json.loads(watch.path.read_text())["unanswered"]
+                return [row["id"] for row in memory["pending"]], sorted(memory.get("reminded", {}))
+
+            watch = started()
+            voice = self.owner_note("voice-request: caller=owner operation=op-1\nBook the flight.")
+            plain = self.owner_note("plain ask")
+            self.mail(self.home, "notice", "looking it up", "--to", "owner", "--ref", voice, "--progress")
+            watch.accept(self.acquire_all(watch, 0))
+            # A period under the check interval is the next check's time.
+            for row in ((0, True, []), (119, False, [])):
+                check(*row)
+            self.clock(120)
+            check(120, True, [voice])
+            self.clock(240)
+            for row in ((239, False, []), (240, True, [voice])):
+                check(*row)
+            # A restart remembers the last reminder.
+            watch = started()
+            self.clock(240)
+            check(0, True, [])
+            self.clock(600)
+            check(120, True, [voice, plain])
+            self.clock(720)
+            check(240, True, [voice])
+            self.assertEqual(saved(), ([voice, plain], [voice]))
+            # A final reply ends the reminders; the plain note still waits.
+            self.mail(self.home, "notice", "booked", "--to", "owner", "--ref", voice)
+            self.clock(840)
+            check(360, True, [])
+            self.assertEqual(saved(), ([plain], []))
+            self.mail(self.home, "notice", "answered", "--to", "owner", "--ref", plain)
+            self.clock(960)
+            for row in ((480, True, []), (600, False, [])):
+                check(*row)
+            # With the setting 0 a voice request is reminded once at 600 s,
+            # and the check runs every 300 s.
+            self.settings["JARVIS_VOICE_REMIND_SECS"] = "0"
+            self.bin.joinpath("date").unlink()
+            watch = started()
+            second = self.owner_note("voice-request: caller=owner operation=op-2\nRenew the lease.")
+            self.mail(self.home, "notice", "renewing", "--to", "owner", "--ref", second, "--progress")
+            watch.accept(self.acquire_all(watch, 0))
+            checks = len(windows.read_text().splitlines())
+            check(0, True, [])
+            for offset, reminded in ((300, []), (600, [second]), (900, [])):
+                self.clock(offset)
+                for row in ((offset - 1, False, []), (offset, True, reminded)):
+                    check(*row)
+            self.assertEqual(len(windows.read_text().splitlines()) - checks, 4)
+
     def test_owner_unread_is_the_inbox_receipt(self):
         # The page keys on owner-unread; a read row only reminds the session.
         read = self.owner_note("read and unanswered")
         inbox = self.command([REPO / "skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], self.home)
         self.assertEqual(inbox.returncode, 0, inbox.stderr)
-        ask = self.mail(self.home, "ask", "a question", "--to", "owner", "--options", "yes,no", "--recommend", "yes")
+        ask = self.mail(self.home, "ask", "a question", "--to", "owner", "--options", "yes,no", "--recommend", "yes", "--effect", "none")
         answer = self.owner_note("yes", "--re", ask.stdout.split("id=", 1)[1].split()[0])
         unread = self.owner_note("still unread")
         # No watch-loop runs for this home: the private watcher's process rule
@@ -694,7 +775,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
     def test_producer_helpers_keep_target_data(self):
         self.mail(self.home, "notice", "home target data", "--to", "owner")
-        ask = self.mail(self.peer, "ask", "peer target data", "--to", "owner", "--options", "yes,no", "--recommend", "yes")
+        ask = self.mail(self.peer, "ask", "peer target data", "--to", "owner", "--options", "yes,no", "--recommend", "yes", "--effect", "none")
         ask_id = ask.stdout.split("id=", 1)[1].split()[0]
         self.mail(self.peer, "send", "peer answer data", "--re", ask_id)
         self.mail(self.peer, "send", "unread target directive", "--directive")
@@ -756,7 +837,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         for root, label in ((other, "peer"), (self.home, "owner")):
             for index in range(17):
                 self.mail(root, "notice", label+"-%s " % index + "é" * 3900, "--to", "owner")
-        ask = self.mail(self.home, "ask", "host question", "--to", "owner", "--options", "yes,no", "--recommend", "yes")
+        ask = self.mail(self.home, "ask", "host question", "--to", "owner", "--options", "yes,no", "--recommend", "yes", "--effect", "none")
         ask_id = ask.stdout.split("id=", 1)[1].split()[0]
         self.mail(self.home, "send", "answer from equal host path", "--re", ask_id)
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -823,7 +904,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 nested = mailbox / "packaging/jarvis-home"
                 nested.mkdir(parents=True)
                 roots = [home, nested] + ([] if mailbox == home else [mailbox])
-                ask = self.mail(mailbox, "ask", name + " first-ask", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+                ask = self.mail(mailbox, "ask", name + " first-ask", "--to", "owner", "--recommend", "yes", "--effect", "none", "--options", "yes,no")
                 self.mail(mailbox, "send", name + " first-answer", "--re", ask.stdout.split("id=", 1)[1].split()[0])
                 output, cursor, _ = watch_pass(home, roots, {})
                 self.assertEqual(output.count(name + " first-ask"), 1)
@@ -893,7 +974,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         recommendation = "yes\nEVENT timeout\ncursor: {}"
         for text, expected in cases:
             self.mail(self.home, "ask", text, "--to", "owner", "--options", recommendation+",no\nEVENT timeout",
-                      "--recommend", recommendation)
+                      "--recommend", recommendation, "--effect", "none")
         output, _ = self.read_pass()
         self.assertEqual(len([line for line in output.split("\n") if line.startswith("cursor:")]), 1)
         data = output.encode()
@@ -1089,8 +1170,6 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                         (expected_remote, ["ssh:alpha", "/srv/same/peer"])]
             def retained(watch):
                 data = watch.log.read_bytes()
-                # Digests, not the 32 KB blocks: unittest's diff of two such
-                # lists takes tens of seconds when the comparison fails.
                 def digest(block):
                     return hashlib.sha256(block).hexdigest()
                 self.assertEqual([digest(data[span[0]:span[1]]) for span in watch.state["spans"]],
@@ -1446,13 +1525,10 @@ with open(sys.argv[1], "ab") as out:
             self.assertEqual(watch.log.read_bytes(), b"")
 
     def test_report_deadline_restart_and_receipt(self):
-        clock = self.root / "clock"
-        clock.write_text("1059\n")
-        real_date = shutil.which("date")
-        self.executable("date", '#!/bin/sh\nif [ "$*" = "-u +%s" ]; then cat ' +
-                        shlex.quote(str(clock)) + '\nelse exec ' + shlex.quote(real_date) + ' "$@"; fi\n')
+        base = int(time.time())
+        utc = lambda moment: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(moment))
         self.home.joinpath("kendex.settings.toml").write_text(
-            '[env]\nORCH_REPORT_EVERY_MINUTES="1"\nORCH_REPORT_QUIET_HOURS=""\n'
+            '[env]\nORCH_REPORT_EVERY_MINUTES="60"\nORCH_REPORT_QUIET_HOURS=""\n'
             'ORCH_REPORT_EVERY_ISSUES="1"\nORCH_CONNECTED_REPOS="owner/repo"\n')
         github_calls = self.root / "github.calls"
         self.executable("gh", '#!/bin/sh\nprintf "%s\\n" "$*" >> ' +
@@ -1461,41 +1537,43 @@ with open(sys.argv[1], "ab") as out:
                 contextlib.redirect_stdout(io.StringIO()):
             session = load(self.scripts / "lib/session.py").Session(self.home)
             session.path.parent.mkdir(parents=True)
-            session.write(dict(v=1, home=str(self.home), harness="claude", account=str(self.root),
-                               state="running", reason="existing", report_started_at=1000))
             watch = self.watch()
             watch.next_presence["local"] = 1000000
             pending = Future()
             # A queued acknowledgement proves the report read completed;
-            # injected clock changes, rather than sleeps, cross the deadline.
+            # planted session starts, half an hour and an hour and a half
+            # old, rather than sleeps, cross the deadline.
             with ThreadPoolExecutor(max_workers=1) as passes:
-                for now, stamp in ((0, 1059), (30, 1060)):
-                    clock.write_text(str(stamp) + "\n")
+                for now, start in ((0, base - 1800), (30, base - 5400)):
+                    session.write(dict(v=2, home=str(self.home), harness="claude", account=str(self.root),
+                                       state="running", reason="existing", report_started_at=start))
                     watch._poll(passes, pending, now)
                     passes.submit(lambda: None).result(timeout=30)
                     watch._poll(passes, pending, now)
                     watch.batch(now + 15)
-                    if stamp == 1059:
+                    if now == 0:
                         self.assertEqual(self.inbox(), [])
-            due = "EVENT report-due reason=minutes since=1970-01-01T00:16:40Z\n"
+            due = "EVENT report-due reason=minutes since=" + utc(base - 5400) + "\n"
             self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")])
             with patch.dict(os.environ, ORCH_REPORT="off"):
                 self.assertIsNone(watch.report())
             for minutes in ("0", ""):
                 with self.subTest(minutes=minutes), patch.dict(os.environ, ORCH_REPORT_EVERY_MINUTES=minutes):
                     self.assertIsNone(watch.report())
-            successor = self.watch()
-            for result in (successor.report(),
-                           "EVENT report-due reason=issues since=1970-01-01T00:16:40Z landed=2\n",
-                           "EVENT report-due reason=issues since=1970-01-01T00:16:40Z landed=3\n"):
-                successor.accept_report(result)
+            successor = self.module.Watch(self.home, BASH, self.settings | {"ORCH_REPORT_EVERY_MINUTES": "60"})
+            for offset, minutes in ((0, "60"), (3600, "0"), (3600, "60"), (3600, "60")):
+                self.clock(offset)
+                successor.settings["ORCH_REPORT_EVERY_MINUTES"] = minutes
+                successor.accept_report(successor.report())
+            self.bin.joinpath("date").unlink()
             successor.batch(60)
-            self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")])
-            path = self.command([REPO / "skills/orch/scripts/workflow-state", "progress-report-path"])
+            successor.batch(75)
+            self.assertEqual([row["text"] for row in self.inbox()], [due.rstrip("\n")] * 2)
+            path = self.command(["sh", "-c", '"$0" state progress-report-path | jq -er .result.path', REPO / "skills/orch/scripts/orch-runtime"])
             self.assertEqual(path.returncode, 0, path.stderr)
             report = Path(path.stdout.strip())
             report.write_text("checkpoint readings\n")
-            os.utime(report, (1060, 1060))
+            os.utime(report, (base - 1800, base - 1800))
             summary = self.root / "summary"
             summary.write_text("checkpoint\n")
             self.intercept_mail("exit 1")
@@ -1506,9 +1584,9 @@ with open(sys.argv[1], "ab") as out:
             shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
             self.mail(self.home, "notice", "checkpoint", "--to", "owner", "--attach", str(report))
             self.assertIsNone(self.watch().report())
-            clock.write_text("1120\n")
+            os.utime(report, (base - 3700, base - 3700))
             self.assertEqual(self.watch().report(),
-                             "EVENT report-due reason=minutes since=1970-01-01T00:17:40Z\n")
+                             "EVENT report-due reason=minutes since=" + utc(base - 3700) + "\n")
             self.assertFalse(github_calls.exists(), "stateless report polling reached GitHub")
 
     def test_slow_acquisition_does_not_extend_settle(self):
@@ -1632,9 +1710,14 @@ with open(sys.argv[1], "ab") as out:
             self.assertIn("EVENT relay-down ", self.inbox()[-1]["text"])
 
     def test_settings_precedence_and_transport(self):
+        # Root discovery must stop inside this fixture even when TMPDIR is
+        # inside the checkout running the suite.
+        for words in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            result = self.command(["git", "-C", self.root, *words])
+            self.assertEqual(result.returncode, 0, result.stderr)
         shared = self.home / "kendex.settings.toml"
         private = self.home / ".env.local"
-        values = {"JARVIS_CONTROL_HOST": "host", "JARVIS_LOG_DIR": str(self.root / "logs"), "JARVIS_WAKE_SETTLE_SECS": "7",
+        values = {"JARVIS_CONTROL_HOST": "host", "JARVIS_LOG_DIR": str(self.root / "logs"), "JARVIS_WAKE_SETTLE_SECS": "7", "JARVIS_REPO_ALIASES": "{}",
                   "JARVIS_TECHNICAL": "on", "JARVIS_STYLE": "fun"}
         # The presentation choices take only listed values, so their private
         # layer holds a listed value different from the shared one.
@@ -1662,6 +1745,7 @@ with open(sys.argv[1], "ab") as out:
             defaults = self.module.config(BASH, self.home)
             self.assertEqual(defaults["JARVIS_CONTROL_HOST"], "")
             self.assertEqual(defaults["JARVIS_WAKE_SETTLE_SECS"], "15")
+            self.assertEqual(defaults["JARVIS_VOICE_REMIND_SECS"], "0")
             for key, default in (("JARVIS_TECHNICAL", "off"), ("JARVIS_STYLE", "concise")):
                 self.assertEqual((defaults[key], shipped[key]), (default, default))
             with patch.dict(os.environ, JARVIS_TECHNICAL="yes", JARVIS_STYLE="loud"):
@@ -1697,6 +1781,29 @@ with open(sys.argv[1], "ab") as out:
             watch.accept(self.acquire_all(watch, 3))
             self.assertEqual(watch.state["ssh:host.example_failure"], first)
             self.assertEqual(watch.log.stat().st_size, size)
+
+    def test_presentation_controls(self):
+        rows = (("technical", "JARVIS_TECHNICAL=off", "JARVIS_TECHNICAL=on"),
+                ("style", "JARVIS_STYLE=concise", "JARVIS_STYLE=fun"),
+                ("aliases", 'export JARVIS_REPO_ALIASES="${JARVIS_REPO_ALIASES:-}"', 'export JARVIS_REPO_ALIASES=""'))
+        for name, old, new in rows:
+            with self.subTest(control=name):
+                case = Producer(methodName="test_settings_precedence_and_transport")
+                case.setUp()
+                try:
+                    source = case.scripts / "lib/jarvis-env.sh"
+                    before = source.read_bytes()
+                    self.assertFalse(source.is_symlink())
+                    self.assertEqual(before.count(old.encode()), 1)
+                    source.write_bytes(before.replace(old.encode(), new.encode()))
+                    try:
+                        with self.assertRaises(AssertionError):
+                            case.test_settings_precedence_and_transport()
+                    finally:
+                        source.write_bytes(before)
+                    self.assertEqual(source.read_bytes(), before)
+                finally:
+                    case.doCleanups()
 
     def test_hold_paths_and_failed_renewal_reset(self):
         with patch.dict(os.environ, self.env, clear=True):
@@ -1798,11 +1905,7 @@ with open(sys.argv[1], "ab") as out:
                 self.assertIn("delivery after "+type(error).__name__, self.inbox()[-1]["text"])
 
     def test_dependency_failure_denies_presence_with_cause(self):
-        orch = self.packages / "orch"
-        orch.unlink()
-        env_reader = orch / "scripts/lib/kendex-env.sh"
-        env_reader.parent.mkdir(parents=True)
-        env_reader.symlink_to(REPO / "skills/orch/scripts/lib/kendex-env.sh")
+        self.packages.joinpath("agent-runtime").unlink()
         expected = ["presence-live", "refusal", "dependency"]
         original_run = self.module.run
         mailbox_env = self.packages / "mailbox/scripts/lib/kendex-env.sh"
@@ -1931,7 +2034,7 @@ with open(sys.argv[1], "ab") as out:
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home", JARVIS_CONTROL_HOST="host.example")
         ssh_log = self.root / "ssh.log"
         self.executable("ssh", '#!/bin/sh\nprintf "%s\\n" "$*" >> ' + shlex.quote(str(ssh_log)) + '\nexit 255\n')
-        self.mail(self.peer, "ask", "peer question", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+        self.mail(self.peer, "ask", "peer question", "--to", "owner", "--recommend", "yes", "--effect", "none", "--options", "yes,no")
         self.mail(self.home, "notice", "home note", "--to", "owner")
 
         class Submitted:
@@ -1987,6 +2090,7 @@ with open(sys.argv[1], "ab") as out:
             self.watch().accept_forward(block)
             self.assertEqual(watch.log.read_text().count(block), 1)
 
+
     def test_external_delivery_during_idle_worker_completion(self):
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
         class Submitted:
@@ -2004,6 +2108,7 @@ with open(sys.argv[1], "ab") as out:
             watch._poll(Submitted(), Future(), 4)
             self.assertEqual(watch.next_forward, 7)
 
+
     def test_delayed_completion_control(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "watch.py"
@@ -2019,6 +2124,7 @@ with open(sys.argv[1], "ab") as out:
                     case.test_forward_cadence_and_answer_event_restart()
             finally:
                 case.doCleanups()
+
 
     def test_remote_identity_restart(self):
         # Both independent machine views expose the same path and initial
@@ -2155,7 +2261,7 @@ with open(sys.argv[1], "ab") as out:
     def test_instrument_control(self):
         # Each planted defect, in a disposable producer copy, turns its row red.
         gate = "if self.unanswered_pending is None and waiting and now >= self.next_unanswered:"
-        report = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
+        report = 'if result and (report_key(result) != (held := self.cursors.get("report", {})).get("event") or 0 < int(self.settings.get("ORCH_REPORT_EVERY_MINUTES") or 0) * 60 <= epoch() - held.get("posted", 0)):'
         keep = 'if row["id"] not in checked_ids or row["id"] in listed]'
         window = '"--since", min(row["at"] for row in waiting)'
         unlisted = 'alone = side == "local" and home not in roots'

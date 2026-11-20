@@ -8,16 +8,19 @@
 #                  "command": "<path>/.agents/skills/orch/scripts/copilot-statusline",
 #                  "refreshInterval": 30}
 #
-# Copilot keeps no live context figure a reader can open: the transcript holds
-# no live count and the footer is a display. This command is the fallback
-# live producer, behind the orch copilot-lane-context extension, whose reading
+# Copilot's `events.jsonl` record holds a context count in each
+# `tool.execution_complete` row (Copilot CLI 1.0.112), and the footer is a
+# display. This command is the fallback
+# live producer, behind the copilot-lane-context extension agent-runtime
+# installs, whose reading
 # of the session the lane's turn-end hook reads first. The record it writes
 # through lib/copilot-session.sh, at
 # `<COPILOT_HOME>/lane-status/<session_id>.json`, is what that hook reads the
-# context through where no extension reading stands (lib/adapters/copilot.sh), and
+# context through where no extension reading stands, and
 # copilot_session_write there states its fields. It is also the one record that
 # carries allow_all_enabled, read for the allow-all stop cause whether or not an
-# extension reading stands (lib/copilot-session.sh copilot_session_stop_cause).
+# extension reading stands (agent-runtime's CopilotRecord::stop_cause, which
+# the turn-end hook and the watch read).
 # The account directory is the one lib/lane-context.sh names for a copilot
 # session, COPILOT_HOME or the CLI's default home, so the writer and every
 # reader name one directory.
@@ -33,8 +36,8 @@
 # <key>=<value>` on stderr and exits 1, and the CLI keeps the previous line; the
 # keys are copilot_session_write's own, payload=invalid-json, payload=unbound
 # and record=unwritable, plus missing-tools=jq where jq is not on PATH. A
-# refreshInterval under COPILOT_SESSION_MAX_AGE_S (120 seconds) keeps the
-# record fresh for its readers, which read an older record as unmeasured.
+# refreshInterval under agent-runtime's 120-second record-age bound keeps
+# the record fresh; its reader reports an older record as unmeasured.
 set -euo pipefail
 
 message() { # KEY VALUE
@@ -49,6 +52,8 @@ message() { # KEY VALUE
 
 command -v jq >/dev/null 2>&1 || { message missing-tools jq >&2; exit 1; }
 
+# shellcheck source=lib/copilot-session.sh
+. "${BASH_SOURCE[0]%/*}/lib/copilot-session.sh"
 # shellcheck source=lib/lane-context.sh
 . "${BASH_SOURCE[0]%/*}/lib/lane-context.sh"
 

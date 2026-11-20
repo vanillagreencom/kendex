@@ -7,8 +7,9 @@
 # merge group. The real classifiers read synthetic git diffs; the
 # verifier double supplies ownership, not the lane decision under test.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 
 ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 ACTION="$ROOT/.github/actions/change-class/classify"
@@ -20,7 +21,7 @@ READER=.agents/skills/harness-ci/scripts/change-class
 QUEUE_READER=.agents/skills/harness-ci/scripts/lib/ci-lanes.sh
 mkdir -p "$SANDBOX/control/skills"
 cp -R "$ROOT/skills/harness-ci" "$SANDBOX/control/skills/"
-cp -R "$ROOT/skills/orch" "$SANDBOX/control/skills/"
+cp -R "$ROOT/skills/change-scope" "$SANDBOX/control/skills/"
 mkdir -p "$SANDBOX/action" "$SANDBOX/bin" "$SANDBOX/default/.github" "$SANDBOX/default/$(dirname "$READER")" "$SANDBOX/default/$(dirname "$QUEUE_READER")"
 cp "$ACTION" "$SANDBOX/action/classify"
 cp "$CHANGE_CLASS" "$SANDBOX/default/$READER"
@@ -55,8 +56,7 @@ old=.agents/skills/orch/scripts/lib/lane-mail-store.py
 new=.agents/skills/mailbox/scripts/lib/lane-mail-store.py
 spare=.agents/spare/original.py
 moved_spare=.agents/spare/renamed.py
-forwarder=.agents/skills/orch/scripts/lane-mail
-commit_paths "$repo" baseline "$old" "$spare" "$forwarder"
+commit_paths "$repo" baseline "$old" "$spare"
 mkdir -p "$repo/$(dirname "$READER")" "$repo/$(dirname "$QUEUE_READER")" "$repo/.github"
 cp "$CHANGE_CLASS" "$repo/$READER"
 cp "$ROOT/skills/harness-ci/scripts/lib/ci-lanes.sh" "$repo/$QUEUE_READER"
@@ -101,9 +101,7 @@ while IFS='|' read -r case event base_name change expected_lanes expected_cause 
   git -C "$repo" clean -qfd
   mkdir -p "$repo/$(dirname "$new")"
   case "$change" in
-    renamed)
-      git -C "$repo" mv "$old" "$new"
-      printf 'forward to mailbox\n' >"$repo/$forwarder" ;;
+    renamed) git -C "$repo" mv "$old" "$new" ;;
     deleted) git -C "$repo" rm -q -- "$old" ;;
     in-place) printf 'updated implementation\n' >>"$repo/$old" ;;
     unclaimed-in-place) printf 'updated implementation\n' >>"$repo/$spare" ;;

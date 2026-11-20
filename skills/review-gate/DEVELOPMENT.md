@@ -4,7 +4,7 @@
 
 GitHub enforces approvals and thread resolution. The package reports repository configuration but grants no merge permission.
 
-The settings loader is shared by the organization-standard tools, consumer refresh and orch's approval-wait. Its process values override project files. `REVIEW_GATE_SETTINGS_FILE=/dev/null` selects no settings source.
+The settings loader is shared by the organization-standard tools and consumer refresh; orch's runtime reads its review policy from the base checkout's files itself. Its process values override project files. `REVIEW_GATE_SETTINGS_FILE=/dev/null` selects no settings source.
 
 Consumer adoption uses the committed workflow hash to prove that a retired copy remains unedited. Core refresh preserves adopted inventory records when their template disappears. Adoption uses that record to find a retired copy, including a renamed copy. It checks ownership before it changes any workflow or inventory entry.
 
@@ -12,7 +12,7 @@ Consumer adoption uses the committed workflow hash to prove that a retired copy 
 
 The refresh scripts and their suites live in the repository's `refresh/` tree. They run from a kendex release checkout. The refresh adoption and publication contracts remain in [references/adoption.md](references/adoption.md#automatic-consumer-refresh).
 
-`retired-settings.json` is the one list the refresh report's Consumer settings section reads. A change that retires a settings key a consumer may have committed adds it under `keys`; one that replaces a shipped default adds the old value under `values` for its key.
+`retired-settings.json` is the one list the refresh report's Consumer settings section reads. A change that retires a settings key a consumer may have committed adds it under `keys`, and a rename also maps it to the new key under `successors`; one that replaces a default an install wrote into the consumer's file adds the old value under `values` for its key.
 
 ## Tests
 

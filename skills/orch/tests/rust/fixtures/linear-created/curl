@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""The curl the real linear.sh runs under `linear` beside it.
+
+It accepts one request, the `ListIssues` page that the report's
+`issues list --created-since S --max --format=safe` sends: the filter
+`{"createdAt": {"gte": S}}` alone, `includeArchived` false, the full
+selection's page of 75 and the cursor of the page before it. It reads the
+request as the package sends it, a curl config on stdin whose `data = ` line
+is the payload, and answers the pages planted in `linear-created.json` in the
+working directory, `{"since": S, "pages": [[node]], "code": N}`, as Linear
+answers them, with `___HTTP_CODE___<code>` as `curl -s -w` prints it; a
+`code` other than 200 is served in place of every page. Every request is
+appended to `linear-created.log`, `{"handled": bool, "payload": ...}` per
+line; any other request is refused with exit 2, as a curl that reached no
+server.
+"""
+import json
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+config = sys.stdin.read()
+line = next(line for line in config.splitlines() if line.startswith('data = '))
+payload = json.loads(json.loads(line[len('data = '):]))
+world = json.loads((root / 'linear-created.json').read_text())
+pages = world['pages']
+cursors = [None] + ['page-%d' % n for n in range(2, len(pages) + 1)]
+variables = payload.get('variables') or {}
+after = variables.get('after')
+handled = (
+    payload.get('query', '').lstrip().startswith('query ListIssues(')
+    and after in cursors
+    and variables == {
+        'filter': {'createdAt': {'gte': world['since']}},
+        'includeArchived': False,
+        'first': 75,
+        'after': after,
+    }
+)
+with open(root / 'linear-created.log', 'a') as log:
+    log.write(json.dumps({'handled': handled, 'payload': payload}) + '\n')
+if not handled:
+    print('unhandled request: ' + json.dumps(payload), file=sys.stderr)
+    sys.exit(2)
+code = world.get('code', 200)
+if code != 200:
+    print(json.dumps({'errors': [{'message': 'upstream unavailable'}]}), end='___HTTP_CODE___%d' % code)
+    sys.exit(0)
+page = cursors.index(after)
+last = page == len(pages) - 1
+data = {'issues': {
+    'pageInfo': {'hasNextPage': not last, 'endCursor': None if last else cursors[page + 1]},
+    'nodes': pages[page],
+}}
+print(json.dumps({'data': data}), end='___HTTP_CODE___200')

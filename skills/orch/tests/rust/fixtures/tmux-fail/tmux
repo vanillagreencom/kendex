@@ -1,0 +1,17 @@
+#!/bin/bash
+# A pass-through tmux for the orch-runtime evidence tests: it execs the real
+# tmux for every call except the verbs $TMUX_FAIL_VERB names (one, or several
+# separated by spaces), which it refuses as a tmux that did not answer (one
+# line on stderr, exit 1), so a host transport failure between two reads of
+# one pane, or across a write and the close that cleans it up, can be planted
+# while the pane and its server stand. $TMUX_REAL is the real tmux the shim
+# execs (never itself, so no recursion).
+for arg in "$@"; do
+  for verb in ${TMUX_FAIL_VERB:-}; do
+    if [ "$arg" = "$verb" ]; then
+      echo "tmux-fail: refused verb=$verb" >&2
+      exit 1
+    fi
+  done
+done
+exec "${TMUX_REAL:-tmux}" "$@"

@@ -1,0 +1,42 @@
+{
+  "record_version": 99,
+  "revision": 7,
+  "issue_id": "KEN-9999",
+  "sub_issues": [],
+  "agent": "rust",
+  "worktree": "",
+  "branch": "",
+  "qa_labels": [],
+  "near_ceiling": [],
+  "finding_occurrences": {
+    "prior": "none",
+    "records": []
+  },
+  "child_sessions": {},
+  "review_agents": [],
+  "review_agent_ids": {},
+  "review_agent_runtime_types": {},
+  "pre_delegate_sha": null,
+  "skip_qa": false,
+  "cycles": 0,
+  "rereview_cycles": 0,
+  "json_paths": [],
+  "fixed_items": [],
+  "escalated_items": [],
+  "audit_issues_created": [],
+  "pr_review_baseline": null,
+  "pr_comment_review": {
+    "iterations": 0,
+    "fixes": [],
+    "issues_created": [],
+    "skipped": []
+  },
+  "post_pr_budgets": {
+    "review_wait": null,
+    "ci_fix": null
+  },
+  "post_pr_stop": null,
+  "field_this_build_does_not_know": {
+    "from": "a later writer"
+  }
+}

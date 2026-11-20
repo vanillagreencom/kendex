@@ -1,37 +1,70 @@
 # Completion-artifact reference
 
-Cross-script routing behind the artifact rows in [../SKILL.md](../SKILL.md). Each script's `--help` is its authoritative contract; nothing here restates one.
+Read when a workflow writes, checks or recovers a round's completion artifact, or reads a validation run's answer. Each verb's `--help` is its flag contract.
 
-| Script | Role |
-|--------|------|
-| `review-artifact-check` | Validates a reviewer's on-disk JSON artifact — the sole reviewer completion condition; review-pr.md § 3.1 relays a rejection's `detail` on the single permitted re-delegation. |
-| `dev-return-write` | Writes a dev round's completion artifact atomically. Schema: [`../schemas/dev-return.md`](../schemas/dev-return.md). |
-| `dev-round-write` | Orchestrator-side twin persisting a fix round's delegated item set at stamp time; immutable per round. Schema: [`../schemas/dev-round.md`](../schemas/dev-round.md). |
-| `dev-artifact-check` | Validates a dev round's artifact by round id and answers `accept`/`wait`/`retry`. Tracker corroboration and exact-commit acceptance binding stay in the orch acceptance tables. |
+## Verbs
+
+| Verb | Role |
+|------|------|
+| `orch-runtime review-artifact check` | Checks a reviewer's on-disk JSON artifact, the one reviewer completion condition. [review-pr.md](../workflows/review-pr.md) § 3.1 relays a rejection's `detail` on the one permitted re-delegation. With `--text` it prints the result object alone and exits 0 accepted, 1 rejected, 2 refused; a refusal prints a `review-artifact: KEY` line on stderr. |
+| `orch-runtime dev-return write` | Writes a dev round's receipt atomically. Schema and refusals: [dev-return.md](../schemas/dev-return.md). |
+| `orch-runtime round stamp`, `round cut` | Writes a fix round's delegated item set once per round, before delegation. `cut` declares a cut round. Schema and refusals: [dev-round.md](../schemas/dev-round.md). |
+| `orch-runtime dev-return check` | Checks a dev round's receipt by round id and answers a verdict ([§ Receipt check answers](#receipt-check-answers)). The delegating workflow's acceptance table keeps tracker corroboration and the exact-commit binding. |
+| `orch-runtime round recover` | Accepts a stalled round from its transcript, or mints its replacement ([§ Recovery answers](#recovery-answers)). [skill-rules.md § Stalled round](skill-rules.md#stalled-round) routes its line. |
 
 ## Validation command output
 
-`DEV_VALIDATE_CMD` or `DEV_VALIDATE_RANGE_CMD` may print one line to report the checks it runs. `dev-validate-run --record` reads it from the run log.
+`DEV_VALIDATE_CMD` or `DEV_VALIDATE_RANGE_CMD` may print one line naming the checks it ran. `orch-runtime validate entry --record` reads that line from the run's log; its `--help` states which line wins and what a missing one records.
 
 | Item | Contract |
 |------|----------|
-| Exit status | `DEV_VALIDATE_CMD` and `DEV_VALIDATE_RANGE_CMD` reserve exit 3 for unavailable host checks. Report the host cause in the log. Return 0 for pass and another nonzero status for a code defect. Wrap a test runner that exits with its failure count. `dev-validate-run --help` owns the sentinel; `dev-implement.md` § 5 owns the `no-verdict` route. A host result cannot supply the timeout-only reuse proof. |
+| Exit status | Exit 3 means host checks were unavailable; name the host cause in the log. Exit 0 for a pass and another nonzero status for a code defect. Wrap a test runner that exits with its failure count. `orch-runtime validate entry --help` maps exits to verdicts; [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate) owns the `no-verdict` route. |
 | Line | `validate: lanes=<comma-separated names> selection=all\|subset\|battery` |
-| Names | Non-empty ASCII names using letters, digits, `.`, `_` or `-`; no empty comma-separated element |
-| `selection` | Eligible lanes follow the command's invocation mode and applicability rules, including change class and changed paths. `all` means every eligible lane; `subset` means the command chose fewer eligible lanes; `battery` means every lane the command has, none stood down for the change class or changed paths |
-| Repeated lines | The last line starting with `validate:` owns the result |
-| Missing or malformed last line | The start's previewed `selection=all` or `selection=subset`; otherwise `selection=unreported`. No `lanes` field; does not change the run verdict |
-| `validate-mode` | Remains `full`, `range` or `ci`; names the invocation, not the lane selection |
-| Finding line | A line starting with the prefix the project declares in `DEV_VALIDATE_FINDING_PREFIX`, such as `guard: ` for a guard printing `guard: suite=…`; a project that declares none has no finding-free run. A timeout or unavailable-host `no-verdict` run whose log holds none may supply its recorded tree through `--last-pass` to `restack-skip`, with `verdict=no-verdict`. This is not a passing verdict. Only a timeout run can answer a later run over no fewer paths without running past the bound again (`dev-validate-run --help`) |
+| Names | Non-empty ASCII names of letters, digits, `.`, `_` or `-`; no empty element |
+| `selection` | The command's invocation mode and applicability rules, change class and changed paths included, decide which lanes are eligible. `all` is every eligible lane. `subset` is fewer. `battery` is every lane the command has, none stood down for the change class or paths |
+| Finding line | A line starting with the project's `DEV_VALIDATE_FINDING_PREFIX`, such as `guard: ` for `guard: suite=…`. A project that declares none has no finding-free run. A `no-verdict` run whose log holds no finding line counts as the last pass `orch-runtime validate entry --last-pass` reports, marked `verdict=no-verdict`. That is not a passing verdict |
 
-## Round-closure mechanics
+## Validation entry answers
 
-- **The watchdog IS the check in blocking mode**: `dev-artifact-check --wait <quiet_window> …` polls on-disk state and returns the moment a fresh artifact lands or at the deadline — return-message delivery is never load-bearing. Per-harness backgrounding is in each check's `--help`. Run A/B on its return if the round is still outstanding; re-arm only on entering a new escalation step. The reviewer side of the same invariant is stated once, in review-pr.md § 3.2, and never restated here.
-- **A watchdog that ends without a verdict leaves the round unwatched.** A verdict is exit 0 or 1; exit 2 is a keyed refusal, and any other status is an abort — judge on the status, since a keyed line may or may not have arrived with it. What to do about it is the re-arm rule's, not this file's: [skill-rules.md](skill-rules.md) § Round Closure item 2 states the exception that covers it. Each check's `--help` owns the statuses and what stderr does and does not carry.
-- **The round token binds A to exactly this delegation's receipt.**
-- **A path whose agent writes no dev-return artifact** (`ci-fix.md` pushes directly) always has A `verdict=wait`: accepted by its return message and the escalation ladder, never by a stale artifact.
-- **Composite B never accepts on its own.** A return-message timeout, clean git status, and no modified files reflect worktree state only. The one positive signal that overrides a missing return is a valid `dev-artifact-check` for the current `dev_round_id`.
+`orch-runtime validate entry` prints each refusal as one `validate: KEY cause=CAUSE` line on stderr, which names the key and its cause. A refusal exits 2; a refused `--stop` or restack check exits 1.
 
-## Dev-vs-reviewer asymmetry (intentional — do not "align")
+`--record` reports two fallbacks from the `start` record:
 
-A reviewer invalid artifact after a return is `incomplete` and gets one re-delegation. Dev's verdict distinguishes a still-running round (`wait`, routed by the sentence ahead of the acceptance table in `dev-start.md` § 3 and `dev-fix.md` § 2, a stalled round to `round-recover` first) from a present-but-failing receipt (`retry` — never accepted, never treated as absent). Neither branch re-runs the work, and neither accepts without the round-scoped artifact.
+- `class-fallback=` names why the change class fell back to the whole battery: `base-unresolved`, `worktree-unrecorded`, `classifier-absent`, `classifier-unreadable`, `docs-reader-unreadable`, `docs-reader-exit`, or `docs-reader-absent:` with the cause.
+- `ci-fallback=` names why a `ci` request ran locally: `push-base`, `setting-empty`, `base-unresolved`, `class-uncovered`, `pr-not-open`, `rules-unread`, `context-unrequired` or `selection-unread`.
+
+## Receipt check answers
+
+`orch-runtime dev-return --text check` prints one result object: `verdict`, `ok`, `path`, `reason`, `warning`, `hint`, `files`, and the receipt's echoed fields ([dev-return.md § Fields](../schemas/dev-return.md#fields)). `ok` is true only for `reason: valid`. The check exits 0 when `ok` is true and 1 otherwise.
+
+| Verdict | When |
+|---------|------|
+| `accept` | A valid receipt whose `validate` is `pass` or `no-verdict` |
+| `accept-excused` | A valid `FAILING` receipt whose every failing check the round's exception excuses |
+| `no-change` | A valid receipt whose `validate` is `not-run` ([dev-return.md § No-change receipt](../schemas/dev-return.md#no-change-receipt)) |
+| `hand-over` | A valid receipt whose `validate` is `handed-over` ([dev-return.md § Hand-over receipt](../schemas/dev-return.md#hand-over-receipt)) |
+| `wait` | `reason: missing` |
+| `retry` | Every other answer |
+
+`reason` names the gate a `retry` failed; the delegating workflow's acceptance table routes each reason it acts on. `valid` may carry `warning: commit_unreachable` where the commit is not in HEAD's ancestry.
+
+For every `reason` but `missing` and `invalid`, a round-mode check sets the round entry's kind and records the run's cost in `validate_rounds`. Where the check cannot record the answer on the item, it adds `record_warning`; the verdict stands.
+
+A refusal records nothing and exits 2 with one `dev-return: KEY CAUSE` line on stderr.
+
+## Recovery answers
+
+`orch-runtime round --text recover` prints one `round: STATE …` line, which [skill-rules.md § Stalled round](skill-rules.md#stalled-round) routes; a `redelegate` or `exhausted` line names its `reason`. A replacement round keeps the group and the exception the replaced round began with. A refusal exits 2 with one `round: KEY CAUSE` line on stderr; a refusal from the writer or the check it runs reaches the caller under that key.
+
+## Round closure mechanics
+
+- **The watchdog is the check in blocking mode.** `orch-runtime dev-return --text check --wait <quiet_window> …` polls the disk. It returns when a receipt lands, or at the deadline. Delivery of the return message is never load-bearing. If the round is still outstanding when it returns, run A and B. [review-pr.md](../workflows/review-pr.md) § 3.2 states the reviewer side.
+- **A watchdog runs where its end wakes the session.** A lane launches it as [skill-rules.md § Round Closure](skill-rules.md#round-closure) step 5 states, then ends its turn; the job's end arrives as the lane's mail. A session that is no lane keeps its own wait. Claude Code runs the watchdog as a background shell, whose exit is the event. Codex holds it as [codex-runtime.md § Delegated round wait](codex-runtime.md#delegated-round-wait) states for a dev round and [§ Reviewer round wait](codex-runtime.md#reviewer-round-wait) for a reviewer. Pi runs it under `bg_task`, paired with the per-wake check. Any other harness runs the check on each wake.
+- **A watchdog that ends without a verdict leaves the round unwatched.** A verdict exits 0 or 1. Exit 2 is a keyed refusal; any other status is an abort. Judge on the status, since the keyed line may not arrive with it. The re-arm rule is [skill-rules.md § Round Closure](skill-rules.md#round-closure) item 5.
+- **The round token binds A to this delegation's receipt.**
+- **A route whose agent writes no receipt** (`ci-fix.md`, which pushes directly) always has A `wait`. It accepts as [skill-rules.md § Round Closure](skill-rules.md#round-closure) states for CI rounds, never on a stale receipt.
+- **Composite B never accepts on its own.** A return-message timeout, a clean git status and no modified files describe only the worktree. Only a valid receipt check for the current `dev_round_id` overrides a missing return.
+
+## Dev-vs-reviewer asymmetry
+
+Do not align the two sides. A reviewer's invalid artifact after a return is `incomplete` and gets one re-delegation. A dev round's verdicts are [§ Receipt check answers](#receipt-check-answers)'s. The stalled-round rule routes a `wait` before the acceptance table in [dev-start.md § 3](../workflows/dev-start.md#3-accept-the-round) and [dev-fix.md § 2](../workflows/dev-fix.md#2-delegate); a stalled round goes to `orch-runtime round --text recover` first. A `retry` is never accepted and never treated as absent. dev-start § 3's row judges a `no-change`. Neither side re-runs the work, and neither accepts without the round-scoped artifact.

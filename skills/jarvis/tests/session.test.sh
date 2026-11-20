@@ -3,7 +3,8 @@
 # Inputs: skills/jarvis/scripts/, skills/orch/scripts/, skills/mailbox/scripts/,
 # skills/github/scripts/lib/group-leader.sh,
 # skills/jarvis/tests/fixtures/, skills/orch/tests/fixtures/oversee-watch/,
-# rust-toolchain.toml.
+# rust-toolchain.toml, skills/orch/runtime/, skills/agent-runtime/scripts/,
+# skills/agent-runtime/runtime/.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
 export JARVIS_TEST_BASH="$BASH"

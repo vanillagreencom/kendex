@@ -102,7 +102,7 @@ assert_eq "$(awaited sk_reactions C001 "$TS1")" "eyes" "its eyes mark is set as 
 assert_eq "$(envelope C001 "$TS1")" "sent=1 unacked=0" "the message's envelope is acknowledged by its envelope_id"
 
 # --- an ask's thread: the first reply is the answer ------------------------------------
-sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Cut it?')" --options yes,no --recommend no >"$SK_TMP/ask.out"
+sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text q 'Cut it?')" --options yes,no --recommend no --effect none >"$SK_TMP/ask.out"
 ASK="$(sed 's/^id=//' "$SK_TMP/ask.out")"
 ask_ts() { sk_state '.messages.C001[] | select(.text | contains("Cut it?")) | .ts'; }
 ASK_TS="$(awaited ask_ts)"

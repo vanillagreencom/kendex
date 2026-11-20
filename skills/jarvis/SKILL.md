@@ -6,7 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [commit-guards, communication, docs-writing, mailbox, orch, slack]
-  optional: [linear]
+  optional: [github, linear]
   agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch, publicist]
   commands:
     - command: agent-browser
@@ -104,41 +104,41 @@ tags: [assistant, productivity]
 
 # Jarvis
 
-Jarvis is the main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the computer that runs Jarvis. A Jarvis satellite runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward) are described separately.
+Jarvis is the owner's main long-running session. Jarvis main is the one computer that runs Jarvis. Jarvis Voice is the VGS voice session on any computer. A Jarvis satellite is another of the owner's computers with a clone of the Jarvis home. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Agent reach covers its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward).
 
 ## Setup
 
-Jarvis home is the folder with Jarvis's instructions, skills and memory. [README: Install](README.md#install) creates it at `~/jarvis`. Use the [home layout](references/home-layout.md) for its files. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
+The Jarvis home is the folder that holds Jarvis's instructions, skills and memory. [README: Install](README.md#install) creates it at `~/jarvis`. The [home layout](references/home-layout.md) places its files. `jarvis-session init` or a person's first manual Start writes its starting files, under [Initialize](references/home-layout.md#initialize).
 
-The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the Jarvis home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
+The declared agents need a kendex installation of Jarvis: `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`. A copy of the skill folder alone, an app-supplied copy included, supplies none of their harness agent files. From the Jarvis home, run the bundle command in [README: Install](README.md#install). It installs Jarvis, its required skills, its declared agents, their assigned skills and the session hooks. Installing `orch` alone installs neither Jarvis nor its declared agents.
 
 Read the [home contract](references/home-contract.md) when starting a session or finding a memory note.
 
-kendex does not insert package text into `AGENTS.md`. The fixed persona path is `persona.md`, beside `SKILL.md`.
+kendex inserts no package text into `AGENTS.md`. The persona lives at `persona.md`, beside `SKILL.md`.
 
 ### Plain folder
 
-On first load, check the folder's `AGENTS.md`. If no line in it routes to [persona.md](persona.md), offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`: the installed file stays its one copy. The route then loads on every turn through the harness's instruction-loading settings. Check that the harness loaded those instructions.
+On first load, look in the folder's `AGENTS.md` for a line that routes to [persona.md](persona.md). If none does, offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`. The harness's instruction-loading settings then load the route on every turn. Check that the harness loaded those instructions.
 
 ### App-managed home
 
-The assistant app gives `persona.md` to its sessions itself. A line in `AGENTS.md` that routes to `persona.md` is the persona step here. Do not offer to paste the persona text into `AGENTS.md`. The text would load twice.
+The assistant app gives `persona.md` to its sessions. Here, a line in `AGENTS.md` that routes to `persona.md` is the persona step. Do not offer to paste the persona text into `AGENTS.md`.
 
 ### Reachable repositories
 
-At first load, and when the user asks which repositories Jarvis can reach, judge each folder `kendex project list` prints, a `(worktree of [MAIN])` line by `[MAIN]`:
+At first load, and when the user asks which repositories Jarvis can reach, judge each folder `kendex project list` prints. Judge a `(worktree of [MAIN])` row by `[MAIN]`.
 
-- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer` with the folder as the working directory. Exit 0 is reachable; a mailbox nobody has written yet prints no envelope at exit 0. This probe records no read position. Read session messages through [Agent reach: Read](references/agent-reach.md#read).
-- Anything else is unreachable. Its cause is the folder's note, a missing mailbox script, or the key `lane-mail` printed, such as `command-missing python3` or `file-unreadable`.
-- A folder with no mailbox script but with `.agents/skills/orch/` has an orch older than the mailbox package. Its cause is "refresh needed", and the offer is `kendex refresh` in that folder.
+- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer`, with the folder as the working directory. Exit 0 means reachable. An unwritten mailbox prints no envelope and exits 0. The probe records no read position. Read session messages through [Agent reach: Read](references/agent-reach.md#read).
+- Any other result means unreachable. The cause is the folder's note, a missing mailbox script, or the key `lane-mail` printed.
+- A folder with `.agents/skills/orch/` but no mailbox script has an orch older than the mailbox package. Its cause is "refresh needed". Offer `kendex refresh` in that folder.
 
-Report both lists in one message, each unreachable folder with its cause.
+Report both lists in one message, with each unreachable folder's cause.
 
 ## Cleanup and backups
 
-Remove all unused code, files, keys, secret-store entries, databases, records and settings from every holder in the same change.
+In the same change, remove every unused code, file, key, secret-store entry, database, record and setting from every holder.
 
-Back up only if a step can lose the only copy; delete the backup after checking the result.
+Back up only when a step can lose the only copy. Delete the backup after checking the result.
 
 ## Reading routes
 
@@ -146,7 +146,7 @@ Read the linked workflow or reference for the task before acting.
 
 | Task | Read first |
 |---|---|
-| Draft product videos, posts or outreach | Launch `publicist` for drafting with a task file or attached prompt. Before a publisher setup launch, obtain the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). Carry the approval record and named publisher selections in the setup task file. |
+| Draft product videos, posts or outreach | Launch `publicist` with a task file or an attached prompt. Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). Carry the approval record and named publisher selections in the setup task file. |
 | Read mail, pages or files, choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |

@@ -7,19 +7,7 @@
 # `crates/core/tests/allowance.rs` fails while the table is stale. Read by
 # `crates/core/src/quality/allowance.rs`.
 
-ruleset = 8
-
-[[package]]
-kind = "skill"
-name = "orch"
-
-[[package.file]]
-path = "scripts/lib/lane-launch.sh"
-
-[[package.file.finding]]
-rule = "safety-bypass"
-line-hash = "36f56839c770e9d1e4f567fba984079248fa0223b9ea72f0f94df0578e887e87"
-message = "`--dangerously-skip-permissions` turns off permission prompts"
+ruleset = 9
 
 [[package]]
 kind = "skill"
@@ -32,3 +20,15 @@ path = "templates/review-gate-writer.yml"
 rule = "rce"
 line-hash = "618f4343fe7c8f11804fe06194842baf1a8df814e3e8bddbe55faa277cace1ed"
 message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
+
+[[package]]
+kind = "skill"
+name = "agent-runtime"
+
+[[package.file]]
+path = "runtime/src/harness.rs"
+
+[[package.file.finding]]
+rule = "safety-bypass"
+line-hash = "13815f40f3c4b9b8f37c05590ffdd89190483125362058a41fbc5ca588f34fb6"
+message = "`--dangerously-skip-permissions` turns off permission prompts"

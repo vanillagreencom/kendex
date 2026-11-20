@@ -10,16 +10,21 @@
 # Usage:
 #   bash skills/orch/tests/run-all.sh
 #   bash skills/orch/tests/run-all.sh session_init      # subset by name
-#   bash skills/orch/tests/run-all.sh open-terminal oversee   # either name
-#   bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee'  # neither
+#   bash skills/orch/tests/run-all.sh lanes oversee   # either name
+#   bash skills/orch/tests/run-all.sh '!lanes' '!oversee'  # neither
 #   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
-#   bash skills/orch/tests/run-all.sh --shard orch-oversee # CI's platform partition
+#   bash skills/orch/tests/run-all.sh --shard orch-state # CI's platform partition
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's
-#   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone
+#   bash skills/orch/tests/run-all.sh --battery DIR --alone NAME   # NAME alone; DIR/NAME.sh must exist
 #   bash skills/orch/tests/run-all.sh --battery DIR --battery OTHER # shared pool
 #   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
 #   bash skills/orch/tests/run-all.sh --local --suite FILE # guard's direct run
 #   bash skills/orch/tests/run-all.sh --checkout-kendex < PATHS # release leg's suites
+#   bash skills/orch/tests/run-all.sh --shard-of < PATHS # each suite's shard
+#
+# --shard-of reads suite paths on stdin and prints `SHARD PATH` for each,
+# shard_of's answer under RUNNER_OS. It runs no suite. tools/ci-job-set reads
+# it to start no orch leg whose every suite a diff skips.
 #
 # --local gives each suite its CI leg's kendex environment. CI installs the
 # checkout build only on selected Linux legs; a local login PATH can contain
@@ -53,7 +58,9 @@
 # a set and that set negated therefore partition the battery: every suite
 # runs in exactly one of them, and a suite added later lands in the negated
 # run rather than in neither. --shard intersects shard_of membership with
-# these filters. Its macOS table spreads suites across the existing CI pools.
+# these filters, and where rejectors alone reject every suite of the shard,
+# as a narrowed CI step's do, it runs none and passes. Its macOS table
+# spreads suites across the existing CI pools.
 #
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
@@ -90,7 +97,7 @@
 #   ::warning::run-all-budget run=<id> attempt=<n> os=<name> shard=<name> suite=<name|job> seconds=<n> bound=<n> review=<n> margin-percent=<n>
 #
 # A warning means seconds times margin-percent exceed 100 times the bound.
-# The review field stays in the annotation consumed by oversee-watch; it
+# The review field stays in the annotation the orch watch consumes; it
 # does not trigger a warning. Job seconds count from the
 # caller's job-start epoch. Nonempty RUN_ALL_REVIEW_SECS enables warnings.
 # That input, RUN_ALL_MARGIN_PERCENT, RUN_ALL_JOB_SECS and
@@ -99,9 +106,11 @@
 # is optional and defaults to the selected battery. skill-tests.yml supplies
 # its review and margin inputs; this package sets no defaults for those inputs.
 #
-# Two bounds hold a suite. RUN_ALL_SUITE_SECS (default 900) counts from the
-# suite's own start. RUN_ALL_DEADLINE_EPOCH, where set, is the Unix time in
-# seconds by which the whole run ends, whatever time each suite started, and
+# Two bounds can hold a suite, each only where set; a local run sets neither
+# and stops no suite. RUN_ALL_SUITE_SECS counts from the suite's own start;
+# CI sets it from the job's ceiling (skill-tests.yml). RUN_ALL_DEADLINE_EPOCH
+# is the Unix time in seconds by which the whole run ends, whatever time each
+# suite started, and
 # no suite starts once it has passed; CI's orch steps get it from the job's
 # first step, which sets it inside the job's ceiling (skill-tests.yml). A
 # suite still running at the earlier of the two is stopped: TERM to it and
@@ -185,17 +194,16 @@ trap 'stop_suites; exit 143' TERM
 trap 'stop_suites; exit 129' HUP
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-# lane_process_table, lane_process_below, lane_process_state and
-# lane_process_start, for the stop.
+# tree_of and stop_tree, for the stop.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/suite-process.sh" ||
   { echo "run-all.sh: lib/suite-process.sh did not load; a stop would have no process owner" >&2; exit 1; }
 source "$(dirname "${BASH_SOURCE[0]}")/../../github/scripts/lib/group-leader.sh" ||
   { echo "run-all.sh: group-leader-missing" >&2; exit 1; }
 
 # Lane launch settings must not override the suites' own fixture settings.
-unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
+unset ORCH_STATE_DIR ORCH_LANE_HOST AGENT_RUNTIME_TMUX_SESSION \
   ORCH_USER_MODE ORCH_DECISION_MODE ORCH_MERGE_AUTONOMY \
-  ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
+  ORCH_LANE_OUTPUT AGENT_RUNTIME_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
 
 # Physical directories from here, so this directory and each --battery one
 # compare equal to themselves however the caller reached them: tools/guard
@@ -206,12 +214,11 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_TEST_DIR="$TEST_DIR"
 
 # Suites that run alone, one at a time, once every other selected suite has
-# finished: each holds a fixed wall-clock window that the code under test
-# must meet, and a loaded host has made it miss. One name per line, first
-# word, with the window it holds; run-all-parallel.sh reads this list.
+# finished, each holding a fixed wall-clock window that the code under test
+# must meet and a loaded host has made it miss. None ships today; one name
+# per line, first word, with the window it holds. run-all-parallel.sh plants
+# a name here to prove the hold.
 ALONE=(
-  open-terminal-lane      # the lane-tree stub holds the picked account for 2s
-  oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
 )
 # Other trees' suites, each a path from the repository root this file sits
 # in, so a pool of any batteries holds them; CI's per-tree --alone arguments
@@ -258,6 +265,10 @@ if [ "${1-}" = --battery ]; then
     TEST_DIRS+=("$TEST_DIR")
     shift 2
     while [ "${1-}" = --alone ]; do
+      # A name no suite file answers to would isolate nothing and say so
+      # nowhere: the suite it meant would run pooled under its timing bound.
+      [ -f "$TEST_DIR/$2.sh" ] ||
+        { echo "run-all.sh: alone-missing suite=$2 battery=$TEST_DIR" >&2; exit 1; }
       ALONE+=("$TEST_DIR/$2.sh")
       shift 2
     done
@@ -281,6 +292,12 @@ CHECKOUT_KENDEX_QUERY=0
 if [ "${1-}" = --checkout-kendex ]; then
   [ "$#" -eq 1 ] || { echo 'run-all.sh: checkout-kendex-arguments' >&2; exit 1; }
   CHECKOUT_KENDEX_QUERY=1
+  shift
+fi
+SHARD_OF_QUERY=0
+if [ "${1-}" = --shard-of ]; then
+  [ "$#" -eq 1 ] || { echo 'run-all.sh: shard-of-arguments' >&2; exit 1; }
+  SHARD_OF_QUERY=1
   shift
 fi
 
@@ -318,8 +335,6 @@ fi
 SELECT=()
 REJECT=()
 SHARD=""
-# Main run 37769037887 and merge-group run 37792683384 exhausted the macOS
-# and Linux deadlines. These watch suites share a separate leg on both.
 if [ "${1-}" = --shard ]; then
   shard="${2-}"
   [ "$#" -ge 2 ] || { echo "run-all.sh: shard-arguments shard=$shard" >&2; exit 1; }
@@ -328,7 +343,7 @@ if [ "${1-}" = --shard ]; then
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-terminal|orch-oversee|orch-oversee-watch|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; shift 2 ;;
+    orch-state|orch-rest) SHARD="$shard"; shift 2 ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -342,37 +357,21 @@ done
 FILTER="$*"
 
 shard_of() { # BASE
-  # Run 38452700793 exhausted watch's deadline with two overseer suites at
-  # 900s. Spread those contracts across the existing macOS worker pools.
-  if [ "${RUNNER_OS:-Linux}" = macOS ]; then
-    case "$1" in
-      oversee_watch_overseer_record*|open-terminal-lane-hosted-accounts) OWNING_SHARD=orch-dev; return ;;
-      oversee_watch_lanes|oversee_watch_owed*|oversee_watch_overseer_context|oversee_watch_overseer_gap|open-terminal-lane-hosted-ssh) OWNING_SHARD=orch-state; return ;;
-      oversee_watch_lifecycle|oversee_watch_overseer_marks|oversee_watch_overseer_mail|open-terminal-lane-hosted-cap|open-terminal-lane-hosted-pending) OWNING_SHARD=orch-rest; return ;;
-      oversee_watch_overseer_wall|open-terminal-lane-hosted-pi) OWNING_SHARD=orch-oversee-succeed; return ;;
-      open-terminal-lane-hosted-copilot|open-terminal-lane-hosted-codex) OWNING_SHARD=orch-oversee; return ;;
-      oversee_watch_overseer*)
-        if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then OWNING_SHARD=orch-oversee; return; fi ;;
-    esac
-  fi
   case "$1" in
-    *open-terminal*) OWNING_SHARD=orch-terminal ;;
-    *oversee_succeed*|*oversee_watch_mail*|*oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
-    oversee_watch|oversee_watch_lifecycle|oversee_watch_terminal|oversee_watch_lanes|oversee_watch_overseer*) OWNING_SHARD=orch-oversee-watch ;;
-    # Merge-group run 39048736979 stopped orch-oversee at its Linux deadline
-    # after 831s. These two families held 1111 of its 3195 suite seconds.
-    oversee_launch*|oversee_watch_owed*) OWNING_SHARD=orch-dev ;;
-    *oversee*) OWNING_SHARD=orch-oversee ;;
-    *dev*|*review*) OWNING_SHARD=orch-dev ;;
-    # The account-reader family exhausted orch-state in merge-group run
-    # 39876878565. Keep it together in Linux's existing dev worker pool.
-    lanes*)
-      if [ "${RUNNER_OS:-Linux}" = Linux ]; then OWNING_SHARD=orch-dev
-      else OWNING_SHARD=orch-state; fi ;;
-    *lane*|*workflow-state*) OWNING_SHARD=orch-state ;;
+    *lane*) OWNING_SHARD=orch-state ;;
     *) OWNING_SHARD=orch-rest ;;
   esac
 }
+
+if [ "$SHARD_OF_QUERY" -eq 1 ]; then
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    entry=${file##*/}
+    shard_of "${entry%.sh}"
+    printf '%s %s\n' "$OWNING_SHARD" "$file"
+  done
+  exit 0
+fi
 
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
@@ -461,19 +460,6 @@ if [ -n "$DIRECT_SUITE" ]; then
 fi
 
 matches() { # BASE FILTER
-  # Exact callers select every part of the physical suite.
-  if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] &&
-    [ "$1" = dev_validate_run_selection ] && [ "$2" = =dev_validate_run ]; then
-    return 0
-  fi
-  if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
-    case "$1:$2" in
-      oversee_watch_owed_*:=oversee_watch_owed|oversee_watch_mail_*:=oversee_watch_mail) return 0 ;;
-      oversee_watch_overseer_marks:=oversee_watch_overseer|oversee_watch_overseer_record*:=oversee_watch_overseer|oversee_watch_overseer_wall:=oversee_watch_overseer|oversee_watch_overseer_mail:=oversee_watch_overseer) return 0 ;;
-      oversee_watch_overseer_context:=oversee_watch_overseer_rows|oversee_watch_overseer_gap:=oversee_watch_overseer_rows) return 0 ;;
-      open-terminal-lane-hosted-*:=open-terminal-lane-hosted) return 0 ;;
-    esac
-  fi
   case "$2" in
     =*:*) battery_tree && [ "${2%%:*}" = "=$BATTERY_TREE" ] && matches "$1" "=${2#*:}" ;;
     =*) [ "$1" = "${2#=}" ] ;;
@@ -543,11 +529,16 @@ if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
   fi
 fi
 PROFILE_SELECTED=0
+SHARD_MEMBERS=0
 for TEST_DIR in "${TEST_DIRS[@]}"; do
 for test_file in "$TEST_DIR"/*.sh; do
   [[ -f "$test_file" ]] || continue
   base=$(basename "$test_file" .sh)
   [[ "$base" == "run-all" ]] && continue
+  if [ -n "$SHARD" ]; then
+    shard_of "$base"
+    [ "$OWNING_SHARD" != "$SHARD" ] || SHARD_MEMBERS=$((SHARD_MEMBERS + 1))
+  fi
   wanted "$base" || continue
   PROFILE_SELECTED=$((PROFILE_SELECTED + 1))
   if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
@@ -572,6 +563,12 @@ if [[ "$RUN" -eq 0 ]]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: no native contracts selected\n' "$BATTERY"
     exit 0
   fi
+  # A shard step whose suite list skips every suite of its shard rejects
+  # each one; a selector that matches none of the shard still refuses.
+  if [ -n "$SHARD" ] && [ "$SHARD_MEMBERS" -gt 0 ] && [ "${#SELECT[@]}" -eq 0 ] && [ "${#REJECT[@]}" -gt 0 ]; then
+    printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every %s suite rejected\n' "$BATTERY" "$SHARD"
+    exit 0
+  fi
   if [[ -n "$FILTER" ]]; then
     echo "run-all.sh: no test scripts matched filter '$FILTER' under $TEST_DIR" >&2
   else
@@ -588,15 +585,16 @@ case "$JOBS" in
   '' | *[!0-9]* | 0) echo "run-all.sh: nproc printed '$JOBS', not a worker count" >&2; exit 1 ;;
 esac
 
-# A suite's own bound: 1.7 times the slowest suite of merge-group run
-# 37477526298, open-terminal-relaunch-route at 540s on macOS. It is the only
-# bound where no deadline is set, as on tools/guard's runs, and on a 30-minute
-# leg it stops a suite hung early in time for the ALONE suites, which wait for
-# every other suite to end, to run before the deadline.
-SUITE_SECS="${RUN_ALL_SUITE_SECS:-900}"
-case "$SUITE_SECS" in
-  '' | *[!0-9]* | 0*) echo "run-all.sh: RUN_ALL_SUITE_SECS is '$SUITE_SECS', not a positive whole number of seconds" >&2; exit 1 ;;
-esac
+# A suite's own bound, where set: on a CI leg it stops a suite hung early in
+# time for the ALONE suites, which wait for every other suite to end, to run
+# before the deadline. A local run has none: a working suite is never
+# stopped there, and a run that stops working is the caller's to end.
+SUITE_SECS="${RUN_ALL_SUITE_SECS:-}"
+if [ -n "${RUN_ALL_SUITE_SECS+set}" ]; then
+  case "$SUITE_SECS" in
+    '' | *[!0-9]* | 0*) echo "run-all.sh: RUN_ALL_SUITE_SECS is '$SUITE_SECS', not a positive whole number of seconds" >&2; exit 1 ;;
+  esac
+fi
 # The run's deadline on the SECONDS clock, or empty for none. It is fixed at
 # the run's start, so a suite that starts late gets only the time left.
 DEADLINE=""
@@ -675,7 +673,7 @@ report() { # BASE STATUS SECONDS [STOP LAST]
   TOTAL_FAIL=$((TOTAL_FAIL + fail))
   printf 'suite=%s seconds=%s pass=%s fail=%s\n' "$1" "$3" "$pass" "$fail"
   if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]]; then
-    budget_warning "$1" "$3" "$SUITE_SECS"
+    [ -z "$SUITE_SECS" ] || budget_warning "$1" "$3" "$SUITE_SECS"
   fi
 }
 
@@ -707,7 +705,7 @@ SLOT_STOP=()
 SLOT_LAST=()
 k=0
 while [ "$k" -lt "$JOBS" ]; do
-  SLOT[k]=""; SLOT_PID[k]=""; SLOT_START[k]=0; SLOT_DUE[k]=0; SLOT_BOUND[k]=""; SLOT_STOP[k]=""; SLOT_LAST[k]=""
+  SLOT[k]=""; SLOT_PID[k]=""; SLOT_START[k]=0; SLOT_DUE[k]=""; SLOT_BOUND[k]=""; SLOT_STOP[k]=""; SLOT_LAST[k]=""
   k=$((k + 1))
 done
 started=$SECONDS
@@ -732,7 +730,7 @@ while [ "$finished" -lt "$RUN" ]; do
   while [ "$k" -lt "$JOBS" ]; do
     base="${SLOT[k]}"
     if [ -n "$base" ] && [ -z "${SLOT_STOP[k]}" ] &&
-      [ "$SECONDS" -ge "${SLOT_DUE[k]}" ] && kill -0 "${SLOT_PID[k]}" 2>/dev/null; then
+      [ -n "${SLOT_DUE[k]}" ] && [ "$SECONDS" -ge "${SLOT_DUE[k]}" ] && kill -0 "${SLOT_PID[k]}" 2>/dev/null; then
       stop_overdue "$k"
     fi
     if [ -n "$base" ] && ! kill -0 "${SLOT_PID[k]}" 2>/dev/null; then
@@ -752,22 +750,23 @@ while [ "$finished" -lt "$RUN" ]; do
       { [ -z "$DEADLINE" ] || [ "$SECONDS" -lt "$DEADLINE" ]; }; then
       printf 'start suite=%s\n' "${SUITES[next]}"
       suite_file="${SUITE_FILES[next]}"
-      suite_args=("$suite_file")
-      if [ "$suite_file" = "$ORCH_TEST_DIR/dev_validate_run.sh" ]; then
-        suite_args+=(runner)
+      if [ "$LOCAL_SUITES" -eq 1 ]; then
+        suite_step="${suite_file#"$PWD"/}"
+        printf 'validate-step: name=%s command=run-all.sh --local --suite %s\n' "$suite_step" "$suite_step"
       fi
-      case "$suite_file" in
-        "$ORCH_TEST_DIR/oversee_watch_owed.sh") suite_args+=(development) ;;
-        "$ORCH_TEST_DIR/oversee_watch_mail.sh") suite_args+=(delivery) ;;
-      esac
+      suite_args=("$suite_file")
       suite_environment "$suite_file" || { status=$?; stop_suites; exit "$status"; }
       PATH="$SUITE_PATH" "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!
       SLOT[k]="${SUITES[next]}"
       SLOT_START[k]=$SECONDS
-      SLOT_DUE[k]=$((SECONDS + SUITE_SECS))
-      SLOT_BOUND[k]=suite-timeout
-      if [ -n "$DEADLINE" ] && [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; then
+      SLOT_DUE[k]=""
+      SLOT_BOUND[k]=""
+      if [ -n "$SUITE_SECS" ]; then
+        SLOT_DUE[k]=$((SECONDS + SUITE_SECS))
+        SLOT_BOUND[k]=suite-timeout
+      fi
+      if [ -n "$DEADLINE" ] && { [ -z "${SLOT_DUE[k]}" ] || [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; }; then
         SLOT_DUE[k]=$DEADLINE
         SLOT_BOUND[k]=run-deadline
       fi

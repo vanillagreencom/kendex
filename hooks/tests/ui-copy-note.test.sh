@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Surface: ui-copy-note.sh. Inputs: that hook, tests/lib/assert.sh, the
-# decider settings reader, code-quality UI reference, orch/scripts/qa-signals
-# and workflow-state, and the tracked Claude Code and Codex registrations.
+# decider settings reader, code-quality UI reference, the orch runtime's
+# record-qa-decision scan (its QA_UI_PATHS matcher, through
+# orch/scripts/orch-runtime, which needs a built runtime), and the tracked
+# Claude Code and Codex registrations.
 set -euo pipefail
 TEST_DIR=$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)
 CATALOG=$(cd -- "$TEST_DIR/../.." && pwd -P)
@@ -224,16 +226,19 @@ while IFS='|' read -r setting changed; do
   git -C "$parity_repo" commit -q -m change
   printf '[env]\nQA_UI_PATHS = "%s"\n' "$setting" >"$parity_repo/kendex.settings.toml"
   parity_branch=$(git -C "$parity_repo" branch --show-current)
+  parity_request=$(jq -cn --arg w "$parity_repo" --arg b "$parity_base" \
+    '{op: "record-qa-decision", step: "scan", worktree: $w, base: $b, judgments: []}')
   parity_answer=$(
     cd -- "$parity_repo" &&
-      "$ORCH/workflow-state" init UI-1 --worktree "$parity_repo" --branch "$parity_branch" --qa-labels '[]' >/dev/null &&
-      "$ORCH/qa-signals" UI-1 --worktree "$parity_repo" --base "$parity_base"
+      "$ORCH/orch-runtime" --state-dir "$parity_repo/tmp" state init --item UI-1 --worktree "$parity_repo" --branch "$parity_branch" >/dev/null &&
+      "$ORCH/orch-runtime" --state-dir "$parity_repo/tmp" op --item UI-1 --request-json "$parity_request" >/dev/null &&
+      "$ORCH/orch-runtime" --state-dir "$parity_repo/tmp" state get --item UI-1 /qa_decision
   ) || exit 1
   expected=''
-  if jq -e '.signals | index("needs-ui-review") != null' <<<"$parity_answer" >/dev/null; then
+  if jq -e '.result.value.signals | index("needs-ui-review") != null' <<<"$parity_answer" >/dev/null; then
     expected="ui-copy-note: path=$changed"
   fi
-  check "qa-signals parity $setting / $changed" claude \
+  check "orch runtime QA matcher parity $setting / $changed" claude \
     "$(edit Edit "$parity_repo" "$changed" "parity-$parity_index")" "$expected"
 done <<'GLOBS'
 shell/**/*.qml|shell/Panel.qml

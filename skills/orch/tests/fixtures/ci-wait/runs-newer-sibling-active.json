@@ -1,6 +1,0 @@
-{
-  "workflow_runs": [
-    {"id": 29634837179, "event": "pull_request_review_comment", "status": "in_progress", "conclusion": null, "workflow_id": 245303662, "created_at": "2026-07-18T06:55:23Z"},
-    {"id": 29634837074, "event": "pull_request_review", "status": "completed", "conclusion": "cancelled", "workflow_id": 245303662, "created_at": "2026-07-18T06:55:23Z"}
-  ]
-}

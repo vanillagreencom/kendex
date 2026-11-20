@@ -29,11 +29,15 @@ if args[:2] == ["users", "list"]:
                        "display_name": "owner.person"}]))
 elif args[:2] == ["teams", "keys"]:
     print(json.dumps({"urlKey": "workspace", "keys": ["KEN"]}))
-elif args[:2] == ["issues", "get"]:
+elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTracker("):
     if row == "rollback-read" and (root / "comment-attempted").exists():
         print("tracker: refused=rollback-read", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps(item))
+    print(json.dumps({"issue": {
+        "description": item["description"],
+        "assignee": {"name": item["assignee"]} if item["assignee"] else None,
+        "labels": {"pageInfo": {"hasNextPage": False},
+                   "nodes": [{"name": label} for label in item["labels"]]}}}))
 elif args[:2] == ["comments", "create"]:
     if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()
@@ -78,7 +82,7 @@ else:
 
 
 def run(source, scratch, bash):
-    facts = {"unposted": True, "notice": True, "posted": True, "edited": True,
+    facts = {"unposted": True, "notice": True, "posted": True, "close_untracked": True,
              "retained_error": True, "comments": True, "rollback_owned": True,
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
              "rollback_labels": True, "comment_form": True}
@@ -126,7 +130,7 @@ def run(source, scratch, bash):
 
             ask = invoke("ask", "--item", "overseer", "--to", "owner", "--issue", "KEN-7",
                          "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
-                         "--recommend", "approve", "--file", str(message))
+                         "--recommend", "approve", "--effect", "none", "--file", str(message))
             ask_id = ask.stdout.strip().split("=", 1)[1]
             pending = json.loads(invoke("pending", "--item", "overseer", "--to", "owner").stdout)
             after_ask = json.loads(state.read_text())
@@ -180,9 +184,6 @@ def run(source, scratch, bash):
                 error_file = Path(error_path) if error_path else None
                 facts["retained_error"] &= (error_file is not None and error_file.is_file()
                     and error_file.read_bytes() == b"tracker: refused=write\n")
-            if row == "edited":
-                after_ask["description"] = "**Other, what you do:** Keep this later action\n\n" + body
-                state.write_text(json.dumps(after_ask))
             before_close = json.loads(state.read_text())
             calls = (root / "calls.jsonl").read_bytes()
             (root / "closing").touch()
@@ -191,14 +192,10 @@ def run(source, scratch, bash):
             if row == "label-failed":
                 facts["retained_error"] &= (error_file is not None and error_file.is_file()
                     and error_file.read_bytes() == b"tracker: refused=write\n")
-            if not posted:
-                facts["unposted"] &= (after_close == before_close
-                    and (root / "calls.jsonl").read_bytes() == calls)
-            elif row == "edited":
-                facts["edited"] &= after_close["description"] == before_close["description"]
-            else:
-                facts["posted"] &= (after_close["description"] == body
-                    and after_close["labels"] == ["skills"] and after_close["assignee"] == "")
+            # The asking overseer's watch owns a closed ask's tracker marks:
+            # the close itself calls no tracker, posted or not.
+            facts["close_untracked"] &= (after_close == before_close
+                and (root / "calls.jsonl").read_bytes() == calls)
     return facts
 
 

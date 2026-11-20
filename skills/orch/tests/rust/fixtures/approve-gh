@@ -1,0 +1,205 @@
+#!/usr/bin/python3
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+
+root = Path.cwd()
+cfg = json.loads((root / 'answer.json').read_text())
+a = sys.argv[1:]
+with (root / 'gh.log').open('a') as log:
+    log.write(json.dumps([os.environ.get('GH_TOKEN'), a]) + '\n')
+# GitHub's REST paths take the owner and repository names case-insensitively
+# (docs.github.com/rest/pulls/pulls: "The name is not case sensitive").
+a = [x.replace('repos/O/R/', 'repos/o/r/') for x in a]
+head =cfg.get('head', '0123456789abcdef0123456789abcdef01234567')
+review = {'id': 91, 'state': 'APPROVED', 'user': {'login': 'review-app[bot]'}, 'commit_id': head}
+copilot = 'copilot-pull-request-reviewer'
+started = '2026-01-29T15:10:00Z'
+def out(value):
+    print(json.dumps(value))
+    sys.exit(0)
+def refused():
+    print('gh: Forbidden (HTTP 403)', file=sys.stderr)
+    sys.exit(1)
+def unplanted():
+    print('unplanted gh call: ' + repr(a), file=sys.stderr)
+    sys.exit(1)
+# The typed Copilot reads, in the exact forms the runtime sends.
+view = ['pr', 'view', '42', '--repo', 'o/r', '--json',
+        'headRefOid,baseRefName,state,isDraft,reviewDecision,latestReviews,author']
+if a == view:
+    out({'headRefOid': cfg.get('view_head', head), 'baseRefName': 'main', 'state': 'OPEN',
+         'isDraft': False, 'reviewDecision': None, 'latestReviews': [],
+         'author': {'login': 'app/lane-app'}})
+if a == ['api', 'repos/o/r/commits/' + cfg.get('view_head', head) + '/check-runs?filter=all&per_page=100&page=1']:
+    work = cfg.get('work')
+    if work == 'later-fail':
+        counter = root / 'check_reads'
+        count = int(counter.read_text()) + 1 if counter.exists() else 1
+        counter.write_text(str(count))
+        work = 'in_progress' if count == 1 else 'fail'
+    if work == 'fail':
+        refused()
+    # Answers GitHub never gives a check-runs read: none, a null member list, no JSON.
+    if work == 'empty':
+        sys.exit(0)
+    if work == 'malformed':
+        out({'total_count': 1, 'check_runs': None})
+    if work == 'invalid':
+        print('invalid JSON')
+        sys.exit(0)
+    status = 'in_progress' if work == 'settled' else work
+    rows = [] if not work else [{
+        'id': 72, 'node_id': 'CR_72', 'name': copilot, 'head_sha': cfg.get('view_head', head),
+        'app': None, 'status': status, 'conclusion': None,
+        'check_suite': None, 'started_at': started, 'completed_at': None,
+        'html_url': None, 'details_url': None}]
+    out({'total_count': len(rows), 'check_runs': rows})
+if a == ['api', 'repos/o/r/issues/42/timeline?per_page=100&page=1']:
+    out(cfg.get('timeline', []))
+if a == ['api', 'repos/o/r/pulls/42/reviews?per_page=100&page=1']:
+    rows = []
+    if cfg.get('work') == 'settled':
+        rows = [{'id': 61, 'user': {'login': copilot + '[bot]', 'type': 'Bot'}, 'body': 'Reviewed.',
+                 'state': 'COMMENTED', 'commit_id': head, 'submitted_at': '2026-01-29T15:12:00Z'}]
+    out(rows)
+# The approval's own calls.
+if a == ['auth', 'status']:
+    sys.exit(0 if cfg.get('keyring') else 1)
+if a == ['auth', 'token']:
+    print('ghs_fixtureLaneToken')
+    sys.exit(0)
+if a == ['api', 'repos/o/r/pulls/42', '--jq', '.head.sha']:
+    counter = root / 'head_reads'
+    count = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(count))
+    print('01234567fedcba9876543210fedcba9876543210' if cfg.get('head_move_on') == count else head)
+    if cfg.get('head_exit') or cfg.get('head_fail_on') == count:
+        print('gh: Not Found (HTTP 404)', file=sys.stderr)
+        sys.exit(cfg.get('head_exit', 1))
+    sys.exit(0)
+if a == ['api', '--method', 'POST', 'repos/o/r/pulls/42/reviews', '--input', '-']:
+    with (root / 'posts').open('a') as posts:
+        posts.write('post\n')
+    record = json.loads((root / 'item.json').read_text())
+    entry = record['head_approvals']['o/r#42'][head]
+    assert entry['attempt']['state'] == 'attempted', 'POST without the once record'
+    payload = json.loads(sys.stdin.read())
+    (root / 'payload.json').write_text(json.dumps(payload))
+    mode = cfg.get('post', 'ok')
+    if mode in ('lost-landed', 'refused-landed') or mode == 'ok':
+        (root / 'landed.json').write_text(json.dumps(review))
+    if mode == 'lost' or mode == 'lost-landed':
+        os.kill(os.getpid(), signal.SIGTERM)
+    if mode == 'auth':
+        sys.exit(4)
+    if mode.startswith('refused'):
+        print('gh: Unprocessable Entity (HTTP 422)', file=sys.stderr)
+        sys.exit(1)
+    if mode == 'scopes':
+        print('gh: Not Found (HTTP 404)', file=sys.stderr)
+        print('gh: This API operation needs the "repo" scope. To request it, run:  gh auth refresh -h github.com -s repo', file=sys.stderr)
+        sys.exit(1)
+    if mode == 'unread':
+        print('{}')
+        sys.exit(0)
+    if mode == 'server-quoted':
+        print('gh: upstream (HTTP 422) (HTTP 500)', file=sys.stderr)
+        sys.exit(1)
+    if mode == 'transport':
+        print('Post "https://api.github.com/repos/o/r/pulls/42/reviews": EOF', file=sys.stderr)
+        sys.exit(1)
+    out(review)
+if a == ['api', 'repos/o/r/pulls/42/reviews', '--paginate', '--slurp']:
+    if cfg.get('read_back') == 'fail':
+        refused()
+    if cfg.get('read_back') == 'malformed':
+        out({})
+    landed = root / 'landed.json'
+    rows = [json.loads(landed.read_text())] if landed.exists() else cfg.get('reviews', [])
+    out([rows])
+# The github reply checker's reads, in the exact forms its router sends.
+if a == ['api', 'user', '--jq', '.login']:
+    print('lane-app[bot]')
+    sys.exit(0)
+if a == ['api', 'repos/o/r/pulls/42']:
+    out({'head': {'sha': cfg.get('reply_head', head)}, 'user': {'login': 'author', 'type': 'User', 'id': 1001}})
+if a == ['api', 'repos/o/r/pulls/42/reviews?per_page=100', '--paginate']:
+    if cfg.get('remove_gh_after_replies'):
+        (root / 'bin/gh').unlink()
+    if cfg.get('reply') == 'unavailable':
+        sys.exit(1)
+    if cfg.get('reply') == 'malformed':
+        out({})
+    if cfg.get('reply') in ('body-findings', 'lane-disposition'):
+        out([{'id': 5539256602, 'state':'COMMENTED', 'commit_id': head,
+              'user': {'login':'copilot-pull-request-reviewer[bot]', 'type':'Bot', 'id':3003},
+              'author_association':'NONE', 'body':'<!-- ccr-overview-v2 -->\n\n### Changes recommended\n\n**0 open findings**'}])
+    out([])
+# The approval's comment: its POST and its paged read-back, in the forms the
+# runtime sends. A comment that landed outlives the answer map, in
+# `comments.json`, and every comments read lists it after any planted one.
+comments = root / 'comments.json'
+landed_comments = json.loads(comments.read_text()) if comments.exists() else []
+if a == ['api', '--method', 'POST', 'repos/o/r/issues/42/comments', '--input', '-']:
+    with (root / 'comment_posts').open('a') as posts:
+        posts.write('post\n')
+    entry = json.loads((root / 'item.json').read_text())['head_approvals']['o/r#42'][head]
+    assert entry['comment']['state'] == 'attempted', 'comment POST without its claim'
+    assert entry.get('attempt') is None, 'comment POST after the approval claim'
+    sent = json.loads(sys.stdin.read())
+    mode = cfg.get('comment', 'ok')
+    if mode == 'forbidden':
+        print('gh: Resource not accessible by integration (HTTP 403)', file=sys.stderr)
+        sys.exit(1)
+    login = 'review-app[bot]' if os.environ.get('GH_TOKEN') == 'ghs_fixtureApprovalFileToken' else 'lane-app[bot]'
+    number = 7001 + len(landed_comments)
+    comment = {'id': number, 'node_id': 'IC_' + str(number),
+               'url': 'https://api.github.com/repos/o/r/issues/comments/' + str(number),
+               'html_url': 'https://github.com/o/r/pull/42#issuecomment-' + str(number),
+               'body': sent['body'], 'user': {'login': login, 'id': 4004, 'type': 'Bot'},
+               'created_at': '2026-01-29T15:20:00Z', 'updated_at': '2026-01-29T15:20:00Z',
+               'issue_url': 'https://api.github.com/repos/o/r/issues/42',
+               'author_association': 'NONE', 'performed_via_github_app': None}
+    comments.write_text(json.dumps(landed_comments + [comment]))
+    if mode == 'lost':
+        os.kill(os.getpid(), signal.SIGTERM)
+    out(comment)
+if a == ['api', 'repos/o/r/issues/42/comments?per_page=100&page=1']:
+    if cfg.get('comment_read') == 'fail':
+        refused()
+    out(landed_comments)
+if a == ['api', 'repos/o/r/issues/42/comments?per_page=100', '--paginate']:
+    if cfg.get('reply') == 'lane-disposition':
+        out([{'user': {'login':'lane-app[bot]', 'type':'Bot', 'id':2002}, 'author_association':'CONTRIBUTOR', 'body':'Dispositions at ' + head + '\nreview:5539256602 - Declined: the caller rejects empty values before the read.'}] + landed_comments)
+    out(landed_comments)
+# Its GraphQL reads: the viewer, and the thread walk with its variables. The
+# planted data is projected onto the query's selection by the shared closed
+# projector, which refuses any query GitHub would not answer.
+thread_vars = ['-F', 'owner=o', '-F', 'repo=r', '-F', 'pr=42']
+if a[:3] == ['api', 'graphql', '-f'] and len(a) >= 4 and a[3].startswith('query=') and a[4:] in ([], thread_vars):
+    if os.environ.get('GH_TOKEN') == 'ghs_fixtureApprovalFileToken':
+        viewer = {'login': 'review-app[bot]', 'databaseId': 4004}
+    else:
+        viewer = {'login': 'lane-app[bot]', 'databaseId': 2002}
+    comments = []
+    if cfg.get('reply') == 'bad':
+        comments = [{'comments': {'totalCount': 2, 'nodes': [
+            {'author': {'login': 'copilot-pull-request-reviewer', '__typename': 'Bot', 'databaseId': 3003}, 'authorAssociation': 'NONE', 'body': 'The value can be empty.'},
+            {'author': {'login': 'lane-app', '__typename': 'Bot', 'databaseId': 2002}, 'authorAssociation': 'CONTRIBUTOR', 'body': 'Tracked separately.'}]}}]
+    planted = {'body': {'data': {
+        'viewer': viewer,
+        'repository': {'pullRequest': {'reviewThreads': {
+            'pageInfo': {'hasNextPage': False, 'endCursor': None}, 'nodes': comments}}}}}}
+    bindings = [[field.split('=', 1)[0], flag[1:], field.split('=', 1)[1]] for flag, field in zip(a[4::2], a[5::2])]
+    projected = subprocess.run(['jq', '-c', '--arg', 'q', a[3][len('query='):], '--argjson', 'bindings', json.dumps(bindings),
+                                '-f', str(root / 'select.jq')],
+                               input=json.dumps(planted), capture_output=True, text=True)
+    if projected.returncode != 0:
+        print(projected.stderr.strip(), file=sys.stderr)
+        sys.exit(64)
+    out(json.loads(projected.stdout)['body'])
+unplanted()

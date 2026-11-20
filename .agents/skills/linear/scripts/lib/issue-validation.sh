@@ -350,7 +350,7 @@ issue_supersession_valid() {
 # STORED is the issue's current description, which `issues update` passes. A
 # body equal to it apart from a leading owner action line only places,
 # replaces or removes that line, as the mailbox owner ask, its rollback and
-# close and the oversee-watch repair do; it is judged on that line's length
+# close and the orch watch's repair do; it is judged on that line's length
 # alone, so an ask on a body filed in the older header-first form is written
 # without notes on text its writer did not author.
 # Every other body, and every body with no STORED, takes the full check.

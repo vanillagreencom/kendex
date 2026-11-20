@@ -1,11 +1,11 @@
 # Review Workflow
 
-On-demand review of local changes: review, present findings, and offer to fix the selected ones. Always standalone — no managed lifecycle, no caller context.
+Review local changes on demand. Run every reviewer, present the findings, and fix what survives disposition. This workflow always runs standalone, with no managed lifecycle and no caller context.
 
 | Command | Behavior |
 |---------|----------|
 | `review` | Uncommitted changes since the last commit |
-| `review all` | All branch changes vs the base, committed and uncommitted |
+| `review all` | All branch changes against the base, committed and uncommitted |
 | `review last [N]` | The last N commits |
 | `review [HASH]` | A single commit |
 
@@ -17,9 +17,7 @@ On-demand review of local changes: review, present findings, and offer to fix th
 .agents/skills/orch/scripts/resolve-base-branch .
 ```
 
-Use the outputs as `BRANCH`, `ISSUE_ID` (empty means § 2 mints and initializes a local key), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
-
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the `.` the line above resolves `WT_PATH` from.
+The outputs are `BRANCH`, `ISSUE_ID` and `BASE_BRANCH`. An empty `ISSUE_ID` means § 2 mints a local key. `WT_PATH` is `git-context repo-root .`. Fill `Worktree:` from `git -C . rev-parse --show-toplevel`.
 
 | Argument | `DIFF_RANGE` |
 |----------|-------------|
@@ -32,36 +30,23 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the
 git -C . diff [DIFF_RANGE] --stat
 ```
 
-No changes → report "No changes to review" and **END**.
+No changes: report "No changes to review" and **END**.
 
-**Decision context** — skip when no `ISSUE_ID`:
-
-```bash
-.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
-.agents/skills/decider/scripts/decisions search "[KEYWORDS_OF_THE_CHANGED_AREA]"
-```
-
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. A decision binds only after its full record and status are read: one marked superseded binds only what its status leaves active, and a retired one binds nothing. Verify each before injecting it, one command per path:
-
-```bash
-test -f [DECISION_FILE_PATH]
-```
-
-A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
+**Decision context.** Skip it with no `ISSUE_ID`. Otherwise run [review-pr.md § 1.1 Decision Context](review-pr.md#11-decision-context); its results fill the delegation's `Decisions:` block.
 
 ## 2. Launch Reviewers
 
-With no `ISSUE_ID`, mint `LOCAL_KEY` through `workflow-state new-local-key`, initialize it through `workflow-state init [LOCAL_KEY] --worktree [WT_PATH] --branch [BRANCH]`, and use it as `ISSUE_ID` from here. This workflow removes that local state in § 5. For an issue key with no state, initialize that key first. Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this local batch, with state writes enabled; § 3 supplies acceptance and § 4 supplies disposition and completion.
+1. **State key.** With no `ISSUE_ID`, mint a local key with `orch-runtime state new-local-key` and take `LOCAL_KEY` from the reply's `result.key`. Initialize it with `orch-runtime state init --item [LOCAL_KEY] --worktree [WT_PATH] --branch [BRANCH]`, and use it as `ISSUE_ID` from here; § 5 removes it. Initialize an issue key with no state the same way.
+2. **Admission.** This run is one [Record verified findings](../schemas/workflow-state.md#record-verified-findings) batch with state writes enabled. Admit it before any reviewer starts. § 3 is its acceptance; § 4 is its disposition and completion.
+3. Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before you select any stored reviewer session.
+4. `[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
 
-Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before selecting any stored reviewer session.
+   ```bash
+   .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
+   ```
 
-`[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
-
-```bash
-.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
-```
-
-`0` delegates to every reviewer in one parallel batch. A positive value smaller than the reviewer count runs bounded sequential waves — launch up to the available slots, wait for each return, retire the completed session, launch the next wave. If a spawn fails with the runtime's thread-limit error despite an unlimited budget, continue in waves sized by the reviewers that did spawn and recommend the observed budget to the user. Review state lives in the returned artifacts, never in reviewer session memory. On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`.
+5. `0` delegates to every reviewer in one parallel batch. A positive value below the reviewer count runs bounded waves: launch up to the available slots, wait for each return, retire the finished session, then launch the next wave. When a spawn fails with the runtime's thread-limit error under an unlimited budget, continue in waves the size of the reviewers that spawned. Recommend that observed budget to the user.
+6. On Codex, spawn each canonical reviewer name by [codex-runtime.md § Spawning Codex collaboration agents](../references/codex-runtime.md#spawning-codex-collaboration-agents), under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/review.md
@@ -78,13 +63,17 @@ Decisions:
 
 ## 3. Collect Results
 
-Wait for every reviewer. Under an unlimited budget do NOT shut them down before § 4; in wave mode they are already retired.
+Wait for every reviewer. Under an unlimited budget, keep the sessions alive until § 4. Wave mode has already retired them.
 
-Extract the report path and verdict from each return; halt and report if any return does not carry them. Apply the shared contract's acceptance to each returned file. Overall verdict is `action_required` when any reviewer has blockers, else `pass`. Append each accepted path:
+1. Take the report path and verdict from each return. A return with neither halts the run: report it.
+2. Accept each returned file by the contract's acceptance step.
+3. Record each accepted path:
 
-```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"returned","artifact":"[PATH]"}'
+   ```
+
+4. The overall verdict is `action_required` when any reviewer reported a blocker, else `pass`.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -99,11 +88,14 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Blockers or any `fix`/`issue` suggestion → § 4. Otherwise complete the shared contract with the empty finding set, then → § 5.
+A blocker, or any `fix` or `issue` suggestion: § 4. Otherwise complete the contract with the empty finding set, then § 5.
 
 ## 4. Present And Fix
 
-Collect the blockers, the `category == "fix"` suggestions, and the `category == "issue"` suggestions. Read `patched_causes` and `frozen_causes` first, with the command [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) states; a finding sharing a cause there takes that section's disposition, never another patch. Decline anything that cannot affect real usage with a one-line reason, per [SKILL.md § The Cycle](../SKILL.md#the-cycle). Nothing left → complete the shared contract, then § 5.
+1. Collect the blockers, the `category == "fix"` suggestions and the `category == "issue"` suggestions.
+2. Read `patched_causes` and `frozen_causes` first, with the command [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) states. A finding that shares a cause there takes that section's disposition, never another patch.
+3. Decline, with a one-line reason, anything that cannot affect real usage ([SKILL.md § The Cycle](../SKILL.md#the-cycle)).
+4. Nothing left: complete the contract, then § 5.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -134,19 +126,23 @@ Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)
 
 </output_format>
 
-Omit empty categories. **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Disposition every finding per [references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. Every surviving blocker and `category == "fix"` suggestion is fixed; declines are reported in § 5. `ORCH_DECISION_MODE` does not reintroduce the menu; the ask set in [communication-modes.md](../references/communication-modes.md) § Ask set still applies.
+Omit empty categories.
+
+**Disposition is by rule, not by prompt.** Present no selection menu over the findings, whatever `ORCH_DECISION_MODE` reads. The ask set in [communication-modes.md](../references/communication-modes.md) § Ask set still applies. Disposition every finding by [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow), Step 0 first. Only what survives enters the fix set. Fix every surviving blocker and `category == "fix"` suggestion; § 5 reports the declines.
 
 **Never fix as the main agent.**
 
-Complete [Record verified findings](../schemas/workflow-state.md#record-verified-findings) for this local batch. An empty fix set goes to the filing route below or § 5; otherwise, with either key:
+1. Complete [Record verified findings](../schemas/workflow-state.md#record-verified-findings) for this batch.
+2. An empty fix set goes to the filing step below, or to § 5. Otherwise record the round's base under either key:
 
-```bash
-.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WT_PATH]
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"base","worktree":"[WT_PATH]"}'
+   ```
 
-**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 tail` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion, each formatted per [dev-round.md § Item text](../schemas/dev-round.md#item-text)), `source: review`. State writes for fixed and escalated items belong to dev-fix — do not repeat them here.
+3. **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 step 4` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (every surviving blocker and `category == "fix"` suggestion, each formatted per [dev-round.md § Item text](../schemas/dev-round.md#item-text)), and `source: review`. Dev-fix writes the state of the fixed and escalated items; write none of it here.
+4. Present the fix results.
 
-Output: [Lane Output](../references/skill-rules.md#lane-output).
+   Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 
@@ -158,18 +154,19 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Apply [references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Filing bar to every candidate: `category == "issue"` suggestions and the escalated items from the fix round alike. What clears it builds an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (null for a minted local key, which names no issue), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
+**Filing.** Apply [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) to every candidate: the `category == "issue"` suggestions and the fix round's escalated items.
 
-Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before invoking `audit-issues`. A non-delegated primary session runs this wrapper itself; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
+1. Build an audit-input file from what clears the bar at `tmp/audit-review-YYYYMMDD-HHMMSS.json`, per `.agents/skills/project-management/schemas/audit-issues-input.md`. Set `source: "review"`, `parent_issue: [ISSUE_ID]` (null for a minted local key) and `worktree: [WT_PATH]`. Each escalated item's `outcome` sets its `origin`: `"skipped"` gives `origin: "skipped"`; `"blocked"` or no `outcome` gives `origin: "escalated"`.
+2. Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`. A non-delegated primary session runs this wrapper itself. Only the `tpm-audit.md` analysis delegates, and audit-issues spawns it.
 
 ## 5. Summary
 
-Shut the review agents down (wave runs already did).
+Shut the review agents down. Wave runs already did.
 
-**Skip if** § 2 minted no `LOCAL_KEY`. A key from the branch names live state that later workflows read, so only `LOCAL_KEY` is removed. Its state has no later reader, since the next review mints its own key:
+**Remove the local key.** **Skip if** § 2 minted no `LOCAL_KEY`. The close-out archives and removes the key's files ([workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)):
 
 ```bash
-.agents/skills/orch/scripts/workflow-state remove [LOCAL_KEY]
+.agents/skills/orch/scripts/orch-runtime state remove --item [LOCAL_KEY]
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).

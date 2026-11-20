@@ -8,9 +8,11 @@ import base64
 import hashlib
 import os
 from pathlib import Path
+import pty
 import runpy
 import shutil
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -20,6 +22,19 @@ import unittest
 from unittest import mock
 
 PACKAGE = Path(__file__).resolve().parents[2]
+
+
+def item_record(state_dir, item="TEST-1"):
+    """The item's state file under a state directory, as orch-runtime places it."""
+    return Path(state_dir) / "items" / item / f"workflow-state-{item}.json"
+
+
+def plant_record(state_dir, text, item="TEST-1"):
+    """Write the item's state file under a state directory, its folder made."""
+    record = item_record(state_dir, item)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(text)
+    return record
 
 
 class SshHostTests(unittest.TestCase):
@@ -40,7 +55,7 @@ class SshHostTests(unittest.TestCase):
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_")) and k != "ORCH_ARCHIVE_ROOT"}
         self.env.update(REAL_GIT=shutil.which("git"), REAL_CHMOD=shutil.which("chmod"),
                         REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
-                        SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
+                        SSH_TEST_LOG=str(self.root / "calls"), ORCH_ARCHIVE_ROOT=str(self.root / "fleet/archive"),
                         HOME=str(self.root),
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.git_env = {key: self.env[key] for key in ("HOME", "PATH", "REAL_GIT")}
@@ -115,7 +130,9 @@ fi
 ''')
         # Every item's tree sits at the clone's one hosted path, as the real
         # command places it. Like the real command, exists answers for the
-        # item the tree there was created for, recorded beside it.
+        # item the tree there was created for, recorded beside it, and a
+        # reuse brings the tree to the base unless the row's tree holds work
+        # of its own (SSH_TEST_TREE_KEEPS).
         wt = self.source / ".agents/skills/worktree/scripts/worktree"
         self.executable(wt, '''#!/usr/bin/env bash
 set -euo pipefail
@@ -123,7 +140,9 @@ printf 'worktree %s\\n' "$*" >> "$SSH_TEST_LOG"
 path="$PWD-worktree"
 case "$1" in
 create)
-  if [[ -d "$path" ]]; then [[ " $* " == *" --reuse "* ]] || exit 75
+  if [[ -d "$path" ]]; then
+    [[ " $* " == *" --reuse "* ]] || exit 75
+    [[ -n "${SSH_TEST_TREE_KEEPS:-}" ]] || git -C "$path" checkout -q --detach "$(git rev-parse HEAD)"
   else
     [[ " $* " != *" --reuse "* ]] || exit 1
     git worktree add --detach "$path" >&2
@@ -150,6 +169,21 @@ esac
         scripts.mkdir(parents=True)
         for name in ("resolve-base-branch", "sync-base", "lane-marker"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
+        # orch's setup on the host, the clone's binaries already built: its
+        # two lines in the order it builds them, orch-runtime's last, the one
+        # the create's record names.
+        self.executable(scripts / "setup", '''#!/usr/bin/env bash
+printf 'agent-runtime-setup: key=fixture binary=/cache/bin/agent-runtime-fixture\n'
+printf 'orch-runtime-setup: key=fixture binary=/cache/bin/orch-runtime-fixture\n'
+''')
+        # The clone's runtime entries a stop runs on the host, each the binary
+        # setup built for these sources, and agent-runtime's setup naming its
+        # own: the prefix's group leader.
+        self.executable(scripts / "orch-runtime", f'#!/bin/sh\nexec {shlex.quote(str(self.runtime_binary()))} "$@"\n')
+        agent = self.source / ".agents/skills/agent-runtime/scripts"
+        lead = shlex.quote(str(self.agent_runtime_binary()))
+        self.executable(agent / "setup", f"#!/usr/bin/env bash\nprintf 'agent-runtime-setup: key=fixture binary=%s\\n' {lead}\n")
+        self.executable(agent / "agent-runtime", f'#!/bin/sh\nexec {lead} "$@"\n')
         # append takes its lock through the clone's own installed lock library.
         self.copy_tree(PACKAGE / "scripts/lib", scripts / "lib")
         self.copy_tree(PACKAGE.parent / "mailbox/scripts", self.source / ".agents/skills/mailbox/scripts")
@@ -241,8 +275,13 @@ exec git "$@"
             library = path.parent / "lib"
             self.copy_tree(PACKAGE / "scripts/lib", library, dirs_exist_ok=True)
             self.copy_tree(PACKAGE.parent / "mailbox/scripts", path.parent.parent.parent / "mailbox/scripts", dirs_exist_ok=True)
-            for name in ("orch-env", "workflow-state", "git-context"):
+            for name in ("orch-env", "git-context"):
                 self.copy_file(PACKAGE / "scripts" / name, path.parent / name)
+            # The archive root is the runtime's answer: this entry runs the
+            # binary setup built for these sources.
+            entry = path.parent / "orch-runtime"
+            entry.write_text(f'#!/bin/sh\nexec {shlex.quote(str(self.runtime_binary()))} "$@"\n')
+            entry.chmod(0o755)
 
     def call(self, *args, data=b"", **env):
         return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=data, capture_output=True)
@@ -276,7 +315,7 @@ exec git "$@"
         self.assertFalse((peer.source / "case-only").exists())
         self.assertEqual(subprocess.check_output([self.env["REAL_GIT"], "-C", str(peer.source), "rev-parse", "HEAD"]), peer_head)
         paths = (".git/config", "source/.git/config", "source/kendex.toml", "local account/auth.json",
-                 "inventory.json", "bin/ssh", "orch/scripts/lane-host-ssh", "orch/scripts/lib/lane-gitfile.sh")
+                 "inventory.json", "bin/ssh", "orch/scripts/lane-host-ssh", "orch/scripts/lib/kendex-env.sh")
         expected = {relative: (peer.root / relative).read_bytes() for relative in paths}
         for relative in paths:
             with self.subTest(path=relative):
@@ -299,11 +338,11 @@ exec git "$@"
             self.executable(path, provider)
         controls[0].write_text("private mutant\n")
         self.assertEqual(controls[1].read_text(), provider)
-        libraries = [path.parent / "lib/lane-gitfile.sh" for path in controls]
+        libraries = [path.parent / "lib/kendex-env.sh" for path in controls]
         original = libraries[1].read_bytes()
         libraries[0].write_bytes(b"private library mutation\n")
         self.assertEqual(libraries[1].read_bytes(), original)
-        self.assertEqual((peer.root / "orch/scripts/lib/lane-gitfile.sh").read_bytes(), original)
+        self.assertEqual((peer.root / "orch/scripts/lib/kendex-env.sh").read_bytes(), original)
         # A shared inode is the defect this isolation assertion must detect.
         libraries[0].write_bytes(original)
         libraries[1].unlink()
@@ -428,7 +467,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         result = self.create("--reuse", harness="pi")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)
-        # The root open-terminal reads the lane's Pi settings under.
+        # The root the launch reads the lane's Pi settings under.
         fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
         self.assertEqual(fields["pi-root"], self.row["account"])
         self.assertNotIn("pi-root", dict(word.split("=", 1) for word in first.stdout.decode().strip().split("\t")))
@@ -458,62 +497,20 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(parse(landed.read_bytes()), expected or data)
 
-    def copilot_create(self):
-        """A copilot create's fields, on a host whose login profile exports every token again."""
+    def test_create_runs_copilot_on_its_stored_login(self):
+        """A copilot lane copies no credential, and its provider selects COPILOT_HOME on the prefix and names it as copilot-home."""
+        before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         result = self.create(harness="copilot")
         self.assertEqual(result.returncode, 0, result.stderr)
-        (self.root / ".bash_profile").write_text(
-            "export GH_TOKEN=profile-token COPILOT_GITHUB_TOKEN=profile-placeholder GITHUB_TOKEN=profile-actions-token\n")
-        return dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
-
-    def copilot_run(self, fields, library=None):
-        """The create's prefix running the command open-terminal hands it, under LIBRARY's launch policy or none."""
-        probe = ('printf "%s|%s|%s|%s|%s|%s" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}"'
-                 ' "$COPILOT_HOME" "$COPILOT_SKILLS_DIRS" "$COPILOT_ALLOW_ALL"')
-        words = ""
-        if library:
-            # The launch policy's one owner, as open-terminal's hosted arm calls it
-            # for a command carrying --allow-all.
-            words = subprocess.run(["bash", "-c", '. "$1" && lane_copilot_env "$2" "$3"', "_",
-                                    str(library), "copilot --allow-all", '"$HOME/.agents/skills"'],
-                                   check=True, capture_output=True).stdout.decode().strip() + " "
-        command = "cd / && exec " + words + "sh -c " + shlex.quote(probe)
-        return subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],
-                              env={**self.env, "COPILOT_GITHUB_TOKEN": "placeholder", "GH_TOKEN": "app-token",
-                                   "GITHUB_TOKEN": "actions-token", "HOME": str(self.root)},
-                              capture_output=True)
-
-    def test_create_runs_copilot_on_its_stored_login(self):
-        """A copilot lane copies no credential, its provider selects COPILOT_HOME, and the launch policy clears the COPILOT_GITHUB_TOKEN the host's profile exports while GH_TOKEN and GITHUB_TOKEN reach the lane."""
-        before = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
-        fields = self.copilot_create()
-        run = self.copilot_run(fields, PACKAGE / "scripts/lib/lane-launch.sh")
+        fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
+        # The home the launcher installs the context reader into and finds the hooks under.
+        self.assertEqual(fields["copilot-home"], self.row["account"])
+        command = "cd / && exec sh -c " + shlex.quote('printf "%s" "$COPILOT_HOME"')
+        run = subprocess.run(["bash", "-c", fields["remote-prefix"] + " " + shlex.quote(command)],
+                             env={**self.env, "HOME": str(self.root)}, capture_output=True, start_new_session=True)
         after = sorted(p.name for p in Path(self.row["account"]).iterdir()) if Path(self.row["account"]).exists() else []
         self.assertEqual(after, before)
-        self.assertEqual(run.stdout.decode(), "|".join(["unset", "profile-token", "profile-actions-token", self.row["account"],
-                                                        str(self.root / ".agents/skills"), "true"]), run.stderr)
-
-    def test_control_copilot_command_without_its_policy(self):
-        """Control: the same prefix running the command with no launch policy leaves the profile's tokens on the lane."""
-        run = self.copilot_run(self.copilot_create())
-        self.assertEqual(run.stdout.decode().split("|")[:3],
-                         ["profile-placeholder", "profile-token", "profile-actions-token"], run.stderr)
-
-    def test_control_copilot_policy_without_its_clearing(self):
-        """Control: the clearing cut from a copy of the policy leaves the profile's COPILOT_GITHUB_TOKEN on the lane."""
-        fields = self.copilot_create()
-        clearing = "printf 'env -u COPILOT_GITHUB_TOKEN COPILOT_SKILLS_DIRS"
-        lib = self.root / "policy-copy"
-        self.copy_tree(PACKAGE / "scripts/lib", lib)
-        library = lib / "lane-launch.sh"
-        original = library.read_text()
-        self.assertEqual(original.count(clearing), 1)
-        library.write_text(original.replace(clearing, "printf 'env COPILOT_SKILLS_DIRS"))
-        self.assertNotIn(clearing, library.read_text())
-        run = self.copilot_run(fields, library)
-        self.assertEqual(run.stdout.decode(), "|".join(["profile-placeholder", "profile-token", "profile-actions-token",
-                                                        self.row["account"], str(self.root / ".agents/skills"), "true"]),
-                         run.stderr)
+        self.assertEqual(run.stdout.decode(), self.row["account"], run.stderr)
 
     def worktree_root(self):
         return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",
@@ -527,7 +524,8 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         marker = Path(self.row["clone"]) / ".git/lane-mail/test-1"
         self.assertEqual(marker.read_bytes(), root)
         launch = Path(self.row["clone"]) / ".git/lane-launch/test-1.json"
-        self.assertEqual(json.loads(launch.read_text()), {"identity_file": self.row["clone"] + "/.git/lane-host-pid"})
+        self.assertEqual(json.loads(launch.read_text()), {"identity_file": self.row["clone"] + "/.git/lane-host-pid",
+                                                          "runtime": "/cache/bin/orch-runtime-fixture"})
         # The lane's own mailbox directory, in the item's own spelling: the
         # turn-end hook resolves the item by it, so a lane nobody has messaged
         # is still judged on its handoff marks.
@@ -537,20 +535,16 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         """SSH create, its native prefix, the installed hook and host state read."""
         hook = PACKAGE.parents[1] / "hooks/lane-mail-check.sh"
         hook_text = hook.read_text()
-        for name in ("workflow-state", "orch-env", "git-context"):
+        for name in ("orch-env", "git-context"):
             relative = ".agents/skills/orch/scripts/" + name
             self.executable(self.source / relative, (PACKAGE / "scripts" / name).read_text())
             self.seed_source(relative, (PACKAGE / "scripts" / name).read_text())
         for library in (PACKAGE.parent / "github/scripts/lib").glob("*.sh"):
             self.seed_source(".agents/skills/github/scripts/lib/" + library.name, library.read_text())
-        if control == "consumer":
-            guard = 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ]; then'
-            self.assertEqual(hook_text.count(guard), 1)
-            hook_text = hook_text.replace(guard, 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ] && false; then')
-        if control == "handoff-notice":
-            target = 'hand_over "lane-mail-check: model-unavailable=handoff-unwritten$NL$(cat -- "$WORK_DIR/model.err")"'
-            self.assertEqual(hook_text.count(target), 1)
-            hook_text = hook_text.replace(target, 'model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"')
+        # The hook's store reads and writes are the runtime's: the checkout's
+        # entry runs the binary setup built for these sources.
+        runtime = self.runtime_binary()
+        self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
         self.seed_source(".claude/hooks/lane-mail-check.sh", hook_text)
         made = self.create()
         self.assertEqual(made.returncode, 0, made.stderr)
@@ -570,60 +564,27 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
             self.assertEqual((reading.returncode, reading.stdout), (0, contents), reading.stderr)
         if not control:
             self.assertEqual(json.loads(reading.stdout), {"model": "claude-fable-5-1",
-                                                  "identity_file": self.row["clone"] + "/.git/lane-host-pid"})
-        stop_done = self.root / "stop-done"
-        fault_reached = self.root / "fault-reached"
+                                                  "identity_file": self.row["clone"] + "/.git/lane-host-pid",
+                                                  "runtime": "/cache/bin/orch-runtime-fixture"})
+        if not control and not recovery_fault:
+            # A private-file value the settings load skips is told beside
+            # every runtime answer, the standing item's init refusal included.
+            (path / ".env.local").write_text("GH_TOKEN=$(printf example)\n")
+        planted = None
         if recovery_fault == "handoff":
-            # The writer's required clock read fails inside this invocation.
-            # Model-check and notice updates retain their real jq dependency.
-            library = path / ".agents/skills/orch/scripts/workflow-state"
-            text = library.read_text()
-            signature = "stamp_judge() {"
-            self.assertEqual(text.count(signature), 1)
-            wrapper = f'''stamp_judge() {{
-  date() {{ printf reached > {shlex.quote(str(fault_reached))}; return 1; }}
-  native_real_stamp_judge "$@"
-}}
-
-'''
-            library.write_text(text.replace(signature, wrapper + "native_real_" + signature))
-        elif recovery_fault:
-            # A private wrapper keeps the real owner and fails its dependency.
-            # Its exit receipt proves detached completion before state is read.
-            name = "lane-state.sh" if recovery_fault == "stop" else "lane-launch.sh"
-            library = path / ".agents/skills/orch/scripts/lib" / name
-            text = library.read_text()
-            function = "lane_stop_identity" if recovery_fault == "stop" else "lane_run_detached"
-            signature = function + "() {"
-            self.assertEqual(text.count(signature), 1)
-            text = text.replace(signature, "native_real_" + signature)
-            if recovery_fault == "stop":
-                wrapper = f'''
-lane_stop_identity() {{
-  trap 'printf done > {shlex.quote(str(stop_done))}' EXIT
-  lane_process_table() {{ printf reached > {shlex.quote(str(fault_reached))}; return 1; }}
-  native_real_lane_stop_identity "$@"
-}}
-'''
-            else:
-                no_commands = self.root / "no-detach-commands"
-                no_commands.mkdir()
-                wrapper = f'''
-lane_run_detached() {{
-  local PATH={shlex.quote(str(no_commands))} rc=0
-  printf reached > {shlex.quote(str(fault_reached))}
-  native_real_lane_run_detached "$@" || rc=$?
-  printf done > {shlex.quote(str(stop_done))}
-  return "$rc"
-}}
-'''
-            library.write_text(text + wrapper)
-        if control == "stop-record":
-            library = path / ".agents/skills/orch/scripts/lib/lane-relaunch.sh"
-            text = library.read_text()
-            target = ".handoff.stop_failure ="
-            self.assertEqual(text.count(target), 1)
-            library.write_text(text.replace(target, ".handoff.unreported_stop_failure ="))
+            # The runtime's handoff write refuses inside this invocation: the
+            # standing record the switch carries forward names a round the
+            # item never ran, so record-handoff answers round-unknown. No
+            # verb writes such a record, so it is planted into the file the
+            # runtime's init wrote. The model check and the notice slot stay
+            # the runtime's real writes.
+            planted = {"round_id": "pruned-round", "merged": [], "remaining": ["old"], "branch": "b",
+                       "worktree": str(path), "open_pr": None, "traps": []}
+            done = subprocess.run([str(path / ".agents/skills/orch/scripts/orch-runtime"), "--state-dir", str(path / "tmp"),
+                                   "state", "init", "--item", "TEST-1"], cwd=path, env=self.env, capture_output=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            record = item_record(path / "tmp")
+            record.write_text(json.dumps({**json.loads(record.read_text()), "handoff": planted}) + "\n")
         # The prefix execs this native process. Block TERM until its callback
         # returns so the fixture can report the hook result before exiting.
         native = self.bin / "claude"
@@ -642,52 +603,27 @@ signal.sigwait({signal.SIGTERM})
                if not key.startswith(("ORCH_", "TMUX", "LANE_MAIL_", "CLAUDE_", "ANTHROPIC_"))}
         env.update(REAL_BASH=shutil.which("bash"), CLAUDE_PROJECT_DIR=str(path), LANE_MAIL_ITEM="TEST-1")
         child = subprocess.Popen([env["REAL_BASH"], "-c", command], cwd=path, env=env,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
             import select
             ready, _, _ = select.select([child.stdout], [], [], 20)
             self.assertTrue(ready, "native callback did not return before its parent deadline")
             reply = json.loads(child.stdout.readline())
             self.assertEqual(reply["exit"], 0, reply)
-            self.assertTrue((path / "tmp/workflow-state-TEST-1.json").exists(), reply)
-            if recovery_fault == "handoff":
-                self.assertTrue(fault_reached.exists(), "the required clock fault was not reached")
-            elif recovery_fault:
-                deadline = time.monotonic() + 20
-                while not stop_done.exists() and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                self.assertTrue(stop_done.exists(), "stop attempt produced no completion receipt")
-                self.assertTrue(fault_reached.exists(), "stop fault was not reached")
-            state = json.loads((path / "tmp/workflow-state-TEST-1.json").read_text())
-            read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh", "TEST-1")
+            self.assertTrue(item_record(path / "tmp").exists(), reply)
+            state = json.loads(item_record(path / "tmp").read_text())
+            read = self.hosted_state_read(path)
             self.assertEqual(read.returncode, 0, read.stderr)
             self.assertEqual(json.loads(read.stdout), state)
             if recovery_fault == "handoff":
                 self.assert_native_model_check(state)
-                self.assertIsNone(state.get("handoff"))
+                self.assertEqual({key: state["handoff"].get(key) for key in planted}, planted,
+                                 "a refused handoff write leaves the standing record")
                 self.assertIsNone(child.poll(), "a failed handoff write ended its predecessor")
                 self.assertFalse((path / "tmp/model-recovery-TEST-1.log").exists(),
                                  "a failed handoff write dispatched recovery")
-                if control == "handoff-notice":
-                    with self.assertRaises(AssertionError):
-                        self.assert_native_handoff_failure(reply)
-                else:
-                    self.assert_native_handoff_failure(reply)
-            elif recovery_fault:
-                self.assert_native_model_handoff(state)
-                self.assertIsNone(child.poll(), "a failed stop ended its predecessor")
-                if recovery_fault == "stop":
-                    if control == "stop-record":
-                        with self.assertRaises(AssertionError):
-                            self.assert_native_stop_failure(state, child.pid)
-                    else:
-                        self.assert_native_stop_failure(state, child.pid)
-                    log = (path / "tmp/model-recovery-TEST-1.log").read_text()
-                    self.assertTrue(log.startswith("lane-relaunch: native-stop=failed "), log)
-                else:
-                    self.assertIn("lane-mail-check: model-unavailable=recovery-unstarted", reply["stdout"])
-                    self.assertIn("lane-launch: detached=missing-command commands=perl", reply["stdout"])
-            elif control in ("producer", "consumer"):
+                self.assertIn("lane-mail-check: model-unavailable=handoff-unwritten", reply["stdout"])
+            elif control == "producer":
                 self.assertEqual(state["model_checks"]["native-session"]["outcome"], "unavailable")
                 self.assertIsNone(child.poll())
                 with self.assertRaises(AssertionError):
@@ -709,6 +645,9 @@ signal.sigwait({signal.SIGTERM})
         self.assertEqual(state.get("handoff", {}).get("cause"), "model-switched")
         self.assertEqual(state["handoff"]["model"], "claude-fable-5-1")
         self.assert_native_model_check(state)
+        # Marked started before the stop, so a switch acquired again is the
+        # same recovery, never a second one.
+        self.assertIs(state["model_checks"]["native-session"].get("recovery_started"), True)
 
     def assert_native_model_check(self, state):
         check = state["model_checks"]["native-session"]
@@ -717,44 +656,14 @@ signal.sigwait({signal.SIGTERM})
         self.assertTrue(check["launch_identity"]["launch"]["pid"])
         self.assertTrue(check["launch_identity"]["launch"]["start"])
 
-    def assert_native_stop_failure(self, state, predecessor):
-        failure = state["handoff"].get("stop_failure")
-        self.assertIsNotNone(failure, "the controller received no stop failure")
-        self.assertEqual((failure["cause"], failure["pid"], failure["exit"]),
-                         ("process-read-failed", None, 1))
-        self.assertEqual(failure["launch"]["pid"], str(predecessor))
-        self.assertTrue(failure["launch"]["start"])
-
-    def assert_native_handoff_failure(self, reply):
-        self.assertIn("lane-mail-check: model-unavailable=handoff-unwritten", reply["stdout"])
-        self.assertIn("workflow-state: clock-unreadable", reply["stdout"])
-
     def test_native_model_recovery_failures(self):
-        for fault in ("handoff", "stop", "dispatch"):
-            with self.subTest(fault=fault):
-                case = type(self)()
-                self.addCleanup(case.doCleanups)
-                case.setUp()
-                case.native_model_switch(recovery_fault=fault)
-
-    def test_native_model_recovery_failure_controls(self):
-        # Retain each required dependency failure. Losing its report must fail
-        # the same assertion. Keep the defects outside the tracked tree.
-        for control, fault in (("handoff-notice", "handoff"), ("stop-record", "stop")):
-            with self.subTest(control=control):
-                case = type(self)()
-                self.addCleanup(case.doCleanups)
-                scratch = tempfile.TemporaryDirectory()
-                self.addCleanup(scratch.cleanup)
-                case.control_scratch = Path(scratch.name)
-                case.setUp()
-                case.native_model_switch(control=control, recovery_fault=fault)
+        self.native_model_switch(recovery_fault="handoff")
 
     def test_native_model_marker_handoff(self):
         self.native_model_switch()
 
     def test_native_model_marker_controls(self):
-        for control in ("producer", "consumer"):
+        for control in ("producer",):
             with self.subTest(control=control):
                 case = type(self)()
                 self.addCleanup(case.doCleanups)
@@ -796,42 +705,88 @@ signal.sigwait({signal.SIGTERM})
         self.assertIn(f"lane-host-ssh: marker-script-missing path={marker}\n".encode(), refused.stderr)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
 
-    def test_create_names_a_clone_without_the_identity_recorder(self):
-        # The clone's library is what every prefix sources to record its
-        # identity, so one older than the recorder would end the prefix at
-        # bash's 127 with nothing naming what the clone is missing.
-        library = ".agents/skills/orch/scripts/lib/lane-state.sh"
-        text = (self.source / library).read_text()
-        self.seed_source(library, text + "\nunset -f lane_identity_record\n")
-        refused = self.create()
-        path = Path(self.row["clone"]) / library
+    def test_create_names_a_clone_without_the_agent_runtime_setup(self):
+        # Every prefix runs the group leader agent-runtime's setup builds, so
+        # a clone without that setup refuses before any window opens.
+        self.assertEqual(self.create().returncode, 0)
+        setup = Path(self.row["clone"]) / ".agents/skills/agent-runtime/scripts/setup"
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "config", "core.fileMode", "false"], check=True)
+        setup.chmod(0o644)
+        refused = self.create("--reuse")
         self.assertEqual((refused.returncode, refused.stdout,
-                          f"lane-host-ssh: identity-recorder-missing path={path}\n".encode() in refused.stderr),
+                          f"lane-host-ssh: agent-runtime-setup-missing path={setup}\n".encode() in refused.stderr),
                          (1, b"", True), refused.stderr)
         original = self.script.read_text()
-        probe = 'declare -F lane_identity_record >/dev/null'
-        self.assertEqual(original.count(probe), 1)
-        self.script.write_text(original.replace(probe, 'true'))
-        self.assertEqual(self.create().returncode, 0)
+        step = 'lead = built(row, "agent-runtime", "agent-runtime")'
+        self.assertEqual(original.count(step), 1)
+        self.script.write_text(original.replace(step, 'lead = "agent-runtime"'))
+        self.assertEqual(self.create("--reuse").returncode, 0)
 
-    def test_prefix_names_an_identity_it_could_not_record(self):
-        # A record that fails ends the prefix there: the harness never starts,
-        # and the pane carries the line naming the file.
+    def test_create_names_a_clone_whose_agent_runtime_setup_names_no_binary(self):
+        # A setup that answers without a binary leaves the prefix nothing to
+        # lead with, so create refuses before any window opens.
+        self.assertEqual(self.create().returncode, 0)
+        relative = ".agents/skills/agent-runtime/scripts/setup"
+        # The sync-base step refuses a tracked change, so the clone is told
+        # the planted setup is unchanged.
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "update-index", "--skip-worktree", relative],
+                       check=True)
+        (Path(self.row["clone"]) / relative).write_text("#!/bin/sh\nprintf 'agent-runtime-setup: held\\n'\n")
+        refused = self.create("--reuse")
+        self.assertEqual((refused.returncode, refused.stdout,
+                          b"lane-host-ssh: agent-runtime-unbuilt output=agent-runtime-setup: held\n" in refused.stderr),
+                         (1, b"", True), refused.stderr)
+
+    def test_prefix_names_a_record_it_could_not_write(self):
+        # A record that cannot be written ends the prefix there: the harness
+        # never starts, and the pane carries the group leader's keyed line.
         created = self.create(harness="codex")
         self.assertEqual(created.returncode, 0, created.stderr)
         prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
-        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
-        identity.mkdir()
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        record.mkdir()
         run = subprocess.run(["bash", "-c", prefix + " " + shlex.quote("printf started")],
-                             env={**self.env, "HOME": str(self.root)}, capture_output=True)
-        self.assertEqual((run.returncode, run.stdout,
-                          f"lane-host-ssh: identity-record-failed path={identity}\n".encode() in run.stderr),
-                         (1, b"", True), run.stderr)
+                             env={**self.env, "HOME": str(self.root)}, capture_output=True, start_new_session=True)
+        self.assertEqual((run.returncode, b"started" in run.stdout,
+                          json.loads(run.stdout)["refusal"]["key"],
+                          run.stderr.startswith(f"agent-runtime: io-failed operation=read path={record}\n".encode())),
+                         (1, False, "io-failed", True), run.stderr)
+
+    @classmethod
+    def agent_runtime_binary(cls):
+        """The agent-runtime binary setup built for this checkout's sources, found
+        through agent-runtime's own key library under the suite's environment."""
+        if getattr(cls, "_agent_runtime_binary", None) is None:
+            runtime = PACKAGE.parent / "agent-runtime"
+            found = subprocess.run(
+                ["bash", "-c", 'refuse() { printf "%s\\n" "$*" >&2; exit 1; }; . "$1" && cache=$(agent_runtime_cache) '
+                 '&& key=$(agent_runtime_key "$2") && printf "%s/bin/agent-runtime-%s" "$cache" "$key"',
+                 "key", str(runtime / "scripts/lib/key.sh"), str(runtime / "runtime")],
+                capture_output=True, text=True, check=True)
+            cls._agent_runtime_binary = Path(found.stdout)
+        return cls._agent_runtime_binary
+
+    @classmethod
+    def runtime_binary(cls):
+        """The orch-runtime binary setup built for this checkout's sources, found
+        through agent-runtime's own key library under the suite's environment."""
+        if getattr(cls, "_runtime_binary", None) is None:
+            found = subprocess.run(
+                ["bash", "-c", 'refuse() { printf "%s\\n" "$*" >&2; exit 1; }; . "$1" && cache=$(agent_runtime_cache) '
+                 '&& key=$(agent_runtime_key "$2") && printf "%s/bin/orch-runtime-%s" "$cache" "$key"',
+                 "key", str(PACKAGE.parent / "agent-runtime/scripts/lib/key.sh"), str(PACKAGE / "runtime")],
+                capture_output=True, text=True, check=True)
+            cls._runtime_binary = Path(found.stdout)
+        return cls._runtime_binary
 
     def hosted_state_launch(self, harness="claude"):
         """Run delegation and recovery through create's actual hosted prefix."""
+        # The source checkout carries no built runtime, so the probe runs the
+        # round's recovery through the one setup built here.
+        runtime = self.runtime_binary()
+        self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
         scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context", "round-recover", "round-prune", "orch-env"):
+        for name in ("git-context", "orch-env"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         self.copy_tree(PACKAGE.parent / "github/scripts/lib",
                         self.source / ".agents/skills/github/scripts/lib", dirs_exist_ok=True)
@@ -840,8 +795,6 @@ signal.sigwait({signal.SIGTERM})
                                     "commit", "--allow-empty", "-qm", "state scripts")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
                            env=self.git_env, check=True, capture_output=True)
-        # The prune's disk decision is independent of this machine's free space.
-        self.executable(self.bin / "df", "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 100 1 99 1%% /\\n'\n")
         created = self.create(harness=harness)
         self.assertEqual(created.returncode, 0, created.stderr)
         fields = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))
@@ -851,19 +804,17 @@ signal.sigwait({signal.SIGTERM})
         probe = self.root / "state-probe.sh"
         probe.write_text('''set -euo pipefail
 export PATH="$1:$PATH"
-scripts="$PWD/.agents/skills/orch/scripts"
-state="$scripts/workflow-state"
-"$state" init TEST-1 --worktree "$PWD" --branch test-1 >/dev/null
-"$state" set-git-head TEST-1 pre_delegate_sha "$PWD" >/dev/null
-round=$("$state" new-round-id TEST-1 dev_round_id)
-"$state" set-now TEST-1 dev_delegated_at >/dev/null
+runtime=@RUNTIME@
+"$runtime" state init --item TEST-1 --worktree "$PWD" --branch test-1 >/dev/null
+"$runtime" state set-git-head --item TEST-1 /pre_delegate_sha --worktree "$PWD" >/dev/null
+"$runtime" state new-round-id --item TEST-1 /dev_round_id >/dev/null
+round=$("$runtime" state get --item TEST-1 /dev_round_id | jq -er .result.value)
+"$runtime" state set-now --item TEST-1 /dev_delegated_at >/dev/null
 rc=0
-"$scripts/round-recover" --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
+"$runtime" round --text recover --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
 [[ "$rc" -eq 3 ]]
-"$scripts/round-prune" TEST-1
-"$state" set-now TEST-1 dev_delegated_at >/dev/null
-"$state" get TEST-1
-''')
+"$runtime" state set-now --item TEST-1 /dev_delegated_at >/dev/null
+'''.replace("@RUNTIME@", shlex.quote(str(runtime))))
         bash = shutil.which("bash", path=self.env["PATH"])
         command = "cd " + shlex.quote(str(path)) + " && exec " + shlex.join([bash, str(probe), str(self.bin)])
         run = self.hosted_prefix_run(fields, command)
@@ -876,11 +827,11 @@ rc=0
         child_env["ORCH_STATE_DIR"] = str(self.root / "control-state")
         return subprocess.run([shutil.which("bash", path=self.env["PATH"]), "-c",
                                fields["remote-prefix"] + " " + shlex.quote(command)],
-                              env=child_env, capture_output=True, timeout=60)
+                              env=child_env, capture_output=True, timeout=60, start_new_session=True)
 
     def assert_hosted_state(self, fields, path, run):
         self.assertEqual(run.returncode, 0, run.stderr)
-        state_file = path / "tmp/workflow-state-TEST-1.json"
+        state_file = item_record(path / "tmp")
         self.assertTrue(state_file.is_file(), state_file)
         state = json.loads(state_file.read_bytes())
         self.assertEqual(state["worktree"], str(path))
@@ -888,17 +839,9 @@ rc=0
             [self.env["REAL_GIT"], "-C", str(path), "rev-parse", "HEAD"],
             env=self.git_env, check=True, capture_output=True).stdout.decode().strip())
         self.assertEqual(state["recovery_round_id"], state["dev_round_id"])
-        self.assertEqual(state["round_prunes"][state["dev_round_id"]],
-                         dict(action="below-mark", used_pct=1, mark_pct=75, bytes=0))
         self.assertIsInstance(state["dev_delegated_at"], int)
         self.assertFalse((Path(self.row["clone"]) / "tmp").exists())
         self.assertFalse((self.root / "control-state").exists())
-        # Without the launch variable the same linked checkout reaches the
-        # state-missing branch, rather than another script or fixture failure.
-        command = "cd " + shlex.quote(str(path)) + " && unset ORCH_STATE_DIR && exec .agents/skills/orch/scripts/round-prune TEST-1"
-        refused = self.hosted_prefix_run(fields, command)
-        self.assertEqual(refused.returncode, 2, refused.stderr)
-        self.assertIn(b"round-prune: state-missing=dev_round_id\n", refused.stderr)
 
     def test_hosted_prefix_carries_state_for_each_harness(self):
         caller_home = self.root / "caller-home"
@@ -916,95 +859,57 @@ rc=0
 
     def test_control_prefix_without_state_export_fails_the_state_contract(self):
         original = self.script.read_text()
-        export = 'prefix = "exec env " + shlex.quote("ORCH_STATE_DIR=" + path + "/tmp") + " " + prefix'
+        export = 'shlex.join(["ORCH_STATE_DIR=" + path + "/tmp", *names,'
         self.assertEqual(original.count(export), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(export, 'prefix = "exec " + prefix'))
+            self.executable(self.script, original.replace(export, 'shlex.join([*names,'))
             fields, path, run = self.hosted_state_launch()
             with self.assertRaises(AssertionError):
                 self.assert_hosted_state(fields, path, run)
-        self.assertTrue((self.root / "control-state/workflow-state-TEST-1.json").is_file())
-        self.assertFalse((path / "tmp/workflow-state-TEST-1.json").exists())
+        self.assertTrue(item_record(self.root / "control-state").is_file())
+        self.assertFalse(item_record(path / "tmp").exists())
 
-    def hosted_state_read(self, path, library, state_key=""):
+    def hosted_state_read(self, path):
+        """The item's state in the lane worktree's tmp, fetched through the provider's cat and read by jq."""
+        fetched = self.call("cat", "--item", "TEST-1", str(item_record(path / "tmp")))
+        if fetched.returncode != 0:
+            return fetched
         scratch = self.root / "state-read"
         scratch.mkdir(exist_ok=True)
-        child_env = {key: self.env[key] for key in
-                     ("HOME", "PATH", "REAL_GIT", "SSH_TEST_SOURCE", "SSH_TEST_LOG",
-                      "LANE_HOST_SSH_SOURCE", "LANE_HOST_SSH_INVENTORY")}
-        return subprocess.run([shutil.which("bash", path=self.env["PATH"]), "-c",
-                               'set -euo pipefail; . "$1"; lane_hosted_item_state "$2" TEST-1 "$3" "$4" "$5"; printf "%s" "$LANE_ITEM_STATE"',
-                               "hosted-reader", str(library), str(self.script), str(path), str(scratch), state_key],
-                              env=child_env, capture_output=True, timeout=60)
+        (scratch / "item-state.json").write_bytes(fetched.stdout)
+        return subprocess.run(["jq", "-c", ".", str(scratch / "item-state.json")], capture_output=True, timeout=60)
 
     def test_hosted_state_read_and_archive_keep_the_prefix_state(self):
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
-        expected = json.loads((path / "tmp/workflow-state-TEST-1.json").read_bytes())
-        for state_key in ("", "pr-7"):
-            with self.subTest(state_key=state_key):
-                original = path / "tmp/workflow-state-TEST-1.json"
-                selected = path / f"tmp/workflow-state-{state_key or 'TEST-1'}.json"
-                original.rename(selected)
-                try:
-                    read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh", state_key)
-                    self.assertEqual(read.returncode, 0, read.stderr)
-                    self.assertEqual(json.loads(read.stdout), expected)
-                    if state_key:
-                        with tempfile.TemporaryDirectory() as control:
-                            lib = Path(control) / "orch/scripts/lib"
-                            self.copy_tree(PACKAGE / "scripts/lib", lib)
-                            self.copy_tree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
-                            library = lib / "lane-gitfile.sh"
-                            text = library.read_text()
-                            rule = 'state_key="${5:-$2}"'
-                            self.assertEqual(text.count(rule), 1)
-                            library.write_text(text.replace(rule, 'state_key="$2"'))
-                            read = self.hosted_state_read(path, library, state_key)
-                            self.assertEqual((read.returncode, read.stdout), (0, b""), read.stderr)
-                            with self.assertRaises(AssertionError):
-                                self.assertEqual(json.loads(read.stdout or b"null"), expected)
-                finally:
-                    selected.rename(original)
+        expected = json.loads(item_record(path / "tmp").read_bytes())
+        read = self.hosted_state_read(path)
+        self.assertEqual(read.returncode, 0, read.stderr)
+        self.assertEqual(json.loads(read.stdout), expected)
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
-            member = str(path / "tmp/workflow-state-TEST-1.json").lstrip("/")
+            member = str(item_record(path / "tmp")).lstrip("/")
             self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
             self.assertEqual(json.loads(saved.extractfile(member).read()), expected)
-
-    def test_control_hosted_reader_without_launch_state_reads_no_rounds(self):
-        fields, path, run = self.hosted_state_launch()
-        self.assert_hosted_state(fields, path, run)
-        with tempfile.TemporaryDirectory() as control:
-            lib = Path(control) / "orch/scripts/lib"
-            self.copy_tree(PACKAGE / "scripts/lib", lib)
-            self.copy_tree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
-            library = lib / "lane-gitfile.sh"
-            original = library.read_text()
-            rule = 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$state_key"'
-            self.assertEqual(original.count(rule), 1)
-            library.write_text(original.replace(rule, 'lane_hosted_state_path "$LANE_HOSTED_CLONE" tmp "$state_key"'))
-            read = self.hosted_state_read(path, library)
-            self.assertEqual((read.returncode, read.stdout), (0, b""), read.stderr)
 
     def test_control_archive_without_launch_state_records_no_state(self):
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
         original = self.script.read_text()
-        rule = 'state="$2/tmp/workflow-state-$3.json"'
+        rule = 'ORCH_STATE_DIR="$2/tmp" "$1$4" state path'
         self.assertEqual(original.count(rule), 1)
         with tempfile.TemporaryDirectory() as control:
             self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, original.replace(rule, 'state="$1/tmp/workflow-state-$3.json"'))
+            self.executable(self.script, original.replace(rule, 'ORCH_STATE_DIR="$1/tmp" "$1$4" state path'))
             closed = self.call("close", "--item", "TEST-1")
             self.assertEqual(closed.returncode, 0, closed.stderr)
             archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
             with tarfile.open(archive) as saved:
                 self.assertEqual(saved.extractfile("lane-host-state").read(), b"\n")
-                member = str(path / "tmp/workflow-state-TEST-1.json").lstrip("/")
+                member = str(item_record(path / "tmp")).lstrip("/")
                 self.assertIsNotNone(saved.extractfile(member))
 
     def test_control_lane_mail_marker(self):
@@ -1160,7 +1065,7 @@ rc=0
     def test_append_waits_on_the_lock_the_mailbox_owns(self):
         """A second writer of one mailbox waits for it."""
         self.assertEqual(self.create().returncode, 0)
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib"
+        library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib"
         target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
         target.parent.mkdir(parents=True)
         taken, release = self.root / "lock-taken", self.root / "lock-release"
@@ -1251,7 +1156,7 @@ rc=0
         target.write_bytes(b"")
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=(json.dumps(envelope) + "\n").encode())
         self.assertEqual(result.returncode, 0, result.stderr)
-        remote_library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        remote_library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={remote_library} repeat-check=skipped\n".encode())
 
     def test_append_names_its_failure_in_a_word(self):
@@ -1331,7 +1236,7 @@ exec "$REAL_CAT" "$@"
     def test_append_names_a_clone_that_predates_the_verb(self):
         """The control machine and the host's clone update apart."""
         self.assertEqual(self.create().returncode, 0)
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
         target.parent.mkdir(parents=True)
         kept = library.read_bytes()
@@ -1349,7 +1254,7 @@ exec "$REAL_CAT" "$@"
         self.assertEqual(self.create().returncode, 0)
         library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         old = library.read_text()
-        # Model the old library: it accepts surplus arguments without judging them.
+        # Model an outdated library: it accepts surplus arguments without judging them.
         for rule, replacement in (("mailbox_duplicate_id()", "legacy_duplicate_id()"),
                                   ('if [ -n "${4:-}" ]; then', 'if false; then')):
             self.assertEqual(old.count(rule), 1)
@@ -1361,10 +1266,10 @@ exec "$REAL_CAT" "$@"
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"nowhere"}\n')
-        remote_library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        remote_library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={remote_library} repeat-check=skipped\n".encode())
         self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
-        # Restoring the refusal loses delivery to the old host clone.
+        # Restoring the refusal loses delivery to the outdated host clone.
         original = self.script.read_text()
         rule = '"$lib/mailbox-append.sh" >&2\n'
         self.assertEqual(original.count(rule), 1)
@@ -1731,6 +1636,11 @@ touch node_modules/dep
                     link.parent.mkdir(parents=True, exist_ok=True)
                     link.symlink_to(clone / private_name)
             self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3, "changed": 1}\n')
+            if selector in ("divergent", "worktree-copies"):
+                # The reused tree keeps its own commit, the changed lockfile in it.
+                env["SSH_TEST_TREE_KEEPS"] = "1"
+                (tree / "ui/package-lock.json").write_text('{"lockfileVersion": 3, "changed": 1}\n')
+                self.git(tree, "commit", "-qam", "item work")
             expected = {private_name: ((clone / private_name).read_bytes(), (clone / private_name).stat().st_mode)
                         for private_name in private_names}
             expected_links = {private_name: os.readlink(clone / private_name)
@@ -2036,8 +1946,8 @@ touch node_modules/dep
   [[ "$1" == selected-private-path ]]
 }
 '''
-        output = '''  if [[ -n "${2:-}" ]]; then
-    printf -v "$2" '%s' "$_kendex_private_file"
+        output = '''  if [[ -n "$_kendex_out" ]]; then
+    printf -v "$_kendex_out" '%s' "$_kendex_private_file"
   fi
 '''
         self.assertEqual(original.count(capability), 1)
@@ -2119,6 +2029,162 @@ touch node_modules/dep
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(second.stdout, first.stdout)
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
+
+    def git(self, path, *args):
+        """Git in a fixture checkout, committing as the fixture's author."""
+        return subprocess.run([self.env["REAL_GIT"], "-C", str(path), "-c", "user.name=Test",
+                               "-c", "user.email=test@example.org", *args],
+                              env=self.git_env, check=True, capture_output=True).stdout
+
+    def real_worktree_source(self, symlinks):
+        """The source on main with the worktree skill's own scripts and links."""
+        self.copy_tree(PACKAGE.parent / "worktree/scripts", self.source / ".agents/skills/worktree/scripts",
+                       dirs_exist_ok=True)
+        (self.source / "kendex.settings.toml").write_text(
+            f'[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = "{symlinks}"\n')
+        with (self.source / ".gitignore").open("a") as ignore:
+            ignore.write("node_modules/\n")
+        for args in (("branch", "-M", "main"), ("add", "."), ("commit", "-qm", "real worktree fixture")):
+            self.git(self.source, *args)
+
+    def commit_in_tree(self, path, relative, text):
+        (path / relative).write_text(text)
+        self.git(path, "add", "--", relative)
+        self.git(path, "commit", "-qm", "item work")
+        return self.git(path, "rev-parse", "HEAD").decode().strip()
+
+    @staticmethod
+    def fields(output):
+        return dict(field.split("=", 1) for field in output.decode().strip().split("\t"))
+
+    def relaunch_after_an_added_dependency(self):
+        """A first launch at the base's lockfile, then the item's own commit
+        adding a dependency to its tree, then a relaunch; returns the tree,
+        the item's lockfile and the relaunch's npm calls."""
+        self.executable(self.bin / "npm", '''#!/usr/bin/env bash
+set -euo pipefail
+printf 'npm %s in %s\\n' "$*" "$PWD" >> "$SSH_TEST_LOG"
+mkdir -p node_modules
+find node_modules -mindepth 1 -delete
+cp package-lock.json node_modules/installed-lockfile
+''')
+        self.real_worktree_source(".env.local ui/node_modules")
+        self.seed_source("ui/package.json", '{"name": "ui"}\n')
+        self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
+        first = self.create()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        path = Path(self.fields(first.stdout)["path"])
+        added = '{"lockfileVersion": 3, "packages": {"node_modules/added": {"version": "1.0.0"}}}\n'
+        (path / "ui/package.json").write_text('{"name": "ui", "dependencies": {"added": "1.0.0"}}\n')
+        self.git(path, "add", "--", "ui/package.json")
+        self.commit_in_tree(path, "ui/package-lock.json", added)
+        mark = len(self.log_since(0))
+        second = self.create("--relaunch")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        return path, added, [line for line in self.log_since(mark) if line.startswith("npm ")]
+
+    def test_relaunch_installs_the_dependencies_the_items_own_tree_commits(self):
+        """A relaunch installs the lockfile the item's tree commits
+        at its head, a dependency absent from the base included, into the
+        node_modules the tree links; the clone's own pair is put back."""
+        path, added, installs = self.relaunch_after_an_added_dependency()
+        clone = Path(self.row["clone"])
+        self.assertEqual(installs, [f"npm ci --no-audit --no-fund in {clone / 'ui'}"])
+        self.assertEqual((path / "ui/node_modules/installed-lockfile").read_text(), added)
+        blob = self.git(path, "rev-parse", "HEAD:ui/package-lock.json").decode().strip()
+        self.assertEqual((clone / "ui/node_modules/.lane-host-install").read_text().strip(), blob)
+        self.assertEqual(self.git(clone, "status", "--porcelain", "--", "ui"), b"")
+
+    def test_control_relaunch_reading_the_base_lockfile_installs_the_base_set(self):
+        original = self.script.read_text()
+        rule = '  declared="$tree"\n'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
+            self.executable(self.script, original.replace(rule, ""))
+            with self.assertRaises(AssertionError):
+                self.test_relaunch_installs_the_dependencies_the_items_own_tree_commits()
+            path = Path(self.fields(self.create("--relaunch").stdout)["path"])
+            self.assertEqual((path / "ui/node_modules/installed-lockfile").read_text(), '{"lockfileVersion": 3}\n')
+
+    def relaunch_over_a_conflicting_base(self):
+        """A first launch, the item's commit to a file, then the base moving
+        that file another way, then a relaunch; returns the tree, the item's
+        head and the relaunch."""
+        self.real_worktree_source(".env.local")
+        self.seed_source("shared.txt", "base\n")
+        first = self.create()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        path = Path(self.fields(first.stdout)["path"])
+        head = self.commit_in_tree(path, "shared.txt", "item\n")
+        (path / "tmp").mkdir(exist_ok=True)
+        (path / "tmp/lane-state").write_text("kept\n")
+        self.seed_source("shared.txt", "moved base\n")
+        return path, head, self.create("--relaunch")
+
+    def test_relaunch_over_a_conflicting_base_keeps_the_items_work(self):
+        """A relaunch whose rebase onto the base conflicts keeps the
+        item's tree on its own head, its commits and files intact, and answers
+        tree=unrebased on its create line."""
+        path, head, result = self.relaunch_over_a_conflicting_base()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fields = self.fields(result.stdout)
+        self.assertEqual((fields["path"], fields["tree"]), (str(path), "unrebased"))
+        self.assertEqual(self.git(path, "rev-parse", "HEAD").decode().strip(), head)
+        self.assertEqual((path / "shared.txt").read_text(), "item\n")
+        self.assertEqual((path / "tmp/lane-state").read_text(), "kept\n")
+        self.assertEqual(self.git(path, "status", "--porcelain"), b"")
+
+    def test_control_relaunch_without_the_keep_fails_the_create(self):
+        original = self.script.read_text()
+        rule = 'REUSE_KEEPING = ["--reuse", "--keep-on-conflict"]'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
+            self.executable(self.script, original.replace(rule, 'REUSE_KEEPING = ["--reuse"]'))
+            with self.assertRaises(AssertionError):
+                self.test_relaunch_over_a_conflicting_base_keeps_the_items_work()
+            failed = self.create("--relaunch")
+            self.assertEqual((failed.returncode, failed.stdout), (1, b""), failed.stderr)
+
+    def relaunch_over_staged_work(self, worktree_script=None):
+        """A first launch, the item's commit, a change staged and left
+        uncommitted, then the base moving another file, then a relaunch;
+        returns the tree, the item's head and the relaunch. worktree_script
+        replaces the fixture's worktree command before the first launch."""
+        self.real_worktree_source(".env.local")
+        if worktree_script is not None:
+            self.seed_source(".agents/skills/worktree/scripts/worktree", worktree_script)
+        first = self.create()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        path = Path(self.fields(first.stdout)["path"])
+        head = self.commit_in_tree(path, "item.txt", "item\n")
+        (path / "staged.txt").write_text("staged\n")
+        self.git(path, "add", "--", "staged.txt")
+        self.seed_source("base.txt", "moved base\n")
+        return path, head, self.create("--relaunch")
+
+    def test_relaunch_over_staged_work_keeps_it_unrebased(self):
+        """A relaunch over a tree holding staged uncommitted work on a moved
+        base keeps its head and index and answers tree=unrebased, so the lane
+        is not read as rebased."""
+        path, head, result = self.relaunch_over_staged_work()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fields = self.fields(result.stdout)
+        self.assertEqual((fields["path"], fields.get("tree")), (str(path), "unrebased"))
+        self.assertEqual(self.git(path, "rev-parse", "HEAD").decode().strip(), head)
+        self.assertEqual(self.git(path, "diff", "--cached", "--name-only"), b"staged.txt\n")
+        self.assertEqual(self.git(path, "show", ":staged.txt"), b"staged\n")
+
+    def test_control_relaunch_over_staged_work_without_the_dirty_keep_reads_rebased(self):
+        source = PACKAGE.parent / "worktree/scripts/worktree"
+        original = source.read_text()
+        rule = 'skipped the rebase." >&2\n        report_reused_worktree\n'
+        self.assertEqual(original.count(rule), 1)
+        cut = original.replace(rule, 'skipped the rebase." >&2\n        report_created_worktree; exit 0\n')
+        _, _, result = self.relaunch_over_staged_work(cut)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("tree", self.fields(result.stdout))
 
     def test_relaunch_opens_origin_only_landing_branch(self):
         """A cloud handoff pushes its branch before a static host has a tree."""
@@ -2274,90 +2340,14 @@ exit 9
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_status_reads_the_owned_harness_and_refuses_failed_reads(self):
-        self.assertEqual(self.create().returncode, 0)
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        lane = subprocess.Popen([str(self.bin / "claude"), "-c", "printf 'ready\\n'; read -r line"],
-                                cwd=Path(self.row["clone"] + "-worktree"), env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        try:
-            self.assertEqual(lane.stdout.readline(), b"ready\n")
-            for harness, expected in (("claude", b"running\n"), ("codex", b"exited\n")):
-                with self.subTest(harness=harness):
-                    result = self.call("status", "--item", "TEST-1", "--harness", harness)
-                    self.assertEqual((result.returncode, result.stdout, lane.poll()), (0, expected, None), result.stderr)
-            original = self.script.read_text()
-            rule = 'if test -n "$LANE_OWNED_PROCESS_PIDS"; then printf'
-            self.assertEqual(original.count(rule), 1)
-            self.script.write_text(original.replace(rule, rule.replace("test -n", "test -z")))
-            self.assertNotEqual(self.call("status", "--item", "TEST-1", "--harness", "claude").stdout, b"running\n")
-            self.script.write_text(original)
-        finally:
-            lane.stdin.close()
-            lane.stdout.close()
-            lane.wait(timeout=2)
-        self.assertEqual(self.call("status", "--item", "TEST-1", "--harness", "claude").stdout, b"exited\n")
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library.write_text(library.read_text() + '\nlane_owned_processes() { return 2; }\n')
-        for env in ({}, {"SSH_TEST_FAIL": "7"}):
-            result = self.call("status", "--item", "TEST-1", "--harness", "claude", **env)
-            self.assertEqual((result.returncode != 0, result.stdout), (True, b""), (env, result.stderr))
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "deleted cwd integration requires procfs")
-    def test_status_follows_the_launch_root_through_merge_cleanup(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        worktree = Path(self.row["clone"] + "-worktree")
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        lane = subprocess.Popen([str(self.bin / "claude"), "-c", "printf 'ready\\n'; read -r line"],
-                                cwd=worktree, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        original = library.read_text()
-        try:
-            self.assertEqual(lane.stdout.readline(), b"ready\n")
-            # merge-pr removes the registered tree before its harness exits.
-            subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)],
-                           check=True, capture_output=True, env=self.env)
-            result = self.call("status", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((result.returncode, result.stdout, lane.poll()), (0, b"running\n", None), result.stderr)
-            controls = (
-                ('launch-record) root="$1";', 'launch-record) root="$(cd -- "$1" && pwd -P)" || return 2;'),
-                ('"$cwd" == "$root (deleted)"', '"$cwd" == "$root"'),
-            )
-            for old, new in controls:
-                self.assertEqual(original.count(old), 1)
-                library.write_text(original.replace(old, new))
-                mutant = self.call("status", "--item", "TEST-1", "--harness", "claude")
-                self.assertNotEqual((mutant.returncode, mutant.stdout), (0, b"running\n"), mutant.stderr)
-            for failure in ('lane_process_table() { return 1; }', 'lane_process_cwd() { return 1; }'):
-                library.write_text(original + '\n' + failure + '\n')
-                failed = self.call("status", "--item", "TEST-1", "--harness", "claude")
-                self.assertEqual((failed.returncode, failed.stdout), (1, b""), failed.stderr)
-            library.write_text(original)
-        finally:
-            library.write_text(original)
-            lane.stdin.close()
-            lane.stdout.close()
-            lane.wait(timeout=2)
-        exited = self.call("status", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((exited.returncode, exited.stdout), (0, b"exited\n"), exited.stderr)
-        marker = clone / ".git/lane-mail/test-1"
-        marker.unlink()
-        unknown = self.call("status", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((unknown.returncode, unknown.stdout), (1, b""), unknown.stderr)
-        marker.write_text(str(worktree) + '\n')
-        closed = self.call("close", "--item", "TEST-1", "--merged")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
-
     def launch_lane(self, on_term="exit 0", name="codex"):
         """A codex lane started through its create's own prefix, a process named NAME in the worktree.
 
-        The prefix records the launch identity of the shell it execs into the
-        harness, so the returned process's pid is the one recorded. The harness
-        waits in a builtin read on a FIFO nothing writes, never forking: a
-        forked child is named for the harness until it execs, and a stop that
-        reads the process table then counts it beside the harness."""
+        The prefix's group leader records itself and becomes the harness, so the
+        returned process's pid is the one recorded; it leads the new session
+        the start makes, so the group it keeps is its own. The harness waits in
+        a builtin read on a FIFO nothing writes, never forking, so the group
+        holds the harness alone."""
         created = self.create(harness="codex")
         self.assertEqual(created.returncode, 0, created.stderr)
         prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
@@ -2369,243 +2359,252 @@ exit 9
                    + shlex.quote(f"exec 3<>{shlex.quote(str(idle))}; trap {shlex.quote(on_term)} TERM; printf 'ready\\n'; "
                                  "while :; do read -r -t 0.1 -u 3 _; done"))
         lane = subprocess.Popen(["bash", "-c", prefix + " " + shlex.quote(command)],
-                                env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE)
+                                env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE, start_new_session=True)
         self.addCleanup(lane.wait, 2)
         self.addCleanup(lambda: lane.poll() is None and lane.kill())
         self.addCleanup(lane.stdout.close)
         self.assertEqual(lane.stdout.readline(), b"ready\n")
         return lane
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_without_an_identity_signals_only_the_named_harness_in_the_owned_worktree(self):
-        # A lane launched before its prefix recorded an identity holds none,
-        # as a create whose prefix nothing ran does: stop finds its harness by
-        # the worktree, as every stop did before identities were recorded.
-        self.assertEqual(self.create().returncode, 0)
-        self.assertFalse((Path(self.row["clone"]) / ".git/lane-host-pid").exists())
-        worktree = Path(self.row["clone"] + "-worktree")
-        clone = Path(self.row["clone"])
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        (self.bin / "claude").chmod(0o755)
-
-        def harness(cwd):
-            return subprocess.Popen([str(self.bin / "claude"), "-c",
-                                     "trap 'exit 0' TERM; while :; do sleep 1; done"],
-                                    cwd=cwd, env=self.env)
-
-        holder = subprocess.Popen(
-            [sys.executable, "-c",
-             "import os,sys,time; p=os.fork(); "
-             "os.execl(sys.argv[1],sys.argv[1],'-c','exit 0') if p == 0 else "
-             "(print(p,flush=True),time.sleep(30))", str(self.bin / "claude")],
-            cwd=worktree, env=self.env, stdout=subprocess.PIPE, text=True)
-        zombie = int(holder.stdout.readline())
-        holder.stdout.close()
-        for _ in range(100):
-            state = Path(f"/proc/{zombie}/stat").read_text().rsplit(")", 1)[1].split()[0]
-            if state == "Z":
-                break
-            time.sleep(0.01)
-        self.assertEqual(state, "Z")
-
-        lane = harness(worktree)
-        lane_two = harness(worktree)
-        outside = harness(clone)
+    @staticmethod
+    def gone(pid):
+        """Whether no live process holds PID: absent, or exited awaiting its parent."""
         try:
-            stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((stopped.returncode, stopped.stdout),
-                             (0, b"stopped item=TEST-1 processes=2\n"), stopped.stderr)
-            lane.wait(timeout=2)
-            lane_two.wait(timeout=2)
-            self.assertIsNone(outside.poll())
+            return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] in ("Z", "X")
+        except FileNotFoundError:
+            return True
 
-            library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-            library_original = library.read_text()
-            library.write_text(library_original + f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{zombie}"; }}\n')
-            raced = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-            self.assertEqual((raced.returncode, raced.stdout),
-                             (0, b"stopped item=TEST-1 processes=0\n"), raced.stderr)
+    def until_gone(self, *pids):
+        deadline = time.monotonic() + 10
+        while not all(self.gone(pid) for pid in pids) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return [pid for pid in pids if not self.gone(pid)]
 
-            library.write_text(library_original)
-            inverse = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-            self.assertEqual((inverse.returncode, inverse.stdout),
-                             (0, b"stopped item=TEST-1 processes=0\n"), inverse.stderr)
-        finally:
-            if 'library_original' in locals():
-                library.write_text(library_original)
-            for process in (lane, lane_two, outside, holder):
-                if process.poll() is None:
-                    process.terminate()
-                process.wait(timeout=2)
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_refuses_a_process_that_left_the_worktree(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        shutil.copy2(shutil.which("bash"), self.bin / "claude")
-        (self.bin / "claude").chmod(0o755)
-        # The ownership read named this pid, and by the signal its directory is
-        # the clone, not the worktree: a process that moved, or a reused pid.
-        moved = subprocess.Popen([str(self.bin / "claude"), "-c", "trap 'exit 0' TERM; while :; do sleep 1; done"],
-                                 cwd=clone, env=self.env)
-        self.addCleanup(moved.wait, 2)
-        self.addCleanup(lambda: moved.poll() is None and moved.kill())
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        staged = f'\nlane_owned_processes() {{ LANE_OWNED_PROCESS_PIDS="{moved.pid}"; }}\n'
-        library.write_text(library_original + staged)
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, f"stop-owner-changed item=TEST-1 pid={moved.pid}\n".encode() in refused.stderr),
-                         (1, True), refused.stderr)
-        self.assertIsNone(moved.poll())
-
-    def test_stop_refuses_an_unreadable_owned_process_set(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        library.write_text(library_original + '\nunset -f lane_stop_owned\n')
-        missing = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((missing.returncode, b"stop-operation-missing" in missing.stderr), (1, True), missing.stderr)
-        library.write_text(library_original + '\nlane_owned_processes() { return 2; }\n')
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1\n" in refused.stderr),
-                         (1, True), refused.stderr)
-
-    def test_stop_answers_a_removed_worktree_with_its_own_status(self):
-        # merge-pr removes the item's worktree before its lane goes idle, and
-        # lane-close reads exit 4 as a stop to skip, so no remote-failed line
-        # may sit above its stop-skipped line. stop's control is the guard
-        # removed.
-        self.assertEqual(self.create().returncode, 0)
-        worktree = Path(self.row["clone"] + "-worktree")
-        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
-                       check=True, capture_output=True)
-        removed = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((removed.returncode, removed.stdout, b"stop-worktree-removed item=TEST-1\n" in removed.stderr,
-                          b"remote-failed" in removed.stderr),
-                         (4, b"", True, False), removed.stderr)
-        original = self.script.read_text()
-        guard = """if ! test -d "$1"; then
-  printf 'lane-host-ssh: stop-worktree-removed item=%s\\n' "$4" >&2
-  exit 4
-fi
-"""
-        self.assertEqual(original.count(guard), 1)
-        self.script.write_text(original.replace(guard, ""))
-        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((mutant.returncode, b"stop-worktree-read-failed item=TEST-1" in mutant.stderr),
-                         (1, True), mutant.stderr)
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_signals_the_recorded_harness(self):
-        lane = self.launch_lane()
-        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
-        self.assertEqual(identity.read_text().split(" ", 1)[0], str(lane.pid))
-        outside = subprocess.Popen([str(self.bin / "codex"), "-c", "trap 'exit 0' TERM; while :; do sleep 0.1; done"],
-                                   cwd=Path(self.row["clone"] + "-worktree"), env=self.env)
-        self.addCleanup(outside.wait, 2)
-        self.addCleanup(lambda: outside.poll() is None and outside.kill())
-        other = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((other.returncode, other.stdout, lane.poll()),
-                         (0, b"stopped item=TEST-1 processes=0\n", None), other.stderr)
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the group reading here uses procfs")
+    def test_the_prefix_makes_the_lane_group_on_a_server_that_shares_its_own_and_stop_ends_it_alone(self):
+        # The SSH server runs every session's command inside one group of its
+        # own, as a server with no terminal to give does: the remote shell is a
+        # member of that group and leads none. The stand-in is a shell leading
+        # a new session and group, with another session's command beside the
+        # one it runs through the planted ssh.
+        created = self.create(harness="codex")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
+        shutil.copy2(shutil.which("bash"), self.bin / "codex")
+        idle = self.root / "codex-idle"
+        os.mkfifo(idle)
+        pids = self.root / "lane-pids"
+        line = (f"cd {shlex.quote(self.row['clone'] + '-worktree')} && exec {shlex.quote(str(self.bin / 'codex'))} -c "
+                + shlex.quote(f"sleep 600 >/dev/null 2>&1 & member=$!; (sleep 600 >/dev/null 2>&1 & printf '%s\\n' \"$!\" > {shlex.quote(str(pids))}.orphan); "
+                              f"printf '%s %s\\n' \"$$\" \"$member\" > {shlex.quote(str(pids))}; exec 3<>{shlex.quote(str(idle))}; "
+                              "while :; do read -r -t 0.1 -u 3 _; done"))
+        server = subprocess.Popen(["bash", "-c", 'sleep 600 >/dev/null 2>&1 & printf "%s\\n" "$!"; "$@"; wait', "server",
+                                   "ssh", "-t", "-o", "BatchMode=yes", "--", self.row["target"], prefix + " " + shlex.quote(line)],
+                                  env={**self.env, "HOME": str(self.root)}, stdout=subprocess.PIPE, start_new_session=True)
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        # The lane's group by its record, then the server's session, which
+        # this row made, by its own group id.
+        self.addCleanup(server.wait, 5)
+        self.addCleanup(os.killpg, server.pid, signal.SIGKILL)
+        self.addCleanup(subprocess.run, [str(self.agent_runtime_binary()), "process", "stop", "--grace-secs", "1",
+                                         "--file", str(record)], capture_output=True)
+        self.addCleanup(server.stdout.close)
+        bystander = int(server.stdout.readline())
+        deadline = time.monotonic() + 20
+        while not (pids.exists() and pids.read_text().endswith("\n")) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        leader, member = map(int, pids.read_text().split())
+        orphan = int(Path(str(pids) + ".orphan").read_text())
+        self.assertEqual(json.loads(record.read_text())["pid"], leader)
+        pgrp = int(Path(f"/proc/{leader}/stat").read_text().rsplit(")", 1)[1].split()[2])
+        self.assertEqual((pgrp, leader != server.pid), (leader, True))
+        status = self.call("status", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((status.returncode, status.stdout), (0, b"running\n"), status.stderr)
         stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
-        lane.wait(timeout=2)
-        self.assertIsNone(outside.poll())
-        # The recorded harness gone, its identity is stale: the stop says so
-        # and takes the worktree rule, which finds the harness left there.
-        gone = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((gone.returncode, gone.stdout, f"stop-identity-stale item=TEST-1 pid={lane.pid}\n".encode() in gone.stderr),
-                         (0, b"stopped item=TEST-1 processes=1\n", True), gone.stderr)
-        outside.wait(timeout=2)
+        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=3\n"), stopped.stderr)
+        self.assertEqual(self.until_gone(leader, member, orphan), [])
+        self.assertEqual((server.poll(), self.gone(bystander)), (None, False))
+        status = self.call("status", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((status.returncode, status.stdout), (0, b"exited\n"), status.stderr)
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_signals_the_recorded_harness_after_its_worktree_is_gone(self):
-        # merge-pr removes the item's worktree before its lane goes idle, and a
-        # later create may make a tree at the same path: neither hides the
-        # recorded harness. The control is the removed-worktree guard the
-        # stop once ran, put back into a copy of the script.
+    def on_terminal(self, script):
+        """SCRIPT run by bash leading a new session whose controlling terminal
+        is a pty: its pid, exit status and everything the terminal showed."""
+        pid, master = pty.fork()
+        if pid == 0:
+            try:
+                os.execve(shutil.which("bash"), ["bash", "-c", script], {**self.env, "HOME": str(self.root)})
+            finally:
+                os._exit(127)
+        shown = b""
+        while True:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            shown += chunk
+        os.close(master)
+        return pid, os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]), shown
+
+    def test_a_prefix_on_a_terminal_keeps_the_group_it_leads_and_refuses_one_it_does_not(self):
+        # A pane's `ssh -t` gives the remote shell a terminal whose session it
+        # leads: that group is the lane's, and the terminal's hang-up still
+        # reaches it. A process holding the terminal that leads no group would
+        # make a background group of it, so it refuses with nothing started.
+        created = self.create(harness="codex")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        prefix = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))["remote-prefix"]
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        line = shlex.quote("printf started")
+        _, code, shown = self.on_terminal("(" + prefix + " " + line + ")")
+        self.assertEqual((code, b"agent-runtime: group-unmade cause=terminal" in shown, b"started" in shown, record.exists()),
+                         (1, True, False, False), shown)
+        pid, code, shown = self.on_terminal(prefix + " " + line)
+        self.assertEqual((code, b"started" in shown, json.loads(record.read_text())["pid"]), (0, True, pid), shown)
+
+    def test_status_reads_the_recorded_group_whatever_the_worktree(self):
         lane = self.launch_lane()
+        clone = Path(self.row["clone"])
+        record = clone / ".git/lane-host-pid"
+        status = lambda **env: self.call("status", "--item", "TEST-1", "--harness", "codex", **env)
+        running = status()
+        self.assertEqual((running.returncode, running.stdout, lane.poll()), (0, b"running\n", None), running.stderr)
+        # merge-pr removes the registered tree before its harness exits.
         worktree = Path(self.row["clone"] + "-worktree")
-        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
-                       check=True, capture_output=True)
+        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)],
+                       check=True, capture_output=True, env=self.env)
+        self.assertEqual(status().stdout, b"running\n")
         original = self.script.read_text()
-        anchor = '''owned(row, item, "stop")
-    result = remote(row, \'\'\''''
-        self.assertEqual(original.count(anchor), 1)
-        self.script.write_text(original.replace(anchor, anchor + '''if ! test -d "$2-worktree"; then
-  printf 'lane-host-ssh: stop-worktree-removed item=%s\\\\n' "$3" >&2
-  exit 4
-fi
-'''))
-        mutant = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((mutant.returncode, b"stop-worktree-removed item=TEST-1\n" in mutant.stderr, lane.poll()),
-                         (4, True, None), mutant.stderr)
+        rule = '{"live": "running", "gone": "exited"}'
+        self.assertEqual(original.count(rule), 1)
+        self.script.write_text(original.replace(rule, '{"live": "exited", "gone": "exited"}'))
+        self.assertNotEqual(status().stdout, b"running\n")
         self.script.write_text(original)
-        worktree.mkdir()
+        text = record.read_text()
+        record.write_text("4242 Tue Nov 11 09:00:00 2026\n")
+        for env in ({}, {"SSH_TEST_FAIL": "7"}):
+            failed = status(**env)
+            self.assertEqual((failed.returncode != 0, failed.stdout), (True, b""), (env, failed.stderr))
+        self.assertIn(b"lane-host-ssh: status-read-failed item=TEST-1", status().stderr)
+        record.write_text(text)
         stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
         self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
-        lane.wait(timeout=2)
+        lane.wait(timeout=5)
+        self.assertEqual(status().stdout, b"exited\n")
+        record.unlink()
+        self.assertEqual(status().stdout, b"exited\n")
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_leaves_a_pid_that_started_at_another_time(self):
-        # The pid now names a later process: it is never signalled by the
-        # identity, and the worktree rule then answers for the lane, here a
-        # worktree its close-out removed.
+    def test_stop_reaches_the_recorded_group_alone_whatever_the_worktree(self):
+        # merge-pr removes the item's worktree before its lane goes idle: the
+        # stop reads no directory. A record whose pid now carries another
+        # start names a group that ended, and nothing is signalled by it.
         lane = self.launch_lane()
-        identity = Path(self.row["clone"]) / ".git/lane-host-pid"
-        identity.write_text(f"{lane.pid} Thu Jan 1 00:00:00 1970\n")
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        text = record.read_text()
+        record.write_text(json.dumps({"pid": lane.pid, "start": "ticks:1"}))
+        reused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((reused.returncode, reused.stdout, lane.poll()),
+                         (0, b"stopped item=TEST-1 processes=0\n", None), reused.stderr)
+        record.write_text(text)
         worktree = Path(self.row["clone"] + "-worktree")
         subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],
                        check=True, capture_output=True)
-        reused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((reused.returncode, reused.stdout, f"stop-identity-stale item=TEST-1 pid={lane.pid}\n".encode() in reused.stderr,
-                          b"stop-worktree-removed item=TEST-1\n" in reused.stderr, lane.poll()),
-                         (4, b"", True, True, None), reused.stderr)
-
-    def test_stop_refuses_an_identity_it_cannot_use(self):
-        self.assertEqual(self.create().returncode, 0)
-        clone = Path(self.row["clone"])
-        identity = clone / ".git/lane-host-pid"
-        identity.write_text("not-a-pid\n")
-        invalid = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((invalid.returncode, invalid.stdout,
-                          f"stop-identity-invalid item=TEST-1 path={identity}\n".encode() in invalid.stderr),
-                         (1, b"", True), invalid.stderr)
-        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        library.write_text(library_original + '\nunset -f lane_stop_identity\n')
-        identity.write_text("1 Thu Jan 1 00:00:00 1970\n")
-        missing = self.call("stop", "--item", "TEST-1", "--harness", "claude")
-        self.assertEqual((missing.returncode, f"stop-operation-missing path={library}\n".encode() in missing.stderr),
-                         (1, True), missing.stderr)
-
-    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
-    def test_stop_refuses_when_a_signaled_process_stays_live(self):
-        lane = self.launch_lane(on_term="")
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/lane-state.sh"
-        library_original = library.read_text()
-        library.write_text(library_original + '\nkill() { return 1; }\n')
-        signal_refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((signal_refused.returncode, f"stop-signal-refused item=TEST-1 pid={lane.pid}".encode() in signal_refused.stderr),
-                         (1, True), signal_refused.stderr)
-        # The private signal stub models delayed teardown after an accepted KILL.
-        library.write_text(library_original + '\nkill() { if [[ "$1" == -KILL ]]; then return 0; fi; builtin kill "$@"; }\n')
-        refused = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((refused.returncode, f"stop-timeout item=TEST-1 pid={lane.pid}".encode() in refused.stderr, lane.poll()),
-                         (1, True, None), refused.stderr)
-        term_only = "for signal in TERM KILL; do"
-        self.assertEqual(library_original.count(term_only), 1)
-        library.write_text(library_original.replace(term_only, "for signal in TERM; do"))
-        control = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((control.returncode, f"stop-timeout item=TEST-1 pid={lane.pid}".encode() in control.stderr, lane.poll()),
-                         (1, True, None), control.stderr)
-        library.write_text(library_original)
         stopped = self.call("stop", "--item", "TEST-1", "--harness", "codex")
-        self.assertEqual((stopped.returncode, stopped.stdout),
-                         (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
-        self.assertEqual(lane.wait(timeout=2), -9)
+        self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=1\n"), stopped.stderr)
+        self.assertEqual(lane.wait(timeout=5), 0)
+        again = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+        self.assertEqual((again.returncode, again.stdout), (0, b"stopped item=TEST-1 processes=0\n"), again.stderr)
+
+    def test_stop_and_close_refuse_a_record_they_cannot_read(self):
+        self.assertEqual(self.create().returncode, 0)
+        record = Path(self.row["clone"]) / ".git/lane-host-pid"
+        record.write_text("4242 Tue Nov 11 09:00:00 2026\n")
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, refused.stdout, b"agent-runtime: record-shape" in refused.stderr,
+                          b"lane-host-ssh: stop-failed item=TEST-1 outcome=refused exit=1\n" in refused.stderr),
+                         (1, b"", True, True), refused.stderr)
+        original = self.script.read_text()
+        for control in (False, True):
+            if control:
+                guarded = 'stop_lane(row, args.item, path, "close", "close-stop-failed")'
+                self.assertEqual(original.count(guarded), 1)
+                self.script.write_text(original.replace(guarded, "try:\n            " + guarded
+                                                        + "\n        except SystemExit:\n            pass"))
+            closed = self.call("close", "--item", "TEST-1")
+            kept = (closed.returncode, b"lane-host-ssh: close-stop-failed item=TEST-1" in closed.stderr,
+                    record.exists(), Path(self.row["clone"] + "-worktree").exists())
+            if control:
+                self.assertNotEqual(kept, (1, True, True, True), closed.stderr)
+            else:
+                self.assertEqual(kept, (1, True, True, True), closed.stderr)
+        self.script.write_text(original)
+
+    def test_close_ends_the_lane_group_before_it_removes_the_record(self):
+        # A lane whose SSH session held no terminal gets no hang-up when its
+        # window closes: the provider's close is its last stop.
+        for control in (False, True):
+            with self.subTest(control=control):
+                case = type(self)()
+                self.addCleanup(case.doCleanups)
+                case.setUp()
+                if control:
+                    original = case.script.read_text()
+                    stop = '        stop_lane(row, args.item, path, "close", "close-stop-failed")\n'
+                    self.assertEqual(original.count(stop), 1)
+                    case.script.write_text(original.replace(stop, ""))
+                lane = case.launch_lane()
+                closed = case.call("close", "--item", "TEST-1")
+                self.assertEqual(closed.returncode, 0, closed.stderr)
+                self.assertFalse((Path(case.row["clone"]) / ".git/lane-host-pid").exists())
+                try:
+                    lane.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                self.assertEqual(lane.poll() is None, control)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the job's start is read in procfs")
+    def test_stop_ends_the_worktrees_validation_runs_through_the_clone_runtime(self):
+        # A validation run leads a group of its own, which the lane's group
+        # stop does not reach: the clone's runtime stops it first, as it does
+        # a local lane's at its close. The planted run names a job this row
+        # started in a group of its own.
+        self.assertEqual(self.create().returncode, 0)
+        run = Path(self.row["clone"] + "-worktree") / "tmp/dev-validate-planted"
+        run.mkdir(parents=True)
+        (run / "start").write_text("start=1\n")
+        for control in (True, False):
+            job = subprocess.Popen(["sleep", "600"], process_group=0)
+            self.addCleanup(job.wait, 5)
+            self.addCleanup(lambda job=job: job.poll() is None and job.kill())
+            start = json.loads(subprocess.run([str(self.agent_runtime_binary()), "process", "identity", str(job.pid)],
+                                              check=True, capture_output=True).stdout)["result"]["start"]
+            (run / "command").write_text(json.dumps({"pid": job.pid, "start": start}))
+            (run / "stop").unlink(missing_ok=True)
+            original = self.script.read_text()
+            step = 'ORCH_STATE_DIR="$2/tmp" exec "$1$3" validate entry --stop --worktree "$2"'
+            self.assertEqual(original.count(step), 1)
+            if control:
+                self.script.write_text(original.replace(step, "exit 0"))
+            stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+            self.script.write_text(original)
+            self.assertEqual((stopped.returncode, stopped.stdout), (0, b"stopped item=TEST-1 processes=0\n"), stopped.stderr)
+            try:
+                job.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            self.assertEqual(job.poll() is None, control)
+        self.assertEqual((run / "stop").read_text(), "stop-requested\n")
+        job = subprocess.Popen(["sleep", "600"], process_group=0)
+        self.addCleanup(job.wait, 5)
+        self.addCleanup(lambda job=job: job.poll() is None and job.kill())
+        (run / "command").write_text(json.dumps({"pid": job.pid}))
+        (run / "stop").unlink()
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, refused.stdout, job.poll(),
+                          b"lane-host-ssh: stop-validations-failed item=TEST-1" in refused.stderr),
+                         (1, b"", None, True), refused.stderr)
 
     def test_close_preserves_and_restores_only_traced_render_drift(self):
         self.assertEqual(self.create().returncode, 0)
@@ -2660,122 +2659,52 @@ fi
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertTrue(removed.exists())
 
-    def test_close_archives_the_state_the_lane_settings_place_outside_tmp(self):
-        # The lane's settings name a state directory outside both tmp trees;
-        # its close archives the item's state there, which oversee-cycle reads
-        # once the sandbox is gone.
-        state_dir = self.root / "lane-state"
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
-        (self.source / "kendex.settings.toml").write_text(f'[env]\nORCH_STATE_DIR = "{state_dir}"\n')
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+    def test_close_archive_names_the_runtime_state_path(self):
+        state_dir = self.root / "runtime-state"
+        record = plant_record(state_dir, '{"cycles": 4}')
+        runtime = shlex.quote(str(self.runtime_binary()))
+        self.seed_source(".agents/skills/orch/scripts/orch-runtime", f'''#!/bin/sh
+if [ "$1 $2" = "state path" ]; then
+  exec {runtime} --state-dir {shlex.quote(str(state_dir))} "$@"
+fi
+exec {runtime} "$@"
+''')
         self.assertEqual(self.create().returncode, 0)
-        state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 4}')
-        # An older copy in the clone's tmp, from before the settings moved it.
-        (Path(self.row["clone"]) / "tmp").mkdir(exist_ok=True)
-        (Path(self.row["clone"]) / "tmp/workflow-state-TEST-1.json").write_text('{"cycles": 9}')
+        worktree = Path(self.row["clone"] + "-worktree")
+        plant_record(worktree / "tmp", '{"cycles": 9}')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
         with tarfile.open(archive) as saved:
-            member = str(state_dir / "workflow-state-TEST-1.json").lstrip("/")
-            self.assertEqual(saved.extractfile("lane-host-state").read(), member.encode() + b"\n")
+            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
+            self.assertEqual(member, str(record).lstrip("/"))
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 4}')
 
-    def test_close_records_a_dotted_state_directory_as_tar_names_it(self):
-        # A relative setting such as ../lane-state resolves to a path holding
-        # .. components; the record names the member tar writes for it. The
-        # kept= path is absolute though FLEET_DIR is relative, since tempfile
-        # makes the archive's directory absolute, which oversee-cycle's read
-        # of the kept= row relies on.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
-        (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "../lane-state"\n')
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
-        self.assertEqual(self.create().returncode, 0)
-        state_dir = Path(self.row["clone"]).parent / "lane-state"
-        state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 6}')
-        closed = self.call("close", "--item", "TEST-1", FLEET_DIR="fleet-relative")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
-        self.assertTrue(archive.is_absolute(), archive)
-        with tarfile.open(archive) as saved:
-            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
-            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 6}')
-
-    def test_close_follows_a_symlink_before_dots_in_the_state_directory(self):
-        # tmp/link/../lane-state names the directory beside link's target, as
-        # the filesystem follows it; collapsing link/.. first names
-        # tmp/lane-state, which here holds another copy, so the record would
-        # name a file that is not the lane's state.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
-        (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "tmp/link/../lane-state"\n')
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
-        self.assertEqual(self.create().returncode, 0)
-        target = self.root / "elsewhere/inner"
-        target.mkdir(parents=True)
-        (Path(self.row["clone"]) / "tmp").mkdir(exist_ok=True)
-        (Path(self.row["clone"]) / "tmp/link").symlink_to(target)
-        (Path(self.row["clone"]) / "tmp/lane-state").mkdir()
-        (Path(self.row["clone"]) / "tmp/lane-state/workflow-state-TEST-1.json").write_text('{"cycles": 9}')
-        state_dir = (self.root / "elsewhere/lane-state").resolve()
-        state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 2}')
-        closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
-        with tarfile.open(archive) as saved:
-            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
-            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 2}')
-
-    def test_close_archives_the_state_the_lane_private_env_places(self):
-        # The lane's workflow-state loads its private env file over its
-        # settings; close resolves the state the way the lane does.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state reader")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
-        created = self.create()
-        self.assertEqual(created.returncode, 0, created.stderr)
-        path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
-        state_dir = (self.root / "private-state").resolve()
-        state_dir.mkdir()
-        (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 5}')
-        (path / ".env.local").write_text(f'ORCH_STATE_DIR="{state_dir}"\n')
-        closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
-        with tarfile.open(archive) as saved:
-            member = saved.extractfile("lane-host-state").read().decode().rstrip("\n")
-            self.assertEqual(member, str(state_dir / "workflow-state-TEST-1.json").lstrip("/"))
-            self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 5}')
-
     def test_close_stops_when_the_state_directory_does_not_resolve(self):
-        # A clone whose workflow-state fails leaves the item's state unplaced:
-        # close stops before the worktree goes, rather than archive without it.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        self.executable(scripts / "workflow-state", "#!/usr/bin/env bash\necho 'workflow-state: settings broken' >&2\nexit 1\n")
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "broken state")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        # A checkout whose settings the loader refuses leaves the item's state
+        # unplaced: close stops before anything goes, rather than archive
+        # without it. A private env file that is no regular file is refused.
+        # With the worktree standing, the clone's runtime cannot read the
+        # worktree's validation runs under those settings and refuses first;
+        # with it removed there is no run to stop, and the state read refuses.
         created = self.create()
         self.assertEqual(created.returncode, 0, created.stderr)
         path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
+        (path / ".env.local").mkdir()
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual((closed.returncode, closed.stdout, path.is_dir(),
+                          b"lane-host-ssh: close-validations-failed item=TEST-1 exit=2\n" in closed.stderr,
+                          b"settings-invalid" in closed.stderr), (1, b"", True, True, True), closed.stderr)
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(path)],
+                       check=True, capture_output=True)
+        clone_env = Path(self.row["clone"]) / ".env.local"
+        clone_env.unlink()
+        clone_env.mkdir()
         closed = self.call("close", "--item", "TEST-1")
         self.assertNotEqual(closed.returncode, 0, closed.stderr)
         self.assertIn(b"lane-host-ssh: state-unresolved item=TEST-1", closed.stderr)
-        self.assertEqual((closed.stdout, path.is_dir()), (b"", True))
+        self.assertEqual((closed.stdout, clone_env.is_dir(), (Path(self.row["clone"]) / ".git/lane-host-item").exists()),
+                         (b"", True, True))
 
     def test_close_refuses_a_drift_patch_that_does_not_carry_the_path(self):
         self.assertEqual(self.create().returncode, 0)
@@ -2907,7 +2836,7 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
             Path(self.env["LAUNCH_RESULT"]).unlink(missing_ok=True)
             prefix = dict(field.split("=", 1) for field in output.decode().strip().split("\t"))["remote-prefix"]
             return subprocess.run([self.env["REAL_BASH"], "-c", prefix + " " + shlex.quote("exec " + shlex.quote(str(harness)))],
-                                  env=self.env, capture_output=True)
+                                  env=self.env, capture_output=True, start_new_session=True)
 
         launched = launch(result.stdout)
         self.assertEqual(launched.returncode, 0, launched.stderr)
@@ -3046,14 +2975,56 @@ WORKTREE_SETUP_CMD = 'mkdir -p tmp; SECRET=; if test -f .env.local; then . ./.en
         self.assertEqual((clone / ".git/lane-host-item").read_text(), "OTHER-1\n")
         self.assertEqual((worktree / "tmp/other.json").read_text(), "keep")
         original = self.script.read_text()
-        answer = 'if owner == b"other" and not worktree_exists(row, item):'
+        answer = 'owner == b"other" and not worktree_exists(row, item):'
         self.assertEqual(original.count(answer), 1)
-        self.script.write_text(original.replace(answer, "if False:"))
+        self.script.write_text(original.replace(answer, "False:"))
         for verb, extra, _ in answers:
             with self.subTest(control=verb):
                 result, _ = ask(verb, extra)
                 self.assertEqual((result.returncode, result.stdout), (75, b""), result.stderr)
         self.script.write_text(original)
+
+    def remove_clone(self, worktree_stands):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        shutil.rmtree(self.row["clone"])
+        if not worktree_stands:
+            shutil.rmtree(worktree)
+        return worktree
+
+    def standing_paths(self):
+        return {Path(parent, name) for parent, dirs, files in os.walk(self.root) for name in dirs + files}
+
+    def close_over_a_gone_clone(self):
+        before = self.standing_paths()
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual((closed.returncode, closed.stdout, closed.stderr), (0, b"closed=absent item=TEST-1\n", b""))
+        self.assertEqual(before - self.standing_paths(), set())
+
+    def test_close_over_a_gone_clone_answers_absent_and_removes_nothing(self):
+        self.remove_clone(worktree_stands=False)
+        self.close_over_a_gone_clone()
+        original = self.script.read_text()
+        answer = 'not owner and verb == "close" or '
+        self.assertEqual(original.count(answer), 1)
+        self.script.write_text(original.replace(answer, ""))
+        refused = self.call("close", "--item", "TEST-1")
+        self.script.write_text(original)
+        self.assertEqual((refused.returncode, refused.stdout, refused.stderr),
+                         (75, b"", b"lane-host-ssh: close-unowned item=TEST-1\n"))
+
+    def test_close_over_a_gone_clone_leaves_a_standing_worktree_directory(self):
+        worktree = self.remove_clone(worktree_stands=True)
+        self.close_over_a_gone_clone()
+        self.assertTrue(worktree.is_dir())
+
+    def test_stop_and_status_over_a_gone_clone_refuse_as_unowned(self):
+        self.remove_clone(worktree_stands=False)
+        for verb in ("stop", "status"):
+            with self.subTest(verb=verb):
+                result = self.call(verb, "--item", "TEST-1", "--harness", "claude")
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (75, b"", f"lane-host-ssh: {verb}-unowned item=TEST-1\n".encode()))
 
     def creation_overlap(self, expect_busy, channel_loss=False):
         """An installer acknowledgement fixes the pre-worktree interval.
@@ -3365,7 +3336,7 @@ fi'''))
                 self.assertIn(b"close-unowned item=TEST-1", refused.stderr)
                 self.assertNotIn("worktree path TEST-1", (self.root / "calls").read_text()[len(before):])
                 self.assertEqual(private.read_text(), "keep")
-                self.assertFalse((Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1").exists())
+                self.assertFalse((Path(self.env["ORCH_ARCHIVE_ROOT"]) / "repo/TEST-1").exists())
 
     def test_existing_clone_refuses_other_repository(self):
         self.assertEqual(self.create().returncode, 0)
@@ -3400,7 +3371,7 @@ fi'''))
                 line = output.read_text().strip()
                 self.assertTrue(line.startswith("kept="), line)
                 archive = Path(line.removeprefix("kept="))
-                self.assertEqual(archive.parent, Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1")
+                self.assertEqual(archive.parent, Path(self.env["ORCH_ARCHIVE_ROOT"]) / "repo/TEST-1")
                 self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
                 with tarfile.open(archive) as saved:
                     self.assertEqual(saved.extractfile(str(clone / "tmp/clone.json").lstrip("/")).read(), b'"clone-record"\n')
@@ -3415,8 +3386,29 @@ fi'''))
                 if state == "present":
                     self.assertIn("before-delete:" + line, (self.root / "calls").read_text())
 
+    def test_close_lists_the_clones_saved_copies_where_no_live_state_remains(self):
+        # The merge's close-out removed the live state after saving its copy
+        # in the clone; a worktree copy is no saved copy, so the list a reader
+        # takes the merge's copy from names the clone's alone.
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        worktree = Path(self.row["clone"] + "-worktree")
+        for directory in (clone / "tmp/cycle-state", worktree / "tmp/cycle-state"):
+            directory.mkdir(parents=True, exist_ok=True)
+        for pr in (6, 7):
+            (clone / f"tmp/cycle-state/workflow-state-pr-{pr}.json").write_text(f'{{"cycles": {pr}}}')
+        (worktree / "tmp/cycle-state/workflow-state-pr-7.json").write_text('{"cycles": 9}')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        listed = [str(clone / f"tmp/cycle-state/workflow-state-pr-{pr}.json").lstrip("/") for pr in (6, 7)]
+        with tarfile.open(archive) as saved:
+            self.assertEqual(saved.extractfile("lane-host-state").read(), b"\n")
+            self.assertEqual(saved.extractfile("lane-host-saved").read().decode().splitlines(), listed)
+            self.assertEqual(saved.extractfile(listed[1]).read(), b'{"cycles": 7}')
+
     def test_close_accepts_merged_and_keeps_the_whole_archive(self):
-        # lane-close passes --merged on a merged full close; a static host cuts
+        # The close passes --merged on a merged full close; a static host cuts
         # nothing, so every tmp record stays in the archive. The control is the
         # parser without the flag, which refuses the close.
         self.assertEqual(self.create().returncode, 0)
@@ -3461,8 +3453,20 @@ fi'''))
             self.assertEqual(saved.extractfile(str(record).lstrip("/")).read(), b'"archive-root-record"\n')
         self.assertFalse(worktree.exists())
 
+    def unplaced_close(self):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        record = worktree / "tmp/return.json"
+        record.parent.mkdir(exist_ok=True)
+        record.write_bytes(b'"unplaced-record"\n')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertEqual(closed.stdout, b"")
+        self.assertFalse(worktree.exists())
+
     def test_close_reads_the_local_archive_root(self):
-        for source in ("settings", "private", "environment", "home-default"):
+        self.env.pop("ORCH_ARCHIVE_ROOT")
+        for source in ("settings", "private", "environment", "unplaced"):
             with self.subTest(source=source):
                 self.row["clone"] = str(self.root / source)
                 self.inventory.write_text(json.dumps([self.row]))
@@ -3472,28 +3476,30 @@ fi'''))
                 private.unlink(missing_ok=True)
                 folder = self.root / (source + " archives")
                 env = {}
-                if source == "home-default":
-                    env["FLEET_DIR"] = ""
-                    folder = self.root / ".fleet/archive"
-                else:
-                    settings.write_text(f'[env]\nORCH_ARCHIVE_ROOT = "{folder}"\n')
-                    if source in ("private", "environment"):
-                        private.write_text(f'ORCH_ARCHIVE_ROOT="{folder}-private"\n')
-                        folder = Path(str(folder) + "-private")
-                    if source == "environment":
-                        folder = self.root / (source + " environment")
-                        env["ORCH_ARCHIVE_ROOT"] = str(folder)
+                if source == "unplaced":
+                    # No root set anywhere: the close keeps no copy.
+                    self.unplaced_close()
+                    continue
+                settings.write_text(f'[env]\nORCH_ARCHIVE_ROOT = "{folder}"\n')
+                if source in ("private", "environment"):
+                    private.write_text(f'ORCH_ARCHIVE_ROOT="{folder}-private"\n')
+                    folder = Path(str(folder) + "-private")
+                if source == "environment":
+                    folder = self.root / (source + " environment")
+                    env["ORCH_ARCHIVE_ROOT"] = str(folder)
                 self.archive_root_contract(folder, **env)
 
     def test_control_close_ignoring_the_archive_root_fails_its_contract(self):
         original = self.script.read_text()
-        rule = 'directory = Path(root.stdout.decode().rstrip("\\n"))'
+        rule = 'directory = Path(placed) / suffix'
         self.assertEqual(original.count(rule), 1)
-        self.script.write_text(original.replace(rule, 'directory = Path(os.environ["FLEET_DIR"]) / "archive"'))
+        self.script.write_text(original.replace(rule, 'directory = Path(os.environ["HOME"]) / "ignored" / suffix'))
         with self.assertRaises(AssertionError):
             self.archive_root_contract(self.root / "configured", ORCH_ARCHIVE_ROOT=str(self.root / "configured"))
 
     def archive_root_read_refusal(self, setting=None):
+        # The settings file's value alone: the caller's environment outranks it.
+        self.env.pop("ORCH_ARCHIVE_ROOT", None)
         self.assertEqual(self.create().returncode, 0)
         worktree = Path(self.row["clone"] + "-worktree")
         record = worktree / "tmp/return.json"
@@ -3529,7 +3535,7 @@ fi'''))
         original = self.script.read_text()
         rule = '        raise SystemExit(root.returncode if root.returncode > 0 else 1)'
         self.assertEqual(original.count(rule), 1)
-        fallback = str(self.root / "control-archive").encode()
+        fallback = json.dumps({"result": {"root": str(self.root / "control-archive")}}).encode()
         self.script.write_text(original.replace(rule, f'        root.stdout = {fallback!r}'))
         with self.assertRaises(AssertionError):
             self.archive_root_read_refusal()
@@ -3573,7 +3579,7 @@ fi'''))
                 else:
                     blocked = self.root / "storage-blocked"
                     blocked.write_text("file")
-                    env["FLEET_DIR"] = str(blocked)
+                    env["ORCH_ARCHIVE_ROOT"] = str(blocked)
                 closed = self.call("close", "--item", "TEST-1", **env)
                 self.assertEqual(closed.returncode, {"tar": 23, "storage": 1}[failure], closed.stderr)
                 self.assertTrue(record.exists())

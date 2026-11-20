@@ -1,0 +1,4 @@
+#!/bin/bash
+# A `loginctl` reporting that the user manager does not linger, so the
+# runtime's job launcher takes its setsid route.
+echo no

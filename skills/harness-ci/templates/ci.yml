@@ -34,7 +34,7 @@ name: CI
   # A required context a merge group never produces blocks the queue forever.
   merge_group:
   # The nightly full run on the default branch; a red one reaches the
-  # overseer through orch's oversee-watch.
+  # overseer through orch's fleet watch.
   schedule:
     - cron: "17 7 * * *"
   workflow_dispatch:

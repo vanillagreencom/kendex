@@ -4,12 +4,11 @@ set -euo pipefail
 JARVIS_LIB="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
 # Targets supply settings and session data, never dependency code.
 MAILBOX_LIB="$JARVIS_LIB/../../../mailbox/scripts/lib"
-ORCH_SCRIPTS="$JARVIS_LIB/../../../orch/scripts"
 [[ -r "$MAILBOX_LIB/kendex-env.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }
 source "$MAILBOX_LIB/kendex-env.sh"
 
 jarvis_load() {
-  kendex_load_project_env "$1" || return 1
+  kendex_load_project_env "$1" -- JARVIS_CONTROL_HOST JARVIS_CONTROL_USER JARVIS_LOG_DIR JARVIS_MAIN_HOST JARVIS_REMOTE_HOSTS JARVIS_REPO_ALIASES JARVIS_STYLE JARVIS_TECHNICAL JARVIS_UNATTENDED_HARNESSES JARVIS_VOICE_REMIND_SECS JARVIS_WAKE_SETTLE_SECS ORCH_REPORT_EVERY_MINUTES || return 1
   export JARVIS_CONTROL_HOST="${JARVIS_CONTROL_HOST:-}"
   export JARVIS_CONTROL_USER="${JARVIS_CONTROL_USER:-}"
   export JARVIS_REMOTE_HOSTS="${JARVIS_REMOTE_HOSTS:-}"
@@ -17,62 +16,46 @@ jarvis_load() {
   export JARVIS_MAIN_HOST="${JARVIS_MAIN_HOST:-}"
   export JARVIS_LOG_DIR="${JARVIS_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/jarvis}"
   export JARVIS_WAKE_SETTLE_SECS="${JARVIS_WAKE_SETTLE_SECS:-15}"
-  # Presentation choices; their values are defined in
-  # ../../../communication/references/messages.md § Reader modes.
-  # An unset or unlisted value takes the default instead of refusing: a
-  # refusal would fail every config read, so a presentation typo would stop
-  # watch.py, forward.py and owner_note.py, and an unlisted value must not
-  # reach Jarvis or VGS for each to interpret.
+  export JARVIS_VOICE_REMIND_SECS="${JARVIS_VOICE_REMIND_SECS:-0}"
+  # Presentation typos take the default: config also serves mail delivery,
+  # which must not stop because a presentation value is unlisted.
   case "${JARVIS_TECHNICAL:-}" in off | on) ;; *) JARVIS_TECHNICAL=off ;; esac
   case "${JARVIS_STYLE:-}" in friendly | concise | fun) ;; *) JARVIS_STYLE=concise ;; esac
   export JARVIS_TECHNICAL JARVIS_STYLE
 }
 
+# Presence: the session the native turn end last stamped into the overseer
+# mailbox's context record is the fleet record's controller, live, bound to
+# that pane on its server's recorded start, of that harness, under the
+# native id the record names. agent-runtime's status read answers all of it;
+# a read it cannot make is never presence.
 jarvis_live() {
-  local root="$1" pane server native harness account rows record start
-  SCRIPT_DIR="$ORCH_SCRIPTS"
-  DEP_ERR=/dev/stderr
-  [[ -r "$SCRIPT_DIR/lib/lane-context.sh" && -r "$SCRIPT_DIR/lib/overseer-launch.sh" ]] || {
-    echo 'jarvis: dependency=orch-missing' >&2; return 1;
-  }
-  source "$SCRIPT_DIR/lib/lane-context.sh"
-  source "$SCRIPT_DIR/lib/overseer-launch.sh"
+  local root="$1" runtime="$JARVIS_LIB/../../../agent-runtime/scripts/agent-runtime"
+  local box harness server pane session at record status
+  [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; return 1; }
+  [[ -x "$runtime" ]] || { echo 'jarvis: dependency=agent-runtime-missing' >&2; return 1; }
+  source "$MAILBOX_LIB/common-root.sh"
   cd -- "$root" || return 1
-  ol_record_read || return 1
-  [[ "$OL_PRIOR" != null ]] || return 1
-  record="$OL_PRIOR"
-  pane="$(jq -er '.pane' <<<"$record")" || return 1
-  native="$(jq -er '.session_id | strings | select(length > 0)' <<<"$record")" || return 1
-  harness="$(jq -er '.harness' <<<"$record")" || return 1
-  account="$(jq -r '.home // ""' <<<"$record")" || return 1
-  jq -e '.exit == null' <<<"$record" >/dev/null || return 1
-  ol_session_inspect "$pane" || return 1
-  [[ "$OL_INSPECT_LIVE" == true ]] || return 1
-  server="$OL_INSPECT_SERVER"
-  start="$OL_INSPECT_START"
-  [[ -n "$start" ]] || start="$(ol_session_start "$server" "$pane")" || return 1
-  jq -e --arg server "$server" --arg start "$start" --arg pane "$pane" \
-    "$OL_JQ_DEFS"' ol_names($server; $start; $pane)' <<<"$record" >/dev/null || return 1
-  rows="$(session_rows_overseer_file "$root" "$server" "$pane")" || return 1
-  session_rows_last "$rows" SessionStart || return 1
-  jq -e --arg harness "$harness" --arg home "$account" --arg session "$native" \
-    "$OL_JQ_DEFS"' .session_id == $session and ol_native_match($harness; $home; $session)' \
-    <<<"${SESSION_ROW:-null}" >/dev/null || return 1
-  record="$(cat -- "$(lane_context_overseer_box "$root")/$LANE_CONTEXT_RECORD")" || return 1
-  lane_context_record_fields "$record" || return 1
-  [[ "$LANE_CTX_HARNESS" == "$harness" && "$LANE_CTX_PANE_KEY" == "$server $pane" && "$LANE_CTX_SESSION" == "$native" ]] || return 1
+  box="$(mailbox_common_root "$root")" || box="$root"
+  IFS=$'\t' read -r harness server pane session at < <(jq -er '
+    select(all(.harness, .session_id, .at; type == "string" and length > 0)
+      and (.pane_key | type == "string" and test("^[^ \t]+ [^ \t]+$")))
+    | [.harness, (.pane_key | split(" ") | .[0], .[1]), .session_id, .at] | @tsv' \
+    "$box/tmp/lane-mail/overseer/context.json") || return 1
+  record="$(mailbox_fleet_record full "$root")" || return 1
+  status="$("$runtime" controller status --record "$record" --server="$server" --pane="$pane" \
+    --harness="$harness" --session="$session")" || return 1
+  jq -e '.result | .live and .binding == "bound" and .native_match
+    and (.recorded.session_id | type == "string" and length > 0)' <<<"$status" >/dev/null || return 1
   # No native route exposes an external health acknowledgement here. Fresh
   # context is sufficient, including work that only invokes existing hooks.
-  printf '%s\n' "$LANE_CTX_AT"
+  printf '%s\n' "$at"
 }
 
 case "${1:-}" in
   config)
-    # The effective settings as JSON. Readers: watch.py and its forward.py and
-    # owner_note.py callers, Jarvis presentation, and VGS, which reads and
-    # writes the same presentation choices.
     jarvis_load "$2"
-    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_REPO_ALIASES","JARVIS_MAIN_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","JARVIS_TECHNICAL","JARVIS_STYLE")}))'
+    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_REPO_ALIASES","JARVIS_MAIN_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","JARVIS_VOICE_REMIND_SECS","ORCH_REPORT_EVERY_MINUTES","JARVIS_TECHNICAL","JARVIS_STYLE")}))'
     ;;
   common-root)
     [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }

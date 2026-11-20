@@ -560,7 +560,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   # A hook that loads the main checkout's project files before it claims
   # takes the owner they name, as one asking the skill's scripts would.
   control loads-project-env '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0' \
-    '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0; . "'"$WORKTREE_SCRIPTS"'/lib/kendex-env.sh"; kendex_load_project_env "${COMMON_DIR%/.git}"' env_rows \
+    '[ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0; . "'"$WORKTREE_SCRIPTS"'/lib/kendex-env.sh"; kendex_load_project_env "${COMMON_DIR%/.git}" -- KENDEX_SESSION_OWNER' env_rows \
     "a skill-created worktree loads no project file;"
 
 fi

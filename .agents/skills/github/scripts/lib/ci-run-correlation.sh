@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Shared CI check-rollup scoping for the PR merge/wait path.
 #
-# One implementation, sourced by both github `pr-merge.sh` and orch `ci-wait`,
-# so the merge gate and the waiter cannot disagree about which run is current.
-# `ci-run-correlation.test.sh` fails if either script grows a local copy.
+# One implementation, sourced by every github command that reads check runs,
+# so no two of them disagree about which run is current. tools/guard refuses
+# a command that grows a local copy.
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
 # workflow, so checks from a SUPERSEDED run are not read as current failures.
@@ -52,9 +52,9 @@
 # Shared jq preamble: the run-id extraction, the check-bucket taxonomy, and
 # the run-scope reduction, exported as one string so every consumer (this
 # scoping, pr-merge's classification and head_runs, ci-classify-refusal's
-# diagnosis, ci-wait's failure classification) prepends the SAME definitions —
+# diagnosis) prepends the SAME definitions —
 # a local `def bucket`/`def runid` copy is the drift this library exists to
-# kill, and ci-run-correlation.test.sh rejects one.
+# kill, and tools/guard refuses one.
 # `red` is the failed/cancelled bucket test, and `required_only($req)` asks
 # whether the base branch requires this context or workflow check — the one definition
 # of "this check can block", shared by pr-merge's classification and
@@ -152,7 +152,7 @@ scope_current_run() {
               })
             # Rank by when the run last executed, tiebroken by run id — but only
             # when every run here is settled and timestamped. Otherwise rank by
-            # run id alone, which is the previous behaviour.
+            # run id alone.
             | (if all(.[]; (.pending | not) and (.last_start != ""))
                then map(.rank = [.last_start, .runid])
                else map(.rank = ["", .runid])
@@ -212,10 +212,15 @@ scope_current_run() {
 # scope_current_run orders runs by it. gh exits 8 while checks are pending
 # but still prints usable JSON, so any valid array is authoritative
 # regardless of the exit status; a non-array answer returns 1 and prints
-# nothing.
+# nothing. Arg 2, when given, is the owner/name the PR lives in, as
+# required_contexts takes it; without it gh resolves the repository from
+# the working directory.
 fetch_checks_rollup() {
-  local out
-  out=$(gh pr checks "$1" --json name,state,bucket,link,startedAt,workflow 2>&1) || true
+  local out repo="${2:-}" repo_arg=()
+  if [ -n "$repo" ]; then
+    repo_arg=(--repo "$repo")
+  fi
+  out=$(gh pr checks "$1" ${repo_arg[@]+"${repo_arg[@]}"} --json name,state,bucket,link,startedAt,workflow 2>&1) || true
   jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || return 1
   printf '%s\n' "$out"
 }
@@ -233,7 +238,7 @@ fetch_checks_rollup() {
 # Arg 1 is required_contexts' complete evidence object; the scoping keeps the
 # workflow runs it bound. Classic names and workflow check links remain
 # separate. Red optional checks block nothing.
-# The legacy array argument names classic contexts; [] counts every check.
+# A bare array as the argument names classic contexts alone; [] counts every check.
 #
 # A required context the scoped rollup carries no check for is `pending` as
 # `<context> (missing)`. GitHub waits for every required context to report,
@@ -311,7 +316,7 @@ RULESET_CONTEXTS_JQ='
 # on a check it does not name. Unreadable workflow parameters refuse.
 # Ready evidence holds classic contexts, distinct workflow definitions with
 # their consumer runs and check links, and all_checks for fallback protection.
-# Failed evidence holds failed_runs so ci-wait retries the bound workflow.
+# Failed evidence holds failed_runs so a caller can rerun the bound workflow.
 # Other unnameable rules retain the all-check fallback. Required workflows instead hold as pending, failed or unreadable;
 # their partial job rollup cannot prove that the required run passed.
 # Arg 2, when given, is the owner/name the PR lives in; without it gh resolves

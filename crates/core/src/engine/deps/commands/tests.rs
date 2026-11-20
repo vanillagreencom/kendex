@@ -211,3 +211,43 @@ fn path_lookup_requires_an_executable_and_accepts_windows_suffixes() {
         Some(second.join("tool.EXE"))
     );
 }
+
+/// A toolchain proxy answers for the name it was invoked by: rustup's
+/// `cargo` is a link to `rustup`, which prints its own version when run
+/// as itself. The probe runs the command at the path the search path
+/// spells, so the proxy sees `cargo` and reports cargo's version.
+#[test]
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn the_version_probe_runs_a_proxied_command_under_its_own_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::test_util::rooted(&tmp);
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("proxy"),
+        "#!/bin/sh\ncase \"$0\" in *cargo) echo 'cargo 9.9';; *) echo 'proxy 1.0';; esac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("proxy"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink("proxy", bin.join("cargo")).unwrap();
+    let path = std::env::join_paths([&bin]).unwrap();
+    let declared = |floor: &str| CommandDependency {
+        command: "cargo".into(),
+        purpose: "Build the runtime".into(),
+        optional: false,
+        floor: Some(floor.into()),
+        packages: BTreeMap::new(),
+    };
+    assert_eq!(check_on(&[declared("9.0")], None, &path, false, ""), []);
+    assert_eq!(
+        check_on(&[declared("10")], None, &path, false, ""),
+        [CommandIssue {
+            dependency: declared("10"),
+            problem: CommandProblem::BelowFloor {
+                found: "9.9.0".into()
+            },
+        }]
+    );
+}

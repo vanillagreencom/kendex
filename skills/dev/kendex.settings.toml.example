@@ -12,7 +12,8 @@ DEV_VALIDATE_CMD = "" # required
 # "tools/check --since $DEV_VALIDATE_BASE". Empty runs DEV_VALIDATE_CMD.
 # An orch restack also runs it, as orch's merge-pr-restack.md sets out.
 # Submit can reuse a current-head pending CI receipt; uncovered work keeps
-# local validation. dev-validate-run --help defines coverage and fallback.
+# local validation. orch-runtime validate entry --help defines coverage and
+# fallback.
 DEV_VALIDATE_RANGE_CMD = ""
 
 # The status check context whose run covers DEV_VALIDATE_CMD, for example
@@ -22,25 +23,18 @@ DEV_VALIDATE_RANGE_CMD = ""
 # implementation and internal-fix rounds to defer before publication.
 # Their receipts accept local edits with CI pending; the merge-group run
 # proves a queue-only change's head before merge. Uncovered work keeps local validation.
-# Empty validates locally. dev-validate-run --help defines coverage.
+# Empty validates locally. orch-runtime validate entry --help defines coverage.
 DEV_VALIDATE_CI_CONTEXT = ""
 
 # The optional command that previews selection=all or selection=subset.
 # It may also print expected-secs=N on a separate line, with its own margin.
-# Before launching a command, dev-validate-run refuses with over-bound when
-# N exceeds DEV_VALIDATE_TIMEOUT_SECS. It names both values and creates no
-# run directory. No estimate, or one within the bound, keeps existing behavior.
+# The start records N as the run's expected time: a run past it is warned
+# of once and goes on, and no estimate refuses a start.
 DEV_VALIDATE_SELECTION_CMD = ""
 
 # The prefix both commands print each finding line with, such as "guard: ".
-# A run the timeout below stopped whose output holds no such line refuted
-# nothing: a later run over no fewer files is not run past the timeout again,
-# and a restack does not count the stopped run as a failure. Empty treats
-# every stopped run as a possible failure.
+# A no-verdict run (the command's exit 3, or a host check that could not
+# run) whose output holds no such line refuted nothing: the last-pass read
+# and a restack count it as a pass, not a failure. Empty treats every
+# no-verdict run as a possible failure.
 DEV_VALIDATE_FINDING_PREFIX = ""
-
-# Seconds either command may run before it is stopped. A stopped run is
-# neither a pass nor a failure; the agent then runs, one at a time, the test
-# files for each script the change touches. The same number decides how long
-# an agent waits, so no agent picks its own.
-DEV_VALIDATE_TIMEOUT_SECS = "3600"

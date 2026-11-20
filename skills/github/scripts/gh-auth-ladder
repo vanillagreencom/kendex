@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# gh-auth-ladder: select the GitHub credential a long-running reader inherits,
+# once, before it starts. The ladder, each candidate probed at most once: a
+# selected env token (GH_TOKEN or GITHUB_TOKEN) validated with a bounded
+# `gh api user`; that failing, the keyring once, the stale env token then
+# unset; that failing, the project's GH_BOT_TOKEN from the caller's
+# environment or the project's env files, validated the same way. A probe
+# killed at KENDEX_GITHUB_AUTH_TIMEOUT (status 124) is asked once more before
+# the fallback, since the first call through an egress proxy can be the slow
+# one.
+#
+# Usage:
+#   gh-auth-ladder --project ROOT
+#       ROOT is the project whose env files hold GH_BOT_TOKEN. Prints two
+#       lines, `GH_TOKEN=VALUE` and `GITHUB_TOKEN=VALUE`, the two variables as
+#       the ladder leaves them; an empty VALUE is a variable the caller unsets.
+#       Exit 0 a candidate works; 2 nothing works, its last line on stderr
+#       `gh-auth-ladder: auth-failed service=github env=CLASS
+#       [keyring=CLASS] bot-token=CLASS`, each source tried with the class
+#       of its failure: absent, expired, refused or unreadable, keyring only
+#       where it was asked; 3 usage.
+#   gh-auth-ladder --help
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() { sed -n '/^# Usage:/,/^#   gh-auth-ladder --help$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+PROJECT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) [[ -n "${2:-}" ]] || { echo 'gh-auth-ladder: usage option=--project' >&2; exit 3; }; PROJECT="$2"; shift 2 ;;
+    --help | -h | help) usage; exit 0 ;;
+    *) echo "gh-auth-ladder: usage option=$1" >&2; exit 3 ;;
+  esac
+done
+[[ -n "$PROJECT" ]] || { echo 'gh-auth-ladder: usage option=--project' >&2; exit 3; }
+
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+# The keyring probe stays silent: what gh says of it can name the account.
+auth_status() {
+  local status=0
+  kendex_github_has_env_token || {
+    kendex_github_keyring_auth_status
+    return
+  }
+  kendex_github_token_auth_status || status=$?
+  if [[ "$status" -eq 124 ]]; then
+    kendex_github_token_auth_status
+    return
+  fi
+  return "$status"
+}
+
+failure_class() { # AUTH_FAILURE_OR_LOAD_FAILURE
+  case "$1" in
+    absent | no_login) printf absent ;;
+    rejected_credential | invalid_token) printf expired ;;
+    permission_refusal | server_failure) printf refused ;;
+    *) printf unreadable ;;
+  esac
+}
+
+refuse() { # BOT_TOKEN_CLASS
+  local keyring=""
+  [[ -z "${KENDEX_GITHUB_KEYRING_STATE:-}" ]] || keyring=" keyring=$(failure_class "$KENDEX_GITHUB_KEYRING_STATE")"
+  echo "gh-auth-ladder: auth-failed service=github env=$ENV_CLASS$keyring bot-token=$1" >&2
+  exit 2
+}
+
+ENV_CLASS=absent
+ENV_HELD=""
+kendex_github_has_env_token && ENV_HELD=1
+kendex_github_sanitize_gh_env
+if ! auth_status; then
+  [[ -z "$ENV_HELD" ]] || ENV_CLASS="$(failure_class "${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-unknown}")"
+  unset GH_TOKEN GITHUB_TOKEN KENDEX_GITHUB_TOKEN_AUTH_FAILURE
+  # The bot token where one loads, else its class, told apart by the status.
+  if ! loaded="$(kendex_github_load_token "$PROJECT" default || {
+    failure_class "${KENDEX_GITHUB_TOKEN_LOAD_FAILURE:-${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-absent}}"
+    exit 1
+  })"; then
+    refuse "$loaded"
+  fi
+  export GH_TOKEN="$loaded"
+  auth_status || refuse "$(failure_class "${KENDEX_GITHUB_TOKEN_AUTH_FAILURE:-unknown}")"
+fi
+printf 'GH_TOKEN=%s\nGITHUB_TOKEN=%s\n' "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"

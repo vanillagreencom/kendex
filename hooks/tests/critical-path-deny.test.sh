@@ -75,6 +75,10 @@ world() { # NAME SHAPE
   git -C "$LANE" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
   cp "$HOOK" "$LANE/.claude/hooks/critical-path-deny.sh"
   cp "$HOOKS/lane-mail-check.sh" "$LANE/.claude/hooks/lane-mail-check.sh"
+  # The install lane-mail-check walks to, its runtime the one setup built.
+  mkdir -p "$LANE/.agents/skills"
+  local package
+  for package in orch mailbox agent-runtime; do ln -s "$REPO_ROOT/skills/$package" "$LANE/.agents/skills/$package"; done
   [ "$2" = plain ] || "$REPO_ROOT/skills/orch/scripts/lane-marker" "$LANE" KEN-1
   case "$2" in
     nojudge) rm -f -- "$LANE/.claude/hooks/lane-mail-check.sh" ;;

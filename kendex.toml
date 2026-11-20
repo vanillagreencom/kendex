@@ -36,7 +36,7 @@ agents = [
   "reviewer-test",
 ]
 skills = [
-  "orch", "mailbox", "communication",
+  "orch", "mailbox", "communication", "agent-runtime",
   "dev",
   "github",
   "worktree",
@@ -46,6 +46,7 @@ skills = [
   "linear",
   "review-gate",
   "harness-ci",
+  "change-scope",
   "bot-instructions",
   "github-repository-settings",
   "second-opinion",
@@ -228,4 +229,4 @@ reviewer = ["reviewer"]
 
 [bundles.jarvis]
 skills = ["jarvis"]
-hooks = ["session-start-row", "lane-mail-check", "jarvis-memory-note"]
+hooks = ["session-start-row", "lane-mail-check", "lane-mail-start", "lane-mail-compact", "jarvis-memory-note"]

@@ -15,6 +15,8 @@ PRISTINE="$TMP/pristine"
 mkdir -p "$PRISTINE/.agents/skills" "$PRISTINE/.github/workflows" "$PRISTINE/docs"
 cp -R "$SKILL_DIR" "$PRISTINE/.agents/skills/review-gate"
 cp -R "$SKILL_DIR/../harness-ci" "$PRISTINE/.agents/skills/harness-ci"
+# harness-ci requires change-scope, so an install lays it beside harness-ci.
+cp -R "$SKILL_DIR/../change-scope" "$PRISTINE/.agents/skills/change-scope"
 printf '[env]\n' >"$PRISTINE/kendex.settings.toml"
 printf '[]\n' >"$PRISTINE/.kendex-generated.json"
 printf 'sandbox\n' >"$PRISTINE/docs/guide.md"

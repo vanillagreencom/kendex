@@ -229,7 +229,7 @@ fn hooks_off_names_the_copilot_settings_file_that_switched_every_hook_off() {
 
 /// A settings file that is there but is no JSON once its comments are
 /// stripped is a layer the answer cannot judge, so the verb fails naming it and prints no answer, and
-/// `open-terminal` refuses the lane instead of reading null.
+/// orch's lane launch refuses the lane instead of reading null.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hooks_off_fails_naming_a_copilot_settings_file_it_cannot_parse() {
@@ -266,7 +266,7 @@ fn hooks_off_fails_naming_a_copilot_settings_file_it_cannot_parse() {
 /// A hook document named with `--hook-document` carries its own
 /// `disableAllHooks`: one switched on is named, one switched off or silent
 /// is not, and one that is no JSON fails the verb naming it, so
-/// `open-terminal` refuses the lane instead of reading null.
+/// orch's lane launch refuses the lane instead of reading null.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hooks_off_reads_the_switch_of_each_named_hook_document() {

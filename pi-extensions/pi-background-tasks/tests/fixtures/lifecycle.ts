@@ -3,7 +3,7 @@ import type { IdentityReading } from "../../extensions/snapshot.js";
 import type { BackgroundTaskSnapshot, ManagedTask, ProcessIdentity, TaskEventType } from "../../extensions/types.js";
 
 export function fakeIdent(pid: number): ProcessIdentity {
-	return { pid, startToken: `start-${pid}`, comm: "approval-wait" };
+	return { pid, startToken: `start-${pid}`, comm: "orch-runtime" };
 }
 
 /** An identity probe answer: null reads as a pid the kernel reports gone. */
@@ -13,7 +13,7 @@ export function reading(identity: ProcessIdentity | null): IdentityReading {
 
 export function fakeSnapshot(overrides: Partial<BackgroundTaskSnapshot> = {}): BackgroundTaskSnapshot {
 	return {
-		command: "approval-wait 81", cwd: "/private/worktree", exitCode: null,
+		command: "orch-runtime copilot-wait --pr 81", cwd: "/private/worktree", exitCode: null,
 		exitNotified: false, expiresAt: null, id: "bg-3", lastOutputAt: null,
 		logFile: "/private/log.txt", notifyOnExit: true, notifyOnOutput: false,
 		notifyPattern: undefined, outputBytes: 0, pid: 2409160, sessionId: "sess-1",

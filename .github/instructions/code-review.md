@@ -20,7 +20,7 @@ Mark a finding as blocking only if it must stop the merge. Mark other findings a
 
 Approve the pull request when the review reports no finding, and when every finding it reports is a suggestion or a nit. Withhold approval only for a blocking finding, and name that finding in the review. Do not withhold approval for a concern you cannot state as a finding. On a later review, a finding the author answered under the reply contract does not block approval unless the code it names changed after the answer.
 
-Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. The conditions for that approval are the KEN-2067 design note, attached to that issue, § Copilot-down fallback.
+Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. The conditions for that approval are in `docs/decisions/D018-platform-review-requirements.md`.
 
 ## no-preferences
 
@@ -32,9 +32,9 @@ Read the PR's decline replies and the repo's instruction files before reporting 
 
 Accepted rationale can appear in settings comments, engine comments, or `skills/review-gate/references/`.
 
-Thread resolution is not rechecked by GitHub after queue admission. `skills/orch/scripts/queue-wait` dequeues or disarms a PR when it observes late findings. Findings inside its probe gap can merge. `skills/orch/workflows/merge-pr.md` reads and answers unresolved threads once after merge. A thread arriving after that read remains unhandled.
+Thread resolution is not rechecked by GitHub after queue admission. The orch runtime's `queue-watch` disarms and dequeues a PR when it observes late findings. Findings inside its probe gap can merge. `skills/orch/workflows/merge-pr.md` reads and answers unresolved threads once after merge. A thread arriving after that read remains unhandled.
 
-Do not request test coverage for instruction markdown or for a `tools/guard` change that adds no guard test lane. Structural markdown checks establish syntax elements, not the truth of prose. `skills/orch/tests/lib/md.sh` defines that check boundary.
+Do not request test coverage for instruction markdown or for a `tools/guard` change that adds no guard test lane. Structural markdown checks establish syntax elements, not the truth of prose.
 
 `hooks/pre-commit-check.sh` reads Git words, not shell expansion. Quoted flags, assignments, aliases, and expanded spellings are outside its contract. The installed Git hook provides the commit check in an armed repository.
 
@@ -54,7 +54,7 @@ A command or skill body under `commands/` or `skills/` is copied verbatim to eve
 
 Do not report findings on tracked files that the repo renders from an upstream package. Apply this exclusion to every bot and every review round. Fix the upstream package and render it again; a local edit is overwritten. Include the excluded paths with this block wherever the bot has no other way to receive them.
 
-Those paths here: .agents/skills/bot-instructions/**, .agents/skills/code-quality/**, .agents/skills/commit-guards/**, .agents/skills/communication/**, .agents/skills/decider/**, .agents/skills/deep-research/**, .agents/skills/dep-radar/**, .agents/skills/dev/**, .agents/skills/doc-limits/**, .agents/skills/docs-writing/**, .agents/skills/github-repository-settings/**, .agents/skills/github/**, .agents/skills/harness-ci/**, .agents/skills/iced-rs/**, .agents/skills/jarvis/**, .agents/skills/linear/**, .agents/skills/mailbox/**, .agents/skills/orch/**, .agents/skills/preflight/**, .agents/skills/price-handling/**, .agents/skills/project-management/**, .agents/skills/review-gate/**, .agents/skills/reviewer/**, .agents/skills/second-opinion/**, .agents/skills/slack/**, .agents/skills/social-media-content-calendar/**, .agents/skills/worktree/**, .agents/skills/xcode-run/**, .agents/skills/youtube-publish/**, .claude/agents/**, .claude/commands/**, .claude/hooks/**, .claude/skills/**, .codex/agents/**, .codex/hooks/**, .github/agents/**, .github/hooks/**, .pi/agents/**, .pi/kendex/**, .pi/prompts/**.
+Those paths here: .agents/skills/agent-runtime/**, .agents/skills/bot-instructions/**, .agents/skills/change-scope/**, .agents/skills/code-quality/**, .agents/skills/commit-guards/**, .agents/skills/communication/**, .agents/skills/decider/**, .agents/skills/deep-research/**, .agents/skills/dep-radar/**, .agents/skills/dev/**, .agents/skills/doc-limits/**, .agents/skills/docs-writing/**, .agents/skills/github-repository-settings/**, .agents/skills/github/**, .agents/skills/harness-ci/**, .agents/skills/iced-rs/**, .agents/skills/jarvis/**, .agents/skills/linear/**, .agents/skills/mailbox/**, .agents/skills/orch/**, .agents/skills/preflight/**, .agents/skills/price-handling/**, .agents/skills/project-management/**, .agents/skills/review-gate/**, .agents/skills/reviewer/**, .agents/skills/second-opinion/**, .agents/skills/slack/**, .agents/skills/social-media-content-calendar/**, .agents/skills/worktree/**, .agents/skills/xcode-run/**, .agents/skills/youtube-publish/**, .claude/agents/**, .claude/commands/**, .claude/hooks/**, .claude/skills/**, .codex/agents/**, .codex/hooks/**, .github/agents/**, .github/hooks/**, .pi/agents/**, .pi/kendex/**, .pi/prompts/**.
 
 ## trust-model
 

@@ -9,7 +9,7 @@ import { runCommandAsync } from "./process.js";
 import { registeredHooks, TOOL_RESULT_LISTENER } from "./registry.js";
 import { claudeSessionFields } from "./vocab.js";
 
-/** The file an overseer's `lane-mail send` and a hosted `lane-host put` append to, in each lane's mailbox. */
+/** The file an overseer's `lane-mail send` and a hosted lane's provider `put` append to, in each lane's mailbox. */
 const TO_LANE = "to-lane.jsonl";
 
 /** The registration whose judge hands a lane its unread mail after a tool call; the wake runs the same judge. */

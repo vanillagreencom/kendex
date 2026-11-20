@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The fake `gh` for the thin entry's rows: `auth status` answers with the
+# status in `gh.auth-status` beside the path this was invoked as (the rows
+# link the fixture into their world's bin as `gh`), 0 when the file is
+# absent; every other call is refused with its argv, so a read reaching it
+# is the row's failure, never a quiet answer. Every call appends its argv to
+# `gh.log` there.
+set -u
+here="$(dirname "${BASH_SOURCE[0]}")"
+printf '%s\n' "$*" >> "$here/gh.log"
+if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
+  [ -f "$here/gh.auth-status" ] || exit 0
+  exit "$(cat "$here/gh.auth-status")"
+fi
+printf 'gh-auth-fixture: unexpected call: %s\n' "$*" >&2
+exit 1

@@ -375,7 +375,7 @@ def rounds($reviews; $pushed):
       pr: $p.number, repo: $repo, state: $p.state,
       head: $head.oid, merge_commit: ($p.mergeCommit.oid // null),
       # merge-attempt records the route here; text in other sections is no
-      # decision. oversee-cycle uses it only after measured waits.
+      # decision. The orch cycle recorder uses it only after measured waits.
       merge_decision: ([$p.body // "" | gsub("\r\n"; "\n") | split("\n")[]
         | {line: .}] | reduce .[] as $row ({inside: false, decision: null};
           if $row.line == "## Merge decision" then .inside = true

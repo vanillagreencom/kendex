@@ -23,7 +23,8 @@
 # the offending lines a rule collected follow that line rather than precede
 # it.
 # The final validate: line reports the repository scans to
-# dev-validate-run --record; it comes after any nested guard's report.
+# orch-runtime validate entry --record; it comes after any nested guard's
+# report.
 set -uo pipefail
 # Resolved before the cd below: the sibling tools this script runs live
 # beside it, not necessarily in the repository it judges.
@@ -37,6 +38,49 @@ fail=0
 # offending lines the rule collected follow that. finding_text below is the
 # only place a key's English lives, so a key has one spelling and one
 # definition, and no caller carries message text of its own.
+# Each measured tools suite as "path seconds samples": the largest observed
+# maximum and the number of legs that recorded it. Fails where the notes
+# cannot be read whole.
+suite_timings() {
+  LC_ALL=C awk '
+    /# the merge groups of runs 36522803055, 36523768409, 36525040329,/ {
+      starts++
+      reading = 1
+    }
+    reading && /# suite sums over those legs, Linux then macOS:/ { ends++; reading = 0 }
+    reading { sub(/^[[:space:]]*# */, ""); text = text " " $0 }
+    END {
+      if (starts != 1 || ends != 1) exit 1
+      gsub(/[,.]/, " ", text)
+      n = split(text, words, /[[:space:]]+/)
+      for (i = 1; i <= n; i++) {
+        if (words[i] ~ /^[[:alnum:]_-]+$/ && words[i+1] == "at") {
+          path = "tools/tests/" words[i] ".test.sh"
+          if (path in named) exit 1
+          named[path] = 1
+        }
+        if (path != "" && words[i] ~ /^[0-9]+-[0-9]+s$/) {
+          samples[path]++
+          split(words[i], range, "-")
+          sub(/s$/, "", range[2])
+          if (range[1]+0 > range[2]+0 || range[2]+0 <= 0) exit 1
+          if (range[2]+0 > timings[path]) timings[path] = range[2]+0
+        }
+      }
+      for (path in timings) print path, timings[path], samples[path]
+    }
+  ' .github/workflows/skill-tests.yml 2>/dev/null
+}
+# The step a validation run names when it is slow or stalled: orch's
+# executor reads the newest such line from the run's log.
+step() { # NAME COMMAND [EXPECTED_SECS]
+  printf 'validate-step: name=%s command=%s%s\n' "$1" "$2" "${3:+ expected-secs=$3}"
+}
+# A measured tools suite's expected time, with the selection's 25% margin.
+suite_expected_secs() { # PATH
+  [ -n "${suite_timing_lines+set}" ] || suite_timing_lines=$(suite_timings) || suite_timing_lines=""
+  LC_ALL=C awk -v path="$1" '$1 == path && $3 == 2 { printf "%d\n", int(($2 * 125 + 99) / 100) }' <<<"$suite_timing_lines"
+}
 say() { # KEY VALUE
   printf 'guard: %s=%s\n' "$1" "$2"
   finding_text "$1" "$2"
@@ -53,6 +97,20 @@ unrun() { # KEY VALUE: report the host cause without a code finding
 }
 count_lines() { # TEXT — the non-empty lines in TEXT, a scan finding's value
   printf '%s\n' "$1" | awk 'NF { n++ } END { print n + 0 }'
+}
+# --suite-reach says where it is on stderr, at each phase and at least every
+# 30 seconds inside one, so the CI step that waits on it shows what it is
+# doing: `guard-progress: phase=<name> at=<done>/<total> elapsed=<s>s`, with
+# ` tree=<dir>` inside a tree. tools/ci-job-set forwards these lines as they
+# come.
+progress_at=0
+reach_progress() { # PHASE DONE TOTAL [TREE]
+  [ "$MODE" = suite-reach ] || return 0
+  progress_at=$SECONDS
+  printf 'guard-progress: phase=%s at=%s/%s elapsed=%ss%s\n' "$1" "$2" "$3" "$SECONDS" "${4:+ tree=$4}" >&2
+}
+reach_tick() { # PHASE DONE TOTAL [TREE] — reach_progress, 30 seconds after the last line
+  [ $((SECONDS - progress_at)) -lt 30 ] || reach_progress "$@"
 }
 finding_text() { # KEY VALUE — the English for one key, and the whole of it
   case "$1" in
@@ -189,11 +247,12 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "mapped_suites returned status 3, a role reach_join does not know, or a status its header defines no meaning for: tools/guard is broken, and its tree's whole suite set ran." ;;
     suites)
       case "$2" in
+        merge-group*) echo "the ci round runs checks only; the merge group owns these suites, with main-only coverage after merge." ;;
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
         *" reason=unidentified "*) echo "a scoped run could not identify which files read that changed path, so its tree's whole suite set ran." ;;
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
         *" reason=kendex-unread "*) echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex, so this unsplit run ran every shell suite of the package; its cause is above." ;;
-        *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
+        *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; the merge group selects by the same reach (tools/ci-job-set)." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
       ;;
@@ -238,8 +297,6 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       ;;
     range-base)
       echo "that --range base names no commit in this repository." ;;
-    inputs-undeclared)
-      echo "that suite's own code names that skill document, and its # Inputs: note does not cover it; the note is what the merge group trusts, so add the document, or a directory holding it, to the note." ;;
     *)
       echo "no explanation is defined for this key: tools/guard is broken." ;;
   esac
@@ -298,6 +355,7 @@ MODE=default
 range_base=""
 selection_only=0
 scoped_only=0
+checks_only=0
 release_version=""
 # The release leg's share of its suites: every Nth from the Kth, as --part K/N.
 release_part=1
@@ -329,14 +387,19 @@ if [ "${1:-}" = --released-packages ]; then
     shift 2
   fi
 fi
-if [ "${1:-}" = --note-skips ]; then
-  MODE=note-skips
+# --suite-reach answers on fd 3 alone; every note the selection prints goes
+# to stderr.
+if [ "${1:-}" = --suite-reach ]; then
+  MODE=suite-reach
+  selection_only=1
   shift
+  exec 3>&1 1>&2
 fi
 if [ "${1:-}" = --selection ]; then
   selection_only=1
   shift
   if [ "${DEV_VALIDATE_SCOPED:-false}" = true ]; then scoped_only=1; fi
+  if [ "$scoped_only" -eq 1 ] && [ "${DEV_VALIDATE_MODE:-}" = ci ]; then checks_only=1; fi
   if [ "$#" -eq 0 ]; then
     if [ -n "${DEV_VALIDATE_BASE:-}" ]; then
       set -- --range "$DEV_VALIDATE_BASE"
@@ -374,12 +437,16 @@ case "${1:-}" in
       '        their changed inputs map to (mapped_suites), and the suites of' \
       '        the Pi-package trees it touched.' \
       '        DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and DEV_VALIDATE_PATHS, set by' \
-      '        dev-validate-run, stand down the lanes tools/ci-job-set does not select.' \
+      '        orch-runtime validate entry, stand down the lanes tools/ci-job-set does' \
+      '        not select.' \
       '--selection: report selection=all|subset without running checks or suites.' \
       '  With DEV_VALIDATE_SCOPED=true it runs the checks and executes the selected' \
-      '  suites, then reports selection=subset and scoped=true.' \
+      '  suites, except DEV_VALIDATE_MODE=ci runs checks only and names the suites' \
+      '  left to the merge group. Both report selection=subset and scoped=true.' \
       '  Emits expected-secs=N only with measured coverage of every selected suite,' \
       '  including a selector-owned 25% margin, rounded up.' \
+      'Each lane and suite a run starts opens with validate-step: name=N command=C' \
+      '  [expected-secs=E], the step a validation run names when slow or stalled.' \
       '--released-packages BINARY [--part K/N] --range BASE: in each changed shell package' \
       '        calling kendex, run the suites a Linux CI leg gives a kendex' \
       '        (run-all.sh --checkout-kendex) with BINARY first on PATH, without scans or' \
@@ -387,14 +454,20 @@ case "${1:-}" in
       '        cannot be read, a run of more than one part fails and an unsplit run' \
       '        runs every shell suite of the package.' \
       '        DEV_VALIDATE_BASE selects range; otherwise selects full.' \
-      '        DEV_VALIDATE_SCOPED=true runs the changed scripts and suites through' \
+      '        DEV_VALIDATE_SCOPED=true maps the changed scripts and suites through' \
       '        the same suite mapper, leaving the full record to merge-group CI;' \
+      '        DEV_VALIDATE_MODE=ci runs checks only; range and docs run the suites.' \
       '        a skill package'"'"'s Markdown, source or render, selects no suite there,' \
       '        nor does a .kendex-generated.json change only to their rows, save' \
       '        in a tree whose suites tools/ci-job-set runs in no shard.' \
-      '--note-skips: read skill Markdown paths on stdin and print every shell suite' \
-      '        whose # Inputs: note covers none of them; run nothing.' \
-      '        Exit 1: such a suite'"'"'s own code names one of the paths.'
+      '--suite-reach: read changed repository paths on stdin and print, one per line,' \
+      '        each shell suite the range run would select for them (mapped_suites, a' \
+      '        tree'"'"'s whole set where a path maps to none) and each Pi-package tree' \
+      '        they touch, as DIR/, then `target PACKAGE/NAME` for each skill' \
+      '        runtime Rust target the reach holds, a whole set every target of' \
+      '        its runtime; run nothing. The notes go to stderr.' \
+      '        The reach misses a caller that runs a script through a variable' \
+      '        path, or only through another script that runs it.'
     exit 0
     ;;
 esac
@@ -408,7 +481,7 @@ if [ "$MODE" = range ]; then
   range_base=$range_sha
 fi
 
-# The one reading of a file's input notes, for scan_load and --note-skips:
+# The one reading of a file's input notes, for scan_load:
 # every item of a `# Inputs:` line, items separated by spaces, commas or
 # both, a line ending in a comma going on into the next comment line, and a
 # trailing period dropped from an item. note_line prints `I<tab>KEY<tab>ITEM`
@@ -429,21 +502,9 @@ INPUTS_NOTE_AWK='
   }
 '
 
-# --note-skips is the merge group's suite query for a diff of skill Markdown
-# alone; tools/ci-job-set is its one caller. The paths arrive on stdin, each
-# a Markdown file of a skill package or its render, and it prints, one per
-# line, each shell suite whose input note covers none of them, running
-# nothing. An item covers a path, its source or its .agents/ render, as a
-# case pattern, or as a directory holding it: one spelled with a trailing
-# slash or a directory of the checkout. A suite with no note is never
-# printed, nor one with a note this cannot take: every item must be a
-# repository path whose fixed part exists, with no brace list, so a note in
-# prose or relative to its own tree reads as none.
-# Exit 1 is the consistency check: a suite it would print whose own code
-# names one of the paths as a read of the checkout, `/skills/<name>/<file>`
-# not after .agents/, `../<name>/<file>`, or inside its own package
-# `/<file>` after an upper-case root variable; a bare relative path is a
-# fixture's. Exit 2 is a suite it could not read.
+# Whether a note ITEM covers a repository PATH, mapped_suites' one reading
+# of an item: as a case pattern, or as a directory holding it, one spelled
+# with a trailing slash or a directory of the checkout.
 note_covers() { # ITEM PATH
   # shellcheck disable=SC2254 # the item is a case pattern
   case "$2" in $1) return 0 ;; esac
@@ -454,120 +515,9 @@ note_covers() { # ITEM PATH
   esac
   return 1
 }
-# Prints SUITE where its note ITEMS, one per line, can be taken and covers
-# none of note_docs; status 1 where it would print SUITE and NAMED, the
-# paths its code names, holds one.
-note_skip() { # SUITE ITEMS NAMED
-  local item fixed doc covered=1
-  while IFS= read -r item; do
-    [ -n "$item" ] || continue
-    case "$item" in *[{}]*) return 0 ;; */* | *.*) ;; *) return 0 ;; esac
-    fixed=${item%%[*?[]*}
-    case "$fixed" in
-      "") return 0 ;;
-      */) [ -d "$fixed" ] || return 0 ;;
-      *)
-        if [ "$fixed" = "$item" ]; then
-          [ -e "$fixed" ] || return 0
-        else
-          case "$fixed" in */*) [ -d "${fixed%/*}" ] || return 0 ;; esac
-        fi
-        ;;
-    esac
-    while IFS= read -r doc; do
-      [ -n "$doc" ] || continue
-      if note_covers "$item" "$doc" || note_covers "$item" ".agents/$doc"; then covered=0; fi
-    done <<<"$note_docs"
-  done <<<"$2"
-  [ "$covered" -eq 1 ] || return 0
-  if [ -n "$3" ]; then
-    say inputs-undeclared "$1 path=${3%%$'\n'*}" >&2
-    return 1
-  fi
-  printf '%s\n' "$1"
-}
-if [ "$MODE" = note-skips ]; then
-  note_docs=""
-  while IFS= read -r doc; do
-    [ -n "$doc" ] || continue
-    case "$doc" in
-      skills/*/*.md | .agents/skills/*/*.md | skills/*/*.markdown | .agents/skills/*/*.markdown) ;;
-      *) refuse argument "--note-skips=$doc" ;;
-    esac
-    # A render is the same text as its source, so its source path answers.
-    doc=${doc#.agents/}
-    case $'\n'"$note_docs" in *$'\n'"$doc"$'\n'*) continue ;; esac
-    note_docs+="$doc"$'\n'
-  done
-  [ -n "$note_docs" ] || refuse argument --note-skips-without-paths
-  note_suites=()
-  for t in tools/tests/*.sh hooks/tests/*.sh refresh/tests/*.sh skills/*/tests/*.sh; do
-    [ ! -f "$t" ] || note_suites+=("$t")
-  done
-  noted_status=0
-  noted=$(grep -l -e '^# Inputs: ' -- "${note_suites[@]}") || noted_status=$?
-  case "$noted_status" in 0) ;; 1) exit 0 ;; *) exit 2 ;; esac
-  # Per suite, its note items (I), each path its code names (C), then its
-  # end (E). The patterns are those the header above names.
-  # shellcheck disable=SC2086 # one suite path per word, none with a space
-  note_records=$(GUARD_NOTE_DOCS=$note_docs awk "$INPUTS_NOTE_AWK"'
-    function escape(text) {
-      gsub(/[][\\.*^$+?(){}|]/, "\\\\&", text)
-      return text
-    }
-    BEGIN {
-      end = "([^[:alnum:]_/-]|$)"
-      count = split(ENVIRON["GUARD_NOTE_DOCS"], list, "\n")
-      for (i = 1; i <= count; i++) {
-        if (list[i] == "") continue
-        n++
-        doc[n] = list[i]
-        rel = substr(list[i], 8)
-        file = rel
-        sub(/^[^\/]*\//, "", file)
-        package[n] = "skills/" substr(rel, 1, length(rel) - length(file))
-        base[n] = file
-        sub(/.*\//, "", base[n])
-        named[n] = "(^|[^s])/" escape(list[i]) end "|\\.\\./" escape(rel) end
-        own[n] = "\\$\\{?[A-Z_]*(ROOT|DIR|SKILL|HERE|PACKAGE|PKG)[A-Z_]*\\}?[\"'"'"']?/" escape(file) end
-      }
-    }
-    FNR == 1 {
-      if (NR > 1) print "E\t" suite
-      suite = FILENAME
-      split("", hit)
-    }
-    note_line(suite, $0) { next }
-    /^[[:space:]]*#/ { next }
-    {
-      # Every pattern spells the file name, so a line without it is passed
-      # over before any is matched.
-      for (k = 1; k <= n; k++)
-        if (!hit[k] && index($0, base[k]) && ($0 ~ named[k] || (index(suite, package[k]) == 1 && $0 ~ own[k]))) {
-          hit[k] = 1
-          print "C\t" suite "\t" doc[k]
-        }
-    }
-    END { if (NR > 0) print "E\t" suite }
-  ' $noted) || exit 2
-  note_items=""
-  note_named=""
-  while IFS=$'\t' read -r kind t value; do
-    case "$kind" in
-      I) note_items+="$value"$'\n' ;;
-      C) note_named+="$value"$'\n' ;;
-      E)
-        note_skip "$t" "$note_items" "$note_named" || exit 1
-        note_items=""
-        note_named=""
-        ;;
-    esac
-  done <<<"$note_records"
-  exit 0
-fi
 
-# The lanes --full runs. dev-validate-run hands over what the classifier and
-# its docs reader answer over one range: DEV_VALIDATE_CLASS,
+# The lanes --full runs. orch-runtime validate entry hands over what the
+# classifier and its docs reader answer over one range: DEV_VALIDATE_CLASS,
 # DEV_VALIDATE_DOCS_ONLY and the changed paths in the file DEV_VALIDATE_PATHS
 # names, the three inputs CI's changes job gives tools/ci-job-set. An unset
 # class is a run outside that runner, and runs every lane. So does a class
@@ -628,7 +578,9 @@ fi
 touched=""
 untracked_touched=""
 base_resolved=0
-if [ "$MODE" != default ]; then
+if [ "$MODE" = suite-reach ]; then
+  touched=$(LC_ALL=C sort -u) || refuse argument --suite-reach-paths-unreadable
+elif [ "$MODE" != default ]; then
   if [ "$MODE" = range ]; then
     suites_base=$range_base
     base_resolved=1
@@ -727,7 +679,7 @@ rendered_in_skill() { # REL: a path inside a skill, carried by its render
   done
 }
 
-# Plugin callback suites below scripts/ entered consumer test discovery.
+# A plugin callback suite below scripts/ enters consumer test discovery.
 # GitHub cannot enforce catalog directory placement, so this guard holds it.
 # Top-level test trees do not render; examples carry their own test content.
 while IFS= read -r f; do
@@ -923,10 +875,10 @@ ROWS
 
 # One run scoping: skills/github/scripts/lib/ci-run-correlation.sh holds the
 # scope_current_run and the jq taxonomy (def bucket, def runid, def red, def
-# required_only) that orch ci-wait and the GitHub commands source. A caller
-# carrying its own copy is the drift the library ended; the scan reads the
-# spelling those files use.
-scan '^scope_current_run\(\)|def (bucket|runid|red|required_only)[(:]' '^(skills/orch/scripts/ci-wait|skills/github/scripts/commands/[^/]+\.sh)$'
+# required_only) that the GitHub commands source. A caller carrying its own
+# copy drifts from the library; the scan reads the spelling those files
+# use.
+scan '^scope_current_run\(\)|def (bucket|runid|red|required_only)[(:]' '^skills/github/scripts/commands/[^/]+\.sh$'
 [ -n "$hits" ] && {
   say ci-correlation-copy "$(count_lines "$hits")"
   show "$hits"
@@ -1059,7 +1011,7 @@ fi
 # through the shared rooted() helper, on the next source line, and that call
 # must take the root just declared — the follow-line test is built from the
 # declared name, so rooting some other binding does not clear it. Diff-scoped:
-# older fixtures predate the helper and are not rewritten to satisfy it.
+# a fixture that does not use the helper is not rewritten to satisfy it.
 temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
   say fixture-diff unreadable
 # A diff against the range's base cannot show a file git does not track, so
@@ -1545,12 +1497,14 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   if ! cargo clippy --version >/dev/null 2>&1; then
     unrun missing-tool cargo-clippy
   elif [ "$rust_all" -eq 1 ]; then
+    step clippy "cargo clippy --workspace"
     # Default native targets retain production and build-script length checks;
     # all targets retain the workspace's other denials, including test helpers.
     cargo clippy --workspace --quiet -- -D clippy::too_many_lines || say clippy workspace
     cargo clippy --workspace --all-targets --quiet || say clippy workspace
   else
     for manifest in ${rust_manifests[@]+"${rust_manifests[@]}"}; do
+      step clippy "cargo clippy --manifest-path $manifest"
       cargo clippy --manifest-path "$manifest" --quiet -- -D clippy::too_many_lines || say clippy "$manifest"
       cargo clippy --manifest-path "$manifest" --all-targets --quiet || say clippy "$manifest"
     done
@@ -1565,9 +1519,10 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   fi
 fi
 
-if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
+if [ "$checks_only" -eq 0 ] && [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
   while IFS= read -r manifest; do
     [ -n "$manifest" ] || continue
+    step cargo-test "cargo test --manifest-path $manifest"
     cargo test --manifest-path "$manifest" --quiet || say cargo-test "$manifest"
   done <<<"$runtime_tests"
 fi
@@ -1649,7 +1604,7 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #              the root of hooks/
 #   lib          a shell file (.sh or .bash) below scripts/<dir>/, which a
 #                script sources or dispatches to
-#   helper       a shell file under tests/lib/, which suites source
+#   helper       a shell file below tests/<dir>/, which suites source or run
 #   module       any other file below scripts/<dir>/
 #   test-module  any other file under tests/lib/
 #   test-program in a DEV_VALIDATE_SCOPED=true run only, a Python file
@@ -1665,49 +1620,69 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #   doc          a file under references/ and any other .md file: a
 #                skill's SKILL.md, README.md, workflows/ and schemas/
 #   settings-example in a DEV_VALIDATE_SCOPED=true run only, a skill's
-#                kendex.settings.toml.example, source or render; in any
-#                other run it is a path of no role
+#                kendex.settings.toml.example, source or render, whose
+#                change names a key (example_areas); any other change of it
+#                is a path of no role
+#   runtime      any file but Markdown under a skill's runtime/, where
+#                runtime/Cargo.toml exists: the source of the programs its
+#                [[bin]] rows name
+#   rust-target  a skill's tests/rust/<file> that runtime/Cargo.toml names
+#                as a [[test]] path
+#   rust-input   any other file under a skill's tests/rust/: a module, a
+#                fixture or a planted program those targets compile or run;
+#                a fixture the lib's unit rows read too
+# A runtime file, a Rust target and a Rust input are scanned as a suite is,
+# their quoted names counted as names (runtime_facts states their targets).
 # A module is scanned as a lib is, and a test module or test program as a
 # helper is, but a changed module seeds its enclosing folder and file name.
 # A changed test module seeds no name: an import can spell no path. A
 # changed test program seeds its file name, and a changed test import its
 # dotted module path, `fixtures.harness` for tests/fixtures/harness.py.
 # Status 1 is a path of no role:
-# run-all.sh, any other file under tests/<dir>/, a Python file under tests/
+# run-all.sh, a non-shell file under tests/<dir>/, a Python file under tests/
 # but tests/lib/ outside a scoped run, a file of hooks/ that is no hook, and
 # anything else.
 # mapped_suites' header says what a scoped run reads for a test module or
 # such a path.
-path_role() { # DIR REL
+path_role() { # DIR REL — sets ROLE, empty with status 1
+  ROLE=""
   case "$1:$2" in
     skills/*:kendex.settings.toml.example)
       [ "$scoped_only" -eq 1 ] || return 1
-      echo settings-example
+      ROLE=settings-example
       ;;
     *:tests/run-all.sh) return 1 ;;
-    *:scripts/*/*.sh | *:scripts/*/*.bash) echo lib ;;
-    *:tests/lib/*.sh | *:tests/lib/*.bash) echo helper ;;
-    *:scripts/*/*) echo module ;;
-    *:tests/lib/*) echo test-module ;;
+    skills/*:runtime/*.md) ROLE=doc ;;
+    skills/*:runtime/*)
+      [ -f "$1/runtime/Cargo.toml" ] || return 1
+      ROLE=runtime
+      ;;
+    skills/*:tests/rust/*)
+      if [[ $RUNTIME_FACTS == *$'\n'"$1 test "*" $2"$'\n'* ]]; then ROLE=rust-target; else ROLE=rust-input; fi
+      ;;
+    *:scripts/*/*.sh | *:scripts/*/*.bash) ROLE=lib ;;
+    *:tests/*/*.sh | *:tests/*/*.bash) ROLE=helper ;;
+    *:scripts/*/*) ROLE=module ;;
+    *:tests/lib/*) ROLE=test-module ;;
     *:tests/*/*.py)
       [ "$scoped_only" -eq 1 ] || return 1
-      echo test-import
+      ROLE=test-import
       ;;
     *:tests/*/*) return 1 ;;
     *:tests/*.py)
       [ "$scoped_only" -eq 1 ] || return 1
-      echo test-program
+      ROLE=test-program
       ;;
-    *:tests/*.sh) echo suite ;;
-    *:tests/*.test.mjs) echo suite ;;
-    hooks:*.md) echo doc ;;
+    *:tests/*.sh) ROLE=suite ;;
+    *:tests/*.test.mjs) ROLE=suite ;;
+    hooks:*.md) ROLE=doc ;;
     hooks:*/*) return 1 ;;
-    hooks:*.sh) echo script ;;
+    hooks:*.sh) ROLE=script ;;
     hooks:*) return 1 ;;
-    tools:*.md) echo doc ;;
-    tools:*) echo script ;;
-    *:scripts/*) echo script ;;
-    *:references/* | *.md) echo doc ;;
+    tools:*.md) ROLE=doc ;;
+    tools:*) ROLE=script ;;
+    *:scripts/*) ROLE=script ;;
+    *:references/* | *.md) ROLE=doc ;;
     *) return 1 ;;
   esac
 }
@@ -1717,7 +1692,7 @@ skill_suites() { # DIR [shell]
   local t
   for t in "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
     [ -f "$t" ] || continue
-    [ "$(path_role "$1" "${t#"$1"/}")" = suite ] || continue
+    path_role "$1" "${t#"$1"/}" && [ "$ROLE" = suite ] || continue
     if [ "${2:-}" = shell ]; then
       case "$t" in *.sh) ;; *) continue ;; esac
     fi
@@ -1728,12 +1703,62 @@ skill_suites() { # DIR [shell]
 # file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
-  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py; do
+  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*/*.sh "$1"/tests/*/*.bash "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py \
+    "$1"/runtime/* "$1"/runtime/src/*.rs "$1"/runtime/src/*/*.rs "$1"/runtime/src/*/*/*.rs "$1"/runtime/src/*/*/*/*.rs \
+    "$1"/tests/rust/*.rs; do
     [ -f "$f" ] || continue
-    role=$(path_role "$1" "${f#"$1"/}") || continue
+    path_role "$1" "${f#"$1"/}" || continue
+    role=$ROLE
     case "$role" in
-      script | lib | helper | module | test-module | test-program | suite) printf '%s %s\n' "$role" "$f" ;;
+      script | lib | helper | module | test-module | test-program | suite | runtime | rust-target | rust-input)
+        printf '%s %s\n' "$role" "$f" ;;
     esac
+  done
+}
+# The Cargo facts of every skill runtime, read once before the reach from
+# each skills/<name>/runtime/Cargo.toml, one per line between newlines:
+# `<tree> bin <name>` for each [[bin]], `<tree> test <name> <file>` for each
+# [[test]] with its file inside the tree, and `<tree> dep <tree>` for each
+# skill runtime it names as a path dependency. Every runtime has the lib
+# target too. Status 2 is a manifest it could not read.
+RUNTIME_FACTS=$'\n'
+runtime_facts() {
+  local manifest facts
+  RUNTIME_FACTS=$'\n'
+  for manifest in skills/*/runtime/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    facts=$(awk -v tree="${manifest%/runtime/Cargo.toml}" '
+      function value(text) { sub(/^[^"]*"/, "", text); sub(/".*/, "", text); return text }
+      /^\[/ { section = $0; name = ""; next }
+      section == "[[bin]]" && /^name *=/ { print tree " bin " value($0); next }
+      section == "[[test]]" && /^name *=/ { name = value($0); next }
+      section == "[[test]]" && /^path *=/ && name != "" { path = value($0); sub(/^\.\.\//, "", path); print tree " test " name " " path; next }
+      /path *= *"\.\.\/\.\.\/[^"\/]+\/runtime"/ { dep = $0; sub(/.*path *= *"\.\.\/\.\.\//, "", dep); sub(/\/runtime".*/, "", dep); print tree " dep skills/" dep }
+    ' "$manifest") || return 2
+    [ -z "$facts" ] || RUNTIME_FACTS+="$facts"$'\n'
+  done
+}
+# A changed or reached runtime file of TREE: every Rust target of TREE and of
+# each runtime that path-depends on it joins REACH_TARGETS, and each of their
+# [[bin]] names joins next_any, a needle any file may name, since every
+# caller of those programs runs the changed code. Once per tree in a reach.
+reach_runtime() { # TREE
+  local tree line deps="" of kind dep
+  [ -f "$1/runtime/Cargo.toml" ] || return 0
+  while read -r of kind dep _; do
+    if [ "$kind" = dep ] && [ "$dep" = "$1" ]; then deps="$deps $of"; fi
+  done <<<"$RUNTIME_FACTS"
+  # shellcheck disable=SC2086 # one tree per word
+  for tree in "$1" $deps; do
+    [[ $runtime_reached != *" $tree "* ]] || continue
+    runtime_reached+=" $tree "
+    REACH_TARGETS+="${tree#skills/}/lib"$'\n'
+    while read -r line; do
+      case "$line" in
+        "$tree bin "*) next_any+=("${line#"$tree bin "}") ;;
+        "$tree test "*) line=${line#"$tree test "}; REACH_TARGETS+="${tree#skills/}/${line%% *}"$'\n' ;;
+      esac
+    done <<<"$RUNTIME_FACTS"
   done
 }
 # Source language selects a reader, never suite eligibility. In particular,
@@ -1792,7 +1817,7 @@ PY
       case "$hit" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
       while IFS= read -r line; do
         # Remove comments before cutting at their separators. Candidate lines
-        # avoid whole-file quote recovery hiding claude-model-classes calls.
+        # avoid whole-file quote recovery hiding a call behind a misread quote.
         uncommented "$line"
         command_segments "$BARE"
         # Masked whitespace is quoted data, not a command-word boundary.
@@ -1818,14 +1843,18 @@ PY
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or per example_areas key of a
 # changed settings example beside its path query, that key in SCAN_KEYS and
-# empty for every other query. One batch extracts file metadata and compares
+# empty for every other query. The tree's rows are tree_rows, its
+# tree_paths rows, which the tree loop sets. SCAN_ROW_QUERIES holds, for the
+# Nth row counted from 0, the queries of its doc,
+# whichever row asked them, and SCAN_NOTED the files with an input note, so
+# mapped_suites reads neither list whole per changed path. One batch extracts file metadata and compares
 # the document-read lines, retaining source text inside that process.
 # A name is the whole run of letters, digits, `.`, `_` and `-` after a slash,
-# less any trailing dots, so `/lane-state` is no name in `/lane-state.sh` and
-# `/oversee` none in `/oversee-watch`. Status 2 is a file it could not read.
+# less any trailing dots, so `/kendex-env` is no name in `/kendex-env.sh` and
+# `/orch` none in `/orch-runtime`. Status 2 is a file it could not read.
 scan_load() { # DIR
-  local role f files tree rel path i q kind value record cache key key_tree
-  local scan_input="" reader_patterns=() query_keys=() nl=$'\n'
+  local role f files tree rel path i q kind value record cache key key_tree row
+  local scan_input="" scan_parts=() reader_patterns=() query_keys=() nl=$'\n'
   SCAN_DIR=""
   SCAN_PATH=()
   SCAN_ROLE=()
@@ -1835,6 +1864,8 @@ scan_load() { # DIR
   SCAN_RELS=()
   SCAN_KEYS=()
   SCAN_READERS=()
+  SCAN_NOTED=()
+  SCAN_ROW_QUERIES=()
   files=$(skill_files "$1") || return 2
   while IFS=' ' read -r role f; do
     [ -n "$f" ] || continue
@@ -1844,15 +1875,18 @@ scan_load() { # DIR
     SCAN_NAMES+=("")
     SCAN_SOURCED+=("")
     SCAN_INPUTS+=("")
-    scan_input="${scan_input}F $i $role $f$nl"
+    scan_parts+=("F $i $role $f$nl")
   done <<<"$files"
+  row=-1
   while IFS=$'\t' read -r tree rel path; do
     [ "$tree" = "$1" ] || continue
+    row=$((row + 1))
     query_keys=("")
     case "$rel" in
       ../*) ;;
       *)
-        role=$(path_role "$1" "$rel") || continue
+        path_role "$1" "$rel" || continue
+        role=$ROLE
         case "$role" in
           doc) ;;
           settings-example)
@@ -1871,17 +1905,39 @@ scan_load() { # DIR
       SCAN_KEYS+=("$key")
       SCAN_READERS+=("")
       doc_readers "$rel" "$key" || return 2
-      scan_input="${scan_input}Q $q$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl"
+      scan_parts+=("Q $q $row$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl$rel$nl")
     done
-  done <<<"$tree_paths"
+  done <<<"$tree_rows"
+  # Joined once, as the plan is.
+  [ "${#scan_parts[@]}" -eq 0 ] || printf -v scan_input '%s' "${scan_parts[@]}"
   # File text stays inside the batch. Bash receives only reach metadata.
   cache=$(awk "$INPUTS_NOTE_AWK"'
+    # TEXT read literally in an extended regex: each of []\.*^$+?(){}| escaped.
+    function literal_ere(text, out, i, c) {
+      out = ""
+      for (i = 1; i <= length(text); i++) {
+        c = substr(text, i, 1)
+        out = out (index("[]\\.*^$+?(){}|", c) ? "\\" c : c)
+      }
+      return out
+    }
     function scan_names(reader, text, kind, rest, name) {
       rest = text
       while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
         name = substr(rest, RSTART, RLENGTH)
         if (!name_seen[kind, reader, name]++)
           print kind "\t" reader "\t" name
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+    }
+    # A runtime or a Rust target runs a program by a quoted name, as
+    # `sibling("pr-order")` does: the name inside the quotes counts as one.
+    function scan_quoted(reader, text, rest, name) {
+      rest = text
+      while (match(rest, /"[[:alnum:]._-]*[[:alnum:]_-]"/)) {
+        name = "/" substr(rest, RSTART + 1, RLENGTH - 2)
+        if (!name_seen["N", reader, name]++)
+          print "N\t" reader "\t" name
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
@@ -1912,20 +1968,25 @@ scan_load() { # DIR
           print "N\t" reader "\t" dotted
       }
     }
-    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i) {
+    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, sources) {
       path = scan_paths[reader]; role = scan_roles[reader]
       while ((status = (getline text < path)) > 0) {
         if (note_line(reader, text)) continue
         if (text ~ /^[[:space:]]*#/) continue
+        if ((role == "runtime" || role == "rust-target" || role == "rust-input") && text ~ /^[[:space:]]*\/\//) continue
         code[++count] = text
         scan_names(reader, text, "N")
         if (role == "test-program") scan_imports(reader, text)
-        if (text ~ /(^|[;&|({[:space:]])(source|\.)[[:space:]]/)
+        if (role == "runtime" || role == "rust-target" || role == "rust-input") scan_quoted(reader, text)
+        sources = text ~ /(^|[;&|({[:space:]])(source|\.)[[:space:]]/
+        if (sources)
           scan_names(reader, text, "S")
         if (role != "script" && role != "lib") {
           keep[count] = 1
           continue
         }
+        # A file a script sources is one it reads, in any tree.
+        if (sources) keep[count] = 1
         if (text ~ /(^|[;&|({[:space:]])(cat|grep|sed|awk|head|tail|read|find)[[:space:]]|\/[^[:space:]]*["}]*[[:space:]]*\/?\*/) {
           keep[count] = 1
           rest = text
@@ -1954,7 +2015,10 @@ scan_load() { # DIR
       for (i = 1; i <= assignments; i++)
         if (read_names[assignment_names[i]]) keep[assignment_lines[i]] = 1
       for (i = 1; i <= count; i++)
-        if (keep[i]) reader_lines[reader, ++reader_counts[reader]] = code[i]
+        if (keep[i]) {
+          reader_lines[reader, ++reader_counts[reader]] = code[i]
+          reader_texts[reader] = reader_texts[reader] "\n" code[i]
+        }
       return 1
     }
     $1 == "F" {
@@ -1966,11 +2030,18 @@ scan_load() { # DIR
       next
     }
     $1 == "Q" {
-      q = $2; queries[q] = 1
-      for (p = 0; p < 4; p++) {
+      q = $2; row = $3; queries[q] = 1
+      for (p = 0; p < 5; p++) {
         if (getline <= 0) { failed = 1; exit 2 }
         query_patterns[q, p] = $0
       }
+      if (query_patterns[q, 1] == "@token")
+        query_patterns[q, 1] = "(^|[^[:alnum:]._/-])" literal_ere(query_patterns[q, 4]) "([^[:alnum:]_/-]|$)"
+      # Every query of a doc, whichever row asked it, answers for each row
+      # that names the doc.
+      if (getline <= 0) { failed = 1; exit 2 }
+      row_rels[row] = $0
+      rel_queries[$0] = ($0 in rel_queries ? rel_queries[$0] " " : "") q
       next
     }
     NF == 0 { next }
@@ -1979,18 +2050,31 @@ scan_load() { # DIR
       if (failed) exit 2
       for (i = 0; i < scan_count; i++)
         if (!scan_file(i)) exit 2
+      for (row in row_rels)
+        print "W\t" row "\t" rel_queries[row_rels[row]]
+      # Every changed path is a query in every tree, so the work per query
+      # stays off the reader lines where it can: a line holds a needle only
+      # where the whole text of its reader does, and the answer of a reader
+      # to one pattern is the same for every query that asks it.
       # GNU Awk caches the last dynamic regex at each match site.
       for (reader_phase = 0; reader_phase < 4; reader_phase++) {
         for (q in queries) {
           pattern = query_patterns[q, reader_phase]
           if (pattern == "-") continue
+          needle = reader_phase == 0 ? pattern : reader_phase == 1 ? query_patterns[q, 4] : "-"
           for (reader in reader_counts) {
-            for (line = 1; line <= reader_counts[reader]; line++) {
-              if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
-                print "R\t" q "\t" reader
-                break
+            if (needle != "-" && !index(reader_texts[reader], needle)) continue
+            hit_key = reader_phase SUBSEP pattern SUBSEP reader
+            if (!(hit_key in reader_hits)) {
+              reader_hits[hit_key] = 0
+              for (line = 1; line <= reader_counts[reader]; line++) {
+                if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
+                  reader_hits[hit_key] = 1
+                  break
+                }
               }
             }
+            if (reader_hits[hit_key]) print "R\t" q "\t" reader
           }
         }
       }
@@ -2005,9 +2089,13 @@ scan_load() { # DIR
       S) SCAN_SOURCED[i]+="$nl$value$nl" ;;
       I) SCAN_INPUTS[i]+="$value$nl" ;;
       R) [[ ${SCAN_READERS[i]} == *"$nl$value$nl"* ]] || SCAN_READERS[i]+="$nl$value$nl" ;;
+      W) SCAN_ROW_QUERIES[i]=$value ;;
       *) return 2 ;;
     esac
   done <<<"$cache"
+  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+    [ -z "${SCAN_INPUTS[i]}" ] || SCAN_NOTED+=("$i")
+  done
   SCAN_DIR=$1
 }
 # The comparison patterns for scanned files that read the doc REL, cached
@@ -2025,12 +2113,13 @@ scan_load() { # DIR
 #     as `"$SKILL_DIR"/*.md` or `"$SKILL_DIR/$doc"`;
 #   - or a skill-root variable or a path ending in /skills among the start
 #     paths of a find, a walk that meets every doc.
-# Scripts and libraries join only on a read command, a directory glob or a
-# path assignment whose variable those lines use. This text scan does not
+# Scripts and libraries join only on a read command, a line that sources a
+# file, a directory glob or a path assignment whose variable those lines use. This text scan does not
 # resolve shell scope or control flow.
 # A comment, printed brief or API path reads nothing, nor does a find from
 # any other start or a walk in another language.
-# A ../ repository input uses whole repository paths. Relative directory
+# A ../ repository input uses whole repository paths, a skill's file also
+# `/<name>/<file>`, as a sibling package spells it. Relative directory
 # and skill-root walks apply only inside their own tree; a /skills walk
 # also reaches documents in another source skill.
 # A narrowed ../kendex.settings.toml (settings_change) is read by key, not
@@ -2039,21 +2128,22 @@ scan_load() { # DIR
 # that only writes a settings file of its own names no changed key; a file
 # that reads the repository's whole file declares it in an input note.
 doc_readers() { # REL [KEY]
-  local rel="$1" dir token external=0 source_rel source_tree
+  local rel="$1" dir external=0 source_rel source_tree fixed
   local skill_root catalog_root walk_root walk
   if [ -n "${2-}" ]; then
-    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - -)
+    # A key the regex spells literally is also its needle.
+    fixed=-
+    [[ $2 =~ ^[[:alnum:]_]+$ ]] && fixed=$2
+    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - - "$fixed")
     return 0
   fi
   if [ "$rel:$settings_scope" = ../kendex.settings.toml:inert ]; then
-    reader_patterns=(- - - -)
+    reader_patterns=(- - - - -)
     return 0
   fi
   skill_root='\$\{?[A-Z_]*SKILL[A-Z_]*\}?'
   catalog_root='[^[:space:]"]*/skills'
   case "$rel" in ../*) external=1; rel=${rel#../} ;; esac
-  token=$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel") || return 2
-  token="(^|[^[:alnum:]._/-])$token([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
       dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])|[\"'](\\\$|[./])[^\"']*/${rel%%/*}[\"']([[:space:]]|\\)|\$)"
@@ -2070,7 +2160,7 @@ doc_readers() { # REL [KEY]
         source_rel=${rel#skills/}
         source_tree=skills/${source_rel%%/*}
         source_rel=${source_rel#*/}
-        if [ "$(path_role "$source_tree" "$source_rel")" = doc ]; then
+        if path_role "$source_tree" "$source_rel" && [ "$ROLE" = doc ]; then
           walk_root=$catalog_root
         fi
         ;;
@@ -2080,13 +2170,37 @@ doc_readers() { # REL [KEY]
   if [ -n "$walk_root" ]; then
     walk='(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?('"$walk_root"')"?([[:space:]]|\)|$)'
   fi
-  reader_patterns=("/$rel" "$token" "$dir" "$walk")
+  # Another skill's file is read as `/skills/<name>/<file>` or, from a
+  # sibling package, `../<name>/<file>`: both hold `/<name>/<file>`.
+  fixed="/$rel"
+  if [ "$external" -eq 1 ]; then
+    case "$rel" in skills/*/*) fixed="/${rel#skills/}" ;; esac
+  fi
+  # The whole-token pattern is the path between the token bounds, its regex
+  # characters escaped: `@token` leaves that to scan_load's batch, so no
+  # process starts per query. The token's escaped path, read literally, is a
+  # needle every match holds.
+  reader_patterns=("$fixed" @token "$dir" "$walk" "$rel")
+}
+# A changed runtime file of another tree, PATH, offers its programs' names
+# into the caller's next_any, as reach_runtime adds them: a program name is
+# the one spelling of the runtime in every tree, while a script or library
+# name can be another tree's own file. Status 1 is a path that offers none.
+home_seed() { # PATH
+  local path="${1#.agents/}" home rel
+  case "$path" in skills/*/runtime/*) ;; *) return 1 ;; esac
+  rel=${path#skills/}
+  home="skills/${rel%%/*}"
+  rel=${rel#*/}
+  path_role "$home" "$rel" && [ "$ROLE" = runtime ] || return 1
+  reach_runtime "$home"
 }
 # A file in the reach adds its name as a needle by its role, into the
 # caller's next_any, next_script and reach_scripts.
 reach_join() { # ROLE PATH [changed]
+  local tree rel line of kind name file
   if [ "$scoped_only" -eq 1 ] && [ "${3:-reader}" != changed ]; then
-    case "$1" in script | lib | module) return 0 ;; esac
+    case "$1" in script | lib | module | runtime) return 0 ;; esac
   fi
   case "$1" in
     lib | helper | module | test-module | test-program) next_any+=("${2##*/}") ;;
@@ -2095,6 +2209,35 @@ reach_join() { # ROLE PATH [changed]
       reach_scripts+=("$2")
       ;;
     suite) ;;
+    runtime)
+      tree=${2#skills/}
+      reach_runtime "skills/${tree%%/*}"
+      ;;
+    rust-target | rust-input)
+      tree=${2#skills/}
+      rel=${tree#*/}
+      tree="skills/${tree%%/*}"
+      [ -f "$tree/runtime/Cargo.toml" ] || return 0
+      line=""
+      if [ "$1" = rust-target ]; then
+        while read -r of kind name file _; do
+          if [ "$of:$kind" = "$tree:test" ] && [ "$file" = "$rel" ]; then
+            line=$name
+            break
+          fi
+        done <<<"$RUNTIME_FACTS"
+      fi
+      if [ -n "$line" ]; then
+        REACH_TARGETS+="${tree#skills/}/$line"$'\n'
+      else
+        # A module or fixture of the targets: every target of its runtime.
+        # The lib compiles no tests/rust/*.rs module and reads its fixtures.
+        [[ $rel =~ ^tests/rust/[^/]+\.rs$ ]] || REACH_TARGETS+="${tree#skills/}/lib"$'\n'
+        while read -r line; do
+          case "$line" in "$tree test "*) line=${line#"$tree test "}; REACH_TARGETS+="${tree#skills/}/${line%% *}"$'\n' ;; esac
+        done <<<"$RUNTIME_FACTS"
+      fi
+      ;;
     *) return 3 ;;
   esac
 }
@@ -2127,14 +2270,25 @@ reach_join() { # ROLE PATH [changed]
 #     The folder needle reaches no test program: the folder a test program
 #     spells is part of a module path it names, which the file name reaches.
 #     A module no suite names runs nothing.
-#   - A changed or deleted test import seeds its dotted module path, which
-#     a test program names when an `import` or `from` line spells it whole.
-#     One whose reach holds no suite has unidentified readers.
+#   - A changed runtime file, or one that joins, adds every Rust target of
+#     its runtime and of each runtime that path-depends on it, and their
+#     [[bin]] names as needles any file may name (reach_runtime). A Rust
+#     target that joins adds itself, and a Rust input, changed or joined,
+#     every [[test]] target of its runtime, and the lib target too unless
+#     it is a tests/rust/*.rs module: the lib's unit rows read fixtures
+#     under tests/rust/ and compile no module there. A runtime file, a Rust
+#     target and a Rust input join on any needle their code names, a
+#     quoted name included, as a suite does.
+#   - A changed runtime file of another tree, a ../ input here, also offers
+#     its programs' names (home_seed); a name no file here spells maps to
+#     nothing.
+#   - A path whose reach holds a Rust target and no suite maps to the target.
 #   - A path of no role, a changed test module, and a path whose
 #     reach holds no suite map to no suite, save in a scoped run below.
 #   - Every tree also scans repository inputs outside its tree. Whole paths in
-#     code and `# Inputs:` path patterns seed the same reader reach. Input
-#     notes name indirect reads that the text scan cannot resolve.
+#     code and `# Inputs:` items seed the same reader reach; an item covers a
+#     path as note_covers reads it, a directory item everything under it.
+#     Input notes name indirect reads that the text scan cannot resolve.
 # With DEV_VALIDATE_SCOPED=true, only the changed production file seeds
 # production needles. Readers under tests/ still extend the reach, so a
 # suite can cover the file through its test helpers. Other production
@@ -2172,7 +2326,6 @@ reach_join() { # ROLE PATH [changed]
 # That holds only in a tree whose suites the merge group runs, which
 # tools/ci-job-set --suite-shards answers; in a tree it runs in no shard, or
 # where it cannot answer, such a path seeds that tree's suites as on main.
-# REVISIT(D026): until KEN-4733 that tree is skills/orch.
 # A changed .kendex-generated.json is read as the rows it lists: where the
 # rows other than skill Markdown are the same list on both sides, the
 # change only adds, removes or reorders skill Markdown rows and seeds no
@@ -2182,7 +2335,8 @@ reach_join() { # ROLE PATH [changed]
 # outside a skill package.
 # The reach is what the scan can see, not every caller: a script run through
 # a variable path is missed, and so is a suite that runs a changed script
-# only through another script that runs it. CI's full run owns completeness.
+# only through another script that runs it. The merge group selects by this
+# reach too (tools/ci-job-set).
 # The suites land in MAPPED, one per line, rather than on stdout, so the
 # scan stays loaded for the tree's next path. None with status 0 is a
 # deleted suite or test program, a module no suite names, a doc no file
@@ -2191,14 +2345,17 @@ reach_join() { # ROLE PATH [changed]
 # could not read or compare, status 3 a role reach_join does not know, a
 # broken guard, and status 4, scoped only, a path whose readers are
 # unidentified, which runs the tree's whole set.
-mapped_suites() { # DIR REL
-  local dir="$1" rel="$2" role="" i n q hit names readers f t name base input input_path noted="" out="" folder="" tested nl=$'\n'
+mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
+  local dir="$1" rel="$2" row="$3" role="" i n q hit names readers f t name base input input_path noted="" out="" folder="" tested nl=$'\n'
+  local runtime_reached="" targets_before=${#REACH_TARGETS} seeded_only=0
   MAPPED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
   case "$rel" in
     ../*) role=doc ;;
     *)
-      if ! role=$(path_role "$dir" "$rel"); then
+      if path_role "$dir" "$rel"; then
+        role=$ROLE
+      else
         [ "$scoped_only" -eq 1 ] || return 1
         role=none
       fi
@@ -2206,18 +2363,22 @@ mapped_suites() { # DIR REL
   esac
   case "$role:$scoped_only" in test-module:0) return 1 ;; esac
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
-  for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-    [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
-    input_path="$dir/$rel"
-    [[ $rel != ../* ]] || input_path=${rel#../}
+  # skill_files globs every scanned path under DIR, so none holds a `..`
+  # component and another tree's path names no scanned file.
+  if [[ $rel != ../* ]]; then
+    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
+      [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
+    done
+  fi
+  input_path="$dir/$rel"
+  [[ $rel != ../* ]] || input_path=${rel#../}
+  for i in ${SCAN_NOTED[@]+"${SCAN_NOTED[@]}"}; do
     while IFS= read -r input; do
       [ -n "$input" ] || continue
-      case "$input_path" in $input)
-        reached[i]=1
-        noted="$noted$i"$'\n'
-        reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
-        ;;
-      esac
+      note_covers "$input" "$input_path" || continue
+      reached[i]=1
+      noted="$noted$i"$'\n'
+      reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
     done <<<"${SCAN_INPUTS[i]}"
   done
   if [ "$role" = none ] || [ "$role" = test-module ]; then
@@ -2228,8 +2389,7 @@ mapped_suites() { # DIR REL
     next_any+=("${name//\//.}")
   elif [ "$role" = doc ] || [ "$role" = settings-example ]; then
     readers=""
-    for ((q = 0; q < ${#SCAN_RELS[@]}; q++)); do
-      [ "${SCAN_RELS[q]}" = "$rel" ] || continue
+    for q in ${SCAN_ROW_QUERIES[row]-}; do
       # A settings-example key is one the tree's own example declares at an
       # endpoint.
       if [ -n "${SCAN_KEYS[q]}" ] && { [ "$role" = settings-example ] || [[ $settings_areas == *"$nl${SCAN_KEYS[q]} $dir$nl"* ]]; }; then
@@ -2243,7 +2403,12 @@ mapped_suites() { # DIR REL
       readers+=${SCAN_READERS[q]}
     done
     readers="$noted$readers"
-    [ -n "$readers" ] || return 0
+    # Another tree's changed runtime file also offers its programs' names,
+    # which a caller here runs through a variable path.
+    if [[ $rel == ../* ]] && home_seed "${rel#../}" && [ -z "$readers" ]; then
+      seeded_only=1
+    fi
+    [ -n "$readers" ] || [ "$seeded_only" -eq 1 ] || return 0
     while IFS= read -r i; do
       [ -n "$i" ] || continue
       reached[i]=1
@@ -2277,7 +2442,7 @@ mapped_suites() { # DIR REL
       done
       if [ "$hit" -eq 0 ]; then
         case "${SCAN_ROLE[i]}" in
-          suite | helper | test-module | test-program) ;;
+          suite | helper | test-module | test-program | runtime | rust-target | rust-input) ;;
           *) names=${SCAN_SOURCED[i]} ;;
         esac
         for n in ${scripts[@]+"${scripts[@]}"}; do
@@ -2316,7 +2481,11 @@ mapped_suites() { # DIR REL
     done
   done
   if [ -z "$out" ]; then
-    case "$role" in none | test-module | test-import) return 4 ;; module) return 0 ;; esac
+    case "$role" in none | test-module | test-import) return 4 ;; module | runtime | rust-target | rust-input) return 0 ;; esac
+    # A reach that holds a Rust target maps to it; a needle another tree's
+    # file offered that no file here names maps to nothing.
+    [ "${#REACH_TARGETS}" -eq "$targets_before" ] || return 0
+    [ "$seeded_only" -eq 0 ] || return 0
     case "$rel" in
       tests/*/*) ;;
       tests/*) [ -e "$dir/$rel" ] || return 0 ;;
@@ -2427,7 +2596,7 @@ settings_values() { # FILE KEY...
     file=$1
     shift
     source "$TOOLS_DIR/../skills/orch/scripts/lib/kendex-env.sh" || exit 1
-    kendex_load_settings_file "$file" || exit 1
+    kendex_load_settings_file "$file" -- "$@" || exit 1
     for key in "$@"; do printf '%s=%s\n' "$key" "${!key-}"; done
   )
 }
@@ -2517,16 +2686,28 @@ preview_unmeasured=0
 suite_trees=()
 suite_runs=()
 suite_scripts=()
+# The Rust targets the reach holds, `<package>/<target>` one per line, which
+# --suite-reach prints; every other run leaves them to CI.
+REACH_TARGETS=""
+runtime_reached=""
 if [ "$MODE" != default ] && lane_on shell_shards; then
+  runtime_facts || { say scan runtime-manifests; RUNTIME_FACTS=$'\n'; }
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
-  # it> TAB <path>`: a render reads as the source it renders.
+  # it> TAB <path>`: a render reads as the source it renders. plan_rows holds
+  # each path's rows until the plan is joined.
   tree_paths=""
+  plan_rows=()
   consumer_trees=()
+  # A tree reads another's path through its suites, or through the Rust
+  # targets of its runtime.
   for consumer in skills/* hooks refresh; do
     [ -d "$consumer/tests" ] || continue
     consumer_suites=$(skill_suites "$consumer")
-    [ -n "$consumer_suites" ] || continue
+    [ -n "$consumer_suites" ] || [ -f "$consumer/runtime/Cargo.toml" ] || continue
     consumer_trees+=("$consumer")
+  done
+  for consumer in pi-extensions/*; do
+    [ ! -f "$consumer/package.json" ] || consumer_trees+=("$consumer")
   done
   inventory_markdown_only=0
   if [ "$scoped_only" -eq 1 ] && grep -Fxq .kendex-generated.json <<<"$touched"; then
@@ -2585,8 +2766,15 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       done <<<"$example_read"
     done <<<"$touched"
   fi
+  plan_total=$(count_lines "$touched")
+  plan_done=0
+  reach_progress plan 0 "$plan_total"
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    plan_done=$((plan_done + 1))
+    reach_tick plan "$plan_done" "$plan_total"
+    # Suites construct their own install records; revisions are no suite input.
+    [ "$f" != .kendex-lock.json ] || continue
     case "$f" in
       skills/*/* | .agents/skills/*/*)
         x="${f#.agents/}"
@@ -2611,34 +2799,45 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         tree="pi-extensions/${x%%/*}"
         rel="${x#*/}"
         ;;
+      # A root Markdown file's name is every fixture's: no reader can be
+      # told from a suite that writes one.
+      */*) tree=tools; rel="../$f" ;;
+      *.md | *.markdown) continue ;;
       *) tree=tools; rel="../$f" ;;
     esac
     if [ -n "$release_version" ]; then
       [ "$tree" != tools ] || continue
-      tree_paths="$tree_paths$tree	$rel	$f
-"
+      plan_rows+=("$tree	$rel	$f
+")
       continue
     fi
-    tree_paths="$tree_paths$tree	$rel	$f
+    path_rows="$tree	$rel	$f
 "
     if [ "$tree" != tools ]; then
-      tree_paths="${tree_paths}tools	../$f	$f
+      path_rows="${path_rows}tools	../$f	$f
 "
     fi
     for consumer in ${consumer_trees[@]+"${consumer_trees[@]}"}; do
       [ "$consumer" != "$tree" ] || continue
-      tree_paths="${tree_paths}$consumer	../$f	$f
+      path_rows="${path_rows}$consumer	../$f	$f
 "
     done
+    plan_rows+=("$path_rows")
   done <<<"$touched"
+  # Joined once: an append to one string copies all of it, so appending per
+  # path costs paths times the whole plan.
+  [ "${#plan_rows[@]}" -eq 0 ] || printf -v tree_paths '%s' "${plan_rows[@]}"
   # Publish only a complete plan. Pi launch probes and tests execute below,
   # after every later battery is available to cancellation reporting.
-  for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
+  reach_trees=$(cut -f1 <<<"$tree_paths" | sort -u)
+  trees_total=$(count_lines "$reach_trees")
+  trees_done=0
+  for d in $reach_trees; do
+    trees_done=$((trees_done + 1))
+    reach_progress trees "$trees_done" "$trees_total" "$d"
     suite_script=""
     if [ -n "$release_version" ]; then
       case "$d" in pi-extensions/*) continue ;; esac
-      # REVISIT(D026): CI excludes the orch corpus until KEN-4733 restores it.
-      [ "$d:${CI:-false}" != skills/orch:true ] || continue
       release_suites=$(skill_suites "$d" shell) || { say scan "$d/tests"; continue; }
       [ -n "$release_suites" ] || continue
       release_inputs=$(skill_files "$d") || { say scan "$d"; continue; }
@@ -2675,11 +2874,29 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       release_suites=$release_share
       [ -n "$release_suites" ] || continue
     fi
+    # The tree's own rows, in plan order, so no pass over them below or in
+    # scan_load reads another tree's.
+    tree_rows=$(awk -F '\t' -v d="$d" '$1 == d' <<<"$tree_paths") || { say scan "$d"; continue; }
     case "$d" in
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
+        # Another tree's path runs a Pi package's suites only where one of
+        # its files names that path, whole or as `/<name>/<file>`.
+        if ! awk -F '\t' -v d="$d" '$1 == d && $2 !~ /^\.\.\// { own = 1 } END { exit !own }' <<<"$tree_rows"; then
+          # One search for every path's needles: a file names one of them
+          # exactly where it names some path's.
+          pi_needles=()
+          while IFS='	' read -r tree rel f; do
+            [ "$tree" = "$d" ] || continue
+            pi_needles+=(-e "${rel#../}")
+            case "$rel" in ../skills/*/*) pi_needles+=(-e "/${rel#../skills/}") ;; esac
+          done <<<"$tree_rows"
+          [ "${#pi_needles[@]}" -gt 0 ] || continue
+          git -c core.quotePath=false grep -q -F "${pi_needles[@]}" -- "$d" || continue
+        fi
         suite_selection=all
         preview_unmeasured=1
+        [ "$MODE" != suite-reach ] || { preview_suites+="$d/"$'\n'; continue; }
         [ "$selection_only" -eq 0 ] || [ "$scoped_only" -eq 1 ] || continue
         if ! command -v jq >/dev/null 2>&1; then
           unrun missing-tool jq
@@ -2702,8 +2919,13 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           tree_ci=""
+          rows_total=$(count_lines "$tree_rows")
+          # scan_load counts this tree's rows the same way.
+          tree_row=-1
           while IFS='	' read -r tree rel f; do
             [ "$tree" = "$d" ] || continue
+            tree_row=$((tree_row + 1))
+            reach_tick tree "$((tree_row + 1))" "$rows_total" "$d"
             if [ "$scoped_only" -eq 1 ]; then
               # mapped_suites' header states this set and why.
               if skill_markdown "$f" || [ "$f:$inventory_markdown_only" = .kendex-generated.json:1 ]; then
@@ -2714,10 +2936,10 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
                 fi
                 [ "$tree_ci" -ne 0 ] || continue
               fi
-              if [[ $rel != ../* ]] && [ "$(path_role "$d" "$rel")" = doc ]; then continue; fi
+              if [[ $rel != ../* ]] && path_role "$d" "$rel" && [ "$ROLE" = doc ]; then continue; fi
             fi
             map_status=0
-            mapped_suites "$d" "$rel" || map_status=$?
+            mapped_suites "$d" "$rel" "$tree_row" || map_status=$?
             sel=$MAPPED
             case "$map_status" in
               0) ;;
@@ -2732,11 +2954,13 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
             esac
             run="$run$sel
 "
-          done <<<"$tree_paths"
+          done <<<"$tree_rows"
           [ "$run" = all ] || run=$(sort -u <<<"$run") || run=all
         fi
         if [ "$run" = all ]; then
           suite_selection=all
+          # The whole set of a tree with a runtime holds its Rust targets.
+          [ "$MODE" != suite-reach ] || reach_runtime "$d"
           if [ -n "$release_version" ]; then
             run=$release_suites
           else
@@ -2761,6 +2985,18 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     suite_runs+=("$run")
     suite_scripts+=("$suite_script")
   done
+  if [ "$checks_only" -eq 1 ]; then
+    deferred_suites=""
+    for run in ${suite_runs[@]+"${suite_runs[@]}"}; do
+      while IFS= read -r t; do
+        [ -z "$t" ] || deferred_suites+=" $t"
+      done <<<"$run"
+    done
+    while IFS= read -r manifest; do
+      [ -z "$manifest" ] || deferred_suites+=" cargo-test:$manifest"
+    done <<<"$runtime_tests"
+    note suites "merge-group$deferred_suites"
+  else
   # Bash defers this guard's trap while a foreground runner stops children,
   # so the active runner reports its own selection; otherwise each entry of
   # suite_runs holds what its tree has not started.
@@ -2807,6 +3043,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       npm_args=(test)
       [ "${suite_scripts[suite_index]}" != test:ci ] || npm_args=(run test:ci)
       suite_runs[suite_index]=""
+      step "$d" "npm ${npm_args[*]}"
       suite_out=$(cd "$d" && npm "${npm_args[@]}" 2>&1) || pi_suite_failed "$d" "$suite_out"
       [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
       continue
@@ -2829,9 +3066,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       suite_runs[suite_index]=""
       continue
     fi
-    # A shell suite joins the one pool call below. The runner discovers no
-    # .test.mjs suite, so each runs here by itself, with no stdin: a suite
-    # that reads it must not wait on the terminal of a guard run by hand.
+    # Shell suites share one pool; Node suites use the direct runner.
     shell_run=""
     direct_run=""
     while IFS= read -r t; do
@@ -2847,6 +3082,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       # One assignment, so the signal report sees a complete remainder.
       suite_runs[suite_index]=$shell_run$direct_run
       echo "=== $t"
+      step "$t" "run-all.sh --local --suite $t" "$(suite_expected_secs "$t")"
       bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" </dev/null || say suite "$t"
     done
     suite_runs[suite_index]=$shell_run
@@ -2873,41 +3109,29 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     active_runner=0
   fi
   trap - TERM INT HUP
+  fi
+fi
+if [ "$MODE" = suite-reach ]; then
+  reach_progress done "${trees_done:-0}" "${trees_total:-0}"
+  {
+    printf '%s' "$preview_suites" | LC_ALL=C sort -u | sed '/^$/d'
+    printf '%s' "$REACH_TARGETS" | LC_ALL=C sort -u | sed '/^$/d; s/^/target /'
+  } >&3
+  exit "$fail"
 fi
 [ -n "$suite_selection" ] || suite_selection=all
 # The workflow records per-suite Linux and macOS ranges from named merge groups.
-# Use the largest observed maximum, never shard sums or the job bound. run-all.sh now
+# Use the largest observed maximum, never shard sums or the job bound. run-all.sh
 # publishes suite=<name> seconds=<n> for new samples; no complete timing inventory
-# exists yet. These observations cover suite-file changes alone: a full run or
+# exists. These observations cover suite-file changes alone: a full run or
 # other changed inputs can also launch untimed compiler and UI work.
 selection_expected_secs() {
-  local estimate
+  local estimate timings
   [ "$MODE" = range ] && [ "$preview_unmeasured" -eq 0 ] && [ -n "$preview_suites" ] || return 0
+  timings=$(suite_timings) || return 0
   estimate=$(LC_ALL=C awk -v suites="$preview_suites" -v touched="$touched" '
-    /# the merge groups of runs 36522803055, 36523768409, 36525040329,/ {
-      starts++
-      reading = 1
-    }
-    reading && /# suite sums over those legs, Linux then macOS:/ { ends++; reading = 0 }
-    reading { sub(/^[[:space:]]*# */, ""); text = text " " $0 }
+    NF == 3 { timings[$1] = $2; samples[$1] = $3 }
     END {
-      if (starts != 1 || ends != 1) exit 1
-      gsub(/[,.]/, " ", text)
-      n = split(text, words, /[[:space:]]+/)
-      for (i = 1; i <= n; i++) {
-        if (words[i] ~ /^[[:alnum:]_-]+$/ && words[i+1] == "at") {
-          path = "tools/tests/" words[i] ".test.sh"
-          if (path in named) exit 1
-          named[path] = 1
-        }
-        if (path != "" && words[i] ~ /^[0-9]+-[0-9]+s$/) {
-          samples[path]++
-          split(words[i], range, "-")
-          sub(/s$/, "", range[2])
-          if (range[1]+0 > range[2]+0 || range[2]+0 <= 0) exit 1
-          if (range[2]+0 > timings[path]) timings[path] = range[2]+0
-        }
-      }
       count = split(suites, selected, "\n")
       for (i = 1; i <= count; i++) {
         if (selected[i] == "" || selected[i] in seen) continue
@@ -2924,15 +3148,20 @@ selection_expected_secs() {
       if (total <= 0) exit 1
       printf "%.0f\n", int((total * 125 + 99) / 100)
     }
-  ' .github/workflows/skill-tests.yml 2>/dev/null) || return 0
+  ' <<<"$timings") || return 0
   printf 'expected-secs=%s\n' "$estimate"
 }
 if [ "$selection_only" -eq 1 ]; then
   if [ -n "$release_version" ]; then
     printf 'catalog-release: version=%s leg=package-suites result=%s\n' "$release_version" "$fail"
   elif [ "$scoped_only" -eq 1 ]; then
-    printf 'validate: lanes=scoped-suites selection=subset\n'
-    printf 'scoped=true\n'
+    if [ "$checks_only" -eq 1 ]; then
+      printf 'scoped=true\n'
+      printf 'validate: lanes=scoped-checks selection=subset\n'
+    else
+      printf 'validate: lanes=scoped-suites selection=subset\n'
+      printf 'scoped=true\n'
+    fi
   else
     printf 'selection=%s\n' "$suite_selection"
     selection_expected_secs
@@ -2993,6 +3222,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ]; then
           if ! grep -Fxq "$cross_target" <<<"$installed_targets"; then
             unrun missing-target "$cross_target"
           else
+            step cross-check "cargo check --target $cross_target"
             cargo check -p kendex-core -p kendex-cli --all-targets --target "$cross_target" ||
               say cross-check "$cross_target"
           fi
@@ -3000,6 +3230,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ]; then
       fi
     fi
     if lane_on cargo_lint; then
+      step cargo-doc "cargo doc --workspace"
       cargo doc --no-deps --document-private-items --workspace --quiet || say cargo-doc workspace
     fi
   fi
@@ -3013,6 +3244,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ] && la
   # same death line for a compiler or build script it launched, under
   # "could not compile" instead of "test failed"; only the runner's is one.
   tests_log=$(mktemp)
+  step cargo-test "cargo test --workspace"
   if ! cargo test --workspace --quiet 2>&1 | tee "$tests_log"; then
     death=""
     if grep -q "^error: test failed" "$tests_log"; then
@@ -3039,6 +3271,7 @@ if [ "$MODE" = full ] && [ -f Cargo.toml ] && [ "$cargo_available" -eq 1 ] && la
   fi
 fi
 if [ "$ui_changed" -eq 1 ] && [ -f ui/package.json ]; then
+  step ui-check "npm run --prefix ui check:types check:lint test"
   npm run --prefix ui check:types || say ui-check check:types
   npm run --prefix ui check:lint || say ui-check check:lint
   if [ "$MODE" != default ]; then

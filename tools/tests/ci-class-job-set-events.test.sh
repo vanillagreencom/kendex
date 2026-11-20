@@ -11,8 +11,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/ci-job-set-world.sh
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 
-# Schedule uses its own no-diff decision. Dispatch stays full in the workflow
-# and has no standalone class selection. Main uses actual push endpoints.
+# An event the workflow does not classify on is refused, with the parity
+# call or without: a manual dispatch runs the nightly jobs whole with no
+# selection, and a selection asked for one would stand lanes down on no
+# diff. The main push and the schedule take the proof routes below.
 # ARGUMENT|EVENT|EXPECTED
 refused_rows=0
 while IFS='|' read -r arg event expected; do
@@ -20,12 +22,11 @@ while IFS='|' read -r arg event expected; do
   check "event ${event:-unset}, called with ${arg:-no argument}" "$expected" \
     "$(SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/SKILL.md)"
 done <<ROWS
-|schedule|nightly=true
 |workflow_dispatch|exit=2 unsupported-event event=workflow_dispatch
---event-parity|schedule|nightly=true
+--event-parity|workflow_dispatch|exit=2 unsupported-event event=workflow_dispatch
 ||exit=2 unsupported-event event=
 ROWS
-[ "$refused_rows" -eq 4 ] || { echo "the refused-event table read $refused_rows rows" >&2; exit 1; }
+[ "$refused_rows" -eq 3 ] || { echo "the refused-event table read $refused_rows rows" >&2; exit 1; }
 # The macOS legs run wherever a shard and a platform lane run, on the pull
 # request as in the merge group.
 # EVENT|PATHS|LEGS
@@ -35,12 +36,12 @@ while IFS='|' read -r event paths expected; do
   check "the $event legs over '$paths'" "$expected" \
     "$(SELECT_EVENT="$event" selection micro false "$(printf '%s\n' $paths)" | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
 done <<ROWS
-pull_request|skills/orch/scripts/lanes|$BOTH
-merge_group|skills/orch/scripts/lanes|$BOTH
+pull_request|skills/orch/scripts/resolve-base-branch|$BOTH
+merge_group|skills/orch/scripts/resolve-base-branch|$BOTH
 pull_request|skills/orch/SKILL.md|$LINUX
 merge_group|skills/orch/SKILL.md|$LINUX
-pull_request|.github/AGENTS.md skills/orch/scripts/lanes|$BOTH
-merge_group|.github/AGENTS.md skills/orch/scripts/lanes|$BOTH
+pull_request|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$BOTH
+merge_group|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$BOTH
 pull_request|crates/core/src/lib.rs|$BOTH
 merge_group|crates/core/src/lib.rs|$BOTH
 ROWS
@@ -62,7 +63,7 @@ parity_rows=0
 while IFS='|' read -r arg event expected; do
   parity_rows=$((parity_rows + 1))
   check "a macOS leg the merge group alone selects, called with ${arg:-no argument} on $event" "$expected" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/scripts/lanes | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG="$arg" SELECT_EVENT="$event" selection micro false skills/orch/scripts/resolve-base-branch | sed 's/.* shell_os=\(\[[^]]*\]\).*/\1/')"
 done <<ROWS
 --event-parity|pull_request|exit=2 event-parity event=merge_group
 --event-parity|merge_group|exit=2 event-parity event=pull_request
@@ -72,8 +73,32 @@ done <<ROWS
 ROWS
 [ "$parity_rows" -eq 5 ] || { echo "the parity table read $parity_rows rows" >&2; exit 1; }
 check "this tree's selection passes the --event-parity call unchanged" \
-  "$(selection micro false skills/orch/scripts/lanes)" \
-  "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/lanes)"
+  "$(selection micro false skills/orch/scripts/resolve-base-branch)" \
+  "$(SELECT_ARG=--event-parity selection micro false skills/orch/scripts/resolve-base-branch)"
+# That call says on stderr each step it starts, in order, with the reach's
+# own progress forwarded inside the reach step.
+progress_steps() { # STDERR_FILE — the steps and the reach's end, `|`-joined
+  sed -n 's/^ci-job-set: progress=\([a-z]*\) at=\([0-9]*\/[0-9]*\) elapsed=[0-9]*s\(.*\)$/\1 \2\3/p; s/^guard-progress: phase=done at=.*/guard done/p' \
+    "$1" | paste -sd '|' -
+}
+PROGRESS_STEPS="reach 1/4|guard done|select 2/4 event=pull_request|select 3/4 event=merge_group|emit 4/4"
+check "the --event-parity call reports each step in order, the reach's progress inside the reach" \
+  "$PROGRESS_STEPS" "$(progress_steps "$TMP/selection-err")"
+# Control: a copy that drops the reach's progress lines breaks the row.
+mkdir -p "$TMP/progress/tools"
+cp -R "$ROOT/tools/lib" "$TMP/progress/tools/lib"
+cp "$ROOT/tools/guard" "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" \
+  "$TMP/progress/tools/"
+ln -s "$ROOT/skills" "$TMP/progress/skills"
+sed "/^      'guard-progress: '\*) printf /d" "$JOB_SET" >"$TMP/progress/tools/ci-job-set"
+chmod +x "$TMP/progress/tools/ci-job-set"
+! cmp -s "$JOB_SET" "$TMP/progress/tools/ci-job-set" || exit 1
+SELECT_WITH="$TMP/progress/tools/ci-job-set" SELECT_ARG=--event-parity selection micro false \
+  skills/orch/scripts/resolve-base-branch >/dev/null
+[ "$(progress_steps "$TMP/selection-err")" != "$PROGRESS_STEPS" ] &&
+  grep -q '^ci-job-set: progress=emit ' "$TMP/selection-err" &&
+  ok "control: a copy that drops the reach's progress breaks the progress row" ||
+  bad "control: a copy that drops the reach's progress breaks the progress row"
 
 # An Ubuntu lane that differs by event is refused too.
 sed 's/^  row="\$class"$/  row="$class"; linux_integration=true; [ "$event" != merge_group ] || linux_integration=false/; s/cargo_linux=true/cargo_linux=$linux_integration/g' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
@@ -82,51 +107,60 @@ for event in pull_request merge_group; do
   other=merge_group
   [ "$event" != merge_group ] || other=pull_request
   check "Ubuntu event parity on $event" "exit=2 event-parity event=$other" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false skills/orch/scripts/lanes)"
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false skills/orch/scripts/resolve-base-branch)"
 done
 
-# Actual push ranges in a disposable repository, independent of the proof head.
-PUSH_REPO="$TMP/push-repo"
-mkdir -p "$PUSH_REPO"
-# Include this suite's own new path references before commit as CI does.
-PUSH_TREE="$(git -C "$ROOT" write-tree)"
-git -C "$ROOT" archive "$PUSH_TREE" | tar -x -C "$PUSH_REPO"
-git -C "$PUSH_REPO" init -q
-git -C "$PUSH_REPO" add -A
-git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm base
-PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-# The workflow path selects the full requested area for the proof recordings.
-printf '\n' >>"$PUSH_REPO/.github/workflows/skill-tests.yml"
-git -C "$PUSH_REPO" add -A
-git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm push
-PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
-MAIN_ONLY_SUITES="$(sed -n "s/^      MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$ROOT/.github/workflows/skill-tests.yml")"
-export PUSH_BEFORE PUSH_AFTER MAIN_ONLY_SUITES
-# THE PUSH ROUTE: a main push owes the shards its same-head merge group did
-# not prove. A stub on PATH answers `gh api` from a world directory built out
-# of the recorded responses in data/: merge-group run 41306604685 and its
-# latest jobs, on the head main pushed next. Each world varies them as one
-# GitHub state would.
+# THE PUBLISHED SELECTION: where CI_SELECTION names a file, a class
+# selection writes there the skips and targets it emits, the one record the
+# push at the group's head reads.
+written="$(CI_SELECTION="$TMP/written.json" selection micro false skills/orch/scripts/resolve-base-branch)"
+check "a class selection writes its skips and targets to CI_SELECTION" \
+  "$(jq -cn --argjson s "$(sed -n 's/.* skipped_suites=\([^ ]*\).*/\1/p' <<<"$written")" \
+    --argjson r "$(sed -n 's/.* rust_targets=\([^ ]*\).*/\1/p' <<<"$written")" '{skipped_suites: $s, rust_targets: $r}')" \
+  "$(jq -c . "$TMP/written.json" 2>/dev/null || echo unwritten)"
+
+# THE PUSH ROUTE: a main push owes, on each runner, the suites and Rust
+# targets its same-head merge group did not prove. A stub on PATH answers
+# `gh api` from a world directory built out of the recorded responses in
+# data/: merge-group run 41306604685 and its latest jobs, on the head main
+# pushed next, with the selection that run published planted as its
+# artifact. Each world varies them as one GitHub state would.
 DATA="$TEST_DIR/data"
-# The step skill-tests.yml runs where a suite list left out a leg's suite,
-# read from the workflow, so the proof read and the step share one name.
-NARROWED_STEP="$(awk '/^      - name: / { name = substr($0, 15) } /^        if: env\.SUITE_LIST_DROPPED == .true.$/ { print name }' \
-  "$ROOT/.github/workflows/skill-tests.yml")"
-[ "$(grep -c . <<<"$NARROWED_STEP")" -eq 1 ] || { echo "the workflow declares no single narrowed step" >&2; exit 1; }
 PUSH_SHA="$(jq -er '.workflow_runs[0].head_sha' "$DATA/main-proof-runs.json")"
 PUSH_RUN="$(jq -er '.workflow_runs[0].id' "$DATA/main-proof-runs.json")"
+PUSH_REPO="$TMP/push-repo"
+git clone -q --shared "$ROOT" "$PUSH_REPO"
+git -C "$PUSH_REPO" config core.hooksPath /dev/null
+git -C "$PUSH_REPO" config gc.auto 0
+git -C "$PUSH_REPO" config maintenance.auto false
+PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+printf '\n# input\n' >>"$PUSH_REPO/tools/guard"
+git -C "$PUSH_REPO" add tools/guard
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm head
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+PUSH_SHA="$PUSH_AFTER"
+MAIN_ONLY_SUITES="$(sed -n "s/^ *MAIN_ONLY_SUITES: '\(.*\)'$/\1/p" "$ROOT/.github/workflows/skill-tests.yml")"
+export PUSH_BEFORE PUSH_AFTER MAIN_ONLY_SUITES
 mkdir -p "$TMP/gh-stub"
 cat >"$TMP/gh-stub/gh" <<'STUB'
 #!/usr/bin/env bash
-# `gh api --paginate URL`, served from GH_WORLD; a `fail` file there is an
-# API outage, and a URL the world has no response for is GitHub's 404.
+# `gh api --paginate URL` for a listing and `gh api URL` for an artifact's
+# zip, served from GH_WORLD; a `fail` file there is an API outage, and a URL
+# the world has no response for is GitHub's 404.
 set -eu
-[ "$#" -eq 3 ] && [ "$1 $2" = "api --paginate" ] || { echo "gh-stub: args=$*" >&2; exit 64; }
+case "$#:${1-}:${2-}" in
+  3:api:--paginate) url=$3 ;;
+  2:api:*) url=$2 ;;
+  *) echo "gh-stub: args=$*" >&2; exit 64 ;;
+esac
 [ ! -e "$GH_WORLD/fail" ] || { echo 'gh: HTTP 502' >&2; exit 1; }
-case "$3" in
-  repos/*/actions/workflows/skill-tests.yml/runs\?*) file=runs.json ;;
-  repos/*/actions/runs/*/jobs\?*) id="${3#repos/*/actions/runs/}"; file="jobs-${id%%/*}.json" ;;
-  *) echo "gh-stub: url=$3" >&2; exit 64 ;;
+case "$#:$url" in
+  3:repos/*/actions/workflows/skill-tests.yml/runs\?event=push\&*) file=push-runs.json ;;
+  3:repos/*/actions/workflows/skill-tests.yml/runs\?*) file=runs.json ;;
+  3:repos/*/actions/runs/*/jobs\?*) id="${url#repos/*/actions/runs/}"; file="jobs-${id%%/*}.json" ;;
+  3:repos/*/actions/runs/*/artifacts\?*) id="${url#repos/*/actions/runs/}"; file="artifacts-${id%%/*}.json" ;;
+  2:repos/*/actions/artifacts/*/zip) id="${url#repos/*/actions/artifacts/}"; file="zip-${id%%/*}" ;;
+  *) echo "gh-stub: url=$url" >&2; exit 64 ;;
 esac
 [ -f "$GH_WORLD/$file" ] || { echo 'gh: HTTP 404' >&2; exit 1; }
 cat "$GH_WORLD/$file"
@@ -142,51 +176,68 @@ jq -e --argjson linux "$ROSTER" --argjson macos "$QUEUE_ALL" '
        | $leg + {name: "Skill suites shard (\(.[0]), \(.[1]))"}]' \
   "$DATA/main-proof-jobs.json" >"$TMP/push-jobs.json" ||
   { echo "the recorded jobs gave no shard leg to clone" >&2; exit 1; }
-# One world per GitHub state: runs.json, and jobs-<run>.json per run.
+EVERY_TARGET='["agent-runtime/*","orch/*"]'
+# The selection a run published, as tools/ci-job-set writes CI_SELECTION,
+# zipped as GitHub serves an artifact, and the run's listing of it.
+plant_selection() { # DIR RUN SKIPPED RUST [EXPIRED]
+  local artifact=$(($2 + 1000))
+  jq -cn --argjson run "$2" --argjson id "$artifact" --argjson expired "${5:-false}" '
+    {total_count: 1, artifacts: [{id: $id, name: "ci-selection", expired: $expired,
+      created_at: "2026-11-13T09:00:00Z", workflow_run: {id: $run}}]}' >"$1/artifacts-$2.json"
+  python3 -c 'import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("ci-selection.json", sys.argv[2])' "$1/zip-$artifact" "{\"skipped_suites\":$3,\"rust_targets\":$4}"
+}
+# One world per GitHub state: runs.json, and per run jobs-<run>.json,
+# artifacts-<run>.json and the artifact's zip.
 push_world() { # NAME
   local dir="$TMP/push/$1" runs="$DATA/main-proof-runs.json" jobs="$TMP/push-jobs.json"
   local second=$((PUSH_RUN + 1))
   mkdir -p "$dir"
-  cp "$runs" "$dir/runs.json"
-  cp "$jobs" "$dir/jobs-$PUSH_RUN.json"
-  edit_jobs() { jq --arg narrowed "$NARROWED_STEP" "$1" "$jobs" >"$dir/jobs-$PUSH_RUN.json"; }
+  jq --arg sha "$PUSH_SHA" '.workflow_runs[].head_sha = $sha' "$runs" >"$dir/runs.json"
+  jq --arg sha "$PUSH_SHA" '.jobs[].head_sha = $sha' "$jobs" >"$dir/jobs-$PUSH_RUN.json"
+  jq --arg sha "$PUSH_BEFORE" '.workflow_runs = [(.workflow_runs[0] + {id:1,event:"push",head_branch:"main",status:"completed",conclusion:"success",created_at:"2026-11-12T00:00:00Z",head_sha:$sha})]' \
+    "$runs" >"$dir/push-runs.json"
+  plant_selection "$dir" "$PUSH_RUN" '[]' "$EVERY_TARGET"
+  edit_jobs() { jq --arg sha "$PUSH_SHA" '.jobs[].head_sha = $sha' "$jobs" | jq "$1" >"$dir/jobs-$PUSH_RUN.json"; }
+  fail_leg() { edit_jobs ".jobs |= map(if .name == \"Skill suites shard ($1)\" then .conclusion = \"failure\" else . end)"; }
   case "$1" in
     all-proved) ;;
-    subset)
-      edit_jobs '.jobs |= map(select(.name | test("^Skill suites shard \\((linear|rest), |^Skill suites shard \\(node, ubuntu") | not))' ;;
-    macos-only) edit_jobs '.jobs |= map(select(.name | endswith(", ubuntu-latest)") | not))' ;;
+    # A leg whose list left a suite out proves the suites it kept.
+    kept-subset) plant_selection "$dir" "$PUSH_RUN" "[\"$P_TOOLS\"]" "$EVERY_TARGET" ;;
+    red-leg) fail_leg 'guards-tools, ubuntu-latest' ;;
+    linux-only) edit_jobs '.jobs |= map(select(.name | endswith(", macos-latest)") | not))' ;;
     no-shard-selected) edit_jobs '.jobs |= map(select(.name | test("^Skill suites shard \\([a-z]") | not))' ;;
-    no-run) printf '{"total_count":0,"workflow_runs":[]}\n' >"$dir/runs.json" ;;
-    outage) : >"$dir/fail" ;;
-    unparseable) printf 'upstream connect error\n' >"$dir/runs.json" ;;
-    jobs-missing) rm "$dir/jobs-$PUSH_RUN.json" ;;
     in-progress)
       edit_jobs '.jobs |= map(if .name == "Skill suites shard (guards-scans, ubuntu-latest)" then .status = "in_progress" | .conclusion = null else . end)' ;;
     failed-second-run)
-      jq --argjson id "$second" '.workflow_runs += [.workflow_runs[0] | .id = $id | .run_attempt = 1]' "$runs" >"$dir/runs.json"
-      jq --argjson id "$second" '.jobs |= map(.run_id = $id | if .name == "Skill suites shard (worktree, ubuntu-latest)" then .conclusion = "failure" else . end)' \
-        "$jobs" >"$dir/jobs-$second.json" ;;
+      jq --arg sha "$PUSH_SHA" --argjson id "$second" '.workflow_runs[].head_sha = $sha | .workflow_runs += [.workflow_runs[0] | .id = $id | .run_attempt = 1]' "$runs" >"$dir/runs.json"
+      jq --arg sha "$PUSH_SHA" --argjson id "$second" '.jobs |= map(.head_sha = $sha | .run_id = $id | if .name == "Skill suites shard (worktree, ubuntu-latest)" then .conclusion = "failure" else . end)' \
+        "$jobs" >"$dir/jobs-$second.json"
+      plant_selection "$dir" "$second" '[]' "$EVERY_TARGET" ;;
     foreign-head-job)
       edit_jobs '.jobs |= map(if .name == "Skill suites shard (mailbox, macos-latest)" then .head_sha = "0000000000000000000000000000000000000000" else . end)' ;;
     foreign-run-job)
       edit_jobs '.jobs |= map(if .name == "Skill suites shard (slack, ubuntu-latest)" then .run_id = 1 else . end)' ;;
+    # A shard proved with only some of its Rust targets owes the rest.
+    one-target) plant_selection "$dir" "$PUSH_RUN" '[]' '["orch/lib"]' ;;
+    red-orch-rest) fail_leg 'orch-rest, ubuntu-latest' ;;
+    no-selection) rm "$dir/artifacts-$PUSH_RUN.json" ;;
+    expired-selection) plant_selection "$dir" "$PUSH_RUN" '[]' "$EVERY_TARGET" true ;;
+    bad-selection) plant_selection "$dir" "$PUSH_RUN" '[]' '"orch/*"' ;;
+    no-run) printf '{"total_count":0,"workflow_runs":[]}\n' >"$dir/runs.json" ;;
+    outage) : >"$dir/fail" ;;
+    unparseable) printf 'upstream connect error\n' >"$dir/runs.json" ;;
+    jobs-missing) rm "$dir/jobs-$PUSH_RUN.json" ;;
     foreign-head-run) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$runs" >"$dir/runs.json" ;;
-    # A leg whose suite list left out one of its suites ran the workflow's
-    # narrowed step, so it proves nothing; one that skipped it ran whole, and
-    # a job whose steps the read does not hold shows neither.
-    narrowed-leg)
-      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then .steps += [{name: $narrowed, status: "completed", conclusion: "success"}] else . end)' ;;
-    whole-leg)
-      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then .steps += [{name: $narrowed, status: "completed", conclusion: "skipped"}] else . end)' ;;
-    stepless-leg)
-      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then del(.steps) else . end)' ;;
     push-event-run) jq '.workflow_runs[0].event = "push"' "$runs" >"$dir/runs.json" ;;
     other-workflow-run) jq '.workflow_runs[0].path = ".github/workflows/lock-record.yml"' "$runs" >"$dir/runs.json" ;;
     *) echo "no push world named $1" >&2; exit 1 ;;
   esac
 }
-# `shards=… queue_macos_shards=… main-proof=… proved-linux=… proved-macos=…
-# warned=yes|no`, with the step's empty class inputs, or `exit=N`.
+# `shards=… queue_macos_shards=… rust_targets=… skips=<linux>/<macos>
+# main-proof=… warned=yes|no`, with the step's empty class inputs, or
+# `exit=N`; the output stays in push-out for in_list.
 push_select() { # WORLD [SELECTOR]
   local out="$TMP/push-out" status=0
   : >"$out"
@@ -194,50 +245,98 @@ push_select() { # WORLD [SELECTOR]
     GITHUB_SHA="$PUSH_SHA" EVENT=push CHANGE_CLASS='' DOCS_ONLY='' CHANGED_PATHS='' GITHUB_OUTPUT="$out" \
     "${2:-$JOB_SET}" --event-parity >"$TMP/push-stdout" 2>"$TMP/push-err") || status=$?
   [ "$status" -eq 0 ] || { printf 'exit=%s' "$status"; return 0; }
-  printf '%s %s warned=%s' "$(sed '/^main_suites=/d; /^cache_compile=/d' "$out" | tr '\n' ' ' | sed 's/ $//')" \
-    "$(sed -n 's/^ci-job-set: \(main-proof=[a-z]*\) runs=[^ ]* \(proved-linux=[0-9]* proved-macos=[0-9]*\).*/\1 \2/p' "$TMP/push-err")" \
+  printf 'shards=%s queue_macos_shards=%s rust_targets=%s skips=%s/%s %s warned=%s' \
+    "$(field shards <"$out")" "$(field queue_macos_shards <"$out")" "$(field rust_targets <"$out")" \
+    "$(field skipped_suites <"$out" | jq length)" "$(field skipped_suites_macos <"$out" | jq length)" \
+    "$(sed -n 's/^ci-job-set: \(main-proof=[a-z]*\) .*/\1/p' "$TMP/push-err")" \
     "$(grep -q '^::warning ' "$TMP/push-stdout" && echo yes || echo no)"
 }
-NO_SHARDS="shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] skipped_suites=[]"
-ALL_SHARDS='shell_shards=true shell_os=["ubuntu-latest","macos-latest"] '"shards=$ROSTER queue_macos_shards=$QUEUE_ALL skipped_suites=[]"
-QUEUE_N="$(jq length <<<"$QUEUE_ALL")"
-ROSTER_N="$(jq length <<<"$ROSTER")"
-UNREAD="main-proof=unread proved-linux=0 proved-macos=0 warned=yes"
-NO_RUN="main-proof=none proved-linux=0 proved-macos=0 warned=yes"
-# WORLD|EXPECTED. A shard counts only where every same-head merge-group leg
-# on its runner succeeded; any read that fails runs the whole roster.
+field() { # NAME — the value of the NAME= line on stdin
+  sed -n "s/^$1=//p"
+}
+in_list() { # NAME MEMBER — whether the last push output's NAME list holds MEMBER
+  field "$1" <"$TMP/push-out" | jq --arg m "$2" 'index($m) != null'
+}
+# The probes and the counts each row's expectation is made of.
+P_TOOLS=tools/tests/ci-skill-prose.test.sh
+P_JARVIS=skills/jarvis/tests/task.test.sh
+UNIVERSE="$(cd "$ROOT" && git ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
+  ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh' | grep -v '/run-all\.sh$')"
+count() { # PREFIX — the universe suites under PREFIX
+  grep -c "^$1" <<<"$UNIVERSE" || true
+}
+U="$(count '')"
+N_TOOLS="$(count tools/tests/)"
+N_JARVIS="$(count skills/jarvis/tests/)"
+N_WORKTREE="$(count skills/worktree/tests/)"
+N_MAILBOX="$(count skills/mailbox/tests/)"
+N_SLACK="$(count skills/slack/tests/)"
+N_ORCH_REST="$(cd "$ROOT" && grep '^skills/orch/tests/' <<<"$UNIVERSE" | RUNNER_OS=Linux bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null | grep -c '^orch-rest ')"
+WHOLE="shards=$ROSTER queue_macos_shards=$QUEUE_ALL rust_targets=$EVERY_TARGET skips=0/0"
+UNREAD="main-proof=unread warned=yes"
+NO_RUN="main-proof=none warned=yes"
+# The all-proved world first: its macOS count is every macOS-placed suite,
+# which each later row's expectation subtracts from.
+push_world all-proved
+got="$(push_select all-proved)"
+M="$(sed -n 's/.* skips=[0-9]*\/\([0-9]*\) .*/\1/p' <<<"$got")"
+check "push route: all-proved" "shards=[] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no" "$got"
+check "push route: all-proved places suites on macOS" true "$([ "${M:-0}" -gt 0 ] && echo true || echo false)"
+# WORLD|EXPECTED. A suite counts only where no selection left it out and
+# every same-head leg that runs it on its runner succeeded; a target only
+# where every selection listed it and the orch-rest Linux leg succeeded; any
+# read that fails runs the whole roster.
 push_rows=0
 while IFS='|' read -r world expected; do
   push_rows=$((push_rows + 1))
   push_world "$world"
   check "push route: $world" "$expected" "$(push_select "$world")"
 done <<ROWS
-all-proved|$NO_SHARDS main-proof=read proved-linux=$ROSTER_N proved-macos=$QUEUE_N warned=no
-subset|shell_shards=true shell_os=["ubuntu-latest","macos-latest"] shards=["linear","rest","node"] queue_macos_shards=["linear","rest"] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 3)) proved-macos=$((QUEUE_N - 2)) warned=no
-macos-only|shell_shards=true shell_os=["ubuntu-latest"] shards=$ROSTER queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=0 proved-macos=$QUEUE_N warned=no
-no-shard-selected|$ALL_SHARDS main-proof=read proved-linux=0 proved-macos=0 warned=no
-in-progress|shell_shards=true shell_os=["ubuntu-latest"] shards=["guards-scans"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
-failed-second-run|shell_shards=true shell_os=["ubuntu-latest"] shards=["worktree"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
-foreign-head-job|shell_shards=true shell_os=["macos-latest"] shards=[] queue_macos_shards=["mailbox"] skipped_suites=[] main-proof=read proved-linux=$ROSTER_N proved-macos=$((QUEUE_N - 1)) warned=no
-narrowed-leg|shell_shards=true shell_os=["ubuntu-latest"] shards=["jarvis"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
-whole-leg|$NO_SHARDS main-proof=read proved-linux=$ROSTER_N proved-macos=$QUEUE_N warned=no
-stepless-leg|shell_shards=true shell_os=["ubuntu-latest"] shards=["jarvis"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
-foreign-run-job|shell_shards=true shell_os=["ubuntu-latest"] shards=["slack"] queue_macos_shards=[] skipped_suites=[] main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
-no-run|$ALL_SHARDS $NO_RUN
-foreign-head-run|$ALL_SHARDS $NO_RUN
-push-event-run|$ALL_SHARDS $NO_RUN
-other-workflow-run|$ALL_SHARDS $NO_RUN
-outage|$ALL_SHARDS $UNREAD
-unparseable|$ALL_SHARDS $UNREAD
-jobs-missing|$ALL_SHARDS $UNREAD
+kept-subset|shards=["guards-tools","guards-tools-tail"] queue_macos_shards=["guards-tools"] rust_targets=[] skips=$((U - 1))/$((M - 1)) main-proof=read warned=no
+red-leg|shards=["guards-hooks","guards-tools","guards-tools-tail","rest","jarvis"] queue_macos_shards=[] rust_targets=[] skips=$((U - N_TOOLS - N_JARVIS))/$M main-proof=read warned=no
+linux-only|shards=[] queue_macos_shards=$QUEUE_ALL rust_targets=[] skips=$U/0 main-proof=read warned=no
+no-shard-selected|$WHOLE main-proof=read warned=no
+in-progress|shards=["guards-scans"] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no
+failed-second-run|shards=["worktree","worktree-restack"] queue_macos_shards=[] rust_targets=[] skips=$((U - N_WORKTREE))/$M main-proof=read warned=no
+foreign-head-job|shards=[] queue_macos_shards=["mailbox"] rust_targets=[] skips=$U/$((M - N_MAILBOX)) main-proof=read warned=no
+foreign-run-job|shards=["slack"] queue_macos_shards=[] rust_targets=[] skips=$((U - N_SLACK))/$M main-proof=read warned=no
+red-orch-rest|shards=["orch-rest"] queue_macos_shards=[] rust_targets=$EVERY_TARGET skips=$((U - N_ORCH_REST))/$M main-proof=read warned=no
+no-selection|$WHOLE $UNREAD
+expired-selection|$WHOLE $UNREAD
+bad-selection|$WHOLE $UNREAD
+no-run|$WHOLE $NO_RUN
+foreign-head-run|$WHOLE $NO_RUN
+push-event-run|$WHOLE $NO_RUN
+other-workflow-run|$WHOLE $NO_RUN
+outage|$WHOLE $UNREAD
+unparseable|$WHOLE $UNREAD
+jobs-missing|$WHOLE $UNREAD
 ROWS
-[ "$push_rows" -eq 18 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+[ "$push_rows" -eq 19 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+# The probes: a red Linux leg owes its suites on Linux alone, and a group
+# that left a suite out proves its every other suite.
+push_select red-leg >/dev/null
+check "push route: a red Linux leg owes its suite on Linux" false "$(in_list skipped_suites "$P_TOOLS")"
+check "push route: and its macOS leg still proves it" true "$(in_list skipped_suites_macos "$P_TOOLS")"
+check "push route: the red leg's other package owes its suites" false "$(in_list skipped_suites "$P_JARVIS")"
+push_select kept-subset >/dev/null
+check "push route: the suite the group left out is owed" false "$(in_list skipped_suites "$P_TOOLS")"
+check "push route: the group's kept suites are proved" true "$(in_list skipped_suites tools/tests/ci-aggregate.test.sh)"
+# The one-target world: the group ran orch/lib alone, so every other target
+# of both runtimes runs on the push's orch-rest leg.
+push_world one-target
+check "push route: one-target" "shards=[\"orch-rest\"] queue_macos_shards=[] main-proof=read warned=no" \
+  "$(push_select one-target | sed 's/ rust_targets=[^ ]* skips=[^ ]*//')"
+check "push route: one-target leaves out the proved target" false "$(in_list rust_targets orch/lib)"
+check "push route: one-target owes another orch target" true "$(in_list rust_targets orch/watch_reads)"
+check "push route: one-target owes the other runtime whole" true "$(in_list rust_targets 'agent-runtime/*')"
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
 mkdir -p "$TMP/trusting/tools"
 cp -R "$ROOT/tools/lib" "$TMP/trusting/tools/lib"
 cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/trusting/tools/"
+cp "$ROOT/tools/guard" "$TMP/trusting/tools/"
 awk '{ n += gsub(/select\(\.head_sha == \$sha and \.run_id == \$id\)/, "select(.run_id == $id)") } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/trusting/tools/ci-job-set" ||
   { echo "the job head check is no longer one select in $JOB_SET" >&2; exit 1; }
@@ -276,7 +375,8 @@ PUSH_AFTER="$saved_after"
 mkdir -p "$TMP/main-control/tools"
 cp -R "$ROOT/tools/lib" "$TMP/main-control/tools/lib"
 cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/main-control/tools/"
-awk '/^  main_linux=/ { print "  want_shard $SHARDS"; n++ } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
+cp "$ROOT/tools/guard" "$TMP/main-control/tools/"
+awk -v roster="$ROSTER" '/^  main_linux="\$\{main_linux%% \*\}"$/ { print; print "  main_linux=" sprintf("%c", 39) roster sprintf("%c", 39); n++; next } { print } END { exit n != 1 }' "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
 chmod +x "$TMP/main-control/tools/ci-job-set"
 git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
 printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
@@ -287,13 +387,63 @@ push_select no-run >/dev/null
 check "lock-only push runs no shard" 'shards=[]' "$(grep '^shards=' "$TMP/push-out")"
 push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
 if grep -qxF 'shards=[]' "$TMP/push-out"; then bad 'must-fail: main selection mutant escaped'; else ok 'must-fail: main selection mutant runs forbidden lock-only shards'; fi
+cp "$JOB_SET" "$TMP/main-control/tools/ci-job-set"
+sed '/^    \[ "\$f" != \.kendex-lock\.json \] || continue$/d' "$ROOT/tools/guard" >"$TMP/main-control/tools/guard"
+! cmp -s "$ROOT/tools/guard" "$TMP/main-control/tools/guard" || exit 1
+push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
+check 'control: install record reach runs suites that construct their own records' true "$(in_list shards node)"
+cp "$ROOT/tools/guard" "$TMP/main-control/tools/guard"
+
+# A pending first push can be replaced by a lock-only second push. The
+# successful baseline still precedes both, so the first input remains owed.
+git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
+printf 'fixture\n' >>"$PUSH_REPO/.bun-version"
+git -C "$PUSH_REPO" add .bun-version
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm pending
+PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+git -C "$PUSH_REPO" add .kendex-lock.json
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm newest
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+push_select no-run >/dev/null
+check 'coalesced unproved push retains the replaced heads node work' true "$(in_list shards node)"
+awk '{ n += sub(/git diff --name-only --no-renames "\$previous"/, "git diff --name-only --no-renames \"$PUSH_BEFORE\"") } { print } END { exit n != 1 }' \
+  "$JOB_SET" >"$TMP/main-control/tools/ci-job-set"
+push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
+check 'control: event before alone loses the replaced heads node work' false "$(in_list shards node)"
+git -C "$PUSH_REPO" reset -q --hard "$PUSH_BASE"
+printf '\n// input\n' >>"$PUSH_REPO/skills/agent-runtime/runtime/src/lib.rs"
+git -C "$PUSH_REPO" add skills/agent-runtime/runtime/src/lib.rs
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm pending-runtime
+PUSH_BEFORE="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+printf 'lock\n' >"$PUSH_REPO/.kendex-lock.json"
+git -C "$PUSH_REPO" add .kendex-lock.json
+git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm newest-runtime
+PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+push_select no-run >/dev/null
+check 'coalesced unproved runtime retains the dependent orch targets' true "$(field rust_targets <"$TMP/push-out" | jq 'any(.[]; startswith("orch/"))')"
+push_select no-run "$TMP/main-control/tools/ci-job-set" >/dev/null
+check 'control: event before alone loses the replaced heads Rust targets' '[]' "$(field rust_targets <"$TMP/push-out")"
+cp "$TMP/push/no-run/push-runs.json" "$TMP/successful-push.json"
+for history in absent unread nonancestor; do
+  case "$history" in
+    absent) printf '{"workflow_runs":[]}\n' >"$TMP/push/no-run/push-runs.json" ;;
+    unread) printf 'unread\n' >"$TMP/push/no-run/push-runs.json" ;;
+    nonancestor) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$TMP/successful-push.json" >"$TMP/push/no-run/push-runs.json" ;;
+  esac
+  push_select no-run >/dev/null
+  check "unproved coalesced range $history runs the full roster" "$ROSTER" "$(field shards <"$TMP/push-out")"
+  check "unproved coalesced range $history retains every runtime" "$EVERY_TARGET" "$(field rust_targets <"$TMP/push-out")"
+done
+cp "$TMP/successful-push.json" "$TMP/push/no-run/push-runs.json"
 
 # Only the latest successful scheduled main run can stand a night down.
 # A history with competing heads must reject an older matching success.
-awk '{ n += sub(/sort_by\(\.created_at\) \| last \|/, "sort_by(.created_at) | first |") } { print } END { exit n != 1 }' \
+awk '/length > 0/ { n += sub(/sort_by\(\.created_at\) \| last \|/, "sort_by(.created_at) | first |") } { print } END { exit n != 1 }' \
   "$JOB_SET" >"$TMP/trusting/tools/ci-job-set"
+jq --arg sha "$PUSH_SHA" '.workflow_runs[].head_sha = $sha' "$DATA/main-proof-runs.json" >"$TMP/night-runs.json"
 while IFS='|' read -r row mutation expected; do
-  jq "$mutation" "$DATA/main-proof-runs.json" >"$TMP/push/no-run/runs.json"
+  jq "$mutation" "$TMP/night-runs.json" >"$TMP/push/no-run/runs.json"
   : >"$TMP/nightly-out"
   PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/no-run" EVENT=schedule GITHUB_RUN_ID=999 GITHUB_SHA="$PUSH_SHA" GITHUB_REPOSITORY=vanillagreencom/kendex GITHUB_OUTPUT="$TMP/nightly-out" "$JOB_SET"
   check "nightly $row" "nightly=$expected" "$(cat "$TMP/nightly-out")"

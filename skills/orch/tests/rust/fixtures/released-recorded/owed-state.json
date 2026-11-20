@@ -1,0 +1,188 @@
+{
+  "issue_id": "oversee",
+  "triaged": [],
+  "launch_queue": [
+    "KEN-7"
+  ],
+  "lanes": [
+    {
+      "item": "KEN-1",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-1",
+      "account": null,
+      "harness": "claude",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "running"
+    },
+    {
+      "item": "KEN-2",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-2",
+      "account": null,
+      "harness": "claude",
+      "surface": "tmux",
+      "model": "claude-sonnet-5",
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "stopped"
+    },
+    {
+      "item": "KEN-3",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-3",
+      "account": null,
+      "harness": "codex",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "stopped"
+    },
+    {
+      "item": "KEN-4",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-4",
+      "account": null,
+      "harness": "claude",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "parked",
+      "parked": {
+        "pr": 14,
+        "head": "abc",
+        "repo": "owner/repo",
+        "at": "2026-09-27T00:00:00Z"
+      }
+    },
+    {
+      "item": "KEN-5",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-5",
+      "account": null,
+      "harness": "claude",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "done",
+      "cycle": {
+        "pr": 15
+      }
+    },
+    {
+      "item": "KEN-9",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-9",
+      "account": null,
+      "harness": "pi",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "stopped"
+    },
+    {
+      "item": "KEN-10",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-10",
+      "account": null,
+      "harness": "claude",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "stopped",
+      "cycle": {
+        "pr": 21
+      }
+    },
+    {
+      "item": "KEN-11",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-11",
+      "account": null,
+      "harness": "claude",
+      "surface": "tmux",
+      "model": "claude-opus-5",
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "stopped"
+    },
+    {
+      "item": "KEN-12",
+      "window": null,
+      "host": "provider-x",
+      "mail_root": "/w/KEN-12",
+      "account": null,
+      "harness": "codex",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "stopped"
+    },
+    {
+      "item": "KEN-13",
+      "window": null,
+      "host": null,
+      "mail_root": "/w/KEN-13",
+      "account": null,
+      "harness": "claude",
+      "surface": "tmux",
+      "model": null,
+      "session_id": null,
+      "launched_at": "2026-09-20T00:00:00Z",
+      "status": "done",
+      "cycle": {
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "class": "small",
+        "class_cause": null,
+        "class_reason": "within-small-ceiling",
+        "tier": "small",
+        "tier_inputs": null,
+        "stamps": {
+          "launched": "2026-09-20T00:00:00Z",
+          "first_commit": "2026-09-20T00:01:00Z",
+          "pr_opened": null,
+          "gate_green": null,
+          "ci_green": null,
+          "armed": null,
+          "merged": "2026-09-20T00:02:00Z"
+        },
+        "target": 1800,
+        "merge_group": null,
+        "actual": 120,
+        "open": null,
+        "verdict": "unmeasured",
+        "phase": null,
+        "phase_secs": null,
+        "gate_waits": null,
+        "cause": null,
+        "missing": [
+          "pr_opened",
+          "gate_green",
+          "ci_green",
+          "armed"
+        ],
+        "rounds": null,
+        "pr_rounds": null,
+        "escaped": false,
+        "escape_cause": null,
+        "refixed": null
+      }
+    }
+  ]
+}

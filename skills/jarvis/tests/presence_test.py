@@ -25,8 +25,17 @@ class Presence(unittest.TestCase):
         bins = scratch / "bin"
         bins.mkdir()
         clock = scratch / "clock"
-        epoch = 1800000000
+        epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
         clock.write_text(str(epoch))
+        def at_stamp(after=0):
+            # The native turn end stamps context.json's `at` with the system
+            # clock and presence reads that stamp, so each moment here counts
+            # from the stamp the last hook wrote: the clock stand-in, Jarvis's
+            # own time and the holds', is moved AFTER seconds past it.
+            row = json.loads((root / "tmp/lane-mail/overseer/context.json").read_text())
+            now = int(datetime.datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp()) + after
+            clock.write_text(str(now))
+            return now
         real_date = shutil.which("date")
         def executable(name, body):
             path = bins / name
@@ -36,9 +45,39 @@ class Presence(unittest.TestCase):
         executable("date", 'case "$*" in *+%s*) cat "$CLOCK";; *+%Y-%m-%dT%H:%M:%SZ*) '+
                    sys_python()+' -c \'import datetime,os; print(datetime.datetime.fromtimestamp(int(open(os.environ["CLOCK"]).read()),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))\';; *) exec '+real_date+' "$@";; esac\n')
         executable("kendex", 'printf "%s\\n" "$PRESENCE_ROOT"\n')
-        state = scratch / "inspect"
+        # The session's harness: a planted process the fleet record names as
+        # its harness identity, which agent-runtime's status read takes the
+        # session's liveness from. A word written here sets what that read
+        # meets: `gone` kills the harness, `exited` lets it exit; `unjudged`,
+        # `unknown` and an empty word keep it running where `ps` cannot read
+        # its start (an exit with words, a refusal, an empty answer), so the
+        # read refuses `controller-unreadable`; any other word keeps a harness
+        # running, a new one recorded where the last one ended.
+        unreadable = scratch / "ps-unreadable"
+        real_ps = shutil.which("ps")
+        executable("ps", 'case "$*" in *lstart=*) case "$(cat "$PS_UNREADABLE")" in\n'
+                   'unjudged) echo "ps: unjudged" >&2; exit 2;; unknown) echo "ps: unknown" >&2; exit 1;; empty) exit 0;;\n'
+                   'esac;; esac\nexec '+real_ps+' "$@"\n')
+        test = self
+        class Harness:
+            process = None
+            def write_text(self, word):
+                unreadable.write_text({"unjudged": "unjudged", "unknown": "unknown", "": "empty"}.get(word, "readable"))
+                if word in ("gone", "exited"):
+                    if self.process is not None and self.process.poll() is None:
+                        self.process.kill() if word == "gone" else self.process.stdin.close()
+                        self.process.wait()
+                elif self.process is None or self.process.poll() is not None:
+                    self.process = process = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
+                    test.addCleanup(lambda: (process.kill(), process.wait(), process.stdin.close()))
+                    started = subprocess.run([real_ps, "-o", "lstart=", "-p", str(process.pid)], check=True, text=True,
+                                             capture_output=True, env=dict(os.environ, LC_ALL="C", TZ="UTC")).stdout
+                    subprocess.run([str(root / ".agents/skills/orch/scripts/orch-runtime"), "state", "set", "--fleet",
+                                    "/controller/harness_pid", str(process.pid),
+                                    "/controller/harness_start", "lstart:" + started.strip()],
+                                   cwd=root, env=os.environ, check=True, capture_output=True)
+        state = Harness()
         state.write_text("idle")
-        inspector = executable("inspector", 'printf "session=%s window=@7 server=%s server_start=%s state=%s\\n" "$TMUX_PANE" "$TMUX_SERVER_ID" "$TMUX_SERVER_START" "$(cat "$INSPECT_STATE")"\n')
         remote = scratch / "remote"
         remote.mkdir()
         subprocess.run(["git", "init", "-q", str(remote)], check=True, capture_output=True)
@@ -54,7 +93,7 @@ class Presence(unittest.TestCase):
         executable("ssh", 'if [ -n "${TRANSPORT_READY:-}" ]; then\nprintf ready > "$TRANSPORT_READY"\nread -r ack < "$TRANSPORT_RELEASE"\nfi\n[ ! -f "$FAIL_HOST" ] || exit 1\ncd "$REMOTE_ROOT" || exit\nPRESENCE_ROOT=$REMOTE_ROOT; export PRESENCE_ROOT\nexec '+BASH+' -s\n')
         root.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
         env = dict(os.environ, PATH=str(bins)+os.pathsep+os.environ["PATH"], CLOCK=str(clock),
-                   INSPECT_STATE=str(state), ORCH_OVERSEER_HOST=str(inspector),
+                   PS_UNREADABLE=str(unreadable),
                    FAIL_HOST=str(failure), REMOTE_ROOT=str(remote))
         settings = dict(JARVIS_LOG_DIR=str(scratch / "log"), JARVIS_CONTROL_HOST="host", JARVIS_MAIN_HOST="",
                         JARVIS_WAKE_SETTLE_SECS="0")
@@ -86,6 +125,7 @@ class Presence(unittest.TestCase):
                             path.parent.mkdir(parents=True, exist_ok=True)
                             path.write_text("exit 93\n")
                             path.chmod(0o755)
+                    epoch = at_stamp()
                     self.assertTrue(watch.live(epoch))
                     renew()
                     for hold in (root / "hold", remote_hold):
@@ -100,8 +140,9 @@ class Presence(unittest.TestCase):
                                                         (240, "rate-limit-switch"),
                                                         (360, "idle"), (480, "idle"))):
                 state.write_text(observed)
-                clock.write_text(str(epoch+elapsed))
                 hook("lane-mail-deliver.sh" if index % 2 == 0 else "lane-mail-check.sh")
+                # Each row's moment, epoch + elapsed, is the stamp its hook wrote.
+                epoch = at_stamp() - elapsed
                 row = json.loads(context.read_text())
                 self.assertEqual(row["session_id"], "s1")
                 self.assertEqual(row["pane_key"], os.environ["TMUX_SERVER_ID"] + " " + os.environ["TMUX_PANE"])
@@ -132,16 +173,17 @@ class Presence(unittest.TestCase):
                 no_renew(epoch+480)
             context.write_text(json.dumps(row))
             for observed in ("gone", "exited", "unjudged", "unknown", ""):
+                state.write_text("idle")
                 state.write_text(observed)
                 self.assertFalse(watch.live(epoch+480), observed)
                 no_renew(epoch+480)
             state.write_text("idle")
-            workflow = root / ".agents/skills/orch/scripts/workflow-state"
-            subprocess.run([str(workflow), "update", "oversee", '.overseer.session_id = null'],
+            runtime = root / ".agents/skills/orch/scripts/orch-runtime"
+            subprocess.run([str(runtime), "state", "set", "--fleet", "/controller/session_id", "null"],
                            cwd=root, env=os.environ, check=True, capture_output=True)
             self.assertFalse(watch.live(epoch+480))
             no_renew(epoch+480)
-            subprocess.run([str(workflow), "update", "oversee", '.overseer.session_id = "s1"'],
+            subprocess.run([str(runtime), "state", "set", "--fleet", "/controller/session_id", "s1"],
                            cwd=root, env=os.environ, check=True, capture_output=True)
             def warnings():
                 # Delivered warnings leave the input log; the mailbox owns their receipts.
@@ -152,8 +194,8 @@ class Presence(unittest.TestCase):
             warning = "EVENT presence-renew-failed repo=ssh:host side=ssh:host"
             failure.touch()
             for elapsed in (600, 601, 720, 721):
-                clock.write_text(str(epoch+elapsed))
                 hook("lane-mail-deliver.sh")
+                epoch = at_stamp() - elapsed
                 if elapsed % 120 == 0:
                     renew()
                 watch.tick(epoch+elapsed, watch.acquire(epoch+elapsed))
@@ -169,13 +211,16 @@ class Presence(unittest.TestCase):
             renew()
             self.assertEqual(warnings(), [warning])
             failure.unlink()
-            clock.write_text(str(epoch+840))
             hook("lane-mail-deliver.sh")
+            epoch = at_stamp() - 840
             renew()
             module.checked([root / ".agents/skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], root)
             failure.touch()
-            clock.write_text(str(epoch+960))
             hook("lane-mail-deliver.sh")
+            # The clock stands 299 s past this stamp, inside presence's 300 s,
+            # so the transport rows' own hook calls below, stamped later, are
+            # read live at it too.
+            epoch = at_stamp(299) - 960
             renew()
             self.assertEqual(warnings(), [warning, warning])
             failure.unlink()
@@ -238,9 +283,11 @@ class Presence(unittest.TestCase):
                 try:
                     self.assertTrue(select.select([read_fd], [], [], 30)[0])
                     self.assertEqual(os.read(read_fd, 5), b"ready")
-                    for elapsed in (1080, 1200, 1320, 1440):
-                        clock.write_text(str(epoch+elapsed))
+                    # Each renewal 120 s after the last, each inside the
+                    # 300 s its own hook's stamp holds presence for.
+                    for elapsed in (1200, 1320, 1440):
                         hook("lane-mail-deliver.sh")
+                        epoch = at_stamp(elapsed - 1200) - elapsed
                         pending = watch._poll(passes, pending, epoch+elapsed)
                         for work in list(watch.presence_pending.values()):
                             work.result(timeout=30)

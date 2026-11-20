@@ -193,7 +193,7 @@ fn the_jarvis_bundle_installs_the_carrier_beside_its_judge() {
     );
     assert!(
         project
-            .join(".agents/skills/orch/scripts/lib/session-rows.sh")
+            .join(".agents/skills/orch/scripts/orch-runtime")
             .is_file()
     );
     let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();

@@ -15,7 +15,7 @@ scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
 
 `activate` also assigns the issue to the person `KENDEX_USER_EMAIL` names when nobody is assigned yet; SKILL.md § Option Behavior states the outcomes.
 
-Cancel, duplicate, and absorb first disposition every open descendant, including open work below a closed child: read `issues children [ISSUE_ID] --recursive --pending`, comment the reason for each disposition, and detach a child to keep it with `issues update [CHILD_ID] --remove-parent`. Cancel a child only with independent authorization for that child, recording its reason and resolving its descendants first. After the descendants are detached or terminal, use `comments create` + `issues update --state "Canceled"` on the parent; name the surviving issue in the comment on both sides of an absorb. The state update refuses open descendants before writing, and bulk-update checks the whole batch before writing any item.
+Cancel, duplicate, and absorb first disposition every open descendant, including open work below a closed child: read `issues get [ISSUE_ID]` and its `children` rows, which report up to three levels with `depth`. Repeat from every deepest row and deduplicate identifiers until no new descendants appear. Keep closed children in this walk and act on the open descendants. Comment the reason for each disposition, and detach a child to keep it with `issues update [CHILD_ID] --remove-parent`. Cancel a child only with independent authorization for that child, recording its reason and resolving its descendants first. After the descendants are detached or terminal, use `comments create` + `issues update --state "Canceled"` on the parent; name the surviving issue in the comment on both sides of an absorb. The state update refuses open descendants before writing, and bulk-update checks the whole batch before writing any item.
 
 ## Quota Holds
 
@@ -35,7 +35,7 @@ An `activate` or `complete` that answers with a quota refusal is held:
 
 Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings only; never use heredocs.
 
-After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
+After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID]`), preserving sections that are still valid.
 
 ## Hierarchy and Relations
 

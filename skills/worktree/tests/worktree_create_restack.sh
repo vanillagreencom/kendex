@@ -8,7 +8,7 @@
 # own stderr, and the worktree's state afterwards: the engine, the branch,
 # the head, the commits ahead of origin/main, the index, every tracked file
 # with its first line, the restack record, the remote ref and the rebase map
-# the restack left in the worktree for orch/scripts/worktree-push.
+# the restack left in the worktree for orch's `record-push`.
 set -euo pipefail
 # The fixtures' origin is a local path that names no GitHub repository, so
 # the suite names the default branch.
@@ -457,7 +457,7 @@ restack_keys() {
 }
 
 # The map a completed restack appends to the worktree's own git dir for
-# `orch/scripts/worktree-push` to consume. Absent is the answer for every path
+# orch's `record-push` to consume. Absent is the answer for every path
 # that rewrote nothing, so every row pins it.
 restack_map() {
   local path=""
@@ -506,7 +506,7 @@ run() {
 # The map lines one restack reports, by shape. The same text appears twice: on
 # stderr under the restack's count record, and under that restack's own hop in
 # the pending map file the worktree's git dir carries for
-# orch/scripts/worktree-push. A shape's leading digit is how many pre-restack
+# orch's `record-push`. A shape's leading digit is how many pre-restack
 # commits the count record names.
 map_lines() {
   case "$1" in
@@ -531,7 +531,7 @@ map_lines() {
 
 # The map file's whole content: a '+'-joined list of hop shapes, each opening
 # with its own boundary line. Two hops is a worktree restacked twice before one
-# push, which worktree-push must apply in order rather than as one map.
+# push, which `record-push` must apply in order rather than as one map.
 map_file_text() {
   local spec="$1"
   case "$spec" in
@@ -627,6 +627,9 @@ remote movement after authorization fails the exact lease|clean restack move-rem
 a local rewrite is not covered by prior authorization|clean restack local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre map=1r
 clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 --keep-on-conflict over a clean rebase rebases as --reuse does|plain|create topic --reuse --keep-on-conflict|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
+--keep-on-conflict over uncommitted work on a head without the advanced main hands the tree back unrebased|plain dirty-other|create topic --reuse --keep-on-conflict|76|wt|reuse-dirty+unrebased|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=- map=-
+--keep-on-conflict over a clean tree at its published head without the advanced main hands it back unrebased|clean|create topic --reuse --keep-on-conflict|76|wt|unrebased|engine=none branch=topic head=pre ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre map=-
+--keep-on-conflict over uncommitted work on a head that contains main exits 0|contained dirty-other|create topic --reuse --keep-on-conflict|0|wt|reuse-dirty|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
 reuse over a clean tree behind its remote fast-forwards to the remote and keeps that head unrebased over the advanced main|cloud move-remote advance-main|create topic --reuse|0|wt|fast-forward|engine=none branch=topic head=external ahead=1 dirty=- tree=file.txt:orig,other.txt:orig restack=- remote=external map=-
 reuse over a clean tree at its published head keeps it unrebased over the advanced main|clean|create topic --reuse|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre map=-
 --reuse --replay over a clean tree behind its remote fast-forwards to the remote, then replays onto the advanced main|cloud cloud-push advance-main|create topic --reuse --replay|0|wt|fast-forward+map:1x|engine=none branch=topic head=rebased ahead=1 dirty=- tree=cloud.txt:cloud,file.txt:orig,main-advanced-twice.txt:advanced twice,other.txt:orig restack=remote:origin,branch:topic,expected:external,authorized:head remote=external map=1x
@@ -652,52 +655,8 @@ while IFS='|' read -r label fixture command rc out err want_state; do
 done <<<"$ROWS"
 
 # Activity admission belongs to reuse, before either remote fast-forward or
-# base restack. Use orch's real live reader with a child that follows the
-# validation owner's argv contract.
-activity_rows() {
-  local row activity flags want cause before rc child="" ready
-  while IFS='|' read -r row activity flags want cause; do
-    build "activity-$row" plain
-    before="$(git -C "$WT" rev-parse HEAD)"
-    case "$activity" in
-      run)
-        mkdir -p "$WT/tmp/dev-validate-planted"
-        mkfifo "$ROOT/ready" "$ROOT/release"
-        "$BASH" -c 'printf "ready\n" >"$1"; read -r answer <"$2"' planted \
-          "$ROOT/ready" "$ROOT/release" --child --run-dir "$WT/tmp/dev-validate-planted" &
-        child=$!
-        read -r ready <"$ROOT/ready"
-        printf '%s\n' "$child" >"$WT/tmp/dev-validate-planted/pid"
-        ;;
-    esac
-    rc=0
-    # shellcheck disable=SC2086
-    (cd "$MAIN" && "$WORKTREE_SCRIPT" create topic $flags >"$ROOT/out" 2>"$ROOT/err") || rc=$?
-    if [[ -n "$child" ]]; then
-      printf 'done\n' >"$ROOT/release"
-      wait "$child"
-      child=""
-    fi
-    assert_eq "$rc" "$want" "$row: activity admission exit"
-    if [[ "$want" == 75 ]]; then
-      assert_eq "$(git -C "$WT" rev-parse HEAD)" "$before" "$row: held branch stays at its head"
-      assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
-        "path=$WT cause=$cause" "$row: structured hold cause"
-    else
-      assert_eq "$(git -C "$WT" merge-base --is-ancestor origin/main HEAD && echo based)" based \
-        "$row: idle branch reaches the base"
-    fi
-  done <<'ACTIVITY'
-run-relaunch|run|--reuse --keep-on-conflict|75|run-live
-run-restack|run|--restack|75|run-live
-idle-reuse|none|--reuse|0|-
-idle-restack|none|--restack|0|-
-ACTIVITY
-}
-activity_rows
-
-# An installed but broken live reader refuses; an absent orch remains a
-# supported standalone installation. Copy the package, never its dependencies.
+# base restack. An absent orch remains a supported standalone installation.
+# Copy the package, never its dependencies.
 saved_activity_script="$WORKTREE_SCRIPT"
 mkdir -p "$TMP_ROOT/activity-packages"
 cp -R "$PACKAGE_DIR" "$TMP_ROOT/activity-packages/worktree"
@@ -711,25 +670,72 @@ build activity-partial-orch plain
 partial_orch_rc=0
 (cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || partial_orch_rc=$?
 assert_eq "$partial_orch_rc" 0 "partial orch without activity readers: reuse still succeeds"
-printf '#!/bin/bash\nexit 2\n' >"$TMP_ROOT/activity-packages/orch/scripts/dev-validate-run"
-chmod +x "$TMP_ROOT/activity-packages/orch/scripts/dev-validate-run"
-build activity-bad-live plain
-bad_live_head="$(git -C "$WT" rev-parse HEAD)"
-bad_live_rc=0
-(cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --restack >"$ROOT/out" 2>"$ROOT/err") || bad_live_rc=$?
-assert_eq "$bad_live_rc" 75 "failed live read: reuse refuses"
-assert_eq "$(git -C "$WT" rev-parse HEAD)" "$bad_live_head" "failed live read: head stays put"
+
+# The live reader beside the copy answers `validate entry --live --worktree W`
+# with the replies `orch-runtime validate entry --help` documents: a held run
+# as `run-dir=DIR pid=N` with exit 0, an unreadable run with pid=0, no live run
+# as the line live=none with exit 1, and a runtime setup has not built as exit
+# 69. orch's own validate suite holds the runtime to those replies. Any other
+# argv exits 64, so an idle row also proves the call's shape.
+LIVE_READER="$TMP_ROOT/activity-packages/orch/scripts/orch-runtime"
+live_reader() { # EXIT LINE ; the reader prints LINE, none for '-', and exits EXIT
+  local print=":"
+  [[ "$2" == - ]] || print="printf '%s\\n' '$2'"
+  printf '#!/bin/bash\n[ "$1 $2 $3 $4" = "validate entry --live --worktree" ] && [ -n "${5:-}" ] || exit 64\n%s\nexit %s\n' \
+    "$print" "$1" >"$LIVE_READER"
+  chmod +x "$LIVE_READER"
+}
+activity_rows() {
+  local row code line flags want cause before rc
+  while IFS='|' read -r row code line flags want cause; do
+    live_reader "$code" "$line"
+    build "activity-$row" plain
+    before="$(git -C "$WT" rev-parse HEAD)"
+    rc=0
+    # shellcheck disable=SC2086
+    (cd "$MAIN" && "$WORKTREE_SCRIPT" create topic $flags >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+    assert_eq "$rc" "$want" "$row: activity admission exit"
+    if [[ "$want" == 75 ]]; then
+      assert_eq "$(git -C "$WT" rev-parse HEAD)" "$before" "$row: held branch stays at its head"
+      assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
+        "path=$WT cause=$cause" "$row: structured hold cause"
+    else
+      assert_eq "$(git -C "$WT" merge-base --is-ancestor origin/main HEAD && echo based)" based \
+        "$row: idle branch reaches the base"
+    fi
+  done <<'ACTIVITY'
+run-relaunch|0|run-dir=/runs/dev-validate-1 pid=4242|--reuse --keep-on-conflict|75|run-live
+run-restack|0|run-dir=/runs/dev-validate-1 pid=4242|--restack|75|run-live
+unreadable-run|0|run-dir=/runs/dev-validate-1 pid=0|--reuse|75|run-live
+idle-reuse|1|live=none|--reuse|0|-
+idle-restack|1|live=none|--restack|0|-
+failed-read|2|-|--restack|75|activity-unreadable
+setup-required|69|-|--reuse|75|activity-unreadable
+exit1-without-idle-line|1|-|--reuse|75|activity-unreadable
+exit1-other-line|1|live=some|--reuse|75|activity-unreadable
+ACTIVITY
+}
+activity_rows
+
+# A runtime that runs this package names itself in ORCH_RUNTIME_BINARY and is
+# asked in place of the reader beside the copy, here one setup has not built:
+# the named runtime's live=none admits, and a named runtime that cannot start
+# holds rather than leaving the tree unasked.
+live_reader 1 live=none
+mv "$LIVE_READER" "$TMP_ROOT/named-runtime"
+live_reader 69 -
+build activity-named-runtime plain
+named_rc=0
+(cd "$MAIN" && ORCH_RUNTIME_BINARY="$TMP_ROOT/named-runtime" "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || named_rc=$?
+assert_eq "$named_rc" 0 "named runtime: its live=none admits over the unbuilt reader beside the copy"
+build activity-named-runtime-absent plain
+named_before="$(git -C "$WT" rev-parse HEAD)"
+named_rc=0
+(cd "$MAIN" && ORCH_RUNTIME_BINARY="$TMP_ROOT/absent-runtime" "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || named_rc=$?
+assert_eq "$named_rc" 75 "named runtime that cannot start: the reuse is held"
+assert_eq "$(git -C "$WT" rev-parse HEAD)" "$named_before" "named runtime that cannot start: held branch stays at its head"
 assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
-  "path=$WT cause=activity-unreadable" "failed live read: structured hold cause"
-printf '#!/bin/bash\nexit 1\n' >"$TMP_ROOT/activity-packages/orch/scripts/dev-validate-run"
-build activity-live-startup-failed plain
-startup_head="$(git -C "$WT" rev-parse HEAD)"
-startup_rc=0
-(cd "$MAIN" && "$WORKTREE_SCRIPT" create topic --reuse >"$ROOT/out" 2>"$ROOT/err") || startup_rc=$?
-assert_eq "$startup_rc" 75 "live reader exit1 without idle answer: reuse refuses"
-assert_eq "$(git -C "$WT" rev-parse HEAD)" "$startup_head" "live reader exit1 without idle answer: HEAD stays put"
-assert_eq "$(sed -n 's/^worktree-resume-held: //p' "$ROOT/err")" \
-  "path=$WT cause=activity-unreadable" "live reader exit1 without idle answer: structured hold cause"
+  "path=$WT cause=activity-unreadable" "named runtime that cannot start: structured hold cause"
 
 # Must-fail control: suppress only the refusal, preserving its matched text.
 python3 - "$WORKTREE_SCRIPT" <<'CONTROL'
@@ -1073,6 +1079,33 @@ kept_remove_rc=0
 assert_eq "$kept_remove_rc" "1" "control: the removal follows the map"
 assert_eq "$(message_records <"$ROOT/kept-remove.err" | grep -c '^worktree-remove-rebase-map: ' || true)" "1" \
   "control: the removal refuses on the map alone"
+
+echo
+echo "=== must-fail control: with an exit's keep check cut, --keep-on-conflict hands a kept tree back at 0 ==="
+
+# The rows above pin exit 76 for a dirty tree and for one at its published
+# head, each without the base. The defect planted is that exit's call of the
+# check, on a private package copy: the tree comes back at 0 with no notice,
+# which a caller reading the exit takes for a rebased tree.
+keep_control() { # LABEL FIXTURE CHECK_CALL
+  local label="$1" fixture="$2" call="$3" mutant got
+  # shellcheck disable=SC2086
+  build "keep-$label" $fixture
+  mkdir -p "$ROOT/pkg"
+  cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+  mutant="$ROOT/pkg/worktree/scripts/worktree"
+  assert_eq "$(F="$call" perl -0ne 'print scalar(() = /\Q$ENV{F}\E/g)' -- "$mutant")" "1" "$label control finds its exit's check"
+  F="$call" perl -0pi -e '$t = $ENV{F}; $t =~ s/report_reused_worktree$/report_created_worktree; exit 0/; s/\Q$ENV{F}\E/$t/' -- "$mutant"
+  assert_eq "$(F="$call" perl -0ne 'print scalar(() = /\Q$ENV{F}\E/g)' -- "$mutant")" "0" "$label control cuts it only in its private copy"
+  got="$(WORKTREE_SCRIPT="$mutant" run "create topic --reuse --keep-on-conflict")"
+  assert_eq "${got%% out=*}" "rc=0" "$label control: the mutant hands the kept tree back at 0"
+  assert_eq "$(message_records <"$ROOT/err" | grep -c '^worktree-reuse-unrebased: ' || true)" "0" \
+    "$label control: the mutant names no unrebased tree"
+}
+keep_control dirty "plain dirty-other" 'skipped the rebase." >&2
+        report_reused_worktree'
+keep_control published clean 'setup_app_worktree "$WT_PATH" true true
+      report_reused_worktree'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

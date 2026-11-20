@@ -1,0 +1,57 @@
+{
+  "issue_id": "KEN-4687",
+  "sub_issues": [],
+  "agent": "rust",
+  "worktree": "/home/u/dev/.worktrees/kendex/ken-4687",
+  "branch": "rebuild/orch-architecture",
+  "qa_labels": [],
+  "near_ceiling": [],
+  "finding_occurrences": {
+    "prior": "none",
+    "records": []
+  },
+  "child_sessions": {},
+  "review_agents": [],
+  "review_agent_ids": {},
+  "review_agent_runtime_types": {},
+  "pre_delegate_sha": null,
+  "skip_qa": false,
+  "cycles": 0,
+  "rereview_cycles": 0,
+  "json_paths": [],
+  "fixed_items": [],
+  "escalated_items": [],
+  "audit_issues_created": [],
+  "pr_review_baseline": null,
+  "pr_comment_review": {
+    "iterations": 0,
+    "fixes": [],
+    "issues_created": [],
+    "skipped": []
+  },
+  "post_pr_budgets": {
+    "review_wait": null,
+    "ci_fix": null
+  },
+  "post_pr_stop": null,
+  "tier": "standard",
+  "pr_order": "review-first",
+  "dev_round_id": "1769600000123456789-1837",
+  "stages": [
+    {
+      "kind": "dev",
+      "round_id": "1769600000123456789-1837",
+      "start": 1769600000,
+      "end": null
+    }
+  ],
+  "dev_delegated_at": 1769600000,
+  "round_prunes": {
+    "1769600000123456789-1837": {
+      "action": "below-mark",
+      "used_pct": 41,
+      "mark_pct": 75,
+      "bytes": 0
+    }
+  }
+}

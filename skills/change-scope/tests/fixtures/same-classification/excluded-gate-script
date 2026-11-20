@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=skills/review-gate/scripts/gate.sh
+harness-note: cause=product-source-or-unreadable-ownership path=skills/review-gate/scripts/gate.sh
+class: class=standard measured=true cause=excluded-path path=skills/review-gate/scripts/gate.sh glob=*skills/review-gate/scripts/*

@@ -11,6 +11,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)" || exit 1
 source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd -P)" || exit 1
 
-for name in issues-list issues-get issues-bundle issues-bulk-get issues-children issues-children-recursive issues-children-pending issues-children-pending-raw issues-relations; do
+for name in issues-list issues-bundle issues-bulk-get issues-relations; do
     recorded_read_case "$name"
 done

@@ -1,6 +1,6 @@
 # Dev Fix Workflow
 
-Delegate fix items to a specialist dev agent. Standalone (user-initiated) or managed (from a review workflow).
+Delegate a set of fix items to a dev agent, then accept the round from its receipt. A user starts it standalone; a review workflow starts it managed. Run it first line to last for one fix round.
 
 | Command | Behavior |
 |---------|----------|
@@ -8,17 +8,17 @@ Delegate fix items to a specialist dev agent. Standalone (user-initiated) or man
 | `dev-fix [ISSUE_ID]` | Fix items for a specific issue |
 | (from a review workflow) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `dev_agent` — a live dev agent; `issue_id` — the workflow-state key, whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number; `items` — formatted review items; `source` — `pr-review` | `pr-comments` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`.
+**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 3) or `"self"` (default); `dev_agent`, a live dev agent; `issue_id`, the workflow-state key ([workflow-state.md § Keys](../schemas/workflow-state.md#keys)), never the bare GitHub issue number; `items`, formatted review items; `source`, `pr-review` | `pr-comments` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`.
 
-**Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else `git-context issue-from-branch .`. Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as `git-context repo-root "[DIR]"` (inside a worktree `[DIR]` is `.`; from the main repo, `worktree path [ISSUE_ID]`, asking before creating).
+## Start
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
+With `lifecycle: "managed"`, `ISSUE_ID` is the caller's `issue_id` and `[WORKTREE_PATH]` its `worktree`. With `lifecycle: "self"`, resolve `ISSUE_ID` as [dev-start.md § Start](dev-start.md#start) step 1 does, and `[WORKTREE_PATH]` as its step 3 does. `[WORKTREE_PATH]` fills every `Worktree:` line below.
 
 ## 1. Build Fix Items
 
-`items` provided (managed) → use them under [dev-round.md § Item text](../schemas/dev-round.md#item-text), → § 2.
+Managed: take the caller's `items` under [dev-round.md § Item text](../schemas/dev-round.md#item-text), then go to § 2.
 
-Standalone: synthesize from conversation context, reading the relevant files first. Format each as:
+Standalone: read the relevant files. Write each item from the conversation as:
 
 ```text
 #[N] | [conversation] | [location or "TBD"]
@@ -41,126 +41,110 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Then resolve the decision mode:
+Then read the decision mode:
 
 ```bash
-.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE auto-recommended
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
 ```
 
-`auto-recommended` takes the recommended option (`Fix all`) without asking; anything else asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The ask set in [communication-modes.md](../references/communication-modes.md) § Ask set applies in every mode.
-
-Cancel ends the workflow; a selection goes to § 2.
+`auto-recommended` takes the recommended option, `Fix all`, without asking. Any other value asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The ask set in [communication-modes.md](../references/communication-modes.md) § Ask set applies in every mode. `Cancel` ends the workflow; a selection goes to § 2.
 
 ## 2. Delegate
 
-Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree to the selected dev agent before every fix round, including a caller-supplied `dev_agent`.
+Before every fix round, apply [Delegation](../references/skill-rules.md#delegation) for the target worktree to the selected dev agent, a caller-supplied `dev_agent` included.
 
-Before stamping or delegating the round, check its base:
+### Base freshness
+
+Check the round's base before stamping or delegating the round:
 
 ```bash
 .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
 ```
 
-- Exit 0 keeps the current validation route, including the later `restack-skip` check.
-- Exit 4 first unarms any open PR through [merge-pr-restack.md](merge-pr-restack.md#unarm-at-a-stop) step 1, then asks the live-round owner from that workflow's step 2:
+- **Exit 0.** The base is current. Keep the current validation route, the later `restack-skip` check included.
+- **Exit 4.** The base is stale. Unarm any open PR through [Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop). Then ask the live-round owner. Write `[WORKTREE_PATH]/tmp/live-round-[ISSUE_ID].json` with the harness file tool as `{"op": "record-push", "mode": "check-live-round", "worktree": "[WORKTREE_PATH]"}` and run it:
 
   ```bash
-  .agents/skills/orch/scripts/worktree-push --check-live-round --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
+  .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/live-round-[ISSUE_ID].json
   ```
 
-  Only exit 0 permits `worktree create [ISSUE_ID] --restack` before validation. Any other exit stops before rebasing. Finish or recover a live round before retrying the gate. Resolve conflicts and run `worktree restack continue [ISSUE_ID]` until complete. Apply [Rules reload after a rebase](../SKILL.md#the-cycle), then run the gate again. Only exit 0 from `base-freshness` permits stamping the round on the rebased HEAD and validating its fixes.
+  Only exit 0 permits `.agents/skills/worktree/scripts/worktree create [ISSUE_ID] --restack`. Any other exit stops before rebasing; finish or recover a live round before the gate runs again. Resolve conflicts and run `.agents/skills/worktree/scripts/worktree restack continue [ISSUE_ID]` until the restack completes. Apply Rules reload after a rebase from [SKILL.md § The Cycle](../SKILL.md#the-cycle), then run `base-freshness` again. Only its exit 0 permits stamping the round on the rebased HEAD.
 
-- Any other exit, or an incomplete restack, first unarms any open PR through [Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop), then stops delegation and validation. Never validate the stale head first.
+- **Any other exit, or an incomplete restack.** Unarm any open PR through [Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop), then stop delegation and validation. Never validate the stale head first.
 
-Before stamping any group's round, apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this proposed fix set. Write `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from its source review items or exact failed-receipt check tokens, then read:
+### Finding occurrences
+
+Before stamping any group's round, apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to the proposed fix set. Write `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from the source review items, or from a failed receipt's exact check tokens. Then read:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state findings query [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime state findings query --item [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
 ```
 
-Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json`. Take the [finding-specific design read](../references/design-review.md#inputs-and-actions) before `new-round-id`, pruning or changing delegation time. Carry this same JSON in the existing ask/status and the delegation's `Finding occurrences:` line; unknown or failed intake remains unknown through that route. This read grants no fix or validation allowance.
+A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `result`, the `{prior, classes}` object, unchanged with the harness file tool as `[WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json`. Take the [finding-specific design read](../references/design-review.md#inputs-and-actions) before minting the round, pruning it or recording its delegation time. Carry this JSON in the ask or status and in the brief's `Finding occurrences:` line. An unknown or failed intake stays unknown along that route. The read grants no fix and no validation allowance.
 
-1. **Determine the agent.** `dev_agent` wins. Otherwise read state, falling back to the issue's `agent:*` label or the component paths:
+### Steps
+
+1. **Determine the agent.** `dev_agent` wins. Otherwise read state, and fall back to the issue's `agent:*` label or the component paths:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
+   .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /agent
    ```
 
-2. **Group items by agent domain** when multi-domain, ordered per [references/skill-rules.md § Coordination](../references/skill-rules.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
+2. **Group the items** by agent domain where they span several, ordered per [skill-rules.md § Sequencing](../references/skill-rules.md#sequencing). Past roughly eight items, prefer two scoped rounds over one broad round. Each group is its own round: run steps 3 to 6 for one group, then the next. With more than one group, every group but the last may hand its work over to the next. The last group's round validates.
 
-3. **Gather decision context**:
+3. **Gather decision context:**
 
    ```bash
    .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
+   ```
+
+   ```bash
    .agents/skills/decider/scripts/decisions search "[KEYWORDS_OF_THE_CHANGED_AREA]"
    ```
 
-   The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. A decision binds only after its full record and status are read: one marked superseded binds only what its status leaves active, and a retired one binds nothing. Verify each before injecting it, one command per path:
+   The `path` fields of these replies are the ONLY source of decision file paths; never compose or recall one. A decision binds only after you read its full record and status. A superseded decision binds only what its status leaves active; a retired one binds nothing. Check each path before injecting it, one command per path:
 
    ```bash
    test -f [DECISION_FILE_PATH]
    ```
 
-   A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
+   On a failed check, leave the path out and carry `- decision index lookup failed for [DECISION_ID]` instead.
 
-4. Read the pull request state before stamping the round:
+4. **Stamp and delegate.** Run each command as its own tool call, immediately before delegating.
 
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json state
-   ```
-
-   Set `[PR_OPEN]` to `true` when `state` is `OPEN`, and `false` for `status=no_pr`, `CLOSED` or `MERGED`. An unknown state or a failed read stops delegation. The record's `pr_open` rule in [dev-round.md](../schemas/dev-round.md) owns the validation mode.
-
-   **Stamp the round**, as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure):
+   Read the pull request's state:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
+   .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] --json state
    ```
 
-   Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
+   `[PR_OPEN]` is `true` for `OPEN`, and `false` for `status: no_pr`, `CLOSED` or `MERGED`. An unknown state or a failed read stops delegation.
+
+   Stamp the round as [dev-start.md § 2](dev-start.md#2-delegate) steps 3 to 8 do. Reconcile the standing dev round, mint the round with `begin-round` kind `dev`, and prune it under the cleanup condition. Record the delegation time, write the admission request, and read the near-ceiling lines. Arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure). Where step 2 made more than one group, the `begin-round` request carries `"group": {"n": [N], "of": [GROUPS]}`. An `exception` follows dev-start's rule.
+
+   Write the delegated item set to `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file tool. It is a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one entry per delegated item. Copy `[ITEM_TEXT]` and name `[REACH]` under [dev-round.md § Item text](../schemas/dev-round.md#item-text). Disposition an item with no reach per [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it.
+
+   Decide whether this round may add protected files. [dev-round.md § Protected additions](../schemas/dev-round.md#protected-additions) is the one scope definition; the default is none. Where the list is not empty, pass the exact repository-relative paths as one blank-separated `--adds` value. Render the same list after `Adds:` in the brief: `Adds: tools/one-helper.sh` for one path, `Adds: tools/one-helper.sh skills/x/scripts/check` for two. A path holding whitespace cannot be authorized ([dev-round.md § Item text](../schemas/dev-round.md#item-text)); check for one before you write the line.
+
+   Write the round record:
 
    ```bash
-   .agents/skills/orch/scripts/round-prune [ISSUE_ID]
+   .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
    ```
+
+   A nonzero exit is a refusal or an environment failure, named on stderr: report it and stop. `--issue` is the normalized workflow-state key, the brief's `Artifact Key:`. `--item [N] '[ITEM_TEXT]' '[REACH]'` groups may replace `--items-file` in one command only where every item's text is plain, with no backticks or quotes.
+
+   **Cuts.** When a reviewer or the orchestrator decides a cut, mint a fresh round. Delegate the cut back to the Done-when as its items, and stamp the record with `--cut`:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+   .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json --cut
    ```
 
+   Never improvise a finding-shaped `reach` for a cut item: [dev-round.md § Declared cuts](../schemas/dev-round.md#declared-cuts) states its reach, the cut declaration and its retry rule. Accept the cut round through step 5, and declare a cut only on the round that does the cutting.
 
-   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. Copy `[ITEM_TEXT]` under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
+   `[LABELS]` is the issue's labels as [dev-start.md § 1](dev-start.md#1-determine-agent) renders them, or `none` where the round's key names no issue.
 
-   Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry in the delegation. The key is the one carrier: the artifact's own path is addressed by `dev_round_id`, which the stamp above has already overwritten.
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
-   ```
-
-   Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
-
-   When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
-
-   ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
-   ```
-
-   A nonzero exit names a usage or environment failure. Report it and stop.
-
-   When a reviewer or the orchestrator decides a cut, mint a fresh round id, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`:
-
-   ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json --cut
-   ```
-
-   A cut item's `reach` is the branch this round shrinks — cut items name work, not a finding, so do not improvise a finding-shaped value; `the finding` is on the writer's refusal list and exits 2.
-
-   Accept it through step 5. The cut declaration and retry rule are [dev-round.md § Declared cuts](../schemas/dev-round.md#declared-cuts). Declare a cut only on the round that does the cutting.
-
-   `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
-
-   `[LABELS]` is the issue's labels as [dev-start.md § 2](dev-start.md#2-delegate) renders them, or `none` for a round whose key names no issue.
-
-   ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
+   ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps; the agent owns validate, commit and return.
 
    <delegation_format>
    Follow workflow: .agents/skills/dev/workflows/dev-fix.md
@@ -171,9 +155,13 @@ Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/findin
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    Labels: [LABELS]
+   Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json
    QA: [QA_AGENT]
    Finding occurrences: [UNCHANGED_QUERY_JSON]
    [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
+   [Where step 2 made more than one group: "Group: [N] of [GROUPS]"]
+   [Where N is below GROUPS: "Hand-over: this group may commit its work and write its receipt with --validate handed-over; the last group validates"]
+   [Where the round began with an exception: "Exception: [WORKTREE_PATH]/tmp/round-exception-[ISSUE_ID].json — pass it as --exception-file beside a FAILING run of an excused check"]
    [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 
    Decisions:
@@ -185,88 +173,98 @@ Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/findin
    [FORMATTED_ITEMS]
    </delegation_format>
 
-5. **Accept the round.** Acceptance is a pure function of **A** (the round-scoped artifact) and **B** (git completion), never the return message.
+5. **Accept the round.** Accept from **A**, the round's receipt, and **B**, git, never from the return message.
 
-   **Check A** — two tool calls:
+   **Check A.** Read the round's token, then check its receipt against the step 4 record:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
+   .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /dev_round_id
    ```
 
    ```bash
-   .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
+   .agents/skills/orch/scripts/orch-runtime dev-return --text check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
 
-   `--expect-items-from-round` reads the step-4 record. It requires the artifact's `items[]` to cover that record's set, each item once with no unknowns or duplicates, valid decisions, and non-empty reasoning. Exit 2 means the expected set cannot be established. Never recreate the record after delegation and never fall back to `--expect-items`; mint and delegate a fresh round.
+   `--expect-items-from-round` holds the receipt's `items[]` to the step 4 record ([dev-return.md § Kind rules](../schemas/dev-return.md#kind-rules)). The check refuses a fix receipt checked without it. Exit 2 means the expected set cannot be established: mint and delegate a fresh round. Never recreate the record after delegation, and never fall back to `--expect-items`. The verdict words, and what the check records, are [dev-start.md § Check A](dev-start.md#check-a)'s; a fix round never answers `no-change`.
 
-   **Check B**:
+   **Check B:**
 
    ```bash
    git -C "[WORKTREE_PATH]" status --porcelain
+   ```
+
+   ```bash
    git -C "[WORKTREE_PATH]" log -1 --oneline
    ```
 
-   A `ci` receipt accepts the local edits on the current commit. Required CI remains pending until the published head's run proves it: the merge-group run where the record names `ci-event=merge_group`, as every queue-only change's does, and the pull-request run otherwise, which submit's § 5 wait reads. A red queue run returns the change to its lane under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle. Acceptance starts no wait on the unpublished head.
+   `B = pass` when the worktree is clean and the receipt's fix commit resolves in the log. It also passes when the round applied nothing and made no commit. On `hand-over`, B also needs the receipt's `.commit` to equal HEAD.
 
-   `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or when the round applied nothing and made no commit.
+   A `ci` receipt accepts the local edits on the current commit. Required CI stays pending until the published head's run proves it. Where the run record names `ci-event=merge_group`, as every queue-only change's does, that run is the merge-group run. Otherwise it is the pull-request run that submit's § 5 wait reads. A red queue run returns the change to its lane under the Recovery cycle of [merge-pr.md § 5](merge-pr.md#5-execute-the-merge). Acceptance starts no wait on the unpublished head.
 
-   A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
+   A round that meets the [Stalled round](../references/skill-rules.md#stalled-round) conditions goes to recovery as [dev-start.md § Stalled round](dev-start.md#stalled-round) runs it, whatever B reads. Never nudge or re-message its agent. Every other round takes the table below. Its stages close through [dev-start.md § Close The Round's Stages](dev-start.md#close-the-rounds-stages).
 
-   `dev-artifact-check` records the round end and validation time before B or its reason routes the round.
+| A (verdict) | B (git) | Action |
+|---|---|---|
+| `accept` | pass | **Accept.** First confirm the receipt's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD`; an all-skipped round's `.commit` is the unchanged HEAD. Read the item decisions, commits and validate status from the return where present, else from the receipt. Run [dev-start.md § Close The Round's Stages](dev-start.md#close-the-rounds-stages) with `pass`, then [Store Proposed Rules](dev-start.md#store-proposed-rules) and [Store Near-Ceiling Lines](dev-start.md#store-near-ceiling-lines): a fix round records its own list. → step 6. |
+| `accept-excused` | pass | **Accept** as the `accept` row does, closing with `pass-excused`. Tell the caller the round closed `pass-excused` with its exception file. → step 6. |
+| `hand-over` | pass | Close The Round's Stages with `handed-over`, then Store Proposed Rules and Store Near-Ceiling Lines. → step 6, then the next group. |
+| `accept`, `accept-excused` or `hand-over` | fail | The receipt claims done, but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause. Then re-delegate only the missing step: the commit, or the revert of leftover work. |
+| `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`orch-runtime dev-return --text write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid receipt for THIS round appears. |
+| `wait` | fail | **Not done.** Wait to the deadline, then escalate per [Round Closure](../references/skill-rules.md#round-closure). |
+| `retry` | any | A receipt for THIS round exists but fails a gate. The reply's `reason` names the gate; the reasons below take their own action. A structurally valid receipt with a failing `validate` is final under [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), after any permitted in-round correction and rerun. Close The Round's Stages with `fail`, then Store Proposed Rules and Store Near-Ceiling Lines. Then end the workflow and report, without another validation round. An identity or schema failure gets the `wait` row's report-only nudge where the receipt's `validate` is not `FAILING`. Over a `FAILING` receipt the writer refuses `receipt-exists`. Under a run's name, the nudge asks for the round's next admitted attempt under dev-implement.md § 5, whose receipt lands under its own run id. Under the round's no-run name the receipt is final, and the round closes as a failing `validate` does. |
 
-   | A (verdict) | B (git) | Action |
-   |---|---|---|
-| `accept` | pass | **Accept.** First confirm exact-commit binding: the artifact's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD` (an all-skipped round's `.commit` is the unchanged HEAD). Read the item decisions, commits, and validate status from the return when present, else from the artifact. Run [dev-start.md § Store Proposed Rules](dev-start.md#store-proposed-rules), then [dev-start.md § Store Near-Ceiling Lines](dev-start.md#store-near-ceiling-lines) — a fix round records its own list, so a binary blob moved out of Git stops being carried and a blob pushed into the warn band starts being. → step 6. |
-   | `accept` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
-   | `wait` | pass | Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if the delegation is gone from your context, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
-   | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
-| `retry` | any | An artifact for THIS round exists but fails a gate. The check's `reason` names it. `unapproved_additions` also returns every refused path in `files`; start a fresh round that names each deliberate path in `Adds:`, or order the files cut. For a structurally valid artifact with a failing `validate`, treat that verdict as final under [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate), after any permitted in-round correction and rerun. Run [dev-start.md § Store Proposed Rules](dev-start.md#store-proposed-rules) and [dev-start.md § Store Near-Ceiling Lines](dev-start.md#store-near-ceiling-lines), then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. `comparison_failed` means git cannot compare the round's recorded base commit against HEAD, so the dev agent has nothing to repair; mint a fresh round. `additions_unattributable` means a rebase moved that base off the branch, so the round's additions were never gated and no path is named. A fresh round does not recover the gate — `dev-round-write` stamps its `base_sha` at the rebased HEAD, which already contains anything this round added — so read the blocked round's own commits for paths in [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions), name each deliberate one in the fresh round's `Adds:` line, and cut the rest before delegating it. That `Adds:` line is the authorization itself here, not something the fresh round's gate re-derives from its base, which is why the reading is not optional. The blocked round then closes through the fresh round, as it does for any other retry reason. `mode_mismatch` means the receipt records another validation mode than this round runs, so its pass does not cover the round the way submit reads it; send ONE nudge to validate as [dev-fix.md § 3](../../dev/workflows/dev-fix.md#3-validate-and-commit) starts the run and rewrite the artifact, without re-running the fix. |
+**Retry reasons** with their own action:
 
-6. **Record the outcome** — one write per item, and the item's own text never enters a shell word:
+| `reason` | Action |
+|---|---|
+| `unapproved_additions` | Start a fresh round that names each deliberate path the reply's `files` lists in `Adds:`, or order the files cut. |
+| `comparison_failed` | The dev agent has nothing to repair. Mint a fresh round. |
+| `additions_unattributable` | Settle the paths as [dev-round.md § Protected additions](../schemas/dev-round.md#protected-additions) states. Read the blocked round's own commits, name each deliberate path in the fresh round's `Adds:` line, and cut the rest before delegating it. That `Adds:` line is the authorization itself, so the reading is not optional. The blocked round closes through the fresh round. |
+| `mode_mismatch` | Its pass does not cover the round as submit reads it. Send ONE nudge: validate as [dev-fix.md § 3](../../dev/workflows/dev-fix.md#3-validate-and-commit) starts the run, and rewrite the receipt, without re-running the fix. |
 
-   Write the item's entry to `tmp/state-item-[ISSUE_ID].json` with the harness file tool, one item at a time. Fixed:
+6. **Record the outcome**, one write per item. An item's own text never enters a shell word or `--arg`.
+
+   Write each item's entry to `[WORKTREE_PATH]/tmp/state-item-[ISSUE_ID].json` with the harness file tool, one item at a time. A fixed item:
 
    ```json
    {"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}
    ```
 
-   Escalated, `[OUTCOME]` carrying the item's accepted decision — Blocked → `"blocked"`, Skipped → `"skipped"`; a Skipped item whose disposition is introduced-or-armed, the fix having introduced or armed the defect it names, lands here with outcome `"skipped"` and the orchestrator re-delegates it in the next fix round instead of ending the review on it:
+   An escalated item, `[OUTCOME]` carrying its accepted decision: Blocked → `"blocked"`, Skipped → `"skipped"`. A Skipped item whose disposition is introduced-or-armed lands here with `"skipped"`: the fix introduced or armed the defect it names. The orchestrator re-delegates it in the next fix round instead of ending the review on it:
 
    ```json
    {"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}
    ```
 
-   Then bind that file into the write for the bucket the item lands in. Fixed:
+   Bind the file into the write for the item's bucket. Fixed:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .fixed_items += [$e]'
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-disposition","into":"fixed","drop":["fixed","escalated"],"file":"[WORKTREE_PATH]/tmp/state-item-[ISSUE_ID].json"}'
    ```
 
    Escalated:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items += [$e]'
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-disposition","into":"escalated","drop":["fixed","escalated"],"file":"[WORKTREE_PATH]/tmp/state-item-[ISSUE_ID].json"}'
    ```
 
-   A fixed item's root cause is recorded too, in `pr_comment_review.patched_causes` — the one record [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) reads, whichever loop patched the cause. `pr-review`, `qa-review`, and `review` rounds reach that rule through this step, and a cause missing from it is one the next pass reads as never patched and answers with an ordinary patch round. One entry per fixed item, through a file like the entry above:
+   Each write first removes the item from BOTH buckets, matched on the recorded entry's location and description, then appends its own entry. The item stands in exactly one bucket, once.
+
+   Record each fixed item's root cause in `pr_comment_review.patched_causes`, whichever loop patched the cause. It is the one record [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) reads. `pr-review`, `qa-review` and `review` rounds reach that rule through this step. Write one entry per fixed item to `[WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json`. Copy `[LOCATION]` from the item's header and `[OWNER]` from its `Owner:` line as written; leave out `owner` where the item has no such line:
 
    ```json
    {"cause": "[ONE_LINE]", "commit": "[SHA]", "location": "[LOCATION]", "owner": "[OWNER]"}
    ```
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.patched_causes tmp/patched-cause-[ISSUE_ID].json
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"patched-cause","file":"[WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json"}'
    ```
 
-   Copy `[LOCATION]` from the fixed item's header as written. Copy `[OWNER]` from its `Owner:` line as written; omit the `owner` key when the item has no such line.
+   Then count the round:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"counted","counter":"fix"}'
    ```
-
-   Each write clears the item from BOTH buckets before appending its own entry, matched on the RECORDED entry's (location, description), the § 8 key. One write per item, and the item stands in exactly one bucket, once.
-
-   The entry goes through a file, never `--arg` or `--argjson`.
 
 ## 3. Return
 
@@ -287,4 +285,4 @@ Validate: [status]
 
 </output_format>
 
-**Managed**: return the parsed item decisions, commits, and validation status to the caller.
+**Managed**: return the item decisions, commits and validation status to the caller, naming `pass-excused` or `handed-over` where the round closed with that word.

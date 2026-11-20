@@ -1,0 +1,6 @@
+#!/bin/bash
+# A `kill` for the orch-runtime evidence tests that signals nothing and
+# reports success, so a process the runtime stops by identity stays live
+# through the grace and the stop reads `timeout`, as a process that ignores
+# its signals would read; put ahead of `PATH` for the one run that plants it.
+exit 0

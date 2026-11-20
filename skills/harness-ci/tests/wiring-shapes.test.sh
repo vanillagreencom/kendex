@@ -3,8 +3,9 @@
 # rather than trusted: every workflow expression stays on one line, and the
 # script path they name is the path this package ships.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 
 WIRING="${WIRING_UNDER_TEST:-$TEST_DIR/../references/wiring.md}"
 AGGREGATE_NEEDS="$TEST_DIR/../scripts/aggregate-needs"
@@ -110,7 +111,7 @@ control_parent="$SANDBOX/empty-documented-options"
 control_root="$control_parent/harness-ci"
 mkdir -p "$control_parent"
 cp -R "$TEST_DIR/.." "$control_root"
-for sibling in orch commit-guards review-gate; do
+for sibling in change-scope commit-guards review-gate; do
   cp -R "$TEST_DIR/../../$sibling" "$control_parent/$sibling"
 done
 control_script="$control_root/tests/wiring-shapes-empty-options.test.sh"

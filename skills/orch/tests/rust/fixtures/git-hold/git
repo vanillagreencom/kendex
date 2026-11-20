@@ -1,0 +1,32 @@
+#!/bin/bash
+# A pass-through git for the orch-runtime close rows: it execs the real git,
+# $GIT_REAL, for every call, except that before a `worktree remove` it
+# creates $GIT_HOLD_MARK, where set, and blocks on the FIFO $GIT_HOLD_FIFO
+# until the row releases it, so the close is held alive at its removal with
+# the worktree's acquisition and the signal already written. Once released,
+# it runs the removal unless $GIT_HOLD_SKIP names a file that exists by then,
+# the row's way of killing the close without the removal running after it.
+# Put ahead of PATH for the one run that plants it; the reads before the
+# removal pass straight through.
+prev=""
+held=0
+for arg in "$@"; do
+  if [ "$prev" = "worktree" ] && [ "$arg" = "remove" ]; then
+    held=1
+  fi
+  prev="$arg"
+done
+if [ "$held" -eq 1 ] && [ -n "${GIT_HOLD_FIFO:-}" ]; then
+  [ -z "${GIT_HOLD_MARK:-}" ] || : > "$GIT_HOLD_MARK"
+  # The read-write open never blocks and the read gives up after
+  # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+  [ -p "$GIT_HOLD_FIFO" ] || { echo "git-hold: hold-not-fifo path=$GIT_HOLD_FIFO" >&2; exit 2; }
+  exec 9<>"$GIT_HOLD_FIFO"
+  read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+    || { echo "git-hold: hold-unreleased path=$GIT_HOLD_FIFO bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+  exec 9<&-
+  if [ -n "${GIT_HOLD_SKIP:-}" ] && [ -e "$GIT_HOLD_SKIP" ]; then
+    exit 128
+  fi
+fi
+exec "${GIT_REAL:-git}" "$@"

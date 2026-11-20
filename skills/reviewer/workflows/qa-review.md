@@ -39,7 +39,7 @@ For `needs-ui-review`, judge the view from the set in [ui-screenshots.md § Scre
 
 ## 3. Artifact, Validate, Return
 
-Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `review-artifact-check` the pre-return check. Populate `qa_metadata.[agent_type]` per your agent file. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
+Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `orch-runtime review-artifact check` the pre-return check. Populate `qa_metadata.[agent_type]` per your agent file. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
 
 Send exactly one agent-to-agent message, then go idle:
 

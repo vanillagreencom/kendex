@@ -1,27 +1,23 @@
 # Public kendex settings seeded from installed skill defaults.
 # Skill scripts read this [env] table; process env and .env.local override it.
 # Keep secrets, tokens, and personal overrides in .env.local.
-# Linear credentials: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET in .env.local
-# select the application with the fixed scope read,write,issues:create,
-# comments:create,timeSchedule:write,initiative:read,initiative:write,
-# customer:read,customer:write.
-# LINEAR_API_KEY is the fallback for key-only installs. A token minted from the
-# pair is kept until it expires in a private per-user file outside the checkout.
+# Linear credentials go in .env.local: skills/linear/README.md § Setup.
 
 [env]
 
-# The owner's order for this organization's repositories: Claude CLI, GPT through the Copilot seat, Codex CLI as fallback (Slack1793558900.347579,2026-11-01).
+# The owner's order for this organization's repositories: Claude CLI, GPT through the Copilot seat, Codex CLI as fallback.
 SECOND_OPINION_MODELS = "claude pi-copilot-gpt codex"
 
-# A lane publishes a draft and runs internal review while CI is pending.
-# Every change is queue-only and merges only after its merge-group run
-# passes (docs/decisions/D027-merge-queue-proves-every-change.md).
+# A lane publishes a draft and runs internal review while CI is pending, the
+# order for this repository's queue-only merges
+# (docs/decisions/D027-merge-queue-proves-every-change.md).
 ORCH_PR_ORDER = "push-first"
 
 ORCH_OWNER_ASK_LABEL = "owner-gated"
-# The team every Linear write targets. No default: an empty value refuses
-# writes instead of guessing inside whatever workspace the API key reaches
-# (the create actions still take `--team <name>` per call). Confirm with
+# This checkout's Linear team. No default: with it unset, existing-issue
+# writes route by the issue identifier and run with the cross-team guard
+# inactive, other writes refuse, and reads drop the team filter
+# (skills/linear/SKILL.md § Team Target). Confirm with
 # `linear.sh auth-check --strict`.
 LINEAR_TEAM = "kendex"
 
@@ -39,41 +35,36 @@ LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:hu
 # Empty = guard off.
 LINEAR_REQUIRE_REACH = "1"
 
-# Total review-wait budget in seconds before the on-timeout policy applies;
-# an explicit max_wait argument always wins.
+# Seconds of one review period before the on-timeout policy applies; a
+# PR_REVIEW_WAIT_SECS= prefix on the call wins.
 PR_REVIEW_WAIT_SECS = "900"
 
 # When the review signal never arrives: "block" reports a timeout;
-# "proceed" records a reviewer-down override and moves on, but only with
-# zero unresolved threads — a real comment is never bypassed. Comment-only
-# bots can go silent on a trivial head, so a silent round proceeds rather
-# than stalling the session.
+# "proceed" moves on only where no reviewer engaged and no thread is open
+# (skills/orch/references/settings.md). Comment-only bots can go silent on a
+# trivial head, so a silent round proceeds rather than stalling the session.
 PR_REVIEW_ON_TIMEOUT = "proceed"
-
-# Seconds ci-wait keeps polling before failing when no CI checks registered
-# yet, four polls at its 180 s default interval; raise for approval-gated CI
-# with slow dispatch.
-CI_WAIT_NO_CHECKS_GRACE = "600"
 
 # Max automated ci-fix rounds per PR before a human takes over.
 CI_FIX_MAX_CYCLES = "6"
 
-# Max internal re-review cycles per issue before the verdict pass; the
-# re-review re-entry raises rereview_cycles and refuses at this, so the number
-# set is the number of re-entries allowed: one fix round, one re-review of it.
+# Max internal re-review cycles per issue before the verdict pass: "1" is one
+# fix round and one re-review of it (skills/orch/references/settings.md).
 REVIEW_MAX_CYCLES = "1"
 
-# Max external review rounds on an open PR. At or past it a finding gets a
-# disposition and no fix push, except a defect the diff introduces or arms.
+# Max external review rounds on an open PR; at or past it the cap rule of
+# skills/orch/workflows/review-pr-comments.md § 6.1 applies.
 REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 
 # Total concurrent agent-session budget, counting the primary; "0" =
-# unlimited. Reviews run in waves when the reviewer set exceeds free slots.
-# On the Codex runtime, set the cap `spawn-adapter slots` reports.
+# unlimited. How reviews fit it:
+# skills/orch/references/skill-rules.md § Reviewer persistence is budget-conditional.
+# On the Codex runtime, set the effective_cap that
+# `agent-runtime subagent room --harness codex` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
-# Who the overseer is talking to. "ceo" asks only about outcomes and decides
-# the rest itself; "engineer" keeps the package's original wording.
+# Who the overseer is talking to: "ceo" or "engineer"; what each value
+# means: skills/orch/references/communication-modes.md.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
 ORCH_REPORT_QUIET_HOURS = "21-8"
@@ -82,33 +73,27 @@ ORCH_REPORT_QUIET_HOURS = "21-8"
 ORCH_DECISION_MODE = "auto-recommended"
 
 # "ask" presents the merge decision; "auto" merges once every gate is green.
-# MERGE_READY = false never auto-merges.
 # values: auto | ask
 ORCH_MERGE_AUTONOMY = "auto"
 
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
 
+# Minutes between two overseer status reports.
+ORCH_REPORT_EVERY_MINUTES = "120"
+
 # Rebuild the installed CLI only when the synchronized range changes a build
 # input, with the commit it was built from in its --version. tools/harness-smoke
 # reads that commit, and its BUILD_INPUTS must name the same paths as this diff.
 ORCH_POST_MERGE_CMD = "if git diff --quiet $ORCH_POST_MERGE_BEFORE $ORCH_POST_MERGE_AFTER -- crates/ Cargo.toml Cargo.lock rust-toolchain.toml .cargo; then exit 0; else rc=$?; [ $rc -eq 1 ] || exit $rc; fi; KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli && cp -f target/release/kendex ~/.cargo/bin/kendex"
 
-# Seconds per brief-delivery verification pass on tmux handoff lanes.
-ORCH_TMUX_VERIFY_SECS = "15"
+# Seconds the runtime's launch waits for a harness to come up in its window
+# before it records the launch unconfirmed; its other confirmation reads share
+# the bound.
+AGENT_RUNTIME_TMUX_VERIFY_SECS = "15"
 
-# Seconds a hosted lane waits for its remote shell prompt after the ssh line is
-# typed, and a claude-cloud launch for its session URL. Its own bound, not the
-# one above: it measures a route coming up and another machine's login, or a
-# cloud machine provisioned. A bound spent with ssh still on the pane interrupts
-# that client and waits the bound again for the pane's own shell; the ssh line
-# is typed again only once that shell is back, because the pane has to be out
-# of ssh before a line pasted into it is run rather than typed into the stalled
-# session. The refusal counts the ssh lines typed in its attempts field.
-ORCH_LANE_SSH_PROMPT_SECS = "60"
-
-# Long provider processes lane-host runs at once, per home: every overseer and
-# checkout on the machine shares the count.
+# Long provider processes the runtime runs at once, per home: every overseer
+# and checkout on the machine shares the count.
 ORCH_LANE_HOST_MAX_CALLS = "4"
 
 # Short provider calls have their own per-home cap, so a held create cannot
@@ -116,29 +101,29 @@ ORCH_LANE_HOST_MAX_CALLS = "4"
 ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
 
 # Seconds a short provider call at the ORCH_LANE_HOST_SHORT_MAX_CALLS cap
-# waits for a slot before it refuses as lane-host-busy with exit 69.
+# waits for a slot before it refuses as host-busy.
 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
 # Claude accounts with room, then Codex; the shared Copilot seat is the last choice.
 ORCH_LANE_PREFERENCE = "claude:standard:high,codex:gpt-6.2-sol:high,pi:github-copilot/gpt-6.2-sol:high:last"
 
-# Accounts a cloud-session pick may hand a kendex lane. An entry records both
-# one-time claude.ai setups of that account on kendex, the cloud environment's
-# setup script and repository access; `lanes --help` § pick states what an
-# entry attests. The saved setup line is fail-open: it ends with
+# Accounts a cloud-session pick may hand a kendex lane: each entry states the
+# repository the account was given access to, and the pick refuses any other
+# account as cloud-repo-unset. The saved setup line is fail-open: it ends with
 # `|| echo kendex-install-failed`, so a cloud session can start without
 # kendex on PATH.
 ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/kendex,4claude=vanillagreencom/kendex,10claude=vanillagreencom/kendex,1claude=vanillagreencom/kendex,7claude=vanillagreencom/kendex,claude=vanillagreencom/kendex"
 
-# Seconds a lane-host call at the ORCH_LANE_HOST_MAX_CALLS cap waits for a
-# slot before it refuses as lane-host-busy with exit 69.
+# Seconds a long provider call at the ORCH_LANE_HOST_MAX_CALLS cap waits for
+# a slot before it refuses as host-busy.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # Maximum Kendex lanes held by this overseer.
 ORCH_OVERSEER_LANES = "20"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
-# OWNER/REPO; open-terminal refuses a fleet launch from any other.
+# OWNER/REPO; the launch's refusal of a checkout of any other:
+# skills/orch/references/lane-directive.md § Launch gate.
 ORCH_CONNECTED_REPOS = "vanillagreencom/kendex-web"
 
 # The turn-end hook uses this pgrep -f pattern to find the session's wake process.
@@ -147,47 +132,49 @@ ORCH_WAKE_PROCESS = ""
 # The turn-end hook prints this command to start the session's missing wake process.
 ORCH_WAKE_START = ""
 
-# `lanes pick` refuses an account at or above 95 percent used on the window it
-# judges, the binding bucket or with --model that model's window.
-ORCH_LANE_MAX_PCT = "95"
+# The account folders the account reading lists, each relative to the home folder.
+AGENT_RUNTIME_ACCOUNT_DIRS = ".claude:.1claude:.2claude:.3claude:.4claude:.5claude:.6claude:.codex:.3codex:.1copilot"
 
-ORCH_LANE_CODEX_CREDIT_FLOOR = "0"
+# The orch account judge refuses an account at or above 95 percent used on the
+# window that binds the lane: with --native-model the fullest of the plan
+# windows and that model's own window, else the account's binding bucket.
+AGENT_RUNTIME_ACCOUNT_MAX_PCT = "95"
 
-ORCH_OVERSEER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium,codex:standard:medium"
+AGENT_RUNTIME_CODEX_CREDIT_FLOOR = "0"
+
+AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium,codex:standard:medium"
 
 # The overseer moves before its account walls when its current binding bucket
-# reaches 5 percent headroom, its projected wall is within 20 minutes, or the
-# qualifying-account trigger fires by the rule oversee-succeed --help states.
-ORCH_OVERSEER_HEADROOM_PCT = "5"
+# reaches 5 percent headroom or its projected wall is within 20 minutes. A
+# seat account (one an overseer or Jarvis session runs on) keeps this headroom
+# for its session; skills/orch/references/settings.md states how a worker's
+# pick and the lanes on it keep it.
+AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT = "5"
 ORCH_OVERSEER_WALL_MINUTES = "20"
-ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
-# A lane whose account reaches 97 percent used is marked, and the overseer asks
-# it for a handoff at the next safe point.
+# A lane whose account reaches 97 percent used is marked for handoff, which
+# follows skills/orch/references/skill-rules.md § Round Closure.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 ORCH_HANDOFF_CONTEXT_PCT = "90"
 ORCH_HANDOFF_CONTEXT_TOKENS = "650000"
 
-# A walled lane is relaunched by oversee-watch on an account with headroom for
-# its model. The notice needs no operator launch action.
+# The watch relaunches a lane its account walled where it can; when it does,
+# and what it reports:
+# skills/orch/references/oversee-events.md § Event kinds, lane-relaunched and usage-limit.
 ORCH_WALL_RELAUNCH = "auto"
 
-# Lane pane output. No person reads a lane's pane: the overseer learns a lane's
-# state from lane-mail, the lane status file and what the watch reads off the
-# pane, so narration, recaps and closing summaries are output tokens nobody
-# spends.
-# "quiet" prints one line per completed step and writes each <output_format>
-# block the lane fills itself to a file instead: the artifact that step owns,
-# or one of its own under the worktree tmp/. "normal" prints every block as
-# written and any other value is quiet. Harness output is never suppressed, so
-# the watch's marker reads are unchanged. The destinations in full, and what
-# the mode never touches: skills/orch/references/skill-rules.md, Lane Output.
+# Lane pane output. "quiet" prints one line per completed step and writes
+# each <output_format> block the lane fills itself to a file instead;
+# "normal" prints every block as written; any other value refuses the launch
+# as setting-invalid. Why
+# no lane narrates, each destination and what the mode never touches:
+# skills/orch/references/skill-rules.md, Lane Output.
 ORCH_LANE_OUTPUT = "quiet"
 
 # Disk use, in percent of the volume holding a lane worktree's target/, at or
-# past which round-prune removes that worktree's Cargo output before a dev
-# round. Below the mark on a 30 GB sandbox more than 7.5 GB is free, above
+# past which the prune-round request removes that worktree's Cargo output at a
+# round's start. Below the mark on a 30 GB sandbox more than 7.5 GB is free, above
 # GUARD_MIN_FREE_GB, so a round the prune skips still passes tools/guard's
 # start floor and validates warm; one full run writes about 3.0 GiB.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
@@ -196,32 +183,32 @@ ORCH_ROUND_PRUNE_DISK_PCT = "75"
 # package command, model, room check and inline diff. The keys below are
 # kendex's differences:
 # the claude and codex entries pin their model and run on a fleet seat with
-# room. The checks assume the orch fleet's accounts, which lanes pick
-# measures; a contributor off the fleet overrides them in .env.local. Each
-# check runs under ORCH_LANE_HOST=local: the reviewer runs on this machine's
-# login, and a lane-host provider's reading of an account would judge a copy
-# it never spends.
+# room. The checks assume the orch fleet's accounts, which agent-runtime's
+# account judge measures with the lanes orch runs on each counted; a
+# contributor off the fleet overrides them in .env.local. The judge reads this
+# machine's own login, the one the reviewer runs on, never a lane-host
+# provider's copy.
 
 # Opinions a review collects; 2+ unions distinct models on one diff.
 SECOND_OPINION_COUNT = "1"
 
 # Claude pinned to Opus 5.5, where the package default takes the standard tier.
 SECOND_OPINION_CLAUDE_CMD = "claude -p --output-format json --no-session-persistence --model claude-opus-5-5 --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
-# A Claude review runs on the seat lanes pick finds room on; a walled seat is skipped.
-SECOND_OPINION_CLAUDE_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness claude --model claude-opus-5-5"
+# A Claude review runs on the seat the account judge finds room on; a walled seat is skipped.
+SECOND_OPINION_CLAUDE_ROOM_CMD = ".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness claude --native-model claude-opus-5-5"
 
 # Codex pinned to GPT-6.2 Sol, where the package default takes Codex's own.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.2-sol -s read-only -c model_reasoning_effort=xhigh --disable hooks --ephemeral"
-# A Codex review runs on the seat lanes pick finds room on, as a codex lane
-# would; a walled seat is skipped.
-SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness codex --model gpt-6.2-sol --binding-floor"
+
+# A Codex review runs on the seat the account judge finds room on, as a codex
+# lane would.
+SECOND_OPINION_CODEX_ROOM_CMD = ".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness codex --native-model gpt-6.2-sol --binding-floor"
 
 # Seconds to wait for the external CLI.
 SECOND_OPINION_TIMEOUT = "1080"
 
-# Home for review/audit records written without --output; a directory the
-# script CREATES is seeded with a "*" .gitignore (a pre-existing one is
-# left alone — ignore it yourself).
+# Home for review/audit records written without --output; what the script
+# writes into a directory it creates: `second-opinion --help`.
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
 # Repo instruction files appended to the review prompt (repo-rule lens).
@@ -242,11 +229,14 @@ GITHUB_STANDARD_BOT_REVIEW = "on"
 REVIEW_GATE_STANDARD_QUEUE_BYPASS = ""
 REVIEW_GATE_STANDARD_CHECKS_BYPASS = ""
 
-# This repository sets no HARNESS_CI_PER_PUSH_REASON, so change-class
-# answers every change queue-only: pr-merge never takes the admin route,
-# and a change merges only after its merge-group run
-# passes (docs/decisions/D027-merge-queue-proves-every-change.md).
-# HARNESS_CI_QUEUE_PATHS is read only once a reason is set.
+# This repository sets no HARNESS_CI_PER_PUSH_REASON, so every change is
+# queue-only (docs/decisions/D027-merge-queue-proves-every-change.md); what a
+# reason would change: skills/harness-ci/README.md.
+
+# Product content a user reads or accepts: the authoring reference the app
+# compiles in, and the Terms and Privacy Policy the first-run accept step
+# records. An edit to one answers standard at any size, never a narrow class.
+HARNESS_CI_STANDARD_PATHS = "docs/authoring/README.md docs/legal/*"
 
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
@@ -266,13 +256,12 @@ DEV_VALIDATE_CMD = "base=$(.agents/skills/orch/scripts/resolve-base-branch .) &&
 # A full run with CARGO_INCREMENTAL=0 writes one artifact set. Measured from a
 # clean target/ at rustc 1.96.1, its test, clippy and doc invocations wrote
 # 2.7 GiB and the two cross-target checks 0.3 GiB; the floor is twice that.
-# The recorded 20 GB target/ was incremental caches and superseded artifacts,
-# which the round-start prune at ORCH_ROUND_PRUNE_DISK_PCT bounds.
+# A target/ past one artifact set holds incremental caches and superseded
+# artifacts, which the round-start prune at ORCH_ROUND_PRUNE_DISK_PCT bounds.
 GUARD_MIN_FREE_GB = "6"
 
 # The free space a full run needs at its start and has left at its end, for the
-# validation log, sentinel, and shell operations. This floor stays far above
-# the recorded 708 KiB case.
+# validation log, sentinel, and shell operations.
 GUARD_EXHAUSTED_FREE_MB = "512"
 
 # A review-fix round validates its own changes: the default rules, cargo
@@ -282,29 +271,31 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 # the working-tree bot-instructions check, the decision-ID check, the
 # free-space floor above and the class lane selection.
 # A restack also runs it, as skills/orch/workflows/merge-pr-restack.md sets out.
-# Submit requests CI validation. CI runs the selected lanes and the
-# decision-ID check, and the merge waits on the merge-group run.
+# CI runs the selected lanes and the decision-ID check, and the merge waits
+# on the merge-group run.
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
-# Preview the same suite selection before launching validation. An all-suite
-# pre-open run uses this command's scoped route; CI holds the full record.
+# Preview the same suite selection before launching validation; how a run
+# uses it: `orch-runtime validate entry --help`. CI holds the
+# full record.
 DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; then branch=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$branch) || exit; fi; tools/guard --selection --range $base"
 
 # The required CI context runs the tools/guard lanes through tools/ci-job-set.
-# Every kendex change is queue-only, so a round that leaves its validation to
-# this check records the merge-group run as its proof.
+# Every kendex change is queue-only
+# (docs/decisions/D027-merge-queue-proves-every-change.md), so a round that
+# leaves its validation to this check records the merge-group run as its
+# proof.
 DEV_VALIDATE_CI_CONTEXT = "CI"
 
-# The prefix tools/guard prints each finding with. A finding-free timeout lets
-# dev-validate-run answer a later run over no fewer paths without running again.
-# Separately, --last-pass may supply a finding-free timeout or unavailable-host
-# no-verdict run's tree to restack-skip. Neither supplies a passing verdict.
-DEV_VALIDATE_FINDING_PREFIX = "guard: "
+# Whether a red merge group's failed checks are ones the change's own paths
+# select, as the queue wait reads them on an ejection: tools/ci-reach maps
+# each check to the tools/ci-job-set lane or shard that runs it.
+QUEUE_WAIT_REACH_CMD = "tools/ci-reach"
 
-# The bound on either run, in whole seconds. Past it the run is signalled,
-# killed outright ten seconds later, and records no-verdict: neither a pass nor
-# a failure. The dev agent's wait is derived from it.
-DEV_VALIDATE_TIMEOUT_SECS = "3600"
+# The prefix tools/guard prints each finding with; a run whose log holds no
+# line with it is finding-free, and what that run may supply:
+# skills/orch/references/artifact-checks.md.
+DEV_VALIDATE_FINDING_PREFIX = "guard: "
 
 # Whether `tools/guard --full` runs the macOS and Windows cross-target checks
 # and cargo doc: "run" runs them unless the branch provably touched no crate,
@@ -314,9 +305,9 @@ DEV_VALIDATE_TIMEOUT_SECS = "3600"
 # GUARD_FULL_CROSS_DOC=ci in .env.local or its environment.
 GUARD_FULL_CROSS_DOC = "run"
 
-# The repo-root executable the guard chain runs last, after doc-limits, preflight,
-# the selected review-file check and the commit-guards batch. tools/guard holds this repository's
-# own scans and compile checks for changed crates or UI files.
+# The repo-root executable the commit-guards pre-commit chain runs last
+# (skills/commit-guards/SKILL.md). tools/guard holds this repository's own
+# scans and compile checks for changed crates or UI files.
 COMMIT_GUARDS_PRE_COMMIT_LOCAL = "tools/guard"
 
 # The paths tools/guard reads when the chain runs it, so the chain runs it only
@@ -331,9 +322,8 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = "tools/* crates/* ui/* skills/* hooks/* a
 
 # The fragment scope of the changelog-entries lane. The two-segment glob
 # keeps changelog.d/README.md out: its bullets document the format and are
-# not entries. Catalog content uses no kendex release fragment.
-# COMMIT_GUARDS_CHANGELOG_RECORD names the combined program release notes.
-# Ordinary checks read that record as evidence for a configured version bump.
+# not entries. Which content writes a fragment: AGENTS.md § Conventions; the
+# record the fragments collate into: skills/commit-guards/SKILL.md.
 COMMIT_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 
 # The app version equals the workspace version (crates/cli/tests/compat.rs).
@@ -345,8 +335,8 @@ COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "crates/app/tauri.conf.json pi-extension
 COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = ""
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg
-# lane: crates/ and ui/ are what a consumer sees. [no-changelog] in the
-# subject is the escape for a change none of them notices.
+# lane: crates/ and ui/ are what a consumer sees. The escape for a change no
+# consumer notices: AGENTS.md § Conventions.
 COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "crates/* ui/*"
 
 # md-refs checks every configured document at every push, even one whose
@@ -370,9 +360,9 @@ ORCH_STATE_DIR = "tmp"
 
 # ── Worktrees ────────────────────────────────────────────────────────────
 # What a fresh issue worktree gets from this checkout: only paths git does
-# not carry. An entry does nothing when git carries every path under it, and
-# links the untracked children when it does not. The harness trees (.agents,
-# .claude, .codex, .pi) are committed whole, so a worktree gets them from its
+# not carry, by the rule of skills/worktree/README.md § Setup. The harness
+# trees (.agents, .claude, .codex, .pi) are committed whole, so a worktree
+# gets them from its
 # own branch. A render installed in the main checkout and left uncommitted is
 # deliberately not linked in: a worktree's harness matches its branch, and
 # commit the render to hand it to every worktree. A single tracked FILE is
@@ -395,11 +385,9 @@ WORKTREE_MKDIRS = "tmp"
 # worktree without the store reds guard on its first commit wherever tsc,
 # biome and vitest are not installed globally — the normal case, not a
 # guarantee the code makes. The link shares the main checkout's real install
-# (npm — ui/package-lock.json), and worktree setup re-creates it on every
-# pass, replacing anything materialized at this path. So a ui/ dependency
-# change is made with the branch checked out in the MAIN checkout, where `npm
-# ci --prefix ui` rebuilds the real store from the changed manifests — never
-# in a linked worktree, whose install would write through the link.
+# (npm — ui/package-lock.json), so a ui/ dependency change follows
+# AGENTS.md § Commands: an install in a linked worktree would write through
+# the link.
 # .gitignore's bare `node_modules` pattern covers the symlink.
 WORKTREE_SYMLINKS = ".env.local .cache ui/node_modules"
 
@@ -416,13 +404,12 @@ KENDEX_GITHUB_AUTH_TIMEOUT = "10"
 # Seconds a single `pr-view` read may take.
 KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
 
-# Path to the worktree CLI `open-terminal` drives. Empty resolves the
-# installed worktree skill's `scripts/worktree`; a value that is not
-# executable stops the launch with that path named.
+# Path to the worktree CLI the orch runtime drives. Empty resolves the
+# installed worktree skill's `scripts/worktree`.
 WORKTREE_CLI = ""
 
-# A file a Jarvis session touches while it answers the overseer. While it is
-# younger than SLACK_JARVIS_SESSION_MAX_AGE, `slack listen --status` shows held-by=jarvis.
-# skills/slack/README.md § The Jarvis session hold defines the hold and resume. Empty: no hold.
+# A file a Jarvis session touches while it answers the overseer; the hold it
+# sets and its resume: skills/slack/README.md § The Jarvis session hold.
+# Empty: no hold.
 SLACK_JARVIS_SESSION_FILE = "~/.fleet/master-live"
 SLACK_JARVIS_SESSION_MAX_AGE = "1800"

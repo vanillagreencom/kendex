@@ -1,6 +1,6 @@
 # Start Session Workflow (Worktree)
 
-The full session from inside a worktree: implement → publication and review in the order from § 2.1 → finalize.
+The whole item session inside its worktree: open the session, implement, publish and review in the order § 2.1 reads, then finalize.
 
 | Command | Flow |
 |---------|------|
@@ -9,132 +9,138 @@ The full session from inside a worktree: implement → publication and review in
 
 ## 1. Open The Session
 
-1. **Write the status file.** In a lane whose brief names a status file, `tmp/lane-status-[ISSUE_ID].md`, write it before this section's first command, and rewrite it at each step change, holding what the brief names.
+1. **Write the status file.** In a lane whose brief names a status file, `tmp/lane-status-[ISSUE_ID].md`, write it before this section's first command. Rewrite it at each step change with what the brief names.
 
-2. **Resolve identity.** Take `[ISSUE_ID]` from the argument, or from the branch:
+2. **Resolve the item.** Take `[ISSUE_ID]` from the argument, or from the branch:
 
    ```bash
    .agents/skills/orch/scripts/git-context issue-from-branch .
    ```
 
-   Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to `git-context repo-root .`.
+   Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). `[WORKTREE_PATH]` is what `git-context repo-root .` prints.
 
-3. **Resume from a handoff.** Run [start.md](start.md) § 0 for `[ISSUE_ID]`: its `handoff-standing` read, its stop-and-report rule, and its `handoff-resume` stamp. A `none` verdict → step 4. A stamped record replaces the rest of this file: take step 6's existing-state branch and its tier write, then continue from the first entry of the record's `remaining` list. A workflow that runs this § 1, [small.md](small.md) § 1, names its own continuation.
+3. **Resume from a handoff.** Run [start.md](start.md) § 0 for `[ISSUE_ID]`: its `handoff-standing` read, its stop-and-report rule and its `handoff-resume` stamp. `none` → step 4. A stamped record replaces the rest of this file. Take step 6's existing-state branch and its tier write, then continue from the first entry of the record's `remaining` list. A workflow that runs this § 1, such as [small.md](small.md) § 1, names its own continuation.
 
-4. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
+4. **Refuse what is not one PR's work.** **Linear only**, before any state exists. Apply the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+   .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
    ```
 
-   A Verifying item stops development preparation here. Its live readings belong to the overseer. A container or a blocked item STOPS here without leasing or initializing anything. A container: list its unblocked children and say this worktree should not exist for it. A blocked item: name the live blockers.
+   A Verifying item stops development preparation here. Its post-merge readings are the overseer's ([verify.md](verify.md)). A container or a blocked item stops here, with nothing leased or initialized. For a container, list its unblocked children and say this worktree should not exist for it. For a blocked item, name the live blockers.
 
-5. **Claim the worktree.** **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
+5. **Claim the worktree.** **Skip if** `[WORKTREE_PATH]` is the main checkout, which the guard refuses.
 
    ```bash
    .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID] --adopt
    ```
 
-   `--adopt` takes over the lease the session-start hook took under this session's environment owner. Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. A flock-less host still serializes through the guard's exclusive-file mutex; exit 1 means the guard itself failed — stop and read its message, never continue unguarded.
+   Pass no `--repo`. Exit 75 means another session holds the lease: coordinate with that owner and go no further. Exit 1 means the guard itself failed: stop and read its message. Never continue unguarded.
 
-6. **Initialize state unless it exists.** `init` overwrites, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
+6. **Create the record unless it stands.** Read whether it stands, and the branch:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+   .agents/skills/orch/scripts/orch-runtime state exists --item [ISSUE_ID]
+   ```
+
+   ```bash
    .agents/skills/orch/scripts/git-context branch [WORKTREE_PATH]
    ```
 
-   `exists` false → initialize:
+   `[BRANCH]` is that branch output. `result.exists` false → create the record:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH]"
+   .agents/skills/orch/scripts/orch-runtime state init --item [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH]"
    ```
 
-   `exists` true → keep the state and record where this session runs:
+   `result.exists` true → keep the record and write where this session runs:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] worktree "[WORKTREE_PATH]"
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] branch "[BRANCH]"
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","worktree":"[WORKTREE_PATH]","branch":"[BRANCH]"}'
    ```
 
-   `[BRANCH]` is the `git-context branch` output.
-
-   Record the tier this session runs at. It lifts any bound a `small` run left in the state; [small.md](small.md) § 1 records `small` after this step:
+   Record the tier this session runs at, which lifts any bound a `small` run left on the record:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier standard
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"standard"}'
    ```
 
-7. **Gate on base freshness.** Every route into a worktree lands here, fresh or reused, except a handoff resume (step 3):
+7. **Gate on base freshness.** Every route into a worktree reaches this step, fresh or reused, except a handoff resume (step 3):
 
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
    ```
 
-   - Exit 0 → § 2. On a merge-queue base whose rules demand no up-to-date branch, a branch behind it that merges cleanly is fresh; the JSON's `reading` names what decided (`base-freshness --help`).
-   - Exit 4 → rebase through the guarded restack, which rebases a branch at its published head too, then re-run the gate; it must exit 0 before § 2:
+   - Exit 0 → § 2. `base-freshness --help` states what reads as fresh.
+   - Exit 4 → rebase through the guarded restack, which also rebases a branch at its published head. Then run the gate again; it must exit 0 before § 2:
 
      ```bash
      .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --restack
      ```
 
-   - Exit 1, or a restack that cannot complete → `worktree restack abort [ISSUE_ID]` where it paused, report the divergence and stop. Never review on an unverified base.
+   - Exit 1, or a restack that cannot complete → run `worktree restack abort [ISSUE_ID]` where it paused, report the divergence and stop. Never review on an unverified base.
 
 ## 2. Implement
 
 1. **Run Workflow**: `⤵ workflows/dev-start.md § 1-4 → § 2 step 2` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
-2. Parse the return: Branch, Commit, QA, Validate, Summary (the field names dev-implement emits).
-3. § 3 requires committed clean work: `HEAD` advanced from the pre-dev SHA, the returned commit in `HEAD` history, and `git status --porcelain` empty. Any failure re-delegates the exact missing step under [Delegation](../references/skill-rules.md#delegation). Never review or submit a dirty worktree.
-4. Dev persistence for § 3 fix cycles follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle). § 5.4 retires the remaining agent.
+2. Parse the return's `Branch`, `Commit`, `QA`, `Validate` and `Summary` lines, the fields dev-implement returns. Where the round closed `no-change` or `pass-excused`, dev-start's managed return also names that word.
+3. **A `no-change` return** ends the item here, with no review, publication or merge. The round's acceptance closed it `no-change` and posted the comparison as the item's Completion Summary ([dev-start.md](dev-start.md) § Close The Round's Stages).
+
+   **Linear only**: read the item's Done-when boxes with `linear.sh issues get [ISSUE_ID]`. Write `[WORKTREE_PATH]/tmp/no-change-evidence-[ISSUE_ID].md` with the harness file tool: one `N: [TEXT]` line per box the comparison meets, where `[TEXT]` names the Completion Summary comment and its finding. Then complete the item:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh issues complete [ISSUE_ID] --done-when-met [N,...] --evidence-file [WORKTREE_PATH]/tmp/no-change-evidence-[ISSUE_ID].md
+   ```
+
+   An item with no Done-when boxes omits both flags. A refusal stops the session: report its line and stop.
+
+   **GitHub only**: the acceptance posted the comparison on the issue and closed it as completed. Where its reply's `issue.closed` reads anything but `completed`, the issue is open: run the acceptance again through [dev-start.md](dev-start.md) § Close The Round's Stages, which closes it without a second comment.
+
+   Then run § 5.4 and end.
+
+4. Any other return, `pass-excused` among them, needs committed, clean work: dev-start § 3's Check B passed, the returned commit in `HEAD`'s history, and an empty `git status --porcelain`. On any failure, delegate the exact missing step again under [Delegation](../references/skill-rules.md#delegation). Never review or submit a dirty worktree.
+5. The dev agent stays for § 3's fix rounds under [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle). § 5.4 retires it.
 
 ### 2.1 Open Early
 
-With `ORCH_DELIVERY=push-base`, `pr-order` returns `review-first`. Continue through internal review before publication.
-
-Read the consumer's publication order through `pr-order --help`:
+Read the consumer's publication order (`orch-runtime pr order --help`):
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-order [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime pr order [WORKTREE_PATH]
 ```
 
-Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
+Bind `[ORDER]` from its `pr-order=[ORDER]` line. On a refusal, report its line and stop. Record the order:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order [ORDER]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"order","order":"[ORDER]"}'
 ```
 
-All orders end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
+Every order ends at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
 
-- `review-first` → the review step. A non-zero exit takes this row and reports its `pr-order-error:` line once.
-- `push-first` → the same early submit and existence check as `open-first` below. Submit creates a draft and leaves auto-merge unarmed. Its `ci` record accepts completed local edits with required CI pending. After the successful existence check, read `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state,headRefOid` and bind the open PR's head as `[HEAD_SHA]`; a failed read stops this pass. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing).
-
-  **Push-first first head.** Request Copilot before entering the review step:
+- `review-first` → the review step.
+- `open-first` → `⤵ workflows/submit-pr.md § 1-2` with context `worktree`, `lifecycle: "managed"`, `issue_id`. It pushes the commit § 2 validated and opens a pull request, not a draft. Confirm the pull request exists:
 
   ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
+  .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] --json number,state
   ```
 
-  Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass with no request record. Then record the head:
+  An open pull request → the review step, which reviews the pushed head. Its fix-round commits stay local until § 4 pushes them.
+
+- `push-first` → the same submit as `open-first`. It creates a draft and leaves auto-merge unarmed. Confirm the pull request and read its head:
 
   ```bash
-  .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'
+  .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] --json number,state,headRefOid
   ```
 
-  Continue to the review step. Keep `pr_order` at `push-first` and the lane's `Review: pending` line through internal fix rounds: it holds overseer approval, and submit § 2 step 5 arms nothing. The passing review and submit publish the combined fixes and request each unrecorded head.
+  Bind the open pull request's head as `[HEAD_SHA]`, and bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). **Push-first first head**: before the review step, run [the review call](../references/gates.md#the-review-call) once from `[WORKTREE_PATH]` with `[MARK_READY]` `true`. It marks the draft ready and settles the head's Copilot request. Route its `request` per [Copilot requests](../references/gates.md#copilot-requests). A refusal or an `unreadable` reply stops this pass; the next pass runs the call again. A `pending` reply reading `ready-head-moved` runs the call again on the new head. Then take the review step. Keep `pr_order` at `push-first` and the lane's `Review: pending` line through the internal fix rounds.
 
-- `open-first` → `⤵ workflows/submit-pr.md § 1-2` with context `worktree`, `lifecycle: "managed"`, `issue_id`. It pushes the commit § 2 validated and opens a pull request, not a draft, so Copilot reviews it while the review step runs; the `open-first` recorded above keeps its § 2 step 5 from arming it. Then confirm the pull request exists:
+For either early order, a failed submit return, a `no_pr` status or a read error means nothing opened to review. Record the review-first order:
 
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state
-  ```
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"order","order":"review-first"}'
+```
 
-  An open pull request → the review step, which reviews the pushed head; its fix round commits stay local until § 4 pushes them. A failed submit return, a `no_pr` status or a read error opened nothing to review on. Record the review-first order:
-
-  ```bash
-  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order review-first
-  ```
-
-  Then report once that the early open failed, with the line submit-pr or this read printed, and take the `review-first` row.
+Then report once that the early open failed, with the line submit-pr or the read printed, and take the `review-first` row.
 
 ## 3. Review
 
@@ -142,51 +148,53 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
 
 ## 4. Submit
 
-Before submit-pr can arm the PR, move a Linear development item to In Review. Read the item live first. A Done or Verifying item skips this mutation. With `pr` delivery it continues through the existing merged-PR route in merge-pr. This state write belongs before arming because an armed PR can merge while submit-pr runs.
+**Linear only.** Before submit-pr can arm the pull request, move the development item to In Review. Read the item live first. A Done or Verifying item skips the move; with `pr` delivery it continues through merge-pr's merged-PR route.
 
-In the same step, read the item's Done-when boxes against the accepted development return. A box whose actual named evidence only a deployment, installation or live use can give, such as a real Pi create/relaunch sample, is a post-merge box. An empty listing or other branch output does not substitute for it. Rewrite it on the item in the form of project-management's SKILL.md § Disposition (`Post-merge:`, `Where:`, `Why after merge:`, `Trigger:` and `Deadline:`) before submit-pr arms, so the merged item reads Verifying rather than waiting for this lane to repair the checklist. Leave branch-provable boxes unticked: merge-pr records their proof after merge.
+In the same step, read the item's Done-when boxes against the accepted development return. A post-merge box is one whose named evidence only a deployment, installation or live use can give, such as a real create or relaunch sample. An empty listing or other branch output does not stand in for it. Before submit-pr arms, rewrite each post-merge box on the item in the form of the project-management skill's SKILL.md § Disposition (`Post-merge:`, `Where:`, `Why after merge:`, `Trigger:` and `Deadline:`), so the merged item reads Verifying. Leave branch-provable boxes unticked. Their proof stands in the pull request body's `## Done-when evidence` section before arming.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
 ```
 
-**GitHub** skips both Linear commands. A failed live read stops this state step.
+A failed live read stops this step.
 
-**Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`. After an `open-first` § 2.1 this pass updates the open pull request: its § 2 step 1 pushes § 3's fix round with the fixes for Copilot's threads in one push, then writes § 3's verdict line and routes the pushed head, and its step 5 arms the head once § 3 has returned.
+**Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 
 ## 5. Finalize
 
-After successful `push-base` delivery, submit-pr § 2.1 already completed the tracker and sent the pushed-commit notice. Run § 5.4, then end. Skip this section's PR stop, summaries and merge steps.
+After a successful `push-base` delivery, submit-pr's § 2.1 has already completed the tracker and sent the pushed-commit notice. Run § 5.4, then end: this section records no stop, writes no summaries and merges nothing.
 
-Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creates `merge-gates-unmet`:
+### 5.1 Record The Final Stop
+
+`MERGE_READY = false` keeps submit-pr's stop, or records `merge-gates-unmet` where none stands:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop record-if-empty [ISSUE_ID] merge-gates-unmet merge "[UNMET_GATE_AND_REMAINING_WORK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop record-if-empty --item [ISSUE_ID] --name merge-gates-unmet --gate merge --remaining "[UNMET_GATE_AND_REMAINING_WORK]" --comment-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
-`recorded` wrote that file, so post it:
+A `result.result` of `recorded` means the command wrote that file. Post it:
 
 ```bash
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
-`kept` posts nothing. The file at that path is the one submit-pr rendered for the stop it recorded, and submit-pr already posted it; posting again would put a byte-identical duplicate on the PR.
+`kept` posts nothing.
 
-Read the final stop before § 5.1. `MERGE_READY = true` clears it:
+`MERGE_READY = true` lifts the stop:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [ISSUE_ID]
 ```
 
-### 5.1 Post Summary
+### 5.2 Post Summary
 
 **Run Workflow**: `⤵ workflows/post-summary.md § 1-3 → § 5.3` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `pr_number` from § 4.
 
 ### 5.3 Session Summary
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length), post_pr_stop: .post_pr_stop}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length), post_pr_stop: .post_pr_stop}' <<<"$STATE_READ"
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
@@ -224,22 +232,37 @@ Sub-issues (tree):
 
 </output_format>
 
-Omit sections with no data; include the sub-issue tree only for a bundle.
+Omit a section with no data, and include the sub-issue tree only for a bundle.
 
 ### 5.4 Retire Agents
 
-Terminate every still-active agent in `child_sessions`, then retire the records:
+End every agent still active in `child_sessions`, then close their records:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions = ((.child_sessions // {}) | with_entries(.value.status = "closed"))'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"children-closed"}'
 ```
 
 ### 5.5 Merge
 
-**Skip if** no PR was created. When CI is not passing or `submit-pr.md` § 6.1 reported `MERGE_READY = false`, return the final stop already rendered in § 5 before the summaries, then stop.
+**Skip if** no pull request was created. When CI is not passing, or submit-pr's § 6.1 reported `MERGE_READY = false`, return the stop § 5.1 recorded and stop.
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto
 ```
 
-`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflows. A `MERGE_READY = false` state never auto-merges: `submit-pr.md` § 6.1 disarmed a PR its § 2 step 5 armed before it returned the stop.
+[settings.md § Talking to you](../references/settings.md#talking-to-you) states the setting and its default.
+
+- `auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`.
+- Anything else → ask, with the options `orch merge-pr [PR_NUMBER]` | `Skip`. Record the question before asking it:
+
+  ```bash
+  .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"merge-asked"}'
+  ```
+
+  In a lane the ask is `lane-mail ask` and its wait ([skill-rules.md § Lane mail](../references/skill-rules.md#lane-mail)). When the answer arrives, record it:
+
+  ```bash
+  .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"merge-answered"}'
+  ```
+
+  On a merge answer, run the same merge-pr route as `auto`.

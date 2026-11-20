@@ -217,7 +217,7 @@ report_trip() {
 }
 # held_report: /report to alpha while the Jarvis session presence file is
 # fresh, then an unrelated owner notice and a notice whose --ref names the
-# directive (oversee-report's own report notice carries none); the hold as status shows it once the answer posted, the
+# directive (the orch watch's own report notice carries none); the hold as status shows it once the answer posted, the
 # answer's top-level posts and the unrelated notice's posts.
 held_report() {
   local key answer

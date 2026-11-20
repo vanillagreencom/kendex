@@ -1,0 +1,5 @@
+#!/bin/bash
+# A stub that exits at once: its pane closes, which the launch reads as the
+# harness exited before it came up (`failed`). Named `claude` and run by bash
+# directly so the kernel records the harness's process name for it.
+exit 0

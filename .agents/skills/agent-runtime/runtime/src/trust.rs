@@ -1,0 +1,1612 @@
+//! The folder-trust record a harness reads before it reads the arguments it
+//! was launched with, made before an unattended launch so the session never
+//! opens on `Do you trust the contents of this directory?` with nobody at
+//! the pane to answer. Codex reads `[projects."<dir>"] trust_level =
+//! "trusted"` in the config.toml of its `CODEX_HOME`; Claude reads
+//! `projects.<dir>.hasTrustDialogAccepted` in the `.claude.json` of its
+//! config dir; Copilot's trust is the launch line's `COPILOT_ALLOW_ALL=true`
+//! on a full bypass, and what its home must hold before a fleet session
+//! starts is the kendex context reader: the `kendex-lane-context` extension
+//! under `extensions/`, loaded only while `enabledFeatureFlags.EXTENSIONS`
+//! is true in its settings.json, and the directory the reader leaves each
+//! session's pending marker in; Pi's trust is the launch line's `--approve`,
+//! which trusts the folder's project resources for the run.
+//!
+//! A numbered Codex account's config.toml is a link the account shim repoints
+//! at every launch, so an entry written there is gone by the next one: the
+//! launch gets a `CODEX_HOME` of its own under the account, holding the
+//! account's files by link and one config.toml of its own carrying the
+//! account's config plus the entry. Claude's `.claude.json` is the account's
+//! own state, the file the harness writes its own answer into, so the entry
+//! goes there and the launch runs under the config dir itself. A Claude
+//! launch in bypass-permissions mode also opens on a one-time confirmation
+//! per config dir, answered by `skipDangerousModePermissionPrompt` in that
+//! dir's settings.json, which the launch records the same way. A hosted
+//! Claude lane's consent is recorded by the same rule in the host's files,
+//! through the provider's file verbs.
+//!
+//! An answer already recorded that is not trust or consent refuses: it is a
+//! decision somebody gave in the harness's own spelling, and overwriting it
+//! would run the launch at full trust against that answer.
+
+use std::ffi::OsStr;
+use std::fs;
+use std::io::ErrorKind;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt, symlink};
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+use crate::error::{Error, Result};
+use crate::harness::Harness;
+
+/// The Copilot context reader a fleet session loads: the extension the
+/// launch installs into the lane's Copilot home.
+const EXTENSION: &str = include_str!("copilot-lane-context.mjs");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Route {
+    /// The harness asks no such question.
+    None,
+    /// Copilot: the launch line grants folder trust through
+    /// `COPILOT_ALLOW_ALL=true` on a full bypass, so nothing is written.
+    AllowAllEnv,
+    /// The account's own config already trusts the directory.
+    Preapproved,
+    /// A private Codex home carrying the entry.
+    LaunchHome,
+    /// The entry written into the Claude config dir's own `.claude.json`.
+    AccountConfig,
+    /// Pi: the launch line's `--approve` trusts the folder for the run, so
+    /// nothing is written.
+    ApproveWord,
+}
+
+/// What a launch runs under once the trust record stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Prepared {
+    pub route: Route,
+    /// The account home, or the private Codex home built under it.
+    pub home: PathBuf,
+}
+
+/// Make the trust entry for `launch_dir` exist in the config a launch of
+/// `harness` under `home` will read, and say which home that is; a launch
+/// whose line carries the harness's bypass word (`bypass`) also gets the
+/// consent Claude asks for before it runs bypassed. A refusal is the
+/// launch-readiness answer: `trust-refused` or `bypass-refused` for a
+/// recorded answer that is not consent, `config-unreadable` for a config
+/// that exists and cannot be read or parsed, and the write's own failure
+/// otherwise.
+pub fn prepare(harness: Harness, home: &Path, launch_dir: &Path, bypass: bool) -> Result<Prepared> {
+    match harness {
+        Harness::Codex => codex(home, launch_dir),
+        Harness::Claude => claude(home, launch_dir, bypass),
+        Harness::Copilot => copilot(home, pending_dir().as_deref()),
+        Harness::Pi => pi(home, launch_dir),
+    }
+}
+
+/// Pi's answer for `dir` as its root's `trust.json` records it: the entry of
+/// `dir` or of its nearest ancestor that holds one, read as Pi's
+/// `ProjectTrustStore` reads it (Pi 0.87.1 `dist/core/trust-manager.js`).
+/// A recorded `false` refuses `trust-refused`, since the line's
+/// `--approve` would override it; a recorded `true` stands, and otherwise
+/// that word trusts the folder for the run.
+fn pi(root: &Path, dir: &Path) -> Result<Prepared> {
+    let h = Harness::Pi;
+    let store = root.join("trust.json");
+    let entries = match present(&store) {
+        Present::Absent => Map::new(),
+        Present::Unreadable(cause) => {
+            return Err(refused("config-unreadable", h, &store, Some(&cause)));
+        }
+        Present::File => {
+            let text = read(&store, h)?;
+            serde_json::from_str::<Map<String, Value>>(text.trim_start_matches('\u{feff}'))
+                .map_err(|e| refused("config-unreadable", h, &store, Some(&e.to_string())))?
+        }
+    };
+    let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let recorded = dir
+        .ancestors()
+        .find_map(|d| match entries.get(&d.display().to_string()) {
+            Some(Value::Bool(answer)) => Some(*answer),
+            _ => None,
+        });
+    let route = match recorded {
+        Some(true) => Route::Preapproved,
+        Some(false) => return Err(refused("trust-refused", h, &dir, None)),
+        None => Route::ApproveWord,
+    };
+    Ok(Prepared {
+        route,
+        home: root.to_path_buf(),
+    })
+}
+
+/// Where one launch directory's private Codex home sits under the account:
+/// `<account>/lane-launch/<leaf>-<cksum>/home`. The leaf is the launch
+/// directory's basename with every byte outside `A-Za-z0-9._-` made `_`,
+/// for an operator reading `ps`, and the checksum is the POSIX `cksum` of
+/// the whole path, because two worktrees of one repository share a
+/// basename. The last component is the fixed word `home`, never a name
+/// derived from the account, so an account launcher on `PATH` named for the
+/// account never matches it. `account_of` takes the path back apart.
+pub fn home_path(account: &Path, launch_dir: &Path) -> PathBuf {
+    let dir = launch_dir.as_os_str().as_bytes();
+    let base = launch_dir.file_name().map_or(dir, OsStr::as_bytes);
+    let leaf: String = base
+        .iter()
+        .map(|&b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-') {
+                b as char
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    account
+        .join("lane-launch")
+        .join(format!("{leaf}-{}", crate::record::cksum(dir)))
+        .join("home")
+}
+
+/// The account a launched home belongs to: the path itself, or the account
+/// a private launch home was built under. A reader holding a `CODEX_HOME`
+/// asks which account is spent; a home built under an account is that
+/// account.
+pub fn account_of(path: &Path) -> &Path {
+    let bytes = path.as_os_str().as_bytes();
+    let Some(prefix) = bytes.strip_suffix(b"/home") else {
+        return path;
+    };
+    match prefix
+        .windows(b"/lane-launch/".len())
+        .rposition(|w| w == b"/lane-launch/")
+    {
+        Some(at) => Path::new(OsStr::from_bytes(&bytes[..at])),
+        None => path,
+    }
+}
+
+fn refused(key: &'static str, harness: Harness, path: &Path, cause: Option<&str>) -> Error {
+    let path = path.display().to_string();
+    match cause {
+        Some(cause) => Error::refused(
+            key,
+            &[
+                ("harness", harness.name()),
+                ("path", &path),
+                ("cause", cause),
+            ],
+        ),
+        None => Error::refused(key, &[("harness", harness.name()), ("path", &path)]),
+    }
+}
+
+/// Whether a config file stands: absent, readable, or present and not a
+/// readable file (a dangling link included, which a readability test alone
+/// would read as absence and rebuild the config from nothing).
+enum Present {
+    Absent,
+    File,
+    Unreadable(String),
+}
+
+fn present(path: &Path) -> Present {
+    match fs::symlink_metadata(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Present::Absent,
+        Err(e) => Present::Unreadable(e.to_string()),
+        Ok(_) => match fs::metadata(path) {
+            Ok(m) if m.is_file() => Present::File,
+            Ok(_) => Present::Unreadable("not a regular file".to_owned()),
+            Err(e) => Present::Unreadable(e.to_string()),
+        },
+    }
+}
+
+/// The text of a file that `present` read as a file.
+fn read(path: &Path, harness: Harness) -> Result<String> {
+    fs::read_to_string(path)
+        .map_err(|e| refused("config-unreadable", harness, path, Some(&e.to_string())))
+}
+
+/// The step of [`install`] that failed.
+enum Step {
+    Write,
+    Rename,
+}
+
+/// Write `text` to `path` through a staged file beside it, private whatever
+/// the caller's umask, since the files a launch prepares hold an account's
+/// state and the harnesses keep them 0600; renamed over the target so a
+/// harness reading the file meets the whole previous file or the whole new
+/// one.
+fn install(path: &Path, text: &str) -> std::result::Result<(), (Step, std::io::Error)> {
+    let staged = path.with_file_name(format!(
+        "{}.{}",
+        path.file_name().and_then(OsStr::to_str).unwrap_or("file"),
+        std::process::id()
+    ));
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&staged)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&staged);
+        return Err((Step::Write, e));
+    }
+    if let Err(e) = fs::rename(&staged, path) {
+        let _ = fs::remove_file(&staged);
+        return Err((Step::Rename, e));
+    }
+    Ok(())
+}
+
+/// A trust config through [`install`], its failure the arm's refusal.
+fn install_config(path: &Path, text: &str, harness: Harness) -> Result<()> {
+    config_install(path, text).map_err(|(key, cause)| refused(key, harness, path, cause.as_deref()))
+}
+
+/// A refusal a file's read, its write or the judgement over it answers: the
+/// key, and the cause where one is known.
+type Refusal = (&'static str, Option<String>);
+
+/// A file's text where it stands, `None` where it does not.
+type ReadFile<'a> = &'a dyn Fn(&Path) -> std::result::Result<Option<String>, Refusal>;
+
+/// `text` made the whole content of a file.
+type WriteFile<'a> = &'a dyn Fn(&Path, &str) -> std::result::Result<(), Refusal>;
+
+fn config_install(path: &Path, text: &str) -> std::result::Result<(), Refusal> {
+    install(path, text).map_err(|(step, e)| {
+        let key = match step {
+            Step::Write => "config-write",
+            Step::Rename => "config-install",
+        };
+        (key, Some(e.to_string()))
+    })
+}
+
+/// A local file read as [`present`] judges it, its failure refused as `key`.
+fn read_file(path: &Path, key: &'static str) -> std::result::Result<Option<String>, Refusal> {
+    match present(path) {
+        Present::Absent => Ok(None),
+        Present::Unreadable(cause) => Err((key, Some(cause))),
+        Present::File => fs::read_to_string(path)
+            .map(Some)
+            .map_err(|e| (key, Some(e.to_string()))),
+    }
+}
+
+/// `text` made the whole content of a hosted file through the provider's
+/// `put`, by the path the host resolves, else the cause.
+pub type Write<'a> = &'a dyn Fn(&str, &str) -> std::result::Result<(), String>;
+
+/// A hosted preparation's refusal as the launch's `failed` cause: its key,
+/// then its fields, then its cause where one is known.
+fn cause_line(refusal: Refusal, fields: &[(&str, &str)]) -> String {
+    let (key, cause) = refusal;
+    let line = fields.iter().fold(key.to_owned(), |line, (name, value)| {
+        format!("{line} {name}={value}")
+    });
+    match cause {
+        Some(cause) => format!("{line} cause={cause}"),
+        None => line,
+    }
+}
+
+fn private_dir(path: &Path, key: &'static str, harness: Harness) -> Result<()> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+        .map_err(|e| refused(key, harness, path, Some(&e.to_string())))
+}
+
+// ---------------------------------------------------------------------------
+// Codex
+// ---------------------------------------------------------------------------
+
+/// What a Codex config says about opening into `dir`: `Some(true)` trusted
+/// outright, `Some(false)` an answer for the directory that is not trust,
+/// `None` the config does not say (no file, no table, no key).
+fn codex_trusted(config: &Path, dir: &Path, harness: Harness) -> Result<Option<bool>> {
+    Ok(config_value(config, &codex_section(dir), "trust_level", harness)?.map(|v| v == "trusted"))
+}
+
+/// The value of `key` under `section` in a harness's TOML config, read the
+/// one way every reader of a harness's configuration reads it: `None` where
+/// the file or the key is absent, `config-unreadable` where the file stands
+/// and cannot be read.
+pub(crate) fn config_value(
+    config: &Path,
+    section: &str,
+    key: &str,
+    harness: Harness,
+) -> Result<Option<String>> {
+    let text = match present(config) {
+        Present::Absent => return Ok(None),
+        Present::Unreadable(cause) => {
+            return Err(refused("config-unreadable", harness, config, Some(&cause)));
+        }
+        Present::File => read(config, harness)?,
+    };
+    Ok(toml_value(&text, section, key))
+}
+
+fn codex_section(dir: &Path) -> String {
+    format!("projects.\"{}\"", dir.display())
+}
+
+fn codex(home_given: &Path, dir: &Path) -> Result<Prepared> {
+    let h = Harness::Codex;
+    // The account, never a private home: a caller inside a launched session
+    // reads its own `CODEX_HOME` to name its lane, and a home taken raw here
+    // would hold the next home inside it, one level deeper per launch.
+    let account = account_of(home_given);
+    if account.as_os_str().is_empty() {
+        return Err(refused("home-path", h, home_given, None));
+    }
+    let config = account.join("config.toml");
+    let home = home_path(account, dir);
+    let private = home.join("config.toml");
+    // Both configs a launch here can open: the private home is where the
+    // launch-home route points `CODEX_HOME`, so it is where Codex writes the
+    // answer somebody gives at the pane.
+    let in_account = codex_trusted(&config, dir, h)?;
+    let in_home = codex_trusted(&private, dir, h)?;
+    if in_account == Some(false) || in_home == Some(false) {
+        return Err(refused("trust-refused", h, dir, None));
+    }
+    // `preapproved` is the account's own answer and only the account's: a
+    // `trusted` in the private home is this preparation's own earlier write.
+    if in_account == Some(true) {
+        return Ok(Prepared {
+            route: Route::Preapproved,
+            home: account.to_path_buf(),
+        });
+    }
+    private_dir(&home, "home-create", h)?;
+    // The transcript store belongs to the account: the harness creates what
+    // is missing under the home it is given, and a rollout written inside
+    // the private home is one no relaunch scan finds. Made in the account
+    // first so the loop below links it like any other entry.
+    private_dir(&account.join("sessions"), "account-store", h)?;
+    // The account's own files by link, never by copy: a token the harness
+    // renews under this lane is renewed in the account's auth.json. The
+    // config is written below and `lane-launch` holds this home, so linking
+    // it in would nest the tree inside itself.
+    let entries = fs::read_dir(account)
+        .map_err(|e| refused("home-link", h, account, Some(&e.to_string())))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| refused("home-link", h, account, Some(&e.to_string())))?;
+        let name = entry.file_name();
+        if name == "config.toml" || name == "lane-launch" {
+            continue;
+        }
+        let target = home.join(&name);
+        match fs::symlink_metadata(&target) {
+            Ok(m) if m.is_dir() => {
+                // Codex can create a plugins directory under the home before
+                // the account has that entry; it stays, data of an unknown
+                // producer included. Any other real directory refuses: a
+                // link made inside it would add a level at every launch.
+                if name == "plugins" {
+                    continue;
+                }
+                return Err(refused("home-entry", h, &target, None));
+            }
+            Ok(_) => {
+                fs::remove_file(&target)
+                    .map_err(|e| refused("home-link", h, &target, Some(&e.to_string())))?;
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(refused("home-link", h, &target, Some(&e.to_string()))),
+        }
+        symlink(entry.path(), &target)
+            .map_err(|e| refused("home-link", h, &target, Some(&e.to_string())))?;
+    }
+    // The account's config minus this directory's own table, which the entry
+    // states outright: a second header for a table the file already declares
+    // is a duplicate key the harness rejects the whole file for. A leading
+    // newline, because the account's config ends inside whatever table it
+    // ends in.
+    let section = codex_section(dir);
+    let mut text = match present(&config) {
+        Present::File => without_table(&read(&config, h)?, &section),
+        Present::Absent => String::new(),
+        Present::Unreadable(cause) => {
+            return Err(refused("config-unreadable", h, &config, Some(&cause)));
+        }
+    };
+    text.push_str(&format!("\n[{section}]\ntrust_level = \"trusted\"\n"));
+    install_config(&private, &text, h)?;
+    if codex_trusted(&private, dir, h)? != Some(true) {
+        return Err(refused("entry-unreadable", h, &private, None));
+    }
+    Ok(Prepared {
+        route: Route::LaunchHome,
+        home,
+    })
+}
+
+/// The table a line belongs to: the header's text between the brackets, or
+/// `None` for a line that is itself a header.
+fn table_of<'a>(line: &'a str, current: &mut &'a str) -> bool {
+    let trimmed = line.trim_start();
+    if let Some(rest) = trimmed.strip_prefix('[') {
+        *current = rest.trim_end().strip_suffix(']').unwrap_or(rest).trim_end();
+        return true;
+    }
+    false
+}
+
+/// The value of `key` inside the table whose header reads `section`, with
+/// one layer of surrounding quotes removed; `None` where the file does not
+/// say (no table, no key, an empty value). Not a TOML parser: a table is its
+/// header line spelled as the caller names it and a key a word left of the
+/// first `=` inside it, which is what every writer of these files emits.
+fn toml_value(text: &str, section: &str, key: &str) -> Option<String> {
+    let mut current = "";
+    for line in text.lines() {
+        if table_of(line, &mut current) || current != section {
+            continue;
+        }
+        let line = line.split('#').next().unwrap_or("");
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if k.trim() != key {
+            continue;
+        }
+        let v = v.trim();
+        if v.is_empty() {
+            return None;
+        }
+        let v = v
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(v);
+        return Some(v.to_owned());
+    }
+    None
+}
+
+/// `text` with `section`'s table removed: its header line and every line
+/// under it up to the next header.
+fn without_table(text: &str, section: &str) -> String {
+    let mut current = "";
+    let mut drop = false;
+    let mut out = String::new();
+    for line in text.lines() {
+        if table_of(line, &mut current) {
+            drop = current == section;
+        }
+        if !drop {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Claude
+// ---------------------------------------------------------------------------
+
+fn claude(lane: &Path, dir: &Path, bypass: bool) -> Result<Prepared> {
+    let route = claude_trust(lane, dir)?;
+    if bypass {
+        claude_bypass_consent(lane)?;
+    }
+    Ok(Prepared {
+        route,
+        home: lane.to_path_buf(),
+    })
+}
+
+fn claude_trust(lane: &Path, dir: &Path) -> Result<Route> {
+    let h = Harness::Claude;
+    let config = lane.join(".claude.json");
+    let key = dir.display().to_string();
+    let mut root = match present(&config) {
+        Present::Absent => Value::Object(Map::new()),
+        Present::Unreadable(cause) => {
+            return Err(refused("config-unreadable", h, &config, Some(&cause)));
+        }
+        Present::File => serde_json::from_str::<Value>(&read(&config, h)?)
+            .map_err(|e| refused("config-unreadable", h, &config, Some(&e.to_string())))?,
+    };
+    match root
+        .get("projects")
+        .and_then(|p| p.get(&key))
+        .and_then(|e| e.get("hasTrustDialogAccepted"))
+    {
+        None | Some(Value::Null) => {}
+        Some(Value::Bool(true)) => return Ok(Route::Preapproved),
+        Some(_) => return Err(refused("trust-refused", h, dir, None)),
+    }
+    // The config dir holds the account's credentials and the file its
+    // address, user id and every per-project tool allowance, so a dir this
+    // creates is private and the file it writes is private too, whatever
+    // the caller's umask: the harness itself makes the file 0600.
+    private_dir(lane, "home-create", h)?;
+    let Some(object) = root.as_object_mut() else {
+        return Err(refused(
+            "config-write",
+            h,
+            &config,
+            Some("the document is not an object"),
+        ));
+    };
+    object.insert("hasCompletedOnboarding".to_owned(), Value::Bool(true));
+    let projects = object
+        .entry("projects")
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(projects) = projects.as_object_mut() else {
+        return Err(refused(
+            "config-write",
+            h,
+            &config,
+            Some("`projects` is not an object"),
+        ));
+    };
+    let entry = projects
+        .entry(key.clone())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(entry) = entry.as_object_mut() else {
+        return Err(refused(
+            "config-write",
+            h,
+            &config,
+            Some("the directory's entry is not an object"),
+        ));
+    };
+    entry.insert("hasTrustDialogAccepted".to_owned(), Value::Bool(true));
+    let text = serde_json::to_string_pretty(&root)
+        .map_err(|e| refused("config-write", h, &config, Some(&e.to_string())))?;
+    install_config(&config, &format!("{text}\n"), h)?;
+    let written: Value = serde_json::from_str(&read(&config, h)?)
+        .map_err(|e| refused("entry-unreadable", h, &config, Some(&e.to_string())))?;
+    if written["projects"][&key]["hasTrustDialogAccepted"] != Value::Bool(true) {
+        return Err(refused("entry-unreadable", h, &config, None));
+    }
+    Ok(Route::AccountConfig)
+}
+
+/// The account's consent to bypass-permissions mode, which Claude asks for
+/// once per config dir before a session launched with its bypass word
+/// starts, and records as `skipDangerousModePermissionPrompt: true` in that
+/// dir's settings.json: written there, every other key kept and the file
+/// written through its links, since a launch with nobody at the pane
+/// cannot answer the confirmation. A recorded `false` is an answer somebody
+/// gave and refuses `bypass-refused`.
+fn claude_bypass_consent(lane: &Path) -> Result<()> {
+    let h = Harness::Claude;
+    let settings = lane.join("settings.json");
+    let target = link_target(&settings).ok_or_else(|| {
+        refused(
+            "config-unreadable",
+            h,
+            &settings,
+            Some("too many links to follow"),
+        )
+    })?;
+    bypass_consent(
+        &target,
+        &|path| read_file(path, "config-unreadable"),
+        &config_install,
+    )
+    .map_err(|(key, cause)| refused(key, h, &target, cause.as_deref()))
+}
+
+/// The settings.json a hosted Claude lane's consent is read and written in:
+/// Claude's default config dir under the host user's home, since the
+/// provider sets no `CLAUDE_CONFIG_DIR`; the host resolves the relative path
+/// there.
+const HOSTED_CLAUDE_SETTINGS: &str = ".claude/settings.json";
+
+/// A hosted Claude lane's bypass consent, by the rule a local launch keeps
+/// ([`claude_bypass_consent`]), over the host's files: `read` the provider's
+/// `cat`, `write` its `put`, which replaces a linked file with a regular one.
+/// A provider's presence is never consent: a recorded `false` refuses
+/// `bypass-refused`.
+pub fn hosted_claude_consent(
+    read: crate::effects::prepare::gate::Read,
+    write: Write,
+) -> std::result::Result<(), String> {
+    bypass_consent(
+        Path::new(HOSTED_CLAUDE_SETTINGS),
+        &|path| {
+            read(&path.display().to_string()).map_err(|cause| ("config-unreadable", Some(cause)))
+        },
+        &|path, text| {
+            write(&path.display().to_string(), text).map_err(|cause| ("config-write", Some(cause)))
+        },
+    )
+    .map_err(|refusal| {
+        cause_line(
+            refusal,
+            &[("harness", "claude"), ("path", HOSTED_CLAUDE_SETTINGS)],
+        )
+    })
+}
+
+/// The consent in the settings.json at `settings`, read by `read`: `true`
+/// stands, `false` refuses `bypass-refused`, absent is written by `write`
+/// with every other key kept and read back.
+fn bypass_consent(
+    settings: &Path,
+    read: ReadFile,
+    write: WriteFile,
+) -> std::result::Result<(), Refusal> {
+    const CONSENT: &str = "skipDangerousModePermissionPrompt";
+    let mut doc = match read(settings)? {
+        None => Value::Object(Map::new()),
+        Some(text) => serde_json::from_str::<Value>(&text)
+            .map_err(|e| ("config-unreadable", Some(e.to_string())))?,
+    };
+    let Some(object) = doc.as_object_mut() else {
+        return Err((
+            "config-unreadable",
+            Some("the document is not an object".to_owned()),
+        ));
+    };
+    match object.get(CONSENT) {
+        Some(Value::Bool(true)) => return Ok(()),
+        Some(Value::Bool(false)) => return Err(("bypass-refused", None)),
+        None | Some(Value::Null) => {}
+        Some(_) => {
+            return Err((
+                "config-unreadable",
+                Some("`skipDangerousModePermissionPrompt` is not a boolean".to_owned()),
+            ));
+        }
+    }
+    object.insert(CONSENT.to_owned(), Value::Bool(true));
+    let text =
+        serde_json::to_string_pretty(&doc).map_err(|e| ("config-write", Some(e.to_string())))?;
+    write(settings, &format!("{text}\n"))?;
+    let written = read(settings)?.ok_or(("entry-unreadable", None))?;
+    let written: Value =
+        serde_json::from_str(&written).map_err(|e| ("entry-unreadable", Some(e.to_string())))?;
+    if written[CONSENT] != Value::Bool(true) {
+        return Err(("entry-unreadable", None));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Copilot
+// ---------------------------------------------------------------------------
+
+/// The launcher's own `HOME`, which the lane's Copilot inherits: a launch
+/// sets the harness's home variable and never `HOME`.
+fn launcher_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// The directory the context reader leaves each session's pending marker
+/// in, under the launcher's own home; the extension spells it again from
+/// its own `os.homedir()`.
+fn pending_dir() -> Option<PathBuf> {
+    launcher_home().map(|home| home.join(".cache/lane-mail/copilot-usage"))
+}
+
+fn reader_refused(detail: &str, file: &Path, cause: Option<&str>) -> Error {
+    let file = file.display().to_string();
+    match cause {
+        Some(cause) => Error::refused(
+            "no-context-reader",
+            &[
+                ("harness", "copilot"),
+                ("file", &file),
+                ("detail", detail),
+                ("cause", cause),
+            ],
+        ),
+        None => Error::refused(
+            "no-context-reader",
+            &[("harness", "copilot"), ("file", &file), ("detail", detail)],
+        ),
+    }
+}
+
+/// Make `home` run the context reader: the extension copied into
+/// `extensions/kendex-lane-context/`, rewritten only where its content
+/// differs, and `enabledFeatureFlags.EXTENSIONS` set true in settings.json,
+/// written through a link to its target so the link stays; then the pending
+/// directory made and proved writable. An `EXTENSIONS` flag set false is the
+/// operator's choice, never overridden: the launch is admitted only where
+/// the home's status line writes the fallback session record, else refused
+/// with that reader's own cause.
+fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
+    if !home.is_absolute() {
+        return Err(Error::refused(
+            "home-relative",
+            &[
+                ("harness", "copilot"),
+                ("home", &home.display().to_string()),
+            ],
+        ));
+    }
+    let settings = home.join("settings.json");
+    let target =
+        link_target(&settings).ok_or_else(|| reader_refused("unreadable", &settings, None))?;
+    let write = |path: &Path, text: &str| {
+        fs::create_dir_all(path.parent().unwrap_or(home))
+            .map_err(|e| ("unwritable", Some(e.to_string())))?;
+        install(path, text).map_err(|(_, e)| ("unwritable", Some(e.to_string())))
+    };
+    let flag = context_reader(
+        &home.join(EXTENSION_FILE),
+        &target,
+        &|path| read_file(path, "unreadable"),
+        &write,
+    )
+    .map_err(|(file, (detail, cause))| reader_refused(detail, &file, cause.as_deref()))?;
+    if let Flag::Off = flag {
+        return match status_line(home, launcher_home().as_deref()) {
+            Ok(()) => Ok(Prepared {
+                route: Route::AllowAllEnv,
+                home: home.to_path_buf(),
+            }),
+            Err(cause) => Err(reader_refused("disabled", &target, Some(cause))),
+        };
+    }
+    let Some(pending) = pending else {
+        return Err(reader_refused(
+            "pending-unwritable",
+            Path::new("$HOME/.cache/lane-mail/copilot-usage"),
+            Some("no HOME"),
+        ));
+    };
+    let probed = fs::create_dir_all(pending).and_then(|()| {
+        let probe = pending.join(format!(".probe.{}", std::process::id()));
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .and_then(|_| fs::remove_file(&probe))
+    });
+    if let Err(e) = probed {
+        return Err(reader_refused(
+            "pending-unwritable",
+            pending,
+            Some(&e.to_string()),
+        ));
+    }
+    Ok(Prepared {
+        route: Route::AllowAllEnv,
+        home: home.to_path_buf(),
+    })
+}
+
+/// Where the context reader's extension stands under a Copilot home.
+const EXTENSION_FILE: &str = "extensions/kendex-lane-context/extension.mjs";
+
+/// What a Copilot home's `enabledFeatureFlags.EXTENSIONS` says once the
+/// reader stands.
+enum Flag {
+    On,
+    /// Set false: the operator's choice, never overridden.
+    Off,
+}
+
+/// A hosted Copilot lane's context reader made to stand in its Copilot
+/// home `home` on the host, by the rule a local launch keeps ([`copilot`]),
+/// over the host's files: `read` the provider's `cat`, `write` its `put`. A
+/// flag set false refuses `disabled`: the status-line fallback a local
+/// launch admits resolves an executable, which no file verb can test. The
+/// pending directory is the extension's own to make on its host.
+pub fn hosted_copilot_reader(
+    read: crate::effects::prepare::gate::Read,
+    write: Write,
+    home: &str,
+) -> std::result::Result<(), String> {
+    let settings = format!("{home}/settings.json");
+    let refusal = |file: &str, (detail, cause): Refusal| {
+        cause_line(
+            ("no-context-reader", cause),
+            &[("harness", "copilot"), ("file", file), ("detail", detail)],
+        )
+    };
+    let flag = context_reader(
+        Path::new(&format!("{home}/{EXTENSION_FILE}")),
+        Path::new(&settings),
+        &|path| read(&path.display().to_string()).map_err(|cause| ("unreadable", Some(cause))),
+        &|path, text| {
+            write(&path.display().to_string(), text).map_err(|cause| ("unwritable", Some(cause)))
+        },
+    )
+    .map_err(|(file, failed)| refusal(&file.display().to_string(), failed))?;
+    match flag {
+        Flag::On => Ok(()),
+        Flag::Off => Err(refusal(&settings, ("disabled", None))),
+    }
+}
+
+/// The context reader made to stand: the extension at `extension`,
+/// rewritten only where its content differs, and
+/// `enabledFeatureFlags.EXTENSIONS` set true in the settings.json at
+/// `settings` where absent, every other key kept. The refusal names its file
+/// and its detail: the extension `unwritable`, the settings `unreadable` or
+/// `unwritable`.
+fn context_reader(
+    extension: &Path,
+    settings: &Path,
+    read: ReadFile,
+    write: WriteFile,
+) -> std::result::Result<Flag, (PathBuf, Refusal)> {
+    let at = |file: &Path, detail: &'static str| {
+        let file = file.to_path_buf();
+        move |(_, cause): Refusal| (file, (detail, cause))
+    };
+    let standing = read(extension).map_err(at(extension, "unwritable"))?;
+    if standing.as_deref() != Some(EXTENSION) {
+        write(extension, EXTENSION).map_err(at(extension, "unwritable"))?;
+    }
+    let unreadable = |cause: String| (settings.to_path_buf(), ("unreadable", Some(cause)));
+    let doc = match read(settings).map_err(at(settings, "unreadable"))? {
+        None => Value::Object(Map::new()),
+        Some(text) => {
+            serde_json::from_str::<Value>(&text).map_err(|e| unreadable(e.to_string()))?
+        }
+    };
+    let Value::Object(mut object) = doc else {
+        return Err(unreadable("the document is not an object".to_owned()));
+    };
+    match object
+        .get("enabledFeatureFlags")
+        .and_then(|f| f.get("EXTENSIONS"))
+    {
+        Some(Value::Bool(true)) => Ok(Flag::On),
+        Some(Value::Bool(false)) => Ok(Flag::Off),
+        None | Some(Value::Null) => {
+            let flags = object
+                .entry("enabledFeatureFlags")
+                .or_insert_with(|| Value::Object(Map::new()));
+            let Some(flags) = flags.as_object_mut() else {
+                return Err(unreadable(
+                    "`enabledFeatureFlags` is not an object".to_owned(),
+                ));
+            };
+            flags.insert("EXTENSIONS".to_owned(), Value::Bool(true));
+            let text = serde_json::to_string_pretty(&Value::Object(object))
+                .map_err(|e| (settings.to_path_buf(), ("unwritable", Some(e.to_string()))))?;
+            write(settings, &format!("{text}\n")).map_err(at(settings, "unwritable"))?;
+            Ok(Flag::On)
+        }
+        Some(_) => Err(unreadable("`EXTENSIONS` is not a boolean".to_owned())),
+    }
+}
+
+/// Whether a session starting on the Copilot home `home` loads a context
+/// reader, read and never made: the extension the launch installs,
+/// readable and loaded while `enabledFeatureFlags.EXTENSIONS` is true in
+/// its settings.json, else a status line that writes the fallback session
+/// record. `Err` with the status line's cause where neither stands. A
+/// session start asks this, never [`prepare`], since a hook must not change
+/// the operator's home.
+pub fn copilot_reader(home: &Path) -> std::result::Result<(), &'static str> {
+    let extension = home.join("extensions/kendex-lane-context/extension.mjs");
+    let enabled = || {
+        fs::read_to_string(home.join("settings.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .is_some_and(|doc| doc["enabledFeatureFlags"]["EXTENSIONS"] == Value::Bool(true))
+    };
+    if fs::File::open(&extension).is_ok() && enabled() {
+        return Ok(());
+    }
+    status_line(home, launcher_home().as_deref())
+}
+
+/// The file a path names through its links, hop by hop, at most forty.
+fn link_target(path: &Path) -> Option<PathBuf> {
+    let mut target = path.to_path_buf();
+    for _ in 0..=40 {
+        match fs::symlink_metadata(&target) {
+            Ok(m) if m.file_type().is_symlink() => {
+                let link = fs::read_link(&target).ok()?;
+                target = if link.is_absolute() {
+                    link
+                } else {
+                    target.parent().map_or(link.clone(), |d| d.join(&link))
+                };
+            }
+            _ => return Some(target),
+        }
+    }
+    None
+}
+
+/// Whether `home` runs `copilot-statusline` as its status line often enough
+/// for the fallback session record to stay fresh: `statusLine` a command
+/// whose first word is that script, an executable file, with a whole-second
+/// `refreshInterval` above 0 and below the record's age bound. A first word
+/// under `~/` names a file under `user_home`, the `HOME` Copilot runs the
+/// command with. The first thing that fails names the cause.
+fn status_line(home: &Path, user_home: Option<&Path>) -> std::result::Result<(), &'static str> {
+    let settings = home.join("settings.json");
+    let text = match present(&settings) {
+        Present::File => fs::read_to_string(&settings).map_err(|_| "settings-unreadable")?,
+        Present::Absent | Present::Unreadable(_) => return Err("settings-missing"),
+    };
+    let doc: Value = serde_json::from_str(&text).map_err(|_| "settings-unreadable")?;
+    let line = &doc["statusLine"];
+    if !line.is_object() || line["type"] != "command" {
+        return Err("no-status-line");
+    }
+    let command = line["command"].as_str().unwrap_or("");
+    let first = command.split(' ').next().unwrap_or("");
+    if Path::new(first).file_name() != Some(OsStr::new("copilot-statusline")) {
+        return Err("other-command");
+    }
+    let resolved = if let Some(under) = first.strip_prefix("~/") {
+        user_home.map(|h| h.join(under))
+    } else if first.contains('/') {
+        Some(PathBuf::from(first))
+    } else {
+        std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(first))
+                .find(|p| fs::metadata(p).is_ok_and(|m| m.is_file()))
+        })
+    };
+    let executable = resolved.is_some_and(|p| {
+        fs::metadata(&p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    });
+    if !executable {
+        return Err("command-missing");
+    }
+    let interval = line["refreshInterval"].as_f64().ok_or("refresh-interval")?;
+    if interval.fract() != 0.0
+        || interval <= 0.0
+        || interval >= crate::context::COPILOT_RECORD_MAX_AGE as f64
+    {
+        return Err("refresh-interval");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOOK_ENTRY: &str = "[hooks.state.\"/repo/.codex/hooks.json:pre_tool_use:0:0\"]";
+
+    /// An account directory with its own files and a config written from
+    /// `body` where one is given; `store` makes the transcript directory.
+    fn account(root: &Path, name: &str, body: Option<&str>, store: bool) -> PathBuf {
+        let lane = root.join(name).join(".1codex");
+        fs::create_dir_all(&lane).unwrap();
+        if store {
+            fs::create_dir_all(lane.join("sessions")).unwrap();
+        }
+        fs::write(lane.join("auth.json"), "token\n").unwrap();
+        if let Some(body) = body {
+            fs::write(lane.join("config.toml"), format!("{body}\n")).unwrap();
+        }
+        lane
+    }
+
+    fn key(e: &Error) -> &'static str {
+        match e {
+            Error::Refused { key, .. } => key,
+            other => panic!("{other}"),
+        }
+    }
+
+    fn count(text: &str, needle: &str) -> usize {
+        text.lines().filter(|l| l.contains(needle)).count()
+    }
+
+    /// The private home's path is the account's launch leaf and checksum,
+    /// the figures the shell's `cksum` prints for the same paths, and the
+    /// inverse takes it apart; a path that is no private home is its own
+    /// account.
+    #[test]
+    fn the_private_home_path_is_the_account_s_launch_leaf_and_checksum() {
+        let account = Path::new("/home/x/.1codex");
+        assert_eq!(
+            home_path(account, Path::new("/work/tree")),
+            Path::new("/home/x/.1codex/lane-launch/tree-1914715100/home")
+        );
+        let home = home_path(account, Path::new("/work/my tree (2)"));
+        assert_eq!(
+            home,
+            Path::new("/home/x/.1codex/lane-launch/my_tree__2_-316542674/home")
+        );
+        assert_eq!(account_of(&home), account);
+        assert_eq!(account_of(account), account);
+        assert_eq!(crate::record::cksum(b""), 4_294_967_295);
+        assert_eq!(crate::record::cksum(b"a"), 1_220_704_766);
+    }
+
+    /// The effective config a launch would open is read back through the
+    /// production reader, so a row measures what the launch will meet.
+    #[test]
+    fn a_codex_launch_runs_under_a_private_home_carrying_the_account_s_config_and_the_trust_table()
+    {
+        let root = tempfile::tempdir().unwrap();
+        type Row<'a> = (&'a str, Option<&'a str>, Route, bool, usize, &'a str);
+        let rows: [Row; 4] = [
+            ("no-config", None, Route::LaunchHome, true, 0, "none"),
+            (
+                "trusts-another",
+                Some(
+                    "HOOK\ntrusted_hash = \"sha256:aa\"\n\n[projects.\"/elsewhere\"]\ntrust_level = \"trusted\"",
+                ),
+                Route::LaunchHome,
+                true,
+                1,
+                "none",
+            ),
+            (
+                "already-trusted",
+                Some(
+                    "HOOK\ntrusted_hash = \"sha256:aa\"\n\n[projects.\"DIR\"]\ntrust_level = \"trusted\"",
+                ),
+                Route::Preapproved,
+                false,
+                1,
+                "none",
+            ),
+            (
+                "table-then-more",
+                Some(
+                    "HOOK\ntrusted_hash = \"sha256:aa\"\n\n[projects.\"DIR\"]\napproval_policy = \"never\"\n\n[features.multi_agent_v2]\nmax_concurrent_threads_per_session = 6",
+                ),
+                Route::LaunchHome,
+                true,
+                1,
+                "6",
+            ),
+        ];
+        for (name, body, route, private, hooks, after) in rows {
+            let dir = root.path().join(name).join("wt");
+            fs::create_dir_all(&dir).unwrap();
+            let body = body.map(|b| {
+                b.replace("HOOK", HOOK_ENTRY)
+                    .replace("DIR", &dir.display().to_string())
+            });
+            let lane = account(root.path(), name, body.as_deref(), true);
+            let prepared = prepare(Harness::Codex, &lane, &dir, false).unwrap();
+            assert_eq!(prepared.route, route, "{name}");
+            assert_eq!(prepared.home != lane, private, "{name}: private");
+            let config = prepared.home.join("config.toml");
+            assert_eq!(
+                codex_trusted(&config, &dir, Harness::Codex).unwrap(),
+                Some(true),
+                "{name}: trusted"
+            );
+            let text = fs::read_to_string(&config).unwrap();
+            assert_eq!(count(&text, HOOK_ENTRY), hooks, "{name}: hooks");
+            assert_eq!(
+                count(&text, &format!("[{}]", codex_section(&dir))),
+                1,
+                "{name}: tables"
+            );
+            assert_eq!(
+                toml_value(
+                    &text,
+                    "features.multi_agent_v2",
+                    "max_concurrent_threads_per_session"
+                )
+                .unwrap_or_else(|| "none".to_owned()),
+                after,
+                "{name}: after"
+            );
+            if let Some(body) = &body {
+                assert_eq!(
+                    fs::read_to_string(lane.join("config.toml")).unwrap(),
+                    format!("{body}\n"),
+                    "{name}: the account's own config is left as it was"
+                );
+            }
+        }
+        // The account's files reach the launch by link, so a token renewed
+        // under the lane lands in the account's own auth.json; a store the
+        // account lacked is made in the account and linked.
+        let dir = root.path().join("linked").join("wt");
+        fs::create_dir_all(&dir).unwrap();
+        let lane = account(root.path(), "linked", None, false);
+        let home = prepare(Harness::Codex, &lane, &dir, false).unwrap().home;
+        fs::write(home.join("auth.json"), "renewed\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(lane.join("auth.json")).unwrap(),
+            "renewed\n"
+        );
+        fs::write(home.join("sessions").join("one.jsonl"), "rollout\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(lane.join("sessions").join("one.jsonl")).unwrap(),
+            "rollout\n"
+        );
+        // A second preparation, from the private home as a relaunch gives
+        // it, links a private file at a name the account has since gained.
+        fs::write(home.join("models_cache.json"), "private\n").unwrap();
+        fs::write(lane.join("models_cache.json"), "shipped\n").unwrap();
+        let again = prepare(Harness::Codex, &home, &dir, false).unwrap();
+        assert_eq!(again.home, home);
+        assert_eq!(
+            fs::read_to_string(home.join("models_cache.json")).unwrap(),
+            "shipped\n"
+        );
+        assert_eq!(
+            fs::read_link(home.join("models_cache.json")).unwrap(),
+            lane.join("models_cache.json")
+        );
+    }
+
+    /// The private home is where Codex writes the answer given at the pane,
+    /// so it is read beside the account's config.
+    #[test]
+    fn an_answer_recorded_in_either_codex_config_refuses_and_is_left_as_written() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("answered").join("wt");
+        fs::create_dir_all(&dir).unwrap();
+        let body = format!(
+            "{HOOK_ENTRY}\ntrusted_hash = \"sha256:aa\"\n\n[projects.\"{}\"]\ntrust_level = \"untrusted\"",
+            dir.display()
+        );
+        let lane = account(root.path(), "answered", Some(&body), true);
+        let e = prepare(Harness::Codex, &lane, &dir, false).unwrap_err();
+        assert_eq!(key(&e), "trust-refused");
+        assert_eq!(
+            fs::read_to_string(lane.join("config.toml")).unwrap(),
+            format!("{body}\n")
+        );
+        let dir = root.path().join("home-answered").join("wt");
+        fs::create_dir_all(&dir).unwrap();
+        let lane = account(root.path(), "home-answered", None, true);
+        let home = prepare(Harness::Codex, &lane, &dir, false).unwrap().home;
+        let answer = format!(
+            "\n[projects.\"{}\"]\ntrust_level = \"untrusted\"\n",
+            dir.display()
+        );
+        fs::write(home.join("config.toml"), &answer).unwrap();
+        let e = prepare(Harness::Codex, &lane, &dir, false).unwrap_err();
+        assert_eq!(key(&e), "trust-refused");
+        assert_eq!(
+            fs::read_to_string(home.join("config.toml")).unwrap(),
+            answer
+        );
+        let dir = root.path().join("dangling").join("wt");
+        fs::create_dir_all(&dir).unwrap();
+        let lane = account(root.path(), "dangling", None, true);
+        symlink(lane.join("absent.toml"), lane.join("config.toml")).unwrap();
+        let e = prepare(Harness::Codex, &lane, &dir, false).unwrap_err();
+        assert_eq!(key(&e), "config-unreadable");
+    }
+
+    /// Codex makes its `plugins` directory under the home before the account
+    /// has the name, so the sequence is reproduced from that home, as a
+    /// relaunch hands it.
+    #[test]
+    fn a_private_plugins_directory_is_kept_and_another_real_directory_refuses() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, kept) in [("plugins", true), ("unknown", false)] {
+            let dir = root.path().join(name).join("wt");
+            fs::create_dir_all(&dir).unwrap();
+            let lane = account(root.path(), name, None, false);
+            let home = prepare(Harness::Codex, &lane, &dir, false).unwrap().home;
+            fs::create_dir_all(home.join(name).join("cache")).unwrap();
+            fs::write(home.join(name).join("private"), "unproved private data\n").unwrap();
+            fs::create_dir_all(lane.join(name)).unwrap();
+            fs::write(lane.join(name).join("account"), "shipped\n").unwrap();
+            let result = prepare(Harness::Codex, &home, &dir, false);
+            if kept {
+                let again = result.unwrap();
+                assert_eq!(again.home, home);
+                assert!(
+                    prepare(Harness::Codex, &home, &dir, false).is_ok(),
+                    "repeats"
+                );
+                assert_eq!(
+                    fs::read_to_string(home.join(name).join("private")).unwrap(),
+                    "unproved private data\n"
+                );
+            } else {
+                assert_eq!(key(&result.unwrap_err()), "home-entry");
+            }
+            assert!(
+                !home.join(name).join(name).exists(),
+                "{name}: no nested link"
+            );
+            assert!(fs::symlink_metadata(home.join(name)).unwrap().is_dir());
+        }
+    }
+
+    /// The file holds the account's address, user id and every per-project
+    /// tool allowance, so each row reads back what else it held.
+    #[test]
+    fn a_claude_config_dir_gains_the_trust_pair_and_a_recorded_refusal_or_unreadable_file_refuses()
+    {
+        let root = tempfile::tempdir().unwrap();
+        type Row<'a> = (
+            &'a str,
+            Option<&'a str>,
+            Result<(Route, &'a str, usize, usize)>,
+        );
+        let rows: [Row; 6] = [
+            ("no-config", None, Ok((Route::AccountConfig, "-", 0, 0))),
+            (
+                "trusts-another",
+                Some(
+                    r#"{"userID": "u", "projects": {"/elsewhere": {"hasTrustDialogAccepted": true, "allowedTools": ["Bash"]}}}"#,
+                ),
+                Ok((Route::AccountConfig, "u", 1, 0)),
+            ),
+            (
+                "already-trusted",
+                Some(
+                    r#"{"userID": "u", "hasCompletedOnboarding": true, "projects": {"DIR": {"hasTrustDialogAccepted": true, "allowedTools": ["Bash"]}}}"#,
+                ),
+                Ok((Route::Preapproved, "u", 0, 1)),
+            ),
+            (
+                "entry-without-answer",
+                Some(r#"{"projects": {"DIR": {"allowedTools": ["Bash", "Read"]}}}"#),
+                Ok((Route::AccountConfig, "-", 0, 2)),
+            ),
+            (
+                "answered-no",
+                Some(r#"{"userID": "u", "projects": {"DIR": {"hasTrustDialogAccepted": false}}}"#),
+                Err(Error::refused("trust-refused", &[])),
+            ),
+            (
+                "not-json",
+                Some(r#"{"projects": "#),
+                Err(Error::refused("config-unreadable", &[])),
+            ),
+        ];
+        for (name, body, want) in rows {
+            let lane = root.path().join(name).join(".1claude");
+            let dir = root.path().join(name).join("wt");
+            fs::create_dir_all(&lane).unwrap();
+            fs::create_dir_all(&dir).unwrap();
+            let config = lane.join(".claude.json");
+            let body = body.map(|b| b.replace("DIR", &dir.display().to_string()));
+            if let Some(body) = &body {
+                fs::write(&config, format!("{body}\n")).unwrap();
+            }
+            let got = prepare(Harness::Claude, &lane, &dir, false);
+            match want {
+                Ok((route, user, other_tools, own_tools)) => {
+                    let prepared = got.unwrap();
+                    assert_eq!(prepared.route, route, "{name}");
+                    assert_eq!(
+                        prepared.home, lane,
+                        "{name}: the launch runs under the config dir"
+                    );
+                    let doc: Value =
+                        serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+                    let entry = &doc["projects"][dir.display().to_string()];
+                    assert_eq!(entry["hasTrustDialogAccepted"], Value::Bool(true), "{name}");
+                    assert_eq!(doc["hasCompletedOnboarding"], Value::Bool(true), "{name}");
+                    assert_eq!(doc["userID"].as_str().unwrap_or("-"), user, "{name}");
+                    let tools = |v: &Value| v.as_array().map_or(0, Vec::len);
+                    assert_eq!(
+                        tools(&doc["projects"]["/elsewhere"]["allowedTools"]),
+                        other_tools,
+                        "{name}"
+                    );
+                    assert_eq!(tools(&entry["allowedTools"]), own_tools, "{name}");
+                    if route == Route::AccountConfig {
+                        assert_eq!(
+                            fs::metadata(&config).unwrap().permissions().mode() & 0o777,
+                            0o600,
+                            "{name}: private"
+                        );
+                    }
+                }
+                Err(e) => {
+                    assert_eq!(key(&got.unwrap_err()), key(&e), "{name}");
+                }
+            }
+            if matches!(name, "answered-no" | "already-trusted") {
+                assert_eq!(
+                    fs::read_to_string(&config).unwrap(),
+                    format!("{}\n", body.as_deref().unwrap()),
+                    "{name}: left as written"
+                );
+            }
+        }
+    }
+
+    /// Pi's arm writes nothing and runs under the root given: the line's
+    /// `--approve` trusts the folder unless the root records an answer for
+    /// it or its nearest ancestor that holds one, and a recorded no refuses.
+    #[test]
+    fn a_pi_root_s_recorded_answer_for_the_folder_or_its_nearest_ancestor_decides() {
+        let root = tempfile::tempdir().unwrap();
+        let rows: [(&str, Option<&str>, Result<Route>); 7] = [
+            ("no-store", None, Ok(Route::ApproveWord)),
+            (
+                "another",
+                Some(r#"{"/elsewhere": false}"#),
+                Ok(Route::ApproveWord),
+            ),
+            ("trusted", Some(r#"{"DIR": true}"#), Ok(Route::Preapproved)),
+            (
+                "parent-no",
+                Some(r#"{"PARENT": false}"#),
+                Err(Error::refused("trust-refused", &[])),
+            ),
+            (
+                "own-yes-over-parent-no",
+                Some(r#"{"PARENT": false, "DIR": true}"#),
+                Ok(Route::Preapproved),
+            ),
+            (
+                "cleared-under-parent-yes",
+                Some(r#"{"PARENT": true, "DIR": null}"#),
+                Ok(Route::Preapproved),
+            ),
+            (
+                "not-an-object",
+                Some("[]"),
+                Err(Error::refused("config-unreadable", &[])),
+            ),
+        ];
+        for (name, body, want) in rows {
+            let parent = root.path().join(name);
+            let dir = parent.join("wt");
+            let pi_root = parent.join(".pi-root");
+            fs::create_dir_all(&dir).unwrap();
+            fs::create_dir_all(&pi_root).unwrap();
+            let store = pi_root.join("trust.json");
+            if let Some(body) = body {
+                let body = body
+                    .replace(
+                        "PARENT",
+                        &parent.canonicalize().unwrap().display().to_string(),
+                    )
+                    .replace("DIR", &dir.canonicalize().unwrap().display().to_string());
+                fs::write(&store, &body).unwrap();
+            }
+            let before = fs::read(&store).ok();
+            let got = prepare(Harness::Pi, &pi_root, &dir, false);
+            match want {
+                Ok(route) => {
+                    let prepared = got.unwrap();
+                    assert_eq!(prepared.route, route, "{name}");
+                    assert_eq!(prepared.home, pi_root, "{name}");
+                }
+                Err(e) => assert_eq!(key(&got.unwrap_err()), key(&e), "{name}"),
+            }
+            assert_eq!(fs::read(&store).ok(), before, "{name}: nothing written");
+        }
+    }
+
+    fn field<'a>(e: &'a Error, name: &str) -> &'a str {
+        match e {
+            Error::Refused { fields, .. } => fields
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+                .unwrap_or(""),
+            other => panic!("{other}"),
+        }
+    }
+
+    /// The pending directory is the row's own: the production one is under
+    /// the launcher's HOME, which a test never writes into.
+    #[test]
+    fn a_copilot_home_gains_the_context_reader_and_an_unwritable_home_refuses_by_name() {
+        let root = tempfile::tempdir().unwrap();
+        let pending = root.path().join("cache/copilot-usage");
+        let home = root.path().join(".1copilot");
+        fs::create_dir_all(&home).unwrap();
+        let prepared = copilot(&home, Some(&pending)).unwrap();
+        assert_eq!(prepared.route, Route::AllowAllEnv);
+        assert_eq!(prepared.home, home);
+        let dest = home.join("extensions/kendex-lane-context/extension.mjs");
+        assert_eq!(fs::read_to_string(&dest).unwrap(), EXTENSION);
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(home.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(
+            settings["enabledFeatureFlags"]["EXTENSIONS"],
+            Value::Bool(true)
+        );
+        assert!(fs::metadata(&pending).unwrap().is_dir());
+        // A stale copy is replaced; other settings stay; a linked settings
+        // file is written through and the link stands.
+        let linked = root.path().join(".2copilot");
+        fs::create_dir_all(linked.join("extensions/kendex-lane-context")).unwrap();
+        fs::write(
+            linked.join("extensions/kendex-lane-context/extension.mjs"),
+            "stale\n",
+        )
+        .unwrap();
+        let shared = root.path().join("shared-settings.json");
+        fs::write(
+            &shared,
+            "{\"theme\": \"dark\", \"enabledFeatureFlags\": {\"OTHER\": true}}\n",
+        )
+        .unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&shared, linked.join("settings.json")).unwrap();
+        copilot(&linked, Some(&pending)).unwrap();
+        assert_eq!(
+            fs::read_to_string(linked.join("extensions/kendex-lane-context/extension.mjs"))
+                .unwrap(),
+            EXTENSION
+        );
+        assert!(
+            fs::symlink_metadata(linked.join("settings.json"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let settings: Value = serde_json::from_str(&fs::read_to_string(&shared).unwrap()).unwrap();
+        assert_eq!(
+            fs::metadata(&shared).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the operator's private settings stay private"
+        );
+        assert_eq!(settings["theme"], "dark");
+        assert_eq!(settings["enabledFeatureFlags"]["OTHER"], Value::Bool(true));
+        assert_eq!(
+            settings["enabledFeatureFlags"]["EXTENSIONS"],
+            Value::Bool(true)
+        );
+        // The operator's `false`: admitted on a working status line alone,
+        // and never overridden.
+        let off = root.path().join(".3copilot");
+        fs::create_dir_all(&off).unwrap();
+        fs::write(
+            off.join("settings.json"),
+            "{\"enabledFeatureFlags\": {\"EXTENSIONS\": false}}\n",
+        )
+        .unwrap();
+        let e = copilot(&off, Some(&pending)).unwrap_err();
+        assert_eq!(
+            (key(&e), field(&e, "detail"), field(&e, "cause")),
+            ("no-context-reader", "disabled", "no-status-line")
+        );
+        let script = root.path().join("copilot-statusline");
+        fs::write(&script, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(
+            off.join("settings.json"),
+            format!(
+                "{{\"enabledFeatureFlags\": {{\"EXTENSIONS\": false}}, \"statusLine\": {{\"type\": \"command\", \"command\": \"{} --fast\", \"refreshInterval\": 30}}}}\n",
+                script.display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            copilot(&off, Some(&pending)).unwrap().route,
+            Route::AllowAllEnv
+        );
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(off.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(
+            settings["enabledFeatureFlags"]["EXTENSIONS"],
+            Value::Bool(false)
+        );
+        // Settings that are no object refuse as unreadable.
+        let odd = root.path().join(".4copilot");
+        fs::create_dir_all(&odd).unwrap();
+        fs::write(odd.join("settings.json"), "[]\n").unwrap();
+        let e = copilot(&odd, Some(&pending)).unwrap_err();
+        assert_eq!(
+            (key(&e), field(&e, "detail")),
+            ("no-context-reader", "unreadable")
+        );
+        // A home that cannot be written, and a pending directory that
+        // cannot, each refuse by name with the file.
+        let sealed = root.path().join(".5copilot");
+        fs::create_dir_all(&sealed).unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o500)).unwrap();
+        let e = copilot(&sealed, Some(&pending)).unwrap_err();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            (key(&e), field(&e, "detail")),
+            ("no-context-reader", "unwritable")
+        );
+        assert_eq!(
+            field(&e, "file"),
+            sealed
+                .join("extensions/kendex-lane-context/extension.mjs")
+                .display()
+                .to_string()
+        );
+        let blocked = root.path().join("blocked-pending");
+        fs::write(&blocked, "").unwrap();
+        let e = copilot(&home, Some(&blocked)).unwrap_err();
+        assert_eq!(
+            (key(&e), field(&e, "detail")),
+            ("no-context-reader", "pending-unwritable")
+        );
+        assert_eq!(
+            key(&copilot(Path::new("rel/.copilot"), Some(&pending)).unwrap_err()),
+            "home-relative"
+        );
+    }
+
+    /// A start's reader check reads the home and writes nothing: the
+    /// extension counts only while its flag is true, a home without it
+    /// counts on a working status line alone, and the first thing that
+    /// fails names the cause.
+    #[test]
+    fn a_copilot_start_reads_its_reader_and_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join(".copilot");
+        assert_eq!(copilot_reader(&home), Err("settings-missing"));
+        assert!(fs::symlink_metadata(&home).is_err(), "nothing written");
+        let extension = home.join("extensions/kendex-lane-context/extension.mjs");
+        fs::create_dir_all(extension.parent().unwrap()).unwrap();
+        fs::write(&extension, EXTENSION).unwrap();
+        let flag = |on: bool| format!("{{\"enabledFeatureFlags\": {{\"EXTENSIONS\": {on}}}}}\n");
+        fs::write(home.join("settings.json"), flag(true)).unwrap();
+        assert_eq!(copilot_reader(&home), Ok(()));
+        fs::write(home.join("settings.json"), flag(false)).unwrap();
+        assert_eq!(copilot_reader(&home), Err("no-status-line"));
+        fs::remove_file(&extension).unwrap();
+        fs::write(home.join("settings.json"), flag(true)).unwrap();
+        assert_eq!(copilot_reader(&home), Err("no-status-line"));
+        let script = root.path().join("copilot-statusline");
+        fs::write(&script, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let line = format!(
+            "{{\"statusLine\": {{\"type\": \"command\", \"command\": \"{}\", \"refreshInterval\": 30}}}}\n",
+            script.display()
+        );
+        fs::write(home.join("settings.json"), line).unwrap();
+        assert_eq!(copilot_reader(&home), Ok(()));
+        assert!(
+            fs::symlink_metadata(&extension).is_err(),
+            "the reader is never installed"
+        );
+    }
+
+    /// A Copilot home whose status line runs `~/bin/copilot-statusline`,
+    /// and the user home `~/` stands for there.
+    fn home_relative_line(root: &Path) -> (PathBuf, PathBuf) {
+        let home = root.join(".copilot");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("settings.json"),
+            "{\"statusLine\": {\"type\": \"command\", \"command\": \"~/bin/copilot-statusline --fast\", \"refreshInterval\": 30}}\n",
+        )
+        .unwrap();
+        let user = root.join("user");
+        fs::create_dir_all(user.join("bin")).unwrap();
+        (home, user)
+    }
+
+    #[test]
+    fn a_home_relative_status_line_runs_the_script_under_the_launchers_home() {
+        let root = tempfile::tempdir().unwrap();
+        let (home, user) = home_relative_line(root.path());
+        crate::host::write_executable(&user.join("bin/copilot-statusline"), "#!/bin/sh\n");
+        assert_eq!(status_line(&home, Some(&user)), Ok(()));
+    }
+
+    #[test]
+    fn a_home_relative_status_line_with_no_script_or_no_home_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let (home, user) = home_relative_line(root.path());
+        // The script stands under the Copilot home, never the user home.
+        fs::create_dir_all(home.join("bin")).unwrap();
+        crate::host::write_executable(&home.join("bin/copilot-statusline"), "#!/bin/sh\n");
+        for user_home in [Some(user.as_path()), None] {
+            assert_eq!(
+                status_line(&home, user_home),
+                Err("command-missing"),
+                "{user_home:?}"
+            );
+        }
+    }
+}

@@ -2,7 +2,7 @@
 # Inputs: tools/guard, tools/ci-job-set, tools/macos-test-contracts, tools/macos-test-contracts.json,
 # skills/orch/*, skills/commit-guards/*,
 # skills/github/*, skills/deep-research/*, skills/slack/*, skills/bot-instructions/*,
-# skills/jarvis/scripts/lib/watch.py, skills/harness-ci/tests/change-class.test.sh
+# skills/jarvis/scripts/lib/watch.py, skills/change-scope/tests/change-scope.test.sh
 # Package selection and PATH are exercised through the production guard and
 # battery. The fixture engines model a command added after a release.
 set -euo pipefail
@@ -161,20 +161,31 @@ prose|https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/D
 prose|echo "a title (kendex#537)"|0:
 prose|echo "reinstall; kendex refresh"|0:
 prose|echo ready # reinstall; kendex refresh|0:
-caller|skills/orch/tests/claude-model-classes.sh|0:caller
-caller|skills/harness-ci/tests/change-class.test.sh|0:caller
+caller|skills/change-scope/tests/change-scope.test.sh|0:caller
 python|skills/jarvis/scripts/lib/watch.py|0:caller companion|1.0.0 project list
 ROWS
 
-# The existing runner owns which orch suites run alone. Discover one of its
-# names, then prove native dispatch puts it after a pooled suite even with a
-# single worker. No elapsed-time assertion or second isolation list is needed.
-alone_names="$(sed -n '/^ALONE=(/,/^)/p' "$REPO/skills/orch/tests/run-all.sh" | sed '1d;$d' | awk '{print $1}')"
-[ -n "$alone_names" ] || { bad 'runner isolation name is available'; exit 1; }
-alone_name=${alone_names%%$'\n'*}
+# The existing runner owns which orch suites run alone, through its ALONE
+# list. The copy this leg runs names a suite of its own there, whatever the
+# list holds, and native dispatch must start it after a pooled suite even
+# with a single worker. Its name sorts ahead of the pooled one, so only the
+# hold puts it last. No elapsed-time assertion or second isolation list is
+# needed.
+alone_name=aaa-alone
 mkdir -p "$R/skills/orch/tests/lib" "$TMP/native/tools" "$TMP/native/skills/orch" "$TMP/one-worker"
 cp "$GUARD" "$TMP/native/tools/guard"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
+python3 - "$R/skills/orch/tests/run-all.sh" "$alone_name" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = '\nALONE=(\n'
+assert source.count(needle) == 1
+planted = source.replace(needle, needle + '  ' + sys.argv[2] + '\n')
+assert planted != source
+path.write_text(planted)
+PY
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
 ln -s "$R/skills/orch/tests" "$TMP/native/skills/orch/tests"
@@ -202,7 +213,7 @@ order="$(tr '\n' ' ' < "$SUITE_LOG")"
 [ "$RC:$order" = "0:zzz-pooled $alone_name " ] && ok 'orch native dispatch retains runner isolation order' || bad 'orch native dispatch retains runner isolation order' "$RC $order $OUT"
 
 # A caller suite in a shard CI gives a kendex (orch-rest) runs; a suite in
-# one CI gives none (orch-oversee) cannot depend on one and does not.
+# one CI gives none (orch-state) cannot depend on one and does not.
 cp "$GUARD" "$TMP/native/tools/guard"
 rm "$R/skills/orch/tests/$alone_name.sh" "$R/skills/orch/tests/zzz-pooled.sh"
 for name in zzz-caller zzz-second; do
@@ -213,20 +224,21 @@ printf '%s\n' '$name' >> "\$SUITE_LOG"
 printf 'pass: 1 fail: 0\n'
 SH
 done
-printf '#!/bin/sh\nprintf "oversee_zzz\\n" >> "$SUITE_LOG"\nexit 97\n' > "$R/skills/orch/tests/oversee_zzz.sh"
+printf '#!/bin/sh\nprintf "lane_zzz\\n" >> "$SUITE_LOG"\nexit 97\n' > "$R/skills/orch/tests/lane_zzz.sh"
 run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
 [ "$RC" -ne 0 ] && [ "$RAN" = 'zzz-caller zzz-second ' ] && [[ "$OUT" == *'suite=zzz-caller '*'fail=1'* ]] \
   && [[ "$OUT" == *'remedy=release-engine'* ]] && [[ "$OUT" == *'selected-suite=skills/orch/tests/zzz-caller.sh'* ]] \
-  && [[ "$OUT" != *'selected-suite=skills/orch/tests/oversee_zzz.sh'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \
+  && [[ "$OUT" != *'selected-suite=skills/orch/tests/lane_zzz.sh'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \
   && ok 'kendex suites only: the caller fails under the release engine' \
   || bad 'kendex suites only: the caller fails under the release engine' "$RC $RAN $OUT"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 [ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] && ok 'kendex suites only: the next engine passes' || bad 'kendex suites only: the next engine passes' "$RC $RAN $OUT"
 
-# The catalog job sets CI=true. Offline released-package runs keep their proof.
+# The catalog job sets CI=true, and runs the orch suites an offline run does.
 RELEASE_TEST_CI=true run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
-[ "$RC:$RAN" = '0:' ] && [[ "$OUT" != *'selected-suite=skills/orch/tests/'* ]] \
-  && ok 'CI released packages exclude the orch corpus' || bad 'CI released packages exclude the orch corpus' "$RC $RAN $OUT"
+[ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] \
+  && ok 'CI released packages run the orch suites a checkout shard gives a kendex' \
+  || bad 'CI released packages run the orch suites a checkout shard gives a kendex' "$RC $RAN $OUT"
 
 # Each part runs its share of the selected suites, and the parts cover them;
 # a part with no share runs nothing.
@@ -250,7 +262,7 @@ done
 cp "$GUARD" "$TMP/native/tools/guard"
 rm "$TMP/native/tools/ci-job-set"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
-[ "$RC:$RAN" = '1:oversee_zzz zzz-caller zzz-second ' ] && [[ "$OUT" == *'guard-note: suites=all reason=kendex-unread tree=skills/orch'* ]] \
+[ "$RC:$RAN" = '1:lane_zzz zzz-caller zzz-second ' ] && [[ "$OUT" == *'guard-note: suites=all reason=kendex-unread tree=skills/orch'* ]] \
   && ok 'an unread kendex selection runs the whole package' || bad 'an unread kendex selection runs the whole package' "$RC $RAN $OUT"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard" 2/2
 [ "$RC:$RAN" = '1:' ] && [[ "$OUT" == *'guard: kendex-unread=skills/orch'* ]] && [[ "$OUT" != *'reason=kendex-unread'* ]] \

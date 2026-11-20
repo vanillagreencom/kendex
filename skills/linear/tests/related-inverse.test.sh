@@ -69,9 +69,7 @@ assert_related() {
   assert_jq "$1" "$2" "$3 | .related == [\"KEN-2\", \"KEN-3\"]"
 }
 
-assert_related "get safe lists the inverse related issue" "$(run_live issues get KEN-1 --format=safe)" '.'
-assert_related "get with bundle lists the inverse related issue" \
-  "$(run_live issues get KEN-1 --with-bundle --format=safe)" '.'
+assert_related "get lists the inverse related issue" "$(run_live issues get KEN-1 --format=safe)" '.'
 assert_related "bulk-get lists the inverse related issue" "$(run_live issues bulk-get KEN-1 --format=safe)" '.[0]'
 assert_related "list lists the inverse related issue" "$(run_live issues list --format=safe)" '.[0]'
 

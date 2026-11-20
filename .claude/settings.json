@@ -8,15 +8,11 @@
       "Bash(tmux list-panes *)",
       "Bash(tmux list-sessions*)",
       "Bash(tmux display-message *)",
-      "Bash(.agents/skills/orch/scripts/workflow-state *)",
-      "Bash(.agents/skills/orch/scripts/dev-artifact-check *)",
-      "Bash(.agents/skills/orch/scripts/review-artifact-check *)",
-      "Bash(.agents/skills/orch/scripts/dev-round-write *)",
+      "Bash(.agents/skills/orch/scripts/orch-runtime review-artifact *)",
       "Bash(.agents/skills/orch/scripts/git-context *)",
       "Bash(.agents/skills/orch/scripts/orch-env *)",
-      "Bash(.agents/skills/orch/scripts/pr-view-json *)",
+      "Bash(.agents/skills/orch/scripts/orch-runtime pr view *)",
       "Bash(.agents/skills/orch/scripts/resolve-base-branch *)",
-      "Bash(.agents/skills/orch/scripts/lanes *)",
       "Bash(.agents/skills/github/scripts/github.sh pr-threads *)",
       "Bash(.agents/skills/github/scripts/github.sh pr-view *)",
       "Bash(.agents/skills/github/scripts/github.sh pr-list *)",
@@ -105,6 +101,15 @@
             "type": "command",
             "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree-prompt-claim.sh\"",
             "timeout": 75
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-prompt.sh\"",
+            "timeout": 30
           }
         ]
       }

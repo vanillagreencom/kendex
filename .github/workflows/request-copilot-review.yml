@@ -9,7 +9,9 @@ name: Request Copilot review
   pull_request: {}
   merge_group: {}
 
+# contents: read lets the checkout below read a private repository.
 permissions:
+  contents: read
   pull-requests: write
 
 jobs:
@@ -19,17 +21,39 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
+      # The classifier reads the range between both endpoints, so the checkout
+      # holds the whole history. It reads the pull request's tree with kendex
+      # main's classifier and executes none of it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # A classifier failure must never redden this required workflow: the
+      # step continues with no quick output, and the request below stays.
+      - id: classify
+        continue-on-error: true
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+        with:
+          event: ${{ github.event_name }}
+          base: ${{ format('{0}^1', github.sha) }}
+          head: ${{ github.event.pull_request.head.sha }}
       # GitHub gives a pull_request run from a fork a read-only token, so a
       # fork head is skipped before a request that would fail. Dependabot
       # heads keep the request: the permissions key above raises their token.
-      # This workflow checks out and executes no pull-request content.
+      # A proved quick change skips the request on the literal true alone.
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          QUICK: ${{ steps.classify.outputs.quick }}
         with:
           script: |
             try {
               const pr = context.payload.pull_request;
               if (pr.head.repo?.full_name !== pr.base.repo.full_name) {
                 core.info(`copilot-request: skipped=${pr.number} reason=fork-read-only-token`);
+                return;
+              }
+              if (process.env.QUICK === 'true') {
+                core.info(`copilot-request: skipped=${pr.number} reason=quick-proof`);
                 return;
               }
               await github.rest.pulls.requestReviewers({

@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=.github/actions/change-class/classify
+harness-note: cause=product-source-or-unreadable-ownership path=.github/actions/change-class/classify
+class: class=standard measured=true cause=excluded-path path=.github/actions/change-class/classify glob=.github/actions/*

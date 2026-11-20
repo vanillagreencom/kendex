@@ -1,146 +1,26 @@
 #!/usr/bin/env bash
-# Shared path rules for change-class and orch's item-tier Location inputs.
-# Sourced with extglob enabled. Path helpers read no diff or repository settings.
-# base_settings reads trusted committed settings for both classifiers.
-# change_class_lanes reads declarations and uses harness-only's resolved range.
+# The lane rules shared by the installed change-class and the change-class
+# action, over the path rules and shared helpers of change-scope's library,
+# loaded from the package installed beside this one. Its callers also read
+# HARNESS_CI_REFRESH_CALLER, change_class_path and its loaders, and
+# names_only_roots_rendered. Sourced with extglob enabled.
 #
-# change_class_path PATH PHASE sets CHANGE_CLASS_PATH and
-# CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, pointer, narrow or
-# launch (all phases). An unmatched path leaves both empty.
-# The launch phase consumes CHANGE_CLASS_STANDARD_PATHS when the caller loads it.
-# change_class_path_load CONF reads the narrow-phase lists once. Returns 1
-# on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
-# narrow class. Call it before the narrow or launch phase.
-# change_class_path_match PATH GLOBS sets PATH_MATCH_HIT on the first match.
-# GLOBS is newline-separated, with bash patterns matching the whole path.
-# change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
+# A checkout without change-scope beside this package fails the load with one
+# `wiring-error: cause=dependency-absent skill=change-scope` line and status
+# 1; the sourcer refuses as it does any unreadable library.
+#
+# change_class_lanes reads declarations and uses harness-only's resolved range.
 
-# The adopted caller can lack an inventory entry when adoption preserves its
-# configuration. Candidacy permits proof setup; release comparison owns it.
-HARNESS_CI_REFRESH_CALLER=.github/workflows/kendex-refresh.yml
-BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
-
-# harness-only owns the names-only verdict. Its roots must also belong to
-# the caller's measurement roots before the inventory can leave the path set.
-# LOAD_ROOTS sets BRANCH_GROWTH_RENDER_ROOTS from the caller's trusted settings.
-names_only_roots_rendered() { # ROOTS LOAD_ROOTS [ARG...]
-  local roots="$1" root listed
-  shift
-  [ "$roots" != - ] || return 0
-  "$@" || return 1
-  set -f
-  for root in ${roots//,/ }; do
-    for listed in $BRANCH_GROWTH_RENDER_ROOTS; do
-      [ "$root" = "$listed" ] && continue 2
-    done
-    set +f
-    echo "inventory-kept: cause=root-not-rendered root=$root" >&2
-    return 1
-  done
-  set +f
-}
-
-change_class_path_match() { # PATH GLOBS
-  local glob
-  PATH_MATCH_HIT=""
-  while IFS= read -r glob; do
-    [ -n "$glob" ] || continue
-    # shellcheck disable=SC2254
-    case "$1" in
-      $glob) PATH_MATCH_HIT="path=$1 glob=$glob"; return 0 ;;
-    esac
-  done <<<"$2"
+# Named for this package: orch's reader sources this file under a
+# CHANGE_CLASS_LIB_DIR of its own.
+HARNESS_CI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+CHANGE_SCOPE_LIB="$HARNESS_CI_LIB_DIR/../../../change-scope/scripts/lib/change-scope.sh"
+if [ ! -r "$CHANGE_SCOPE_LIB" ]; then
+  printf 'wiring-error: cause=dependency-absent skill=change-scope path=%s\n' "$CHANGE_SCOPE_LIB" >&2
   return 1
-}
-
-change_class_list_globs() { # CONF KEYWORD
-  awk -v kind="$2" '
-    $1 == "superseded" { drop[$2] = 1 }
-    $1 == kind { glob[++n] = $2 }
-    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
-  ' "$1"
-}
-
-change_class_path_load() { # CONF
-  CHANGE_CLASS_PATH_CAUSE=narrow-change-list-unreadable
-  [ -r "$1" ] || return 1
-  CHANGE_CLASS_EXCLUDED="$(change_class_list_globs "$1" path)" &&
-    CHANGE_CLASS_INSTRUCTION="$(change_class_list_globs "$1" instruction)" || return 1
-  CHANGE_CLASS_PATH_CAUSE=narrow-change-floor-missing
-  [ -n "$CHANGE_CLASS_INSTRUCTION" ] || return 1
-  CHANGE_CLASS_PATH_CAUSE=""
-}
-
-change_class_path() { # PATH PHASE
-  local globs
-  CHANGE_CLASS_PATH=""
-  CHANGE_CLASS_PATH_CAUSE=""
-  if [ "$2" = launch ]; then
-    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = before-render ] || [ "$2" = launch ]; then
-    # These files decide the render and classifier inputs. Gemini's shim
-    # owns one key only, not the other settings its harness executes.
-    globs='kendex.toml
-kendex.settings.toml
-kendex-local.toml
-.kendex/settings.toml
-.gemini/settings.json'
-    if change_class_path_match "$1" "$globs"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = registry ] || [ "$2" = launch ]; then
-    # Registries execute hooks, permissions and MCP servers. A proven render
-    # can own their changed keys; a Location alone proves no render.
-    globs='.claude/settings.json
-.claude/settings.local.json
-.mcp.json
-.codex/config.toml
-.codex/hooks.json
-.cursor/hooks.json
-.cursor/mcp.json
-.agents/hooks.json
-.agents/mcp_config.json
-.github/copilot/settings.json
-.github/copilot/settings.local.json
-.github/mcp.json
-.github/hooks/*.json
-.pi/settings.json
-.pi/kendex/hooks.json
-opencode.json
-opencode.jsonc'
-    if change_class_path_match "$1" "$globs"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = pointer ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" $'CLAUDE.md\n*/CLAUDE.md'; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="instruction-pointer $PATH_MATCH_HIT"
-      return 0
-    fi
-  fi
-  if [ "$2" = narrow ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED"; then
-      CHANGE_CLASS_PATH=standard
-      CHANGE_CLASS_PATH_CAUSE="excluded-path $PATH_MATCH_HIT"
-      return 0
-    fi
-    if change_class_path_match "$1" "$CHANGE_CLASS_INSTRUCTION"; then
-      CHANGE_CLASS_PATH=small
-      CHANGE_CLASS_PATH_CAUSE="instruction-file $PATH_MATCH_HIT"
-    fi
-  fi
-}
+fi
+# shellcheck source=../../../change-scope/scripts/lib/change-scope.sh
+. "$CHANGE_SCOPE_LIB" || return 1
 
 # The unread rule's queue list and globs take the list grammar, extglob on,
 # for this match alone: the change-class action sources this file with it
@@ -196,23 +76,22 @@ fi
 # change-class's per-push record. An absent line stands nothing down.
 per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
   die "cause=queue-record-unreadable" "could not read change-class's per-push line"
-# change-class's light-ci record, likewise.
-light="$(sed -n 's/^light-ci: kind=//p' "${work:?}/class-log")" ||
-  die "cause=light-record-unreadable" "could not read change-class's light-ci line"
 # change-class's unread-paths record: the base's HARNESS_CI_UNREAD_PATHS,
 # globs of paths no lane reads. change-class prints it on every verdict after
 # all it relays from tools that read the head, so only the last line is its
 # own. An absent record declares none.
 unread_globs="$(sed -n 's/^unread-paths://p' "${work:?}/class-log" | tail -n 1 | tr ' ' '\n')" ||
   die "cause=unread-record-unreadable" "could not read change-class's unread-paths line"
+light="$(sed -n 's/^light-ci: kind=//p' "${work:?}/class-log")" ||
+  die "cause=light-record-unreadable" "could not read change-scope's light-ci line"
 unread_hit=""
 # A path the shipped queue list names is a CI input no declaration takes out
-# of the lanes: change-class's queue-only rule reads that list from orch
-# beside this package. Unread, the declaration is refused.
+# of the lanes: change-class's queue-only rule reads that list from
+# change-scope beside this package. Unread, the declaration is refused.
 queue_globs=""
 if [ -n "$unread_globs" ]; then
   queue_globs="$(change_class_list_globs \
-    "${BASH_SOURCE[0]%/*}/../../../orch/references/narrow-change.conf" queue 2>/dev/null)" ||
+    "${BASH_SOURCE[0]%/*}/../../../change-scope/references/narrow-change.conf" queue 2>/dev/null)" ||
     queue_globs=""
   if [ -z "$queue_globs" ]; then
     printf 'setting-refused: setting=HARNESS_CI_UNREAD_PATHS cause=queue-list-unreadable\n' >&2
@@ -579,76 +458,3 @@ case "$reader_missing" in
 esac
 
 }
-
-# The bytes of PATH as commit REV holds it, written to OUT: status 0, 2 where
-# that commit holds no PATH, 3 where it holds PATH as anything but a regular
-# file, and 1 where the commit or the file could not be read. A symlink is a
-# blob of its target's name, which no reader of a checkout sees: it follows
-# the link.
-rev_file() { # REV PATH OUT
-  local listed kind blob TAB=$'\t'
-  listed="$(git -C "$repo" ls-tree "$1" -- "$2" 2>/dev/null)" || return 1
-  [ -n "$listed" ] || return 2
-  case "${listed%% *}" in
-    100644 | 100755) ;;
-    *) return 3 ;;
-  esac
-  kind="${listed#* }"
-  kind="${kind%% *}"
-  blob="${listed%%"$TAB"*}"
-  blob="${blob##* }"
-  [ "$kind" = blob ] || return 1
-  git -C "$repo" cat-file blob "$blob" >"$3" 2>/dev/null || return 1
-}
-
-# rev_file at the commit --base names. BASE_REV is that commit, resolved once.
-base_file() { # PATH OUT
-  if [ -z "$BASE_REV" ]; then
-    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
-      BASE_REV=""
-    [ -n "$BASE_REV" ] || return 1
-  fi
-  rev_file "$BASE_REV" "$1" "$2"
-}
-
-base_settings() {
-  local file files=() n=0 status loaded key value parser_dir
-  for file in $BASE_SETTINGS_FILES; do
-    status=0
-    base_file "$file" "$work/base-settings-$((n + 1))" || status=$?
-    case "$status" in
-      0) ;;
-      2) continue ;;
-      *)
-        MEASURE_CAUSE="cause=base-settings-unreadable base=${BASE_REV:-$base}${BASE_REV:+ path=$file}"
-        return 1 ;;
-    esac
-    n=$((n + 1))
-    files=("${files[@]+"${files[@]}"}" "$work/base-settings-$n")
-  done
-  [ "$n" -gt 0 ] || return 0
-  if ! loaded="$(
-    exec 3>&1 1>&2
-    # shellcheck disable=SC2086
-    unset $BASE_SETTINGS_KEYS
-    parser_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-    # shellcheck source=../../../orch/scripts/lib/kendex-env.sh
-    . "$parser_dir/../../../orch/scripts/lib/kendex-env.sh" || exit 1
-    for file in "${files[@]}"; do
-      kendex_load_settings_file "$file" || exit 1
-    done
-    for key in $BASE_SETTINGS_KEYS; do
-      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
-    done
-  )"; then
-    MEASURE_CAUSE="cause=base-settings-unreadable base=$BASE_REV"
-    return 1
-  fi
-  while IFS= read -r value; do
-    [ -n "$value" ] || continue
-    key="${value%%=*}"
-    [ -z "${!key+x}" ] || continue
-    printf -v "$key" '%s' "${value#*=}"
-  done <<<"$loaded"
-}
-

@@ -69,9 +69,9 @@ answers the overseer, and the relay holds mailbox posts except replies to
 messages the owner typed in the channel, which still post in their threads,
 a notice whose --ref names a /report directive, which posts as a new
 message, and a notice whose --ref names a directive a satellite forwarded,
-which posts under a root that quotes the request. oversee-report's report
+which posts under a root that quotes the request. The orch watch's report
 notice carries no --ref, so it is an ordinary owner notice under the hold,
-and oversee-report sends none during
+and the watch sends none during
 ORCH_REPORT_QUIET_HOURS.
 Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
@@ -154,7 +154,12 @@ ROUTED_SUBTYPES = {None, "file_share", "thread_broadcast"}
 # The package's code: the launcher and the modules it loads.
 SCRIPTS = Path(__file__).resolve().parents[1]
 LAUNCHER = SCRIPTS / "slack"
-WORKFLOW_STATE = Path(".agents/skills/orch/scripts/workflow-state")
+# The root's overseer generation, read from its fleet record as data.
+GENERATION_READ = r'''
+. "$1" || exit 1
+fleet="$(mailbox_fleet_record full "$2")" || exit 1
+exec jq -r '.controller.generation // 0' -- "$fleet"
+'''
 # Seconds the relay waits for Slack's `hello` on a new connection.
 HELLO_SECONDS = 10
 # Seconds of silence on the connection before it pings, and as many again
@@ -196,7 +201,7 @@ TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 # The delivery id of a /report directive is its trigger_id under this
 # prefix. `report` writes it and `RootRelay.routes` reads it as typed in
 # Slack, so a notice whose --ref names the directive posts, held or not.
-# oversee-report's report notice names no directive: an ordinary notice.
+# The orch watch's report notice names no directive: an ordinary notice.
 COMMAND_KEY = "command:"
 # A forwarded owner directive: a satellite Jarvis's `jarvis-session forward`
 # sends the request under this delivery key, its text ending in one
@@ -455,13 +460,15 @@ def author_of(message: Dict, owner_ids: Iterable[str], bot_user: str = "") -> Op
 def reader_generation(root: Path) -> int:
     """The generation the root's registered overseer record names, read as
     lane-mail's own overseer check reads that record: from the root, in the
-    relay's environment. A record from before generations reads as 0. A
-    failed read refuses as a refused lane-mail write does, so the message is
-    read again on the next poll."""
-    command = "workflow-state get oversee .overseer.generation"
+    relay's environment, the record file where the mailbox's own resolver
+    places it. A record from before generations reads as 0. A failed read,
+    an absent record among them, refuses as a refused lane-mail write does,
+    so the message is read again on the next poll."""
+    command = "fleet record .controller.generation"
     try:
-        proc = subprocess.run([str(root / WORKFLOW_STATE), "get", "oversee", ".overseer.generation // 0"], cwd=str(root),
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=LANE_MAIL_TIMEOUT_SECONDS)
+        proc = subprocess.run(["bash", "-c", GENERATION_READ, "reader-generation", str(MAILBOX_READ_FILES[2]), str(root)],
+                              cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                              timeout=LANE_MAIL_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as err:
         raise Refusal("lane-mail-failed", f"{command} ({err})") from err
     generation = proc.stdout.strip()

@@ -18,7 +18,7 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 # Lane state and host settings must resolve inside each suite's fixtures.
 unset ORCH_STATE_DIR ORCH_LANE_HOST
 
-# A scratch directory inside a checkout must not discover that checkout or
-# write its shared workflow state. Recompute the ceiling when a nested suite
-# sets its own TMPDIR, rather than retaining its caller's search boundary.
+# A scratch directory inside a checkout must not discover that checkout.
+# Recompute the ceiling when a nested suite sets its own TMPDIR, rather than
+# retaining its caller's search boundary.
 export GIT_CEILING_DIRECTORIES="${TMPDIR:-/tmp}"

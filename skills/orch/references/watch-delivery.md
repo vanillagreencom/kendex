@@ -1,57 +1,70 @@
 # Watch delivery
 
-At [overseer takeover § 2](../workflows/oversee-takeover.md#2-claim-and-follow-the-watch), read this introduction and Repeat watch for reader setup, the claim read and its refusals, the numbered follow and the current harness row. Read only the standing-watch section that row names. Leave the paragraphs beginning “For a hand-opened session”, “To stop a launcher-owned watch” and “The [oversee.md § 5]” for their launch or stop action. A runtime that wakes only at a background command's exit also reads Single passes, except its final hand-opened-fleet paragraph and its Stop sentence. Read stop instructions only at [oversee.md § 5](../workflows/oversee.md#5-stop). Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) before launching the watch, and from [skill-rules.md § Coordination](skill-rules.md#coordination), Lane mail, before a lane arms its mailbox monitor.
+Read when an overseer starts, follows or stops the fleet watch, and when a lane arms its mailbox monitor. At [overseer takeover § 2](../workflows/oversee-takeover.md#2-claim-and-follow-the-watch), read § The watch, § Reader directory, § Claim and the section and table row for this harness. Read § Stop only at [oversee.md § 5](../workflows/oversee.md#5-stop). A lane reads § Lane mailbox monitor from [skill-rules.md § Lane mail](skill-rules.md#lane-mail).
 
-Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
+Oversight stands from the watch's first launch until [oversee.md § 5](../workflows/oversee.md#5-stop). Every watch line reaches this session as the watch writes it. Where the harness has no asynchronous wake, the turn is the wait: hold a blocking follow of the log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
-`oversee launch` and `oversee-succeed` start the repeat watch through the orch job runner. The watch serves the new pane and survives the session's exit. A failed runner launch refuses the overseer launch. A running watch is handed to the new pane by the succession helper. The retained command includes its script, directory and watch arguments after the old claim ends. Automatic death and wall recovery leave a watch for the successor.
+## The watch
 
-Read that watch's log without starting another watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside the turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
+The watch is the runtime's standing scheduler, `orch-runtime watch run`. A controller that `start-controller` opens has its watch from the start: the request carries the watch's words. A session that `orch-runtime register --fleet` recorded, with no live claim, starts the watch once from its own pane with the block [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states. The watch outlives the session that started it, a succession, and a death or wall recovery. Nothing hands it over; a successor follows the same log.
+
+Follow the watch's log. Never start a second watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside its turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
+
+## Reader directory
+
+The log is `oversee-watch.log` beside the fleet state. `oversee-watch.err` beside it holds the runner's stderr, including each duty failure's cause under its `watch-step-failed` words.
+
+1. From the watch claim's working directory, create a fresh reader directory with `mktemp -d tmp/waiter.XXXXXX`. Use its absolute path as `[RUN_DIR]`. The turn-end check and the wake duty find the follow by this path.
+2. Link `[RUN_DIR]/watch.log` to the log.
+3. Save the follow of § Repeat watch or § Single passes as `[RUN_DIR]/follow.sh`.
+4. Follow with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]`, starting after the last numbered line handled.
+
+A fleet's first start, a `start-controller` with no `resume`, empties the log an earlier fleet left. After it the reader starts at 1, whatever a standing handoff names. A succession, a resume, a takeover and a hand `watch start` keep the log, so a successor keeps the cursor its handoff names. Never launch a second follow merely to receive events.
+
+## Claim
+
+The runtime is the one reader of the claim. Run this after each delivery and each expiry:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime watch status --fleet
+```
+
+Read `result.claim.standing`:
+
+- `live` is the watch.
+- `gone`, or no claim, is no live watch. A session the fleet state records as its overseer then starts the watch as [takeover § 2](../workflows/oversee-takeover.md#watch-reader) states.
+- `unreadable` is a failed read, its `cause` in the reply. A refusal with a keyed line is a failed read too. Report either and start nothing.
+- A live claim from another pane belongs to that pane: read the fleet's current controller record before any recovery.
+
+Do not replace a watch because a follow ended.
 
 ## Repeat watch
 
-The registered overseer's lead turn end refuses with `lane-mail-check: wake=unarmed` when a launcher-owned repeat watch is live but its follow does not run on a reader whose `watch.log` is the watch's stdout log. A hand-opened watch keeps the reader-path check under the watch claim's cwd. Re-arm with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]` from the next unhandled line. The hook starts no process.
+The bound controller's turn end checks that its follow can wake it, and refuses once when it cannot (`lane-mail-check: wake=unarmed` or `wake=unwatched`). Then re-arm with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]` from the next unhandled line.
 
-Read the `log` field of the launch's `watch-started` line. After a handover, the stdout log is `oversee-watch.log` beside the fleet state. Read `oversee-watch.err` beside it for restart failures. Create a fresh reader directory with `mktemp -d tmp/waiter.XXXXXX` from the watch claim's cwd. Use its absolute path as `[RUN_DIR]`. Link `[RUN_DIR]/watch.log` to that stdout log. Save the numbered follow below as `[RUN_DIR]/follow.sh`. The reader directory uses the path the turn-end wake check recognizes. It owns no watch claim.
-
-Every harness follows with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]`. `[NEXT_LINE]` starts at 1 in each fresh reader. A fresh overseer launch with no live watch clears both retained logs before starting its watch. Each follow starts after the last numbered line handled. The detached watch appends to the same log across succession and recovery, so the successor keeps the cursor from the handoff. Read the runner record and the live watch claim beside the fleet state through `scripts/lib/watch-pid.sh` and `scripts/lib/job-unit.sh`. Never launch a second repeat command merely to receive events.
-
-For a hand-opened session with no live watch claim, launch the workflow's repeat command once by [Waiter launch](waiter-launch.md) § Launch. That launch uses `[RUN_DIR]/watch`, `[RUN_DIR]/watch.log`, `[RUN_DIR]/watch.exit` and `[RUN_DIR]/watch.runner`, as the steps below specify.
-
-For a watch the overseer launcher started, run this claim read after each delivery and expiry. It prints the live watch's `[PID]`, also used by the stop command below.
-
-```bash
-bash -c '. "$1" || exit 3; watch_pid_live "$2" && printf "%s\n" "$WATCH_PID"' _ .agents/skills/orch/scripts/lib/watch-pid.sh "[OVERSEE_STATE]"
-```
-
-Exit 0 is a live claim. Exit 1 is no live claim. Any other status is a failed read: report its stderr and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, a session the fleet state records as its overseer restarts the watch as [takeover § 2](../workflows/oversee-takeover.md#watch-reader) states, unless the watch stopped itself with status 0 under [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance): after notice-only recovery, an exhausted retry or a blocked recovery, and in a session the fleet state does not record as its overseer, follow that section's stop and restart rules. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
-
-To stop a launcher-owned watch, use `[PID]` from that claim read. Run `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[OVERSEE_STATE_DIR]/oversee-watch.runner" [PID] '*oversee-watch*'`. The runner stops its exact unit or its verified process group. Report any failed stop with its `job-unit:` line.
-
-For a hand-opened session's waiter launch, find its group with `pgrep -f 'waiter[.][RUN_ID]/watc[h] '`. Exit 0 is a live watch and exit 1 is no watch. Report any other status and start nothing. Run `test -s "[RUN_DIR]/watch.exit"` after each delivery and expiry. With no pid, read that file: `stopped` ends oversight, another value follows the workflow's stop and restart rules, and an empty file means the watch died without a verdict. To stop that watch, write `stopped` into `[RUN_DIR]/watch.exit`, then stop its verified group with `.agents/skills/orch/scripts/lib/job-unit.sh stop-job "[RUN_DIR]/watch.runner" [PID] '*waiter.[RUN_ID]/watch *'`.
-
-| Harness | Wake mechanism | Re-arm |
-|---------|----------------|--------|
-| Claude Code | `Monitor` on the numbered follow, `timeout_ms` at its maximum. | At each expiry or stop, from the line after the last number delivered. |
-| Codex | `write_stdin` polls on a follow: [codex-runtime.md § Standing watch](codex-runtime.md#standing-watch). | Poll again once each poll's output is handled. |
-| Pi | `bg_task` output wakes on a follow: [pi-runtime.md § Standing watch (Pi)](pi-runtime.md#standing-watch-pi). | Respawn in the cases its Re-arm and Exit rows name. |
+On every harness, the watch types the follow's start command into an idle overseer whose follow has ended with log lines unhandled: the `overseer-follow` target of [oversee-events.md § `wake-delivered`, `wake-unconfirmed`, `wake-limit`](oversee-events.md#wake-delivered-wake-unconfirmed-wake-limit).
 
 ```sh
 n=$2
 tail -n "+$n" -F "$1" | while IFS= read -r line; do printf '%s: %s\n' "$n" "$line"; n=$((n + 1)); done
 ```
 
-The shell `read` loop numbers each line as it arrives; `awk` is not used because `mawk` fills its input buffer before it acts on a line, holding back lines already written.
+The shell `read` loop numbers each line as it arrives. Do not use `awk`: `mawk` fills its input buffer before it acts on a line, and holds back lines already written.
 
-The [oversee.md § 5](../workflows/oversee.md#5-stop) handoff names the mechanism in force, its re-arm rule, `[RUN_DIR]` and the next log line. After that Stop it names the watch `stopped` and its `[RUN_DIR]`, and no later session resumes or relaunches that watch.
+| Harness | Wake | Re-arm |
+|---|---|---|
+| Claude Code | `Monitor` on the numbered follow, `timeout_ms` at its maximum. | At each expiry or stop, from the line after the last number delivered. |
+| Codex | `write_stdin` polls on a follow: [codex-runtime.md § Standing watch](codex-runtime.md#standing-watch). | Poll again once each poll's output is handled. |
+| Pi | `bg_task` output wakes on a follow: [pi-runtime.md § Standing watch (Pi)](pi-runtime.md#standing-watch-pi). | Respawn in the cases its Re-arm and Exit rows name. |
+| Copilot CLI | § Single passes is this harness's standing follow. Run each pass as a sync-mode shell call with `initial_wait` 520 seconds, never in async mode. A call that returns at its wait with no line leaves its pass running. Start no second pass: the running pass's exit wakes the session (both measured on Copilot CLI 1.0.114). A background follow's exit starts a new turn only after a turn that ended without `Task complete`. So never end a turn with `Task complete` while overseeing; the watch's typed line is the net under it (measured on Copilot CLI 1.0.112 with autopilot). | Start the next pass after each pass exits. |
 
 ## Single passes
 
-Keep single-pass delivery for a harness that wakes only when a background command exits. When a detached repeat watch owns the fleet state, each pass reads new log lines instead of running `oversee-watch` again. Use the same reader directory, log link and numbered cursor as § Repeat watch. Save this version as `[RUN_DIR]/follow.sh`:
+Use single passes on a harness that wakes only when a background command exits. Each pass reads new log lines and starts no watch. Use the reader directory, link and cursor of § Reader directory, and save this follow as `[RUN_DIR]/follow.sh`:
 
 ```sh
 n=$2
-remaining=30
+remaining=6300
 while :; do
   lines="$(
     sed -n "${n},\$p" "$1" | while IFS= read -r line; do
@@ -65,22 +78,39 @@ while :; do
 done
 ```
 
-Run the follow as the harness's background command. Its exit wakes the session after new complete lines or a quiet expiry. After each return, read the claim and error log as § Repeat watch directs before any recovery action. A quiet return keeps the next unhandled line unchanged. Handle each numbered line and start the next pass after the last line handled. The detached watch keeps judging the overseer's pane for death and wall between deliveries. At Stop, stop that watch through its runner record and start no further reader pass.
+1. Run the follow as the harness's background command, in the mode its § Repeat watch row names. Its exit wakes the session.
+2. Handle each numbered line, then start the next pass after the last line handled.
+3. A quiet expiry is rare: it means the watch missed its heartbeat. Read the claim and `oversee-watch.err` as § Claim directs before any recovery. Keep the next unhandled line unchanged, and start the next pass.
 
-A hand-opened fleet with no repeat claim may still run the workflow command without `--repeat` as its background command. Its exit is the wake. This mode alone cannot report the session's death. Do not use it when a detached watch owns the state.
+## Stop
+
+Run this from the overseer's checkout. It asks the claimed runner to stop and waits for the claim's release. Report a refusal with its keyed line. Then start no further follow or pass.
+
+```bash
+.agents/skills/orch/scripts/orch-runtime watch stop --fleet
+```
+
+After a stop, the [oversee.md § 5](../workflows/oversee.md#5-stop) handoff's Watch line ([communication-modes.md § Handoff](communication-modes.md#handoff)) names the watch `stopped` with its `[RUN_DIR]`. No later session resumes or relaunches that watch.
 
 ## Lane mailbox monitor
 
-A lane whose harness has an Arm below arms one standing monitor on its own mailbox as its first step, from its worktree and on its own host, a hosted lane inside its sandbox. The monitor runs `.agents/skills/mailbox/scripts/lane-mail watch --item [ISSUE_ID]`, which announces unread mail, including answers no wait has read, on lines opening `lane-mail: mail=[ISSUE_ID]`; `lane-mail --help` owns when it announces. Each announcement wakes an idle lane, and the woken turn runs the `lane-mail inbox` command printed under it and acts on every envelope it prints, answers and directives alike, as its text directs. The ask gate's `lane-mail wait` hands preceding unread envelopes to the lane on stderr before advancing the read cursor past the answer it returns on stdout. Act on those envelopes as their text directs. The watch and inbox do not hand that mail over again. Every poll rewrites the mailbox's `to-lane.watch`, and a `lane-mail send` receipt reads it as `monitor=live` or `monitor=none`; the overseer wakes a Claude Code or Codex lane only on `monitor=none` ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)), and a lane on any other harness never. A Pi lane is sent no wake on the receipt: it runs no watch, so its receipt always reads `monitor=none` while the `pi-hooks` mail wake starts its turn, and a directive the watch reports `directive-unread` on any Pi lane takes [lane-reach.md](lane-reach.md). A Copilot CLI lane's `monitor=none` is a `--once` watch that announced and is not yet re-armed, or one never armed: the re-armed watch announces what still stands unread, so the overseer sends it no wake. That the watch's exit starts a Copilot turn, the premise of its Arm row below, is measured on Copilot CLI 1.0.88 by the kendex Jarvis session on 2026-09-29; the overseer sends a Copilot CLI lane no wake, so a directive the watch reports `directive-unread` on one takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver); a lane the wake refuses while its session runs, every hosted lane included, takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver). A lane whose harness has no Arm below never has a monitor. A Claude Code lane reads `none` while its monitor is not running.
+A lane whose harness has an Arm in the table below arms one standing monitor on its own mailbox as its first step. It arms it from its worktree on its own host; a hosted lane arms it inside its sandbox. The launch closes every brief of such a lane with the line that tells it to ([lane-directive.md § Brief file](lane-directive.md#brief-file)); the overseer writes none.
 
-The launch brief of a lane whose harness has an Arm below adds this line ([oversee.md § 3](../workflows/oversee.md#3-launch)): "As your first step, arm the mailbox monitor `lane-mail watch --item [ISSUE_ID]` per watch-delivery.md § Lane mailbox monitor, re-arm it at each expiry, and run the `lane-mail inbox` command each of its announcements prints." A Copilot CLI lane's line names `lane-mail watch --once --item [ISSUE_ID]` and says to re-arm it after each exit. A Pi lane's brief and relaunch line carry no monitor arm line ([pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi)).
+- The monitor runs `.agents/skills/mailbox/scripts/lane-mail watch --item [ISSUE_ID]`. It announces unread mail, including answers no wait has read, on lines opening `lane-mail: mail=[ISSUE_ID]`. `lane-mail --help` owns when it announces.
+- Each announcement wakes an idle lane. The woken turn runs the `lane-mail inbox` command printed under it, and acts on every envelope it prints, answers and directives alike.
+- The ask gate's `lane-mail wait` hands earlier unread envelopes to the lane on stderr before it advances the read cursor past the answer it prints on stdout. Act on those envelopes; the watch and the inbox do not hand them over again.
+- A watch that exits with status 2 refused, its keyed `lane-mail:` line on stderr. Never re-arm a refused watch blind. Run `lane-mail inbox --item [ISSUE_ID]` once, send that keyed line to the overseer with `lane-mail notice`, and re-arm once the cause it names is fixed.
 
-A watch that exits with status 2 refused, and its keyed `lane-mail:` line is on its stderr. The lane never re-arms a refused watch blind: it runs `lane-mail inbox --item [ISSUE_ID]` once, sends that keyed line to the overseer with `lane-mail notice`, and re-arms once the cause the line names is fixed.
+The overseer wakes no lane on a `lane-mail send` receipt's `monitor=` word: the watch's wake duty types a running lane read idle with mail unread ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)). A directive the watch reports `directive-unread` on a lane the wake does not reach takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
 
 | Harness | Arm | Re-arm |
-|---------|-----|--------|
-| Claude Code | `Monitor` on the watch command, `timeout_ms` at its maximum. | At its expiry, or after the lane stopped it. An exit with status 2 is the refusal above. |
-| Codex | None. Codex starts no turn for output that arrives after a turn ended, so the overseer wakes the lane: [codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox). | None. |
-| Pi | No monitor. The `pi-hooks` mail wake starts a turn in the idle lane when unread mail, including an answer, lands ([pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi)). | None. |
-| Copilot CLI | The watch command with `--once`, run as a background shell command: it exits 0 at its first announcement, and that exit is the wake ([copilot-runtime.md § Wake and lane mail](copilot-runtime.md#wake-and-lane-mail)): a background command's exit starts a new turn in an idle Copilot session with no user message, measured on Copilot CLI 1.0.88 by the kendex Jarvis session on 2026-09-29. The paragraph above names the overseer's route for mail it does not wake. Beside the watch, the lane reads mail at its `lane-mail inbox` wait points, at its session start and at each prompt it is handed through the `lane-mail-start` and `lane-mail-prompt` hooks, after each tool call through the `lane-mail-deliver` hook, at its turn end through the `lane-mail-check` hook, and at its next tool call while a halt stands. A Copilot tool call names no agent, so mail is handed after one, and marked read, only where the call's session is a lead session the hook recorded at its session start or at a turn end its own transcript proved; a custom subagent's call, measured on Copilot CLI 1.0.88 carrying its own session id, which nothing recorded, is handed nothing, and its halt refusal names no command: the lead's turn end names the read that clears it. Whether a built-in task-tool subagent's calls carry their own session id or the lead's is a pending live-lane proof, and one whose calls carry the lead's is read as the lead, handed the lead's mail after its calls, which marks it read, and under a halt shown the read that clears it. `tools/harness-smoke --only copilot --copilot-interactive` measured session-start context, typed print and interactive prompt context, and turn-end continuation on Copilot CLI 1.0.91 against silent-hook controls. That version can also run userPromptSubmitted on a background-command completion and discard its context, so the prompt hook leaves mail unread for inbox or another delivery point. A typed prompt can show context that the next delivery repeats. Copilot also runs the `hooks` entries of `.claude/settings.json`; the lane-mail registrations kendex writes there exit 0 before their script in a Copilot hook process, as measured on Copilot CLI 1.0.88 (kendex's `docs/adapters/claude.md` § Cross-reads), leaving the `.github/hooks` copies the one reader. A copy registered there by hand runs, reads the payload's `timestamp` as a Copilot call and passes it silently (`CALL_HARNESS`, `hooks/lane-mail-check.sh`). The lead's turn end is the agentStop naming a transcript in the session's own `session-state/<session-id>/` directory; Copilot CLI 1.0.88 also fires agentStop at a custom subagent's end, with the subagent's own session id and the lead's transcript, which that rule reads as a subagent's. | After each exit 0, once the `lane-mail inbox` command it printed has run; the fresh watch announces what still stands unread. An exit with status 2 is the refusal above. |
-| OpenCode and others | None. No background wake starts a turn, and `open-terminal --wake` does not take these harnesses: the lane reads mail at its `lane-mail inbox` wait points, and the overseer sends no wake. | None. |
+|---|---|---|
+| Claude Code | `Monitor` on the watch command, `timeout_ms` at its maximum. | At its expiry, or after the lane stopped it. Status 2 is a refusal. |
+| Codex | None: [codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox). | None. |
+| Pi | None: the `pi-hooks` mail wake starts a turn in the idle lane when unread mail lands ([pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi)). | None. |
+| Copilot CLI | The watch command with `--once`, run as a background shell command. It exits 0 at its first announcement, and that exit starts a new turn in the idle session (measured on Copilot CLI 1.0.88). The lane also reads mail at its hook points and its `lane-mail inbox` wait points ([copilot-runtime.md § Wake and lane mail](copilot-runtime.md#wake-and-lane-mail)). | After each exit 0, once the `lane-mail inbox` command it printed has run; the fresh watch announces what still stands unread. Status 2 is a refusal. |
+
+The prompt hook hands Claude Code, Codex and Copilot CLI lanes unread mail, and opens their local turn row. Claude Code and Codex acknowledge written context. Copilot CLI leaves it unread, and there a typed prompt can show context that the next delivery repeats. Beside its watch, a Copilot CLI lane's hooks hand it mail, only in a recorded lead session. [copilot-runtime.md § Wake and lane mail](copilot-runtime.md#wake-and-lane-mail) names each hook point. [copilot-runtime.md § Unproved behaviour](copilot-runtime.md#unproved-behaviour) holds the pending proof for a built-in subagent's calls.
+
+- A custom subagent's halt refusal names no command: the lead's turn end names the read that clears it.
+- Copilot also runs the `hooks` entries of `.claude/settings.json`. The lane-mail registrations kendex writes there exit 0 before their script in a Copilot hook process (measured on Copilot CLI 1.0.88; kendex's `docs/adapters/claude.md` § Cross-reads). The `.github/hooks` copies stay the one reader. A copy registered there by hand runs, reads the payload's `timestamp` as a Copilot call, and passes it silently (the turn-end check's payload reading, `skills/orch/runtime/src/turnend/payload.rs`).

@@ -1,6 +1,6 @@
 # Codebase Review Workflow
 
-Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegation. Always standalone — no managed lifecycle and no workflow-state file.
+Run every reviewer over a whole repository and present the findings. This workflow has no pull request, issue, diff or fix delegation. It always runs standalone, with no managed lifecycle and no state file.
 
 | Command | Behavior |
 |---------|----------|
@@ -13,23 +13,22 @@ Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegati
 .agents/skills/orch/scripts/git-context repo-root [PATH_OR_PWD]
 ```
 
-Not a git worktree → report `review-codebase requires a git worktree` and **END**. Otherwise use the output as `WT_PATH` and `mkdir -p "$WT_PATH/tmp"`.
+Not a git worktree: report `review-codebase requires a git worktree` and **END**. Otherwise the output is `WT_PATH`. Run `mkdir -p "$WT_PATH/tmp"`.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the `[PATH_OR_PWD]` § 1 resolves `WT_PATH` from.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, where `[DIR]` is `[PATH_OR_PWD]`.
 
 ## 2. Delegate
 
-Apply [Delegation](../references/skill-rules.md#delegation) before selecting any stored reviewer session.
+1. Apply [Delegation](../references/skill-rules.md#delegation) before you select any stored reviewer session.
+2. `[AGENTS]` is every `reviewer-*` agent this harness exposes, with no path filter. With none, report `No reviewer agents installed; cannot run codebase review` and **END**.
+3. Resolve the reviewer mode per [skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
 
-`[AGENTS]` is every `reviewer-*` agent this harness exposes; use the full list and do not path-filter. None available → report `No reviewer agents installed; cannot run codebase review` and **END**.
+   ```bash
+   .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
+   ```
 
-Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
-
-```bash
-.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
-```
-
-`0` delegates to every reviewer in one parallel batch; a positive value smaller than the reviewer count runs bounded sequential waves, retiring each completed session before launching the next. A thread-limit spawn failure under an unlimited budget continues in waves sized by the reviewers that did spawn. No re-review cycles here. On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`.
+4. `0` delegates to every reviewer in one parallel batch. A positive value below the reviewer count runs bounded waves: retire each finished session before the next wave. A thread-limit spawn failure under an unlimited budget continues in waves the size of the reviewers that spawned. This workflow runs no re-review.
+5. On Codex, spawn each canonical reviewer name by [codex-runtime.md § Spawning Codex collaboration agents](../references/codex-runtime.md#spawning-codex-collaboration-agents), under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/codebase-review.md
@@ -41,7 +40,7 @@ Exclusions: generated artifacts, dependency and vendor directories, build output
 
 ## 3. Present Findings
 
-Wait for every reviewer and read the returned JSONs. A reviewer that does not return the expected format is listed `unresponsive` and the run continues. Do not synthesize findings. Overall verdict is `action_required` when any reviewer returned blockers, else `pass`.
+Wait for every reviewer, then read the returned JSON files. List a reviewer that returns another format as `unresponsive`, and continue. Never synthesize a finding. The overall verdict is `action_required` when any reviewer returned a blocker, else `pass`.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -68,4 +67,4 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Omit an empty Blockers or Suggestions section. Do not offer to fix items automatically.
+Omit an empty Blockers or Suggestions section. Offer no automatic fix.

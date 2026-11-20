@@ -34,7 +34,7 @@ holds() { jq -r 'select(.t == "hold" or .t == "resume") | .t' "$(sk_journal "$1"
 ask() { # ROOT NAME TEXT [ASK FORM ARGS]
   local root="$1" name="$2" text="$3"
   shift 3
-  [ "$#" -gt 0 ] || set -- --recommend a
+  [ "$#" -gt 0 ] || set -- --recommend a --effect none
   sk_lm "$root" ask --item overseer --to owner --file "$(sk_text "$name" "$text")" --options a,b "$@" | sed 's/^id=//'
 }
 notice() { sk_lm "$1" notice --item overseer --to owner --file "$(sk_text "$2" "$3")" >/dev/null; } # ROOT NAME TEXT

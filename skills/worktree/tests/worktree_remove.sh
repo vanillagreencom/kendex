@@ -300,6 +300,7 @@ STUB
       ROW_ENV+=("WORKTREE_BASE_DIR=$ROOT/trees")
       ;;
     after-partial-remove) FIRST_REMOVE_STATE="$(run_remove TOPIC)" ;;
+    confined) ROW_ENV+=(AGENT_RUNTIME_CONFINED=1) ;;
     *)
       echo "UNKNOWN-STEP: $1" >&2
       exit 2
@@ -429,6 +430,7 @@ remove_out() {
     -) printf '' ;;
     removed) printf 'worktree-removed: <wt>' ;;
     usage) printf 'worktree-help: remove' ;;
+    confined) printf 'worktree-remove: left cause=confined owner=overseer' ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -512,6 +514,7 @@ the moved lane mailbox keeps its answered ask answered|tree mail answered|TOPIC|
 a lane mailbox meeting one in the main checkout carries the answer to its ask but not its directive|tree mail answered main-mail|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=- mail=main:main-1,wt-1,wt-2,wt-3 wt:absent staged=0 lane=re-3@1 pending=-
 a carried answer leaves unread a line the main checkout mailbox had not read|tree mail answered main-mail main-unread|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=- mail=main:main-1,wt-1,wt-2,wt-3 wt:absent staged=0 lane=main-dir,re-3@- pending=main-dir
 a worktree tmp linked to the tmp of the main checkout leaves its mailbox where it is|tree shared-tmp mail|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=- mail=main:wt-1,wt-2+watch wt:absent staged=0
+a confined lane leaves its own worktree whole to the overseer, mailbox, links and branch with it|tree links mail confined|TOPIC|0|confined|-|worktree=registered/yes branch=present dirs=topic links=LINKS mail=main:absent wt:wt-1,wt-2+watch staged=0
 '
 
 ADOPTED_OWNER_ROWS='

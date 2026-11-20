@@ -14,7 +14,7 @@ Mark a finding as blocking only if it must stop the merge. Mark other findings a
 
 Approve the pull request when the review reports no finding, and when every finding it reports is a suggestion or a nit. Withhold approval only for a blocking finding, and name that finding in the review. Do not withhold approval for a concern you cannot state as a finding. On a later review, a finding the author answered under the reply contract does not block approval unless the code it names changed after the answer.
 
-Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. The conditions for that approval are the KEN-2067 design note, attached to that issue, § Copilot-down fallback.
+Copilot code review reviews each new head on a push. Copilot re-reads a head only on a review request. The `vanillagreen-overseer` GitHub App can approve a head that no review bot approves and whose findings the author answered under the reply contract, in their threads or in a `Dispositions at <sha>` comment. The conditions for that approval are in `docs/decisions/D018-platform-review-requirements.md`.
 
 ## Path rules
 

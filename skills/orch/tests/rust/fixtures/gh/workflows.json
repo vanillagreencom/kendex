@@ -1,0 +1,17 @@
+{
+  "total_count": 1,
+  "workflows": [
+    {
+      "id": 161335,
+      "node_id": "MDg6V29ya2Zsb3cxNjEzMzU=",
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "state": "active",
+      "created_at": "2025-01-08T23:48:37.000-08:00",
+      "updated_at": "2025-01-08T23:50:21.000-08:00",
+      "url": "https://api.github.com/repos/owner/repo/actions/workflows/161335",
+      "html_url": "https://github.com/owner/repo/blob/main/.github/workflows/ci.yml",
+      "badge_url": "https://github.com/owner/repo/workflows/CI/badge.svg"
+    }
+  ]
+}

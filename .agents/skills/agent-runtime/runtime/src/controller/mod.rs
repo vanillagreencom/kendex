@@ -1,0 +1,279 @@
+//! The controller record's parts: the successor a succession is about to
+//! open, the keys a succession writes, compares and drops, the record as a
+//! succession reads it, the watch job it names, why a succession was
+//! asked for, and the adoption of a controller this runtime did not launch.
+//! The transitions over that record are [`transition`]'s.
+
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+use crate::launch::Permission;
+use crate::process::Identity;
+
+pub mod effect;
+pub mod handoff;
+pub mod heal;
+pub mod model;
+pub mod run;
+pub mod status;
+pub mod successor;
+#[cfg(test)]
+mod testing;
+pub mod transition;
+pub mod views;
+
+/// The record's member that holds the controller: every read and write of
+/// it in this crate names it through this one constant.
+pub const MEMBER: &str = "controller";
+
+/// One write of the controller document at `path`: `change` applied to the
+/// document as read and stored under its lock, applied again to a fresh
+/// read where another writer moved the record between; `record-missing`
+/// where no document stands.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the heal's and the model check's one store write of the controller document"
+)]
+pub fn rewrite(
+    path: &std::path::Path,
+    locking: crate::record::Locking,
+    change: impl Fn(&mut crate::record::Document) -> crate::Result<Value>,
+) -> crate::Result<Value> {
+    crate::record::reread(
+        || {
+            let read =
+                crate::record::read_document(path)?.ok_or_else(|| crate::Error::RecordMissing {
+                    path: path.to_path_buf(),
+                })?;
+            let mut doc = read.clone();
+            let reply = change(&mut doc)?;
+            crate::record::store(path, &read, &doc, locking)?;
+            Ok(reply)
+        },
+        crate::Error::key,
+    )
+}
+
+/// The successor a succession is about to open, `overseer.pending`: the
+/// identity fields the record carries, the typed launch fields the runtime
+/// builds the command from (the permission posture and the caller's own
+/// words) and the native session it continues where it resumes one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Pending {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    /// The native session the launch continues in place of starting one:
+    /// its file must stand under `home` for `cwd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
+    /// The file of that session, which Pi continues by in place of its id:
+    /// it must be the file `resume`'s id names under `home` for `cwd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_file: Option<String>,
+    /// The permission posture the launch runs under: `bypass`, or `native`
+    /// with the caller's own permission words among `extra_args`. Left out,
+    /// the runtime's launch permission setting decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<Permission>,
+    /// The caller's own launch words beyond what the builder spells from the
+    /// typed fields: its permission words under `native`, and whatever else
+    /// the walk carried over, as given.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_args: Vec<String>,
+    /// The overseer handoff the controller's brief names, the launch's own
+    /// `--handoff`; left out, the default handoff. The record keeps it, so a
+    /// recovery the watch asks names the same file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Pending {
+    /// The name the controller's window takes: the pending's `window` where
+    /// its request names one, else `overseer`.
+    pub fn window(&self) -> &str {
+        self.extra
+            .get("window")
+            .and_then(Value::as_str)
+            .unwrap_or("overseer")
+    }
+}
+
+/// The keys a confirmed succession writes from `pending` onto the overseer
+/// record, and nulls where the pending names none: the launch's identity.
+/// `class` is not among them: a record carries it
+/// only where its launch knew it, so the successor record has the key only
+/// when `pending` does.
+pub const SUCCESSOR_IDENTITY_KEYS: &[&str] =
+    &["harness", "account", "home", "model", "effort", "cwd"];
+
+/// The session bindings a transfer confirmation does not know: a successor
+/// inherits none of the prior's. Its watch start fills them; until then a
+/// confirmed succession nulls each the record holds. `pane`, `server` and
+/// `server_start` are not among them: the confirmation writes the first two
+/// from the successor's launch identity, and the third where it carries it,
+/// so the successor's pane owns the record and its watch start keeps it.
+pub const SUCCESSOR_BINDING_KEYS: &[&str] = &["window", "session_rows"];
+
+/// The keys of the session that ended, which a different session's record
+/// leaves out: the native session id, the harness process and its model
+/// check, the recorded exit, the pending it just opened, its display line,
+/// and the accounts its successions could not prove.
+pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
+    "session_id",
+    "harness_pid",
+    "harness_start",
+    "model_check",
+    "exit",
+    "pending",
+    "launch_line",
+    "unproved",
+];
+
+/// The keys the succession compare-and-swap requires equal, less
+/// `session_id` and `pending`, which it judges on their own.
+pub const OVERSEER_COMPARE_KEYS: &[&str] = &[
+    "server",
+    "server_start",
+    "pane",
+    "generation",
+    "launch_line",
+    "cwd",
+];
+
+/// The overseer session record as read: the fields a succession reads.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Overseer {
+    #[serde(default)]
+    pub generation: Option<u64>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub pending: Option<Pending>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// The fleet watch the controller record carries as `overseer.watch`:
+/// the job identity the launcher recorded for the watch a
+/// start launched (`runner=systemd` with its unit, or `runner=setsid` with
+/// the leader's pid and start), or `runner=claimed` with the claim's own
+/// identity where a start found the watch already claimed. The claim beside
+/// the fleet state stays the watch's liveness record; this field names what
+/// started it. An additive field: a succession keeps it as it stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchJob {
+    pub runner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+}
+
+/// Why a succession was asked for: the cause tells the effect
+/// what proves the predecessor terminal and the transition what it must
+/// refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransferCause {
+    /// The controller succeeds itself at one of its marks.
+    #[default]
+    Live,
+    /// The watch read the controller dead: the held line is the successor
+    /// and a predecessor with no recorded identity is proven terminal by
+    /// the exit record or the pane.
+    Dead,
+    /// The controller's account is walled: the successor must not run on
+    /// the spent account.
+    Walled,
+    /// A refused succession left a standing handoff; a fresh session takes
+    /// over from it, retiring the still-live predecessor first.
+    RefusedRecovery,
+}
+
+impl TransferCause {
+    /// The cause's word as a request and the record carry it.
+    pub fn word(self) -> &'static str {
+        match self {
+            TransferCause::Live => "live",
+            TransferCause::Dead => "dead",
+            TransferCause::Walled => "walled",
+            TransferCause::RefusedRecovery => "refused-recovery",
+        }
+    }
+}
+
+/// Bind a controller this runtime did not launch: the pane a person opened
+/// it in, on the fleet server (or the one `socket` names), and what the
+/// person knows of its launch. The identity is read in that pane by the
+/// effects, never taken from the caller.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdoptController {
+    pub pane: String,
+    #[serde(default)]
+    pub socket: Option<PathBuf>,
+    pub harness: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub account: Option<String>,
+    #[serde(default)]
+    pub home: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// The file the pane's own harness writes its session rows to, which
+    /// the watch judges the controller's death and wall from.
+    #[serde(default)]
+    pub session_rows: Option<PathBuf>,
+    /// The permission posture the session runs under and its own permission
+    /// words, which the next succession launches with.
+    #[serde(default)]
+    pub permission: Option<Permission>,
+    #[serde(default)]
+    pub extra_args: Option<Vec<String>>,
+}
+
+/// What the effects read of the pane an adoption names, handed to the
+/// transition: the harness identity in its foreground and the server and
+/// window the pane is on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdoptionRead {
+    pub identity: Identity,
+    pub server: u64,
+    pub server_start: u64,
+    pub socket: String,
+    pub window: String,
+    /// Whether the record already names this pane on this server:
+    /// the record is healed, not replaced.
+    pub same: bool,
+}
+
+/// A controller bound.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ControllerAdopted {
+    pub generation: u64,
+    /// True when the record already named this pane and was healed in
+    /// place; false when the record was written for this session.
+    pub healed: bool,
+}

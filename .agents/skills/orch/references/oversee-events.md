@@ -1,1066 +1,690 @@
 # Oversee events
 
-Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles a watch event. Apply Judgement rules to every event, then look up its Event kinds entry. The event entry supplies the condition and required action.
+Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles a line of the watch's log. Apply § Judgement rules to every line, then take the line's entry under § Event kinds.
 
 ## Judgement rules
 
+The overseer owns the fleet's judgement and its liveness. It implements nothing: a fix goes to a lane as an item.
+
 Review panels take the [pre-panel context check](../workflows/review-pr.md#2-prepare-reviewers) before any attached reviewer starts.
 
-The overseer owns fleet judgement, not just liveness; every `oversee.md` § 4 event is handled under these rules.
-
-The fleet log is the oversee state's `fleet_log[]` ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), which exists before the first append per `oversee.md` § 3 Lane record; every record a rule below asks for is one append, `[KIND]` being `proposal`, `ruling`, `close`, `peer` or `use1` and `[ITEM]` the issue or repository it is about. `[ONE_LINE]` carries text the overseer did not author, so the record crosses a file and never argv ([SKILL.md](../SKILL.md) § Harness-Safe Shell): write it with the harness file-write tool, then bind the path.
-
-Append each record before replacing the file for the next one.
-
-The record carries no time: `append-file` stamps `at` from its own clock and refuses as `fleet-log-at-future` a record already dated later than it. `[ONE_LINE]` holds at most `ORCH_FLEET_LOG_ROW_BYTES` bytes, default 600, and a longer one is refused as `fleet-log-row-bytes`.
-
-The `append-file` entry in `workflow-state --help` names the rest of what it refuses on that field.
+A record, below, is one fleet-log row in the fleet state's `fleet_log[]` ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state) holds its kinds). `[ITEM]` is the issue or repository the row is about. `[ONE_LINE]` holds text the overseer did not author, so it crosses a file, never argv ([SKILL.md § Harness-Safe Shell](../SKILL.md#harness-safe-shell)). Write the row to a file with the harness file-write tool, then append it:
 
 ```json
 {"kind":"[KIND]","item":"[ITEM]","text":"[ONE_LINE]"}
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append-file oversee fleet_log tmp/fleet-log-record.json
+.agents/skills/orch/scripts/orch-runtime state log append --fleet tmp/fleet-log-record.json
 ```
+
+Append each row before writing the file for the next one. Leave `at` out: the append stamps it from the runtime's clock. Keep `text` within `ORCH_FLEET_LOG_ROW_BYTES` ([settings.md](settings.md)).
+
+A standing instruction from the owner, and its lift, follow [communication-modes.md § Recording](communication-modes.md#recording).
 
 ### Lane proposals
 
-Record each lane's `Proposal comment:` notice in the fleet log as an authorized tracker, repository, issue, and returned comment ID or URL binding.
+A lane posts each proposal as a tracker comment and reports it with a `Proposal comment:` notice.
 
-Partition pending authorized comments by tracker and source PR repository.
-
-For each batch, launch one fresh one-shot canonical `tpm` subagent, the catalog's planning agent that owns the creation bar, priority, placement, duplicate and cancellation analysis, on the lowest-cost model the surface exposes, with the launch call, surface rule, single-return capture and retirement of the `triage` verifier under § Event kinds, naming `tpm` where that call names `maintainer`.
-
-A proposal sweep creates no carrier item and starts no `open-terminal` or hosted lane, and its TPM analysis never runs in the overseer.
-
-Send it the [proposal-sweep](../../project-management/workflows/proposal-sweep.md) workflow with a brief that supplies a checkout of the source repository on this host as its worktree, the batch tracker, tracker repository, source repository, fleet issue IDs, and authorized and resolved comment bindings.
-
-Accept the return only when it contains no other text and parses as one issue-mode audit object whose `tracker` type, and for GitHub its `repository`, equal the batch's.
-
-Its proposal rows are its `create` and `skip` rows: each carries exactly one `proposal_sources[]` entry by `index`, each entry names a distinct authorized binding of this batch, and no entry points at another row.
-
-A proposal whose source PR has not merged has no row and stays pending for the next sweep.
-
-Stop without a reply or fleet-log outcome on a launch, capture, parse, or validation failure.
-
-Write the accepted object with the harness file-write tool to `tmp/proposal-audit-[UTC_EPOCH].json` in the overseer's checkout, `[UTC_EPOCH]` fresh per batch.
-
-Check its rows against live fleet work, then invoke [audit-issues](../../project-management/workflows/audit-issues.md) from `oversee.md` § 1 as `audit-issues --analyzed tmp/proposal-audit-[UTC_EPOCH].json` under `PM_CREATE_AUTONOMY`.
-
-Its normal route parses the tracker, runs its tracker preflight and label inventory, skips TPM analysis, and continues through §§ 5-7.
-
-For Linear, reply with `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --parent [COMMENT_ID] --body-file [PATH]`.
-
-For GitHub, use `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`; its first line is `Proposal outcome for [COMMENT_URL]:`.
-
-Each outcome carries the created issue ID or one-line decline.
-
-Record the source and outcome in the fleet log.
+1. Record each `Proposal comment:` notice in the fleet log: the tracker, the repository, the issue, and the comment's ID or URL.
+2. Group the pending comments by tracker and by the source pull request's repository. A proposal whose source pull request has not merged waits for the next sweep.
+3. For each group, launch one fresh one-shot canonical `tpm` subagent on the surface's lowest-cost model, by the launch call § `triage` names, with `tpm` in place of `maintainer`. Send it the project-management skill's `workflows/proposal-sweep.md`. The brief names a checkout of the source repository on this host as its worktree, the group's tracker, tracker repository and source repository, the fleet's issue IDs, and the group's comment bindings. The sweep creates no carrier item and starts no lane. Its analysis never runs in the overseer.
+4. Capture its single final return, then retire it as § `triage` says.
+5. Accept the return only when it holds no other text and parses as one issue-mode audit object. Its `tracker`, and for GitHub its `repository`, equal the group's. Each `create` and `skip` row carries exactly one `proposal_sources[]` entry by `index`. Each entry names a distinct binding of this group, and no entry points at another row.
+6. On a launch, capture, parse or validation failure, stop: post no reply and record no outcome.
+7. Write the accepted object with the harness file-write tool to `tmp/proposal-audit-[UTC_EPOCH].json` in the overseer's checkout, with a fresh `[UTC_EPOCH]` per group.
+8. Check its rows against live fleet work. Then run the project-management skill's `workflows/audit-issues.md` as `audit-issues --analyzed tmp/proposal-audit-[UTC_EPOCH].json` under `PM_CREATE_AUTONOMY`.
+9. Reply to each comment with its outcome: the created issue's ID or a one-line decline. On Linear, run `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --parent [COMMENT_ID] --body-file [PATH]`. On GitHub, run `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`, with the body's first line `Proposal outcome for [COMMENT_URL]:`.
+10. Record each source and its outcome in the fleet log.
 
 ### Heartbeat backstop for lane proposals
 
-At each `heartbeat` and before fleet close, run the Lane proposals sweep with every fleet issue in its tracker and repository batch.
-
-This catches a comment posted without another event.
+At each `heartbeat` and before fleet close, run § Lane proposals over every fleet issue in its tracker and repository group.
 
 ### Heartbeat backlog audit
 
-At each `heartbeat`, apply [Heartbeat audit](heartbeat-audit.md), independently of the lane-proposal sweep and the fleet-lane `triage` verifier.
+At each `heartbeat`, apply [heartbeat-audit.md](heartbeat-audit.md), apart from the proposal sweep and the `triage` verifier.
 
-### Heartbeat design-review trigger
+### Heartbeat design review
 
-At each `heartbeat`, apply [Design review](design-review.md)'s `heartbeat` row to each `running` lane: its `lanes facts` read, the `lane-long` trigger, and the rule for an `unread`, failed or absent count.
-
-This catches a repeated patch cause between two `lane-long` events.
+At each `heartbeat`, apply [design-review.md](design-review.md)'s `heartbeat` row to every `running` lane.
 
 ### Cut scope blowups
 
-A PR whose diff outgrows its issue's Done-when goes back to the contract: keep the oversized work on a branch, land the contract.
+A pull request whose diff outgrows its issue's Done-when goes back to the contract. The oversized work stays on a branch, and the contract lands.
 
-Machinery no issue ordered — a new subsystem, scanner, or lexer — is cut, never reviewed into shape.
+Cut machinery no issue ordered, such as a new subsystem, scanner or lexer. Never review it into shape.
 
 ### End spirals
 
-A round whose finding shares a root cause with one a prior round patched is dispositioned by [references/finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence), which states the branches and their limits.
+[finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) dispositions a finding that shares a root cause with one a prior round patched.
 
-Bots drip-feeding one class get the class exhausted in one audit pass, then dispositions without pushes.
+When a bot drip-feeds one finding class, exhaust the class in one audit pass, then disposition without pushes.
 
-After five bot rounds on one PR, the lane answers the standing threads once and starts no further fix round.
+After five bot rounds on one pull request, the lane answers the standing threads once and starts no further fix round. The review gate and the owner's merge authorization still apply.
 
-The review gate and the user's merge authorization still apply.
-
-The overseer never orders a blanket `Declined` across a PR's open findings: each one is dispositioned on its own mechanism, and a label-only decline violates [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow).
+The overseer never orders a blanket `Declined` across a pull request's open findings. Disposition each finding on its own mechanism. A label-only decline breaks [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow).
 
 ### Fix the source
 
-The same finding class on a third PR is a mechanism gap: file it and route the smallest deterministic check (a guard lane, a preflight rule, a refusing script) or one sentence in the owning skill through a lane as its own item — the overseer still implements nothing.
+The same finding class on a third pull request is a mechanism gap. File the fix as its own item and route it through a lane: the smallest deterministic check (a guard lane, a preflight rule, a refusing script) or one sentence in the owning skill.
 
-Deterministic beats prose where it stays simple; complex or brittle machinery is worse than either.
+A deterministic check beats prose where it stays simple. Complex or brittle machinery is worse than either.
 
-A package or workflow gap is never a harness memory or a local note: a lane's is a proposal ([skill-rules.md § Coordination, Tracked issue creation](skill-rules.md#coordination)), and the overseer's own is filed as File one item alone below states.
+A package or workflow gap is never a harness memory or a local note. A lane's gap is a proposal ([skill-rules.md § Coordination](skill-rules.md#coordination)). The overseer files its own through § File one item alone.
 
 ### File one item alone
 
-Before filing, read [Design review](design-review.md).
-
-One item the overseer files itself, a class under Fix the source above or an issue an `owner-note` asks for, goes through [audit-issues](../../project-management/workflows/audit-issues.md) as `audit-issues --single [FILE_PATH]`, the file holding that one item per [audit-issues-input.md](../../project-management/schemas/audit-issues-input.md) with `source: "oversee"`, `parent_issue: null` and the fleet's `tracker`.
-
-After filing, append one fleet-log `ruling` whose text starts `filed ` and names the filed item, its Location file(s) and its defect-class rule, stated as the rule every site breaks. `--issues` is for a batch: its TPM run sweeps the whole backlog for cancellations.
+1. Read [design-review.md](design-review.md) before filing.
+2. Write the one item, a class under § Fix the source or an issue an `owner-note` asks for, to a file in the project-management skill's audit-issues input form, with `source: "oversee"`, `parent_issue: null` and the fleet's `tracker`.
+3. Run the project-management skill's `workflows/audit-issues.md` as `audit-issues --single [FILE_PATH]`. `--issues` is for a batch: its TPM run sweeps the whole backlog for cancellations.
+4. Append one fleet-log `ruling` whose text starts `filed ` and names the filed item, its Location files and its defect-class rule, stated as the rule every site breaks.
 
 ### Rule once for the fleet
 
-A ruling that answers one lane's question is sent to every lane in the same situation and recorded in the fleet log.
+Send a ruling that answers one lane's question to every lane in the same situation, and record it in the fleet log.
 
 ### Held merges
 
-Under `ORCH_MERGE_AUTONOMY=ask` (`oversee.md` § 3) the lane's merge question arrives as `lane-question`.
+Under `ORCH_MERGE_AUTONOMY=ask` a lane's merge question arrives as `lane-question`.
 
-Read the gate results without reproducing them, then relay the question to the user, worded as communication's [questions](../../communication/references/questions.md) requires.
+1. Read the gate results the lane reports. Do not reproduce them.
+2. Relay the question to the owner, worded as the communication skill's [questions reference](../../communication/references/questions.md) requires.
+3. Send `MERGE` to the lane only after the owner authorizes it, or send the one directive the owner gave. A directive may carry the authorization ("with that landed, MERGE stands"). The lane then merges once the change is in, with no second answer.
 
-Send `MERGE` to the lane only after the user authorizes it, or send exactly one directive the user gave.
-
-A directive may carry the authorization ("with that landed, MERGE stands"), and the lane then merges once the change is in without a second answer.
-
-Under `ask` a `disarmed` pr-watch line on a `land=lane` record is not a wake; on a running `land=handoff` record it launches the landing lane (`pr-watch` below).
+A merge hold is a person who disabled a pull request's automatic merge, never a fault. `queue-watch` reads it as `cause: merge_hold`, with `disarmed_by` naming that person. The lane asks about it through `lane-mail ask`, so it arrives as `lane-question`: relay it to the owner as above, naming who holds it.
 
 ### Lanes merge their own pull requests
 
-A lane whose gates read met merges its own head by [merge-pr.md](../workflows/merge-pr.md) § 5 step 1, where `pr-merge` picks the route.
+A lane whose gates read met merges its own head by [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1. The overseer runs no normal merge for a lane.
 
-The overseer runs no normal merge for a lane.
+The overseer's own GitHub App acts only for the head approvals [copilot-head-notices.md](copilot-head-notices.md) sets. The one exception is an emergency merge in a consumer whose ruleset lists that app as a bypass actor, as that step's "Who acts" names.
 
-Its own GitHub App acts for the head approvals [copilot-head-notices.md](copilot-head-notices.md) sets, and for nothing else except an emergency merge in a consumer whose ruleset lists that app as a bypass actor, which that step's "Who acts" names.
-
-A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in [review-gate SKILL.md § 4. Operations](../../review-gate/SKILL.md#4-operations).
+When a CI input read from the default branch breaks and a merge group cannot pass, take the recovery route in the review-gate skill's `SKILL.md` § 4. Operations.
 
 ### Hand off a lane before it runs out
 
-The `lane-mail-check` turn-end hook reads the lane's context through its harness adapter, from the transcript, or on Copilot CLI from the reading its kendex Copilot extension recorded from Copilot's `session.usage_info`, against the limit Copilot compacts at, and where none stands from Copilot's statusLine session record ([copilot-runtime.md](copilot-runtime.md#measurement)), and its account headroom on its own credential, and refuses the turn end at either mark until the record below stands, so a lane hands itself off with no directive.
+At each turn end, the `lane-mail-check` turn-end hook judges a lane's context and account marks. At a mark it refuses the turn end and tells the lane to write its handoff record. [skill-rules.md § Round Closure](skill-rules.md#round-closure) names the marks, the record and when the lane writes it. The refusal is given once a session: a later turn end without the record ends the turn, and the hook sends the overseer a `lane-stopped` notice from the lane. The overseer judges the same marks between turn ends, and for a lane whose hook refuses nothing:
 
-Copilot honours a turn-end block 8 times in a row and then ends the turn unheld; the refusal returns at the session's next turn end.
+1. Read `tmp/lane-mail/[ITEM]/context.json` under the lane's `mail_root`. For a hosted lane, run `.agents/skills/orch/scripts/orch-runtime host --host [HOST] cat --item [ITEM] [PATH]`, with `[HOST]` from the lane record. A record whose `harness` or `session_id` differs from the lane record's is another session's. A reading older than an hour is stale while `session-rows.jsonl` beside it holds a later Stop row.
+2. Judge a current reading with the hook's own judge, `orch-runtime marks --item [ITEM] --context [TOKENS]:[WINDOW]`. A lane reaches its context mark at `ORCH_HANDOFF_CONTEXT_TOKENS` tokens used, or past `ORCH_HANDOFF_CONTEXT_PCT` of its window; [settings.md](settings.md) owns the defaults. A reading with no window and fewer tokens than that count has unknown capacity: direct the lane to write its handoff record.
+3. Read the account mark with `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --lane [ACCOUNT] --harness [HARNESS] --min-headroom-pct [ORCH_HANDOFF_HEADROOM_PCT]`, with `[ACCOUNT]` the lane record's `account`. A Claude or Pi lane adds `--native-model [MODEL]`, the lane record's `model`. In the reply's `answer`, `lane` is room and `walled` is the mark reached. `reserved`, `retired` or `excluded` means its owner's setting refused the account: tell the owner. Any other answer leaves the mark unknown.
+4. Treat no record, another session's record, an unreadable or stale one, and an unknown mark as unknown, never as room.
+5. Where a mark is reached and no handoff record stands, send the lane a directive ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)) to reach its next safe point: a pushed head, a landed merge or a held pull request. The lane writes the request below to `tmp/handoff-request-[ITEM].json` in its worktree with the harness file tool. It fills in the placeholders and sets `open_pr` to the open pull request's number, if any ([workflow-state.md § Handoff](../schemas/workflow-state.md#handoff) holds the fields).
 
-What follows is the BACKSTOP for a lane whose hook refused nothing, such as one past its account mark with no turn end since.
+   ```json
+   {"op":"record-handoff","merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]","open_pr":null,"traps":["[TRAP]"]}
+   ```
 
-On the `oversee.md` § 1 tmux surface, at every `oversee.md` § 4 event, read each live lane's context use:
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ITEM] --request tmp/handoff-request-[ITEM].json
+   ```
 
-  ```bash
-  .agents/skills/orch/scripts/lanes context
-  ```
+   After the write succeeds, the lane sends `lane-mail notice --item [ITEM] --file [PATH]` with a file naming what is left, then ends its session.
 
-  The three-argument context rule in `../scripts/lib/lane-context.sh::lane_context_handoff_due`, without an agent reserve, requires handoff at `ORCH_HANDOFF_CONTEXT_TOKENS` tokens used (default `650000`), or strictly past the effective percentage of the printed window. `ORCH_HANDOFF_CONTEXT_PCT` accepts 1 to 100 and defaults to `90`; values above `90` use `90`. A lower setting requests an earlier handoff only after usage strictly exceeds that percentage. Equality at any percentage does not trigger handoff, unless the independent token limit is reached. The token limit applies even when capacity is unknown. Below that token limit, unknown capacity remains unmeasured. Capacity means the limit before automatic compaction, or the actual window when automatic compaction is disabled; [skill-rules.md](skill-rules.md#coordination), Compaction, defines the harness controls.
+6. On the lane's `handoff` line, relaunch the item through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which resumes from the handoff record. A Copilot lane's relaunch starts a fresh session on that record.
 
-  `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` reserves nonnegative whole tokens for attached agent returns before the earlier context mark. Its default is `150000`. The reserve applies only to the attached-launch refusal, and only while an attached agent this session launched may still be out. On Claude Code the hook reads that roster from the session's task registry where the payload carries one, else from the transcript's Agent-call results, task notifications, teammate idle notifications and sends; an unreadable roster, or an entry neither read classifies, is unknown. On Codex the hook reads ordered collaboration calls and results from the rollout. A full unfiltered list replaces earlier unknown observations only when its call does not overlap a launch or followup. Pending calls and unreadable current observations keep the roster unknown. After waiting for agents, call `list_agents` with no path filter to observe their returns. Other harnesses read no roster, so their rosters are unknown. While the reserve applies, the existing tool hook refuses attached launches at or above that mark minus the reserve, including equality. A launch refused by the reserve alone, below the plain mark, with an agent out names waiting for the attached agents to return, the job runner or a separate session, and no handoff. With the roster unknown no return can be observed, so that refusal names the job runner or a separate session, and for a lane its handoff record, never a wait. The reserve protects only a new launch. The turn-end judge and every `oversee-succeed` run use the three-argument rule above, even with an agent out, because a succession waits for every attached child ([oversee.md](../workflows/oversee.md) § Succession step 1) or names each unfinished one in the handoff. Missing required context also refuses the launch. Claude Code, Pi and Copilot CLI enforce this launch rule. Codex enforces it for `spawn_agent` and for `followup_task`, which starts a new turn on an attached agent, under any tool namespace. `send_message` only queues a message and is admitted. OpenCode installs advisory instructions only. Longer work uses the orch job runner ([waiter-launch.md, Launch](waiter-launch.md#launch)) or a separate session, with its run directory on the handoff. The general wait and emergency recovery rule is the Jarvis `long-session.md`, Handoff, contract.
+The hook refuses a new attached launch near the mark: the attached-launch reserve, `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`. Longer work uses the orch job runner ([waiter-launch.md § Launch](waiter-launch.md#launch)) or a separate session, with its run directory on the handoff.
 
-  `lanes context` reports the context reading each lane's hook recorded at its last turn end, hosted lanes included, and account headroom. It sets `handoff_required` when the shared context rule requires handoff, or when the binding account bucket has headroom at or below `ORCH_HANDOFF_HEADROOM_PCT`. A lane on an overseer seat also requires handoff at or below `ORCH_OVERSEER_SEAT_RESERVE_PCT`. The caller's own row keeps the ordinary account mark. Headroom never marks a Codex account room on its credits or a lane on a grant, a Pi `anthropic/` API grant or a Claude cloud credit, which is marked only when its grant is walled; `lanes --help` under `context` states both. A Copilot lane's launch takes no `--lane`, so no claim names it: its row is read from its running lane record. Every other lane is read through its claim alone. A row reading `unrecorded` has no reading yet, which is not room. A row reading `window-unread` has unknown capacity and remains below the independent token limit: direct it to write its handoff at its next safe point. The default is `3`, so a lane whose account reaches 97 percent used is marked for the overseer's next sweep, and the hook refuses the turn end on that same setting. Both resolve it through the kendex settings ladder, the hook through `orch-env` and this poll through its own project-env load, so a settings file sets one mark for both. At each event, tell every lane the poll marks and the hook has not already stopped to write its handoff at the next safe point, as for the context mark; a lane whose record already stands is handing itself off and needs no directive. Use `oversee-lanes.md` § Talking to a lane until lane mail is installed; then send the directive through lane mail. At either mark, wait for a safe point such as a landed merge or held PR. Never interrupt a round or an unpushed tree. The lane records the fixed shape below and exits. The record carries no time: `workflow-state set` stamps `written_at` from its own clock and refuses as `handoff-written-at-future` a record already dated later than it. The `set` entry in `workflow-state --help` names the rest of what it refuses on that field. The watch reports `handoff [ISSUE_ID]` once. Relaunch the item through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which uses the handoff record as durable recovery state; a copilot lane's relaunch starts a fresh session on that record rather than resuming the one that handed off.
+A handoff record names any in-flight foreground validation in `traps`. It says whether the validation survives the agent's scope, and gives the run and recovery details [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) requires.
 
-  ```bash
-  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] handoff '{"merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]","open_pr":[PR_NUMBER_OR_NULL],"traps":["[TRAP]"]}'
-  ```
+On a hosted fleet, also read `.agents/skills/orch/scripts/orch-runtime host list`. A row whose item has no `running` lane record is a sandbox no lane claims: tell the owner.
 
-  Include any in-flight foreground validation in `traps`. State whether it survives the agent's scope and carry the run and recovery details required by [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation). A queued run whose parent is gone follows that interruption route.
+### The overseer's own marks
 
-#### Source-only continuation
+The watch reports a mark `orch-runtime marks --fleet` reached on the overseer as `overseer-mark` ([overseer-session-events.md § Event kinds](overseer-session-events.md#event-kinds)). An unread or unmeasured mark is never room, and a silent interval does not mean the mark lifted. At a mark, follow [oversee.md § Succession](../workflows/oversee.md#succession).
 
-For a source-only phase, retain one continuation artifact in the task's existing scratch or tracker artifacts before a handoff. Finish the current safe operation, collect each available attached return and identify every unfinished or unread return by task id and known output path. Keep unknown liveness or paths explicit.
-
-The artifact carries the following evidence without replacing the originals:
-
-| Evidence | Required binding |
-| --- | --- |
-| Authority | Original phase brief, root directions and any explicit service/scope-boundary disposition. |
-| Source | Repository, ref, HEAD, dirty state and the read time or native record for each binding. Unknown dirty state remains unknown. |
-| Inputs and costs | Complete known inventory by role; completed files/slices and spent attempts; metadata and service costs; partial/truncated output and exact unread paths, URLs or ranges. |
-| Work and opinion | Partial design/table/source-map or other output; original opinion JSON/Markdown and performed/completeness flags; attached task ids and known results. |
-| Continuation | Exact pending action, independent holds and unchanged cumulative service counters and ceilings. |
-
-Use the existing native handoff writer above. Its first `remaining` entry names the exact next unread slice or pending action and the retained artifact path. Its `traps` reference the original brief, source/head/dirty/input/read bindings, completed reads and costs, partial artifacts, original opinion status and unchanged service ceilings. The native writer still owns the timestamp and record shape. For a service or scope boundary, send these retained facts in one `lane-mail ask` and wait for the root disposition; the native context hook decides whether session succession is also due.
-
-An unchanged immutable source binding stays complete. Preserve historical versions and costs when HEAD, dirty state or another binding moves; identify and re-evaluate only the affected source/artifact bindings and ask root for the exact necessary re-read. New required protocol/admission reads and authorized added work incur new costs. A truncated attempt remains spent and its unseen portion remains unread. A metadata recheck grants no new service call.
-
-The continuation resumes the same pending action through [Recovery relaunch](lane-directive.md#recovery-relaunch). It reads retained work and available original opinions before repeating a task. It does not reconstruct a lost counter by replaying completed source, reset a spent allowance, turn incomplete work into acceptance or rejection, or begin another phase. A missing artifact remains an exact unknown to report to root. Any completion of an incomplete or unperformed opinion needs the acceptance owner's explicit continuation of that pending task under [Delegation](skill-rules.md#source-only-inputs).
-
-
-  The record, the event and the relaunch are surface-independent. Surfaces 2 and 3 register no lane claim, so `lanes context` reports no worker lane there: on surface 2 read a lane's context through the harness's own session tooling and hand off at the same mark; surface 3 has no lane to hand off.
-
-  On a hosted fleet, also run `lane-host list`: a row not `available` whose item, the last segment of repository/item, has no `running` lane record is a sandbox with no live claim; surface it to the user.
-
-  The overseer's own triggers are the shared context mark, its account mark, projected wall time at `ORCH_OVERSEER_WALL_MINUTES`, and the qualifying-accounts trigger. `oversee-succeed --help` defines the account, wall and qualifying-accounts judgement. Only the `lane-mail-check` hook's current reading judges the context mark. An unread or unmeasured trigger is never room. The watch reports reached account triggers as `overseer-mark` in [overseer-session-events.md](overseer-session-events.md), at the crossing and every `ORCH_OVERSEER_MARK_REPEAT` passes while they stand. A silent interval does not mean the mark lifted. `ORCH_OVERSEER_SUCCESSION=off` disables account-trigger refusals and automatic succession; the event still carries `succession=off`. The context refusal remains until this session records its handoff. The caller's row in `lanes context`, marked `*`, is the account backstop. Its context reads `unrecorded`. Its `HANDOFF` cell uses the shared context mark and lane headroom threshold, not the overseer's account, wall or qualifying-accounts triggers. At a trigger, follow [oversee.md § Succession](../workflows/oversee.md#succession) for preparation, launch and every refusal branch.
-
-  Every refusal of a live self-succession, from the mode decision onward, records one fleet-log row and sends one owner notice through `lane-mail notice --to owner`. The keyed line names the mark, or `unknown` before the run judges one. Only `mark=headroom` names the account and reset time. A notice the owner already received within the last 24 hours can be refused as `owner-notice-repeated`; the fleet-log row still lands and the succession's refusal status stands. Check and print modes write neither channel.
-
-  An overseer that DIES reaches none of this: it runs no turn, so it judges no mark and calls nothing. The successor reads available output from the predecessor's children before repeating their tasks, under the general recovery rule above. `oversee-watch` carries that case, from the session rows the overseer's own harness writes, its pane process and its recorded launch line, and reports it as `overseer-dead` in [overseer-session-events.md](overseer-session-events.md). An overseer that WALLS reaches none of it either, for the same reason and with the harness still running: the watch reads the same rows and reports it as `overseer-walled` there, recovering it on an account the pick judged rather than on the recorded line's spent one. One that WEDGES on a full context reads as `overseer-dead` `source=context`.
+[overseer-session-events.md](overseer-session-events.md) holds a dead or walled overseer's events and recovery. A successor reads the output its predecessor's children left before it repeats their tasks.
 
 ### Keep the report's inputs current
 
-After each `oversee.md` § 2 selection, `workflow-state set oversee launch_queue '["[ITEM]",...]'` with the items not yet launched, in launch order.
+After each [oversee.md § 2](../workflows/oversee.md#2-select-work) selection, write the items not yet launched in launch order:
 
-The queue is the order and the tracker the membership: the `heartbeat` handling below adds what the tracker says the fleet owes.
+```bash
+.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"launch-queue","items":["[ITEM]",...]}'
+```
 
-A question sent to the owner is an owner ask ([communication-modes.md § Owner asks](communication-modes.md#owner-asks)), and the report's Waiting on you row reads the unresolved ones from the mailbox itself; nothing is recorded in the state for it.
+The queue holds the order; the tracker holds the membership. § `heartbeat` adds what the tracker says the fleet owes.
+
+A question sent to the owner is an owner ask ([communication-modes.md § Owner asks](communication-modes.md#owner-asks)). The report reads the open asks from the mailbox; the state records nothing for them.
 
 ### Decide without the user
 
-The ask set is [communication-modes.md](communication-modes.md) § Ask set, which nothing here narrows or widens.
-
-Any other call takes the option that costs nothing and is recorded in the fleet log as that file's § Recording requires.
+The ask set is [communication-modes.md § Ask set](communication-modes.md#ask-set); nothing here narrows or widens it. For any other call, take the option that costs nothing, and record it in the fleet log as [communication-modes.md § Recording](communication-modes.md#recording) requires.
 
 ## Direct-push cycle records
 
-When a lane reports a successful direct push to the base branch, record its cycle before closing it or removing its workflow state.
+A direct push raises no `merged` line. When a lane reports a successful direct push to the base branch, close the lane with the pushed commit as the close's `delivery`. The close then writes its cycle.
 
-Run from a checkout of that repository.
+1. Work from a checkout of that repository. The cycle reads the commit there, and reads the push from the lane record's `repo`, else from the checkout's own.
+2. Write the request to `[REQUEST_FILE]` with the harness file-write tool:
 
-A direct push raises no PR `merged` event.
+   ```json
+   {"op":"close-lane","item":"[ITEM_KEY]","delivery":{"commit":{"commit":"[PUSHED_SHA]"}}}
+   ```
 
-Refuse to record a push with several commits and report it in the fleet log; `oversee-cycle --help` defines the single-commit contract.
+3. Run it:
 
-```bash
-.agents/skills/orch/scripts/oversee-cycle --state-dir [OVERSEE_STATE_DIR] record --commit [PUSHED_SHA] [ITEM_KEY]
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime --state-dir [OVERSEE_STATE_DIR] op --fleet --request [REQUEST_FILE]
+   ```
 
-Use `--tier [TIER]` only for an old lane record without a launch tier.
-
-Add `--repo [OWNER/REPO]` when the lane record names no repository. `merged` is the time the push reached the base branch, as GitHub's repository activity log records it, never the commit's committer date; where that read fails, `actual` prints `-`, `missing` names `merged`, and a `merged-unread` line names the cause.
-
-Unknown fields print `-`.
-
-Report a refusal without blocking lane close.
+4. Read the reply's `.result.notes`, and report a note that names a failed read.
 
 ## Event kinds
 
-`watch-step-failed step=triage count=N` means the fleet state's `triaged` read failed. The watch prints it on the first failure and every `ORCH_OVERSEER_MARK_REPEAT` failed reads. The count persists in the watch baseline across restarts and resets after a successful read. The pass still exits 2. Read the `triage-state-failed` diagnostic and retained cause on stderr. Correct a malformed record against the [triaged schema](../schemas/workflow-state.md#oversee-state) before retrying. For another read failure, correct the cause stderr names.
+The watch writes one line per event to its log beside the fleet state. A line that starts `EVENT ` is the event; [watch/events.rs](../runtime/src/watch/events.rs) `Event::render` holds every form. The lines after an event that lack `EVENT ` belong to it: an unindented pane tail or banner; a message's payload, indented two spaces, with an `options:` line where the message offered options; a heartbeat's or report's body.
 
-`tracker-quota` means this pass could not finish its tracker reads. Keep owner answers unread. An absent owed or Verifying line during this hold is unavailable evidence, not proof that no work remains. Follow the linear skill's quota contract and its `patterns/workflow-actions.md` for held writes. Mail, available GitHub and lane checks, and report-due checks continue. The heartbeat repeats the scheduling receipt while it stands.
+Below, a field in brackets is a value, and every other word prints as shown. To wake a lane is to send it a directive as [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane) says.
 
-A lane's successful direct-push completion takes [§ Direct-push cycle records](#direct-push-cycle-records) before lane close.
+### `watch-step-failed`
 
-To wake a lane below is to send it the directive and wake it per `oversee-lanes.md` § Talking to a lane, which wakes only a Claude Code or Codex lane whose send receipt reads `monitor=none`.
+`EVENT watch-step-failed step=[DUTY] count=[N]`: the named duty failed, whole or in part, `N` times in a row. The line prints on the first failure and on every `ORCH_OVERSEER_MARK_REPEAT`th after. The duty runs again at its next cadence, and the other duties go on.
+
+1. Read the cause in `oversee-watch.err` beside the fleet state, under the same `watch-step-failed step=[DUTY] count=[N]` words.
+2. Correct what the cause names. Correct a malformed fleet record against [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state).
+
+A lane whose mail, clone or state read fails draws no other line; this one names it. The hosted words under it:
+
+- `snapshot-unwritten host=[HOST] path=[DIR] cause=[CAUSE]` under `step=mail`: the mail duty could not write its local copy of that host's lane mail files, so those lanes' mail is unread this pass. Correct the cause at the named path.
+- `host-capabilities-unread host=[HOST] cause=[CAUSE]`: the provider's capability line did not read, so the watch judges none of that host's lanes this pass. Correct the provider or its host.
+- `host-busy count=[N] cap=[N] verb=[VERB] item=[ITEM]`: every slot of the provider's call pool stayed taken past its wait, so the call ran nothing ([settings.md](settings.md), `ORCH_LANE_HOST_MAX_CALLS`). The next pass asks again.
+
+### `tracker-quota`
+
+`EVENT tracker-quota status=[STATE] reset=[ISO|unavailable] limit=[KIND]`: the pass could not finish its tracker reads. Keep owner answers unread. During the hold, a missing owed or Verifying line is unread evidence, not proof that no work remains. Hold writes under the linear skill's quota contract and its `patterns/workflow-actions.md`. Mail, GitHub, lane and report checks go on.
+
+### `github-auth-failed`
+
+`EVENT github-auth-failed cause=[CAUSE]`: GitHub refused the GitHub duty's sign-in, and the github skill's credential ladder found no working credential, so no GitHub line prints. The watch tells the owner through the overseer mailbox's owner channel. Sign `gh` in again, or renew the token the ladder reads; the next GitHub pass takes it.
+
+### `watch-taken-over`
+
+`EVENT watch-taken-over pid=[PID] start=[START|none] reason=gone`: this watch took over the claim of a runner whose process ended, or whose pid another process reuses. Nothing is owed: read the log on as one watch's.
+
+### `reconcile-refused`
+
+`EVENT reconcile-refused intent=[ID] refusal=[KEY]`: the reconcile duty could not complete or mark the named open intent. The line prints when the key is new or changes.
+
+1. Read the intent with `.agents/skills/orch/scripts/orch-runtime state inspect --fleet`.
+2. Correct what the key names. Otherwise report the open intent to the operator, as [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) says of an intent no reconcile settles.
+
+### `notice-unmarked`
+
+`EVENT notice-unmarked intent=[ID] cause=[KEY]`: the intent's owed failure notice reached the owner, and the store refused its `sent` mark. Read the intent with `orch-runtime state inspect --fleet` and correct the cause.
+
+### `directive-send-unsettled`
+
+`EVENT directive-send-unsettled item=[ITEM] cause=[KEY]`: no receipt settles a directive that `orch-runtime send` recorded as owed on the lane. Until it settles, every later send to that lane refuses `directive-send-owed`. The line prints when the cause is new or changes.
+
+1. Look under the state directory's `directive-send/` first. A kept receipt needs only its refusal corrected; the next reconcile stamps it.
+2. With no receipt, read the session to learn whether the directive arrived.
+3. Settle the record. Write `{"op":"record-directive-send","item":"[ITEM]","write":{"stage":"failed","cause":"[WHY]"}}` to a file and run `.agents/skills/orch/scripts/orch-runtime op --fleet --request [FILE]`. The next send then proceeds.
+4. Send again only where the session shows the directive did not arrive.
 
 ### `merged`
 
-every PR the watch reported `refresh-ready` gets `EVENT merged <PR> kendex/refresh <repo>` at its merge, once across restarts.
+`EVENT merged [PR] [ITEM] [OWNER/REPO]`: a pull request of the lane's item merged, with `[ITEM]` lowercased. The line prints once per merge. A GitHub merge alone does not complete the lane.
 
-This line triggers the base-move check for open lane PRs whose files the refresh changed.
+- A running item: the lane finishes [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) itself. Where its worktree or sandbox is gone, the runtime close completes the item's branch boxes from the pull request body's `## Done-when evidence` section ([lane-reach.md § Lane close](lane-reach.md#lane-close)). When a merged lane's work has left its host, the watch closes it at its `lane-exited` or `idle-after-return` line, with the merge as the close's `delivery`. Close any other local lane once it has finished `merge-pr.md` § 5. Add `"delivery":{"pr":{"pr":[PR_NUMBER],"repo":"[OWNER/REPO]"}}` to the request § Direct-push cycle records shows. Run it from the overseer's base checkout, or from a checkout of the lane's repository where its `mail_root` is another repository's worktree.
+- A parked or stopped item: once the tracker reads it ended, the watch reads the lane's merges and closes it on the terminal ground. The close writes the lane's merge cycle. A parked record whose pull request is still open or queued stays parked. A parked item with work left takes § `parked-merged`.
+- A Done item with no open box: its cycle row is its report. No relaunch is owed.
+- `[ITEM]` `kendex/refresh`: a refresh pull request the watch reported `refresh-ready` merged. No lane owns it. Check whether the open lane pull requests touch the files the refresh changed, and follow the repository's declared refresh owner.
 
-Approval while open and an unmerged close print no merged line.
+A confined lane's own `container-close` and `state remove` leave the close to the overseer (`main.rs::step_aside`), which runs the container close of § Verification.
 
-A refresh has no owning lane; handle its base-move check and follow the repository's declared refresh owner.
+A hosted lane stays in the watch until its `lane-closed` or `lane-close-refused` line. Send it nothing while that close runs.
 
-For an item PR, the PR is in; the owning lane finishes `merge-pr.md` § 5 on its own and a GitHub merge alone is not lane completion.
+The close writes the cycle to the fleet log. A `verdict=miss` line needs nothing more. A `repeat-miss` line means three lanes missed one phase: file one CI or process issue in that repository naming the phase, the lanes and each lane's `causes` ([skill-rules.md § Coordination](skill-rules.md#coordination)).
 
-A parked or stopped item that the close command judges terminal gets its cycle record from the watch before terminal close.
+When the close cannot record a cycle, the watch's stderr reads `lane-close-failed item=[ITEM] step=cycle cause=[CAUSE]`. The watch holds the close and asks again each pass. The stderr line is the report.
 
-A parked record whose pull request is open or queued stays parked, whatever the tracker state.
+After the item's merge, follow the repository's declared refresh owner in its consumer instructions:
 
-A resumed record whose retained PR is OPEN also stays in the fleet, including after failed create leaves it stopped; [workflow-state.md](../schemas/workflow-state.md#oversee-state) owns the retained identity.
+- On a hosted fleet, keep refresh and verification with the declared owner outside the control host. After the owner's reviewed outputs merge, run `.agents/skills/orch/scripts/sync-base` in the control checkout. Report a failed owner workflow.
+- On a local fleet, run a post-merge in the overseer's base checkout: `.agents/skills/orch/scripts/post-merge --command-only` where a declared workflow owns refresh, or `.agents/skills/orch/scripts/post-merge` where the local fleet owns it. Then run the repository's lifecycle check. Both modes keep checkout changes: report those diffs to their declared owner. Stop on a failed step and report its status.
 
-A parked Done item with an unchecked Done-when box takes the parked-merged rule after its recorded pull request merges.
+When the fleet's last item completes, run the `heartbeat` triage pass before closing out. A Linear fleet also runs `.agents/skills/orch/scripts/orch-runtime reconcile-items`. Its exit-0 reply carries its findings in `result.findings` and its box lines in `result.lines`. Report both with the close-out.
 
-A stopped Done item with an unchecked box also stays open for Recovery relaunch, including after a parked resume starts the sandbox but fails to create the harness.
+### `parked-merged`
 
-The watch reports a recorder refusal through `lane-close-failed item=[ITEM] step=cycle exit=[N]` and continues close.
+`EVENT parked-merged [ITEM] pr=[N] repo=[OWNER/REPO]`: the pull request a parked item waited on merged, and the item has work left. A dependency park waits on `parked.until_pr`, a queue park on `parked.pr`. The watch repeats the line before each heartbeat while the record reads parked.
 
-It uses the recorded launch tier and does not invent a missing tier.
+1. Relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). The relaunch starts the harness fresh on the kept disk, and the item's handoff record carries its context.
+2. A dependency park: the lane rebases and continues the held step. Record no cycle for the dependency's merge.
+3. A queue park: the lane finishes `merge-pr.md` § 5 steps 2 to 6 and § 6, and its close records the item's cycle.
 
-Read its cycle output under the verdict rules below.
+Report a capacity refusal and act on the next repeat.
 
-The class target forgives one clean final-head CI run and the merge group. `oversee-cycle --help` owns the class bases.
+### `parked-closed`
 
-The cycle row keeps lane-controlled time as `lane=` and end-to-end open-to-merge time as `open=`.
+`EVENT parked-closed [ITEM] pr=[N] repo=[OWNER/REPO]`: the pull request a dependency park waited on closed unmerged. The line prints once. Resolve the hold, or resume the lane through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
 
-The rollup and progress report show both medians and the miss share on lane-controlled time.
+### `park-owed`
 
-The cycle row is the report for a Done item with no open box; no lane completion check or relaunch is required.
-
-A parked item with work left takes the `parked-merged` rule, which records the cycle once relaunch brings its sandbox up.
-
-For a running item, first, before any step below and while the lane's own workflow state still stands, record the lane's cycle from the overseer's base checkout, or from a checkout of the lane's repository where its `mail_root` is another repository's worktree, as `oversee.md` § 3 runs `lane-mail` for it: `.agents/skills/orch/scripts/oversee-cycle --state-dir [OVERSEE_STATE_DIR] record --pr [PR_NUMBER] --tier [TIER] [ITEM_KEY]`, `[TIER]` being what `oversee.md` § Item Tier gives the item, and `--repo [OWNER/REPO]` added for a lane whose record names none in another repository.
-
-It logs its own row.
-
-A `verdict=miss` line needs nothing more; a `repeat-miss` line is three lanes missing on one phase, and files one CI or process issue in that repository naming the phase, the lanes and the `causes` the line gives each, per [skill-rules.md § Coordination](skill-rules.md#coordination).
-
-A refusal is reported and never blocks the rest of this rule.
-
-A hosted item stays in the watch until its `lane-closed` or `lane-close-refused` event, per § Event kinds.
-
-Wake it only if it is not still inside that run, and read a reported failure there rather than advancing the item.
-
-For a parked or stopped item this rule ends here.
-
-Items the close command judges terminal close in the watch.
-
-A parked item with work left gets `parked-merged` and its resumed lane runs `merge-pr.md` § 5 steps 2-6.
-
-For an item that is not parked, follow the repository's declared refresh owner in its consumer instructions.
-
-On a hosted fleet, run `.agents/skills/orch/scripts/sync-base` in the control checkout.
-
-The first sync can receive the item merge before the owner's refresh commit exists; it is not refresh completion.
-
-Keep refresh and verification with the declared owner outside the control host, and run `sync-base` again after its reviewed outputs merge.
-
-Report a failed owner workflow.
-
-Consumer refresh stays in each consumer's own Actions through the [refresh workflow](../../review-gate/references/adoption.md).
-
-On a local fleet, run `.agents/skills/orch/scripts/post-merge --command-only` in the overseer's base checkout when a declared workflow owns refresh.
-
-When the local fleet is the refresh owner, run `.agents/skills/orch/scripts/post-merge` without a mode flag.
-
-After either local mode succeeds, run the repo's lifecycle check.
-
-All post-merge modes retain checkout changes; report those diffs to their declared owner.
-
-A later sync can refuse pending changes; report that refusal and preserve the changes.
-
-Stop on a failed step and report its status.
-
-When the fleet's LAST item completes, run the `heartbeat` triage pass before closing out, whatever the tracker; items living in Linear also get `.agents/skills/orch/scripts/reconcile-work-items` (a GitHub-item fleet skips that with a note).
-
-Report both with the close-out.
-
-### `parked-merged [ITEM] pr=[N] repo=[OWNER/REPO]`
-
-the wait PR merged and the item has work left.
-
-A dependency park selects `parked.until_pr`, even with no own `parked.pr`.
-
-Its own PR merge cannot clear that wait.
-
-A queue park selects `parked.pr`.
-
-Relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
-
-The launcher starts the sandbox before resume.
-
-It reports `host-start-failed` and keeps the record parked if the provider does not confirm the start.
-
-A lane that resumes without a transcript is a blocker to report.
-
-For a dependency park, the lane rebases and continues the held step.
-
-Record no cycle for the dependency's merge.
-
-For a queue park, record the item's cycle under `merged` once the sandbox is up.
-
-The lane finishes `merge-pr.md` § 5 steps 2-6 and § 6.
-
-The watch repeats this hand before each heartbeat while the record still reads parked.
-
-Recovery relaunch rewrites the record before harness creation, so replay cannot start a second harness.
-
-Report a capacity refusal and handle the next repeat.
-
-### `parked-closed [ITEM] pr=[N] repo=[OWNER/REPO]`
-
-the dependency PR closed without merging.
-
-The watch reports it once.
-
-Resolve the hold or resume the lane through the same Recovery relaunch route.
-
-### `lane-exited`
-
-the window is alive but the harness under it is gone (the lane's closing lines follow the event and say why; `payload-noise-only lines=N` in their place means the lane deleted its own worktree and the shell has drawn nothing since).
-
-A lane stopped by a harness session limit ("You've hit your session limit · resets 9:50am") is not dead: resume it under another auth lane (`lanes pick --harness [HARNESS] --model [MODEL]` for the model the replacement will run, then [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)), or wait for the shown reset and use Recovery relaunch on the original account.
-
-The relaunch carries its own continuation line, except on a hosted codex lane, which resumes without one and takes it by Pane paste ([lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch)).
-
-A lane that reported `handoff` on an earlier run is relaunched per that event, not resumed or nudged.
-
-Any other exit is the `window-gone` rule below.
-
-### `overseer-dead`, `overseer-walled`, `overseer-reserve`, `overseer-context-unmeasured`, `overseer-context-stale`, `overseer-mark`
-
-the overseer's own session: [overseer-session-events.md](overseer-session-events.md).
-
-### `handoff`
-
-the item's lane recorded its handoff and exited: relaunch it per § Judgement rules, Hand off a lane; the record follows the event line.
-
-When `cause` is `model-switched`, pin the recorded `model` in the recovery launch flags.
-
-A native remote lane dispatches its predecessor stop through the launch identity owner.
-
-Report `stop_failure` cause and process identity when that field stands on the handoff.
-
-The existing controller recovery route rechecks the stop before relaunch.
-
-A handoff alone does not confirm that its predecessor stopped.
+`EVENT park-owed [ITEM] result=[RESULT]`: the watch asked again for the park a stopped record owes, one whose sandbox stands with a `park_owed` member. It asks each pass and prints each distinct result once. `parked` needs nothing. Read any other result, the park's refusal or failure, against [oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait). Resolve a standing refusal with a relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) or a close through [lane-reach.md § Lane close](lane-reach.md#lane-close).
 
 ### `lane-closed`
 
-the watch ran `lane-close` under the [Lane close contract](lane-reach.md#lane-close).
-
-Record the line below in the fleet log, the provider's `kept=PATH`, `kept=none` for no archive, or `closed=absent item=ITEM` for a host that no longer held the item and ran no archive pass ([lane-host.md](../schemas/lane-host.md) `close`).
+`EVENT lane-closed [ITEM]`: the watch ran the runtime close under [lane-reach.md § Lane close](lane-reach.md#lane-close), for a hosted lane, or for a parked or stopped record the tracker reads ended. Record a hosted close's line under it in the fleet log; [lane-host.md](../schemas/lane-host.md) `close` holds its forms.
 
 ### `lane-close-refused`
 
-`lane-close` relayed exit 3 from the provider and the sandbox stays. Surface the `path=` line that follows to the user; its value is the checkout the close stopped on, never the path that stopped it. Render-only drift is saved as a binary patch under the hosted clone's `tmp`, restored, and refreshed before close, and the provider refuses on any of several conditions. An untraced change in the checkout is the common one; a saved patch that does not carry a path the close was about to restore or remove is another. Several of them leave every changed path inside the generated inventory, so a hunt for an untraced path can find none. Inspect the directory and never force the close.
+`EVENT lane-close-refused [ITEM]`: the watch's close refused.
 
-### `lane-close` refusing `stop-failed` or `exit-timeout`
+- A parked or stopped record's close: read `lane-close-refused item=[ITEM] cause=[CAUSE]` on the watch's stderr. The watch asks no more until the record or the verdict moves.
+- A hosted close the provider refused: the sandbox stays. Tell the owner the `path=` line under the event, the checkout the close stopped on. Inspect that directory, and never force the close.
 
-the idle lane's harness did not end by signal, and the window and record stay. `stop-failed` names the failed step as `cause=`: `cause=timeout` is a harness that ignored its signal, which on a hosted lane arrives as `cause=provider` with the provider's own lines above the refusal, `cause=identity-unread` is a local record naming no launch identity over a pane with no harness process under it, `cause=identity-stale` one naming a harness that has exited, or whose `pid=` a later process holds, over a pane with none under it either, and `cause=process-read-failed` a process read under the pane, or the process table read at the identity the stop signals by, that failed. `target=wake` is the turn a wake started, stopped by the record's `wake` before the record reads done or stopped.
+### `lane-close-failed`, `lane-close-unanswered`, `lane-close-unconfirmed`
 
-A hosted stop by `lane-host-ssh` refusing `stop-identity-invalid` is a clone whose `.git/lane-host-pid` holds no pid and start: remove that file and close again, which stops the lane by its worktree. `cause=provider status=4` under `--keep-sandbox` is a hosted item whose worktree its own close-out removed, under a stop that finds the harness by that directory: the stop has no directory to find the harness by, and only a full close, which prints `stop-skipped cause=worktree-removed`, closes it: its host close ends the harness where the provider's `close` ends the sandbox, and otherwise the window kill hangs up the lane's ssh session.
+The watch's own closes print these lines on its stderr, under a `watch-step-failed` line, with no `EVENT` line.
 
-That reading needs the provider's `stop-worktree-removed item=[ITEM]` line above the refusal; `cause=provider status=4` without it is the provider's own `4`, such as a sandbox it stopped, whose line above names it: start the sandbox, then close again. `exit-timeout` on a local lane names `identity=`, the identity the stop signalled by: `recorded`, the record's `launch`, or `pane`, read off the pane because the record named none or a stale one. `processes=0` there is a harness that identity named which exited before its signal, or under `recorded` no process named for the harness at or below the recorded pid. `processes=` above 0 means that many harness processes were signalled and confirmed exited, yet the pane still does not read exited: inspect what the pane now runs.
+- `lane-close-failed item=[ITEM] [CAUSE]`: the watch's close of that lane failed, with the close's own cause. `lane-close-failed item=[ITEM] step=cycle cause=[CAUSE]` is a cycle the close could not record (§ `merged`). Correct the named cause.
+- `lane-close-unanswered item=[ITEM] [CAUSE]`: the provider's close gave no answer within its bound, so the sandbox may still stand. Read the host with `orch-runtime host list` before closing again.
+- `lane-close-unconfirmed item=[ITEM] marker=[PATH]`: no one read an earlier close's end. § `cloud-stall-closed` says what the operator does.
 
-Report the refusal lines to the user.
+### Close answers
 
-Never type into the pane to end the harness instead.
+The overseer's runtime close ([lane-reach.md § Lane close](lane-reach.md#lane-close)) answers in `.result.word`, or refuses at exit 1 with `refusal.key` and its fields. Report a refusal or an observation to the owner. Never type into the pane to end the harness instead.
 
-### `lane-close` refusing `ask-unanswered`
+- `lane-live state=[STATE]`: the close ends no live lane.
+- `unconfirmed`: the close left something standing, named in `.result.observation`, and its intent stays open. Correct the cause and run the same close again.
+- `ask-unanswered`: the lane waits in `lane-mail ask` for an answer. A hosted lane's close refuses with the `ask=` it found. A local lane's close answers `failed` with `ask-unanswered` in its observation. Answer the ask as [lane-reach.md § Lane close](lane-reach.md#lane-close) says, then run the same close again. Only an answer lifts the refusal; a relaunch writes none.
+- `harness-unsupported harness=unknown`: a hosted lane's record names no harness to stop. Run the close again with `"harness"` set to `claude`, `codex`, `pi` or `copilot` in the request.
+- `tracker-read-failed cause=key-ambiguous`: an `issue-N` record carries no tracker. Set `"tracker"` to `linear` or `github`; for GitHub, also set `"repo":"[OWNER/REPO]"`. A request field fills only a field the record leaves empty.
+- `item-files-kept cause=[CAUSE]` in `.result.notes`: the lane closed, and its files stay because its tracker did not answer. For a record carrying neither `"tracker"` nor `"repo"`, add them to that close. Otherwise the files stay until a later close-out of the item ([workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)).
+- `stop-failed`: a hosted stop did not answer. Its `cause=` names the failed step, under the provider's own lines. The window and the record stay. A Copilot CLI lane in a `pane=local` window holds the same stop `unconfirmed`, with `host_stop: stop-failed` in `.result.observation`, after the harness exited and its window closed; the record stays. Correct the cause and close again.
+- `cause=provider status=4` under the provider's `stop-worktree-removed item=[ITEM]` line: the item's own close-out removed its worktree, so the stop cannot find the harness. Only a full close closes it. Without that line, the `4` is the provider's own, such as a stopped sandbox: start the sandbox, then close again.
 
-the lane asked the overseer a question through `lane-mail ask` and is waiting for the answer.
+### `lane-exited`
 
-The refusal names the ask id, the seconds the lane has waited and how many asks stand.
+`EVENT lane-exited [LANE]`: the window is alive and the harness under it is gone. The lane's closing lines follow and say why. `payload-noise-only lines=[N]` in their place means the lane deleted its own worktree and its shell has drawn nothing since.
 
-Closing the lane ends the session that answer would reach, so answer it as [lane-reach.md § Lane close](lane-reach.md#lane-close) states, then run the same close again.
+- A lane at a harness session limit ("You've hit your session limit · resets 9:50am") is walled, not dead: § `usage-limit` applies.
+- Relaunch a lane that reported `handoff` per § `handoff`. Never nudge it.
+- A lane whose merge landed and whose work has left its host: the watch closes it at this line, with its merge as the close's `delivery`.
+- Any other exit: § `window-gone`.
 
-An exited lane takes no such refusal, its session being gone; a stopped record does, because the sandbox `--keep-sandbox` kept can be relaunched into a session that reads the reply.
+### `window-gone`
 
-So `--keep-sandbox` on an exited lane records `stopped` and refuses nothing, and the later full close of that record refuses until the ask is answered.
+`EVENT window-gone [LANE]`, or any lane whose session ended with no merged pull request:
 
-Only an answer lifts it: a relaunch writes none, so a lane relaunched to clear this refusal spends a session and meets it again. `mail-read-failed` is the mailbox failing to read: fix what the `lane-mail:` line under it names rather than closing a lane nothing measured.
+1. Inspect its worktree and pull request.
+2. When the tracker reads the lane's item completed or canceled, the lane has ended its work, including a no-change round's item ([start-worktree.md § 2](../workflows/start-worktree.md#2-implement)). Close it through the runtime close ([lane-reach.md § Lane close](lane-reach.md#lane-close)) and relaunch nothing.
+3. Otherwise relaunch it once with the same brief through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+4. Tell the owner of a second death. Do not retry it.
+5. After the relaunched lane finishes, close it through the runtime close. Do not rebuild the pane, host and state steps by hand.
 
-### `lane-close` refusing `harness-unsupported harness=unknown`
+### `lane-unreadable`
 
-the lane record predates the launcher recording the lane's harness, and its pane runs a wrapper rather than the harness itself, so nothing here names which harness to stop.
+`EVENT lane-unreadable [LANE] cause=[WORD]`: the watch could not read the lane's pane, process or screen this pass. The line prints when the cause first appears or changes, and a pass that reads the lane clears it. The lane keeps its last judged state. The line is never `window-gone` or `lane-exited`: relaunch nothing on it alone. A cause that stands across passes is a fault of the recorded tmux server or of the lane's `mail_root`: read and correct it.
 
-Run it again with `--harness claude|codex|pi|copilot`.
+### `stray-window`
 
-Such a record otherwise closes on its item alone wherever the item key names the tracker, the pane naming the harness it runs.
+`EVENT stray-window [PANE] window=[ID] server=[PID] name=[NAME]`: a window of the fleet's tmux session that no lane record, overseer record, open intent or receipt names. The watch reports it once while it stands, and never closes or adopts it. Find what opened it, such as a person or a launch whose record was lost. Then close it or register it.
 
-An `issue-N` record carrying no tracker refuses as `tracker-read-failed cause=key-ambiguous`, that key being what a GitHub lane and a Linear lane are both given: it wants `--tracker linear|github`, and a GitHub lane's repository, read from nothing, wants `--repo [OWNER/REPO]` besides.
+### `handoff`
 
-Act on that refusal's `cause=`, which names which read did not answer and whose body defines each one; `cause=read-failed` is the tracker CLI itself failing, and its words are on the lines above the refusal. `source=derived` is a tracker read from the item key and `source=given` one the record or `--tracker` carried; on a key that answers, `--tracker` only pins what the key already says.
+`EVENT handoff [ITEM]`: the item's lane recorded its handoff and exited. The record follows the line. Relaunch the item through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which composes the request from the record. A record whose `cause` is `model-switched` relaunches on the record's `model`.
 
-Each option fills only a field the record leaves null or absent, and one that contradicts a value the record carries refuses as `record-invalid` rather than repointing the lane.
-
-An exited lane closes without any of the three, but its files leave the state directory only where its tracker answers: pass `--tracker` or `--repo` on that close for a record carrying neither, since a second close of a `done` record never reaches the removal; otherwise the files stay for as long as the prune holds the item live ([schemas/workflow-state.md § Prune](../schemas/workflow-state.md#prune)).
-
-### `lane-close` refusing `validate-stop-failed`
-
-[lane-reach.md § Lane close](lane-reach.md#lane-close).
-
-### `lane-relaunched [ITEM] lane=[DIR] from=[DIR]`
-
-under `ORCH_WALL_RELAUNCH=auto` (default) the watch ran the usage-limit route itself: the shared judge read the lane walled, `lanes pick --harness [HARNESS] --model [MODEL]` for the model its record names qualified `lane=` with the spent `from=` excluded, and the watch started the record's own `open-terminal --relaunch` detached, its output at the `log=` line.
-
-The launch keeps the original checkout, host, tmux session, flags and refresh choice.
-
-The launcher replaces the window without deleting its session.
-
-It delivers the continuation after a confirmed hosted Codex resume.
-
-This notice requires no operator launch action.
-
-While that launch runs, inside `ORCH_WATCH_PREPARE_SECS`, its missing window is no `window-gone`.
-
-A failed detached launch reports `lane-prepare-failed` with `reason=relaunch-failed`, its exit status and log, even when the window stays open.
-
-A launch that exceeds that bound reports `lane-prepare-stuck`.
-
-Existing hosted preparation reports its own outcome.
-
-The watch's refusal lines name what it never does: relaunch a lane the judge reads `working`, or onto the spent account before its reset.
-
-A wall forced on a scratch lane by removing its account's login, with another account qualifying, takes this route and counts as the wall a check needs; the watch's `EVENT lane-relaunched` line and the lane record naming the new lane directory are the evidence.
-
-### `usage-limit`
-
-the watch left the wall to the overseer: `ORCH_WALL_RELAUNCH=ask`, no lane qualified (`pick none`), or a `wall-relaunch-refused` line on its stderr names the step that stopped it. `reason=context-unavailable` names the cause: `permission-choice-unrecorded` for a legacy record or custom command whose original flags cannot be recovered; `checkout-unavailable` when the launch checkout is gone; `host-capabilities-unavailable exit=N` when the saved host capability read failed, with its cause on stderr; or `relative-provider-deferred:KEN-3996` for deferred automatic recovery through a relative provider executable path.
-
-The line under the event is the pick's answer where one ran: `pick lane=[DIR]`, `pick none`, or `pick unjudged exit=[N]`.
-
-Read the lines under it and confirm the banner is the harness's own, not a limit phrase the lane printed; a lane still working is left alone.
-
-With `wall_kind=auth`, the shared judge found a login failure: keep the failed config dir as `--exclude-lane [DIR]` on every replacement pick, also across harnesses, and since a login wall has no reset, report blocked recovery and ask the operator to sign in when no other account qualifies.
-
-Before any manual stop, apply [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
-
-Under `ask` with `pick lane=[DIR]`, only for a lane that rule admits, take the steps the watch takes under `auto`: on a hosted `pane=local` lane run `lane-host stop --item [ITEM] --harness [HARNESS]` and require its `stopped item=[ITEM] processes=[COUNT]` line, keep the window for the launcher to replace, then run [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) with `--lane [DIR]`.
-
-For an admitted lane with no account of that harness qualifying, pick another terminal harness and relaunch with the one-sentence continuation brief from `handoff.md` § 2, including the matching path from the prior harness's transcript store.
-
-When no replacement qualifies and the event has `resets=`, keep the old window and wait for that reset: it announces `usage-limit-passed`, and the overseer sends its one-line continuation nudge.
-
-A `resets=` pinned from a clock or weekday is an upper bound, so read the lines under the event.
-
-Never launch onto the spent account again until its reset, and never park a lane against an estimate of your own when `resets=` states the time.
-
-A wall reported without `resets=` is announced once and nothing announces it again: if none qualifies, report the blocked recovery and keep the old window until a replacement qualifies.
-
-The spent account's `account` event or heartbeat roster line settles which case this is, routed per `account` below: `status=expired` goes to the operator and a walled account to its reset.
-
-A weekly-limit report from a claimed lane's harness, with a `resets=` still ahead, is also recorded for that config dir, so `lanes pick` and `lanes list` read the account walled until that reset even where its usage reading shows room.
-
-The report is the banner the harness drew on the lane's screen, or for a Pi lane the error its turn ended on; a banner the lane quotes records nothing. `account-wall: record-unwritten config_dir=[DIR]` on the watch's stderr is that record failing: the watch tries again each pass, and until one succeeds pass `--exclude-lane [DIR]` to `lanes pick --harness` until the reset.
-
-### `usage-limit-passed`
-
-read the lines under the event first, the banner with the screen on both sides of it, as for `usage-limit` above: a lane still working is left alone.
-
-Confirmed, the wall named by `resets=` has already lifted and the lane is still sitting under the old banner.
-
-Send it a one-line continuation nudge; do not move the item and do not wait.
-
-The nudge is the whole remedy: this event never licenses a fresh launch onto that account, and a nudge that does not take means the wall still stands.
-
-### `account <alias> ... change=<kinds> was=<status>/<verdict>`
-
-an account the fleet launches on changed since the last compared reading; `oversee-watch --help` states the fields.
-
-An unmeasured reading leaves that comparison unchanged and emits no event unless its status is `expired` or `retired`.
-
-Take the first arm below that matches the new reading. `change=reset` is context and never a route of its own.
-
-  1. `status=expired` → no reset brings the account back: its login is dead, or its Codex renewal ended in an `expired` outcome the `lanes` script header lists under "Why a Codex token is renewed by the Codex CLI". Tell the operator to log in to that account once, or to run the codex command its `detail` in `lanes list` names, in the shape [communication-modes.md](communication-modes.md) § Status report gives. Never park a lane on it.
-  2. `status=plan_ended` → no reset brings the account back either: its plan ended or its organization disabled subscription access, so the reading is `verdict=walled` with `binding_bucket=plan` and `binding_resets_at=-`. Tell the operator that only the owner can restore the plan or the organization's access, or take the account out of the fleet, in the shape [communication-modes.md](communication-modes.md) § Status report gives. Never park a lane on it.
-  3. Any other status with `verdict=unmeasured` → nothing measured the account. Launch nothing new on it, and handle its status word per [lane-directive.md § No lane has room](lane-directive.md#no-lane-has-room).
-  4. `verdict=walled` → the account's binding bucket is at or above `ORCH_LANE_MAX_PCT`: launch nothing on it before `binding_resets_at`. Beside `change=reset`, the old bucket reset and another bucket binds until the new time. Where `binding_bucket=model` the wall is one model's, and `lanes pick --harness [HARNESS] --model [MODEL]` decides a launch of another model; `scripts/lib/lane-model.sh` owns that rule. Where `binding_bucket=credits` the account is a grant, a Pi `anthropic/` API grant or a Claude cloud credit, at or below `ORCH_LANE_CLOUD_CREDIT_FLOOR`, and nothing reopens it (`binding_resets_at=-`): launch nothing on it, and hand off each live lane on it as `lanes context` `handoff_required` directs; the relaunch takes the account `lanes pick` returns.
-  5. `verdict=room` → the account has capacity. Resume any launch `lanes pick` refused for want of an account. Where `binding_bucket=credits` on a `harness=codex` account the capacity is its credit balance above `ORCH_LANE_CODEX_CREDIT_FLOOR`, its plan windows spent; `lanes pick` hands it out only when no Codex account has plan room. Where `binding_bucket=credits` on a grant, a Pi `anthropic/` API grant or a Claude cloud credit, the grant has more than `ORCH_LANE_CLOUD_CREDIT_FLOOR` dollars left and is tier 0, which `lanes pick` spends first (`lanes --help` § pick). Nudge a lane parked on this account with the one-line continuation nudge only where its `usage-limit` carried no `resets=`; a lane parked with `resets=` gets its nudge from `usage-limit-passed`.
-
-### `model-capacity`
-
-resend one continuation line through Pane paste; the next pass watches the lane again.
-
-Never relaunch the lane: the selected model stopped one turn, not the session.
+A handoff does not confirm that its session stopped: a relaunch refuses `lane-live` while the record reads in flight. End the lane first, as that section says. Report a `stop_failure` cause and process identity where the record carries one.
 
 ### `idle-after-return`
 
-read the closing lines under the event.
+`EVENT idle-after-return [LANE]`, then an optional note: the lane read idle on two passes in a row, or a local Codex lane read idle after its turn. Pane dialogs and walls take priority over a local lane's session rows except on Pi; Codex's current failed-turn marker below its last prompt and above its idle composer can end a Working row. Hosted Pi lanes use their own Stop rows; other hosted lanes keep their provider's screen reading. Read the closing lines under it.
 
-A Pi lane is idle by the Stop row its own hook wrote at its turn end, never by its pane; the lines under the event are its pane's.
+- `cause=length`: the model's output limit cut the turn, and the lane has not finished. Send it a one-line continuation directive.
+- `cause=api-error` is a turn its provider's API ended. The watch resumes a lane the wake reaches once, with no line. So this line is a second such end, a resume the wake could not type, or a lane the wake does not reach: wake the lane with a continuation directive.
+- `stop-cause=allow-all-blocked-by-policy`: follow [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) instead of sending a directive. That section names the `session-record=` reasons.
+- A lane whose merge landed and whose work has left its host: the watch closes it at this line.
+- A lane inside `merge-pr.md` § 5 step 1 waits on its queue. That is work in flight, not idle.
 
-A lane that has returned is available for another fleet launch; a lane still inside `merge-pr.md` § 5 step 1 is blocked on its queue wait, which reads as work in flight rather than idle.
+Otherwise the lane has returned and is free for another fleet launch.
 
-A directive for an idle lane is sent, and the lane woken as `oversee-lanes.md` § Talking to a lane says.
+A lane is a stalled-round candidate only when all three hold:
 
-A line that carries `stop-cause=allow-all-blocked-by-policy` follows [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) instead of the wake, and that section names the `session-record=` reasons.
+- The lines show its round watchdog finished with no waiter still running.
+- Its status file names a dev or fix round as its current step.
+- Its worktree holds no `tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` for its workflow state's `dev_round_id`.
 
-  - A lane is a stalled-round candidate, not an available lane, only when the lines under the event show its round watchdog finished with no waiter still running, its status file names a dev or fix round as its current step, and its workflow state's `dev_round_id` has no `tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` in its worktree. A lane whose watchdog is still armed is work in flight, as the queue wait above is. Read the state file and test for the artifact as `oversee.md` § Bounded lane reads reads the status file. Send the lane a directive to check the stall conditions in [skill-rules.md § Round Closure](skill-rules.md#round-closure), Stalled round, and to recover the round only when every one holds, then wake it.
-- A lane whose session ended AFTER its PR merged but before `merge-pr.md` § 5 steps 2-6 finished → send it `merge-pr [PR_NUMBER]` as a directive per `oversee-lanes.md` § Talking to a lane, then relaunch it per [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). The order is fixed: the relaunch's continuation line tells the lane to read its inbox first, so a directive already waiting there is what binds the pull request number. That run's already-merged route skips the merge and runs the tracker sync, project verification and worktree removal the dead lane never reached. The launcher keeps a merged item's tree as it stands and reports it as `worktree-reuse-merged` with the merge commit. The rule below does not reach this lane: its PR did merge.
+Read the state file and test for that file as [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads) reads the status file. Direct the lane to check the conditions in [skill-rules.md § Stalled round](skill-rules.md#stalled-round), and to recover the round only when every one holds.
 
-### `lane-ready`
+When a lane's session ended after its pull request merged, before `merge-pr.md` § 5 steps 2 to 6 finished:
 
-a hosted lane `open-terminal` handed to a background job while its host prepared it is up, and the watch carries it from this pass.
-
-Nothing to do.
-
-### `lane-prepare-failed`
-
-`log=` names the failed launch's output. `reason=relaunch-failed` is a completed automatic recovery failure, with `exit=` naming its status. Keep any surviving window and fix the cause in the log before another launch. Other reasons name a preparation job that failed and closed its window. `reason=wait-failed` is the host's own preparation: close the lane through `lane-close [ITEM]`, which closes the host from the `stopped` record, and launch the item again once. `reason=launch-failed` is a launch step on a ready host, named in the log: fix that cause, then relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). A second failure is surfaced to the user.
-
-### `lane-prepare-stuck`
-
-with `reason=relaunch-pending`, the automatic recovery exceeded `ORCH_WATCH_PREPARE_SECS`.
-
-Read its log and keep the window.
-
-Its job still owns completion.
-
-Do not start a second recovery while it runs.
-
-Other outcomes mean the record has read `preparing` longer than `ORCH_WATCH_PREPARE_SECS` with no outcome.
-
-A `prepare.line` record is a saved foreground busy continuation ([lane-host.md § Provider protocol](../schemas/lane-host.md#provider-protocol)): retry the original launch with the same host, account, harness, relaunch identity and native/custom command route.
-
-A changed command route follows [Recovery relaunch](lane-directive.md#recovery-relaunch).
-
-Keep its sandbox and any pane it already started.
-
-A `prepare.log` record belongs to a background job: read the log's tail, close the lane through `lane-close [ITEM]`, which stops that job and closes its window and host, then launch the item again once.
-
-A relaunch over that active job would race it for the same window and record.
-
-A second stuck preparation is surfaced to the user.
-
-### `lane-stalled [ITEM] age=[SECONDS] state=finished`
-
-the open pull request of a lane whose host kind declares `status=none` has left draft.
-
-Launch the item's landing lane in this pass, as `disarmed` for a `land=handoff` record says.
-
-Send no directive and wait for no approval.
-
-The watch never passes a finished lane to its stall close.
-
-### `lane-stalled [ITEM] age=[SECONDS] state=out-of-credit`
-
-the pull request is still draft, and the pass's account roster reads its account locked or `remaining_dollars` at or below zero.
-
-Send no directive.
-
-Close the lane with `lane-close [ITEM]` and relaunch it as `cloud-stall-closed` below says.
-
-Both state lines go out on their first reading, repeat every `ORCH_OVERSEER_MARK_REPEAT` passes while the word stands, and report a changed word at once.
-
-Missing or unread draft and credit readings keep the age route below.
-
-### `lane-stalled [ITEM] age=[SECONDS]` without `state=`
-
-a running lane whose host kind declares `status=none`, a Claude cloud session, has an open pull request whose head and `## Lane status` body have not moved for `ORCH_WATCH_LANE_STALL_SECS`: it may be running a long step, waiting on a question, out of credit or ended, and no read of a cloud session's state tells these apart: Claude Code 2.1.295 documents none (`claude agents --json` and `claude logs` read only this machine's background sessions).
-
-With no pull request open, the line names a lane a push started, as `start-stalled` below says, whose item branch head has not moved for `ORCH_WATCH_LANE_STALL_SECS`: read the branch's newest commit message and any report committed on it in place of the pull request body.
-
-Where they record a pull request create the session token was refused, lacking Pull requests write, or another blocker its session words have it record there, that is the owner's step: report it to the user and send no directive.
-
-Otherwise read the pull request body with `gh pr view`, or that branch, and send one directive through `lane-mail send --directive --state-dir [OVERSEE_STATE_DIR]` ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)).
-
-That send records the cause readings on the lane record as `directive_send`: its result and the CLI's words, and the account's cloud credit, `remaining_dollars` and `locked_reason`, read at the send.
-
-Where the send refuses as `session-archived`, close the record with `lane-close [ITEM]` at once and relaunch it as `cloud-stall-closed` below says.
-
-Otherwise the watch holds the bound: with no push and no `## Lane status` change within `ORCH_CLOUD_STALL_MINUTES` of the send, it closes the lane itself and reports `cloud-stall-closed`.
-
-Keep no stall count per repository: a fleet whose cloud lanes keep stalling drops cloud from `ORCH_LANE_PREFERENCE`.
-
-The line repeats every `ORCH_OVERSEER_MARK_REPEAT` passes while it stands.
-
-### `start-stalled [ITEM] age=[SECONDS]`
-
-`ORCH_WATCH_START_STALL_SECS` have passed since the record's `running_at`, the time its launch or relaunch recorded it `running`, with no status file under its `mail_root`, on any harness, or, for a lane whose host kind declares `files=none`, neither an open pull request on the item branch nor a push to that branch since launch: the lane never started its workflow. The watch reads a push as a branch head committed at or after the record's `session_since`, or a head it saw move between two of its reads. Such a session pushes an empty first commit at once and opens its pull request only at finish, so any push is its start, the push that records a refused create included, and `start-stalled` never reports a pushed lane: `lane-stalled` above reports one whose branch then stops moving, and reads a refused create there. Such a cloud lane's pane is only its session's local client, which no pane event reports: send it one directive, which the watch bounds as `lane-stalled` above says. For any other lane, the event carries no pane payload, so read the lane's state with `lanes state [WINDOW]` and its pane per `oversee.md` § Bounded lane reads. Wake a lane idle at its brief per `oversee-lanes.md` § Talking to a lane, and answer a harness dialog per [lane-reach.md § Per harness](lane-reach.md#per-harness). Relaunch an exited or `unjudged` lane once through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). The line repeats every `ORCH_OVERSEER_MARK_REPEAT` passes while the file is missing, so a line already acted on needs nothing more. A relaunch renews `running_at` and so the window: a `start-stalled` line whose `age=` counts from after the relaunch is a second stall, surfaced to the user.
-
-### `cloud-stall-closed [ITEM] directive_age=[SECONDS]`
-
-a stalled cloud lane left its recorded directive unanswered for `ORCH_CLOUD_STALL_MINUTES`, nothing pushed since, and the watch closed it through `lane-close`, whose `lane-closed` lines come before this one and whose fleet-log `close` row names the send's result, the CLI's words and the credit reading.
-
-Archive nothing yourself: report the session id to the owner, who archives it.
-
-Relaunch the item as a hosted lane on its branch: choose the host under [oversee.md § 3 Placement](../workflows/oversee.md#3-launch), never `claude-cloud`, and use [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) with `--host [HOST]`.
-
-With no session on that host to resume, the relaunch renders the `start` template and runs the standard cycle on the branch the cloud lane left.
-
-Name the fleet-log cause in the relaunch's own `ruling` row.
-
-### `lane-long [ITEM] age=[SECONDS] review_rounds=[COUNT] fix_receipts=[COUNT] validation_runs=[COUNT] restacks=[COUNT] repeated_class_rounds=[COUNT] stage=[STEP]`
-
-a `running` or `parked` lane is `ORCH_WATCH_LANE_AGE_SECS` past its record's `launched_at` (default 12600 seconds, 3.5 hours), which `--relaunch` and handoffs keep and a fresh launch after `lane-close` renews; `stage=` is the `Step` line of its status file, `parked`, `unread` or `none`.
-
-The repeat schedule is `oversee-watch --help` § `EVENT lane-long`. `review_rounds=` adds the first internal review panel, re-review cycles and comment-review iterations from workflow state. `fix_receipts=` counts `stages` entries whose `kind` is `fix`, not `cycles`, which can count fixed items. `validation_runs=` counts each `dev-validate-run` start in the lane worktree, including finished, bounded and running runs before round acceptance.
-
-Restack validation runs count too.
-
-The runner publishes its start inventory at `tmp/validation-runs`; its help defines the file.
-
-A missing, unreadable or invalid inventory reads `unread`. `restacks=` reads workflow state `restacks`, one per completed restack whatever validation route followed it ([workflow-state.md](../schemas/workflow-state.md)). `repeated_class_rounds=` counts later distinct patch commits that repeat an equal cause or a shared location/owner key in `pr_comment_review.patched_causes`, once per commit, across internal and comment reviews.
-
-The optional `owner` comes from the item's `Owner:` line.
-
-Key equality is the [dev-round schema](../schemas/dev-round.md)'s contract.
-
-This count covers recorded patches only; it cannot show a review that recorded no class.
-
-With no patch entry, `repeated_class_rounds` reads `unread`.
-
-With no `stages` list, `fix_receipts` reads `unread`.
-
-An absent `restacks` field counts as zero.
-
-All five counts read `unread` when state is absent or unread, the lane writes no files, or it is parked.
-
-The watch reads no parked lane file.
-
-For any `stage=` but `parked`, read the lane record: its status file per `oversee.md` § Bounded lane reads, its workflow state, and its pull request's `github.sh pr-timeline`.
-
-A `parked` lane's disk is stopped, so read none of its files: read the overseer's own lane record, its `parked` `{pr, head, repo, at}` and `pauses`, and that pull request's `github.sh pr-timeline`; a park happens only in [merge-pr.md](../workflows/merge-pr.md) § 5 step 1's queue wait, so the cause is the merge queue or the time before the park.
-
-Before naming the cause, apply [Design review](design-review.md) when its trigger holds, including its wider read for missing counts.
-
-Name the cause: long tests, a stuck state or wait, a review loop, scope growth, or the merge queue.
-
-If no design review starts, record the cause in the fleet log as a `ruling` whose text starts `long-reason`.
-
-Where the cause is in the system, not in this one item, file its source fix under Fix the source in § Judgement rules.
-
-### `window-gone`, or any lane whose session ended with no merged PR
-
-inspect its worktree and PR state, then re-launch once with the same brief through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
-
-Without `--relaunch`, the existing worktree reads as another session's claim and the item is skipped.
-
-The launcher starts from the normal brief only when no matching transcript exists.
-
-A second death is surfaced to the user, not retried.
-
-After the relaunched lane finishes, close it through `lane-close`; do not reconstruct the pane, host, and state steps by hand.
-
-### `lane-question`
-
-the lane's own question, and the only shape one arrives in.
-
-Answer it when available evidence already decides it, apply the ruling, record it in the fleet log, and send the answer back per `oversee-lanes.md` § Talking to a lane.
-
-Repo state, the issue body, a stated convention, scope-narrowing calls subject to [requirement-change review](design-review.md#inputs-and-actions), and a lane's own well-argued recommendation are available evidence.
-
-A pure cut back to main's behaviour, or a cut of surface the Done-when does not need, takes no table.
-
-Relay any other question to the user only where [communication-modes.md](communication-modes.md) § Ask set puts it, using the question format that section links.
-
-A merge question under `ORCH_MERGE_AUTONOMY=ask` follows Held merges above and always goes to the user.
-
-Every emitted question is answered: the lane is blocked in `lane-mail wait` on this line.
-
-An overseer resuming a fleet reads what it still owes with `lane-mail pending --item [ISSUE_ID]`, adding `--root [MAIL_ROOT] --host` for a lane whose record puts it on another host.
-
-### `lane-notice`
-
-the lane reported something it is not waiting on.
-
-Act on it where it needs acting on; it needs no reply.
-
-A `copilot-*` notice takes [copilot-head-notices.md](copilot-head-notices.md).
-
-### `directive-read [ITEM] [ID]`
-
-the lane's mailbox cursor passed the directive: the lane has it.
-
-Nothing is owed; a sent directive is confirmed by this line alone.
-
-### `directive-unread [ITEM] [ID] age=[SECONDS]`
-
-the directive has waited past `ORCH_DIRECTIVE_UNREAD_SECS` with the lane's cursor short of it.
-
-Reach the lane by its state: wake an idle one per `oversee-lanes.md` § Talking to a lane, and any other by its row in [lane-reach.md § Wake refusals](lane-reach.md#wake-refusals). `directive-read` follows once it reads it.
-
-### `owner-note`
-
-a note to the overseer mailbox, which carries owner and delegate notes; its text follows. `from=owner` is routing, not authorship; a record names the stated speaker per [communication-modes.md § Recording](communication-modes.md#recording).
-
-Every text and `options:` line under `lane-question`, `lane-notice`, `peer-note`, `owner-note` and `owner-ask-resolved` is indented two spaces, so only a watch record begins with `EVENT`.
-
-Act on it, or record it in the fleet log as a ruling.
-
-Where a reply is owed, send it as `lane-mail notice --item overseer --to owner --ref [ID]`, the event's id as `--ref`, so the owner reads it on the channel the note came from ([overseer takeover § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff)); a question back is an owner ask.
-
-Follow [communication-modes.md § Owner delivery](communication-modes.md#owner-delivery) for reply routing; an identical send within the minute appends nothing and refuses `duplicate id=[FIRST_ID]`, and a notice text the owner received within 24 hours refuses `owner-notice-repeated` naming that notice's id, so a second reply takes its own words.
-
-The watch reports each `lane-question`, `lane-notice`, `directive-unread`, `owner-note`, `owner-ask-resolved` and `peer-note`, and each `directive-read` for a directive read after its lane is first watched, at least once, and a stop between its print and the commit of its row or cursor reports it again: an id already seen is a repeat.
-
-### `owner-ask-resolved [ASK_ID] by=[text|default] id=[ANSWER_ID]`
-
-an answer to an owner ask; its text follows.
-
-The owner can answer more than once, each with its own answer id.
-
-Record the ruling per [communication-modes.md § Recording](communication-modes.md#recording).
-
-When the overseer has its ruling, close with `lane-mail resolve --item overseer --id [ASK_ID]` and send a notice with `--ref [ASK_ID]` naming what stood. `by=default` supplies the recommendation only for an unanswered deadline.
-
-Later replies after closure arrive as `owner-note` directives.
-
-### `owner-ask-closed [ASK_ID] by=[explicit|text|default]`
-
-the separate close record.
-
-An answered deadline closes without a default answer; the owner's words stand.
-
-### `peer-note [REPOSITORY] [ID] kind=[KIND]`
-
-a peer repository's overseer wrote to this one; its text follows.
-
-Answer `kind=ask` alone, per [peer-mail.md](peer-mail.md); `kind=answer` carries `re=[ASK_ID]` and is recorded against that ask of this overseer's, and `kind=directive` needs no reply.
-
-Record the exchange in the fleet log.
+1. Send it `merge-pr [PR_NUMBER]` as a directive.
+2. Then relaunch it through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). The relaunch tells the lane to read its inbox first, so the waiting directive binds the pull request number. Its already-merged route skips the merge and runs the tracker sync, project verification and worktree removal.
 
 ### `lane-asking`
 
-a harness dialog, never a question for the overseer: a permission prompt, a trust prompt, a model picker.
+`EVENT lane-asking [LANE]`, then an optional note: a harness dialog, such as a permission prompt, a trust prompt or a model picker. It is never a question for the overseer. Answer it in the lane's own dialog per [lane-reach.md § Per harness](lane-reach.md#per-harness).
 
-Answer it in the lane's own dialog per [lane-reach.md § Per harness](lane-reach.md#per-harness).
+A note `stop-cause=allow-all-blocked-by-policy` is a Copilot lane launched with allow-all that its policy blocks. Follow [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy), and do not answer the prompt. That section also names each `session-record=` reason.
 
-A line that carries `stop-cause=allow-all-blocked-by-policy` is a Copilot lane launched with allow-all whose policy blocks it: follow [copilot-runtime.md § Allow-all blocked by policy](copilot-runtime.md#allow-all-blocked-by-policy) and do not answer the prompt.
+### `model-capacity`
 
-A Copilot lane launched without allow-all carries no cause, and its prompt is answered as above.
+`EVENT model-capacity [LANE]`: the selected model stopped one turn, not the session. Send a one-line continuation directive ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)). The next pass watches the lane again. Never relaunch the lane.
 
-That section also names each `session-record=` reason a Copilot lane's line can carry.
+### `lane-ready`
+
+`EVENT lane-ready [ITEM]`: a hosted lane that its host prepared in a background job is up, and the watch carries it from this pass. The line prints once. Nothing is owed.
+
+### `lane-prepare-failed`
+
+`EVENT lane-prepare-failed [ITEM] reason=[REASON] [exit=[RC]] log=[PATH]`: a launch failed. `log=` holds its output.
+
+- `reason=relaunch-failed`: the watch's own wall relaunch failed. Its log holds the `op` replies, and `.result.effect.report.intent.observation` names the cause. Keep any window that stands, fix the cause, then relaunch.
+- A new launch that fails with `host-wait-failed` in the launch result's cause: read the provider's answer there. Close the lane through the runtime close ([lane-reach.md § Lane close](lane-reach.md#lane-close)), which closes the host from the `stopped` record. Then launch the item again once.
+- A failed launch on a ready host: read the cause or held observation in the launch result. Fix the cause, settle any held launch through its close, then relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+
+Tell the owner of a second failure.
+
+### `lane-prepare-stuck`
+
+`EVENT lane-prepare-stuck [ITEM] age=[N]s log=[PATH] [reason=relaunch-pending]`: a preparation ran past `ORCH_WATCH_PREPARE_SECS` with no outcome. The line prints once per preparation.
+
+- `reason=relaunch-pending`: the watch's wall relaunch is still out. Its job owns completion while it runs. Once the job ends with its launch unconfirmed, the reconcile duty owns it. Read the log, keep the window, and start no second recovery.
+- A launch the runtime holds open over an unanswered preparation step follows [lane-directive.md § Launch gate](lane-directive.md#launch-gate).
+- A record with `prepare.log` belongs to a background job. Read the log's tail. Close the lane through the runtime close, which stops that job and closes its window and host. Then launch the item again once. A relaunch over that job races it for the same window and record.
+
+Tell the owner of a second stuck preparation.
+
+### `start-stalled`
+
+`EVENT start-stalled [ITEM] age=[SECONDS]`: the lane never started its workflow. `ORCH_WATCH_START_STALL_SECS` passed since the record's `running_at` with no status file under its `mail_root`. For a host kind that declares `files=none`, it passed with no open pull request and no push on the item branch. The line repeats every `ORCH_OVERSEER_MARK_REPEAT` passes while it stands, so a line already acted on needs nothing more.
+
+- A cloud lane (`files=none`): send it one directive. The watch bounds it as § `lane-stalled` says.
+- A host kind that declares `files=verb`: the watch reads its status file through the provider. A failed read is `start-stall-unread` on the duty's `watch-step-failed` line, with no event.
+- Any other lane: read its state with `.agents/skills/orch/scripts/orch-runtime lane status --item [ITEM]`, and its pane per [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads). Wake a lane idle at its brief. Answer a harness dialog per [lane-reach.md § Per harness](lane-reach.md#per-harness). Relaunch an exited or unjudged lane once through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+
+A relaunch renews `running_at`. A `start-stalled` line whose `age=` counts from after the relaunch is a second stall: tell the owner.
+
+### `lane-stalled`
+
+`EVENT lane-stalled [ITEM] age=[SECONDS] [state=[STATE]]`: a running cloud lane, on a host kind that declares `status=none`. The line repeats every `ORCH_OVERSEER_MARK_REPEAT` passes while it stands. A changed `state=` prints at once.
+
+- `state=finished`: its open pull request left draft. Launch the item's landing lane in this pass, as § `pr-watch` says for `disarmed` on a `land=handoff` record. Send no directive and wait for no approval.
+- `state=out-of-credit`: the pull request is still draft, and the account roster reads its account locked or out of credit. Send no directive. Close the lane through the runtime close and relaunch it as § `cloud-stall-closed` says.
+- No `state=`: for `ORCH_WATCH_LANE_STALL_SECS`, nothing moved: neither the pull request's head and body nor, with no pull request, the item branch's head. The watch reads a record naming no `repo` in the fleet's own repository, then in the `ORCH_CONNECTED_REPOS` ones. A fleet repository that cannot be named fails the read. No read tells a long step, a waiting question, spent credit and an ended session apart:
+  1. Read the pull request body with `gh pr view`, or the branch's newest commit message and any report committed on it.
+  2. Where they record a blocker that is the owner's, such as a refused pull request create for the session token, tell the owner and send no directive.
+  3. Otherwise send one directive through `.agents/skills/orch/scripts/orch-runtime send --item [ITEM] --file [PATH]` ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)). It records the send on the lane record as `directive_send`.
+  4. With no push and no body change within `ORCH_CLOUD_STALL_MINUTES` of that send, the watch closes the lane and prints `cloud-stall-closed`. A send recorded `archived` or `failed` cannot reach the session: close the record through the runtime close at once, and relaunch it as § `cloud-stall-closed` says.
+
+Keep no stall count per repository. A fleet whose cloud lanes keep stalling drops cloud from `ORCH_LANE_PREFERENCE`.
+
+### `cloud-stall-closed`
+
+`EVENT cloud-stall-closed [ITEM] directive_age=[SECONDS]`: a stalled cloud lane left its directive unanswered past `ORCH_CLOUD_STALL_MINUTES` with nothing pushed, and the watch closed it through the runtime close. Its `lane-closed` line, with the archive line, comes first. The fleet-log `close` row names the send's result, the CLI's words and the credit reading from `directive_send`.
+
+The watch asks for a close once per lane, by a marker `lane-close.[ITEM]` under its own state directory. A marker beside a lane whose record still reads open is a close the watch cannot confirm. Each pass, the duty's failure line then says `lane-close-unconfirmed item=[ITEM] marker=[PATH]`. Close that lane yourself, then remove the marker at the named path.
+
+1. Archive nothing yourself. Report the session id to the owner, who archives it.
+2. Relaunch the item as a hosted lane on its branch. Choose the host under [oversee.md § 3](../workflows/oversee.md#3-launch) Placement, never `claude-cloud`. Run [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) with the request's `host` naming it. The relaunch starts fresh on the `start` brief, which runs the standard cycle on the branch the cloud lane left.
+3. Name the fleet-log cause in the relaunch's `ruling` row.
+
+### `lane-long`
+
+`EVENT lane-long [ITEM] age=[SECONDS] review_rounds=[N] fix_receipts=[N] validation_runs=[N] restacks=[N] repeated_class_rounds=[N] stage=[STEP]`: a `running` or `parked` lane is `ORCH_WATCH_LANE_AGE_SECS` past its record's `launched_at`, which a relaunch keeps. The line repeats once per further `ORCH_WATCH_LANE_AGE_SECS`.
+
+1. For any `stage=` but `parked`, read the lane: its status file per [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads), its workflow state, and its pull request's `.agents/skills/github/scripts/github.sh pr-timeline`.
+2. For `parked`, read none of its files. Read the lane record's `parked` and `pauses`. Apply [Parking a merge wait](oversee-lanes.md#parking-a-merge-wait) to the recorded hold or wait. Run `pr-timeline` only for a pull request the record names; with none, skip that read. Record the held step or intentional hold as the cause. Never infer a merge-queue wait from `parked` alone.
+3. Apply [design-review.md](design-review.md) when its trigger holds.
+4. Name the cause: long tests, a stuck state or wait, a review loop, scope growth, or the merge queue. If no design review starts, record the cause as a fleet-log `ruling` whose text starts `long-reason`.
+5. Where the cause is in the system, not in this item, file its fix under § Fix the source.
+
+### `usage-limit`
+
+`EVENT usage-limit [LANE] [ACCOUNT] [resets=[UTC]] [wall_kind=auth]`: the lane's harness drew a usage-limit banner, or a Pi lane's turn ended on one. The banner and the screen around it follow. The watch left the wall to the overseer: `ORCH_WALL_RELAUNCH=ask`, no account qualified, or a refusal. The lines under it:
+
+- `pick lane=[DIR]`, `pick none` or `pick unjudged [CAUSE]`: the account judge's answer for the record's model, excluding the spent account.
+- `wall-relaunch-refused lane=[LANE] reason=[REASON]`: the step that stopped the watch's relaunch. Under `stop-failed` or `stop-unanswered`, the harness may still run: start nothing beside it.
+- `account-wall: record-unwritten config_dir=[DIR] cause=[CAUSE]`: the wall's record for that account did not write. Until it writes, launch nothing on that account before the reset.
+
+1. Read the banner and the screen around it. Confirm the banner is the harness's own, not a limit phrase the lane printed. Leave a lane that is still working alone.
+2. Before any stop by hand, apply [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+3. With `pick lane=[DIR]` under `ask`, for a lane that section admits: on a hosted lane, run `.agents/skills/orch/scripts/orch-runtime host --host [HOST] stop --item [ITEM] --harness [HARNESS]`, with `[HOST]` from the lane record. Require its `stopped item=[ITEM] processes=[N]` line. Keep the window; the relaunch's runtime close closes it. Then relaunch with `[DIR]` as the request's `account`.
+4. When no account of that harness qualifies, pick another harness. Relaunch with the one-sentence continuation brief from [handoff.md § 2](../workflows/handoff.md#2-launch), naming the matching path from the prior harness's transcript store.
+5. When none qualifies and the line carries `resets=`, keep the window and wait for the reset; § `usage-limit-passed` follows. A `resets=` read from a clock time or weekday is an upper bound. Never launch onto the spent account before its reset. Never park a lane on your own estimate when `resets=` states the time.
+6. When none qualifies and the line carries no `resets=`, tell the owner the recovery is blocked. Keep the window until an account qualifies. The spent account's `account` line or heartbeat roster line says which case it is.
+
+`wall_kind=auth` is a login failure: a wall with no reset. The account judge never picks an account whose credential no longer answers. Relaunch on another account, never the walled one. When none qualifies, tell the owner and ask the operator to sign in.
+
+### `lane-relaunched`
+
+`EVENT lane-relaunched [ITEM] lane=[DIR] from=[DIR]`, then `log=[PATH]`: under `ORCH_WALL_RELAUNCH=auto`, the watch relaunched the lane on the `lane=` account, with its output at `log=`. Nothing is owed. While that launch runs, inside `ORCH_WATCH_PREPARE_SECS`, its missing window is no `window-gone`. Its failure is § `lane-prepare-failed`, and its overrun § `lane-prepare-stuck`.
+
+### `usage-limit-passed`
+
+`EVENT usage-limit-passed [LANE] [ACCOUNT] resets=[UTC]`: the wall's named reset passed, and the lane still sits at the banner. The line under it says what follows:
+
+- `resume wake`: the wake duty types the lane's resume once the account reads room. The `wake-*` lines with `resume=usage-limit` report it. Nothing is owed until one of those lines asks.
+- `resume unreached`: the wake does not reach this lane. Read the banner and the screen as for § `usage-limit`, and leave a working lane alone. Otherwise send it a one-line continuation directive. Do not move the item, and do not launch onto that account.
+- `resume walled`: the account walled again. Handle it as § `usage-limit`.
+
+### `account`
+
+`EVENT account [FIELDS] change=[KINDS] was=[STATUS]/[VERDICT]`: an account the fleet launches on changed since the last compared reading. `change=reset` is context, never a route of its own.
+
+An `account-end-contradicted [ALIAS] ...` line under the roster is a retired account whose credential still answers. Correct the retire statement its `source=` names, or take the account out of the fleet. Launch nothing on it meanwhile.
+
+Take the first arm that matches the new reading:
+
+1. `status=expired`: no reset brings the account back. Tell the operator to log in to it once, in the shape [communication-modes.md § Status report](communication-modes.md#status-report) gives. Never park a lane on it.
+2. `status=plan_ended`: its plan ended, or its organization disabled access. Tell the operator that only the owner can restore it, or take the account out of the fleet. Never park a lane on it.
+3. `verdict=unmeasured`: nothing measured the account. Launch nothing new on it, and handle its status per [lane-directive.md § No lane has room](lane-directive.md#no-lane-has-room).
+4. `verdict=walled`: launch nothing on it before `binding_resets_at`. With `binding_bucket=credits`, the account is a grant at or below its credit floor, which no reset reopens. Launch nothing on it, and direct each live lane on it to write its handoff record.
+5. `verdict=room`: resume any launch the judge refused for want of an account. Wake a lane parked on this account only where its `usage-limit` carried no `resets=`.
+
+[agent-runtime's accounts judge](../../agent-runtime/runtime/src/accounts/mod.rs) owns the verdict rules, the buckets and the credit floors.
+
+### `overseer-dead`, `overseer-walled`, `overseer-reserve`, `overseer-context-unmeasured`, `overseer-context-stale`, `overseer-mark`
+
+The overseer's own session: [overseer-session-events.md](overseer-session-events.md).
+
+### `lane-question`
+
+`EVENT lane-question [ITEM] [ID]`, then the question: the lane's own question. The lane is blocked in `lane-mail wait` on it, so answer every question.
+
+1. Answer it where the evidence at hand decides it: repository state, the issue body, a stated convention, a scope-narrowing call under [design-review.md § Inputs and actions](design-review.md#inputs-and-actions), or the lane's own well-argued recommendation. A pure cut back to main's behaviour, or a cut of surface the Done-when does not need, takes no table.
+2. Relay any other question to the owner only where [communication-modes.md § Ask set](communication-modes.md#ask-set) puts it, in the question format that section links. A merge question under `ORCH_MERGE_AUTONOMY=ask` always goes to the owner, per § Held merges.
+3. Record the ruling in the fleet log, and send the answer per [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane).
+
+An answer may accept a step the lane's workflow would otherwise ask about. It carries that acceptance in its envelope, and the lane's round close names its id as the overseer's act. The `stages[].authorization` row of [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions) says which ids that field admits.
+
+An overseer resuming a fleet reads what it still owes with `lane-mail pending --item [ISSUE_ID]`. For a lane whose record puts it on another host, add `--root [MAIL_ROOT] --host`.
+
+### `lane-notice`
+
+`EVENT lane-notice [ITEM] [ID]`, then the notice: the lane reports something it is not waiting on. Act on it where it needs action. It needs no reply.
+
+- A `copilot-*` notice takes [copilot-head-notices.md](copilot-head-notices.md). A `copilot-fallback` notice whose first line carries `cause=` comes from the lane's review call, and can arrive twice. One with no `cause=` is the lane's own, from its triage's `timeout` row ([review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route)).
+- A notice may name a merge-group ejection that `queue-watch` read as `reach: outside`, with the failed checks, their reach, the run links and the head. Those red checks are ones the item's change does not select: a defect outside the item. Apply [design-review.md](design-review.md)'s filing row. Then file the defect once through § File one item alone, naming the failed checks and the run links. Where that row matches the notice to an earlier filing, record it against that filing in the fleet log.
+
+### `directive-read`
+
+`EVENT directive-read [ITEM] [ID]`: the lane's mailbox cursor passed the directive. Only this line confirms a sent directive.
+
+### `directive-unread`
+
+`EVENT directive-unread [ITEM] [ID] age=[SECONDS]`: the directive has waited `ORCH_DIRECTIVE_UNREAD_SECS` with the lane's cursor short of it. Reach the lane by its state, under its row in [lane-reach.md § Lane states](lane-reach.md#lane-states). `directive-read` follows once the lane reads it.
+
+### `owner-note`
+
+`EVENT owner-note [ID]`, then the note: a note to the overseer mailbox from the owner or a delegate. `from=owner` is routing, not authorship. A record names the stated speaker per [communication-modes.md § Recording](communication-modes.md#recording).
+
+1. Act on it, or record it in the fleet log as a ruling. A standing instruction follows [communication-modes.md § Recording](communication-modes.md#recording).
+2. Where a reply is owed, send it with `lane-mail notice --item overseer --to owner --ref [ID] --file [PATH]`. The owner then reads it on the note's own channel ([oversee-takeover.md § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff)). Route it per [communication-modes.md § Owner delivery](communication-modes.md#owner-delivery). A question back is an owner ask.
+
+`lane-mail --help` states the repeat refusals, `duplicate` and `owner-notice-repeated`. A second reply takes its own words.
+
+The watch prints each message line at least once. A stop between the print and its cursor commit prints it again, so an id already seen is a repeat.
+
+### `owner-ask-resolved`
+
+`EVENT owner-ask-resolved [ASK_ID] by=[text|default] id=[ANSWER_ID]`, then the answer: an answer to an owner ask. The owner can answer more than once, each answer with its own id. `by=default` is the recommendation standing for an unanswered deadline.
+
+1. Record the ruling per [communication-modes.md § Recording](communication-modes.md#recording).
+2. Once you hold the ruling, close the ask with `lane-mail resolve --item overseer --id [ASK_ID]`. Send a notice with `--ref [ASK_ID]` naming what stood.
+
+[communication-modes.md § Owner asks](communication-modes.md#owner-asks) says what a reply after the close reaches on each channel.
+
+### `owner-ask-closed`
+
+`EVENT owner-ask-closed [ASK_ID] by=[explicit|text|default]`: the ask's close record. An answered deadline closes with no default answer; the owner's words stand.
+
+### `owner-ask-unmarked`
+
+`EVENT owner-ask-unmarked [ASK_ID] issue=[ITEM] step=[STEP] cause=[KEY]`: a tracker mark of an owner ask did not land on the item. The line prints once per cause. Correct what the key names.
+
+### `peer-note`
+
+`EVENT peer-note [REPOSITORY] [ID] kind=[KIND] [re=[ASK_ID]]`, then the note: a peer repository's overseer wrote to this one. Answer only `kind=ask`, per [peer-mail.md](peer-mail.md). Record `kind=answer` against the ask its `re=` names. `kind=directive` needs no reply. Record the exchange in the fleet log.
+
+### `idle-unread`
+
+`EVENT idle-unread [TARGET]`: the wake duty found `[TARGET]`, `overseer` or a lane's item, idle with unread mail. § `wake-delivered`, `wake-unconfirmed`, `wake-limit` report the wake. The line repeats only once the target's unread state changes.
+
+For the overseer, this session: run `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer`, and act on every envelope it prints.
+
+### `wake-delivered`, `wake-unconfirmed`, `wake-limit`
+
+`EVENT wake-delivered [TARGET] [resume=[CAUSE]]`, `EVENT wake-unconfirmed [TARGET] cause=[C] [resume=[CAUSE]]`, `EVENT wake-limit [TARGET] harness=[H] cause=[C] [resume=[CAUSE]]`: the wake duty's outcome for one unread state. `resume=` names the turn end the wake resumed.
+
+- `wake-delivered`: the session confirmed the typed line. Nothing is owed.
+- `wake-unconfirmed`: nothing confirmed the typed line within the bound. Nothing is typed again for that unread state.
+- `wake-limit`: nothing was typed. `cause` says why the harness has no confirmable route.
+
+On a lane's `wake-unconfirmed` or `wake-limit`, deliver the mail per [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
+
+For the overseer, the watch tells the owner on its next pass, once per unread state, through the overseer mailbox's owner channel, with the notice file `overseer-wake-unread.txt`. The owner types into this session the line that notice names.
+
+`[TARGET]` `overseer-follow` is the follow wake. The overseer was idle, the watch log held lines past its last follow, and no follow ran. The watch typed it a line: handle each numbered line from the next unhandled one, and re-arm the follow. A confirmed follow wake prints no line. On `wake-limit overseer-follow` or `wake-unconfirmed overseer-follow`, the watch tells the owner once, with the notice file `overseer-wake-follow.txt`. The owner types that line into this session.
 
 ### `report-due`
 
-the status report is due.
+`EVENT report-due reason=[minutes|issues] since=[UTC] [landed=[N]]`: the status report is due. While the same due stands with no report sent, the watch prints the line again each `ORCH_REPORT_EVERY_MINUTES`; with `ORCH_REPORT_EVERY_MINUTES=0`, once.
 
-Run `oversee-report render` with the watch's `--state` and `--repo` values, which reads the `ORCH_CONNECTED_REPOS` repositories after them as the watch does, write the work's outcomes with communication's [summary template](../../communication/references/reports.md#summary-template), then run `oversee-report write --summary-file [PATH]` with the same values.
+1. Run `.agents/skills/orch/scripts/orch-runtime report render --state [OVERSEE_STATE] --repo [REPO]`, one `--repo` per watch `--repo` value. It reads the `ORCH_CONNECTED_REPOS` repositories after them. The rendered body is the report's whole read of the fleet. Read a record from its home by item only where a row needs explaining, and print no state file.
+2. Write the work's outcomes to `[PATH]` with the communication skill's [summary template](../../communication/references/reports.md#summary-template).
+3. Run `.agents/skills/orch/scripts/orch-runtime report write --state [OVERSEE_STATE] --repo [REPO] --summary-file [PATH]` with the same values.
+4. Paste the reply's `result.body` into the chat unchanged. `write` sends the summary to the owner as the report's notice: never send it as a separate notice.
 
-Paste what `write` prints into the chat unchanged: it is the file's content, so chat and file carry one report.
+During `ORCH_REPORT_QUIET_HOURS`, in `ORCH_OWNER_TIME_ZONE`, `write` writes the file and sends no notice. The first due report after the window is the morning brief. Its summary covers the work since the last report sent to the owner, including overnight merges. Decisions needed and critical notices go out at any hour.
 
-The summary is in neither: it is the text of the report notice `write` sends the owner, posted as the file's Slack comment. `write` sends that notice and is the only send of a report and its summary: never send the summary as a separate notice, before or after `write`.
+A refused `write`:
 
-During `ORCH_REPORT_QUIET_HOURS` (default midnight to 7 am in `ORCH_OWNER_TIME_ZONE`, default `America/Los_Angeles`), `write` sends no owner notice.
+- A failed notice send: fix the cause. Then run the same `write` with the same summary within the same UTC minute, which sends the notice once ([communication-modes.md § Status report](communication-modes.md#status-report)).
+- `report-unjudged cause=report-exists`: past that minute, or with another summary. Send the notice by hand: `lane-mail notice --item overseer --to owner --attach [FILE] --file [SUMMARY_PATH]`, with `[FILE]` the report's path.
+- `report-unjudged cause=summary-stale ask=[ID]`: the summary cites a closed owner ask. Summarize again against `lane-mail pending --item overseer --to owner`, and run the same `write`.
+- Any other refusal names its cause on its first stderr line. Fix it and run the report again. Where it stands, tell the owner the report is blocked and why.
 
-Empty quiet hours turns suppression off.
+### `heartbeat`
 
-The first due report after the window sends the morning brief.
+`EVENT heartbeat loops=[N] interval=[N]s since=[UTC|none]`, then its body. Take the body's lines in order.
 
-Its summary follows that template and covers the work since the last report sent to the owner, including overnight merges.
-
-Decisions needed and critical notices remain immediate at any hour.
-
-The written file ends the cadence event without advancing the last-sent baseline when no notice was sent.
-
-A `write` refused as `notice=[FILE]` wrote and printed the report, which ends the event; nothing re-sends the notice, and a second `write` in the same minute is refused `report-exists`.
-
-Fix what the lines under it name, then send the notice by hand: `lane-mail notice --item overseer --to owner --attach [FILE] --file [SUMMARY_PATH]`.
-
-A hand send refused `owner-notice-repeated` means the first send landed: the owner holds that text, and the id it names is the receipt.
-
-Any other refused `render` or `write` names its cause on its first stderr line: fix it, and where it stands, tell the user the report is blocked and why, because the event repeats on every long pass until a report is written.
+1. The open pull request lines carry no arm or queue state. A parked record's pull request that the list shows open, with no reducer line on it, stays parked. Its dequeue reads as a `disarmed` line under § `pr-watch`, never from this list.
+2. Take each hosted `running` lane whose pull request the list shows open and whose reducer lines name nothing. Run the park verb on it as [oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait) says. This applies only on a fleet whose provider implements the `stop-sandbox` and `start` pair; the shipped `lane-host-ssh` does not. The verb's own read judges queued, armed and clean. Where the lane is not ready, its refusal is the answer.
+3. The `account-roster` lines are the fleet's capacity as the account judge reads it. Route them per § `account`. `account-roster unread` means the watch read no account, never that none has room.
+4. Each `owed [ITEM] state=[STATE] priority=[N] lane=[LANE] verdict=[VERDICT]` line is an item the tracker holds as owed work. It has no running, preparing or parked record, and `launch_queue` lacks it. `priority=-` ranks after every number. A parked item with work left over its merged pull request takes its `parked-merged` line instead.
+   - `verdict=queue`: gate it as [oversee.md § 2](../workflows/oversee.md#2-select-work) does. One that passes joins `launch_queue` at its priority's position. Where `lane=` names a record, relaunch it per [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). Tell the owner of one that fails, with the reason it cannot run, in the chat and in the next report's summary.
+   - `verdict=merged [DELIVERY]`: the record carries the cycle of that merge while the tracker still holds the item open. Where the merge finished the item, complete it in the tracker. Where the item went back to work after it, queue it as for `queue`.
+   - `verdict=dated harness=[H] until=[UTC]`: every account for the record's harness and model is walled. Launch and queue nothing. When first judged so, name the item with its `until=` in the chat and in that summary. Each heartbeat judges it again.
+   - `verdict=unjudged harness=[H]`: the host's account listing or the judge failed, as the watch's stderr names. The next heartbeat judges it again.
+5. Run § Heartbeat backstop for lane proposals, § Heartbeat backlog audit and § Heartbeat design review.
+6. Run the triage pass. Run [oversee.md § Bounded issue reads](../workflows/oversee.md#bounded-issue-reads), drop the IDs the fleet state's `triaged` already records, and send the rest through § `triage`. Judge only issues a fleet lane filed. They are the created-issue records in each lane item's workflow state (`audit_issues_created`, `pr_comment_review.issues_created`), and each lane pull request body's Created Issues section. For a tracker with no such state, the created-since listing is the backstop. Leave every other issue alone.
 
 ### `triage`
 
-team-wide: run `oversee.md` § Bounded issue reads and set `[ISSUES]` to the emitted identifiers.
+`EVENT triage [ID]`: an issue the triage pass owes a verdict. The watch prints it every pass until the fleet state's `triaged` list records one.
 
-Take out of `[ISSUES]` each Linear mirror `oversee.md` § Outside contributions judges on GitHub, recorded as it says.
+1. Run [oversee.md § Bounded issue reads](../workflows/oversee.md#bounded-issue-reads), and set `[ISSUES]` to the identifiers it prints. Take out each Linear mirror that [oversee.md § Outside contributions](../workflows/oversee.md#outside-contributions) judges on GitHub, recorded as it says.
+2. Cross-check `gh issue list --repo [REPO] --state open` for the first repository. An open GitHub issue whose Linear mirror is Done is residue: close it on GitHub, naming the pull request that fixed it. One with no mirror and no `outside-contribution` line means the GitHub-to-Linear sync broke: send the owner one notice naming the issue.
+3. Read each issue team's whole live project inventory once. Reuse it for project selection and validation. Where a project read fails or comes back incomplete, stop without writing `triaged`.
+4. Launch one fresh canonical `maintainer` verifier on the source repository, on the surface's lowest-cost model, by the surface's generated-agent call ([SKILL.md § Runtime Notes](../SKILL.md#runtime-notes) gives Codex's). On the terminal surface, call it from the overseer session. On the managed-session surface, use that surface's own call. In sequential mode, make the same call and wait for it.
+5. Send it the team project inventories and this task: `Verify only these Linear issues: [ISSUES]. For each issue, read its full body and source. If Reached by: in the Filing record names an owner or Jarvis decision that authorizes the work, check only for duplication, project and agent. If it names no such decision, apply the filing bar, including to items from a review, a worker's proposal or discovered work. Follow the Verifier returns contract in .agents/skills/orch/references/skill-rules.md under Coordination for evidence, project and agent selection, and the final return.` That contract ([skill-rules.md § Coordination](skill-rules.md#coordination)) governs the task and its acceptance.
+6. Capture only its single final return ([skill-rules.md § Single Return Message](skill-rules.md#single-return-message)). Once it is captured, or on any failure after the launch, retire the verifier through the surface's own shut-down call before any further launch. A finished subagent can keep holding a thread slot ([skill-rules.md § Reviewer persistence is budget-conditional](skill-rules.md#reviewer-persistence-is-budget-conditional)).
+7. Validate the return against that contract. On a launch, capture, parse or validation failure, stop without writing `triaged`.
+8. For each valid kept item, read its project and labels with `linear.sh issues get [ID]`. Set only what is missing, in one `linear.sh issues update [ID]`:
+   - `--project` only where the team inventory is nonempty and the item has none.
+   - `--labels` only where `LINEAR_AGENT_LABELS` is nonempty and the item has no agent label. Merge the chosen agent label with every current label under the linear skill's `--labels` rule.
 
-Cross-check `gh issue list --repo [REPO] --state open` for the first repository: an open GitHub issue whose Linear mirror, the item whose `github_sync` names it, is Done is residue, so close it on GitHub naming the pull request that fixed it; one with no mirror and no `outside-contribution` event means the GitHub-to-Linear sync broke, so send one owner notice naming the issue.
+   Leave an existing project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. Where the read or update fails, write no `triaged` record for that item.
 
-Read each issue team's complete live project inventory and reuse it for project selection and validation.
-
-Stop without writing `triaged` if a project read fails or is incomplete.
-
-Launch one fresh canonical `maintainer` verifier with the source repository and the lowest-cost model the surface exposes.
-
-The launch call is Claude's generated-agent tool, Codex `spawn_agent` after `scripts/spawn-adapter spawn maintainer` followed by `send_input`, OpenCode `functions.task`, or Pi `subagent`, as [SKILL.md § Runtime Notes](../SKILL.md#runtime-notes) specifies.
-
-On the terminal surface, call it from the overseer session.
-
-On the managed-session surface, use that surface's native call.
-
-In sequential mode, make the same call and wait for it before resuming.
-
-Send it the team project inventories and this task: `Verify only these Linear issues: [ISSUES].
-
-For each issue, read its full body and source and apply the filing bar regardless of lane authorship.
-
-Follow the Verifier returns contract in .agents/skills/orch/references/skill-rules.md under Coordination for evidence, project and agent selection, and the final return.` The [Verifier returns contract](skill-rules.md#coordination) governs both the task and acceptance.
-
-Capture only the single final return defined by [skill-rules.md § Single Return Message](skill-rules.md#single-return-message).
-
-Once that return is captured, or on any launch, capture, parse, or validation failure after the launch, retire the verifier through the surface's own shut-down call before any further launch: a finished subagent can keep holding a runtime thread slot ([DEVELOPMENT.md § Reviewer slot budget](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md#reviewer-slot-budget)).
-
-Validate the final return against that contract.
-
-Stop without writing `triaged` on a launch, capture, parse, or validation failure.
-
-For each valid kept item, read its project and labels live with `linear.sh issues get [ID]`.
-
-If the team inventory is nonempty and the project is missing, or a required agent label is missing, set only the missing fields in one `linear.sh issues update [ID]`: pass `--project` only when the team inventory is nonempty and no project exists; pass `--labels` only when `LINEAR_AGENT_LABELS` is nonempty and no agent label exists, merging the selected agent label with all current labels under the linear skill's `--labels` rule.
-
-Leave existing projects and agent labels unchanged.
-
-With an empty `LINEAR_AGENT_LABELS`, preserve all current labels and skip agent-label assignment.
-
-Stop without writing that item's `triaged` record if its read or update fails.
-
-Route each valid kept item or cancel it, then record the terminal verdict in the fleet state's `triaged` list; every pass emits the item again until that record exists. `triaged` is the verdict log the watch rebuilds its triage keys from, per `oversee-watch --help`.
+9. Route each valid kept item or cancel it. Then record its verdict: write `{"issue":"[ID]","verdict":"[kept|canceled]","reason":"[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool, and run `.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"triage","file":"tmp/triage-verdict-[ID].json"}'`.
 
 ### `outside-contribution`
 
-[oversee.md § Outside contributions](../workflows/oversee.md#outside-contributions).
+`EVENT outside-contribution [OWNER/REPO]#[N] kind=[KIND] author=[LOGIN] [head=[SHA]]`: [oversee.md § Outside contributions](../workflows/oversee.md#outside-contributions).
+
+### `pr-watch`
+
+`EVENT pr-watch rc=[N]`, then the reducer's attention lines and its stderr: the GitHub duty's reducer found a new attention key. `.agents/skills/github/scripts/pr-watch.sh --help` says what each kind means; below is what the overseer does. A detail ending in `(QUEUED: dequeue before pushing)` outranks its kind: the lane dequeues before it can push anything.
+
+- A `refresh-ready` line takes [copilot-head-notices.md § Consumer refresh approval](copilot-head-notices.md#consumer-refresh-approval) at once. It needs no owning lane and no quiet period. That route owns the proof, review and same-head approval.
+- Any other line on a pull request that no `lanes[]` record or triaged item owns is no wake. The exception is an approved, green `kendex/refresh` pull request in a fleet repository. The refresh workflow arms every class itself. The overseer arms one that a dequeue or a failed arm left unarmed, by the queue route of [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1.
+- A line on a pull request that a parked record's `parked.pr` names is a resume, whatever its kind. Relaunch through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which starts the harness fresh on the kept disk. A dequeue also reads as a `disarmed` line on a parked pull request. Under `ORCH_MERGE_AUTONOMY=ask` it is still a resume.
+
+Per kind:
+
+- `ci-failed`: for a pull request no lane owns, including the refresh pull request, read the failed run with `.agents/skills/github/scripts/github.sh ci-logs [PR]`. Route the cause through § File one item alone. Approve nothing and re-run nothing until the cause is known. A running lane's pull request is no wake while its merge wait holds it.
+- `threads-open`: check the count against the API, then wake the owning lane with it.
+- `changes-requested`: wake the owning lane. A standing objection is the lane's to answer, never the overseer's to dismiss.
+- `disarmed`:
+  - A `running` record whose kind declares `land=handoff` in [lane-host.md § Host kinds](../schemas/lane-host.md#host-kinds), a `claude-cloud` record: it never merges and has no mailbox to ask through. Under either `ORCH_MERGE_AUTONOMY`, its line launches the item's landing lane. Choose the host under [oversee.md § 3](../workflows/oversee.md#3-launch) Placement. Then run [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) with `/orch merge-pr [PR_NUMBER]` in its `brief_file` and `host` naming that host. That lane merges by `merge-pr.md` § 5 and completes the item. Under `ask`, it asks its merge question through lane mail, and § Held merges applies.
+  - A `land=lane` record under `auto`: a pull request its `running` lane owns is no wake. The lane owns its merge through its own direct attempt in `merge-pr.md` § 5 step 1. For a record no lane runs, relaunch the lane into that step through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+  - A `land=lane` record under `ask`: no wake. The lane holds the pull request for § Held merges.
+- `awaiting-stale`: no approval reached the head within the quiet period. Copilot is down, out of credit, or gave no verdict. Apply [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval).
+- `head-moved`: the reduction describes the earlier head. Do nothing; the next pass reads the new head.
+- `error`: each line's detail carries its remedy. Follow it. A pull request nothing evaluated is never healthy.
+
+The merge route stays the lane's (§ Lanes merge their own pull requests).
 
 ### `refresh-failing`
 
-send one owner notice for every `report=initial`, naming the repository, the failed-run count and the cause, even when the cause matches an earlier incident.
+`EVENT refresh-failing [OWNER/REPO] runs=2 last=[RUN] since=[UTC] report=[initial|repeat] cause=[CAUSE]`: a consumer refresh workflow failed twice in a row. On `report=initial`, send the owner one notice naming the repository, the failed-run count and the cause, even when the cause matches an earlier incident. On `report=repeat`, notify only where the cause changed. A consumer fleet's overseer applies this to its own repository too.
 
-For `report=repeat`, notify only when the cause changes.
+### `main-push-failing`
 
-A consumer fleet's overseer applies this rule to its own repository too. `oversee-watch --help` defines the event fields.
+`EVENT main-push-failing [OWNER/REPO] workflow=[FILE] event=[push|schedule] run=[RUN] [head=[SHA] since=[SHA|none]] jobs=[JOBS] cause=[CAUSE]`: a push run or a scheduled run on the default branch is red. On a push run, the merges between `since=`, the last green push run's head, and `head=` can have turned it red.
 
-### `main-push-failing` (a red push or nightly scheduled run on main)
+1. Link an open item that covers the failed jobs and suite. Otherwise file one item at Urgent priority in the repository's tracker, through § File one item alone. Name the run link (`https://github.com/[OWNER/REPO]/actions/runs/[RUN]`), the failed jobs, the cause, and the merges between `since=` and `head=`.
+2. Send the owner a notice with that item and the run link.
 
-link an open item that covers the failed jobs and suite, or file one item in the repository's tracker through File one item alone above.
+### `main-push-budget`
 
-Include the run link (`https://github.com/[REPO]/actions/runs/[RUN]`), failed jobs and cause.
+`EVENT main-push-budget [OWNER/REPO] workflow=skill-tests.yml run=[RUN] warnings=[JSON]`: a completed Skill Tests run carries budget warnings. The line prints once per run. Link an open maintenance item that covers the named suites or jobs. Otherwise file one through § File one item alone, naming the run link and each distinct warning.
 
-Send the owner a notice with that item and run link. `oversee-watch --help` defines the event fields.
+### `main-workflow-absent`
 
-### `main-push-budget` (a selected completed Skill Tests run carries budget warnings)
+`EVENT main-workflow-absent [OWNER/REPO] workflow=[FILE] cause=[branch|unwatched]`: nothing reads a workflow `ORCH_MAIN_WORKFLOWS` names, so its red runs reach no one.
 
-link an open maintenance item that covers the named suites or jobs, or file one item in the repository's tracker through File one item alone above.
-
-Include the run link (`https://github.com/[REPO]/actions/runs/[RUN]`) and each distinct warning from `warnings=`.
-
-The event reports once per run after all annotation reads succeed. `oversee-watch --help` defines its fields.
-
-### `main-workflow-absent` (a workflow `ORCH_MAIN_WORKFLOWS` names is read by nothing, so its red runs reach no one)
-
-with `cause=branch`, read the repository's `.github/workflows/` for the renamed or removed file; with `cause=unwatched`, check the entry's `OWNER/REPO` against the watch's `--repo` values and `ORCH_CONNECTED_REPOS`.
-
-Correct the entry, or the connected list, in the overseer repository's settings in a reviewed change.
-
-Where the repository has its own overseer, ask it which workflow holds its nightly run with `lane-mail peer ask --repo [REPO] --file [PATH]` ([peer-mail.md](peer-mail.md)).
-
-Restart the watch after the change merges.
+1. With `cause=branch`, read the repository's `.github/workflows/` for the renamed or removed file. With `cause=unwatched`, check the entry's `OWNER/REPO` against the watch's `--repo` values and `ORCH_CONNECTED_REPOS`.
+2. Where the repository has its own overseer, ask it which workflow holds its nightly run: `lane-mail peer ask --repo [OWNER/REPO] --file [PATH]` ([peer-mail.md](peer-mail.md)).
+3. In a reviewed change, correct the entry, or the connected list, in the overseer repository's settings. Restart the watch after it merges.
 
 ### `security-alert`, `security-alerts-unread`, and a `heartbeat` line on a Dependabot pull request
 
 [security-alerts.md](security-alerts.md).
 
-### `pr-watch`
+### `verifying-deadline`
 
-handle every attention line.
+`EVENT verifying-deadline [ITEM] [ROW]`: a due or overdue box of a Verifying item changed its key. `[ROW]` `boxes=0` is the first read of the item with no open box. Run [verify.md](../workflows/verify.md) with the item and its box lines. Apply § Verification to that box even where reconciliation omits it.
 
-A `refresh-ready` line takes Consumer refresh approval below before checking lane ownership.
+### `verifying-invalid`
 
-Any other line on a PR no `lanes[]` record or triaged item owns is neither a wake nor an arm.
-
-An approved, green `kendex/refresh` pull request in a fleet repository is the exception: the refresh workflow arms every class itself, and the overseer arms one a dequeue or a failed arm left unarmed by the queue route of [merge-pr.md](../workflows/merge-pr.md) § 5 step 1.
-
-A line on a PR a PARKED record's `parked.pr` names is a resume, whatever its kind below says about waking: the lane is needed again, and "wake the owning lane" reads as [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which starts the sandbox before the resume and refuses as `host-start-failed`, the record still parked, when the provider does not confirm it; a lane that resumes on no transcript is a blocker to report, never a resumed lane.
-
-A `disarmed` line on a parked pull request is also how a dequeue nothing else reported reads: the reducer prints it for an approved pull request neither queued nor armed, so the queue needs no other reading, and under `ORCH_MERGE_AUTONOMY=ask` that line is still a resume: the lane is what holds the PR for the user's answer.
-
-What each kind MEANS is `pr-watch.sh --help`; what follows is only what the overseer does about it.
-
-A detail ending in `(QUEUED: dequeue before pushing)` rides several kinds and outranks all of them: the lane dequeues before it can push anything.
-
-  - `refresh-ready` → apply [copilot-head-notices.md § Consumer refresh approval](copilot-head-notices.md#consumer-refresh-approval) immediately. No owning lane or quiet-period expiry is required. That route owns the proof, review and same-head approval requirements.
-  - `ci-failed` → for a PR no lane owns, including the refresh PR, read the failed run with `github.sh ci-logs [PR]` and route the cause through File one item alone above; approve nothing and re-run nothing until the cause is known. A running lane record's PR is not a wake while its merge wait holds it. A parked record's PR is a resume as above.
-  - `threads-open` → verify the count against the API, then wake the owning lane with it.
-  - `changes-requested` → wake the owning lane: a standing objection is the lane's to answer, never the overseer's to dismiss.
-  - `disarmed` → a `running` record whose `kind` declares `land=handoff` in [lane-host.md § Host kinds](../schemas/lane-host.md#host-kinds), a `claude-cloud` record, never merges and has no mailbox to ask through, so under either `ORCH_MERGE_AUTONOMY` its `disarmed` line is a wake that launches the item's landing lane. Choose the landing host under [oversee.md § 3 Placement](../workflows/oversee.md#3-launch), then use [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch). The relaunch carries a `--cmd` and a `--brief-file` holding `/orch merge-pr [PR_NUMBER]`. Its run merges by the route of merge-pr.md § 5 under the lanes app identity and completes the item; under `ask` that landing lane asks its merge question through lane-mail, and Held merges above applies. For a `land=lane` record, under `auto`, a PR whose owning `lanes[]` record is `running` is not a wake: a PR the admin route takes stays unarmed until that lane's own direct attempt in [merge-pr.md](../workflows/merge-pr.md) § 5 step 1, and the lane owns its merge. For a lane not running, wake it to rerun the merge route of that step; a parked record resumes as above. Under `ask` a `land=lane` record's line is not a wake, the lane holds the PR for § Judgement rules, Held merges. The merge route stays the lane's reply-pass discipline; the overseer never adopts it as its own step.
-  - `awaiting-stale` → no approval has reached the head within the quiet period: Copilot is down, out of AI credit, or gave no verdict. Apply the overseer's fallback approval, [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval).
-  - `head-moved` → the reduction describes the old head. Do nothing; the next pass reads the new head.
-  - `error` → many producers, and each line's own detail carries its remedy: follow that. An unevaluated PR is never healthy.
-
-### `verifying-deadline [ITEM] box=[N] trigger=[JSON_TEXT] status=[due|overdue] deadline=[UTC|null]`
-
-that due or overdue box's saved key changed.
-
-The same event with `boxes=0` reports the first read with no open boxes.
-
-Run [verify.md](../workflows/verify.md) with the event's item and box lines.
-
-Apply Verification below to that item and box even when reconciliation omits them.
+`EVENT verifying-invalid [ITEM]`: the item's checklist cannot be judged. Either a branch-provable box is still open on a Verifying item, or the parser refuses its post-merge metadata. Every pass, the watch's stderr carries the parser's rule and the box under `verifying-invalid issue=[ITEM]`. The event prints once while the item stays invalid. Correct the checklist in the tracker; the next pass judges it again.
 
 ### Verification
 
-Each `verifying [ITEM] box=[N] trigger=[JSON_TEXT] status=[due|overdue|blocked|waiting] deadline=[UTC|-] [merged=[UTC]] blocked_by=[ids|-] reading=[JSON_TEXT] where=[JSON_TEXT] why=[JSON_TEXT]` line names an open post-merge box on a merged item, or an unproved box beside a container's child box, "Every child Done or cancelled".
+Each `verifying [ITEM] box=[N] ...` line names an open post-merge box on a merged item, or an unproved box beside a container's "Every child Done or cancelled" box; a container's line has `trigger="outcome"`. `verifying-deadline` prints a box only when its due or overdue key changes; the heartbeat and `orch-runtime reconcile-items` (`result.lines`) print every box.
 
-A container line has `trigger="outcome"`, `deadline=-` and no merge time.
+The watch itself completes a box that reads `met`, with its Evidence line. It comments once on a box that reads `failed` or `inconclusive`. For each due or overdue box the watch leaves open, run [verify.md](../workflows/verify.md). Acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), and a failed check takes that section's route. Evidence still unreadable at its deadline takes [verify.md § 2](../workflows/verify.md#2-resolve-missing-evidence). [communication-modes.md § Owner-only verification](communication-modes.md#owner-only-verification) names the reader and the message for a person's reading.
 
-Its reading is the box text.
+For each proved box:
 
-Acceptance follows [SKILL.md § The Cycle, The overseer reads results](../SKILL.md#the-cycle).
-
-Event blocks print only due or overdue boxes whose number, trigger, status or deadline key changed within the saved verifying-deadline row.
-
-Changes to reading, where, why or blocked_by alone wait for the heartbeat.
-
-Boxes with waiting or blocked status have no individual keys in that row and print at heartbeat.
-
-The heartbeat prints every box regardless of queued or active lane records.
-
-The first read of an item with no open boxes raises `verifying-deadline [ITEM] boxes=0` once; the heartbeat repeats its completion line.
-
-The status order is `overdue`, `blocked`, `waiting`, then `due`.
-
-A box at or past its deadline reads `overdue`, including a box with an open blocker.
-
-Without an expired deadline, an open blocker means `blocked`; an unfired trigger means `waiting`; otherwise the box reads `due`. `blocked_by` lists open blocker ids, separated by commas, or `-` for none.
-
-An unfired release has no deadline and reads `waiting` unless blocked.
-
-Its line prints `deadline=-` and `merged=<UTC>`.
-
-A matching release starts its deadline at publication, within 72 hours.
-
-A `+Nh` deadline after a merge or time trigger counts from the merge or the stated time.
-
-The release read also runs for blocked items.
-
-Invalid items print `verifying-invalid issue=<id>` with their parser rule and box on stderr; the pass continues and commits the valid due set. `reconcile-work-items` prints these box lines plus a `verifying-counts due=N overdue=N blocked=N waiting=N items=N` line.
-
-Its release boxes and `+Nh` merge boxes require local branch merge evidence.
-
-Its `--help` states the local merge-read limits and finding contract.
-
-Its overdue boxes remain findings with exit 1.
-
-On each due or overdue box, apply that acceptance rule in that pass and post an evidence comment on the item.
-
-Write one `N: text` line per proved box in `[EVIDENCE_FILE]` under the checkout’s `tmp/`.
-
-The text cites the evidence comment.
-
-Include already-ticked boxes whose Evidence line is absent, using the evidence comment already posted for them.
-
-For a merged item, a pass ticks and completes with `issues complete [ITEM] --post-merge-at [MERGED_AT] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
-
-For that merged-item route, bind `[MERGED_PR_URL]` to the item's linked merged PR URL.
-
-Read `[MERGED_AT]` from that PR with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [MERGED_PR_URL] --json mergedAt --jq .mergedAt`.
-
-An absent or unreadable timestamp is a completion failure.
-
-The completion command keeps Verifying while another box remains open and sets Done after the last one.
-
-A merged item’s `verifying [ITEM] boxes=0` line requires completion with the same selected PR’s timestamp.
-
-If checked boxes lack Evidence lines, select their numbers and supply the evidence file from the existing comments.
-
-Omit both evidence flags only when every checked box already carries its Evidence line.
-
-A container is due once every child is Done or Canceled, and closes with no holder read.
-
-Its `boxes=0` line runs `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [ITEM]`.
-
-A container `box=[N] trigger="outcome"` line names an outcome the parent still holds: move it into its own child item, a leaf blocked by the siblings it measures whose holder completes it with `issues complete [CHILD] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`, `[SUMMARY_FILE]` a nonempty summary of the read under `tmp/`, and remove the box from the parent.
-
-The open child keeps the parent open.
-
-The helper ticks the parent's child box with each child's state as Evidence, posts or reuses the Bundle Complete summary, and completes required effects through `issues complete`, including on a Done parent.
-
-A parent whose every child was canceled is set Canceled.
-
-A container uses no `--post-merge-at` and no `[MERGED_AT]` read.
-
-Preserve the helper’s stderr diagnostics. `closed [ITEM]` records successful closure and required effects. `deferred [CHILD_IDS...]` keeps the container open until those children complete.
-
-A bare `deferred` means the lock wait expired. `held [ITEM] [HOLD_RESET]` carries the selected retry deadline and follows linear’s `patterns/workflow-actions.md` § Quota Holds.
-
-A nonzero exit records unfinished required work even when the parent is already Done; retry the same helper after its named cause is resolved.
-
-Its `completion-refused` prints each refused row; follow each row's `remedy` before the retry.
-
-The helper supplies no merge time.
-
-On a failed check, apply [orch § The Cycle](../SKILL.md#the-cycle).
-
-For evidence still unreadable at its deadline, apply [verify.md § Resolve missing evidence](../workflows/verify.md#2-resolve-missing-evidence).
-
-For each due or overdue box, select the reader and message under [communication-modes.md § Owner-only verification](communication-modes.md#owner-only-verification).
-
-After either completion route sets the item Done, close its parent through [merge-pr.md § 5 step 2](../workflows/merge-pr.md#5-execute-the-merge), repeating for container ancestors.
-
-Record closures and diagnostics in the verification evidence comment.
-
-### `heartbeat`
-
-each `  failing [ITEM] [KEY]` line under it names a lane whose mail, clone or state read still fails: fix the cause its key names, or reach the lane, as for the first report on stderr.
-
-The plain open pull request lines carry repo, number, branch and title and no arm or queue state: a parked record's pull request the list still shows open, with no reducer line on it, stays parked, and its dequeue reads as the reducer's `disarmed` line under `pr-watch` above, never from this list.
-
-Then, for each hosted `running` lane whose pull request the list shows open and whose reducer lines name nothing, run the park verb as [oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait) states, on a fleet whose provider implements the `stop-sandbox` and `start` pair, which `lane-host-ssh` does not; the verb's own read is the only judge of queued or armed and `CLEAN`, and its refusal is the answer where the lane is not ready.
-
-Read the `account-roster` lines under the open PRs as the fleet's current capacity, routed per `account` above; `account-roster unread` means no account was read, never that none has room.
-
-Then each `owed [ITEM] state=[STATE] priority=[N] lane=[LANE] verdict=[VERDICT]` line: an item the tracker holds as owed work, with no running, preparing or parked record, that `launch_queue` lacks; a parked item with work left over its merged pull request is named by the `parked-merged` lines ahead of the `heartbeat` line and takes that rule. `priority=-` is no priority, which ranks after every numbered one. `verdict=queue` → gate it as `oversee.md` § 2 Select Work does; one that passes goes into `launch_queue` at its priority position, relaunched per `oversee.md` § 3 Recovery relaunch where `lane=` names a record, and one that fails is reported to the owner with the reason it cannot run, in the chat and the next status report's summary.
-
-A record with no harness, or whose host lists no account its pick would judge (`oversee-watch --help`, owed), is `queue`: its launch picks the account.
-
-Every account read behind a verdict is the record's own host's, the one its relaunch stays on. `verdict=merged pr=[N]` → the record carries the `cycle` of pull request N's merge while the tracker still holds the item: where that merge finished the item, complete it in the tracker; where the item went back to work after it, queue it as for `queue`. `verdict=dated` → `lanes pick` for the record's harness and model found every account walled: launch and queue nothing, and name the item with its `until=` reset in the chat when first judged so and in that summary; each heartbeat judges it again. `verdict=unjudged` → the host's `lanes list` failed, or `lanes pick` measured no account or failed, named on stderr as `owed-accounts-unread` or `owed-wall-unjudged`, so the next heartbeat judges it.
-
-Then the triage pass: run `oversee.md` § Bounded issue reads.
-
-Drop IDs already recorded in the fleet state's `triaged`, and send the remaining candidate IDs through the `triage` verifier.
-
-Judge only issues a fleet lane filed — the candidate set is each lane item's created-issue records in workflow state (`audit_issues_created`, `pr_comment_review.issues_created`) plus each lane PR body's Created Issues section; the created-since listing backstops trackers without that state.
-
-Anything outside the set is left alone.
-
-Record each verdict by writing `{"issue": "[ID]", "verdict": "[kept|canceled]", "reason": "[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool and running `workflow-state append-file oversee triaged tmp/triage-verdict-[ID].json`, in the state `oversee.md` § 3 Lane record creates before the first append; the next pass runs on its own.
+1. Post an evidence comment on the item.
+2. Write one `N: text` line per proved box to `[EVIDENCE_FILE]` under the checkout's `tmp/`, the text citing the evidence comment. Include an already-ticked box whose Evidence line is missing, citing the comment already posted for it.
+3. A merged item: read `[MERGED_AT]` from the item's linked merged pull request with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [MERGED_PR_URL] --json mergedAt --jq .mergedAt`. An absent or unreadable time is a completion failure. Then run `.agents/skills/linear/scripts/linear.sh issues complete [ITEM] --post-merge-at [MERGED_AT] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`. A merged item's `verifying [ITEM] boxes=0` line completes the same way, with the same pull request's time. Leave both evidence flags out only where every checked box already carries its Evidence line.
+4. A container is due once every child is Done or Canceled. Its `boxes=0` line runs `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime container-close [MAIN_REPO_ROOT] [ITEM]`. A container uses no `--post-merge-at`. Hold a `held [ITEM] [RESET]` answer per the linear skill's `patterns/workflow-actions.md` § Quota Holds. On a refusal, keep its stderr, and run the same close again once the named cause is resolved.
+5. A container `box=[N] trigger="outcome"` line names an outcome the parent still holds. Move it into its own child item: a leaf blocked by the siblings it measures. Its holder completes it with `linear.sh issues complete [CHILD] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`. Remove the box from the parent. The open child keeps the parent open.
+6. After either route sets the item Done, close its parent through [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 2, and repeat for container ancestors. Record the closures and diagnostics in the evidence comment.

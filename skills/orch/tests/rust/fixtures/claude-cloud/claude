@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# The Claude CLI as the session send's rows run it: `-p --cloud SESSION
+# --output-format json` with the directive on stdin, through the real
+# `lane-mail`. It appends its argv, its CLAUDE_CONFIG_DIR and the stdin text
+# to $CLAUDE_CLOUD_LOG (one call is three lines, so a row counts the sends
+# the session took), the nested-session marker it inherited to
+# $CLAUDE_CLOUD_PARENT_LOG where set, copies $CLAUDE_CLOUD_SNAPSHOT_OF to
+# $CLAUDE_CLOUD_SNAPSHOT where both are set (the fleet record as it stands
+# while the CLI runs, the barrier a row reads the owed stage through), makes
+# the directory $CLAUDE_CLOUD_SEAL read-only where set (the mark that
+# follows the answer then cannot be written), ends the process
+# $CLAUDE_CLOUD_KILL names where set (the mailbox program, killed after the
+# directive was taken and before any receipt; `parent`, the process that
+# started the CLI), waits for one line on the fifo $CLAUDE_CLOUD_HOLD where
+# set (read with a bound, so a row that fails before it writes the line
+# leaves no CLI standing), and prints
+# $CLAUDE_CLOUD_ANSWER, the `{ok: true}` answer where unset.
+set -u
+printf 'argv=%s\nconfig=%s\nstdin=%s\n' "$*" "${CLAUDE_CONFIG_DIR:-}" "$(cat)" >> "${CLAUDE_CLOUD_LOG:?}"
+if [ -n "${CLAUDE_CLOUD_HOLD:-}" ]; then
+  exec 3<>"$CLAUDE_CLOUD_HOLD"
+  read -r -t 30 -u 3 _ || :
+fi
+[ -z "${CLAUDE_CLOUD_PARENT_LOG:-}" ] || printf 'parent-marker=%s\n' "${CLAUDECODE-}" >> "$CLAUDE_CLOUD_PARENT_LOG"
+[ "${CLAUDE_CLOUD_KILL:-}" != parent ] || CLAUDE_CLOUD_KILL=$PPID
+[ -z "${CLAUDE_CLOUD_KILL:-}" ] || kill -KILL -- "$CLAUDE_CLOUD_KILL"
+if [ -n "${CLAUDE_CLOUD_SNAPSHOT:-}" ] && [ -n "${CLAUDE_CLOUD_SNAPSHOT_OF:-}" ]; then
+  cp -- "$CLAUDE_CLOUD_SNAPSHOT_OF" "$CLAUDE_CLOUD_SNAPSHOT"
+fi
+[ -z "${CLAUDE_CLOUD_SEAL:-}" ] || chmod 555 -- "$CLAUDE_CLOUD_SEAL"
+answer="${CLAUDE_CLOUD_ANSWER:-}"
+[ -n "$answer" ] || answer='{"ok":true,"session_id":"session_01CLOUD","url":"https://claude.ai/code/session_01CLOUD"}'
+printf '%s\n' "$answer"

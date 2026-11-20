@@ -3,7 +3,7 @@
 # mutant_scripts NAME [FILE] — a must-fail control mutates a private copy of
 # one script, never the shipped one. Every orch script finds its siblings and
 # lib/ through its own directory without resolving a symlink, so a lone `cp`
-# of dev-round-write dies on startup, and a control whose mutant never runs
+# of orch-env dies on startup, and a control whose mutant never runs
 # credits a pass to nothing. This builds $TMP_ROOT/NAME/scripts as real
 # directories of symlinks to the shipped scripts, with FILE, a path relative
 # to scripts/, the one private copy, which the caller mutates with
@@ -88,6 +88,49 @@ mutant_scripts() {
       [ -e "$paired_orch/../github" ] || cp -R "$orch_src/../../github" "$paired_orch/../github" || _mutant_scripts_refuse copy-failed "$paired_orch"
     fi
   fi
+  # The runtime's dev-return writer, item-tier and the classifier reader
+  # resolve change-scope beside their package and refuse at startup without
+  # it, so the tree carries that required sibling as real files a control can
+  # mutate.
+  local change_scope="${sibling%/*}/change-scope"
+  if [[ ! -e "$change_scope" ]]; then
+    mkdir -p "$change_scope" || _mutant_scripts_refuse mkdir-failed "$change_scope"
+    cp -R "$orch_src/../../change-scope/scripts" "$change_scope/scripts" || _mutant_scripts_refuse copy-failed "$change_scope"
+    cp -R "$orch_src/../../change-scope/references" "$change_scope/references" || _mutant_scripts_refuse copy-failed "$change_scope"
+  fi
+  # A fixture's shell entries run the built runtime from its complete catalog
+  # layout, so its cache key includes the real runtime and required sibling.
+  local runtime_entry runtime_cache
+  runtime_cache="$(bash -c '. "$1"; agent_runtime_cache' _ "$orch_src/../../agent-runtime/scripts/lib/key.sh")" \
+    || _mutant_scripts_refuse runtime-cache-failed "$orch_src"
+  for runtime_entry in "$dir/orch-runtime" "$sibling/scripts/orch-runtime" "${sibling%/mailbox}/orch/scripts/orch-runtime"; do
+    [[ -f "$runtime_entry" ]] || continue
+    [[ "${2:-}" != orch-runtime ]] || continue
+    perl -e '
+      use strict; use warnings;
+      my ($real, $cache, $file) = @ARGV;
+      unlink($file) or die "runtime fixture unlink: $!\n" if -l $file;
+      open my $out, ">", $file or die "runtime fixture write: $!\n";
+      print {$out} "#!/usr/bin/env bash\nexport AGENT_RUNTIME_CACHE=\"$cache\"\nexec \"$real\" \"\$@\"\n" or die "runtime fixture output: $!\n";
+      close $out or die "runtime fixture close: $!\n";
+      chmod 0755, $file or die "runtime fixture mode: $!\n";
+    ' -- "$orch_src/orch-runtime" "$runtime_cache" "$runtime_entry" || _mutant_scripts_refuse runtime-failed "$runtime_entry"
+  done
+  # A private lane-mail reads an overseer record through the agent-runtime
+  # package beside it, the built one whatever HOME or environment it runs under.
+  local agent_runtime="${dir%/scripts}/../agent-runtime/scripts/agent-runtime"
+  if [[ "$moved" -eq 1 && ! -e "$agent_runtime" ]]; then
+    mkdir -p "${agent_runtime%/*}" || _mutant_scripts_refuse mkdir-failed "${agent_runtime%/*}"
+    perl -e '
+      use strict; use warnings;
+      my ($real, $cache, $file) = @ARGV;
+      open my $out, ">", $file or die "runtime fixture write: $!\n";
+      print {$out} "#!/usr/bin/env bash\nexport AGENT_RUNTIME_CACHE=\"$cache\"\nexec \"$real\" \"\$@\"\n" or die "runtime fixture output: $!\n";
+      close $out or die "runtime fixture close: $!\n";
+      chmod 0755, $file or die "runtime fixture mode: $!\n";
+    ' -- "$orch_src/../../agent-runtime/scripts/agent-runtime" "$runtime_cache" "$agent_runtime" \
+      || _mutant_scripts_refuse runtime-failed "$agent_runtime"
+  fi
   printf '%s\n' "$dir"
 }
 
@@ -127,41 +170,14 @@ mutate_file() {
   ' -- "$old" "$new" "$file" || exit 1
 }
 
-init_growth_state() {
-  local state="$1" worktree="$2" issue="$3" round_id="$4"
-  local exclude
-
-  exclude="$(git -C "$worktree" rev-parse --path-format=absolute --git-path info/exclude)"
-  grep -Fxq 'tmp/' "$exclude" 2>/dev/null || printf 'tmp/\n' >> "$exclude"
-  "$state" --state-dir "$worktree/tmp" init "$issue" --worktree "$worktree" --branch test >/dev/null
-  "$state" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
-}
-
-growth_round_write() {
-  local state="$1" writer="$2" worktree="" issue="" round_id="" arg previous=""
-  shift 2
-  for arg in "$@"; do
-    case "$previous" in
-      --worktree) worktree="$arg" ;;
-      --issue) issue="$arg" ;;
-      --round-id) round_id="$arg" ;;
-    esac
-    previous="$arg"
-  done
-  if [[ -n "$worktree" && -n "$issue" && -n "$round_id" && -f "$worktree/tmp/workflow-state-$issue.json" ]]; then
-    "$state" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
-  fi
-  env ORCH_STATE_DIR="$worktree/tmp" "$writer" "$@"
-}
-
-# validate_run_dir DIR MODE [EXIT] [HEAD] [START] — a finished dev-validate-run
+# validate_run_dir DIR MODE [EXIT] [HEAD] [START] — a finished validation
 # run directory for a receipt to name: a start record under MODE, started at
 # HEAD and at the epoch second START where each is given, a wall time of 3300
 # seconds, and a sentinel recording EXIT, 0 by default; EXIT "none" leaves the
 # run unfinished, with neither, and "no-verdict" records the bound ending it,
 # as the runner's child does. The receipt reads it back through
-# dev-validate-run --record, which dev_validate_run.sh pins against runs the
-# script itself wrote. Prints DIR.
+# orch-runtime validate entry --record. The Rust validation rows read the same record
+# from a command the executor ran. Prints DIR.
 validate_run_dir() {
   mkdir -p "$1"
   printf 'validate-mode=%s\n' "$2" > "$1/start"

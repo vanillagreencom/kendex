@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=.kendex-lock.json
+changed-path: path=runtime/product.ts
+harness-note: cause=product-source-or-unreadable-ownership path=.kendex-lock.json
+class: class=standard measured=true cause=excluded-path path=.kendex-lock.json glob=.kendex-lock.json

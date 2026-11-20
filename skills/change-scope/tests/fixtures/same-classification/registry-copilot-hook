@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=.github/hooks/guard.json
+changed-path: path=runtime/product.ts
+harness-note: cause=product-source-or-unreadable-ownership path=.github/hooks/guard.json
+class: class=standard measured=true cause=configuration-source path=.github/hooks/guard.json glob=.github/hooks/*.json

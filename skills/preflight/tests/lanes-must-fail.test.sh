@@ -102,7 +102,7 @@ bare_guard_world() { # COMMAND FAMILY POSITION MODE
   } >"$R/scripts/bare.sh"
 }
 
-# The jq continuation is emitted by oversee-watch::check_lanes.
+# A jq filter continued across lines.
 multisubst_world() { # SHAPE HANDLER
   local assignment='' prefix='' suffix='' guard='[ -z "$ROOT" ] && exit 1'
   local preamble='set -euo pipefail' path="$R/scripts/multisubst.sh"
@@ -141,7 +141,7 @@ multisubst_world() { # SHAPE HANDLER
       assignment='ROOT="$(printf '\''%s'\'' '\''literal \
 '\'')"' ;;
     arrayprefix)
-      # oversee-watch::repeat_watch emits the continued array prefix.
+      # A continued array assignment before the guarded one.
       prefix=$'args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" \\\n  --handoff "$HANDOFF" --state "$STATE_FILE")\n'
       assignment='ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"' ;;
     mktemp)

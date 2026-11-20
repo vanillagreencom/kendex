@@ -1,4 +1,6 @@
 /target
+/skills/agent-runtime/runtime/target/
+/skills/orch/runtime/target/
 /crates/app/gen/schemas/
 node_modules
 dist

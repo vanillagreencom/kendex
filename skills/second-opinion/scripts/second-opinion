@@ -19,7 +19,7 @@
 #   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude, codex, pi-copilot and
 #                                pi-copilot-gpt have defaults)
 #   SECOND_OPINION_<NAME>_ROOM_CMD  Room check for target <NAME>'s account (default: none;
-#                                orch's lanes pick for pi-copilot/pi-copilot-gpt)
+#                                agent-runtime's account pick for pi-copilot/pi-copilot-gpt)
 #   SECOND_OPINION_<NAME>_INLINE_DIFF  Set to 1 to embed the review diff for target <NAME>
 #                                (default: on for pi-copilot/pi-copilot-gpt)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
@@ -178,7 +178,7 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              Whether the account target <NAME> spends has
                              room now (default: none, no check; for
                              pi-copilot and pi-copilot-gpt on their default
-                             command, orch's lanes pick, below; set empty for
+                             command, agent-runtime's account pick, below; set empty for
                              no check). Before it runs, its program word is
                              resolved as an entry's command program is; one
                              not installed skips the target as room check
@@ -187,7 +187,8 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              check passed. Exit 0 is room, and each stdout line
                              is a NAME=value assignment the target command
                              runs under, the account it judged: the env prefix
-                             `lanes pick` prints (orch skill). Any other exit
+                             `agent-runtime accounts pick --env` prints
+                             (agent-runtime skill). Any other exit
                              skips the target on that exit alone, the check's
                              own stderr passed through; running the setting's
                              command prints its reason again. A stdout line
@@ -310,14 +311,16 @@ Default commands:
           names it in SECOND_OPINION_MODELS, which needs no other key.
           Read-only file tools and no shell, so each is sent the review
           diff inline. Room check:
-          env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick
-            --harness pi --model MODEL
+          .agents/skills/agent-runtime/scripts/agent-runtime
+            accounts pick --env --harness pi --native-model MODEL
           from the project root this script is installed in: an entry is
-          taken only where the orch skill is installed there and its check
+          taken only where the agent-runtime skill is installed there and its check
           admits the account's Copilot seat; the reviewer runs on this
-          machine's login. An install in no repository, such as a global
-          one, has no project root, and the check is unavailable there; it
-          never runs a lanes found under the working directory.
+          machine's login. A runtime its setup has not built refuses the
+          check (exit 69, its setup command on stderr). An install in no
+          repository, such as a global one, has no project root, and the
+          check is unavailable there; it never runs an agent-runtime found
+          under the working directory.
 
 Output clearing and ownership:
   No exit leaves a previous run's output behind. Every mode that writes
@@ -444,17 +447,32 @@ if ! PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)
 fi
 # Load project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
-# kendex_load_project_env snapshots and re-asserts it.
+# kendex_load_project_env snapshots and re-asserts it. A load assigns only the
+# names it asks for: the fixed names here, and each target's own names once the
+# roster is known (target_settings_names below).
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
+# The package's one declared list: its fixed names, worktree's default branch
+# a review's scope starts from (derive_review_scope), and the four suffixes of
+# a target's own names (target_var).
+SETTINGS_NAMES=(SECOND_OPINION_ARTIFACT_DIR SECOND_OPINION_COUNT
+  SECOND_OPINION_CURRENT_MODEL SECOND_OPINION_FOREGROUND_CAP
+  SECOND_OPINION_MODELS SECOND_OPINION_REVIEW_INSTRUCTIONS
+  SECOND_OPINION_REVIEW_TARGETS SECOND_OPINION_TARGET SECOND_OPINION_TIMEOUT
+  WORKTREE_DEFAULT_BRANCH)
+TARGET_SETTINGS_SUFFIXES=(CMD MODEL ROOM_CMD INLINE_DIFF)
+readonly -a SETTINGS_NAMES TARGET_SETTINGS_SUFFIXES
 # errexit would abort on a refused load anyway, but this marker is the
 # OBSERVABLE contract: it names the terminator, so a later tolerance
 # failure (`|| true`, a set +e window) cannot pass the pin on the
 # loader's own stderr plus an unrelated exit 1.
-kendex_load_project_env "$PROJECT_ROOT" || {
-  echo "second-opinion: refusing to run on a rejected settings load" >&2
-  exit 1
+load_project_settings() { # NAME...
+  kendex_load_project_env "$PROJECT_ROOT" -- "$@" || {
+    echo "second-opinion: refusing to run on a rejected settings load" >&2
+    exit 1
+  }
 }
+load_project_settings "${SETTINGS_NAMES[@]}"
 if ! $FOREGROUND_CAP_WAS_IN_CALLER_ENV && [[ -n "${SECOND_OPINION_FOREGROUND_CAP+x}" ]]; then
   echo "Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP; remove it there and pass --foreground or export it in this session" >&2
   exit 1
@@ -1061,6 +1079,9 @@ target_var() {
   printf 'SECOND_OPINION_%s_%s' "$(printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_')" "$2"
 }
 target_cmd_var() { target_var "$1" CMD; }
+# The shape of a target name: consider_target refuses any other, and only such
+# a name builds the names a target reads.
+target_name_valid() { [[ "$1" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; }
 
 # Declared model identity of a target: SECOND_OPINION_<NAME>_MODEL, else the
 # model harness_model names for it, else the model a stock Copilot entry's
@@ -1090,12 +1111,13 @@ target_model() {
 DEFAULT_CLAUDE_CMD="claude -p --output-format json --no-session-persistence --effort high --restricted --permission-mode dontAsk --tools Bash,Read,Glob,Grep --allowedTools Bash(read-only:true),Read,Glob,Grep --setting-sources="
 DEFAULT_CODEX_CMD="codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 # The stock Copilot entries, %s being the entry's model: Pi on the Copilot
-# provider with read-only file tools and no shell, and the orch skill's room
-# check for the seat that model spends, run on this machine's login because the
-# reviewer runs here. Orch is optional: where its script is not installed under
-# the project root the check is unavailable and the entry is skipped.
+# provider with read-only file tools and no shell, and the agent-runtime skill's
+# room check for the seat that model spends, run on this machine's login because
+# the reviewer runs here. agent-runtime is optional: where its script is not
+# installed under the project root the check is unavailable and the entry is
+# skipped.
 DEFAULT_PI_COPILOT_CMD="pi -p --no-session --no-extensions --model %s --thinking high --tools read,grep,find,ls"
-DEFAULT_PI_COPILOT_ROOM_CMD="env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model %s"
+DEFAULT_PI_COPILOT_ROOM_CMD=".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness pi --native-model %s"
 
 # The model a stock Copilot entry runs: pi-copilot Claude Opus, pi-copilot-gpt
 # GPT, matched on the settings namespace as every other per-target key is.
@@ -1218,15 +1240,16 @@ target_available() { command_program "$(target_cmd "$1")" "$CWD"; }
 # check. A check whose program is not installed where it runs is unavailable,
 # not refused, and skips the target before anything runs: a missing optional
 # integration is no reading of the account, and never admits it. The stock
-# check names orch by a path relative to the project root this script is
+# check names agent-runtime by a path relative to the project root this script is
 # installed in, the tree that supplies the script and its settings; an install
 # in no repository, such as a global one, has none, and resolving it from the
 # working directory would run a file of the tree under review, so the stock
 # check is unavailable there. Exit 0 is
 # room, and the stdout lines are the NAME=value env prefix naming the account
-# the command judged, which ROOM_ENV carries to the target command: `lanes pick`
-# prints exactly that, and `lanes pick --json` prints a record, which is
-# refused rather than exported. Any other exit is the check refusing, for a
+# the command judged, which ROOM_ENV carries to the target command: `agent-runtime
+# accounts pick --env` prints exactly that, and the pick without --env prints a
+# record, which is refused rather than exported. Any other exit is the check
+# refusing, for a
 # wall to wait out, a setting or read to fix, or a check that could not run;
 # the command's own stderr, passed through, says which. The skip is judged on
 # the exit alone and quotes none of that stderr, which is another tool's, its
@@ -1250,7 +1273,7 @@ target_room() {
     # No setting holds the stock command, so each skip quotes it.
     again=": $cmd"
     if [[ -z "$PROJECT_ROOT" ]]; then
-      skip_target "$t" "room check unavailable — $from runs orch from the project root this install is in, and it is in none: $cmd"
+      skip_target "$t" "room check unavailable — $from runs agent-runtime from the project root this install is in, and it is in none: $cmd"
       return 1
     fi
   fi
@@ -1289,6 +1312,23 @@ target_room() {
 # eligible remains the run refuses and says why: a same-model review presented
 # as a second opinion is worse than no review.
 
+# Each target's own settings, asked once the roster and a forced target are
+# known: both are settings, so no fixed list holds these names. Only a target
+# consider_target accepts builds names, so a value makes the loader assign a
+# target's four keys under this package's prefix and nothing else: a forced
+# target is not split on whitespace, and a built name with a space in it would
+# ask for each word inside it.
+TARGET_SETTINGS_NAMES=()
+while IFS= read -r _target; do
+  target_name_valid "$_target" || continue
+  for _suffix in "${TARGET_SETTINGS_SUFFIXES[@]}"; do
+    _name="$(target_var "$_target" "$_suffix")" || exit 1
+    TARGET_SETTINGS_NAMES+=("$_name")
+  done
+done < <(roster_entries; [[ -z "$FORCED_TARGET" ]] || printf '%s\n' "$FORCED_TARGET")
+unset _target _suffix _name
+load_project_settings ${TARGET_SETTINGS_NAMES[@]+"${TARGET_SETTINGS_NAMES[@]}"}
+
 [[ -n "${SECOND_OPINION_REVIEW_TARGETS:-}" ]] \
   && echo "→ SECOND_OPINION_REVIEW_TARGETS is not read; the roster is SECOND_OPINION_MODELS" >&2
 
@@ -1319,7 +1359,7 @@ SEEN_NAMESPACES=()
 roster_has_current() {
   local t
   while IFS= read -r t; do
-    [[ "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    target_name_valid "$t" || continue
     [[ "$(target_model "$t")" == "$CURRENT_MODEL" ]] && return 0
   done < <(roster_entries)
   return 1
@@ -1343,7 +1383,7 @@ skip_target() {
 # the same lane would race on its artifact paths and duplicate its provenance.
 consider_target() {
   local t="$1" model existing ns
-  if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+  if ! target_name_valid "$t"; then
     # An arbitrary token would otherwise reach indirect variable expansion and
     # per-lane file paths.
     skip_target "$t" "invalid target name"
@@ -3242,7 +3282,7 @@ response_missing_input_coverage() {
 # review), so a response with no qa_metadata key cannot attest that any review
 # happened — non-conforming, structurally detected, no prose parsing. Catches
 # in particular a retried response that dropped the field along with the rest
-# of its context. (orch review-artifact-check stays tolerant of absent
+# of its context. (orch's review-artifact check stays tolerant of absent
 # qa_metadata for internal reviewers; this gate is producer-side only.)
 response_missing_qa_metadata() {
   ! printf '%s' "$1" | jq -e '(.qa_metadata? | type) == "object"' >/dev/null 2>&1

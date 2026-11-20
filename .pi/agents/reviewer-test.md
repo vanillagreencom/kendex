@@ -36,9 +36,7 @@ A finding in a class `.agents/skills/reviewer/references/finding-disposition.md`
 
 ## Output
 
-Missing or weak needed protection, or an unwired suite that supplies it → `blockers[]`. A missing must-fail control blocks only a new or changed instrument. A test with no protection, including a vacuous or redundant case, or one whose protection a cheaper form keeps → `suggestions[]` with category `fix`. The test rows of the `.agents/skills/reviewer/references/finding-disposition.md` decision table give each one's remedy and say which omission to accept.
-
-Record each test you judge, kept, added or removed, as one `qa_metadata.tests` entry with `location`, `protection` and `cost`. Judge protection against cost under `.agents/skills/code-quality/SKILL.md` § Tests. `location` takes the form `.agents/skills/reviewer/schemas/review-finding.md` § Item Fields (blockers/suggestions) gives it. A review that names no cost for a test it judges is incomplete.
+Missing or weak needed protection, or an unwired suite that supplies it → `blockers[]`. A missing must-fail control blocks only a new or changed instrument. A test with no protection, including a vacuous or redundant case, or one whose protection a cheaper form keeps → `suggestions[]` with category `fix`. The test rows of the `.agents/skills/reviewer/references/finding-disposition.md` decision table give each one's remedy and say which omission to accept. List in top-level `tests[]` (`.agents/skills/reviewer/schemas/review-finding.md` § Arrays) every test you judge, kept, added or removed. Set `verdict` to `keep` where the review accepts it, `add` for a new test or one a blocker asks to add, and `remove` for a test a `fix` suggestion deletes. Each entry records `location`, `protection` (the named failure a real run can reach) and `cost` (what each run of it costs). `location` takes the form `.agents/skills/reviewer/schemas/review-finding.md` § Item Fields (blockers/suggestions) gives it. A review that names no cost for a test it judges is incomplete.
 
 ## Required Skills
 

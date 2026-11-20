@@ -97,6 +97,15 @@ outputs:
       output, and where the step failed, whose wiring error is the answer;
       read empty as true.
     value: ${{ steps.classify.outputs.queue_only }}
+  quick:
+    description: >-
+      true where a review request may be skipped: the shipped classifier's
+      `quick-proof:` line reads proved=true, which change-scope prints only
+      for a trivial pull request whose every changed path is an admitted
+      settings file or Markdown of the docs set, with no repository
+      allowlist. false where that line is absent or reads anything else.
+      Empty where the step failed; act on the literal true alone.
+    value: ${{ steps.classify.outputs.quick }}
   docs_only:
     description: >-
       true where the shipped harness-only --mode docs accepts every changed
@@ -116,7 +125,7 @@ outputs:
       skills/harness-ci/references/wiring.md § Per-lane verdicts names the
       events a claimed lane runs on. A trivial class or
       docs_only=true on a non-render class runs none, except that changed declared text keeps its claiming lanes and the ordinary unclaimed-path fallback. A consumer
-      manifest's small class with change-class's light-ci record runs only
+      manifest's small class with change-scope's forwarded light-ci record runs only
       the lanes a default-branch claim reaches, and every lane where the
       declaration cannot be read. On pull_request and
       push, with queue-only-default true, a base that names no

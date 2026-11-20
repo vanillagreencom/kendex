@@ -11,9 +11,9 @@ source "$SCRIPT_DIR/../lib/github-api.sh"
 TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
-# workflow. Shared with orch `ci-wait` so the merge gate and the waiter cannot
-# disagree about which run is current — see the library for the
-# full rationale.
+# workflow. The library is the one scoping every GitHub command that reads
+# check runs sources, so the merge gate and ci-classify-refusal's diagnosis
+# cannot disagree about which run is current.
 # shellcheck source=../lib/ci-run-correlation.sh
 source "$SCRIPT_DIR/../lib/ci-run-correlation.sh"
 
@@ -97,8 +97,8 @@ Merge-mode exit codes:
   blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
 
 Exit 75 is volatile:
-  A queue ejection can disarm merge state. Block on .agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does: the default budget outlives any foreground call an agent harness holds, so a call without them is killed before the verdict.
-  Route verdicts through queue-wait --help Verdicts, named by SKILL.md § PR Merge Outcomes; this skill's scripts/pr-watch.sh still reports fleet attention.
+  A queue ejection can disarm merge state. Block on the orch runtime's queue watch, .agents/skills/orch/scripts/orch-runtime queue-watch --item ITEM --repo OWNER/REPO --pr <N> --poll <secs> --max-wait <secs>, before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does.
+  Route verdicts through orch merge-pr.md § 5 step 1's table, named by SKILL.md § PR Merge Outcomes; this skill's scripts/pr-watch.sh still reports fleet attention.
   Re-arm only through the merge route of orch merge-pr.md § 5 step 1 after
   that route: the workflow picks the direct attempt or an explicit queue
   arm after its readiness and approval checks.
@@ -528,9 +528,9 @@ run_checks() {
     else
         # Drop checks belonging to superseded workflow runs before classifying,
         # so a prior canceled run can't be reported as a current merge blocker.
-        # Mirrors orch ci-wait's pre-classification scoping; the shared
-        # classify_checks_rollup carries the scoping and name-sanitization
-        # contract, including the required contexts that registered no check.
+        # The shared classify_checks_rollup carries the scoping and
+        # name-sanitization contract, including the required contexts that
+        # registered no check.
         local rollup pending failed optional_failed required_evidence required_state
         required_evidence=$(required_contexts "$pr_num") || required_evidence='{"state":"unreadable","contexts":[]}'
         required_state=$(jq -r '.state' <<<"$required_evidence")
@@ -796,7 +796,7 @@ volatile_note() {
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; follow orch merge-pr.md § 5 for PR #$pr_num" >&2
     local reducer="GH_REPO=$repo .agents/skills/github/scripts/pr-watch.sh (disarmed lines)"
     [ -n "$repo" ] || reducer=".agents/skills/github/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
-    echo "  Block on .agents/skills/orch/scripts/queue-wait $pr_num --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, which picks the direct attempt or an explicit queue arm after readiness and approval checks" >&2
+    echo "  Block on the orch runtime's queue watch once, .agents/skills/orch/scripts/orch-runtime queue-watch --item ITEM --repo ${repo:-OWNER/REPO} --pr $pr_num, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, which picks the direct attempt or an explicit queue arm after readiness and approval checks" >&2
 }
 
 exit_queued() {

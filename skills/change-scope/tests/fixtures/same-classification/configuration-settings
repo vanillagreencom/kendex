@@ -1,0 +1,6 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=kendex.settings.toml
+changed-path: path=runtime/product.ts
+harness-note: cause=product-source-or-unreadable-ownership path=kendex.settings.toml
+class: class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml

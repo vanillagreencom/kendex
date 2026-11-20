@@ -23,25 +23,25 @@ trivial|true|docs/architecture/overview.md|$VERIFY_LANES|[]
 trivial|true|AGENTS.md|$VERIFY_LANES|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
-micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +rest +jarvis
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE| +guards-scans +guards-tools
-micro|false|skills/orch/scripts/lanes|$SHARD_CODE| +guards-scans +guards-tools +rest
-standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE| +guards-tools +rest
-micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
+micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
+micro|false|skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
+micro|false|skills/agent-runtime/runtime/src/lib.rs|$SHARD_CODE|$ORCH_ALL +rest
+micro|false|tools/tests/example.test.sh|$(lanes linux false true false)|+guards-scans -guards-tools -guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
-micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  +guards-tools
+micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
 micro|false|skills/jarvis/scripts/task|$SHARD_CODE|+jarvis +rest
-micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  -guards-scans
-micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox  +slack +guards-tools
+micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
+micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox $ORCH_ALL +slack +guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls
-micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls +guards-tools
+micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +guards-tools
 micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls +guards-commit
 micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
 micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
-micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
+micro|false|skills/change-scope/scripts/lib/branch-growth.sh|$SHARD_CODE|+rest $ORCH_ALL
 micro|false|$SETTINGS_TOML|$SHARD_CODE|+guards-tools
 micro|false|$LOCAL_TOML|$SHARD_CODE|+guards-tools
-micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-hooks-tail +guards-tools-tail +rest
+micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-hooks-tail +rest
 micro|false|.claude/hooks/lane-mail-check|$SHARD_CODE|+guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|.bun-version|$SHARD_CODE|+node
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
@@ -49,9 +49,9 @@ micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
 micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
-micro|false|$SKILLS_AGENTS|$SHARD_PROSE|["guards-scans","guards-tools-tail"]
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans +guards-tools-tail
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
-micro|false|.github/AGENTS.md skills/orch/scripts/lanes|$SHARD_CODE|$ROSTER
+micro|false|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 small|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
 standard|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
@@ -69,8 +69,58 @@ ROWS
 [ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
 
+# The Rust targets are the reach's: a runtime source runs every target of its
+# runtime and of each runtime that path-depends on it, a path a target or the
+# runtime runs or reads runs those targets, and a lane source every target.
+# What the reach leaves out is held in guard-range's planted runtime.
+# PATHS|A TARGET THE LIST HOLDS
+while IFS='|' read -r paths held; do
+  got="$(selection micro false "$(printf '%s\n' $paths)" | field rust_targets)"
+  check "rust targets over '$paths' hold $held" true "$(jq --arg t "$held" 'index($t) != null' <<<"$got")"
+done <<'ROWS'
+skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|orch/lib
+skills/agent-runtime/runtime/src/lib.rs|orch/lib
+skills/orch/scripts/lane-marker|orch/verify
+hooks/lane-mail-check.sh|orch/controller
+skills/mailbox/scripts/lane-mail|agent-runtime/controller
+skills/orch/tests/rust/push.rs|orch/push
+tools/ci-job-set|orch/*
+ROWS
+check "a path no target can depend on runs none" '[]' \
+  "$(selection micro false "$UNREAD_DOC" | field rust_targets)"
+
+# The shards are the reach's projection and the skips the rest. The install
+# record changes no suite input. The github package's group-leader.sh runs
+# the runtime's target that runs it, and a
+# path a suite's input note names for a read the scan cannot see runs that
+# suite (the required members of the derived reach and of the notes).
+# A runtime source runs every Jarvis suite that runs that built runtime.
+lock="$(selection micro false .kendex-lock.json)"
+kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$lock")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | awk '!/\/run-all\.sh$/' | tr '\n' ' ')"
+check "the install record keeps no orch suite" "" "$kept_orch"
+check "the install record starts no shard" '[]' "$(field shards <<<"$lock")"
+leader="$(selection micro false skills/github/scripts/lib/group-leader.sh)"
+check "group-leader.sh runs the runtime target that runs it" true \
+  "$(jq 'index("orch/validate") != null' <<<"$(field rust_targets <<<"$leader")")"
+# PATH|THE SUITES WHOSE NOTES NAME IT
+while IFS='|' read -r path suites; do
+  skipped="$(selection micro false "$path" | field skipped_suites)"
+  for suite in $suites; do
+    check "$path keeps $suite" false "$(jq --arg s "$suite" 'index($s) != null' <<<"$skipped")"
+  done
+done <<'ROWS'
+skills/change-scope/references/narrow-change.conf|skills/orch/tests/merge-pr-restack-wiring.test.sh
+skills/agent-runtime/scripts/setup|skills/orch/tests/post_merge.sh
+skills/mailbox/scripts/lib/file-lock.sh|skills/orch/tests/lane-host-ssh.sh
+skills/github/scripts/lib/kendex-env.sh|skills/orch/tests/settings-literal-strings.sh
+skills/orch/runtime/src/ops/approve.rs|skills/jarvis/tests/controls.test.sh skills/jarvis/tests/forward.test.sh skills/jarvis/tests/owner-note.test.sh skills/jarvis/tests/owner-unanswered.test.sh skills/jarvis/tests/presence.test.sh skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession-controls.test.sh skills/jarvis/tests/succession.test.sh skills/jarvis/tests/task.test.sh skills/jarvis/tests/watch-loop.test.sh
+skills/agent-runtime/runtime/src/context.rs|skills/jarvis/tests/controls.test.sh skills/jarvis/tests/forward.test.sh skills/jarvis/tests/owner-note.test.sh skills/jarvis/tests/owner-unanswered.test.sh skills/jarvis/tests/presence.test.sh skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession-controls.test.sh skills/jarvis/tests/succession.test.sh skills/jarvis/tests/task.test.sh skills/jarvis/tests/watch-loop.test.sh
+ROWS
+
+# The copy stands beside the real reach, so only the planted rule differs.
+cp "$ROOT/tools/guard" "$TMP/rule/tools/guard"
 awk '
-  $0 == "      .bun-version) want_shard node ;;" { sub(/want_shard node/, ":"); n++ }
+  $0 == "      .bun-version) whole=\"$whole node\" ;;" { sub(/whole="\$whole node"/, ":"); n++ }
   { print }
   END { if (n != 1) exit 1 }
 ' "$JOB_SET" >"$TMP/rule/tools/ci-job-set" ||
@@ -99,7 +149,7 @@ lane_sources() { # SCRIPT — a path per LANE_SOURCES alternative
 build_names() { # SCRIPT — the names its build list declares
   awk '/^build=\$\(printf/ { on = 1; sub(/.*%s\\n. /, "") } on { last = /\)$/; gsub(/[\\)]/, ""); print; if (last) exit }' "$1" | tr -s ' ' '\n' | grep .
 }
-SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/rust-reads tools/macos-test-contracts tools/macos-test-contracts.json tools/lib/skill-requirements.awk"
+SOURCES=".github/workflows/x .github/actions/x tools/ci-job-set tools/ci-aggregate tools/guard tools/rust-reads tools/macos-test-contracts tools/macos-test-contracts.json"
 NAMES="crates Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml .cargo clippy.toml .clippy.toml rustfmt.toml .rustfmt.toml"
 pins() { echo "$(echo $(lane_sources "$1"))|$(echo $(build_names "$2"))"; } # JOB-SET READER
 check "the declared lists are the pinned sets" "$SOURCES|$NAMES" "$(pins "$JOB_SET" "$ROOT/tools/rust-reads")"
@@ -107,7 +157,7 @@ sources="$(lane_sources "$JOB_SET")" names="$(build_names "$ROOT/tools/rust-read
 while IFS= read -r p; do check "lane source $p runs every lane" "$ALL_ON" "$(selection standard false "$p")"; done <<<"$sources"
 # A lane source decides which lanes `CI` waits on, so a change to one runs in
 # a merge group: harness-ci's change-class answers it queue-only, off the
-# `queue` group of orch's narrow-change.conf.
+# `queue` group of change-scope's narrow-change.conf.
 while IFS= read -r p; do
   check "lane source $p is queue-only" "queue_only=true inputs=run cause=queue-path path=$p" \
     "$(queue_only_of "$p" | sed 's/ glob=.*//')"
@@ -121,7 +171,7 @@ mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\]"$/'
+RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\] rust_targets=\[\]"$/'
 [ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 # LANE|WORD dropped from the render row
@@ -140,8 +190,9 @@ while IFS='|' read -r lane word; do
 done <<'ROWS'
 cargo_windows_check| cargo_windows_check=false
 macos|macos=false[ ]
+rust_targets| rust_targets=[[]]
 ROWS
-[ "$forgot_rows" -eq 2 ] || { echo "the forgotten-lane table read $forgot_rows rows" >&2; exit 1; }
+[ "$forgot_rows" -eq 3 ] || { echo "the forgotten-lane table read $forgot_rows rows" >&2; exit 1; }
 
 # A `trivial` diff changing a path tools/rust-reads names takes the measured
 # row. The fixture crate reads docs/a.md and assets/x.json through
@@ -184,7 +235,8 @@ check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
 # The lanes intentionally take the union. Root README is a run-time Rust
 # read, which selects cargo but does not change these two jobs.
 # The local suite runner consumes this result, without the class selector's
-# conservative package unions. Offline orch retains its existing shard environment.
+# conservative package unions. An orch suite takes the shard shard_of gives it,
+# and orch-rest is a checkout shard.
 # Only Linux takes a checkout, at the shard gate and at the orch shard gate;
 # the `macos` column marks the one row per gate that also asserts macOS none.
 while IFS='|' read -r path shard expected macos; do
@@ -194,10 +246,8 @@ while IFS='|' read -r path shard expected macos; do
   check "suite kendex: macOS $path $shard" none \
     "$("$JOB_SET" --suite-kendex macOS "$path" "$shard")"
 done <<'ROWS'
-skills/orch/tests/lanes-pick-spread.sh|orch-state|none
-skills/orch/tests/open-terminal-copilot-context.sh|orch-terminal|checkout|macos
-skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
-skills/orch/tests/dev_return.sh|orch-dev|none
+skills/orch/tests/lane-marker.sh|orch-state|none
+skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout|macos
 skills/github/tests/pr-view.test.sh||checkout|macos
 skills/jarvis/tests/task.test.sh||checkout
 refresh/tests/refresh-consumer.test.sh||checkout

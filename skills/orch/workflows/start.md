@@ -1,47 +1,53 @@
 # Start Workflow
 
-Prepare one work item from the main repo. Never watches or manages other sessions.
+Prepare one work item from the main checkout and hand it to its worktree session. This workflow never watches or manages other sessions.
 
 | Command | Flow |
 |---------|------|
 | `start` | pick one item → prepare |
-| `start [LINEAR_ID]` | prepare Linear issue |
-| `start github OWNER/REPO#N` | prepare GitHub issue |
+| `start [LINEAR_ID]` | prepare a Linear issue |
+| `start github OWNER/REPO#N` | prepare a GitHub issue |
 | `start new ...` | `workflows/start-new.md` |
 
-**Main checkout only.** Read the lane host before anything else:
+**Main checkout only.** Read the lane host before anything else. A worktree cwd skips this read, and § 1 step 3 routes it on:
 
 ```bash
-.agents/skills/orch/scripts/lane-host resolve
+.agents/skills/orch/scripts/orch-runtime host resolve
 ```
 
-A worktree cwd skips this read; § 1 step 3 routes it on. Any answer but `local` refuses the run here, with no handoff resumed and nothing read, activated or created; [SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes, holds the rule. The report's first line is `start-control-host host=[HOST]`, and its next line is the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief; for `start new`, create the issue first, then launch it that way.
+Any answer but `local` refuses the run here: resume no handoff, and read, activate or create nothing ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes). Report `start-control-host host=[HOST]` as the first line. As the next line, report the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief. For `start new`, create the issue first, then launch it that way.
 
 ## 0. Resume From A Handoff
 
-**Skip if** no work item was named (`start` alone, or `start new`), or the read below prints the verdict `workflow-state: handoff-standing=none`, the one that means no record stands. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
+**Skip if** no work item was named (`start` alone, or `start new`). For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
 
 ```bash
-.agents/skills/orch/scripts/workflow-state handoff-standing [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime state handoff-standing --item [ISSUE_ID]
 ```
 
-That verb owns the question of whether a record stands, and where it is read, for this workflow, for [start-worktree.md](start-worktree.md) § 1 step 3, which runs this section from a worktree cwd, and for the watch and turn-end hook that ask it too. The word on its first line is the answer and its exit status is not; `workflow-state --help` states what each verdict means and this file does not restate it. **Stop and report** on any other verdict, and on any non-zero status, naming the item and what the reader wrote: the state could not be read, or the script never reached the verb, and preparing the item from § 1 would redo the steps its record lists as merged. A `stands` verdict carries the record on the line under it. The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it in every place it stands, then continue from the first entry of its `remaining` list instead of § 1-5, or from the continuation start-worktree.md § 1 step 3 names on that route:
+This verb answers whether a lane's handoff record ([oversee-events.md § Hand off a lane before it runs out](../references/oversee-events.md#hand-off-a-lane-before-it-runs-out)) stands. The reply's `result.standing` word is the answer, not the exit status.
 
-```bash
-.agents/skills/orch/scripts/workflow-state handoff-resume [ISSUE_ID]
-```
+- `none` → § 1.
+- `unreadable`, or a non-zero exit → stop and report, naming the item and what the reader wrote.
+- `stands` → `result.record` holds the record. Print it and stamp it resumed in every place it stands. Then continue from the first entry of its `remaining` list instead of § 1-5, or, on the start-worktree.md § 1 step 3 route, from the continuation that step names:
+
+  ```bash
+  .agents/skills/orch/scripts/orch-runtime state handoff-resume --item [ISSUE_ID]
+  ```
+
+  A refusal stops and reports the same way.
 
 ## 1. Route
 
-1. Args starting with `new` → invoke `workflows/start-new.md`.
-2. Parse explicit args before checking cwd: `github` → `tracker=github`, `[OWNER/REPO]`, `ISSUE_ID=issue-[N]`; otherwise `tracker=linear` with the parsed `[ISSUE_ID]`, promoted to `github` when it starts with `issue-`.
-3. cwd is a worktree → invoke `workflows/start-worktree.md` with that context and stop.
+1. Arguments starting with `new` → run `workflows/start-new.md`.
+2. Parse explicit arguments before reading the cwd. `github` → `TRACKER=github`, `[OWNER/REPO]` and `ISSUE_ID=issue-[N]`. Otherwise `TRACKER=linear` with the parsed `[ISSUE_ID]`; an `[ISSUE_ID]` starting with `issue-` makes it `github`.
+3. A worktree cwd → run `workflows/start-worktree.md` with that context, and stop here.
 
 ## 2. Select Work Item
 
-**Skip if** an explicit issue was provided.
+**Skip if** an explicit item was named.
 
-Present the unblocked candidates from the tracker and pick one. If several are wanted, convert them to issues first and hand them off separately — this workflow prepares exactly one.
+Present the unblocked candidates from the tracker and pick one. This workflow prepares exactly one: where several are wanted, make each an issue first and hand each off separately.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -59,27 +65,27 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 ## 3. Resolve Work Item
 
-**Linear** — read live:
+**Linear only.** Read the item live:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
-Verifying → stop development preparation. Its post-merge readings belong to the verification pass in [verify.md](verify.md).
+A Verifying item stops development preparation. Its post-merge readings belong to the verification pass in [verify.md](verify.md).
 
-Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) from this live read, including any further reads the gate requires.
+Apply the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to this live read, with any further reads the gate requires.
 
-- **Container** (this read reports `in_pr_bundle` false) → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; never select a deeper descendant directly), pick one, and re-run this section for it.
-- **Single-PR work item** (a leaf whose description carries an internal checklist, or an in-PR bundle root, whose read reports `in_pr_bundle`) → it IS the work item; dev-start delegates a root with its children.
-- **Child of a container** → the child is the PR unit. Apply the Ancestor gate to it. Blocked or terminal → stop and name the live blockers.
+- **A container**, whose read reports `in_pr_bundle` false, is not the work item. List its unblocked direct children, `depth` 0 in the read's flattened children, never a deeper descendant. Pick one and run this section again for it.
+- **A single-PR work item** is the work item: a leaf whose description carries an internal checklist, or an in-PR bundle root, whose read reports `in_pr_bundle`.
+- **A child of a container** is the PR unit. Apply the Ancestor gate to it. A blocked or terminal child stops, naming the live blockers.
 
-**GitHub**:
+**GitHub only**:
 
 ```bash
 gh issue view [N] --repo [OWNER/REPO] --json number,title,body,url,labels,state
 ```
 
-Not open → stop and ask for a different item.
+An issue that is not open stops: ask for another item.
 
 ## 4. Prepare Worktree
 
@@ -87,28 +93,28 @@ Not open → stop and ask for a different item.
 .agents/skills/worktree/scripts/worktree check
 ```
 
-Resolve a dirty main repo with the user before creating anything. Then check for an existing worktree:
+Resolve a dirty main checkout with the user before creating anything. Then look for an existing worktree:
 
 ```bash
 .agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
 .agents/skills/worktree/scripts/worktree path [ISSUE_ID]
 ```
 
-An existing worktree means active ownership: inspect its branch and PR and coordinate with that owner. Do not spawn a second implementer; only the confirmed owning session may run `create [ISSUE_ID] --reuse`.
+An existing worktree means another session owns the item. Inspect its branch and pull request, and coordinate with that owner. Start no second implementer. Only the confirmed owning session runs `create [ISSUE_ID] --reuse`.
 
-Otherwise create it, checking the exit status directly (`issue-[N]` for GitHub items):
+Otherwise create the worktree, `issue-[N]` for a GitHub item, and check its exit status:
 
 ```bash
 .agents/skills/worktree/scripts/worktree create [ISSUE_ID]
 ```
 
-Exit 75 means a branch or open PR already owns the issue — inspect it instead of delegating. Use the create output as `WT_PATH`.
+Exit 75 means a branch or an open pull request already owns the item: inspect it instead of delegating. `[WT_PATH]` is the path `create` prints.
 
 ## 5. Continue In Worktree
 
-Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
+Run `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context. Ask no question.
 
-An `orch start` run is complete when its merge work is complete, its worktree is gone, and the tracker issue is Done or handed to the overseer in Verifying under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge). The issue reaches Done only after every post-merge box has proof. An opened or armed PR is not complete.
+An `orch start` run is complete when its merge work is complete and the tracker issue is Done, or is handed to the overseer in Verifying under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge). The issue reaches Done only after every post-merge box has proof. An opened or armed pull request is not complete. A run outside a lane removes its worktree in [merge-pr.md](merge-pr.md) § 5. A lane leaves its worktree standing for the overseer's close of the lane.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -125,4 +131,4 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Launched as a handoff → stop after launch.
+A run launched as a handoff stops after the launch.

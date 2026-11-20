@@ -192,7 +192,9 @@ edited_file() { # PATH — resolve the parent, including parents yet to be made
   printf '%s' "${parent%/}$suffix"
 }
 
-# QA_UI_PATHS follows orch/scripts/qa-signals until the orch rebuild's matcher replaces this copy.
+# QA_UI_PATHS follows the orch runtime's record-qa-decision matcher
+# (skills/orch/runtime/src/ops/qa.rs); this hook keeps its own copy until a
+# runtime verb answers the match.
 shopt -s extglob
 ANY_DIRS='@(*/|)'
 MATCH=''
@@ -214,7 +216,7 @@ while IFS= read -r candidate; do
       { reader_issue settings reader-missing; continue; }
     SETTING=$( (
       # shellcheck source=../skills/decider/scripts/lib/kendex-env.sh
-      source "$READER" && kendex_load_project_env "$root" &&
+      source "$READER" && kendex_load_project_env "$root" -- QA_UI_PATHS &&
         printf '%s\n' "${QA_UI_PATHS:-*.qml *.tsx *.jsx *.vue *.svelte}"
     ) 2>&1) || {
       reader_issue settings unreadable "$SETTING"

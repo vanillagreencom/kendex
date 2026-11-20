@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# The tracker CLI the report's created read runs: the real `linear.sh`, with
+# the `curl` beside the path this was invoked as first on PATH, so a row
+# drives the package's own list, paging and safe formatter over the answers
+# that `curl` plants.
+set -euo pipefail
+here="$(dirname "${BASH_SOURCE[0]}")"
+real="$(python3 -B -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parents[5] / "linear/scripts")' "${BASH_SOURCE[0]}")"
+cd -- "$here"
+export PATH="$here:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_RETRY_BASE_DELAY=0
+exec "$real/linear.sh" "$@"

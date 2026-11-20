@@ -172,37 +172,9 @@ linear	scripts/linear.sh	documents --help
 linear	scripts/linear.sh	project-labels --help
 linear	scripts/linear.sh	attachments --help
 linear	scripts/linear.sh	projects
-orch	scripts/approval-wait	--help
-orch	scripts/approval-wait	-h
-orch	scripts/approval-wait	help
-orch	scripts/approval-wait	123 --mode approval -h
-orch	scripts/lanes	-
-orch	scripts/lanes	--help
-orch	scripts/lanes	-h
-orch	scripts/lanes	help
-orch	scripts/lanes	list --help
-orch	scripts/lanes	pick --harness claude -h
-orch	scripts/open-terminal	--help
-orch	scripts/open-terminal	-h
-orch	scripts/open-terminal	help
-orch	scripts/open-terminal	KEN-1 --harness claude --help
 orch	scripts/orch-env	--help
 orch	scripts/orch-env	-h
 orch	scripts/orch-env	help
-orch	scripts/oversee-watch	--help
-orch	scripts/oversee-watch	-h
-orch	scripts/oversee-watch	help
-orch	scripts/oversee-watch	--repo o/r --item KEN-1 -h
-orch	scripts/reconcile-work-items	--help
-orch	scripts/reconcile-work-items	-h
-orch	scripts/reconcile-work-items	help
-orch	scripts/workflow-state	--help
-orch	scripts/workflow-state	-h
-orch	scripts/workflow-state	help
-orch	scripts/workflow-state	--state-dir tmp --help
-orch	scripts/workflow-state	remove --help
-orch	scripts/workflow-state	remove -h
-orch	scripts/workflow-state	--state-dir tmp remove --help
 second-opinion	scripts/second-opinion	--help
 second-opinion	scripts/second-opinion	-h
 second-opinion	scripts/second-opinion	review --help

@@ -6,8 +6,9 @@
 # list in its named output keeps the change in the queue, `[]` leaves the
 # answer as it was, and every failure reads queue-only.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 
 # The fixture's selector: one job per changed path under slow/ or named
 # docs/slow*, each spelling the inputs it was asked with and the base tree's
@@ -114,7 +115,7 @@ require_rows queue-selector "$rows"
 
 # The suite's must-fail control: a planted copy that never calls the selector
 # answers the row it holds otherwise.
-planted="$(mutant no-call change-class '  [ "$QUEUE_ONLY" = true ] || queue_selection "$1"' -)"
+planted="$(mutant no-call change-class '[ "$QUEUE_ONLY" = true ] || queue_selection "$class"' -)"
 control_label="a path the selector names is queue-only"
 control_row=""
 while IFS='|' read -r label expected edits row_base env row_event; do

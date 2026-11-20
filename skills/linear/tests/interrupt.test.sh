@@ -21,9 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
 source "$SCRIPT_DIR/lib/control-runner.sh"
-# started_at and lane_identity_status: the runner's own process identity
-# readers, which a zombie and a reused pid both fail. Only status 3 from
-# lane_identity_status is a suite that ended; 1 is a read that did not answer.
+# started_at: the runner's own process identity reader, which a zombie and a
+# reused pid both fail. Its status 1 is a process that ended; 2 is a read that
+# did not answer.
 source "$SCRIPT_DIR/../../orch/tests/lib/suite-process.sh" || exit 2
 assert_tmpdir TMP
 # The runner's TERM handlers append their entries here; an empty file is a
@@ -85,13 +85,23 @@ wait "$runner"
 wait_rc=$?
 waited="$(clock)"
 
+# suite_identity — the timed suite now: live, ended (gone, a zombie, or its
+# pid handed to a process started later) or unread.
+suite_identity() {
+    local start rc=0
+    start="$(started_at "$suite_pid")" || rc=$?
+    case "$rc" in
+    0) if [ "$start" = "$suite_start" ]; then echo live; else echo ended; fi ;;
+    1) echo ended ;;
+    *) echo unread ;;
+    esac
+}
+
 # suite_stopped — the timed suite's handler acknowledged the TERM for this
 # suite, and this suite has ended, by that TERM or by the KILL after its grace.
 suite_stopped() {
-    local rc=0
     grep -Fq -- " timed_suite TERM suite=[$suite_pid]" "$CONTROL_TRACE" || return 1
-    lane_identity_status "$suite_pid" "$suite_start" || rc=$?
-    [ "$rc" -eq 3 ]
+    [ "$(suite_identity)" = ended ]
 }
 
 stopped=no
@@ -104,7 +114,7 @@ printf -- '- timed_suite TERM suite=[%s]\n' "$suite_pid" >"$TMP/planted-trace"
 unread=proved
 (
     CONTROL_TRACE="$TMP/planted-trace"
-    lane_process_state() { return 2; }
+    started_at() { return 2; }
     suite_stopped
 ) || unread=unproved
 assert_eq "an unreadable identity read does not prove the suite stopped" "$unread" unproved
@@ -116,17 +126,16 @@ assert_eq "an unreadable identity read does not prove the suite stopped" "$unrea
 # after the wait; unread, the identity read gave no answer.
 if [ "$stopped" != yes ]; then
     step=trace-unread
-    identity=0
-    lane_identity_status "$suite_pid" "$suite_start" || identity=$?
+    identity="$(suite_identity)"
     capture=(
         "test: kill=$kill_rc wait=$wait_rc waited=$waited gave-up=$(clock)"
         "marks: started=$(mark_time "$marks/started")"
-        "suite: pid=$suite_pid start=$suite_start identity=$identity cause=${LANE_IDENTITY_CAUSE:--}"
+        "suite: pid=$suite_pid start=$suite_start identity=$identity"
     )
     if [ -r "$CONTROL_TRACE" ]; then
         case "$identity" in
-        0) step=suite-alive ;;
-        3) step=late ;;
+        live) step=suite-alive ;;
+        ended) step=late ;;
         *) step=identity-unread ;;
         esac
         for entry in "runner-term| runner TERM pid=" "job-term| job TERM body=" \

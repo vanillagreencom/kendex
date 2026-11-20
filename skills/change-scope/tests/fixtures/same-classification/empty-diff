@@ -1,0 +1,4 @@
+exit=0
+stdout=change_class=standard
+harness-note: cause=empty-diff base=be173da4bdc9f70c5caeb05435f3ea094e398317 head=HEAD
+class: class=standard measured=false cause=empty-diff base=be173da4bdc9f70c5caeb05435f3ea094e398317 head=HEAD

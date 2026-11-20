@@ -84,7 +84,7 @@ function laneMail(lane: string, ...args: string[]): string {
 	return run.stdout;
 }
 
-/** The receipt oversee-watch reads: the directive is read once the lane's cursor passes its line. */
+/** The receipt the orch watch reads: the directive is read once the lane's cursor passes its line. */
 function directiveState(lane: string, id: string): "directive-read" | "directive-unread" | "directive-unjudged" {
 	const receipts = laneMail(lane, "drain", "--item", ITEM, "--root", lane, "--after", "0", "--receipts").split("\n");
 	const cursor = /^receipts cursor=(missed|\d+) /.exec(receipts.find((line) => line.startsWith("receipts ")) ?? "");

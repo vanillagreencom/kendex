@@ -1,0 +1,17 @@
+#!/bin/bash
+# A stub harness that stands with no composer until its row lets it draw
+# one: it waits, at most 120 seconds, for `.stub-composer` in its working
+# directory, then draws Claude Code's composer marker (❯ then U+00A0) and
+# reads lines until its stdin closes, as stub-confirm does. A launch whose
+# bound passes first is `unconfirmed`, and its reconcile then reads the
+# runner at its composer. Named `claude` and run by bash directly so the
+# kernel records the harness's process name for it.
+printf 'starting up, no composer yet\n'
+waited=0
+while [ ! -e .stub-composer ] && [ "$waited" -lt 1200 ]; do
+  sleep 0.1
+  waited=$((waited + 1))
+done
+printf '\xe2\x9d\xaf\xc2\xa0\n'
+printf '  ? for shortcuts\n'
+while IFS= read -r _line; do :; done

@@ -76,8 +76,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Shared with pr-merge.sh and orch ci-wait, so this diagnosis and the merge
-# gate cannot disagree about which run is current. CI_RUN_JQ_DEFS carries the
+# Shared with pr-merge.sh, so this diagnosis and the merge gate cannot
+# disagree about which run is current. CI_RUN_JQ_DEFS carries the
 # one runid/bucket implementation for every jq program below.
 # shellcheck source=../lib/ci-run-correlation.sh
 source "$SCRIPT_DIR/../lib/ci-run-correlation.sh"

@@ -462,7 +462,6 @@ __assert_on_exit() {
 pages_case() {
 	local name="$1" mode="$2" limit=0 budget line hits=0 child_mode=bundle
 	[[ "$name" != bounded ]] || limit=1
-	[[ "$name" != children-recursive ]] || child_mode=recursive
 	jq -cn --arg name "$name" '
 		def conn($rows; $more; $cursor): {nodes:$rows,pageInfo:{hasNextPage:$more,endCursor:$cursor}};
 		def issue($id; $size): {id:$id,identifier:"FIX-1",title:"synthetic",description:("s" * $size),
@@ -496,7 +495,7 @@ pages_case() {
 		elif $name == "root-rows-closed" then
 			{initial:root([issue("first";180000),issue("second";180000)];false;null),replies:[]}
 		elif $name == "absent" then {initial:{issue:{id:"owner",description:"short"},project:null},replies:[]}
-		elif $name == "children" or $name == "children-recursive" or $name == "children-failure" then
+		elif $name == "children" or $name == "children-failure" then
 			{initial:{issue:(issue("parent";180000) | .children=conn([
 				issue("child-a";180000) | .labels=conn([{name:("n"*180000)}];true;"l1")];true;"ch1"))},
 			 replies:[labelReply("child-a"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The retired doc-drift-check stub: a Stop payload passes at exit 0 with
+# The doc-drift-check stub: a Stop payload passes at exit 0 with
 # nothing on stdout or stderr, so a consumer still declaring the hook is never
 # held. The control reruns the same observation on a planted copy that writes
 # and refuses, and requires it to differ.
@@ -15,7 +15,8 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# Padding exceeds a pipe buffer so an early close always rejects the old writer.
+# Padding exceeds a pipe buffer, so a stub that closes stdin unread fails the
+# payload's writer.
 printf -v PAYLOAD '%s%131072s' '{"session_id":"s","stop_hook_active":false}' ''
 trap '' PIPE
 
@@ -28,14 +29,14 @@ observe() { # HOOK -> "rc=N out=<stdout> err=<stderr>"
 echo "=== doc-drift-check: retired stub ==="
 assert_eq "$(observe "$HOOK")" "rc=0 out= err=" "a stop passes silently"
 
-legacy_rc=0
-legacy_out="$( { printf '%s' "$PAYLOAD" | bash "$HOOK" 2>"$TMP_ROOT/err"; } \
-  2>"$TMP_ROOT/writer-err")" || legacy_rc=$?
-assert_eq "rc=$legacy_rc out=$legacy_out err=$(cat "$TMP_ROOT/err")" "rc=1 out= err=" \
-  "control: the old payload writer fails the silent stop observation"
+piped_rc=0
+piped_out="$( { printf '%s' "$PAYLOAD" | bash "$HOOK" 2>"$TMP_ROOT/err"; } \
+  2>"$TMP_ROOT/writer-err")" || piped_rc=$?
+assert_eq "rc=$piped_rc out=$piped_out err=$(cat "$TMP_ROOT/err")" "rc=1 out= err=" \
+  "control: a writer piping the whole payload fails the silent stop observation"
 assert_eq "$(case "$(cat "$TMP_ROOT/writer-err")" in
   (*'printf: write error: Broken pipe'*) echo broken-pipe ;; (*) echo missing ;; esac)" broken-pipe \
-  "control: the old writer reports its broken pipe"
+  "control: that writer reports its broken pipe"
 
 PLANTED="$TMP_ROOT/doc-drift-check.sh"
 sed 's/^exit 0$/echo held; echo held >\&2; exit 2/' "$HOOK" >"$PLANTED"

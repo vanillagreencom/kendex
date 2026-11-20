@@ -57,8 +57,9 @@
 # template not asking for the queue-only default, the pull request's
 # recorded base, and a fixed old installer pin.
 set -euo pipefail
-# shellcheck source=lib/sandbox.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
+# shellcheck source=../../change-scope/tests/lib/sandbox.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
+PLANT_ENTRY=change-class
 # shellcheck source=lib/workflow.sh
 . "$TEST_DIR/lib/workflow.sh"
 
@@ -732,8 +733,10 @@ assert_eq "the installer reads with the workflow token" 'github.token' "$(step_k
 install_root="$SANDBOX/release-selection"
 mkdir -p "$install_root/bin" "$install_root/classifier/.agents/skills/harness-ci/scripts" "$install_root/home"
 cp "$TEST_DIR/../scripts/install-latest.sh" "$install_root/classifier/.agents/skills/harness-ci/scripts/"
-mkdir -p "$install_root/classifier/.agents/skills/harness-ci/scripts/lib"
+mkdir -p "$install_root/classifier/.agents/skills/harness-ci/scripts/lib" \
+  "$install_root/classifier/.agents/skills/change-scope/scripts/lib"
 cp "$TEST_DIR/../scripts/lib/change-class.sh" "$install_root/classifier/.agents/skills/harness-ci/scripts/lib/"
+cp "$CHANGE_SCOPE_PACKAGE/scripts/lib/change-scope.sh" "$install_root/classifier/.agents/skills/change-scope/scripts/lib/"
 cat >"$install_root/bin/curl" <<'CURL'
 #!/usr/bin/env bash
 set -euo pipefail

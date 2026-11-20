@@ -152,8 +152,8 @@ Dependencies:
   Without this setting no worktree command runs a package-manager install.
   An npm project can install in main and link its node_modules. On a
   hosted lane the host provider's create owns that install in its clone:
-  orch's lane-host-ssh runs it for a static SSH host, and any other host
-  provider owes the same step, per orch schemas/lane-host.md. pnpm
+  orch's lane-host-ssh runs it for a static SSH host, and orch requires
+  the step of no other host provider. pnpm
   (ERR_PNPM_UNSAFE_MODULES_DIR) and Turbopack ("Symlink node_modules is
   invalid, it points out of the filesystem root") refuse a node_modules
   resolving outside the project root, so a pnpm or Next.js project leaves it
@@ -310,8 +310,12 @@ Options:
                   issue worktree is absent. A fork PR checks out origin's
                   refs/pull/NUMBER/head as local branch fork-pr-NUMBER, with
                   no upstream
-  --reuse         Explicitly reuse an existing issue worktree: refuses a
-                  foreign session-guard lease by name (exit 75), refreshes its
+  --reuse         Explicitly reuse an existing issue worktree: holds a tree
+                  unless orch-runtime prints live=none for it
+                  (worktree-resume-held, exit 75), asking $ORCH_RUNTIME_BINARY
+                  when set, else orch's wrapper where it is installed beside
+                  this package; refuses a foreign session-guard lease by
+                  name (exit 75), refreshes its
                   own lease in place, and skips the rebase for a tree with
                   uncommitted work. A clean tree whose branch is an ancestor
                   of its remote branch, whose commits another machine pushed,
@@ -342,11 +346,16 @@ Options:
                   With --reuse, not --restack: when the rebase or replay
                   conflicts, abort it as --reuse does and hand the tree back
                   on its pre-rebase head, set up as a completed reuse would
-                  be: the path on stdout, a 'worktree-reuse-unrebased' notice
-                  naming the path on stderr followed by the conflicting
-                  files, exit 76. For a caller that needs a session in the
-                  tree more than a rebased branch, such as a relaunch; a
-                  caller that needs the base omits it and keeps the failure
+                  be. Every tree --reuse hands back whose head does not
+                  contain origin/<default> (a conflict, uncommitted work, a
+                  detached HEAD, a head at its remote branch's head) then
+                  exits 76: the path on stdout, a 'worktree-reuse-unrebased'
+                  notice naming the path and the cause on stderr, the
+                  conflicting files after it. A merged branch stays exit 0,
+                  so exit 0 means the head contains the base. For a caller
+                  that needs a session in the tree more than a rebased
+                  branch, such as a relaunch; a caller that needs the base
+                  omits it and keeps the failure
   --hosted        The create runs for a hosted lane, on a clone that holds one
                   lane worktree: a new tree lands at
                   ../.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME> beside
@@ -396,7 +405,7 @@ Rewritten commits:
   <new-sha|dropped>' line per rewritten commit on stderr (stdout is the
   worktree path) and appends the same lines, under a 'rebase-hop:' line of
   their own, to 'kendex-rebase-map' in the worktree's git dir.
-  'orch/scripts/worktree-push' applies each hop there in order to reconcile
+  orch's 'record-push' applies each hop there in order to reconcile
   SHAs recorded before the restack, so restacking twice before pushing carries
   a recorded SHA through both rewrites (push --help). A base the branch already
   contains rebases nothing and reports no map.
@@ -734,7 +743,7 @@ otherwise by commit subject. A push that skips the rebase, or one run with
 
 Those printed lines are a report, not the record. The same map is appended to
 'kendex-rebase-map' in the worktree's git dir as its own hop, and that file is
-what 'orch/scripts/worktree-push' reconciles from: a map only printed lives in
+what orch's 'record-push' reconciles from: a map only printed lives in
 its reader's temporary capture, which that reader does not act on until this
 process has returned and which its own exit trap then removes. A push whose
 map cannot be recorded there refuses rather than publishing.
@@ -762,7 +771,7 @@ emitter: this auto-rebase, and a completed restack through 'create --reuse',
 stderr, because create's stdout is the worktree path it hands its caller, and
 records them the same way this auto-rebase does. Each rewrite appends its own
 hop to 'kendex-rebase-map', a 'rebase-hop:' line followed by that rewrite's
-map lines, and 'orch/scripts/worktree-push' applies the hops in order, one
+map lines, and orch's 'record-push' applies the hops in order, one
 reconciliation each: those standing before it pushes, then the one its own
 push writes. It deletes the file only once every hop it read is recorded. The
 hops stay separate because each reconciliation compares a record against the

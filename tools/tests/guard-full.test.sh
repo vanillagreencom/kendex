@@ -320,9 +320,8 @@ fi
 
 # A full run deletes nothing from target/: the second of two runs leaves the
 # first run's superseded unit beside its own. What bounds target/ across rounds
-# is the round-start prune, outside every validation run, and
-# skills/orch/tests/round_prune.sh measures it across two simulated validation
-# runs of the same shape.
+# is the round-start prune, outside every validation run, which
+# skills/orch/tests/rust/push.rs holds (prune::).
 RUNS_TARGET="$TMP/two-runs/target"
 mkdir -p "$RUNS_TARGET/debug"
 : >"$RUNS_TARGET/debug/.cargo-lock"
@@ -1252,7 +1251,7 @@ rm -- "$R/fake-bin/npm"
 rm -r -- "$R/pi-extensions/peers"
 
 echo "=== full validation runs the lanes the change class selects ==="
-# dev-validate-run hands over the class, the docs verdict and the changed
+# orch-runtime validate entry hands over the class, the docs verdict and the changed
 # paths as DEV_VALIDATE_CLASS, DEV_VALIDATE_DOCS_ONLY and a DEV_VALIDATE_PATHS
 # file. Each lane is read off the call it makes: cargo and npm log their calls, and the parse
 # lane is a stub here because its real pass needs a Bash 3.2 this row does not

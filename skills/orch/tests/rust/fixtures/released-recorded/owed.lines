@@ -1,0 +1,9 @@
+owed KEN-10 state=in-progress priority=2 lane=stopped verdict=merged pr=21
+owed KEN-11 state=in-progress priority=1 lane=stopped verdict=dated harness=claude until=2026-10-04T00:00:00Z
+owed KEN-12 state=in-progress priority=2 lane=stopped verdict=queue
+owed KEN-13 state=in-review priority=2 lane=done verdict=merged commit=0123456789abcdef0123456789abcdef01234567
+owed KEN-2 state=in-progress priority=2 lane=stopped verdict=queue
+owed KEN-3 state=in-progress priority=1 lane=stopped verdict=dated harness=codex until=2026-10-03T00:00:00Z
+owed KEN-5 state=in-review priority=2 lane=done verdict=merged pr=15
+owed KEN-6 state=in-review priority=3 lane=none verdict=queue
+owed KEN-9 state=in-progress priority=- lane=stopped verdict=queue

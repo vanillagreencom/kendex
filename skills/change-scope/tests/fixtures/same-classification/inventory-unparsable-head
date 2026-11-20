@@ -1,0 +1,5 @@
+exit=0
+stdout=change_class=standard
+changed-path: path=.kendex-generated.json
+harness-note: cause=invalid-generated-paths
+class: class=standard measured=false cause=invalid-generated-paths

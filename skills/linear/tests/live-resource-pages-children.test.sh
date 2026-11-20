@@ -16,7 +16,6 @@ while IFS='|' read -r name mode check; do
     assert_jq "$name: rows and fields" "$PAGE_OUT" "$check"
     assert_file_lacks "$name: no argument-size failure" "$PAGE_ROOT/error" 'Argument list too long'
 done <<'ROWS'
-children-recursive|query|(.issue.children.nodes | length == 2) and (.issue.children.nodes[1] | has("description") | not) and (.issue.children.nodes[1].children.nodes | length == 2) and (.issue.children.nodes[1].children.nodes[1] | has("children") | not)
 children|query|(.issue.children.nodes | length == 2) and (.issue.children.nodes[0].labels.nodes | length == 2) and (.issue.children.nodes[1].children.nodes | length == 2) and (.issue.children.nodes[1].children.nodes[1] | has("children") | not)
 ROWS
 

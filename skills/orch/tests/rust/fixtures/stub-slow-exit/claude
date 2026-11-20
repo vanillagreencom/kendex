@@ -1,0 +1,8 @@
+#!/bin/bash
+# A stub that stands for a moment then exits without drawing a composer: the
+# launch poll finds its pane present, then gone, and records `failed` (the
+# harness exiting during the launch poll). Named `claude` and run by bash
+# directly so the kernel records the harness's process name for it.
+printf 'starting up, no composer yet\n'
+sleep 0.3
+exit 0

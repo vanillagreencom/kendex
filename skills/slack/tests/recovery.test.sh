@@ -110,7 +110,7 @@ while read -r answer; do
   sk_bind "$ROOT"
   CH="$(sk_channel "$ROOT")"
   sk_poll "$ROOT"
-  sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "ask-$mode" 'Deleted ask?')" --options yes,no --recommend no --wait 30 >"$SK_TMP/ask.out"
+  sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "ask-$mode" 'Deleted ask?')" --options yes,no --recommend no --effect none --wait 30 >"$SK_TMP/ask.out"
   ID="$(sed 's/^id=//' "$SK_TMP/ask.out")"
   sk_poll "$ROOT"
   ASK_TS="$(sk_state ".messages.${CH}[-1].ts")"

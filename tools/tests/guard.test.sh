@@ -292,32 +292,29 @@ run_guard
   && ok "a def bucket copy in a GitHub command reds the guard, naming the line" \
   || bad "a def bucket copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
 git -C "$R" rm -q --cached skills/github/scripts/commands/demo.sh
+printf '#!/usr/bin/env bash\nscope_current_run() { :; }\n' >"$R/skills/github/scripts/commands/demo.sh"
+git -C "$R" add skills/github/scripts/commands/demo.sh
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
+  && [[ "$OUT" == *"skills/github/scripts/commands/demo.sh:2:"* ]] \
+  && ok "a scope_current_run copy in a GitHub command reds the guard, naming the line" \
+  || bad "a scope_current_run copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
+printf '#!/usr/bin/env bash\necho "def required_only($r): ."\n' >"$R/skills/github/scripts/commands/demo.sh"
+git -C "$R" add skills/github/scripts/commands/demo.sh
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
+  && [[ "$OUT" == *"skills/github/scripts/commands/demo.sh:2:"* ]] \
+  && ok "a required_only copy in a GitHub command reds the guard, naming the line" \
+  || bad "a required_only copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
+printf '#!/usr/bin/env bash\necho "def red: ."\n' >"$R/skills/github/scripts/commands/demo.sh"
+git -C "$R" add skills/github/scripts/commands/demo.sh
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
+  && [[ "$OUT" == *"skills/github/scripts/commands/demo.sh:2:"* ]] \
+  && ok "a red copy in a GitHub command reds the guard, naming the line" \
+  || bad "a red copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
+git -C "$R" rm -q --cached skills/github/scripts/commands/demo.sh
 rm -rf -- "$R/skills/github"
-mkdir -p "$R/skills/orch/scripts"
-printf '#!/usr/bin/env bash\nscope_current_run() { :; }\n' >"$R/skills/orch/scripts/ci-wait"
-chmod +x "$R/skills/orch/scripts/ci-wait"
-git -C "$R" add skills/orch/scripts/ci-wait
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
-  && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
-  && ok "a scope_current_run copy in orch ci-wait reds the guard, naming the line" \
-  || bad "a scope_current_run copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
-printf '#!/usr/bin/env bash\necho "def required_only($r): ."\n' >"$R/skills/orch/scripts/ci-wait"
-git -C "$R" add skills/orch/scripts/ci-wait
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
-  && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
-  && ok "a required_only copy in orch ci-wait reds the guard, naming the line" \
-  || bad "a required_only copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
-printf '#!/usr/bin/env bash\necho "def red: ."\n' >"$R/skills/orch/scripts/ci-wait"
-git -C "$R" add skills/orch/scripts/ci-wait
-run_guard
-[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
-  && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
-  && ok "a red copy in orch ci-wait reds the guard, naming the line" \
-  || bad "a red copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
-git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
-rm -rf -- "$R/skills/orch"
 
 echo "=== the shipped command-safety policy keeps refusing what it documents ==="
 policy_line='COMMAND_SAFETY_DENY_PATTERN = "^never-matches-anything$"'

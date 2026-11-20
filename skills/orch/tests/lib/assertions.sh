@@ -2,9 +2,7 @@
 #
 # The one assertion library of the orch suites: the pass/fail counters, the
 # stderr dump a failure prints, and the comparisons the suites assert with.
-# Every suite under tests/ sources it, directly or through lib/md.sh or
-# lib/oversee-watch-harness.sh, and defines none of these names itself, so how
-# an assertion judges and what its failure prints are decided here once.
+# Suites source this library to share the comparisons and failure output.
 # assertions.test.sh is its suite, the one suite that judges without it.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
@@ -37,9 +35,9 @@ assertion_timing() { # RESULT NAME
 fixture_succession_handoff() { # STATE HANDOFF
   local state="$1" handoff="$2" generation
   [[ -f "$state" ]] || return 0
-  jq '.overseer.generation //= 1' "$state" > "$state.fixture" || return 1
+  jq '.controller.generation //= 1' "$state" > "$state.fixture" || return 1
   mv -- "$state.fixture" "$state" || return 1
-  generation="$(jq -er '.overseer.generation' "$state")" || return 1
+  generation="$(jq -er '.controller.generation' "$state")" || return 1
   mkdir -p -- "${handoff%/*}" || return 1
   printf 'Start here: 2026-10-01T00:00:00Z generation=%s\n' "$generation" > "$handoff"
 }

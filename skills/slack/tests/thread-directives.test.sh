@@ -47,7 +47,7 @@ TOP="$(sk_inject "$CH" U001 'A new topic.')"
 sk_event "$ROOT" "$CH" "$TOP"
 assert_eq "$(jq -r --arg d "$CH:$TOP" 'select(.delivery_id == $d) | has("thread_ts") or has("parent")' "$(sk_box "$ROOT")/to-lane.jsonl")" "false" "a top-level directive carries neither pointer field"
 
-sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text ask 'Proceed?')" --options yes,no --recommend no >/dev/null
+sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text ask 'Proceed?')" --options yes,no --recommend no --effect none >/dev/null
 sk_poll "$ROOT"
 ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Proceed?\")) | .ts")"
 ANSWER="$(sk_inject "$CH" U001 yes "$ASK_TS")"

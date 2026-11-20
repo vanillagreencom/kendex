@@ -36,14 +36,15 @@ if [[ "$1:$2" == users:list ]]; then
   read -r release < "$TRACKER_CASE/release"
 fi
 case "$TRACKER_ROW:$1:$2:${4:-}" in
-  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:issues:get:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
+  owner-read:users:list:*|workspace-read:teams:keys:*|assign:issues:update:--assignee|labels-read:graphql:--query:*|label:issues:update:--labels|comment:comments:create:*) exit 1 ;;
 esac
 case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
   users:list) printf '[{"id":"person","name":"Owner Person","email":"owner@example.test","display_name":"owner"}]\n' ;;
-  issues:get)
-    if [[ "$TRACKER_ROW" == prepare ]]; then printf '{"labels":"invalid"}\n'
-    else printf '{"labels":["skills"],"description":"Item body"}\n'; fi ;;
+  graphql:--query)
+    [[ "$3" == "query OwnerTracker("* ]] || exit 1
+    if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
+    printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;
   comments:create) printf '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}\n' ;;
   issues:update) printf '{}\n' ;;
   *) exit 1 ;;
@@ -68,7 +69,7 @@ def run(source, scratch, bash):
                 subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
             message = root / "question"
             message.write_text("Approve this change?\nMore detail.\n")
-            env = {"PATH": os.environ["PATH"], "HOME": str(root),
+            env = {"PATH": os.environ["PATH"], "HOME": str(root), "TMPDIR": str(root),
                    "ORCH_OWNER_EMAIL": "owner@example.test", "ORCH_OWNER_ASK_LABEL": "owner-gated",
                    "TRACKER_CASE": str(root), "TRACKER_ROW": row}
             clock = root / "clock"
@@ -93,7 +94,7 @@ else exec '{shutil.which("date")}' "$@"; fi
             release_fd = os.open(release, os.O_RDWR)
             writer = subprocess.Popen([*mail, "ask", "--item", "overseer", "--to", "owner",
                 "--issue", "KEN-7", "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
-                "--recommend", "approve", "--file", str(message)], cwd=root, env=env,
+                "--recommend", "approve", "--effect", "none", "--file", str(message)], cwd=root, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             def read(verb, *args):

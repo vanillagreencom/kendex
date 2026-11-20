@@ -1,22 +1,28 @@
 # Dev Return (Completion Artifact) Schema
 
-The on-disk record a dev or QA agent writes at the end of an implement or fix delegation. Orch accepts a completion from it **independently of the live return message**.
+Read when writing, checking or accepting a dev round's receipt. The agent of an implement or fix delegation writes the receipt at the end of its round. Orch accepts the round from this file and git, never from the agent's return message.
 
-Written **only** by `dev-return-write` — never hand-authored, never composed with a file-write tool. The writer builds the JSON with `jq` and writes it atomically; its `--help` is the flag reference. Validation gates live in `dev-artifact-check --help`; round-closure routing in [`../references/artifact-checks.md`](../references/artifact-checks.md).
-
-Every `implement` receipt carries the branch's additions plus deletions at its commit as `baseline_lines`, with binary rows and mandated render mirrors omitted and a floor of 1. The shared branch measurement pairs a render against the source it renders, so a source with a tracked render is counted once. The receipt value measures churn; it does not authorize a fix round. CI also reads this shared measurement to classify a change and choose its checks.
+`orch-runtime dev-return --text write` is the one writer. Never write or edit a receipt with a file tool. The writer builds the JSON, publishes it atomically, and refuses with one keyed line ([§ Writer refusals](#writer-refusals)). `orch-runtime dev-return --text check` judges a receipt. [artifact-checks.md § Receipt check answers](../references/artifact-checks.md#receipt-check-answers) lists its answers; the delegating workflow routes them.
 
 ## Identity: the round id
 
-Each delegation stamps a unique token (`workflow-state new-round-id [ISSUE] dev_round_id`) and embeds it in the delegation. The artifact is bound to that token twice: its filename is `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json`, and it carries `"round_id": ROUND_ID` inside. `dev-artifact-check --round-id RID` requires the internal token to match.
+Each delegation's `Round ID:` line carries the round token orch minted through `begin-round` (`dev_round_id`). The receipt's name and `round_id` bind it to that token. Its name binds it to the run it reports:
 
-An admitted recovery under dev-implement § 5 writes one fixed companion, `tmp/dev-return-[ISSUE_ID]-[ROUND_ID]-recovery.json`, through `dev-return-write --recovery`. It keeps the same round id and carries `recovery_of`, the original receipt's basename. The checker requires a valid failed original of the same issue, round, kind and branch. The writer preserves that original and refuses companion replacement. Round mode selects the companion when present and returns its `path`; an invalid companion refuses without fallback. Explicit file mode checks its named file. Acceptance and submit consume the selected path. Both results remain readable, including their native run records; a recovery can name the same implementation commit.
+- `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID]-[RUN_ID].json` where `--validate-run-dir` names a run. `[RUN_ID]` is the run directory's name without its `dev-validate-` prefix.
+- `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json` where no run directory is named.
 
-An interrupted foreground recovery without a completed validation record writes a terminal `FAILING` companion with `validate_mode` and `validate_time` null. Omit both evidence flags and explain the interruption in `validate_note`. Keep its unfinished record and log. The checker selects this failing result and refuses acceptance; no further execution follows.
+`dev-return --text check --round-id RID` requires the receipt's `round_id` to be `RID` and its `issue` to be the `--issue` key. Otherwise it answers `invalid`.
 
-Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` — the delegated item set the orchestrator persists at stamp time, checked against this artifact's `items[]` via `--expect-items-from-round`. Schema: [`dev-round.md`](dev-round.md).
+After a run that ended without a pass, the runtime admits the round's next attempt ([dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate)). That run writes its own receipt under its own run id, beside the first. The writer never replaces a failing receipt: at a path that holds one it refuses `receipt-exists`. A foreground attempt interrupted before its record completed writes a `FAILING` receipt under the no-run name. That receipt has `validate_mode` and `validate_time` null, names no evidence source, and names the interruption in `validate_note`.
 
-`[ISSUE_ID]` is the workflow-state key where one exists, whose forms `workflow-state --help` § Keys enumerates; a bundled delegation uses the Parent ID. An ad-hoc id is a `local-` key from `workflow-state new-local-key`, never an empty or free-form string. The command writes nothing, so ad-hoc work that runs no workflow-state step uses the key to name the artifact file alone. [`review.md` § 4](../workflows/review.md#4-present-and-fix) mints one for a review of a branch carrying no issue id and inits state under it. Both, and `[ROUND_ID]`, must match `^[A-Za-z0-9._-]+$` with no `..`.
+The check selects the receipt it judges:
+
+- **Round mode** (`--worktree`, `--issue`, `--round-id`). Where the round has an admitted `validate` stage, the check takes the receipt of the run the newest stage names. Otherwise it takes the round's one receipt under either name; two or more refuse `receipt-ambiguous`. The reply's `path` names the selected receipt, which acceptance and submit consume.
+- **File mode** (`--file`). The named file, an earlier attempt's receipt included.
+
+A fix round also has an input record bound by the same token, `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`. Orch stamps this delegated item set before delegating. `--expect-items-from-round` checks the receipt's `items[]` against it. Its schema is [dev-round.md](dev-round.md).
+
+`[ISSUE_ID]` is the workflow-state key where one exists ([workflow-state.md § Keys](workflow-state.md#keys)). A bundled delegation uses the parent's key. Ad-hoc work takes a `local-` key from `orch-runtime state new-local-key`, never an empty or free-form string. That command writes nothing, so work with no state step can still name its receipt. The key and `[ROUND_ID]` must match `^[A-Za-z0-9._-]+$` with no `..`.
 
 ## Schema
 
@@ -27,7 +33,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "kind": "implement",
   "issue": "PROJ-123",
   "branch": "user/proj-123",
-  "commit": "abc123f",
+  "commit": "abc123f0d4e5b6a7c8d9e0f1a2b3c4d5e6f7a8b9",
   "baseline_lines": 138,
   "validate": "FAILING: cargo test",
   "validate_mode": "full",
@@ -36,6 +42,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
   "qa_labels": ["needs-review"],
   "near_ceiling": ["byte-ceiling: near-ceiling=assets/demo.bin:189000:204800:92"],
   "near_ceiling_error": null,
+  "screenshots": ["/home/dev/wt/tmp/ui-shots/settings-after-dark.png"],
   "summary_posted": true,
   "summary": "### Proposed Rules\n- Rule the validation list is missing",
   "recovered_from": null,
@@ -46,57 +53,127 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 }
 ```
 
-| Field | Required | Writer flag | Description |
-|-------|----------|-------------|-------------|
-| `schema_version` | Yes | (constant `1`) | Artifact schema version (number) |
-| `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the expected `dev_round_id` |
-| `kind` | Yes | `--kind` | `implement` or `fix` |
-| `issue` | Yes | `--issue` | Normalized workflow-state key (Parent ID when bundled) |
-| `branch` | Yes | `--branch` | Git branch (non-empty string) |
-| `commit` | Yes | `--commit` | HEAD SHA after the commit, or the prior HEAD when no commit was needed |
-| `baseline_lines` | implement | measured by writer | Additions plus deletions against the base branch at `commit`, omitting binary rows and render mirrors whose source changed in the same diff, floored at 1. **Absent for `fix`** |
-| `validate` | Yes | `--validate` | `pass`, `no-verdict` or `FAILING: check1,check2` — a closed enumeration. With `--validate-run-dir`, `pass` needs a local run that passed or a `ci` record whose verdict is `pending`; with `ci`, it accepts the local edits and leaves required CI pending: the merge-group run proves the head where the record carries `ci-event=merge_group`, as every queue-only change's does, and a red one returns the change to its lane under [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) Recovery cycle. `no-verdict` needs a run that ended with that result (`--record` reads `verdict=no-verdict`); `--validate-record` follows the [foreground record rule](#foreground-validation-record); `FAILING` is accepted beside a run of any verdict, because it judges every gate of the round; a `fix` receipt's run must still belong to its round (see `validate_mode`). `dev-artifact-check` accepts `pass` and `no-verdict` and retries `FAILING` |
-| `validate_mode` | Yes | read from `--validate-run-dir` or `--validate-record` | The mode `dev-validate-run --record` reports for the run directory, or the `full` or `range` a [foreground validation record](#foreground-validation-record) states: `full`, the full invocation, which may execute scoped suites, `range`, a fix round's changes since its base, or `ci`, completed local edits with required CI pending. Where the project sets `DEV_VALIDATE_SELECTION_CMD`, a `ci` run first runs that selector's scoped suites, so a `ci` record can also carry `FAILING` or `no-verdict`. Implement and fix receipts accept `ci` only at the current HEAD. The runner's `head` is the HEAD at validation start, before the workflow commits. The runner's existing snapshot tree binds those pending contents to this receipt's committed `commit`; the writer refuses changed contents as `ci-contents-mismatch`. This receipt is no CI pass. Submit checks required pull-request CI. Its existing queue route proves required merge-group CI for queue-only work. `null` only beside a failing `validate` without completed evidence, which omits both flags; a `pass` or `no-verdict` without the flag is refused. `dev-artifact-check` echoes it and refuses a missing key or any other value. A `fix` receipt names only a run or record that started at a HEAD containing its round record's `base_sha`, recording that base as `validate-base-orphaned`, or containing that base's rewritten SHA in the worktree-private `kendex-rebase-map` (ordered hops per [`workflow-state.md`](workflow-state.md), `rebase_map` row), no earlier than its `delegated_at`, and records the mode its round runs, `range`, or `full` where the project sets no `DEV_VALIDATE_RANGE_CMD`, or `ci`: the writer refuses an earlier round's run as `run-off-round` or `run-before-round`, and `dev-artifact-check` refuses any other mode as `mode_mismatch`. Submit accepts a current-head `ci` receipt as pending, and in a project that forbids `dev-validate-run` reuses a current-head `full` pass from a foreground validation record; `dev-validate-run --require-proof` decides whether any other pass proves the commit, per [`submit-pr.md`](../workflows/submit-pr.md) § 1.1 |
-| `validate_time` | Yes | read from `--validate-run-dir` or `--validate-record` | The run's wall time as `dev-validate-run --record` reports it, or as the writer derives it from a record's two times: `started_at` and `ended_at` in UTC, and `seconds` between them. A `no-verdict` run carries one too, since a host or timeout result also ends the run. `null` where no run is named or the run is unfinished, so only beside a failing `validate`; a time beside a `null` `validate_mode` is refused. `dev-artifact-check` echoes it and refuses a missing key, a wrong type or seconds that are not the span; `dev-artifact-check` records it per round |
-| `validate_lanes` | Optional | read from `--validate-run-dir` or `--validate-record` | Comma-separated lane names from the command's [output contract](../references/artifact-checks.md#validation-command-output). Absent when unreported, when the selection is the start's preview (the output contract's Missing or malformed last line row), or when no run is named. `dev-artifact-check` echoes it for round storage |
-| `validate_selection` | Optional | read from `--validate-run-dir` or `--validate-record` | `all`, `subset`, `battery` or `unreported` from `--record` or the record. Absent when no run is named. Does not change `validate_mode` or the verdict |
-| `validate_class_base` | Optional | read from `--validate-run-dir` | The commit `--record` reports as `class-base`: a `range` request's base, whichever mode ran, or the branch merge base for scoped full execution. A scoped `ci` run carries it too: the round base, or the branch merge base for a full request or an orphaned base. A full run with this field covers the whole branch's battery only where its `validate_selection` is `battery`; the runner's `--require-proof local-pass` filter and start reuse decide whether submit reuses it. Absent for whole-branch validation and for a `ci` run that ran no command. `dev-artifact-check` echoes it, `null` when absent |
-| `validate_note` | Optional | `--validate-note` | A free-text qualifier the enumeration cannot express, or `null`. Required beside `no-verdict`, where it names the host cause or timeout; `dev-artifact-check` refuses a `no-verdict` without it |
-| `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none |
-| `near_ceiling` | Optional | `--near-ceiling-base` | One `byte-ceiling` `near-ceiling` line per binary blob within reach of the byte ceiling, as the lane reports the branch AT ARTIFACT TIME; `[]` when none. The writer runs the worktree's installed lane with `--base REF` and keeps its near-ceiling lines on exit 0 or 1; a repository with nothing at the lane path has no byte ceiling and records `[]`. An omitted `--near-ceiling-base`, a dangling link at or above the lane, a lane that is not executable, or a lane that exits otherwise records `null`, which means unknown, never none. A binary blob that first enters the warn band in work landed afterwards, including one the pre-push lane names on a rebased or squashed state, is not in the list, so the list is not a completeness claim about the branch as pushed. `dev-artifact-check` echoes it, and the orchestrator stores it as workflow state's `near_ceiling` so the next round's brief plans Git LFS, an asset store or generation before a later commit meets the ceiling |
-| `near_ceiling_error` | Optional | set by the writer | Why `near_ceiling` is `null`: `byte-ceiling exit N:` and the lane's first stderr line, `byte-ceiling not executable:` and the lane path, `byte-ceiling broken link:` and the dangling link above the lane, or `byte-ceiling not probed: no --near-ceiling-base`; `null` otherwise. `dev-artifact-check` echoes it, and `dev-start.md` § Store Near-Ceiling Lines names it in the round's report |
-| `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the summary was posted to a tracker; GitHub and ad-hoc rounds set `false`, and so does a recovered artifact, since recovery never verifies a post |
-| `summary` | Optional | `--summary`, `--summary-file` or `--recovered-text` | The summary content, or `null`. Every single implement round embeds it, including a Linear round that also sets `summary_posted: true`, so a consumer can read its `### Proposed Rules` |
-| `recovered_from` | Optional | `--recovered-text` sets `"transcript"` | `"transcript"` when `round-recover` wrote the artifact from a stalled agent's transcript, with that report as `summary`; otherwise `null` |
-| `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement |
-| `items` | Conditional | `--item N DECISION REASONING` | Per kind rules below |
+## Fields
 
-`items[]` elements are `{n: number, decision: "Applied"|"Skipped"|"Blocked", reasoning: string}`, with `n` the review item's `#N` or the sub-issue index and `reasoning` non-empty — citing the decision id or rule when `Skipped`.
+| Field | Required | Writer flag | Meaning |
+|-------|----------|-------------|---------|
+| `schema_version` | Yes | (constant `1`) | Receipt schema version, a number. |
+| `round_id` | Yes | `--round-id` | The round's token. It equals the name's token and the expected `dev_round_id`. |
+| `kind` | Yes | `--kind` | `implement` or `fix`. |
+| `issue` | Yes | `--issue` | The normalized workflow-state key; the parent's when bundled. |
+| `branch` | Yes | `--branch` | The git branch, a non-empty string. |
+| `commit` | Yes | `--commit` | The full 40-hex name of the commit `--commit` names: HEAD after the round's commit, or the prior HEAD where the round needed no commit. A `not-run` receipt records the HEAD the round was delegated at. The writer resolves the text in the worktree and refuses one that names no commit as `commit-unresolvable`. |
+| `baseline_lines` | `implement` | measured by the writer | The branch's churn at `commit`, as change-scope's `branch_baseline_lines` measures it (`skills/change-scope/scripts/lib/branch-growth.sh`), floored at 1. It authorizes no fix round. Absent on a `fix` receipt. |
+| `validate` | Yes | `--validate` | `pass`, `no-verdict`, `not-run`, `handed-over` or `FAILING: check1,check2`, a closed set. § [`validate` and its note](#validate-and-its-note) gives each word's evidence rule. |
+| `validate_mode` | Yes | read from `--validate-run-dir` or `--validate-record` | The mode of the named run. `full` is the whole battery, which may run scoped suites. `range` is a fix round's changes since its base. `docs` is a docs-only snapshot's declared text checks. `ci` is completed local edits with required CI pending. A run directory reports the mode through `orch-runtime validate entry --record`; a [foreground validation record](#foreground-validation-record) states `full` or `range`. `null` only beside a `FAILING`, `not-run` or `handed-over` receipt that names no run. |
+| `validate_time` | Yes | read from `--validate-run-dir` or `--validate-record` | The run's wall time: `started_at` and `ended_at` in UTC, and `seconds` between them. A `no-verdict` run carries one too. `null` where no run is named or the run left no timing, so only beside a `FAILING`, `not-run` or `handed-over` receipt. The check answers `invalid` for a time beside a `null` mode, a wrong type, or seconds that are not the span. |
+| `validate_lanes` | Optional | read from the run | Comma-separated lane names from the command's [output contract](../references/artifact-checks.md#validation-command-output). Absent where unreported, where the selection is the start's preview, or where no run is named. |
+| `validate_selection` | Optional | read from the run | `all`, `subset`, `battery` or `unreported`. Absent where no run is named. It changes neither `validate_mode` nor the verdict. |
+| `validate_class_base` | Optional | read from `--validate-run-dir` | The run record's `class-base`: the base a scoped run judged its class from. That is the request's base, or the branch merge base where the request names none. The runtime's proof reader (`orch-runtime read-proof`) decides whether submit reuses the run. Absent for whole-branch validation and for a `ci` run that ran no command. |
+| `validate_tree` | `FAILING` `fix` receipt with a run | read from the run | The tree the run validated, which may hold staged work `commit` does not ([§ Fix-round run binding](#fix-round-run-binding)). Absent on every other receipt. |
+| `validate_note` | Optional | `--validate-note` | A qualifier the closed set cannot express, or `null`. Required beside `no-verdict`, where it names the host cause or the stop that ended the run. |
+| `qa_labels` | Optional | `--qa-label`, repeatable | The applied QA labels; `[]` where none. |
+| `near_ceiling` | Optional | `--near-ceiling-base` | One `byte-ceiling: near-ceiling=` line per binary blob within reach of the byte ceiling. The writer runs the worktree's installed `.agents/skills/commit-guards/scripts/byte-ceiling --base REF` and keeps those lines on exit 0 or 1. A repository with nothing at the lane path has no byte ceiling and records `[]`. Every other outcome records `null`, which means unknown, never none. The list describes the branch at receipt time; a blob that enters the warn band later is not in it. Orch stores the list as workflow state's `near_ceiling` for the next round's brief. |
+| `near_ceiling_error` | Optional | set by the writer | Why `near_ceiling` is `null`, in the writer's words. `null` otherwise. |
+| `screenshots` | Optional | `--screenshot`, repeatable | The round's captures as absolute paths. The writer refuses a path that is not a readable file as `screenshot-unreadable`. Absent where none is named. The acceptance's `accept-result` attaches each to the item's summary comment. |
+| `summary_posted` | Optional | `--no-summary` sets `false` | `true` unless the writer got `--no-summary`: a GitHub or ad-hoc round, or a receipt `round --text recover` wrote. The runtime reads no decision from it. |
+| `summary` | Optional | `--summary`, `--summary-file` or `--recovered-text` | The round's summary, or `null`. Every single implement round embeds it, so a consumer can read its `### Proposed Rules`. |
+| `recovered_from` | Optional | `--recovered-text` sets `"transcript"` | `"transcript"` where `orch-runtime round --text recover` wrote the receipt from a stalled agent's transcript, with that report as `summary`. `null` otherwise. |
+| `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement round. |
+| `items` | Conditional | `--item N DECISION REASONING`, repeatable | Per [§ Kind rules](#kind-rules). |
+| `no_change` | `not-run` | `--no-change` | The item's sentence that permits ending the round with no change, as the worker quoted it ([§ No-change receipt](#no-change-receipt)). Absent on every other receipt. |
+| `exception` | Beside a cited exception | `--exception-file` | The exception `{by, id, excused}` the round began with, cited beside a `FAILING` run ([§ Exception](#exception)). Absent otherwise. |
+
+The check echoes the `validate` and `validate_*` fields, `near_ceiling`, `near_ceiling_error`, `screenshots` (`[]` where absent), `no_change` and `exception`, each `null` where the receipt lacks it.
 
 ## Kind rules
 
+Each `items[]` element is `{n: number, decision: "Applied"|"Skipped"|"Blocked", reasoning: string}`. `n` is the review item's `#N` or the sub-issue index, each number once. `reasoning` is non-empty; a `Skipped` one cites the decision id or rule.
+
 | Case | `items` |
 |------|---------|
-| `implement`, single | May be empty → `items: []` |
-| `implement`, `--bundled` | Non-empty — one entry per sub-issue result |
-| `fix` | Non-empty — one entry per delegated review item, and `--expect-items`/`--expect-items-from-round` requires the set to match EXACTLY |
+| `implement`, single | May be empty: `items: []` |
+| `implement`, `--bundled` | Non-empty, one entry per sub-issue result |
+| `fix` | Non-empty, one entry per delegated review item; `--expect-items-from-round` requires the set to match the round record exactly |
 
 ## `validate` and its note
 
-`validate` is a closed enumeration. `--validate-note` records what the enumeration cannot express. The dev skill's `dev-implement.md` § 5 owns the permitted correction and rerun routes and the notes they require. The note never relaxes `--validate`, which records the final run's verdict:
+`validate` records the final run's verdict. The note never relaxes it. [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate) owns the permitted correction and rerun routes and the notes they require:
 
 ```bash
 --validate "FAILING: cargo test" --validate-note "Test-only validation ceiling: the suite failed at 34m; the failed target passed alone under load"
 ```
 
-`no-verdict` reports a timeout or an unavailable host check: neither a pass nor a failure. The validation command reserves exit 3 for the host result, as `dev-validate-run --help` specifies. The round takes the route [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate) names, and `validate_note` names the cause. Only a `no-verdict` whose `validate_mode` is `ci` leaves its proof to required CI; any other is unproved.
+| Word | Evidence the writer needs |
+|------|---------------------------|
+| `pass` | Exactly one of `--validate-run-dir` and `--validate-record`, whose verdict is `pass`, or a `ci` run whose verdict is `pending`. A `ci` pass's run snapshot must be the commit's tree, or the writer refuses `ci-contents-mismatch`. Required CI then proves the head; the merge-group run does so where the run record carries `ci-event=merge_group`. |
+| `no-verdict` | One evidence source whose run ended `no-verdict`, and a `--validate-note` naming the host cause or the stop that ended it. It is neither a pass nor a failure ([artifact-checks.md § Validation command output](../references/artifact-checks.md#validation-command-output)). Only a `no-verdict` in the `ci` mode leaves its proof to required CI; any other is unproved. |
+| `FAILING: …` | Any run verdict, or no evidence source. The names are the failing checks, comma-separated. |
+| `not-run` | No evidence source; [§ No-change receipt](#no-change-receipt). |
+| `handed-over` | No evidence source; [§ Hand-over receipt](#hand-over-receipt). |
 
-The Apple gate reads `ORCH_APPLE_WORKFLOW` and the space-separated `ORCH_APPLE_LABELS` through `orch-env` for the `--worktree` repository. `dev-return-write --help` lists their defaults. Where the base branch holds that configured workflow, a `pass` or `no-verdict` declares the item's labels, the delegation's `Labels:` entries or none, and the writer refuses it undeclared as `labels-undeclared`. An item the Apple gate names records its passing `mac run test` as one `validate_note` line, `mac run test: pass run=RUN_ID`, beside any other note text. The writer refuses that item's `pass` or `no-verdict` without the line, as `mac-run-missing`. A failed or absent run is `FAILING: mac run test`, which needs no line. The labels are never recorded, so every other receipt is unchanged.
+The writer refuses a `--validate` that differs from the named run's verdict as `validate-disagrees`, a `FAILING` one aside. It refuses an empty or whitespace-only note or summary as `empty-text`.
 
-`dev-artifact-check` echoes both. An empty or whitespace-only note is rejected.
+### Fix-round run binding
+
+A `fix` receipt that names a run must bind it to its round record ([dev-round.md](dev-round.md)), or the writer refuses `run-off-round`:
+
+- A `pass` or `no-verdict` run validated the receipt's committed tree. A `FAILING` run binds over the tree it ran, staged work included, and the receipt stores that tree as `validate_tree`.
+- The run's HEAD contains the record's `base_sha`; or the base's tree is the run's tree; or the run's start record names that base as its `validate-base`; or the run's HEAD contains the base's rewritten commit in the worktree-private `kendex-rebase-map` (ordered hops per [workflow-state.md](workflow-state.md), `rebase_map` row). Where no map file stands, the rewritten commit is the first one the item record's `rebase_map` maps the base to, hop by hop, that the worktree's HEAD contains.
+- A run directory whose start record names no tree, and a foreground record, prove their recorded HEAD's tree only while that HEAD is the worktree's HEAD and `git status --porcelain --untracked-files=all` prints nothing.
+- A `pass` also needs the round's proof: the runtime's proof reader, as `read-proof --need round` reads it, answers the tree `complete` or `pending`. A `no-verdict` needs the run itself to have ended `no-verdict`.
+
+The check then holds the receipt's mode to the round. A run the runtime started carries its mode on the round's admitted `validate` entry (`proof`); a receipt recording another mode answers `mode_mismatch`. A receipt whose run has no admitted entry, an ad-hoc run or a foreground record, may record any mode but `ci`. It may record `ci` only on a round whose record carries `pr_open: true` or whose `pr-order` resolves `push-first`. Submit's reuse of a pass is its own: [submit-pr.md](../workflows/submit-pr.md) § 1.1.
+
+### Apple gate
+
+The gate reads `ORCH_APPLE_WORKFLOW` and the space-separated `ORCH_APPLE_LABELS` ([settings.md § Validation](../references/settings.md#validation)) from the project settings. It judges every receipt but a `FAILING` or `not-run` one, and only where the base branch holds the configured workflow:
+
+- The receipt declares the item's labels: one `--label` per entry of the brief's `Labels:` line, or `--no-labels`. The writer refuses an undeclared receipt as `labels-undeclared`.
+- The item touches Apple work where a label is one of `ORCH_APPLE_LABELS`, or a changed path sits under `ios`, `macos`, a `.xcodeproj` or a `.xcworkspace`. A changed `Package.swift` that names `.iOS` or `.macOS` counts, as does a changed path with a part an Xcode project's file references name, at the merge base or at the commit. An unreadable project file counts as Apple work.
+- Such an item records its passing run as one `validate_note` line, `mac run test: pass run=RUN_ID`, beside any other note text. Without the line the writer refuses `mac-run-missing`. A failed or absent run is `FAILING: mac run test`, which needs no line.
+
+The receipt does not record the labels.
+
+## No-change receipt
+
+A round whose item permits ending it with no change, and whose comparison finds none needed, writes `--validate not-run --no-change TEXT`. `TEXT` is the item's sentence that permits it, quoted from the item's description. The writer admits the receipt only where each of these holds:
+
+- The round is a single `implement` round, with no `--bundled` and no `--item`.
+- The key is a Linear identifier or a GitHub issue's `issue-N`. Any other key, such as a `local-` or a `directive-` key, refuses `no-change-unverifiable`. An `issue-N` key's repository is the worktree's own; a worktree that names none refuses `repo-unresolved`.
+- `--commit`, the worktree's HEAD and the item's recorded `pre_delegate_sha` are one commit, and `git status --porcelain` prints nothing.
+- No `--validate-run-dir` or `--validate-record` is named, and a summary is. The summary is the comparison, which the acceptance posts as the item's Completion Summary.
+- The item's live description holds `TEXT`, with runs of whitespace folded. The writer reads a Linear item through the tracker CLI's `issues get ID --format=safe`, and a GitHub issue through `gh issue view N --repo R --json body,labels`. A failed read refuses `item-unread`, never `no-change-unpermitted`.
+
+The writer proves only that the sentence is the item's. The acceptance in [dev-start.md § 3](../workflows/dev-start.md#3-accept-the-round) judges whether it permits the end. The check answers `no-change` for a valid receipt. It answers `retry` with reason `head_moved` where the receipt's `commit` is no longer the worktree's HEAD.
+
+## Hand-over receipt
+
+In a grouped round, each group but the last commits its work and writes `--validate handed-over`. The next group takes the work and validates. The writer admits the receipt only where each of these holds:
+
+- The receipt is a `fix` receipt, a `--bundled` one, or one that names `--item`s; otherwise `handover-kind`.
+- The round's stage records a `group` that is not the last, as `begin-round` recorded it; otherwise `handover-final`, with the group or `group=unrecorded`.
+- The commit differs from its base and descends from it; otherwise `handover-unmoved`. A fix hand-over's base is the stamped round's `base_sha`. An implementation hand-over's base is the item's recorded `pre_delegate_sha`.
+- No evidence source is named.
+
+The check answers `hand-over` for a valid receipt. The runtime does not judge the worktree's cleanliness on a hand-over; the acceptance's Check B does.
+
+## Exception
+
+A round may begin with an exception: `{"by": "overseer"|"owner-directive", "id": ID, "excused": [CHECK, …]}`. It lists the known failing checks the delegating side grants, each named as a `FAILING:` list names it. A worker never grants one. Beside a `FAILING` run, `--exception-file FILE` cites the exception the round began with, and the receipt keeps its `FAILING` line:
+
+- The receipt's `validate` must be `FAILING: …` and name a run or a record; otherwise `exception-run`.
+- FILE must hold an exception with a non-empty `id` and at least one check, each name trimmed and holding no comma; otherwise `exception-invalid`.
+- FILE must equal the exception the round's stage recorded; otherwise `exception-unbegun`.
+
+The check answers `accept-excused` where the exception excuses every failing check. It answers `exception_unbegun` where the cited exception is not the round's.
 
 ## Foreground validation record
 
-A project whose own policy runs its validation entry point in the foreground and forbids `dev-validate-run` names that run with `--validate-record FILE` in place of `--validate-run-dir`; the writer refuses the two together. FILE holds one `KEY=VALUE` per line: the mode, the HEAD the run started at, its UTC start and end, its exit status, and its lane selection with any lanes. `dev-return-write --help` gives the grammar, and the writer refuses a record that names no head, no time or no exit status.
+Some projects run their validation entry point in the foreground by their own policy and forbid orch's validation runner. Such a project names its run with `--validate-record FILE` in place of `--validate-run-dir`; the writer takes only one of the two. FILE holds one `KEY=VALUE` per line in the grammar `orch-runtime dev-return --text write --help` prints, `head=` being the HEAD the run started at.
 
-The writer reads the record into the fields a run directory fills, so the receipt has the same shape on either route. It derives the wall time from the two times and reads the verdict through the runner's marker rule. An optional `verdict=no-verdict` carries that outcome with the same note and evidence requirements. Without the marker, exit 0 is `pass` and any other exit is `FAILING`. A `fix` receipt binds the record's head and start time to its round as it binds a run directory's. The record file stays where the project wrote it; the receipt does not copy its head or exit status.
+The writer reads the record into the fields a run directory fills, so the receipt has the same shape on either route. It derives the wall time from the two times. With the `verdict=no-verdict` marker the verdict is `no-verdict`. Otherwise exit 0 is `pass` and any other exit is a failure. A `fix` receipt binds the record to its round as it binds a run directory ([§ Fix-round run binding](#fix-round-run-binding)). The record file stays where the project wrote it; the receipt does not copy its head or exit status.
+
+## Writer refusals
+
+`orch-runtime dev-return --text write` writes nothing on a refusal. It exits 2 with one `dev-return: KEY CAUSE` line on stderr, which names the key and its cause. Without `--text` the reply is `ok: false` with the key, exit 1. The sections above name the keys a writer must avoid.

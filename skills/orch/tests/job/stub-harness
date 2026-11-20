@@ -1,0 +1,525 @@
+#!/bin/bash
+# The stub harness the one-job suite launches in place of a model. Its `#!`
+# line names bash directly rather than `env`, so the kernel records this
+# script's own name, the basename of the program AGENT_RUNTIME_HARNESS_BINARIES
+# configures, for the pane's foreground process; the runtime's judge reads
+# the pane idle only when that process is the harness's. It
+# ignores every launch flag, draws Claude Code's composer marker, then
+# executes the lane's workflow commands deterministically:
+# skills/orch/workflows/start-worktree.md § 1 and its section 2.1,
+# skills/orch/workflows/dev-start.md § 2 and its section 3 with the dev
+# result written in place of the dev agent
+# (skills/dev/workflows/dev-implement.md § 5 and its sections 7 and 10),
+# skills/orch/workflows/small.md § 2 and its section 3 with
+# skills/orch/workflows/review-pr.md § 1 through its section 3.3 and the
+# review JSON written in place of the reviewer,
+# skills/orch/workflows/submit-pr.md § 2.1 with its verification of the
+# published head and skills/orch/workflows/start-worktree.md § 5.4; or
+# skills/orch/workflows/micro.md § 1 through its section 3 for a micro item.
+# Every step runs the real script; nothing here fakes a script's output. The
+# runtime operations run through scripts/orch-runtime: state init,
+# begin-round, record-validation-admission, reconcile-round, accept-result,
+# verify-head, record-handoff and resume-handoff. Each reply the suite
+# asserts on is written whole under <worktree>/tmp.
+#
+# The opening instruction, the last word of argv, is the brief the suite
+# wrote: one key=value line per fact the lane needs (item, tier, tracker,
+# repo, number, worktree, main, scenario, after). `scenario` names the
+# interruption the row drives: `plain` runs the job through; `handoff`
+# records a context handoff with its validation run going and ends the
+# session, and the relaunched session finds the record standing and
+# resumes it: that run holds on the suite's barrier, so it ends after the
+# session did and the continuation reads a run that ended while the lane
+# was away; `killed` holds the admitted validation run for
+# the suite to kill the lane under, and `retry` is the relaunched session
+# that reconciles the round and runs the admitted retry. `after` says what
+# the lane does once its job is done: `idle` on stdin until the window
+# closes, as a harness waits at its composer, or `exit`, a session that
+# ended.
+#
+# Progress goes to <worktree>/tmp/lane-status, one `step=<name>` line per
+# step and a final `lane-done`, `lane-handoff` or `lane-failed step=<name>`;
+# command output goes to <worktree>/tmp/lane.log.
+
+printf '\xe2\x9d\xaf\xc2\xa0\n'
+printf '  ? for shortcuts\n'
+
+brief="${!#}"
+ITEM="" TIER="" TRACKER="" GH_REPO_SLUG="" NUMBER="" WT="" MAIN="" SCENARIO=plain AFTER=idle
+while IFS='=' read -r key value; do
+  case "$key" in
+    item) ITEM="$value" ;;
+    tier) TIER="$value" ;;
+    tracker) TRACKER="$value" ;;
+    repo) GH_REPO_SLUG="$value" ;;
+    number) NUMBER="$value" ;;
+    worktree) WT="$value" ;;
+    main) MAIN="$value" ;;
+    scenario) SCENARIO="$value" ;;
+    after) AFTER="$value" ;;
+  esac
+done <<EOF
+$brief
+EOF
+
+idle() {
+  while IFS= read -r _line; do :; done
+  exit 0
+}
+[ -n "$WT" ] && [ -d "$WT" ] || { printf 'stub-harness: brief-worktree-missing\n' >&2; idle; }
+mkdir -p "$WT/tmp"
+STATUS="$WT/tmp/lane-status"
+LOG="$WT/tmp/lane.log"
+: > "$STATUS"
+exec >>"$LOG" 2>&1
+
+step() { printf 'step=%s\n' "$1" >> "$STATUS"; printf '\n== %s\n' "$1"; }
+fail() {
+  printf 'lane-failed step=%s\n' "$1" >> "$STATUS"
+  printf 'lane-failed step=%s\n' "$1"
+  idle
+}
+# The runtime's reply to a transition: `ok` must be true, and the report is
+# printed. A read-then-record op (verify-head) answers its whole result
+# instead; its caller reads the reply itself.
+op() { # TARGET REQUEST_JSON
+  local reply
+  reply="$(op_reply "$1" "$2")" || return 1
+  jq -c '.result.report' <<<"$reply"
+}
+# The value the item's record holds at POINTER as `jq -r` prints it, nothing
+# where it holds none.
+value() { # POINTER
+  local reply
+  reply="$("$ORCH/orch-runtime" state get --item "$ITEM" "$1")" || return 1
+  jq -r '.result.value // empty' <<<"$reply"
+}
+op_reply() { # TARGET REQUEST_JSON — the whole reply, ok or not
+  local request reply
+  request="$WT/tmp/op-request.json"
+  printf '%s\n' "$2" > "$request"
+  reply="$("$ORCH/orch-runtime" op "$1" "$ITEM" --request "$request")" || return 1
+  jq -e '.ok == true' <<<"$reply" >/dev/null || return 1
+  printf '%s\n' "$reply"
+}
+# The detached validation job writes the sentinel the wait loop reads, then
+# closes its stage and sends the end notice; await that close so the round
+# the accept reconciles is settled.
+await_validate_close() { # RUN_DIR
+  local tries=0 stages end
+  while :; do
+    stages="$("$ORCH/orch-runtime" state get --item "$ITEM" /stages)" || return 1
+    end="$(jq -r --arg d "$1" '([.result.value[] | select(.kind == "validate" and .run_dir == $d)] | .[0].end) // empty' <<<"$stages")" || return 1
+    [ -z "$end" ] || return 0
+    tries=$((tries + 1))
+    [ "$tries" -lt 1200 ] || return 1
+    sleep 0.05
+  done
+}
+
+printf 'lane-env: PATH=%s gh=%s\n' "$PATH" "$(command -v gh || echo none)"
+cd "$WT" || fail cd
+ORCH=.agents/skills/orch/scripts
+WORKTREE=.agents/skills/worktree/scripts
+MAILBOX=.agents/skills/mailbox/scripts
+BRANCH="$(git branch --show-current)" || fail branch
+
+# --- skills/orch/workflows/start-worktree.md § 1 / skills/orch/workflows/micro.md § 1: open the session ---
+step identity
+if [ "$TRACKER" = github ]; then
+  id="$("$ORCH/git-context" issue-from-branch .)" || fail issue-from-branch
+  [ "$id" = "$ITEM" ] || fail issue-from-branch-value
+fi
+# skills/orch/workflows/start.md § 0: a standing handoff is the one way a
+# session is a continuation of an earlier one; the suite's handoff row is
+# the only row that leaves one.
+standing="$("$ORCH/orch-runtime" state handoff-standing --item "$ITEM")" || fail handoff-standing
+case "$(jq -r '.result.standing' <<<"$standing")" in
+  none) RESUMING=false ;;
+  stands) RESUMING=true ;;
+  *) fail handoff-standing-value ;;
+esac
+[ "$RESUMING" = false ] || [ "$SCENARIO" = handoff ] || fail handoff-unexpected
+step claim
+"$WORKTREE/worktree-session-guard" claim "$WT" --owner "$ITEM" --adopt || fail claim
+step init
+exists="$("$ORCH/orch-runtime" state exists --item "$ITEM")" || fail exists
+if [ "$(jq -r '.result.exists' <<<"$exists")" = true ]; then
+  # The existing-state branch of skills/orch/workflows/start-worktree.md § 1
+  # step 6: a relaunched session keeps the record the earlier one wrote.
+  [ "$RESUMING" = true ] || [ "$SCENARIO" = retry ] || fail state-exists
+else
+  "$ORCH/orch-runtime" state init --item "$ITEM" --worktree "$WT" --branch "$BRANCH" || fail init
+fi
+if [ "$TIER" = micro ]; then
+  "$ORCH/orch-runtime" state set --item "$ITEM" /tier micro || fail tier
+else
+  "$ORCH/orch-runtime" state set --item "$ITEM" /tier standard || fail tier-standard
+  "$ORCH/orch-runtime" state set --item "$ITEM" /tier "$TIER" || fail tier
+fi
+step base-freshness
+"$ORCH/base-freshness" "$WT" || fail base-freshness
+
+if [ "$TIER" = micro ]; then
+  # --- skills/orch/workflows/micro.md § 2: the commit chain, the edit, the commit by name ---
+  step hooks-armed
+  hooks="$(git rev-parse --git-path hooks)" || fail hooks-path
+  [ -x "$hooks/pre-commit" ] || fail hooks-unarmed
+  step edit
+  sed 's/hello\\n/hello, world\\n/' lib.sh > lib.sh.new && mv -- lib.sh.new lib.sh || fail edit
+  sed 's/= hello \]/= "hello, world" ]/' tests/greet.test.sh > tests/greet.test.sh.new \
+    && mv -- tests/greet.test.sh.new tests/greet.test.sh || fail edit-test
+  porcelain="$(git status --porcelain)" || fail porcelain
+  [ -n "$porcelain" ] || fail edit-empty
+  git add lib.sh tests/greet.test.sh || fail add
+  git commit -qm "fix($ITEM): greet the world" || fail commit
+else
+  # --- skills/orch/workflows/start-worktree.md § 2.1: publication order ---
+  step pr-order
+  order="$("$ORCH/orch-runtime" pr order "$WT")" || fail pr-order
+  [ "$order" = "pr-order=review-first" ] || fail pr-order-value
+  "$ORCH/orch-runtime" state set --item "$ITEM" /pr_order review-first || fail pr-order-set
+
+  if [ "$RESUMING" = true ]; then
+    # --- skills/orch/workflows/start.md § 0: the continuation stamps the handoff resumed ---
+    # The record names the round and the admitted run the earlier session
+    # left open; the continuation takes them up instead of starting new ones.
+    step resume
+    resumed="$(op --item '{"op": "resume-handoff"}')" || fail resume-handoff
+    printf '%s\n' "$resumed" > tmp/resume-report.json
+    RID="$(jq -er '.round_id' <<<"$resumed")" || fail resume-round
+    # The run the predecessor's job closed while the lane was away, the
+    # newest first: the continuation reuses its recorded outcome rather
+    # than starting a new one, then commits and writes the receipt the
+    # earlier session did not reach.
+    RUN_DIR="$(jq -er '.open_runs[0].run_dir' <<<"$resumed")" || fail resume-run
+    [ "$(jq -r '.open_runs[0].outcome' <<<"$resumed")" = pass ] || fail resume-verdict
+  elif [ "$SCENARIO" = retry ]; then
+    # --- skills/orch/workflows/dev-start.md § 3: a stalled round's admitted runs are reconciled first ---
+    # The earlier session died with its run admitted and held; the runtime
+    # closes that stage with the word the run supports before the retry is
+    # admitted as the round's next attempt (skills/dev/workflows/dev-implement.md § 5).
+    step retry
+    RID="$(value /dev_round_id)" || fail round-read
+    [ -n "$RID" ] || fail round-missing
+    reconciled="$(op --item "$(jq -cn --arg r "$RID" '{op: "reconcile-round", round_id: $r}')")" || fail reconcile-retry
+    printf '%s\n' "$reconciled" > tmp/reconcile-retry.json
+    step admission
+    admitted="$(op --item "$(jq -cn --arg r "$RID" '{op: "record-validation-admission", round_id: $r, attempt: "next"}')")" \
+      || fail admission
+    printf '%s\n' "$admitted" > tmp/admission-retry.json
+    RUN_ID="$(jq -er '.run_id' <<<"$admitted")" || fail admission-id
+    RUN_DIR="$(jq -er '.run_dir' <<<"$admitted")" || fail admission-dir
+  else
+    # --- skills/orch/workflows/dev-start.md § 1 and its section 2: labels, stamps, delegation record ---
+    step dev-round
+    if [ "$TRACKER" = github ]; then
+      labels="$(gh issue view "$NUMBER" --repo "$GH_REPO_SLUG" --json labels --jq '.labels[].name')" || fail labels
+      [ -z "$labels" ] || fail labels-value
+    fi
+    "$ORCH/orch-runtime" state set-git-head --item "$ITEM" /pre_delegate_sha --worktree "$WT" || fail pre-delegate-sha
+    begun="$(op --item '{"op": "begin-round", "kind": "dev"}')" || fail begin-round
+    RID="$(jq -er '.round_id' <<<"$begun")" || fail begin-round-id
+    printf '%s\n' '{"op": "prune-round", "field": "dev"}' > "$WT/tmp/op-request.json"
+    pruned="$("$ORCH/orch-runtime" op --item "$ITEM" --request "$WT/tmp/op-request.json")" && jq -e '.ok == true' <<<"$pruned" >/dev/null \
+      || { printf 'round-prune action=%s\n' "$(jq -r '.result.action // empty' <<<"$pruned" 2>/dev/null)" >&2; fail round-prune; }
+    "$ORCH/orch-runtime" state set-now --item "$ITEM" /dev_delegated_at || fail dev-delegated-at
+    "$ORCH/orch-runtime" state get --item "$ITEM" /near_ceiling || fail near-ceiling-read
+    "$ORCH/orch-runtime" state set --item "$ITEM" /child_sessions/dev \
+      '{"status": "active", "agent_id": "stub-dev", "runtime_agent_type": "stub", "agent_type_fallback": null}' \
+      || fail child-session
+
+    # --- skills/dev/workflows/dev-implement.md § 5 and its sections 7 and 10: the dev result ---
+    # A small-class change: a second function past the micro production
+    # ceiling, so review-depth selects package review, and its test.
+    step dev-result
+    cat >> lib.sh <<'SH'
+
+# farewell NAME prints the parting line for NAME, formal for a title.
+farewell() {
+  local name="$1" line
+  case "$name" in
+    "")
+      line="goodbye"
+      ;;
+    Dr.*|Prof.*)
+      line="good day, $name"
+      ;;
+    *)
+      line="goodbye, $name"
+      ;;
+  esac
+  printf '%s\n' "$line"
+}
+
+# salute NAME greets then takes leave, the two lines a visit makes.
+salute() {
+  greet
+  farewell "$1"
+}
+
+# visitors COUNT prints COUNT salutes for the names on stdin.
+visitors() {
+  local count="$1" name read_count=0
+  while IFS= read -r name; do
+    salute "$name"
+    read_count=$((read_count + 1))
+    [ "$read_count" -lt "$count" ] || break
+  done
+}
+SH
+    cat > tests/farewell.test.sh <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname -- "$0")/../lib.sh"
+[ "$(farewell "")" = goodbye ]
+[ "$(farewell Ada)" = "goodbye, Ada" ]
+[ "$(farewell "Dr. Ada")" = "good day, Dr. Ada" ]
+[ "$(printf 'Ada\nBob\n' | visitors 1 | wc -l | tr -d ' ')" = 2 ]
+SH
+    git add -A || fail add
+    # The delegation's `Validation admission:` line
+    # (skills/orch/workflows/dev-start.md § 2): the runtime mints the run's
+    # identity and opens its stage before any work starts, and the runner is
+    # told the directory its admission named. The stage as it stands before
+    # the start is kept for the suite to read.
+    step admission
+    admitted="$(op --item "$(jq -cn --arg r "$RID" '{op: "record-validation-admission", round_id: $r}')")" \
+      || fail admission
+    printf '%s\n' "$admitted" > tmp/admission-report.json
+    RUN_ID="$(jq -er '.run_id' <<<"$admitted")" || fail admission-id
+    RUN_DIR="$(jq -er '.run_dir' <<<"$admitted")" || fail admission-dir
+    stages="$("$ORCH/orch-runtime" state get --item "$ITEM" /stages)" || fail admission-stage
+    jq --arg r "$RID" '[.result.value[] | select(.kind == "validate" and .round_id == $r)] | map({run_dir, end})' \
+      <<<"$stages" > tmp/admission-stage.json || fail admission-stage
+  fi
+
+  if [ "$RESUMING" = false ]; then
+    # skills/dev/workflows/dev-implement.md § 5: the configured validation
+    # through orch-runtime validate entry under the admitted id; its detached run prints
+    # its run directory first and blocks until the verdict.
+    step validate
+    if [ "$SCENARIO" = killed ]; then
+      # The row's validation command marks itself running and holds until
+      # released; nothing releases it, so the suite ends the lane with the
+      # run admitted and going. The command is this lane's own setting
+      # (orch-env: the process environment outranks the settings file).
+      cat > tmp/hold-validate <<'SH'
+#!/usr/bin/env bash
+mkdir -p tmp && : > tmp/validate-held
+while [ ! -e tmp/validate-release ]; do sleep 0.1; done
+SH
+      export DEV_VALIDATE_CMD="bash tmp/hold-validate"
+      validate_out=tmp/validate.out
+    elif [ "$SCENARIO" = handoff ]; then
+      # The row's validation command waits, bounded under the project's
+      # cap, on the barrier the suite releases once this session has
+      # exited, then runs the project's own command: the run ends while
+      # the lane is away, and the continuation reads a run that ended
+      # after the handoff was recorded. The command is this
+      # lane's own setting, as the killed row's is.
+      cat > tmp/await-barrier <<'SH'
+#!/usr/bin/env bash
+n=0
+while [ ! -e tmp/one-job-barrier ]; do
+  n=$((n + 1))
+  [ "$n" -lt 900 ] || { echo 'await-barrier: never released' >&2; exit 1; }
+  sleep 0.1
+done
+exec bash tools/validate
+SH
+      export DEV_VALIDATE_CMD="bash tmp/await-barrier"
+      validate_out=tmp/validate.out
+    elif [ "$SCENARIO" = retry ]; then
+      validate_out=tmp/validate-retry.out
+    else
+      validate_out=tmp/validate.out
+    fi
+    "$ORCH/orch-runtime" validate entry --worktree "$WT" --poll 1 --run-id "$RUN_ID" > "$validate_out" 2> tmp/validate.err &
+    validate_pid=$!
+    case "$SCENARIO" in killed|handoff) unset DEV_VALIDATE_CMD ;; esac
+    tries=0
+    started_dir=""
+    while [ -z "$started_dir" ]; do
+      started_dir="$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' "$validate_out" 2>/dev/null)"
+      [ -n "$started_dir" ] && break
+      tries=$((tries + 1))
+      [ "$tries" -lt 1200 ] || fail validate-start
+      kill -0 "$validate_pid" 2>/dev/null || fail validate-exited
+      sleep 0.05
+    done
+    if [ "$SCENARIO" = killed ]; then
+      tries=0
+      until [ -e tmp/validate-held ]; do
+        tries=$((tries + 1))
+        [ "$tries" -lt 1200 ] || fail validate-hold
+        sleep 0.05
+      done
+      step validate-held
+    fi
+    if [ "$SCENARIO" = handoff ]; then
+      # --- the context handoff: the session ends with the round open and its run going ---
+      # The record names what the continuation takes up; `relaunch: resume`
+      # is the route the record asks for. The session then ends, as one
+      # out of context does, its detached run still held on the suite's
+      # barrier, and the relaunch reads the record standing.
+      step handoff
+      recorded="$(op --item "$(jq -cn --arg r "$RID" --arg b "$BRANCH" --arg wt "$WT" \
+        '{op: "record-handoff", round_id: $r, merged: [], remaining: ["read the validation verdict, commit and write the receipt", "accept the dev round", "review and publish"],
+          branch: $b, worktree: $wt, open_pr: null, traps: [], context: {"cause": "context-ceiling"}, relaunch: "resume"}')")" \
+        || fail record-handoff
+      printf '%s\n' "$recorded" > tmp/handoff-report.json
+      printf 'lane-handoff\n' >> "$STATUS"
+      exit 0
+    fi
+    wait "$validate_pid" || fail validate-run
+    done_line="$(sed -n 's/^state=done .*validate=\([^ ]*\).*/\1/p' "$validate_out")" || fail validate-read
+    [ "$done_line" = pass ] || fail validate-verdict
+    await_validate_close "$RUN_DIR" || fail validate-close
+  fi
+
+  # skills/dev/workflows/dev-implement.md § 7 and its section 10: the
+  # commit and the receipt, keyed by the run the verdict was read from; a
+  # continuation makes them for the session that handed off before them.
+  step commit
+  git commit -qm "feat($ITEM): add farewell and salute" || fail commit
+  SHA="$(git rev-parse HEAD)" || fail head
+  step receipt
+  printf '## Completion Summary\n\nAdded farewell, salute and visitors with their test.\n' > "tmp/completion-summary-$ITEM.md"
+  receipt="$("$ORCH/orch-runtime" dev-return --text write --worktree "$WT" --kind implement --issue "$ITEM" --round-id "$RID" \
+    --branch "$BRANCH" --commit "$SHA" --validate pass --validate-run-dir "$RUN_DIR" --no-labels \
+    --near-ceiling-base origin/main --summary-file "tmp/completion-summary-$ITEM.md" --no-summary)" || fail receipt
+  [ -f "$receipt" ] || fail receipt-path
+
+  # --- skills/orch/workflows/dev-start.md § 3: accept the round ---
+  step accept
+  round="$(value /dev_round_id)" || fail round-read
+  [ "$round" = "$RID" ] || fail round-value
+  check="$("$ORCH/orch-runtime" dev-return --text check --worktree "$WT" --issue "$ITEM" --round-id "$RID")" || fail artifact-check
+  [ "$(jq -r '.verdict' <<<"$check")" = accept ] || fail artifact-verdict
+  pre="$(value /pre_delegate_sha)" || fail pre-read
+  [ "$pre" != "$SHA" ] || fail head-unchanged
+  [ -z "$(git status --porcelain)" ] || fail dirty
+  [ "$(jq -r '.commit' "$receipt")" = "$SHA" ] || fail receipt-commit
+  # skills/orch/workflows/dev-start.md § Close The Round's Stages: the
+  # round's admitted runs close with the words their sentinels support, then
+  # the round's own entry with the acceptance owner's word.
+  reconciled="$(op --item "$(jq -cn --arg r "$RID" '{op: "reconcile-round", round_id: $r}')")" || fail reconcile-round
+  printf '%s\n' "$reconciled" > tmp/reconcile-report.json
+  dev_closed="$(op --item "$(jq -cn --arg r "$RID" '{op: "accept-result", round_id: $r, outcome: "pass"}')")" || fail accept-dev
+  printf '%s\n' "$dev_closed" > tmp/accept-dev.json
+  "$ORCH/orch-runtime" state set --item "$ITEM" /qa_labels '[]' /sub_issues '[]' || fail qa-state
+
+  # --- skills/orch/workflows/small.md § 2: the branch against its class ---
+  step tier-check
+  base="$("$ORCH/resolve-base-branch" "$WT")" || fail base-branch
+  tier_line="$("$ORCH/orch-runtime" tier --floor small --base "origin/$base" --head HEAD --repo "$WT")" || fail tier
+  case "$tier_line" in tier=small*) ;; *) fail tier-value ;; esac
+
+  # --- skills/orch/workflows/small.md § 3, then skills/orch/workflows/review-pr.md § 1 through its section 3.3 ---
+  step review-depth
+  [ -z "$(git status --porcelain)" ] || fail review-dirty
+  floor="$(value /review_floor)" || fail review-floor
+  floor="${floor:-micro}"
+  depth_line="$("$MAIN/.agents/skills/reviewer/scripts/review-depth" --base "origin/$base" --head HEAD --repo "$WT" --floor "$floor")" \
+    || fail review-depth
+  depth="${depth_line#*review_depth=}"
+  depth="${depth%% *}"
+  printf 'review-depth: %s\n' "$depth_line"
+  [ "$depth" != none ] || fail review-depth-none
+  step review-panel
+  if [ "$TRACKER" = github ]; then
+    gh issue view "$NUMBER" --repo "$GH_REPO_SLUG" --json body --jq .body > tmp/done-when.md || fail done-when
+  fi
+  "$ORCH/orch-runtime" state set --item "$ITEM" /first_panel \
+    '{"agents": ["reviewer-correctness"], "reason": "domains touched: lib.sh", "external": false}' || fail first-panel
+  review_begun="$(op --item '{"op": "begin-round", "kind": "review"}')" || fail begin-review
+  RRID="$(jq -er '.round_id' <<<"$review_begun")" || fail begin-review-id
+  "$ORCH/orch-runtime" state set-now --item "$ITEM" /review_delegated_at || fail review-delegated-at
+  "$ORCH/orch-runtime" state set --item "$ITEM" /review_agents '["reviewer-correctness"]' /review_agent_ids '{}' \
+    /review_agent_runtime_types '{}' || fail review-agents
+  artifact="$("$ORCH/orch-runtime" review-artifact --text path --worktree "$WT" --agent reviewer-correctness)" || fail review-path
+  # The reviewer's artifact, written in place of the reviewer: a pass over
+  # the reviewed head with a clean tree, in the shape the content gates read.
+  jq -cn --arg head "$SHA" \
+    '{agent: "reviewer-correctness", verdict: "pass", blockers: [], suggestions: [], head: $head, dirty_paths: []}' \
+    > "$artifact.tmp" && mv -- "$artifact.tmp" "$artifact" || fail review-write
+  step review-accept
+  delegated_at="$(value /review_delegated_at)" || fail review-delegated-read
+  verdict_json="$("$ORCH/orch-runtime" review-artifact --text check --worktree "$WT" --agent reviewer-correctness --delegated-at "$delegated_at" --issue "$ITEM")" || fail review-check
+  jq -e '.ok == true and .reason == "valid"' <<<"$verdict_json" >/dev/null || fail review-check-value
+  "$ORCH/orch-runtime" state append --item "$ITEM" /json_paths "$artifact" || fail json-paths
+  # skills/orch/workflows/review-pr.md § 3.3: the panel's one required
+  # reviewer accepted with no blocker is `pass`; the batch's last accepted
+  # artifact times the end.
+  review_accepted="$(op --item "$(jq -cn --arg r "$RRID" --arg a "$artifact" \
+    '{op: "accept-result", round_id: $r, outcome: "pass", end: {from_artifact: $a}}')")" || fail accept-review
+  printf '%s\n' "$review_accepted" > tmp/accept-review.json
+  tier_line="$("$ORCH/orch-runtime" tier --floor small --base "origin/$base" --head HEAD --repo "$WT")" || fail tier-review
+  case "$tier_line" in tier=small*) ;; *) fail tier-review-value ;; esac
+fi
+
+# --- skills/orch/workflows/submit-pr.md § 2.1: base publication ---
+step delivery-setting
+delivery="$("$ORCH/orch-env" ORCH_DELIVERY pr)" || fail orch-env
+[ "$delivery" = push-base ] || fail delivery-value
+if [ "$TRACKER" = github ]; then
+  gh issue view "$NUMBER" --repo "$GH_REPO_SLUG" --json body > tmp/post-merge-read.json || fail post-merge-read
+  body="$(jq -r '.body' tmp/post-merge-read.json)" || fail post-merge-body
+  case "$body" in *"Post-merge:"*) fail post-merge-box ;; esac
+fi
+step review-gate
+BASE_REVIEW_STATE="$("$ORCH/orch-runtime" state get --item "$ITEM")" || fail gate-read
+BASE_REVIEW_STATE="$(jq -c '.result.value | {tier: (.tier // "standard"), json_paths: (.json_paths // [])}' <<<"$BASE_REVIEW_STATE")" \
+  || fail gate-read
+jq -e --arg lifecycle managed --arg verdict pass \
+  '.tier == "micro" or (if $lifecycle == "managed" then $verdict == "pass" else (.json_paths | length) > 0 end)' \
+  <<<"$BASE_REVIEW_STATE" >/dev/null || fail gate-unaccepted
+step prepare
+BOUND_HEAD="$(git rev-parse --verify HEAD)" || fail bound-head
+prepared="$(op_reply --item "$(jq -cn --arg wt "$WT" '{op: "record-push", mode: "prepare", worktree: $wt}')")" \
+  || fail prepare
+PREPARED_BASE="$(jq -r '.result.prepared.before // empty' <<<"$prepared")"
+PREPARED_HEAD="$(jq -r '.result.prepared.commit // empty' <<<"$prepared")"
+[ -n "$PREPARED_BASE" ] && [ -n "$PREPARED_HEAD" ] || fail prepare-receipt
+printf 'bound-head=%s\n' "$BOUND_HEAD"
+step publish
+published="$(op_reply --item "$(jq -cn --arg wt "$WT" --arg base "$PREPARED_BASE" --arg head "$PREPARED_HEAD" \
+  '{op: "record-push", mode: "publish", worktree: $wt, base: $base, head: $head}')")" || fail publish
+PUSHED="$(jq -r '.result.delivery.commit // empty' <<<"$published")"
+PUSHED_BASE="$(jq -r '.result.delivery.base // empty' <<<"$published")"
+[ -n "$PUSHED" ] && [ -n "$PUSHED_BASE" ] || fail delivery-receipt
+
+# --- skills/orch/workflows/submit-pr.md § 2.1: verify the published head where it stands ---
+# The runtime reads the pinned head's checks, statuses and runs and the
+# base's required set, and records the verdict itself in the same call; the
+# whole reply is kept for the suite.
+step verification
+verified="$(op_reply --item "$(jq -cn --arg repo "$GH_REPO_SLUG" --arg base "$PUSHED_BASE" --arg head "$PUSHED" \
+  '{op: "verify-head", repo: $repo, base: $base, head: $head, required_only: true}')")" || fail verify-head
+printf '%s\n' "$verified" > tmp/verify-report.json
+[ "$(jq -r '.result.status' <<<"$verified")" = complete ] || fail verify-status
+
+# --- skills/orch/workflows/submit-pr.md § 2.1: completion and the notice ---
+step report
+if [ "$TRACKER" = github ]; then
+  # The tracker's own answer to the close is the terminal evidence the
+  # overseer's close of this lane carries; it is recorded as the command
+  # returned it, status and all.
+  close_status=0
+  gh issue close "$NUMBER" --repo "$GH_REPO_SLUG" --reason completed || close_status=$?
+  jq -cn --argjson status "$close_status" --argjson n "$NUMBER" \
+    '{command: "gh issue close", number: $n, reason: "completed", status: $status}' > tmp/issue-close.json
+  [ "$close_status" -eq 0 ] || fail issue-close
+fi
+printf 'Pushed %s to %s.\n' "$PUSHED" "$PUSHED_BASE" > "tmp/delivery-$ITEM.md"
+"$MAILBOX/lane-mail" notice --item "$ITEM" --file "$WT/tmp/delivery-$ITEM.md" || fail notice
+if [ "$TIER" != micro ]; then
+  # skills/orch/workflows/start-worktree.md § 5.4
+  sessions="$("$ORCH/orch-runtime" state get --item "$ITEM" /child_sessions)" || fail retire
+  sessions="$(jq -c '(.result.value // {}) | with_entries(.value.status = "closed")' <<<"$sessions")" || fail retire
+  "$ORCH/orch-runtime" state set --item "$ITEM" /child_sessions "$sessions" || fail retire
+fi
+printf 'lane-done\n' >> "$STATUS"
+[ "$AFTER" != exit ] || exit 0
+idle

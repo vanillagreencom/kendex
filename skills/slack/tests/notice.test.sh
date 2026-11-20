@@ -18,7 +18,7 @@ for page_case in accepted linked-home read no-event unanswered ordinary foreign 
   sk_bind "$ROOT"
   PAGE_RC=0
   env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
     SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
     SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" SLACK_JARVIS_SESSION_FILE=tmp/page-presence \
     python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" "$page_case" \
@@ -47,7 +47,7 @@ ROOT="$(sk_new_root page-binding-control)"
 sk_bind "$ROOT"
 PAGE_RC=0
 env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
   SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
   SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" SLACK_JARVIS_SESSION_FILE=tmp/page-presence \
   python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" linked-home \
@@ -62,7 +62,7 @@ ROOT="$(sk_new_root page-control)"
 sk_bind "$ROOT"
 PAGE_RC=0
 env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
   SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
   SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
   python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" accepted \
@@ -78,7 +78,7 @@ ROOT="$(sk_new_root page-reference-control)"
 sk_bind "$ROOT"
 PAGE_RC=0
 env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
   SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
   SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
   python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" compacted-read \
@@ -140,7 +140,7 @@ sk_poll "$ROOT"
 POINTER="$(jq -r --arg d "$CH:$POINTER_TS" 'select(.delivery_id == $d) | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
 sk_event_filter "$ROOT" "if .id == \"$POINTER\" then del(.delivery_id) else . end"
 
-sk_lm "$ROOT" ask --item overseer --to owner --options yes,no --recommend no --file "$(sk_text ask 'Proceed?')" >/dev/null
+sk_lm "$ROOT" ask --item overseer --to owner --options yes,no --recommend no --effect none --file "$(sk_text ask 'Proceed?')" >/dev/null
 ASK="$(jq -r 'select(.kind == "ask") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
 sk_poll "$ROOT"
 ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Proceed?\")) | .ts")"

@@ -49,10 +49,10 @@ def issue_in_pr_bundle($description): ($description // "") | test("(^|\\n)[ \\t]
 # One rule decides which project a name means, for every spelling of the
 # lookup: an id match wins outright whatever its state, a canceled match
 # otherwise loses to every live one, and an all-canceled match set is refused
-# naming each UUID and its state so a deliberate read can pass one. Open-coded
-# once per lookup, it was corrected one site at a time and the site nobody
-# reached still shipped the defect. Callers prepend this the way they prepend
-# ISSUE_RELATION_JQ; `git grep -n live_project_pick` enumerates them.
+# naming each UUID and its state so a deliberate read can pass one. One
+# definition serves every lookup, so no lookup site drifts from the rule.
+# Callers prepend this the way they prepend ISSUE_RELATION_JQ;
+# `git grep -n live_project_pick` enumerates them.
 #
 # Input is the array of matches. `live_project_refusal` takes the subject line
 # from its caller; the parenthetical, and which states count as live, live
@@ -114,12 +114,7 @@ format_issues_list() {
 
 # Format single issue to safe structure
 # Input: Raw GraphQL response with .issue
-# Output: Flat object (not wrapped in {issue: ...}). A response carrying
-# syncedWith, which only `issues get` without --with-bundle asks for, adds
-# github_sync: the GitHub issues Linear's GitHub sync links the issue to,
-# each as owner/repo#N, lowercased: GitHub reads owner and repository names
-# case-insensitively, and oversee-watch keys each --repo lowercased. A read
-# without it has no github_sync rather than an empty one it cannot vouch for.
+# Output: Flat object (not wrapped in {issue: ...})
 format_issue_single() {
     local raw="$1"
     echo "$raw" | jq "$ISSUE_RELATION_JQ"'{
@@ -151,11 +146,7 @@ format_issue_single() {
         blocked_by_launch: issue_blocked_by_launch_ids(.issue.inverseRelations.nodes),
         related: issue_related_ids(.issue.relations.nodes; .issue.inverseRelations.nodes),
         url: (.issue.url // "")
-    } + (if (.issue | has("syncedWith")) then {
-        github_sync: [(.issue.syncedWith // [])[] | (.metadata // {})
-            | select(.owner and .repo and .number)
-            | "\(.owner | ascii_downcase)/\(.repo | ascii_downcase)#\(.number)"]
-    } else {} end)'
+    }'
 }
 
 # Format single issue with bundle info (recursive children + pending count)
@@ -184,7 +175,8 @@ format_issue_with_bundle() {
                 parent_id: ($node.parent.identifier // ""),
                 blocks: issue_blocks_ids($node.relations.nodes),
                 blocked_by: issue_blocked_by_ids($node.inverseRelations.nodes),
-                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes)
+                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes),
+                blocked_by_launch: issue_blocked_by_launch_ids($node.inverseRelations.nodes)
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         # Flatten all children
@@ -216,6 +208,7 @@ format_issue_with_bundle() {
             blocks: issue_blocks_ids(.issue.relations.nodes),
             blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
             blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
+            blocked_by_launch: issue_blocked_by_launch_ids(.issue.inverseRelations.nodes),
             related: issue_related_ids(.issue.relations.nodes; .issue.inverseRelations.nodes),
             url: (.issue.url // ""),
             children: $children,
@@ -247,50 +240,6 @@ format_issue_compact() {
         blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
         children: [(.issue.children.nodes // [])[] | {id: .identifier, title: .title, state: .state.name}]
     }'
-}
-
-# Format issue with bundle to compact structure
-format_issue_with_bundle_compact() {
-    local raw="$1"
-    echo "$raw" | jq "$ISSUE_RELATION_JQ"'
-        def flatten_children(depth):
-            . as $node | [{
-                id: $node.identifier,
-                title: ($node.title // ""),
-                state: ($node.state.name // ""),
-                state_type: ($node.state.type // ""),
-                agent: ((([($node.labels.nodes // [])[] | .name | select(startswith("agent:"))] | first) // "") | sub("^agent:"; "")),
-                labels: [($node.labels.nodes // [])[] | .name],
-                priority: ($node.priority // 0),
-                estimate: ($node.estimate // 0),
-                depth: depth,
-                parent_id: ($node.parent.identifier // ""),
-                blocks: issue_blocks_ids($node.relations.nodes),
-                blocked_by: issue_blocked_by_ids($node.inverseRelations.nodes),
-                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes)
-            }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
-
-        ([.issue.children.nodes[] | flatten_children(0)] | flatten) as $children |
-        {
-            id: .issue.identifier,
-            title: (.issue.title // ""),
-            state: (.issue.state.name // ""),
-            state_type: (.issue.state.type // ""),
-            agent: ((([(.issue.labels.nodes // [])[].name | select(startswith("agent:"))] | first) // "") | sub("^agent:"; "")),
-            labels: [(.issue.labels.nodes // [])[] | .name],
-            priority: (.issue.priority // 0),
-            estimate: (.issue.estimate // 0),
-            sort_order: (.issue.sortOrder // 0),
-            project: (.issue.project.name // ""),
-            assignee: (.issue.assignee.name // ""),
-            parent_id: (.issue.parent.identifier // ""),
-            blocks: issue_blocks_ids(.issue.relations.nodes),
-            blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
-            blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
-            children: $children,
-            pending_count: ([$children[] | select(.state_type | IN("completed", "canceled") | not)] | length)
-        }
-    '
 }
 
 # Format issues list to compact structure
@@ -358,31 +307,6 @@ format_projects_list() {
         links: [(.externalLinks.nodes // [])[] | {id, label, url}],
         url: (.url // "")
     }]'
-}
-
-# Format single project to safe structure
-format_project_single() {
-    local raw="$1"
-    echo "$raw" | jq '.projects.nodes[0] // .project | {
-        id: .id,
-        name: (.name // ""),
-        description: (.description // ""),
-        content: (.content // ""),
-        state: (.state // ""),
-        progress: (.progress // 0),
-        health: (.health // ""),
-        priority: (.priority // null),
-        sort_order: (.sortOrder // 0),
-        target_date: (.targetDate // ""),
-        start_date: (.startDate // ""),
-        lead: (.lead.name // ""),
-        teams: [(.teams.nodes // [])[] | .name],
-        labels: [(.labels.nodes // [])[] | .name],
-        links: [(.externalLinks.nodes // [])[] | {id, label, url}],
-        url: (.url // ""),
-        blocked_by: [(.relations.nodes // [])[] | select(.type == "dependency") | {id: .relatedProject.id, name: .relatedProject.name, state: .relatedProject.state, progress: .relatedProject.progress}],
-        blocks: [(.inverseRelations.nodes // [])[] | select(.type == "dependency") | {id: .project.id, name: .project.name, state: .project.state, progress: .project.progress}]
-    }'
 }
 
 format_project_dependencies() {
@@ -547,53 +471,6 @@ format_relations_list() {
             state: .relatedIssue.state.name
         }]
     }'
-}
-
-# Format children issues to safe structure
-format_children_list() {
-    local raw="$1"
-    echo "$raw" | jq '[.issue.children.nodes[] | {
-        id: .identifier,
-        uuid: .id,
-        title: (.title // ""),
-        state: (.state.name // ""),
-        assignee: (.assignee.name // ""),
-        priority: (.priority // 0),
-        estimate: (.estimate // 0)
-    }]'
-}
-
-# Format recursive children (3 levels deep) to flat list with depth
-# Input: Raw GraphQL response with nested .issue.children structure
-# Output: Flat array with depth field indicating nesting level
-# Includes blocks/blocked_by from relations for sub-issue ordering
-format_children_recursive() {
-    local raw="$1"
-    echo "$raw" | jq "$ISSUE_RELATION_JQ"'
-        # Recursive function to flatten children with depth tracking
-        def flatten_children(depth):
-            . as $node | [{
-                id: $node.identifier,
-                uuid: $node.id,
-                title: ($node.title // ""),
-                description: ($node.description // ""),
-                state: ($node.state.name // ""),
-                state_type: ($node.state.type // ""),
-                assignee: ($node.assignee.name // ""),
-                agent: ((([($node.labels.nodes // [])[] | .name | select(startswith("agent:"))] | first) // "") | sub("^agent:"; "")),
-                priority: ($node.priority // 0),
-                estimate: ($node.estimate // 0),
-                labels: [($node.labels.nodes // [])[] | .name],
-                depth: depth,
-                parent_id: ($node.parent.identifier // ""),
-                blocks: issue_blocks_ids($node.relations.nodes),
-                blocked_by: issue_blocked_by_ids($node.inverseRelations.nodes),
-                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes)
-            }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
-
-        # Start from issue.children.nodes (depth 0 = direct children)
-        [.issue.children.nodes[] | flatten_children(0)] | flatten
-    '
 }
 
 # Format users list to safe structure

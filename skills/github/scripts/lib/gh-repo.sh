@@ -69,16 +69,14 @@ kendex_github_resolve_gh_repo() {
 
   [ -n "$repo" ] || return 1
   printf '%s\n' "$repo"
-  # Each segment must be what GitHub issues, judged on its own. A single class
-  # over the whole slug is what let two classes of value through: one that
-  # only barred whitespace and a second slash admitted the quote, semicolon,
-  # dollar, backtick, ampersand, pipe and parenthesis, and the class that
-  # replaced it still admitted a segment made only of dots. Both reach a
-  # shell or an API path: open-terminal renders this value into a launch line
-  # its caller's shell runs, and label-add and get_repo_info's callers
-  # interpolate it into `repos/<slug>/…`, where `.` and `..` are path segments
-  # a client or server may normalise rather than refuse. A checkout's tracked
-  # settings file exports GH_REPO, so both reach here from the repository.
+  # Each segment must be what GitHub issues, judged on its own: a class over
+  # the whole slug admits the quote, semicolon, dollar, backtick, ampersand,
+  # pipe and parenthesis, or a segment made only of dots. label-add and
+  # get_repo_info's callers interpolate the value into `repos/<slug>/…`,
+  # where `.` and `..` are path segments a client or server may normalise
+  # rather than refuse, and orch's scripts hand it to `gh`. A checkout's
+  # tracked settings file exports GH_REPO, so the value reaches here from the
+  # repository.
   owner="${repo%%/*}"
   name="${repo#*/}"
   # One slash, and nothing before or after it that GitHub would not issue. A

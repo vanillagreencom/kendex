@@ -10,6 +10,15 @@
 # never read; shared settings belong in kendex.settings.toml, personal and
 # secret overrides in the private env file.
 #
+# A caller names the keys it reads after `--`, and a load assigns those
+# keys alone: one that names none assigns nothing. Both files hold every
+# package's keys and the private file holds the project's own names too, so
+# a key nobody asked for is passed over without a word: a value that is
+# never assigned is never run.
+# A private-file line's value is judged only where its key is asked, as
+# the runtime's reader judges it; a line with no assignment shape fails the
+# load for every caller, and the settings files' grammar is judged whole.
+#
 # KENDEX_ENV_FILE is the one setting that decides which file is read
 # rather than what a value is, so it is resolved after the settings load
 # and before the private file. It is a path relative to the project root:
@@ -99,7 +108,7 @@ kendex_env_message() { # KEY ARG...
       ;;
     private-env-line)
       printf 'kendex-env: private-env-line file=%s lineno=%s\n' "$1" "$2"
-      printf '%s\n' "::error::$1:$2: the private env file is read as data and never run, so each line is blank, a # comment, or [export ]KEY=VALUE, where VALUE is a single-quoted string with no apostrophe inside, a double-quoted string with no '\"', '\\', '\$' or backtick inside, or a bare word with no whitespace, quotes, backslash, dollar sign, backtick or shell operator (; & | ( ) < >), and no tilde at the start or after a colon; on an export line, a bare word must also have no opening brace (use single quotes instead), optionally followed by a space and a # comment"
+      printf '%s\n' "::error::$1:$2: the private env file is read as data and never run, so each line is blank, a # comment, or [export ]KEY=VALUE, where VALUE is a single-quoted string with no apostrophe inside, a double-quoted string with no '\"', '\\', '\$' or backtick inside, or a bare word of letters, digits and _ . / : @ % + , = -, optionally followed by a space and a # comment"
       ;;
     reserved-key)
       printf 'kendex-env: reserved-key file=%s key=%s\n' "$1" "$2"
@@ -118,6 +127,25 @@ kendex_env_message() { # KEY ARG...
 
 kendex_parent_env_has() {
   [[ "${_kendex_parent_env_name_set-}" == *" $1 "* ]]
+}
+
+# The keys a reader assigns, from its arguments after the file: the names
+# after `--`, space-delimited, and none when the caller names none.
+# Each reader keeps the answer in its own local _kendex_asked.
+kendex_asked_names() { # OUT_VAR [-- NAME...]
+  local _kendex_asked_out="$1" _kendex_asked_list=" " _kendex_asked_name
+  shift
+  if [[ "${1-}" == -- ]]; then
+    shift
+    for _kendex_asked_name in "$@"; do
+      _kendex_asked_list+="$_kendex_asked_name "
+    done
+  fi
+  printf -v "$_kendex_asked_out" '%s' "$_kendex_asked_list"
+}
+
+kendex_asked() { # KEY — 0 = the running reader assigns KEY
+  [[ "$_kendex_asked" == *" $1 "* ]]
 }
 
 kendex_key_usable() { # FILE KEY LINE — 0 = safe assignment destination; 1 + ::error otherwise
@@ -208,8 +236,9 @@ kendex_decode_value() { # OUT_VAR RAW — decoded value assigned to OUT_VAR; 1 =
   printf -v "$1" '%s' "${BASH_REMATCH[1]}"
 }
 
-kendex_load_settings_file() {
-  local _kendex_file="$1"
+kendex_load_settings_file() { # FILE [-- NAME...]
+  local _kendex_file="$1" _kendex_asked
+  kendex_asked_names _kendex_asked "${@:2}"
   kendex_source_usable "$_kendex_file" || return 1
   [[ -f "$_kendex_file" ]] || return 0
   kendex_bom_guard "$_kendex_file" || return 1
@@ -237,7 +266,9 @@ kendex_load_settings_file() {
     [[ "$_kendex_section" == "env" && "$_kendex_line" == *=* ]] || continue
     kendex_trim _kendex_key "${_kendex_line%%=*}"
     [[ "$_kendex_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    kendex_key_usable "$_kendex_file" "$_kendex_key" "$_kendex_lineno" || return 1
+    if kendex_asked "$_kendex_key"; then
+      kendex_key_usable "$_kendex_file" "$_kendex_key" "$_kendex_lineno" || return 1
+    fi
     # Which duplicate wins would be an accident of read order, so a re-assigned
     # key is a configuration error — the same ambiguity guard the settings.sh
     # resolver family applies. Checked before the parent-env skip: a malformed
@@ -254,11 +285,17 @@ kendex_load_settings_file() {
 
     # Parent-process values win over project [env] tables. The snapshot is
     # only populated when called via kendex_load_project_env; standalone calls
-    # see an empty snapshot and load every key.
+    # see an empty snapshot and load every key they ask for.
     if kendex_parent_env_has "$_kendex_key"; then
       continue
     fi
 
+    # The project load picks its private file by this key whether or not
+    # the caller asked for it (kendex_load_project_env).
+    if [[ "$_kendex_key" == KENDEX_ENV_FILE && "${_kendex_selecting-}" == yes ]]; then
+      _kendex_selected="$_kendex_value"
+    fi
+    kendex_asked "$_kendex_key" || continue
     printf -v "$_kendex_key" '%s' "$_kendex_value"
     export "$_kendex_key"
   done < "$_kendex_file"
@@ -270,6 +307,9 @@ kendex_load_settings_file() {
 # kendex_env_line_value says which values read as the shell would read them.
 # Any other line fails the load, naming the file and the line: a line read
 # some other way than the shell reads it would load a value nobody wrote.
+# The value of a key the caller did not ask for is not read at all: the file
+# is the project's own, shared with its apps, which keep their values in
+# whatever form their own tools read.
 #
 # Reading and assigning are two steps. Nothing is assigned until the whole
 # file has been read, and kendex_load_project_env assigns only after its
@@ -309,9 +349,10 @@ kendex_env_line_value() { # OUT_VAR RAW [FORM] — value assigned to OUT_VAR; 1 
 # Reads FILE into _kendex_private_values, three entries per assignment: the
 # key, the value, and `export` or `plain`. A key the parent snapshot holds is
 # left out, as kendex_load_settings_file leaves it out.
-kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::error otherwise
+kendex_read_env_file() { # FILE [-- NAME...] — 0 = read, an absent FILE included; 1 + ::error otherwise
   local _kendex_env_line _kendex_env_lineno=0 _kendex_env_key _kendex_env_value _kendex_env_form LC_ALL=C
-  local _kendex_env_assignment='^([A-Za-z_][A-Za-z0-9_]*)=(.*)$'
+  local _kendex_env_assignment='^([A-Za-z_][A-Za-z0-9_]*)=(.*)$' _kendex_asked
+  kendex_asked_names _kendex_asked "${@:2}"
   _kendex_private_values=()
   kendex_source_usable "$1" || return 1
   [[ -f "$1" ]] || return 0
@@ -329,6 +370,7 @@ kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::err
     _kendex_env_key=""
     if [[ "$_kendex_env_line" =~ $_kendex_env_assignment ]]; then
       _kendex_env_key="${BASH_REMATCH[1]}"
+      kendex_asked "$_kendex_env_key" || continue
       kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" "$_kendex_env_form" || _kendex_env_key=""
     fi
     if [[ -z "$_kendex_env_key" ]]; then
@@ -357,14 +399,14 @@ kendex_assign_env_file() {
 
 # One private env file, read and assigned, for a caller that loads it alone.
 # The name is older than the rule: the file is never sourced.
-kendex_source_env_file() { # FILE
-  kendex_read_env_file "$1" || return 1
+kendex_source_env_file() { # FILE [-- NAME...]
+  kendex_read_env_file "$@" || return 1
   kendex_assign_env_file
 }
 
 # Which file this project keeps its secrets in, relative to its root.
 # Read from KENDEX_ENV_FILE, which the settings load above has already
-# exported when the project sets it, and which the caller's environment
+# held when the project sets it, and which the caller's environment
 # outranks like every other key.
 #
 # The path is refused rather than resolved when it could reach outside the
@@ -426,7 +468,7 @@ kendex_inside_project() { # PROJECT_ROOT RELATIVE_FILE — 0 = the file's direct
 }
 
 kendex_private_env_file() { # OUT_VAR PROJECT_ROOT — project-relative private env file, assigned to OUT_VAR
-  local _kendex_named="${KENDEX_ENV_FILE:-}"
+  local _kendex_named="${_kendex_selected-${KENDEX_ENV_FILE:-}}"
   if [[ -z "$_kendex_named" ]]; then
     _kendex_named='.env.local'
   else
@@ -449,9 +491,15 @@ kendex_project_env_supports() { # CAPABILITY
   [[ "$1" == selected-private-path ]]
 }
 
-kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional output is the selected project-relative path
-  local _kendex_project_root="$1"
+kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] [-- NAME...] — optional output is the selected project-relative path
+  local _kendex_project_root="$1" _kendex_out=""
+  shift
+  if [[ $# -gt 0 && "$1" != -- ]]; then
+    _kendex_out="$1"
+    shift
+  fi
   [[ -n "$_kendex_project_root" ]] || return 0
+  local _kendex_selecting=yes _kendex_selected="${KENDEX_ENV_FILE-}"
   local _kendex_empty_private
   if [[ ! -f "$_kendex_project_root/kendex.settings.toml" && ! -f "$_kendex_project_root/.kendex/settings.toml" ]]; then
     kendex_source_usable "$_kendex_project_root/kendex.settings.toml" || return 1
@@ -459,7 +507,7 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
     kendex_private_env_file _kendex_empty_private "$_kendex_project_root" || return 1
     kendex_source_usable "$_kendex_project_root/$_kendex_empty_private" || return 1
     if [[ ! -f "$_kendex_project_root/$_kendex_empty_private" ]]; then
-      [[ -z "${2:-}" ]] || printf -v "$2" '%s' "$_kendex_empty_private"
+      [[ -z "$_kendex_out" ]] || printf -v "$_kendex_out" '%s' "$_kendex_empty_private"
       return 0
     fi
   fi
@@ -487,11 +535,11 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
   # private path outside the project, a private line outside its grammar, or
   # a BOM-prefixed file — fails the whole call: resolving on a partial or
   # silently reinterpreted file would be worse than stopping.
-  kendex_load_settings_file "$_kendex_project_root/kendex.settings.toml" || return 1
-  kendex_load_settings_file "$_kendex_project_root/.kendex/settings.toml" || return 1
+  kendex_load_settings_file "$_kendex_project_root/kendex.settings.toml" "$@" || return 1
+  kendex_load_settings_file "$_kendex_project_root/.kendex/settings.toml" "$@" || return 1
   local _kendex_private_file
   kendex_private_env_file _kendex_private_file "$_kendex_project_root" || return 1
-  kendex_read_env_file "$_kendex_project_root/$_kendex_private_file" || return 1
+  kendex_read_env_file "$_kendex_project_root/$_kendex_private_file" "$@" || return 1
 
   # Re-assert parent values so parent env wins over every project file, while
   # the settings < .env.local order is preserved for non-parent keys.
@@ -508,7 +556,7 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
   unset _kendex_parent_env_names _kendex_parent_env_values _kendex_parent_env_name_set
   # The private values land only once the snapshot the loop above expands is gone.
   kendex_assign_env_file || return 1
-  if [[ -n "${2:-}" ]]; then
-    printf -v "$2" '%s' "$_kendex_private_file"
+  if [[ -n "$_kendex_out" ]]; then
+    printf -v "$_kendex_out" '%s' "$_kendex_private_file"
   fi
 }

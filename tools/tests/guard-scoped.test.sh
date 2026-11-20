@@ -6,14 +6,14 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/guard-world.sh"
 
 mkdir -p "$R/skills/orch/scripts" "$R/skills/orch/tests/lib" "$R/tools/tests"
-printf '#!/usr/bin/env bash\nlaunch_status=0\n' > "$R/skills/orch/scripts/open-terminal"
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\n' > "$R/skills/orch/scripts/dispatcher"
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\n' > "$R/skills/orch/tests/lib/launch.sh"
-for row in 'direct|scripts/open-terminal' 'helper|tests/lib/launch.sh' 'indirect|scripts/dispatcher'; do
+printf '#!/usr/bin/env bash\nlaunch_status=0\n' > "$R/skills/orch/scripts/launcher"
+printf 'source "$PWD/skills/orch/scripts/launcher"\n' > "$R/skills/orch/scripts/dispatcher"
+printf 'source "$PWD/skills/orch/scripts/launcher"\n' > "$R/skills/orch/tests/lib/launch.sh"
+for row in 'direct|scripts/launcher' 'helper|tests/lib/launch.sh' 'indirect|scripts/dispatcher'; do
   IFS='|' read -r name input <<<"$row"
   printf 'source "$PWD/skills/orch/%s"\nprintf "%s\\n" >> "$SUITE_LOG"\nexit "$launch_status"\n' "$input" "$name" > "$R/skills/orch/tests/$name.sh"
 done
-printf 'printf "named\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/open-terminal.test.sh"
+printf 'printf "named\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/launcher.test.sh"
 git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 # run-all.sh reds a suite that exits 0 with no row; a nonzero exit still reds.
@@ -26,8 +26,39 @@ git -C "$R" commit -qm launch
 BASE="$(git -C "$R" rev-parse HEAD)"
 SUITE_LOG="$TMP/suites"
 
+# CI-CHECKS-ROW
+ci_checks_only() { # GUARD
+  printf '# changed\n' >> "$R/skills/orch/scripts/launcher"
+  printf 'fn ci_defect() {\n let tmp = tempfile::tempdir().unwrap();\n drop(tmp);\n}\n' >> "$R/crates/core/tests/existing_temp.rs"
+  : > "$SUITE_LOG"
+  RC=0
+  OUT="$(cd "$R" && DEV_VALIDATE_SCOPED=true DEV_VALIDATE_MODE=ci SUITE_LOG="$SUITE_LOG" "$1" --selection --range "$BASE" 2>&1)" || RC=$?
+  git -C "$R" checkout -q -- skills/orch/scripts/launcher crates/core/tests/existing_temp.rs
+  [ "$RC" -ne 0 ] && [ ! -s "$SUITE_LOG" ] \
+    && ! grep -q '^guard-note: selected-suite=' <<<"$OUT" \
+    && [ "$(grep -c '^guard-note: suites=merge-group' <<<"$OUT")" -eq 1 ] \
+    && grep -q '^guard-note: suites=merge-group .*skills/orch/tests/direct.sh' <<<"$OUT" \
+    && grep -qx 'guard: unrooted-fixture=1' <<<"$OUT" \
+    && [ "${OUT##*$'\n'}" = 'validate: lanes=scoped-checks selection=subset' ]
+}
+ci_checks_only "$GUARD" \
+  && ok 'ci scoped validation keeps scan failures and defers its suites to the merge group' \
+  || bad 'ci scoped validation keeps scan failures and defers its suites to the merge group' "rc=$RC out=$OUT"
+if mutant_guard 's/\[ "${DEV_VALIDATE_MODE:-}" = ci \]/[ "${DEV_VALIDATE_MODE:-}" = never ]/'; then
+  if ci_checks_only "$MUTANT_TOOLS/guard"; then
+    bad 'control: disabling the ci gate breaks the checks-only row' "$OUT"
+  elif [ -s "$SUITE_LOG" ] && grep -q '^guard-note: selected-suite=' <<<"$OUT"; then
+    ok 'control: disabling the ci gate breaks the checks-only row'
+  else
+    bad 'control: the ci gate mutation must execute the selected suites' "$OUT"
+  fi
+else
+  bad 'control changes the ci gate'
+fi
+# CI-CHECKS-END
+
 launch_selection() { # SCOPED STATUS GUARD
-  printf '#!/usr/bin/env bash\nlaunch_status=%s\n# changed\n' "$2" > "$R/skills/orch/scripts/open-terminal"
+  printf '#!/usr/bin/env bash\nlaunch_status=%s\n# changed\n' "$2" > "$R/skills/orch/scripts/launcher"
   : > "$SUITE_LOG"
   RC=0
   OUT="$(cd "$R" && DEV_VALIDATE_SCOPED="$1" SUITE_LOG="$SUITE_LOG" "$3" --selection --range "$BASE" 2>&1)" || RC=$?
@@ -36,8 +67,8 @@ launch_selection() { # SCOPED STATUS GUARD
 for status in 0 1; do
   launch_selection true "$status" "$GUARD"
   [ "$RC" -eq "$status" ] && [ "$SELECTED" = 'direct helper named ' ] \
-    && ok "open-terminal scoped fixture returns status $status with direct, named and helper coverage" \
-    || bad "open-terminal scoped fixture returns status $status with direct, named and helper coverage" "rc=$RC selected=$SELECTED out=$OUT"
+    && ok "launcher scoped fixture returns status $status with direct, named and helper coverage" \
+    || bad "launcher scoped fixture returns status $status with direct, named and helper coverage" "rc=$RC selected=$SELECTED out=$OUT"
 done
 
 # Restore main's reach without removing any file text or input references.
@@ -53,7 +84,7 @@ fi
 
 # Normal range selection still includes the production caller. This is the
 # mapper CI already owns, not the local scoped branch above.
-printf '#!/usr/bin/env bash\nlaunch_status=0\n# changed\n' > "$R/skills/orch/scripts/open-terminal"
+printf '#!/usr/bin/env bash\nlaunch_status=0\n# changed\n' > "$R/skills/orch/scripts/launcher"
 : > "$SUITE_LOG"
 RC=0
 OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
@@ -64,9 +95,8 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
 # A skill doc and its render, each read by a suite outside the skill: tools/
 # reads the source, the orch consumer tree reads the render. tools/ also reads
 # skills/AGENTS.md, Markdown in no skill package. The real tools/ci-job-set
-# answers which trees the merge group runs: tools/ in its shards, the orch
-# corpus in none until KEN-4733 (REVISIT(D026)), so the orch reader of a
-# skill doc stays in the scoped run.
+# answers which trees the merge group runs: tools/ and orch in their shards,
+# so a scoped run seeds neither reader of a skill doc.
 mkdir -p "$R/skills/demo/references" "$R/.agents/skills/demo/references"
 printf '# Guide\n' > "$R/skills/demo/references/guide.md"
 cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
@@ -78,11 +108,11 @@ git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm docs
 BASE="$(git -C "$R" rev-parse HEAD)"
-doc_change() { # [script|outside]: edit the doc pair, and open-terminal or skills/AGENTS.md too
+doc_change() { # [script|outside]: edit the doc pair, and launcher or skills/AGENTS.md too
   printf '# Guide\nchanged\n' > "$R/skills/demo/references/guide.md"
   cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
   case "${1:-}" in
-    script) printf '#!/usr/bin/env bash\nlaunch_status=0\n# beside docs\n' > "$R/skills/orch/scripts/open-terminal" ;;
+    script) printf '#!/usr/bin/env bash\nlaunch_status=0\n# beside docs\n' > "$R/skills/orch/scripts/launcher" ;;
     outside) printf '# Skills\nchanged\n' > "$R/skills/AGENTS.md" ;;
   esac
   : > "$SUITE_LOG"
@@ -95,12 +125,12 @@ doc_selection() { # GUARD: the scoped selection's selected-suite lines in PLAN
 }
 doc_change
 doc_selection "$GUARD"
-[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh ' ] && [ "$SELECTED" = 'doc-render ' ] \
-  && ok 'scoped: a skill doc and its render select only the reader CI does not run' \
-  || bad 'scoped: a skill doc and its render select only the reader CI does not run' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
+[ "$RC" -eq 0 ] && [ "$PLAN" = '' ] && [ "$SELECTED" = '' ] \
+  && ok 'scoped: a skill doc and its render select no reader the merge group runs' \
+  || bad 'scoped: a skill doc and its render select no reader the merge group runs' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
 doc_change outside
 doc_selection "$GUARD"
-[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-outside.sh ' ] \
+[ "$RC" -eq 0 ] && [ "$PLAN" = 'tools/tests/doc-outside.sh ' ] \
   && ok 'scoped: Markdown outside a skill package still selects its reader' \
   || bad 'scoped: Markdown outside a skill package still selects its reader' "rc=$RC plan=$PLAN out=$OUT"
 git -C "$R" checkout -q -- skills/AGENTS.md
@@ -117,10 +147,10 @@ doc_selection "$MUTANT_TOOLS/guard"
 cp "$REPO/tools/ci-job-set" "$MUTANT_TOOLS/ci-job-set"
 doc_change script
 doc_selection "$GUARD"
-[ "$RC" -eq 0 ] && [ "$SELECTED" = 'direct doc-render helper named ' ] \
+[ "$RC" -eq 0 ] && [ "$SELECTED" = 'direct helper named ' ] \
   && ok 'scoped: a script beside the docs still selects its own suites' \
   || bad 'scoped: a script beside the docs still selects its own suites' "rc=$RC selected=$SELECTED out=$OUT"
-git -C "$R" checkout -q -- skills/orch/scripts/open-terminal
+git -C "$R" checkout -q -- skills/orch/scripts/launcher
 doc_change
 RC=0
 OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
@@ -131,9 +161,8 @@ git -C "$R" checkout -q -- skills/demo .agents/skills/demo
 
 # .kendex-generated.json, read as data by a tools/ suite and an orch suite. A
 # scoped run reads the rows the range changed: skill Markdown rows alone
-# select no tools/ suite, and any other changed row, or a side that is no list
-# of paths, maps the file as today. The orch reader runs on every row while
-# the merge group runs no orch suite.
+# select no suite the merge group runs, and any other changed row, or a side
+# that is no list of paths, maps the file as today.
 jq -n '[".agents/skills/demo/SKILL.md", ".agents/skills/demo/kendex.settings.toml.example",
   ".agents/skills/demo/references/guide.md", ".agents/skills/demo/scripts/tool", ".claude/skills/demo"]' \
   > "$R/.kendex-generated.json"
@@ -158,7 +187,7 @@ for row in \
   'a markdown and a non-Markdown render row added;. + [".agents/skills/demo/references/new.md", ".claude/skills/other"] | sort;reader' \
   'a side that is no list of paths;{rows: .};reader'; do
   IFS=';' read -r name filter expected <<<"$row"
-  if [ -n "$expected" ]; then expected=$READERS; else expected=$ORCH_READER; fi
+  if [ -n "$expected" ]; then expected=$READERS; else expected=''; fi
   inventory_change "$filter"
   doc_selection "$GUARD"
   [ "$RC" -eq 0 ] && [ "$PLAN" = "$expected" ] \
@@ -317,6 +346,15 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
   && ok 'normal range maps a settings key change by path' \
   || bad 'normal range maps a settings key change by path' "rc=$RC out=$OUT"
 git -C "$R" checkout -q -- .
+# A key with no named test reader can select more locally than by path.
+settings_change area-key
+REACH="$(cd "$R" && printf 'kendex.settings.toml\n' | "$GUARD" --suite-reach 2>"$TMP/settings-reach.err")"
+doc_selection "$GUARD"
+[ "$RC" -eq 0 ] && [[ $PLAN == *'skills/area/tests/one.sh '*'skills/area/tests/two.sh '* ]] \
+  && ! grep -q '^skills/area/tests/' <<<"$REACH" \
+  && ok 'settings gap: the scoped declared-key fallback exceeds the unscoped path reach' \
+  || bad 'settings gap: the scoped declared-key fallback exceeds the unscoped path reach' "rc=$RC plan=$PLAN reach=$REACH out=$OUT"
+git -C "$R" checkout -q -- .
 # Control: reading the settings file by path again selects the writer.
 if mutant_guard '/^  if \[ -n "\${2-}" \]; then$/,/^  fi$/d'; then
   settings_change read-key
@@ -355,33 +393,29 @@ fi
 # A real cancellation must also name suites in batteries not yet entered.
 # Each phase holds on its FIFO; the parent sends TERM only once its
 # non-blocking writer open proves a holder is there, then releases the hold.
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
-printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
-mkdir -p "$TMP/serial-bin"
-printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
-# A .test.mjs suite runs by itself before the pool call, beside its tree's
-# shell suites; the node stub holds it in the standalone phase.
-printf '// reads skills/orch/scripts/open-terminal\n' > "$R/skills/orch/tests/direct.test.mjs"
-printf '#!/usr/bin/env bash\nif [ "$PHASE" = standalone ] && [ "$1" = --test ]; then read -r line < "$FIFO"; fi\n' > "$TMP/serial-bin/node"
-chmod +x "$TMP/serial-bin/node"
-# The guard runs the runner beside it, so the loading hold below needs a
-# guard whose runner is a copy: a root linking every package but that one file.
-CANCEL="$TMP/cancel-root"
-mkdir -p "$CANCEL/skills/orch/tests"
-cp -R "$MUTANT_TOOLS" "$CANCEL/tools"
-cp "$GUARD" "$CANCEL/tools/guard"
-ln -s "$REPO/.agents" "$CANCEL/.agents"
-for entry in "$REPO"/skills/*; do [ "${entry##*/}" = orch ] || ln -s "$entry" "$CANCEL/skills/${entry##*/}"; done
-for entry in "$REPO"/skills/orch/*; do [ "${entry##*/}" = tests ] || ln -s "$entry" "$CANCEL/skills/orch/${entry##*/}"; done
-for entry in "$REPO"/skills/orch/tests/*; do [ "${entry##*/}" = run-all.sh ] || ln -s "$entry" "$CANCEL/skills/orch/tests/${entry##*/}"; done
-cp "$REPO/skills/orch/tests/run-all.sh" "$CANCEL/skills/orch/tests/run-all.sh"
+printf 'source "$PWD/skills/orch/scripts/launcher"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
+printf '# Inputs: skills/orch/scripts/launcher\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
+mkdir -p "$R/skills/github/scripts/lib" "$TMP/serial-bin"
+cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
+cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
+cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
+cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
+printf '# Inputs: skills/orch/scripts/launcher\nif [ "$PHASE" = standalone ]; then read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
 printf '#!/bin/sh\necho 1\n' > "$TMP/serial-bin/nproc"
 chmod +x "$TMP/serial-bin/nproc"
 git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm cancellation
 BASE="$(git -C "$R" rev-parse HEAD)"
-printf '# changed\n' >> "$R/skills/orch/scripts/open-terminal"
+printf '# changed\n' >> "$R/skills/orch/scripts/launcher"
+CANCEL="$TMP/cancel"
+mkdir -p "$CANCEL/tools" "$CANCEL/skills/orch/tests/lib" "$CANCEL/skills/github/scripts/lib"
+cp -R "$MUTANT_TOOLS/." "$CANCEL/tools/"
+cp "$GUARD" "$CANCEL/tools/guard"
+ln -s "$REPO/.agents" "$CANCEL/.agents"
+cp "$REPO/skills/orch/tests/run-all.sh" "$CANCEL/skills/orch/tests/"
+cp "$REPO/skills/orch/tests/lib/"{git-env,suite-process}.sh "$CANCEL/skills/orch/tests/lib/"
+cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$CANCEL/skills/github/scripts/lib/"
 if python3 - "$R" "$CANCEL/tools/guard" "$BASE" "$TMP" <<'PY'
 import errno
 import os
@@ -394,9 +428,11 @@ import time
 repo, guard, base, scratch = sys.argv[1:]
 runner = Path(guard).parent.parent / "skills/orch/tests/run-all.sh"
 runner_text = runner.read_text()
-grace_text = (Path(guard).parent.parent / "skills/orch/scripts/lib/job-unit.sh").read_text()
-grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
-                 if line.startswith("JOB_UNIT_KILL_GRACE=")))
+# The phase holds below rewrite the runner. They are harness, not a change
+# under test: a changed run-all.sh selects its tree's whole set.
+subprocess.run(["git", "update-index", "--skip-worktree", "skills/orch/tests/run-all.sh"], cwd=repo, check=True)
+grace = int(next(line.split("=", 1)[1] for line in runner_text.splitlines()
+                 if line.startswith("STOP_GRACE=")))
 packages = ["pi-extensions/startup", "pi-extensions/z-later"]
 for name in packages:
   package = Path(repo) / name
@@ -416,25 +452,17 @@ read -r line < "$FIFO"
 ''')
 npm.chmod(0o755)
 shell_suites = ["skills/orch/tests/direct.sh", "skills/orch/tests/helper.sh",
-                "skills/orch/tests/open-terminal.test.sh", "tools/tests/later.sh"]
-standalone = "skills/orch/tests/direct.test.mjs"
-suites = [*shell_suites[:1], standalone, *shell_suites[1:]]
-complete_plan = ["hooks/tests/startup.sh", *packages, *suites]
-# Every shell suite waits for the one pool call after the packages, the hooks
-# suite first; once that call has found them it names each <tree>--<name>.
-pooled = ["hooks/tests/startup.sh", *shell_suites]
-pool_names = [Path(p).parts[-3] + "--" + Path(p).stem for p in pooled]
+                "skills/orch/tests/launcher.test.sh", "tools/tests/later.sh"]
+hooks = ["hooks/tests/startup.sh"]
+complete_plan = [*hooks, *packages, *shell_suites]
 # Each row stops a different execution state. The fallback consumes these
 # machine-read suite paths, including later package batteries.
 for phase, expected in (
-    ("npm", [pooled[0], packages[1], *suites]),
-    # The .test.mjs suite holds: its tree's shell suites and every other
-    # tree's wait for the pool call.
-    ("standalone", pooled),
-    ("npm-probe", complete_plan),
-    ("npm-later", [pooled[0], *suites]),
-    ("loading", pooled),
-    ("running", pool_names[2:]),
+    ("npm", [*hooks, packages[1], *shell_suites]),
+    ("npm-probe", [*hooks, *packages, *shell_suites]),
+    ("npm-later", [*hooks, *shell_suites]),
+    ("loading", [*hooks, *shell_suites]),
+    ("running", ["orch--helper", "orch--launcher.test", "tools--later"]),
 ):
   fifo = Path(scratch) / (phase + "-hold")
   os.mkfifo(fifo)
@@ -469,7 +497,8 @@ for phase, expected in (
     os.killpg(process.pid, signal.SIGTERM)
     os.close(writer)
     writer = None
-    output, _ = process.communicate(timeout=grace)
+    # The row asserts the cancelled output and exit code, not the stop time, so a loaded runner gets a margin.
+    output, _ = process.communicate(timeout=grace + 20)
     assert process.returncode == 143, output
     selected = [line.removeprefix("guard-note: selected-suite=") for line in output.splitlines()
                 if line.startswith("guard-note: selected-suite=")]

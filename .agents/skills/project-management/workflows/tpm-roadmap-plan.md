@@ -36,10 +36,9 @@ Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Prefl
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ORIGIN_ISSUE_ID]
-.agents/skills/linear/scripts/linear.sh issues children [ORIGIN_ISSUE_ID] --recursive --format=safe
 ```
 
-`--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
+`issues get` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 Decide whether the proposed issues decompose the origin issue's scope (`children_of_origin`), reach beyond it (`new_project`), or split (`mixed`), and store `hierarchy_recommendation` with `type`, `origin_issue`, and `rationale`.
 

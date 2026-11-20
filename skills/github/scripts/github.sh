@@ -38,6 +38,8 @@ Commands:
   pr-create          Create PR as bot account
   pr-edit-body       Update PR body from a file
   pr-merge           Merge PR as bot account (with safety checks)
+  merge-queue-mutation  Disarm a PR's auto-merge or take it out of the merge
+                     queue, by its node id, judged on the answer's body
   ci-classify-refusal  Name the cause of a pr-merge refusal (conflicts,
                      current vs superseded CI failures)
   check-review-replies  Judge what a PR's review replies say, read live
@@ -47,6 +49,8 @@ Commands:
   label-add          Add a PR/issue label
   label-remove       Remove a PR/issue label
   ci-logs            Get CI failure logs for a PR
+  ci-rerun           Rerun a PR's current failed run once when its log names
+                     a transient runner failure
   bot-token          Check bot token configuration
   dismiss-review     Dismiss a PR review (bot or specific user)
   resolve-thread     Resolve a review thread
@@ -186,6 +190,7 @@ esac
 _takes_value() {
     case "$command:$1" in
         ci-logs:--lines) return 0 ;;
+        ci-rerun:--repo) return 0 ;;
         dismiss-review:--message | dismiss-review:--user) return 0 ;;
         edit-comment:--body | edit-comment:--body-file) return 0 ;;
         find-comment:--author | find-comment:--pattern) return 0 ;;
@@ -240,7 +245,9 @@ if [ -z "$_help_route" ]; then
     if [ -n "$_env_root" ]; then
         # shellcheck source=lib/kendex-env.sh
         source "$SCRIPT_DIR/lib/kendex-env.sh"
-        kendex_load_project_env "$_env_root"
+        # shellcheck source=lib/settings-names.sh
+        source "$SCRIPT_DIR/lib/settings-names.sh"
+        kendex_load_project_env "$_env_root" -- "${github_settings_names[@]}"
     fi
     if [ -n "$_CALLER_GH_TOKEN_SET" ]; then
         export GH_TOKEN="$_CALLER_GH_TOKEN"
@@ -261,7 +268,7 @@ unset _help_route
 
 
 case "$command" in
-    pr-data|pr-view|pr-threads|pr-timeline|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|ci-classify-refusal|check-review-replies|pr-cross-check|pr-issue|label-add|label-remove|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
+    pr-data|pr-view|pr-threads|pr-timeline|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|merge-queue-mutation|ci-classify-refusal|check-review-replies|pr-cross-check|pr-issue|label-add|label-remove|ci-logs|ci-rerun|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
         script="$SCRIPT_DIR/commands/${command}.sh"
         if [ -f "$script" ]; then
             if [ -n "$WORK_DIR" ]; then
@@ -274,10 +281,6 @@ case "$command" in
             echo "Error: Command script not found: $script" >&2
             exit 1
         fi
-        ;;
-    ci-wait|ciwait|ci_wait)
-        echo "Error: Unknown command '$command' — CI waiting is the orch skill's script: .agents/skills/orch/scripts/ci-wait <PR_NUMBER> [interval] [max_wait] [--json]" >&2
-        exit 1
         ;;
     *)
         echo "Error: Unknown command '$command'" >&2

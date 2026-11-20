@@ -50,7 +50,7 @@ set +e
 s1_out=$(
   set -euo pipefail
   source "$LIB"
-  kendex_load_project_env "$PROJ"
+  kendex_load_project_env "$PROJ" -- FOO BAR BAZ QUX
   printf '%s|%s|%s|%s\n' "$FOO" "$BAR" "$BAZ" "${QUX-unset}"
 )
 s1_code=$?
@@ -65,7 +65,7 @@ s2_out=$(
   set -euo pipefail
   export FOO=from-parent
   source "$LIB"
-  kendex_load_project_env "$PROJ"
+  kendex_load_project_env "$PROJ" -- FOO BAR
   printf '%s|%s\n' "$FOO" "$BAR"
 )
 s2_code=$?
@@ -86,7 +86,7 @@ s3_out=$(
   set -euo pipefail
   export GH_ISSUE_PATTERN='CC-[0-9]+'
   source "$LIB"
-  kendex_load_project_env "$PROJ3"
+  kendex_load_project_env "$PROJ3" -- GH_ISSUE_PATTERN
   printf '%s\n' "$GH_ISSUE_PATTERN"
 )
 s3_code=$?
@@ -106,7 +106,7 @@ set +e
 s4_out=$(
   set -euo pipefail
   source "$LIB"
-  kendex_load_settings_file "$STANDALONE"
+  kendex_load_settings_file "$STANDALONE" -- FRESH_KEY
   printf '%s\n' "$FRESH_KEY"
 )
 s4_code=$?
@@ -151,7 +151,8 @@ for variant in production base-control; do
       BASH_XTRACEFD=9
       PS4="+"'\''${FUNCNAME[0]:-main}: '\''
       # Bash 3.2 has no BASH_XTRACEFD; the same descriptor captures its stderr trace.
-      { set -x; kendex_load_project_env "$2"; set +x; } 2>&9
+      { set -x; kendex_load_project_env "$2" -- KENDEX_TRACE_KEY_1 KENDEX_TRACE_KEY_100 \
+        NESTED_PARENT NESTED_FILE PRIVATE_PARENT PRIVATE_FILE; set +x; } 2>&9
       printf "%s|%s|%s|%s|%s|%s\n" "$KENDEX_TRACE_KEY_1" "$KENDEX_TRACE_KEY_100" \
         "$NESTED_PARENT" "$NESTED_FILE" "$PRIVATE_PARENT" "$PRIVATE_FILE"
     ' kendex-env-trace "$trace_lib" "$TRACE_PROJ" "$extra_names" "$trace")
@@ -197,7 +198,7 @@ s5_out=$(
   set -euo pipefail
   export EMPTIED=parent-had-it
   source "$LIB"
-  kendex_load_project_env "$PROJ5"
+  kendex_load_project_env "$PROJ5" -- TOPLEVEL IN_OTHER COMMENTED EMPTIED
   printf '%s|%s|%s|%s\n' "${TOPLEVEL-unset}" "${IN_OTHER-unset}" "$COMMENTED" "$EMPTIED"
 )
 s5_code=$?
@@ -212,7 +213,7 @@ set +e
 s5b_out=$(
   set -euo pipefail
   source "$LIB"
-  kendex_load_project_env "$PROJ5"
+  kendex_load_project_env "$PROJ5" -- EMPTIED
   printf '%s|%s\n' "${EMPTIED+isset}" "${EMPTIED-unset}"
 )
 s5b_code=$?
@@ -321,7 +322,7 @@ s9_out=$(
     _kendex_trim_real "$@"
   }
   TRIM_CALLS=0
-  kendex_load_settings_file "$PROJ9/kendex.settings.toml"
+  kendex_load_settings_file "$PROJ9/kendex.settings.toml" -- K1 K2
   printf '%s|%s|%s\n' "$TRIM_CALLS" "$K1" "$K2"
 )
 s9_code=$?
@@ -352,7 +353,7 @@ s10_load() { # SETTINGS_BODY NAME -> the SECRET the loader exports
     printf '%s' "$1" > "$PROJ10/kendex.settings.toml"
     # shellcheck source=/dev/null
     source "$LIB"
-    kendex_load_project_env "$PROJ10" >/dev/null 2>&1 || { echo "REFUSED"; exit 0; }
+    kendex_load_project_env "$PROJ10" -- SECRET LITERAL >/dev/null 2>&1 || { echo "REFUSED"; exit 0; }
     printf '%s|%s\n' "${SECRET:-}" "${LITERAL:-}"
   )
 }
@@ -461,7 +462,7 @@ s10b_default=$(
   unset -v SECRET KENDEX_ENV_FILE
   # shellcheck source=/dev/null
   source "$LIB"
-  kendex_load_project_env "$PROJ10B" >/dev/null 2>&1
+  kendex_load_project_env "$PROJ10B" -- SECRET >/dev/null 2>&1
   printf '%s\n' "${SECRET:-}"
 )
 assert_eq "$s10b_default" "kept-through-link" \
@@ -494,7 +495,7 @@ s10_parent=$(
   export KENDEX_ENV_FILE=.env.local
   # shellcheck source=/dev/null
   source "$LIB"
-  kendex_load_project_env "$PROJ10" >/dev/null 2>&1
+  kendex_load_project_env "$PROJ10" -- SECRET >/dev/null 2>&1
   printf '%s\n' "${SECRET:-}"
 )
 assert_eq "$s10_parent" "kept-local" "scenario 10: an exported KENDEX_ENV_FILE outranks the project's"
@@ -506,7 +507,7 @@ assert_eq "$s10_parent" "kept-local" "scenario 10: an exported KENDEX_ENV_FILE o
 # A refusal is `refused lineno=N`, the keyed line the loader prints.
 RUNS_FILE_SCRIPTS="$(mutant_scripts runs-private-file lib/kendex-env.sh)" || exit 1
 mutate_file "$RUNS_FILE_SCRIPTS/lib/kendex-env.sh" \
-  '  kendex_read_env_file "$_kendex_project_root/$_kendex_private_file" || return 1' \
+  '  kendex_read_env_file "$_kendex_project_root/$_kendex_private_file" "$@" || return 1' \
   '  source "$_kendex_project_root/$_kendex_private_file" >&2 || return 1'
 mutate_file "$RUNS_FILE_SCRIPTS/lib/kendex-env.sh" '  kendex_assign_env_file || return 1' '  :'
 S10_MARK="$TMP_ROOT/private-file-ran"
@@ -553,7 +554,7 @@ s10_private() { # LIB BODY — the load's observed result
     # shellcheck source=/dev/null
     source "$1"
     rc=0
-    kendex_load_project_env "$PROJ10" >/dev/null 2> "$PROJ10/private-err" || rc=$?
+    kendex_load_project_env "$PROJ10" -- S10_VALUE S10_OTHER >/dev/null 2> "$PROJ10/private-err" || rc=$?
     ran=no
     [[ ! -e "$S10_MARK" ]] || ran=yes
     if [[ "$rc" -ne 0 ]]; then
@@ -579,16 +580,6 @@ while IFS='|' read -r s10_label s10_body s10_data s10_run; do
     "control: a loader that runs the file gives $s10_label its shell meaning"
 done <<<"$S10_ROWS"
 
-# The regression row must detect an assignment reader that refuses brackets.
-BRACKET_CLOSED_SCRIPTS="$(mutant_scripts bracket-closed lib/kendex-env.sh)" || exit 1
-mutate_file "$BRACKET_CLOSED_SCRIPTS/lib/kendex-env.sh" \
-  '  local _kendex_line_decoded' \
-  '  [[ "$2" != *\[* && "$2" != *\]* ]] || return 1
-  local _kendex_line_decoded'
-assert_eq "$(s10_private "$BRACKET_CLOSED_SCRIPTS/lib/kendex-env.sh" 'S10_VALUE=example-app[bot]')" \
-  "kendex-env: private-env-line file=$PROJ10/chosen.env lineno=1 ran=no" \
-  'control: the bracket row detects a reader that refuses literal brackets'
-
 # The install caller needs the path read, even when that file changes the selector.
 PROJ_SELECTED="$TMP_ROOT/selected-private"
 mkdir -p "$PROJ_SELECTED"
@@ -596,22 +587,22 @@ printf '[env]\nKENDEX_ENV_FILE = "selected.env"\n' > "$PROJ_SELECTED/kendex.sett
 printf '%s\n' 'SECRET=selected-secret' 'KENDEX_ENV_FILE=other.env' > "$PROJ_SELECTED/selected.env"
 SELECTED_SCRIPTS="$(mutant_scripts selected-path lib/kendex-env.sh)" || exit 1
 mutate_file "$SELECTED_SCRIPTS/lib/kendex-env.sh" \
-  '    printf -v "$2" '\''%s'\'' "$_kendex_private_file"' \
-  '    printf -v "$2" '\''%s'\'' "$KENDEX_ENV_FILE"'
+  '    printf -v "$_kendex_out" '\''%s'\'' "$_kendex_private_file"' \
+  '    printf -v "$_kendex_out" '\''%s'\'' "$KENDEX_ENV_FILE"'
 for variant in production mutant; do
   selected_lib="$LIB"
   [[ "$variant" != mutant ]] || selected_lib="$SELECTED_SCRIPTS/lib/kendex-env.sh"
-  for form in legacy output-variable; do
+  for form in bare output-variable; do
     selected_result=$(
       unset SECRET KENDEX_ENV_FILE
       source "$selected_lib"
       kendex_project_env_supports selected-private-path || exit 1
       if kendex_project_env_supports unknown-capability; then exit 1; fi
       selected_path=unchanged
-      if [[ "$form" == legacy ]]; then
-        kendex_load_project_env "$PROJ_SELECTED"
+      if [[ "$form" == bare ]]; then
+        kendex_load_project_env "$PROJ_SELECTED" -- SECRET KENDEX_ENV_FILE
       else
-        kendex_load_project_env "$PROJ_SELECTED" selected_path
+        kendex_load_project_env "$PROJ_SELECTED" selected_path -- SECRET KENDEX_ENV_FILE
       fi
       printf '%s|%s\n' "$SECRET" "$selected_path"
     )
@@ -626,10 +617,9 @@ done
 
 # A private env file line that would print is refused, never run: no
 # consumer that parses stdout sees its words, and each one stops on the
-# loader's refusal. A result is status|stdout|first stderr line, and the
-# lanes stdout is the JSON type jq reads from it.
+# loader's refusal. A result is status|stdout|first stderr line.
 PROJ11="$TMP_ROOT/proj11"
-mkdir -p "$PROJ11/accounts"
+mkdir -p "$PROJ11"
 git -C "$PROJ11" init -q
 printf '%s\n' 'echo env-file-output' 'KENDEX_STDOUT_TEST=private-value' > "$PROJ11/.env.local"
 s11_record() { # NAME COMMAND... — writes NAME's result under PROJ11
@@ -645,32 +635,21 @@ for variant in production runs-file; do
   refusal="kendex-env: private-env-line file=$PROJ11/.env.local lineno=1"
   expected_loader="1||$refusal"
   expected_value="1||$refusal"
-  expected_lanes="1||$refusal"
   if [[ "$variant" == runs-file ]]; then
     scripts="$RUNS_FILE_SCRIPTS"
     expected_loader="0||env-file-output"
     expected_value="0|private-value|env-file-output"
-    expected_lanes="0|array|env-file-output"
   fi
   (
     unset KENDEX_ENV_FILE KENDEX_STDOUT_TEST CODEX_HOME
-    unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE
-    export LANES_HOME="$PROJ11/accounts" OVERSEE_WATCH_STATE_DIR="$PROJ11/state"
     cd "$PROJ11"
     # shellcheck source=/dev/null
     source "$scripts/lib/kendex-env.sh"
     s11_record loader kendex_load_project_env "$PROJ11"
     s11_record value "$scripts/orch-env" KENDEX_STDOUT_TEST default
-    # The writer finishes before jq reads what it wrote.
-    s11_record lanes-raw "$scripts/lanes" list --json
-    s11_record lanes-type jq -r type "$PROJ11/lanes-raw-out"
-    IFS='|' read -r lanes_rc _ lanes_first < "$PROJ11/lanes-raw"
-    IFS='|' read -r _ lanes_type _ < "$PROJ11/lanes-type"
-    printf '%s|%s|%s\n' "$lanes_rc" "$lanes_type" "$lanes_first" > "$PROJ11/lanes"
   )
   assert_eq "$(cat "$PROJ11/loader")" "$expected_loader" "$variant: loader result"
   assert_eq "$(cat "$PROJ11/value")" "$expected_value" "$variant: orch-env result"
-  assert_eq "$(cat "$PROJ11/lanes")" "$expected_lanes" "$variant: lanes result"
 done
 
 # Scenario 12: a key in either project file never reaches a variable the
@@ -712,7 +691,8 @@ s12_load() { # LIB PROJECT FILE BODY — the load's observed result
     # shellcheck source=/dev/null
     source "$1"
     rc=0
-    kendex_load_project_env "$2" >/dev/null 2> "$2.err" || rc=$?
+    kendex_load_project_env "$2" -- lineno _kendex_lineno _kendex_parent_env_names S12_AFTER \
+      >/dev/null 2> "$2.err" || rc=$?
     ran=no
     [[ ! -e "$S12_MARK" ]] || ran=yes
     if [[ "$rc" -ne 0 ]]; then
@@ -793,9 +773,9 @@ s13_load() { # LIB PROJECT FILE KEY ATTRIBUTES
     source "$1"
     rc=0
     if [[ "$3" == standalone ]]; then
-      kendex_source_env_file "$file" >"$2.out" 2>"$2.err" || rc=$?
+      kendex_source_env_file "$file" -- "$4" >"$2.out" 2>"$2.err" || rc=$?
     else
-      kendex_load_project_env "$2" >"$2.out" 2>"$2.err" || rc=$?
+      kendex_load_project_env "$2" -- "$4" >"$2.out" 2>"$2.err" || rc=$?
     fi
     ran=no
     [[ ! -e "$S13_MARK" ]] || ran=yes
@@ -833,6 +813,139 @@ while IFS='|' read -r s13_file s13_key s13_attributes s13_result s13_control; do
   assert_eq "$(s13_load "$ATTRIBUTES_OPEN_SCRIPTS/lib/kendex-env.sh" "$s13_project-control" "$s13_file" "$s13_key" "$s13_attributes")" "loaded $s13_control" \
     "control: $s13_file $s13_key $s13_attributes retains assignment semantics"
 done <<<"$S13_ROWS"
+
+# Scenario 14: a load that names no key assigns nothing, and a load that
+# names keys assigns those alone, so a name Bash acts on when it holds a
+# value is never assigned. PS4 is expanded at every traced command: each row
+# turns tracing on in the loader's own caller before the loader runs, with
+# the value in the form it was reported in and descriptor 9 opened on a file
+# of the row's own. The last row asks for a key holding that value: the trace
+# prints it as text and the key holds it as text. A row is
+# label|file|names|body|result|control result: names `-` is a load that
+# names none, and a row with a control result runs again against the
+# prefix-open loader with its asked-key test opened too, which assigns every
+# key as a load that named none did before.
+mutate_file "$PREFIX_OPEN_SCRIPTS/lib/kendex-env.sh" \
+  'kendex_asked() { # KEY — 0 = the running reader assigns KEY' \
+  'kendex_asked() { # KEY — 0 = the running reader assigns KEY
+  return 0'
+S14_FD9="$TMP_ROOT/s14-fd9"
+S14_ROWS='PS4 in the settings file, a load that names no key|settings|-|PS4 = '\''$(printf injected >&9)'\''|rc=0 ps4=default asked=unset fd9=empty|rc=0 ps4=planted asked=unset fd9=written
+PS4 in the private file, a load that names no key|private|-|PS4='\''$(printf injected >&9)'\''|rc=0 ps4=default asked=unset fd9=empty|rc=0 ps4=planted asked=unset fd9=written
+PS4 in the settings file, a load that names another key|settings|S14_ASKED|PS4 = '\''$(printf injected >&9)'\''\nS14_ASKED = "asked"|rc=0 ps4=default asked=asked fd9=empty|-
+PS4 in the private file, a load that names another key|private|S14_ASKED|PS4='\''$(printf injected >&9)'\''\nS14_ASKED=asked|rc=0 ps4=default asked=asked fd9=empty|-
+an asked key holds the reported value as text under tracing|private|S14_ASKED|S14_ASKED='\''$(printf injected >&9)'\''|rc=0 ps4=default asked=$(printf injected >&9) fd9=empty|-'
+s14_load() { # LIB PROJECT FILE NAMES BODY — the load's observed result
+  (
+    unset -v KENDEX_ENV_FILE S14_ASKED
+    : > "$S14_FD9"
+    mkdir "$2"
+    if [[ "$3" == settings ]]; then
+      printf '[env]\n%b\n' "$5" > "$2/kendex.settings.toml"
+    else
+      printf '%b\n' "$5" > "$2/.env.local"
+    fi
+    # shellcheck source=/dev/null
+    source "$1"
+    exec 9> "$S14_FD9"
+    rc=0
+    {
+      set -x
+      if [[ "$4" == - ]]; then
+        kendex_load_project_env "$2" || rc=$?
+      else
+        kendex_load_project_env "$2" -- "$4" || rc=$?
+      fi
+      : traced
+      set +x
+    } 2> "$2.trace"
+    exec 9>&-
+    ps4=default
+    [[ "$PS4" == "+ " ]] || ps4=planted
+    written=empty
+    [[ ! -s "$S14_FD9" ]] || written=written
+    printf 'rc=%s ps4=%s asked=%s fd9=%s\n' "$rc" "$ps4" "${S14_ASKED-unset}" "$written"
+  )
+}
+s14_row=0
+while IFS='|' read -r s14_label s14_file s14_names s14_body s14_want s14_control_want; do
+  s14_row=$((s14_row + 1))
+  assert_eq "$(s14_load "$LIB" "$TMP_ROOT/proj14-$s14_row" "$s14_file" "$s14_names" "$s14_body")" "$s14_want" \
+    "scenario 14: $s14_label"
+  [[ "$s14_control_want" != - ]] || continue
+  assert_eq "$(s14_load "$PREFIX_OPEN_SCRIPTS/lib/kendex-env.sh" "$TMP_ROOT/proj14-$s14_row-control" "$s14_file" "$s14_names" "$s14_body")" \
+    "$s14_control_want" "control: the prefix-open loader assigns $s14_label"
+done <<<"$S14_ROWS"
+
+# Scenario 15: a named load judges the lines of the keys it asks for. A
+# private line of a key nobody asked for is passed over unread, whatever its
+# value; a line with no assignment shape refuses the file for every caller;
+# the settings files' grammar is judged whole. A row is
+# label|file|names|body|result: names `-` is a load that names none.
+JUDGEMENT_FIRST_SCRIPTS="$(mutant_scripts judgement-first lib/kendex-env.sh)" || exit 1
+mutate_file "$JUDGEMENT_FIRST_SCRIPTS/lib/kendex-env.sh" \
+  '      kendex_asked "$_kendex_env_key" || continue
+      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" "$_kendex_env_form" || _kendex_env_key=""' \
+  '      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" "$_kendex_env_form" || _kendex_env_key=""
+      [[ -z "$_kendex_env_key" ]] || kendex_asked "$_kendex_env_key" || continue'
+S15_MARK="$TMP_ROOT/judgement-ran"
+S15_ROWS='an unasked private value out of the grammar|private|S15_ASKED|S15_OTHER=$(touch MARK)\nS15_ASKED=asked|loaded asked=asked other=unset ran=no
+an unasked private value in the grammar|private|S15_ASKED|S15_OTHER=other\nS15_ASKED=asked|loaded asked=asked other=unset ran=no
+a private line with no assignment shape|private|S15_ASKED|this is ( not shell\nS15_ASKED=asked|refused .env.local 1 ran=no
+an asked private value out of the grammar|private|S15_ASKED|S15_ASKED=$(touch MARK)|refused .env.local 1 ran=no
+a load that names no key|private|-|S15_OTHER=$(touch MARK)\nS15_ASKED=asked|loaded asked=unset other=unset ran=no
+an unasked settings key|settings|S15_ASKED|S15_OTHER = "other"\nS15_ASKED = "asked"|loaded asked=asked other=unset ran=no
+an unasked settings value out of the grammar|settings|S15_ASKED|S15_OTHER = bare\nS15_ASKED = "asked"|syntax kendex.settings.toml S15_OTHER ran=no'
+s15_load() { # LIB PROJECT FILE NAMES BODY — the load's observed result
+  (
+    unset -v KENDEX_ENV_FILE S15_ASKED S15_OTHER
+    rm -f -- "${S15_MARK:?}"
+    mkdir "$2"
+    if [[ "$3" == settings ]]; then
+      printf '[env]\n%b\n' "${5//MARK/$S15_MARK}" > "$2/kendex.settings.toml"
+    else
+      printf '%b\n' "${5//MARK/$S15_MARK}" > "$2/.env.local"
+    fi
+    # shellcheck source=/dev/null
+    source "$1"
+    rc=0
+    if [[ "$4" == - ]]; then
+      kendex_load_project_env "$2" >/dev/null 2> "$2.err" || rc=$?
+    else
+      kendex_load_project_env "$2" -- "$4" >/dev/null 2> "$2.err" || rc=$?
+    fi
+    ran=no
+    [[ ! -e "$S15_MARK" ]] || ran=yes
+    if [[ "$rc" -ne 0 ]]; then
+      first=""
+      IFS= read -r first < "$2.err" || :
+      printf '%s ran=%s\n' "$first" "$ran"
+    else
+      printf 'loaded asked=%s other=%s ran=%s\n' "${S15_ASKED-unset}" "${S15_OTHER-unset}" "$ran"
+    fi
+  )
+}
+s15_row=0
+while IFS='|' read -r s15_label s15_file s15_names s15_body s15_want; do
+  s15_row=$((s15_row + 1))
+  s15_project="$TMP_ROOT/proj15-$s15_row"
+  case "$s15_want" in
+    refused\ *)
+      read -r _ s15_where s15_line s15_ran <<<"$s15_want"
+      s15_want="kendex-env: private-env-line file=$s15_project/$s15_where lineno=$s15_line $s15_ran"
+      ;;
+    syntax\ *)
+      read -r _ s15_where s15_key s15_ran <<<"$s15_want"
+      s15_want="kendex-env: value-syntax file=$s15_project/$s15_where key=$s15_key $s15_ran"
+      ;;
+  esac
+  assert_eq "$(s15_load "$LIB" "$s15_project" "$s15_file" "$s15_names" "$s15_body")" "$s15_want" "scenario 15: $s15_label"
+  if [[ "$s15_row" -eq 1 ]]; then
+    assert_eq "$(s15_load "$JUDGEMENT_FIRST_SCRIPTS/lib/kendex-env.sh" "$s15_project-control" "$s15_file" "$s15_names" "$s15_body")" \
+      "kendex-env: private-env-line file=$s15_project-control/.env.local lineno=1 ran=no" \
+      "control: a loader that judges before it asks refuses the project's own line"
+  fi
+done <<<"$S15_ROWS"
 
 echo
 # Prefix probes and physical path checks retain the loader's output and cwd.

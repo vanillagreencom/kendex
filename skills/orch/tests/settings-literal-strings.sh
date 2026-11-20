@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Surface: shell settings readers, including every vendored project loader.
-# Inputs: scripts/lib/kendex-env.sh tests/lib/assertions.sh
+# Inputs: skills/*/scripts/lib/kendex-env.sh,
+# skills/*/scripts/lib/settings.sh.
+# The catalog glob below reads each package's settings reader.
 # The catalog root argument lets the same assertions judge disposable source
 # copies for must-fail controls. No reader is replaced by a test parser.
 set -euo pipefail
@@ -22,7 +24,7 @@ read_value() { # LIBRARY FUNCTION KEY
     cd -- "$4"
     source "$1"
     if [[ "$2" == kendex_load_project_env ]]; then
-      kendex_load_project_env "$4" || exit 1
+      kendex_load_project_env "$4" -- "$3" || exit 1
       printf "%s" "${!3}"
     else
       "$2" "$3" fallback

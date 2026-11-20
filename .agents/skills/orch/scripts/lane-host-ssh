@@ -16,15 +16,15 @@ import tarfile
 import tempfile
 import time
 
-# The launch identity a lane's prefix records, `PID START`, under the clone it
-# owns, beside the item marker: the record stop signals the harness by.
+# The record of the process group a lane's prefix makes, under the clone it
+# owns, beside the item marker: agent-runtime's `process lead` writes its
+# leader there, and status and stop read that group by it alone.
 IDENTITY_FILE = "/.git/lane-host-pid"
-# The status the identity stop answers where it has no identity to stop by:
-# no file, a lane whose prefix recorded none, or a stale one. stop then finds
-# the harness by the item's worktree instead.
-STOP_BY_DIRECTORY = 76
-# The static host kind's capability line. lane-host answers it for a provider
-# that predates the verb, so this is its one spelling.
+# The clone's own runtimes, each built by create for the clone's sources.
+AGENT_RUNTIME = "/.agents/skills/agent-runtime/scripts/agent-runtime"
+ORCH_RUNTIME = "/.agents/skills/orch/scripts/orch-runtime"
+# The static host kind's capability line, this provider's answer to the
+# `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
                           "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local"))
 
@@ -252,7 +252,7 @@ fi
 # library reaches the source line without reaching the check. Neither library
 # defines `lib` or `library`. A library without the repeat guard still delivers;
 # the warning names the missing check without duplicating the library's rule.
-APPEND_LIBRARIES = '''lib="$3/.agents/skills/orch/scripts/lib"
+APPEND_LIBRARIES = '''lib="$3/.agents/skills/mailbox/scripts/lib"
 for library in file-lock.sh mailbox-append.sh; do
   if [ ! -r "$lib/$library" ]; then
     printf 'lane-host-ssh: append-library-missing path=%s\\n' "$lib/$library" >&2
@@ -401,16 +401,26 @@ def worktree(row, *args, preliminary=False):
     if preliminary:
         command = 'export WORKTREE_SETUP_CMD=\n' + command
     return remote(row, command,
-                  row["clone"], *args, accept=(75,) if args[0] == "create" else ())
+                  row["clone"], *args, accept=(75, REUSE_UNREBASED) if args[0] == "create" else ())
+
+
+# The worktree command's exit for a reuse that handed the tree back, set up, on
+# a head that does not contain the base.
+REUSE_UNREBASED = 76
+# A standing tree is reused with the item's work kept: a tree the reuse cannot
+# rebase stays as it stands rather than failing the create.
+REUSE_KEEPING = ["--reuse", "--keep-on-conflict"]
 
 
 def create_worktree(row, item, flags, preliminary=False):
     """Create the item's tree at the hosted lane path, identical in every lane
     of the repository, so a build there hits compile-cache entries another
-    lane or the warm snapshot keyed by the same source path."""
+    lane or the warm snapshot keyed by the same source path. True where the
+    tree stands unrebased on the item's own head."""
     made = worktree(row, "create", item, "--hosted", *flags, preliminary=preliminary)
-    if made.returncode:
+    if made.returncode not in (0, REUSE_UNREBASED):
         raise SystemExit(made.returncode)
+    return made.returncode == REUSE_UNREBASED
 
 
 # What stop, status and close answer for an item the clone holds nothing of:
@@ -428,7 +438,10 @@ def owned(row, item, verb):
     and a create for another item may have followed. The verb gives its absent
     answer and exits 0, touching nothing of the other item. A worktree for the
     item beside no marker naming it is a create that failed after making it,
-    which still refuses as unowned, as does a clone that is not there."""
+    which still refuses as unowned. A clone that is not there took the marker
+    and the process record with it: close gives its absent answer and removes
+    nothing, since a worktree left beside it lost its history with the clone;
+    stop and status refuse as unowned, since no record says nothing runs."""
     owner = remote(row, '''test -d "$1/.git" || exit 0
 if test -f "$1/.git/lane-host-item"; then
   owner=$(cat -- "$1/.git/lane-host-item") || exit 1
@@ -437,7 +450,7 @@ fi
 printf other''', row["clone"], item).stdout
     if owner == b"owned":
         return
-    if owner == b"other" and not worktree_exists(row, item):
+    if not owner and verb == "close" or owner == b"other" and not worktree_exists(row, item):
         lifecycle_output(row, (ABSENT_ANSWERS[verb].format(item) + "\n").encode())
         raise SystemExit(0)
     notice(verb + "-unowned", item=item)
@@ -447,13 +460,7 @@ printf other''', row["clone"], item).stdout
 def owned_worktree(row, item, verb):
     """Resolve the item only after the clone marker confirms its owner."""
     owned(row, item, verb)
-    # The launch marker survives merge-pr's worktree removal. The worktree
-    # command then returns its configured fallback, not the launched root.
-    if verb == "status":
-        path = remote(row, '''marker=$("$1/.agents/skills/orch/scripts/lane-marker" --marker-path "$1/.git" "$2") || exit 1
-cat -- "$marker"''', row["clone"], item).stdout.decode().strip()
-    else:
-        path = worktree(row, "path", item).stdout.decode().strip()
+    path = worktree(row, "path", item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=item)
         raise SystemExit(1)
@@ -474,7 +481,7 @@ def create_flags(row, item, reuse_requested):
     if not reuse_requested:
         return []
     if worktree_exists(row, item):
-        return ["--reuse"]
+        return REUSE_KEEPING
     branch = item.lower()
     existing = remote(row, '"$1/.agents/skills/github/scripts/git-https-auth" -C "$1" ls-remote --exit-code --heads origin "$2"',
                       row["clone"], "refs/heads/" + branch, accept=(2,))
@@ -524,7 +531,9 @@ def install_dependencies(row, item):
     cannot read those paths or provisioned copies.
     npm ci empties node_modules first, so the marker of the
     committed lockfile blob it was installed from lives inside it and survives
-    only a finished install: an unchanged lockfile installs nothing. An entry
+    only a finished install: an unchanged lockfile installs nothing. Where
+    the item's tree already stands, the lockfile is the one that tree commits
+    at its head, so the dependencies its own work added are installed. An entry
     climbing out of the clone is the worktree command's to refuse, never a
     directory to install in.
     """
@@ -560,7 +569,7 @@ load_install_settings() {
     printf 'lane-host-ssh: loader-private-path-missing path=%s output=selected-private-path\\n' "$loader" >&2
     return 1
   fi
-  kendex_load_project_env "$1" selected_private >&2 || return 1
+  kendex_load_project_env "$1" selected_private -- WORKTREE_SYMLINKS WORKTREE_COPIES >&2 || return 1
   printf '%q ' "${WORKTREE_SYMLINKS:-}" "$selected_private" "${WORKTREE_COPIES:-}"
 }
 settings=$(load_install_settings "$1") || exit 1
@@ -570,8 +579,10 @@ symlinks=${settings[0]}
 private_names=(.env.local "${settings[1]}")
 copy_settings=("${settings[2]}")
 roots=("$1")
+declared="$1"
 tree=$(cd -- "$1" && .agents/skills/worktree/scripts/worktree path "$2") || exit 1
 if test -d "$tree"; then
+  declared="$tree"
   selected=$(load_install_settings "$tree") || exit 1
   eval "selected=($selected)"
   private_names+=("${selected[1]}")
@@ -664,8 +675,24 @@ done
 # would still expose it and worktree copies to dependency lifecycle scripts.
 private=$(mktemp -d) || exit 1
 saved_paths=()
+placed=()
+clone="$1"
+# The clone's own committed pair back where the item's was placed for npm ci.
+restore_placed() {
+  local status=0 path
+  for path in ${placed[@]+"${placed[@]}"}; do
+    if git -C "$clone" cat-file -e "HEAD:$path" 2>/dev/null; then
+      git -C "$clone" checkout -q HEAD -- "$path" || status=1
+    else
+      rm -f -- "$clone/$path" || status=1
+    fi
+  done
+  placed=()
+  return "$status"
+}
 restore_private() {
   local status=$? index path
+  restore_placed || status=1
   for ((index = ${#saved_paths[@]} - 1; index >= 0; index--)); do
     path=${saved_paths[$index]}
     mv -- "$private/$index" "$path" || status=1
@@ -686,7 +713,7 @@ for entry in ${entries[@]+"${entries[@]}"}; do
   strip_trailing_slashes "$entry" entry
   case "$entry" in node_modules|*/node_modules) ;; *) continue ;; esac
   lockfile=${entry%node_modules}package-lock.json
-  if ! blob=$(git -C "$1" rev-parse -q --verify "HEAD:$lockfile"); then
+  if ! blob=$(git -C "$declared" rev-parse -q --verify "HEAD:$lockfile"); then
     printf 'lane-host-ssh: dependency-install-skipped path=%s cause=no-committed-lockfile\\n' "$lockfile" >&2
     continue
   fi
@@ -695,9 +722,38 @@ for entry in ${entries[@]+"${entries[@]}"}; do
   if test -f "$marker"; then installed=$(cat -- "$marker") || exit 1; fi
   if test "$installed" = "$blob"; then continue; fi
   printf 'lane-host-ssh: dependency-install path=%s\\n' "$lockfile" >&2
+  # npm ci reads the manifest pair beside node_modules and, run in the tree,
+  # replaces the tree's link with a directory of its own, so the standing
+  # tree's committed pair is placed in the clone for the install.
+  if test "$declared" != "$1"; then
+    manifest=${entry%node_modules}package.json
+    placed=("$lockfile" "$manifest")
+    git -C "$declared" show "HEAD:$lockfile" >"$1/$lockfile"
+    if git -C "$declared" cat-file -e "HEAD:$manifest" 2>/dev/null; then
+      git -C "$declared" show "HEAD:$manifest" >"$1/$manifest"
+    fi
+  fi
   (cd -- "$1/${entry%node_modules}" && npm ci --no-audit --no-fund) >&2
+  restore_placed
   printf '%s\\n' "$blob" >"$marker"
 done''', row["clone"], item)
+
+
+def built(row, package, refusal):
+    """The binary the clone's own setup of PACKAGE builds from the clone's
+    sources, keyed on them, so a lane never meets setup-required at its first
+    turn; a host that already holds it builds nothing. A clone without the
+    setup, or a setup that names no binary, refuses before any window."""
+    return remote(row, '''setup="$1/.agents/skills/$2/scripts/setup"
+if [ ! -x "$setup" ]; then
+  printf 'lane-host-ssh: %s-setup-missing path=%s\\n' "$3" "$setup" >&2
+  exit 1
+fi
+line=$("$setup") || exit 1
+case "$line" in
+  *" binary=/"*) printf '%s\\n' "${line##* binary=}" ;;
+  *) printf 'lane-host-ssh: %s-unbuilt output=%s\\n' "$3" "$line" >&2; exit 1 ;;
+esac''', row["clone"], package, refusal).stdout.decode().strip()
 
 
 def create(row, args, source):
@@ -722,49 +778,36 @@ fi''', row["clone"], args.repo, args.item)
     if result.stdout == b"existing":
         remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
 exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
-        # Claim ownership first; the consumer setup command needs private-file delivery.
+    # Claim ownership first; the consumer setup command needs private-file
+    # delivery. A relaunch's tree stands before the install reads its lockfile.
+    prepared = result.stdout == b"existing" or args.relaunch
+    if prepared:
         create_worktree(row, args.item, create_flags(row, args.item, args.relaunch or args.reuse), preliminary=True)
-    # Every prefix below sources the clone's library and records the launch
-    # identity through it before the harness starts. A clone whose library
-    # predates the recorder would end that prefix at bash's 127 with only
-    # `command not found` on the pane, so it is named here, before the harness
-    # is handed a prefix that cannot run.
-    remote(row, '''lib="$1/.agents/skills/orch/scripts/lib/lane-state.sh"
-if ! test -r "$lib" || ! bash -c '. "$1" && declare -F lane_identity_record >/dev/null' lane-host "$lib"; then
-  printf 'lane-host-ssh: identity-recorder-missing path=%s\\n' "$lib" >&2
-  printf 'the clone, at its base branch, carries a kendex render that predates the launch identity recorder; refresh the kendex render the repository commits on that base branch, then create again\\n' >&2
-  exit 1
-fi''', row["clone"])
     env_file = source / ".env.local"
     put(row, row["clone"] + "/.env.local", env_file.read_bytes() if env_file.exists() else b"")
     account = Path(args.account)
     remote_account = row["account"]
-    # The shell the prefix starts records its own launch identity beside the
-    # item marker before it execs the harness, so stop signals the lane by it
-    # once the item's worktree is gone (lib/lane-state.sh lane_identity_record).
-    # A record that fails ends the prefix there, the harness unstarted, with a
-    # line naming the file on the pane.
-    identity = [row["clone"] + "/.agents/skills/orch/scripts/lib/lane-state.sh", row["clone"] + IDENTITY_FILE]
-    record = '{ lane_identity_record "$F" || { printf \'lane-host-ssh: identity-record-failed path=%s\\n\' "$F" >&2; exit 1; }; }'
+    # The command the prefix's group leader becomes, with the launcher's line
+    # appended as its last argument.
     if args.harness == "claude":
         put(row, remote_account + "/setup-token", (account / "setup-token").read_bytes())
-        prefix = shlex.join(["bash", "-c",
-            '. "$2" && ' + record.replace("$F", "$3") + ' && CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$4"',
-            "lane-host", remote_account + "/setup-token", *identity])
+        names = []
+        command = ["bash", "-c", 'CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$2"',
+                   "lane-host", remote_account + "/setup-token"]
     else:
         # A copilot lane's identity is the login its host account already
         # holds, so nothing is copied; the rest of its launch policy rides in
-        # the command open-terminal hands (lib/lane-launch.sh § lane_copilot_env).
+        # the command the launcher hands (agent-runtime's runtime/src/launch.rs).
         if args.harness != "copilot":
             put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = {"codex": "CODEX_HOME", "copilot": "COPILOT_HOME"}.get(args.harness, "PI_CODING_AGENT_DIR")
-        prefix = "env " + shlex.quote(name + "=" + remote_account) + " " + shlex.join(["bash", "-c",
-            '. "$1" && ' + record.replace("$F", "$2") + ' && exec bash -lc "$3"', "lane-host", *identity])
+        names = [name + "=" + remote_account]
+        command = ["bash", "-lc"]
     # The caller's folder trust and hook approval land where each harness reads
     # them; Claude's relative path resolves in the SSH session's remote home.
     # A copilot lane places no file: its prefix sets COPILOT_HOME, and its
     # folder trust is the COPILOT_ALLOW_ALL=true its start command carries where
-    # it names --allow-all or --yolo (lib/lane-launch.sh lane_copilot_env).
+    # it names --allow-all or --yolo (agent-runtime's runtime/src/launch.rs).
     approval = {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}.get(args.harness)
     approval = account / "lane-host" / approval if approval else None
     if approval is not None and approval.exists():
@@ -778,14 +821,24 @@ fi''', row["clone"])
     # setup again after preparation so its links, copies and identity are current.
     # The install changes the shared node_modules, so it waits for that
     # ownership too, and precedes the final setup pass that links it.
-    flags = ["--reuse"] if result.stdout == b"existing" else create_flags(row, args.item, args.relaunch or args.reuse)
+    flags = REUSE_KEEPING if prepared else create_flags(row, args.item, args.relaunch or args.reuse)
     install_dependencies(row, args.item)
-    create_worktree(row, args.item, flags)
+    unrebased = create_worktree(row, args.item, flags)
     path = worktree(row, "path", args.item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item)
         raise SystemExit(1)
-    prefix = "exec env " + shlex.quote("ORCH_STATE_DIR=" + path + "/tmp") + " " + prefix
+    # The orch runtime the lane's own workflow runs on this host, its path in
+    # the launch record for the launcher to read before it opens a window.
+    runtime = built(row, "orch", "runtime")
+    # The prefix's group leader: agent-runtime makes the lane's process group
+    # in place, records its leader beside the item marker and becomes the
+    # harness command, or refuses by name on the pane with the harness
+    # unstarted. The group is never the SSH server's: a server can run every
+    # session's command in one group of its own, which a stop must not reach.
+    lead = built(row, "agent-runtime", "agent-runtime")
+    prefix = "exec env " + shlex.join(["ORCH_STATE_DIR=" + path + "/tmp", *names, lead, "process", "lead",
+                                       "--file", row["clone"] + IDENTITY_FILE, "--", *command])
     # The item marker is local to this clone; it is not part of the install record.
     remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
     # The launch record lane-mail-check reads, written by its one owner out of
@@ -802,20 +855,21 @@ if [ ! -x "$marker" ]; then
   exit 1
 fi
 exec "$marker" --launch-record "$4" "$2" "$3"''', row["clone"], path, args.item,
-           json.dumps({"identity_file": row["clone"] + IDENTITY_FILE}))
-    pi_root = f"\tpi-root={remote_account}" if args.harness == "pi" else ""
-    lifecycle_output(row, f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{pi_root}\n".encode())
+           json.dumps({"identity_file": row["clone"] + IDENTITY_FILE, "runtime": runtime}))
+    home = {"pi": "pi-root", "copilot": "copilot-home"}.get(args.harness)
+    home = f"\t{home}={remote_account}" if home else ""
+    tree = "\ttree=unrebased" if unrebased else ""
+    lifecycle_output(row, f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{home}{tree}\n".encode())
 
 
 def archive_tmp(row, item, worktree_path):
     """Preserve remaining lane records locally before close removes their worktree.
 
-    The item's workflow state goes with them under the launch environment's
-    rule in workflow-state --help. Older launches can keep it where their
-    settings and private env file placed it. The archive's
-    `lane-host-state` member names that file's member, or is an empty line
-    when no live state remains. With an empty marker, a reader takes only
-    the saved cycle copy of the merge it records, if present. A resolution
+    The clone's runtime resolves the item state under the launch's state
+    directory. The archive's `lane-host-state` names that member, or is empty
+    when no live state remains. With an empty marker, the `lane-host-saved`
+    member lists the clone's saved cycle copies, and a reader takes only the
+    listed copy of the merge it records. A resolution
     that fails stops close, the sandbox and its state kept: an archive
     without the state loses it."""
     data = remote(row, '''paths=() names=()
@@ -827,21 +881,12 @@ for base in "$1" "$2"; do
 done
 state="" member="" from="$2"
 test -d "$from" || from="$1"
-states="$1/.agents/skills/orch/scripts/workflow-state"
-if test -x "$states"; then
-  state="$2/tmp/workflow-state-$3.json"
-  if ! test -f "$state"; then
-    if ! state=$(cd "$from" && "$states" path "$3"); then
-      printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
-      exit 1
-    fi
-  fi
+if state=$(cd -- "$from" && ORCH_STATE_DIR="$2/tmp" "$1$4" state path --item "$3" |
+    jq -er '.result.path | strings | select(startswith("/"))'); then
   names=(lane-host-state)
   if test -f "$state"; then
-    # workflow-state joins a relative setting such as ../lane-state as given,
-    # and tar cuts a member name at its last .. component, so the record names
-    # the file's physical path: the one test -f found, a symlink before ..
-    # followed as the filesystem follows it, and the root directory kept.
+    # Tar cuts a member name at its last .. component. Use the file's
+    # physical directory, following any symlink before .. as test -f did.
     dir=$(cd -P -- "$(dirname -- "$state")" && pwd -P)
     state="${dir%/}/$(basename -- "$state")"
     member="${state#/}"
@@ -850,25 +895,37 @@ if test -x "$states"; then
       *) paths+=("$member") ;;
     esac
   fi
+else
+  printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
+  exit 1
 fi
 if test "${#paths[@]}" -eq 0; then exit 0; fi
 manifest=$(mktemp -d)
 trap 'rm -rf -- "${manifest:?}"' EXIT
 printf '%s\\n' "$member" > "$manifest/lane-host-state"
-tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row["clone"], worktree_path, item).stdout
+if test -z "$member"; then
+  for saved in "$1"/tmp/cycle-state/workflow-state-pr-*.json; do
+    if test -f "$saved"; then printf '%s\\n' "${saved#/}"; fi
+  done > "$manifest/lane-host-saved"
+  names+=(lane-host-saved)
+fi
+tar -chzf - -C "$manifest" "${names[@]}" -C / "${paths[@]}"''', row["clone"], worktree_path, item, ORCH_RUNTIME).stdout
     if not data:
         return
-    # The local writer owns this setting's default and settings precedence.
+    # The local runtime owns this setting's default, its settings precedence
+    # and the refusal of a root a removal would take; its entry is Bash.
     bash = shutil.which("bash")
     if bash is None:
         raise FileNotFoundError(2, "Bash is required to read archive settings", "bash")
-    root = subprocess.run([bash, "-c",
-                           'set -euo pipefail\nSCRIPT_DIR=$1\n. "$SCRIPT_DIR/lib/state-archive.sh"\narchive_root "$PWD" "$2/$3"',
-                           "lane-host-ssh", str(Path(__file__).resolve().parent),
-                           row["repo"].rsplit("/", 1)[-1], item], stdout=subprocess.PIPE)
+    suffix = row["repo"].rsplit("/", 1)[-1] + "/" + item
+    root = subprocess.run([bash, str(Path(__file__).resolve().parent / "orch-runtime"),
+                           "archive", "root", "--suffix", suffix], stdout=subprocess.PIPE)
     if root.returncode != 0:
         raise SystemExit(root.returncode if root.returncode > 0 else 1)
-    directory = Path(root.stdout.decode().rstrip("\n")) / row["repo"].rsplit("/", 1)[-1] / item
+    placed = json.loads(root.stdout)["result"]["root"]
+    if placed is None:
+        return
+    directory = Path(placed) / suffix
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix=f"tmp-{time.time_ns()}-", suffix=".tgz", dir=directory, delete=False) as archive:
@@ -882,91 +939,61 @@ tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row[
     print(f"kept={kept}", flush=True)
 
 
-def status(row, item, harness):
-    """Read the owned remote harness without signalling any process."""
-    path = owned_worktree(row, item, "status")
-    result = remote(row, '''lib="$3/.agents/skills/orch/scripts/lib/lane-state.sh"
-if ! test -r "$lib"; then
-  printf 'lane-host-ssh: status-library-missing path=%s\\n' "$lib" >&2
-  exit 1
-fi
-. "$lib"
-lane_owned_processes "$1" "$2" launch-record || {
-  printf 'lane-host-ssh: status-read-failed item=%s\\n' "$4" >&2
-  exit 1
-}
-if test -n "$LANE_OWNED_PROCESS_PIDS"; then printf 'running\\n'
-else printf 'exited\\n'; fi''', path, harness, row["clone"], item)
-    lifecycle_output(row, result.stdout)
+def runtime_result(answer):
+    """The `result` of an agent-runtime reply on stdout, empty where none parses."""
+    try:
+        reply = json.loads(answer.stdout)
+    except ValueError:
+        return {}
+    return reply.get("result") or {} if isinstance(reply, dict) else {}
 
 
-def stop(row, item, harness):
-    """Stop the named harness by the launch identity the item's prefix recorded.
-
-    The identity stop reads no directory, so an item whose worktree its own
-    close-out already removed stops all the same. A lane with no identity to
-    stop by, one launched before its prefix recorded any or one whose
-    recorded harness has exited or whose pid a later process holds, is
-    stopped by the item's worktree, as every lane was before identities were
-    recorded: an item whose worktree is no longer a directory exits 4, and
-    lane-close reads that status as a stop its host close makes
-    unnecessary."""
-    owned(row, item, "stop")
-    result = remote(row, '''lib="$2/.agents/skills/orch/scripts/lib/lane-state.sh"
-if ! test -r "$lib"; then
-  printf 'lane-host-ssh: stop-library-missing path=%s\n' "$lib" >&2
-  exit 1
-fi
-if ! test -e "$2$4"; then exit "$5"; fi
-. "$lib"
-if ! declare -F lane_stop_identity >/dev/null || ! declare -F lane_identity_read >/dev/null; then
-  printf 'lane-host-ssh: stop-operation-missing path=%s\n' "$lib" >&2
-  exit 1
-fi
-lane_identity_read "$2$4" || {
-  printf 'lane-host-ssh: stop-identity-invalid item=%s path=%s\n' "$3" "$2$4" >&2
-  exit 1
-}
-rc=0
-lane_stop_identity "$LANE_IDENTITY_PID" "$LANE_IDENTITY_START" "$1" || rc=$?
-case "$rc" in
-  0) printf 'stopped item=%s processes=%s\n' "$3" "$LANE_STOP_COUNT" ;;
-  3)
-    printf 'lane-host-ssh: stop-identity-stale item=%s pid=%s\n' "$3" "$LANE_STOP_PID" >&2
-    exit "$5" ;;
-  *)
-    printf 'lane-host-ssh: stop-%s item=%s%s\n' "$LANE_STOP_CAUSE" "$3" "${LANE_STOP_PID:+ pid=$LANE_STOP_PID}" >&2
-    exit 1 ;;
-esac''', harness, row["clone"], item, IDENTITY_FILE, str(STOP_BY_DIRECTORY), accept=(STOP_BY_DIRECTORY,))
-    if result.returncode == STOP_BY_DIRECTORY:
-        result = stop_by_worktree(row, item, harness)
-    lifecycle_output(row, result.stdout)
+def status(row, item):
+    """Read the lane's recorded process group without signalling any process:
+    running while a member lives, exited once none does or nothing was
+    recorded. It reads no directory, so a lane whose worktree its own
+    close-out removed still reads running."""
+    owned(row, item, "status")
+    answer = remote(row, 'exec "$1$2" process group --file "$1$3"', row["clone"], AGENT_RUNTIME, IDENTITY_FILE,
+                    accept=None)
+    word = {"live": "running", "gone": "exited"}.get(runtime_result(answer).get("reading"))
+    if answer.returncode != 0 or word is None:
+        notice("status-read-failed", item=item, exit=answer.returncode)
+        raise SystemExit(1)
+    lifecycle_output(row, (word + "\n").encode())
 
 
-def stop_by_worktree(row, item, harness):
-    """Stop the named harness only when its process belongs to the item worktree.
+def stop_lane(row, item, path, verb, failed):
+    """End the lane's processes on the host and return how many of its group
+    were signalled: first the validation runs of its worktree, which lead
+    groups of their own, through the clone's own runtime, the owner of a
+    lane's validation stop, under the state directory the prefix exports; a
+    worktree that no longer stands holds none. Then the process group the
+    prefix made, by its recorded leader alone. A failure of either refuses
+    with the cause the runtime printed above it."""
+    validations = remote(row, '''test -d "$2" || exit 0
+cd -- "$2"
+ORCH_STATE_DIR="$2/tmp" exec "$1$3" validate entry --stop --worktree "$2"''',
+                         row["clone"], path, ORCH_RUNTIME, accept=None)
+    if validations.returncode != 0:
+        notice(verb + "-validations-failed", item=item, exit=validations.returncode)
+        raise SystemExit(1)
+    answer = remote(row, 'exec "$1$2" process stop --file "$1$3"', row["clone"], AGENT_RUNTIME, IDENTITY_FILE,
+                    accept=None)
+    stopped = runtime_result(answer).get("stop") or {}
+    if answer.returncode == 0 and stopped.get("outcome") in ("stopped", "already-gone"):
+        return stopped.get("signaled", 0)
+    notice(failed, item=item, outcome=stopped.get("outcome", "refused"), exit=answer.returncode)
+    raise SystemExit(1)
 
-    It runs the clone library's lane_stop_owned, which a library from before
-    identities were recorded holds under the same name and arguments."""
+
+def stop(row, item):
+    """Stop the item's lane by the group its prefix made. Nothing here reads
+    the worktree's processes, so an item whose worktree its own close-out
+    already removed stops all the same."""
     path = owned_worktree(row, item, "stop")
-    result = remote(row, '''if ! test -d "$1"; then
-  printf 'lane-host-ssh: stop-worktree-removed item=%s\n' "$4" >&2
-  exit 4
-fi
-lib="$3/.agents/skills/orch/scripts/lib/lane-state.sh"
-. "$lib"
-if ! declare -F lane_stop_owned >/dev/null; then
-  printf 'lane-host-ssh: stop-operation-missing path=%s\n' "$lib" >&2
-  exit 1
-fi
-lane_stop_owned "$1" "$2" || {
-  printf 'lane-host-ssh: stop-%s item=%s%s\n' "$LANE_STOP_CAUSE" "$4" "${LANE_STOP_PID:+ pid=$LANE_STOP_PID}" >&2
-  exit 1
-}
-printf 'stopped item=%s processes=%s\n' "$4" "$LANE_STOP_COUNT"''', path, harness, row["clone"], item, accept=(4,))
-    if result.returncode == 4:
-        raise SystemExit(4)
-    return result
+    signalled = stop_lane(row, item, path, "stop", "stop-failed")
+    lifecycle_output(row, f"stopped item={item} processes={signalled}\n".encode())
 
 
 def main():
@@ -990,10 +1017,13 @@ with render-untracked.
 For each WORKTREE_SYMLINKS entry naming a node_modules, create runs npm ci in
 the clone, the lane's main checkout, beside that entry's committed
 package-lock.json once it holds the item, before the final setup pass links
-it. node_modules/.lane-host-install records the lockfile blob installed, so an
+it. Where the item's tree already stands, the package.json and
+package-lock.json are the pair that tree commits at its head, placed in the
+clone for the install and put back after it.
+node_modules/.lane-host-install records the lockfile blob installed, so an
 unchanged lockfile installs nothing; a failed install fails create. An entry
 with no committed package-lock.json installs nothing and prints
-dependency-install-skipped. On an existing clone the first setup pass, which
+dependency-install-skipped. On an existing clone or a relaunch the first setup pass, which
 takes the item, runs before that install and can print the worktree's
 dependency-source-missing warning; the --reuse setup that follows links it.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Copilot
@@ -1028,43 +1058,45 @@ packages once on the host at that root:
 PI_CODING_AGENT_DIR=<row account> kendex update-pi --scope global.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
-fields, and pi-root, the row's account directory, for a Pi lane. Existing
-ownership exits 75; --reuse and --relaunch pass --reuse to the worktree
-command when the target exists. Without a target, an origin item branch uses
+fields, and the row's account directory as pi-root for a Pi lane and as
+copilot-home for a Copilot lane. Existing
+ownership exits 75; --reuse and --relaunch pass --reuse --keep-on-conflict to
+the worktree command when the target exists: a tree that command hands back
+without the base (a conflicting rebase aborted, uncommitted work, a detached
+head, a head at its published head) is kept on the item's own head, and the
+line adds tree=unrebased. Without a target, an origin item branch uses
 --base; no origin item branch uses plain create.
 Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.
-Every create's remote-prefix records the launch identity of the shell that
-execs the harness, its pid and start time, in clone/.git/lane-host-pid before
-the harness starts, through the clone's lib/lane-state.sh; a clone whose
-library predates that recorder refuses create as identity-recorder-missing,
-and a record that fails ends the prefix with identity-record-failed before the
-harness starts.
+create builds the clone's orch runtime and agent-runtime through their own
+setups (runtime-setup-missing, runtime-unbuilt, agent-runtime-setup-missing,
+agent-runtime-unbuilt). Every create's remote-prefix runs agent-runtime's
+process lead, which makes the lane's process group in place, records its
+leader's pid and start in clone/.git/lane-host-pid and becomes the harness
+command; a refusal ends the prefix on the pane with the harness unstarted.
 create, status, stop and close hold one exclusive remote lock beside the clone
 for the whole call. An overlapping lifecycle call exits 75 as ownership-busy,
 so unfinished creation cannot be reported as an absent sandbox.
-stop --item ID --harness claude|codex|pi|copilot reads that identity after
-confirming the clone's item owner and signals only the matching harness
-processes at or below its pid, where that pid still runs and started at the
-recorded time, waits for them to exit, and prints stopped item=ID
-processes=COUNT. It reads no directory, so an item whose worktree its own
-close-out removed stops all the same. A clone holding no identity, a lane
-launched before its prefix recorded one, and an identity whose process has
-exited or whose pid a later process holds, which prints stop-identity-stale
-first, are stopped by the item's worktree instead: the matching harness
-processes whose current directory is that worktree, or exit 4 with
-stop-worktree-removed where it is no longer a directory. An identity file that
-holds no pid and start exits 1 with stop-identity-invalid: remove that file,
-which the stop then reads as a lane with no identity, and stop again. status
-takes the same arguments and reads the owned harness without signalling it:
-running or exited on stdout. A failed ownership or process read exits nonzero
-and reports no status. A clone holding neither a marker naming the item nor
+stop --item ID --harness claude|codex|pi|copilot, after confirming the clone's
+item owner, stops the item worktree's validation runs through the clone's
+orch runtime (validate entry --stop), then every member of the recorded group
+by its own identity, TERM then KILL, and prints stopped item=ID
+processes=COUNT, the group's members signalled (0 where none ran or nothing
+was recorded). It reads no directory's processes, so an item whose worktree
+its own close-out removed stops all the same. A failed validation stop exits 1
+with stop-validations-failed, a failed group stop with stop-failed, each below
+the runtime's own line. status takes the same arguments and reads the
+recorded group without signalling it: running while a member lives, exited
+otherwise. A failed ownership or group read exits nonzero and reports no
+status. A clone holding neither a marker naming the item nor
 the item's worktree, as a finished close leaves it whether or not a create for
 another item followed, holds nothing of the item: stop answers stopped item=ID
 processes=0, status answers exited and close answers closed=absent item=ID,
 each with exit 0 and touching nothing. A missing or other item's marker beside
 the item's standing worktree refuses stop, status and close with exit 75
-before worktree path lookup. close removes the identity with the item marker. close preserves render-only drift as a binary patch under clone/tmp, restores
+before worktree path lookup. close first stops the lane as stop does, refusing
+close-validations-failed or close-stop-failed with nothing removed, and
+removes the group's record with the item marker last. close preserves render-only drift as a binary patch under clone/tmp, restores
 the generated paths, refreshes the clone, and then closes. An untracked render,
 a skill symlink a post-launch kendex apply added among them, enters the patch
 through a temporary index rather than a working-tree comparison, so a link to a
@@ -1077,9 +1109,9 @@ Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories, and the item's workflow state, falling back to
 an older launch's settings when needed, with a lane-host-state member naming that
 state's member, under ORCH_ARCHIVE_ROOT/REPO/ITEM/tmp-STAMP.tgz
-(the root defaults to ${FLEET_DIR:-$HOME/.fleet}/archive) and prints kept=PATH.
+and prints kept=PATH; with no root set it keeps no archive and prints no kept line.
 A configured root requires a readable Git worktree list on this host. A failed archive stops
-close, as does a state directory the clone's workflow-state cannot resolve,
+close, as does a state directory the clone's settings loader cannot resolve,
 reported as state-unresolved. An already removed worktree's tmp cannot be recovered. No remaining tmp
 and no workflow state outside it means no archive and no kept line. Archives contain paths relative to / and
 follow symlinks, so linked records remain in the archive after their target is gone.
@@ -1175,11 +1207,14 @@ def dispatch(row, args):
     elif args.verb == "touch":
         remote(row, "true")
     elif args.verb == "stop":
-        stop(row, args.item, args.harness)
+        stop(row, args.item)
     elif args.verb == "status":
-        status(row, args.item, args.harness)
+        status(row, args.item)
     elif args.verb == "close":
         path = owned_worktree(row, args.item, "close")
+        # Nothing of the lane outlives its record: a lane whose SSH session
+        # held no terminal gets no hang-up when its window closes.
+        stop_lane(row, args.item, path, "close", "close-stop-failed")
         result = remote(row, '''drop_render_scratch() { rm -f -- "$owned" "$status" "$index" "$carried"; }
 clean_render_drift() {
   dir="$1"; clone="$2"; item="$3"; label="$4"

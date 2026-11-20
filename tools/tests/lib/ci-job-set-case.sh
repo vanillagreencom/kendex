@@ -7,11 +7,10 @@ cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
 # build input runs the checkout-kendex shards for real kendex rows, the
-# Linux-only jarvis leg among them, and a tools/ path its suites' two shards
-# and the scans.
-BUILD_ROW="$(measured both false true true '["refresh","rest","jarvis"]' '["refresh","rest"]')"
-TOOL_SHARDS='["guards-scans","guards-tools","guards-tools-tail"]'
-TOOL_ROW="$(measured both false true false "$TOOL_SHARDS" "$(macos_shards "$TOOL_SHARDS")")"
+# Linux-only jarvis leg among them, and a tools/ path no suite reads the
+# Linux-only scans alone.
+BUILD_ROW="$(measured both false true true '["refresh","orch-rest","rest","jarvis"]' '["refresh","orch-rest","rest"]')"
+TOOL_ROW="$(measured linux false true false '["guards-scans"]' '[]')"
 # Where a shard runs, and where none does. A shard runs on both runners
 # unless the diff is prose alone.
 SHARD_CODE="$(lanes both false true false)"
@@ -19,7 +18,8 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -refresh -guards-commit -guards-commit-tail -linear -linear-controls -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
+NO_SKILL="-review-gate -refresh -orch-state -orch-rest -guards-commit -guards-commit-tail -linear -linear-controls -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
+ORCH_ALL="+orch-state +orch-rest"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
 # `+shard` members it must hold and `-shard` members it must not. Empty
@@ -113,7 +113,7 @@ skill commit-guards ''
 skill doc-limits commit-guards
 skill price-handling ''
 printf '. "$(dirname "$0")/../../github/scripts/lib/gh-auth.sh"\n' >"$SEL_WORLD/skills/worktree/scripts/worktree"
-printf '. "$HERE/../../orch/scripts/lib/branch-growth.sh"\n' >"$SEL_WORLD/skills/harness-ci/scripts/change-class"
+printf '. "$HERE/../../orch/scripts/lib/kendex-env.sh"\n' >"$SEL_WORLD/skills/harness-ci/scripts/change-class"
 printf 'run "$R/.agents/skills/preflight/scripts/preflight"\n' >"$SEL_WORLD/skills/commit-guards/tests/scope.test.sh"
 printf 'refs "$ROOT/docs/guard/refs.md"\n' >"$SEL_WORLD/skills/commit-guards/tests/refs.test.sh"
 printf 'read "$ROOT/kendex.settings.toml" lib/atomic-install.sh README.md\n' >"$SEL_WORLD/tools/tests/settings.test.sh"
@@ -121,7 +121,11 @@ printf 'DISCOVER="$TEST_DIR/../../crates/demo/src/discover.rs"\n' >"$SEL_WORLD/h
 printf 'policy "$ROOT/docs/x/policy.md"\n' >"$SEL_WORLD/hooks/tests/policy.test.sh"
 mkdir -p "$SEL_WORLD/pi-extensions/pi-demo/tests" "$SEL_WORLD/docs"
 printf 'run("tools/demo-tool")\n' >"$SEL_WORLD/pi-extensions/pi-demo/tests/demo.test.ts"
+printf '{"name": "pi-demo", "scripts": {"test": "bun test"}}\n' >"$SEL_WORLD/pi-extensions/pi-demo/package.json"
 printf 'the `guards-scans` shard runs it\n' | tee "$SEL_WORLD/skills/AGENTS.md" >"$SEL_WORLD/docs/cite.md"
+mkdir -p "$SEL_WORLD/skills/orch/tests/rust" "$SEL_WORLD/skills/orch/runtime"
+printf '[package]\nname = "orch-runtime"\n\n[[test]]\nname = "rows"\npath = "../tests/rust/rows.rs"\n' >"$SEL_WORLD/skills/orch/runtime/Cargo.toml"
+printf 'let fixture = root.join("assets/rust-read.json");\n' >"$SEL_WORLD/skills/orch/tests/rust/rows.rs"
 git -C "$SEL_WORLD" init -q
 git -C "$SEL_WORLD" add -A
 

@@ -11,15 +11,15 @@
 # take one shared gh call and jq reduction, independent of the PR count.
 # The authoritative contract — attention kinds, output format, exit
 # codes, env — is print_usage below: run with --help.
-# Stdout is the whole-text attention protocol consumed by orch oversee-watch
-# and lane-close: PR number, head prefix, kind, and detail separated by
-# literal tabs. The detail includes the queue annotation.
+# Stdout is the whole-text attention protocol consumed by orch's watch
+# (`orch-runtime watch`) and its close's park: PR number, head prefix, kind, and
+# detail separated by literal tabs. The detail includes the queue annotation.
 # Preserve these payloads.
 # Global refusals use diagnostic records on stderr, followed by explanation.
 set -euo pipefail
 
 # The diagnostic record: `review-gate-error=CODE value=VALUE`, the value
-# escaped with Bash printf %q, then the explanation. oversee-watch carries
+# escaped with Bash printf %q, then the explanation. orch's watch carries
 # this stderr verbatim into the overseer's diagnostics, so the record keeps
 # the form its readers already hold.
 watch_message() { # CODE VALUE MESSAGE
@@ -134,9 +134,9 @@ router reads them. Without --awaiting-after, unreadable project settings
 are a global failure.
 
 Consumers: orch's workflows treat this as the single state reducer for
-multi-PR watching (orch's approval-wait remains the single-PR foreground
-wait with on-timeout policy; orch's oversee consumes it through
-oversee-watch, and lane-close reads its silence before a park); harness
+multi-PR watching (the orch runtime's verify-review operation remains the
+single-PR review gate with its on-timeout policy; the orch runtime's watch
+consumes this reducer, and its close reads its silence before a park); harness
 wake-up mechanisms (a monitor loop, cron, a scheduler) call it rather than
 re-deriving state keys per session.
 USAGE
@@ -191,7 +191,7 @@ if [ -z "$AWAITING_AFTER" ]; then
   # The project's settings load in a subshell, as the github.sh router finds
   # them, so the project files set nothing else in this process.
   project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || project_root=""
-  AWAITING_AFTER="$(kendex_load_project_env "$project_root" && printf '%s' "${PR_REVIEW_WAIT_SECS-900}")" || {
+  AWAITING_AFTER="$(kendex_load_project_env "$project_root" -- PR_REVIEW_WAIT_SECS && printf '%s' "${PR_REVIEW_WAIT_SECS-900}")" || {
     watch_message watch-settings-unreadable "$project_root" "::error::pr-watch: the project settings could not be read for PR_REVIEW_WAIT_SECS" >&2
     exit 2
   }

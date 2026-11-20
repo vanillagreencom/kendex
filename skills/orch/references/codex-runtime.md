@@ -1,34 +1,34 @@
 # Codex runtime reference
 
-Deep halves of the Codex notes in [../SKILL.md](../SKILL.md). Everything here is Codex-specific.
+Read when orch runs on Codex: a shell refusal, a wait inside a turn, a process-owned reviewer, a lane's mail, a collaboration agent or an app handoff.
 
 ## Shell approval by launch mode
 
-In the check below, Codex refused a command for one of three causes: an execpolicy rule match, its built-in `rm -f` check, or the sandbox. It refused no shell form. A redirect, a pipeline, a `;` list, `$(...)`, a heredoc, a `for` loop, an env-assignment prefix, a literal backtick and `git rebase` each ran in every mode, as far as the sandbox let it write.
+Codex refuses a command for one of three causes: an execpolicy rule match, its built-in `rm -f` check, or the sandbox. It refuses no shell form: each shape § Check lists from Redirect to Rebase ran in every mode, as far as the sandbox let it write (measured, `codex-cli 0.157.1`).
 
 | Mode | Where kendex launches it | Probe flags | Sandbox | `rm -f` |
-|------|--------------------------|-------------|---------|---------|
-| Bypass | Lanes: the spelling [lane-launch.sh](../scripts/lib/lane-launch.sh) writes | `--dangerously-bypass-approvals-and-sandbox` | None | Refused |
-| `never`, full access | The user config default, `approval_policy = "never"` with `sandbox_mode = "danger-full-access"`; `-a never` on that config | None, on a config holding `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` | None | Refused |
+|---|---|---|---|---|
+| Bypass | A lane under the `bypass` posture: `--dangerously-bypass-approvals-and-sandbox` (agent-runtime `harness.rs` `Harness::permission_spellings`) | `--dangerously-bypass-approvals-and-sandbox` | None | Refused |
+| `never`, full access | A user config holding `approval_policy = "never"` and `sandbox_mode = "danger-full-access"`; `-a never` on that config | None, on that config | None | Refused |
 | `never`, workspace-write | `-a never` on a config whose sandbox is `workspace-write` | `-c approval_policy='"never"' -s workspace-write` | A write outside the working directory fails `Read-only file system` | Refused |
-| Approve for me | Lanes: the accepted spelling `--approve-for-me` | `--approve-for-me` | workspace-write; a write outside the working directory failed, then its reviewed escalation ran | Reviewed, then ran |
+| Approve for me | A lane whose line carries `--approve-for-me` | `--approve-for-me` | workspace-write; a write outside the working directory failed, then its reviewed escalation ran | Reviewed, then ran |
 | Read-only | second-opinion: `codex exec -s read-only` | `-s read-only` | Every write fails `Read-only file system` | Refused |
 
 ### Refusals
 
 | Cause | Text the tool returns | Action |
-|-------|-----------------------|--------|
-| An execpolicy rule with `decision="prompt"` matched; observed in bypass and `never`, full access | `approval required by policy, but AskForApproval is set to Never` | Do not retry and do not wait: no approval can arrive. The rule matches a command prefix, not a shell form. Rules live in `$CODEX_HOME/rules/*.rules` and the project's `.codex/rules/*.rules`; `codex execpolicy check --rules <file> <command words>` prints the matching rule. Run the replacement the rule's owner names, or report a blocker. |
+|---|---|---|
+| An execpolicy rule with `decision="prompt"` matched; seen in bypass and `never`, full access | `approval required by policy, but AskForApproval is set to Never` | Do not retry and do not wait: no approval can arrive. The rule matches a command prefix, not a shell form. Rules live in `$CODEX_HOME/rules/*.rules` and the project's `.codex/rules/*.rules`; `codex execpolicy check --rules <file> <command words>` prints the matching rule. Run the replacement the rule's owner names, or report a blocker. |
 | The built-in `rm -f` check, in every mode but approve for me | `rm -f style commands are not permitted. Use a safer approach` | Drop `-f`: `rm <path>` passed the check in every mode. |
 | The sandbox, in the workspace-write and read-only modes | `Read-only file system` | Read-only writes nothing. Workspace-write writes inside the working directory; a write outside it is a blocker. |
 | A kendex PreToolUse hook, in every mode | `Command blocked by PreToolUse hook: <hook>: ...` | Use the accepted form the hook names. The project's `.codex/hooks.json` lists the hooks; each refuses a named command, and none refuses a shell form. |
 
 ### Check
 
-Observed with `codex-cli 0.157.1`. Each mode ran one `codex exec` whose prompt listed these commands, one shell tool call each, in a scratch directory under `tmp/` that holds a one-commit git repository `repo`:
+Each mode ran one `codex exec` whose prompt listed these commands, one shell tool call each, in a scratch directory under `tmp/` holding a one-commit git repository `repo`:
 
 | Shape | Command | Result |
-|-------|---------|--------|
+|---|---|---|
 | Redirect | `echo probe > redirect.txt` | Ran; read-only failed `Read-only file system` |
 | Pipeline | `printf 'a\nb\n' \| wc -l` | Ran |
 | `;` list | `echo one; echo two` | Ran |
@@ -50,116 +50,114 @@ A `command_execution` item with `"status":"completed"` in the `--json` output is
 
 ### Substitutes
 
-orch runs one simple command per tool call in every harness ([../SKILL.md](../SKILL.md) § Harness-Safe Shell). These substitutes keep a command inside that rule; no mode above refuses the forms they replace. In a fenced command, write a backtick in a search pattern with the regex hex escape `\x60` (`[\x60]` inside a bracket expression) in regex mode; `rg -F` has no escapes:
+A kendex hook reads a literal backtick in a command as command substitution. In a regex search pattern, write a backtick as the hex escape `\x60`, or `[\x60]` inside a bracket expression. `rg -F` has no escapes:
 
 ```bash
 rg -n '\x60kendex refresh\x60' skills/
 ```
 
-- Polling loops → the orch waiters `ci-wait`, `approval-wait`, `queue-wait`, launched through [Waiter launch](waiter-launch.md). Save its detach command with the harness file-write tool, then invoke the saved script as one simple command. Use the harness wait mechanism to poll the completion file.
-- Multi-item sweeps → one simple command per item.
-- Derived values → helper scripts (`git-context`, `workflow-state`), never substitution.
-- File writes → harness file tools, `apply_patch`, or a direct redirect such as `echo value > path` where the sandbox allows the write. Never wrap a write in a Python subprocess.
-- Related `workflow-state` operations → one `get '{...}'` or one `update '... | ...'`. Split what cannot collapse — `set-git-head`/`set-now` (they compute their own value), a read mixed with a write, a `// empty` default that would collapse a combined object, a per-item loop — into separate one-command calls.
-- Several file reads → separate read commands or the harness file-read tool.
-- An optional environment variable affecting a command → omit the option and let the script auto-detect, or read it with `printenv VAR` and run a second command with a literal value. Never put an unset-variable expansion in a required command.
+- A derived value comes from a helper (`git-context`, `orch-runtime state`), never from substitution.
+- Read related state with one `orch-runtime state get` held in a variable, then one jq filter over its `.result.value` once the read exits 0. Write related state with the one command the step names; `orch-runtime state set-git-head` and `orch-runtime state set-now` compute their own value.
+- For an optional environment variable that affects a command, omit the option and let the script detect it. Or read it with `printenv VAR`, then run a second command with the literal value. Never put an unset-variable expansion in a required command.
 
-### Env-assignment prefixes
+### Rule-refused rebase
 
-The prefix is an environment precondition, not part of the required command — normalize it where the command is accepted into the workflow, before any agent is asked to run it. `printenv VAR` confirms ordinary variables; `locale` confirms locale variables by their effective `LC_*` lines (an unset `LC_ALL` with an effective `C` locale satisfies `LC_ALL=C`). `env VAR=value cmd args` is not an accepted shape. If the ambient environment does not satisfy the precondition, report a blocker instead of running under the wrong environment.
+Where an execpolicy rule refuses top-level `git rebase`, no user authorization or delegation lifts the refusal. A clean linear issue branch takes the worktree skill's replay route, [worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback)](../../worktree/SKILL.md#policy-blocked-rebase-cherry-pick-replay-fallback), never an improvised force-push. A dirty tree or a merge commit in range is outside that route: report a blocker.
 
-### Rule-refused porcelain
+## Confinement
 
-Where an execpolicy rule refuses top-level `git rebase`, no user authorization or delegation lifts the refusal. The replacement for a clean linear issue branch is the worktree skill's guarded `create <ID> --reuse --replay` (or `--restack --replay` to pause on conflicts) with `worktree restack continue|skip|abort` — worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback) — never an improvised force-push. A dirty tree or merge commits in range put the branch outside that recipe: report a blocker.
+On Linux a local Codex lane runs inside agent-runtime's `bwrap` wrapper, except on a seat whose links lead outside its grants (`linked-seat`); on any other host it runs unconfined ([agent-runtime SKILL.md § Confinement](../../agent-runtime/SKILL.md#confinement)).
 
 ## Standing watch
 
-Codex starts no turn for output that arrives after a turn ended, from a detached process or from a running exec session. The oversee watch ([watch-delivery.md](watch-delivery.md)) is held inside the turn by the unified exec tools. The limits are the Codex CLI tool descriptions (0.156.1):
+Codex starts no turn for output that arrives after a turn ended, from a detached process or a running exec session (agent-runtime `harness.rs` `starts_turn_on_output`). So a Codex overseer holds the oversee watch ([watch-delivery.md](watch-delivery.md)) inside its turn with the unified exec tools:
 
-| Step | Call | Limit |
-|------|------|-------|
-| Arm | `exec_command`, `cmd` the numbered follow command of [watch-delivery.md](watch-delivery.md), `yield_time_ms` 30000 | `yield_time_ms` takes 250-30000 ms. The call returns the first output and a `session_id` while the follow runs. |
-| Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000 | An empty poll waits 5000-300000 ms; `background_terminal_max_timeout` sets the ceiling, 300000 by default. It returns the output written since the previous call. |
-| Re-arm | The same `write_stdin` again, in the same turn, once every returned line is handled | Never end the turn between polls while a lane record is `running`. Every poll return, empty, with output or with an `exit_code`, is an expiry: run the watch-delivery.md checks before the next poll. An `exit_code` ended the follow: arm again from the line after the last number handled. |
+| Step | Call | Return |
+|---|---|---|
+| Arm | `exec_command`, `cmd` the numbered follow command of [watch-delivery.md](watch-delivery.md), `yield_time_ms` 30000 | The first output and a `session_id` while the follow runs. |
+| Wait | `write_stdin` on that `session_id`, empty `chars`, `yield_time_ms` 300000 | The output written since the previous call. |
+| Re-arm | The same `write_stdin` again, in the same turn, once every returned line is handled | Every poll return is an expiry, whether empty, with output or with an `exit_code`: run the watch-delivery.md checks before the next poll. An `exit_code` means the follow ended: arm again from the line after the last number handled. |
 
-Each call is one simple command, as orch's one-simple-command rule asks ([../SKILL.md](../SKILL.md) § Harness-Safe Shell).
+Never end the turn between polls while a lane record is `running`. A turn end while the follow runs outside the turn is held once with `lane-mail-check: wake=unwatched`, because the follow cannot wake the session (orch `turnend/wake.rs` `check`). Poll again in the same turn. A continued turn end passes and says the session is unwatched.
 
 ## Validation wait
 
-A dev agent holds its `dev-validate-run` inside the turn with the same tools, under the limits of § Standing watch. Codex starts no turn when the run ends, and the wake refuses a hosted Codex lane (§ Lane mailbox).
+A dev agent holds its validation run inside its turn with the same tools. Codex starts no turn when the run ends, and the run's end notice reaches the lane's mailbox, never the dev agent. The dev skill's [long-running-validation.md](../../dev/workflows/long-running-validation.md) owns the route; these are its Codex calls.
 
-Start and Resume each return an `exit_code` once the command ended inside their yield, or a `session_id` while it still runs. A return that carries an `exit_code` ended the command: read its lines and do not poll. Only a return that carries a `session_id` takes the Wait step, repeated until a return carries an `exit_code`.
+Start and Resume each return an `exit_code` once the command ended inside their yield, or a `session_id` while it still runs. An `exit_code` means the command ended: read its lines and do not poll. Only a return carrying a `session_id` takes the Wait step, repeated until a return carries an `exit_code`.
 
 | Step | Call | Return |
-|------|------|--------|
-| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]`, `yield_time_ms` 30000 | The output so far. The start prints its `state=started` line only once it has classified the change and launched the run, which nothing bounds to this call, so the line can come on a Wait return. Keep its `run-dir=` value. The start then blocks until the verdict and never exits 3. |
+|---|---|---|
+| Start | `exec_command`, `cmd` `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]`, `yield_time_ms` 30000 | The output so far. The start prints its `state=started` line once it has launched the run; the line can come on a Wait return. Keep its `run-dir=` value. The start follows the run for its wait budget (`orch-runtime validate entry --help`), then exits 3 with `state=running`. |
 | Wait | `write_stdin` on the `session_id` a Start or Resume returned, empty `chars`, `yield_time_ms` 300000, repeated in the same turn | The output since the previous return. |
-| Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000 | Taken only for a run whose `state=started` line was read: when its session ended with no verdict line and no refusal line, or when a `--wait` session exits 3 with `state=running`, which `--wait` prints once its per-call budget runs out. |
+| Resume | `exec_command`, `cmd` `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]`, `yield_time_ms` 30000 | Taken only for a run whose `state=started` line was read, when a call exits 3 with `state=running` or its session ended with no verdict line and no refusal line. |
 
-A session that exits 2 with a `dev-validate-run: [REASON]` line was refused and is never resumed: `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). Once a `state=started` line is read, never end the turn while that run has printed no `state=done`, `state=timeout` or `state=lost` line. What each line means is the dev skill's SKILL.md § Long-Running Validation.
+A call that exits 2 with a `validate: [REASON]` line on stderr was refused; never resume it. `run-live` routes as its line names, and any other reason is a validation failure, both by the dev skill's [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). Once a `state=started` line is read, never end the turn before the run prints `state=done` or `state=lost`. The dev skill's [SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) says what each line means.
 
 ## Delegated round wait
 
-Codex starts no turn when a collaboration agent returns after its caller ended the turn. This includes hosted lanes, whose mailbox wake is unavailable. For dev rounds that write a dev-return artifact, keep the delegation's watchdog inside the current turn until it records an artifact verdict or reaches the round deadline. The round token, deadline, acceptance and escalation stay in [skill-rules.md § Round Closure](skill-rules.md#round-closure).
+Codex starts no turn when a collaboration agent returns after its caller ended the turn. So for a dev round that writes a dev-return artifact, the round's watchdog decides the round by an artifact verdict or the round deadline. [skill-rules.md § Round Closure](skill-rules.md#round-closure) holds the round token, deadline, acceptance and escalation.
 
-Launch the single `dev-artifact-check` watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
+Launch the one watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch), whose step 2 says when `--owner` stands:
 
 ```bash
-sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/dev-artifact-check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID]
+.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- .agents/skills/orch/scripts/orch-runtime dev-return --text check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] < /dev/null
 ```
 
-A fix round appends `--expect-items-from-round`. This replaces the background watchdog, rather than adding a second one. Hold its completion through [waiter-launch.md § Completion](waiter-launch.md#completion), using `exec_command` and empty `write_stdin` polls in this turn. A tool return with a `session_id` requires another poll; one with an `exit_code` ended that command. A poll timeout requires the completion route's retry while `wait.exit` is empty. An agent's return message does not release this wait.
+A fix round appends `--expect-items-from-round`. Launch one watchdog per round; it replaces any background watchdog. A lane then ends its turn, and the `job-end` mail reaches it through the wake ([waiter-launch.md § Completion](waiter-launch.md#completion)). A session that is no lane holds the completion inside the turn with `exec_command` and empty `write_stdin` polls, as § Validation wait does. An agent's return message does not release the wait.
 
-Read `wait.exit` and `wait.log` once the completion file is nonempty. Apply Round Closure's refusal and replacement rules when the watchdog returned no verdict. Otherwise run the delegating workflow's acceptance table on the artifact verdict or deadline result. Continue the workflow in this turn. The generic lane-notice instruction to end a turn while waiting on an agent does not apply to this wait.
+Once `wait.exit` is nonempty, read it and `wait.log`. Where the watchdog returned no verdict, apply Round Closure's refusal and replacement rules. Otherwise, run the delegating workflow's acceptance table on the artifact verdict or the deadline result.
 
 ## Reviewer round wait
 
-For each incomplete reviewer, launch its single watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
+For each incomplete reviewer, launch its one watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
 
 ```bash
-sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- .agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID] < /dev/null
 ```
 
-Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog). This replaces each background watchdog. Start [waiter-launch.md § Completion](waiter-launch.md#completion)'s foreground poll for each run before polling their sessions. Keep all completion waits inside this turn with `exec_command` and empty `write_stdin` polls, as [§ Delegated round wait](#delegated-round-wait) requires. After every tool return, sweep all run directories for nonempty `wait.exit` files and run § 3.2's filesystem sweep and due actions before the next poll. Read each completed run's `wait.exit` and `wait.log`; § 3.2 owns refusal replacement and § 3.1 owns artifact acceptance. Continue the review workflow in this turn; an agent message alone never releases a watchdog wait.
+Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog). Each watchdog replaces a background one. A lane ends its turn and handles each `job-end` mail as it arrives. A session that is no lane holds every completion inside the turn as § Delegated round wait does. After each completion, sweep all run directories for nonempty `wait.exit` files, and run § 3.2's filesystem sweep and due actions. Read each completed run's `wait.exit` and `wait.log`. § 3.2 owns refusal replacement, and § 3.1 owns artifact acceptance. An agent message alone never releases a watchdog wait.
 
 ## Process-owned reviewers
 
-Read when [review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers) receives `alternate-review` from the explicit Codex attached-launch check. This route runs each mandatory canonical domain as a separate Codex session. Panel selection, one-domain waves, original-batch provenance, deadlines, the one re-delegation and artifact acceptance stay with that workflow. An advisory external reviewer cannot replace a required domain.
+Read when [review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers) receives `alternate-review` from `orch-runtime admission --item [ITEM] --attached-launch`. This route runs each mandatory canonical review domain as a separate Codex session. Every required domain not yet launched starts in the same wave, each through its own admission (step 4). That workflow keeps panel selection, original-batch provenance, deadlines, the one re-delegation and artifact acceptance. An advisory external reviewer cannot replace a required domain.
 
-Use the installed `codex exec` interface: [CLI reference](https://developers.openai.com/codex/cli/reference/). Bind `[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS]` from this lane's current native model/effort and recorded launch selection under [Model class](skill-rules.md#model-class). [lane-launch.sh](../scripts/lib/lane-launch.sh) owns the supported flag spellings. Keep the current launch home and account in the inherited environment, including a private `CODEX_HOME` when the lane uses one. Do not select another model, effort, account, provider or installed executable. A missing CLI, runner or native launch/source binding stops this route and is reported to the caller.
-
-Prepare a fresh `[JOB_DIR]` through [waiter-launch.md § Launch](waiter-launch.md#launch), including its unchanged `launch.sh`. Save the complete `DELEGATION:` prompt as `[JOB_DIR]/delegation.md` with the harness file-write tool. Use the installed canonical role's full instructions and workflow, followed by review-pr's complete unchanged delegation with its exact minted artifact path, concrete range, decisions and re-review context. A role name or shortened review request is insufficient. Launch from the owned worktree:
+1. Read the lane's own model and effort with `.agents/skills/orch/scripts/orch-runtime session`. From its `model=` and `effort=` lines, bind `[MODEL_AND_EFFORT_FLAGS]` as `-m [MODEL] -c model_reasoning_effort=[EFFORT]` (agent-runtime `harness.rs` `Harness::model_words`). A refusal line stops this route: report its key to the caller.
+2. Bind `[PERMISSION_FLAG]` to the permission word of the lane's own launch line: `--dangerously-bypass-approvals-and-sandbox` under the `bypass` posture, `--approve-for-me` where the lane carries it, nothing under `native`. Keep the lane's launch home and account in the inherited environment, a private `CODEX_HOME` included. Select no other model, effort, account, provider or executable. A missing `codex` stops this route: report it to the caller.
+3. Make a fresh `[JOB_DIR]` as [waiter-launch.md § Launch](waiter-launch.md#launch) makes `[RUN_DIR]`. With the harness file-write tool, save the complete `DELEGATION:` prompt as `[JOB_DIR]/delegation.md`: the installed canonical role's full instructions and workflow, then review-pr's complete delegation with its minted artifact path, range, decisions and re-review context. A role name or a shortened request is not enough.
+4. Run [review-pr.md § Process launch admission](../workflows/review-pr.md#process-launch-admission) immediately before every launch, a replacement included. An earlier `alternate-review` verdict is no fresh reading.
+5. Launch from the owned worktree:
 
 ```bash
-sh "[JOB_DIR]/launch.sh" "[JOB_DIR]/review" sh -c 'exec codex exec --ephemeral [CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS] --disable hooks --output-last-message "$1/last-message.md" - < "$1/delegation.md"' sh "[JOB_DIR]"
+.agents/skills/orch/scripts/orch-runtime launch-job --name review-[RUN_ID] --run [JOB_DIR]/review --owner [ISSUE_ID] -- sh -c 'exec codex exec --ephemeral [MODEL_AND_EFFORT_FLAGS] [PERMISSION_FLAG] --disable hooks --output-last-message "$1/last-message.md" - < "$1/delegation.md"' sh "[JOB_DIR]" < /dev/null
 ```
 
-The invocation-only `--disable hooks` prevents this separate session from delivering or acknowledging its parent's lane mail. `--ephemeral` controls persistence alone. Keep the override after the current selection flags; change no stored configuration, trust, account or home.
+The turn end hands lane mail only to the session the lane record binds, so the reviewer session reads none of its parent's mail. `--disable hooks` keeps its hooks off before that binding stands. `--ephemeral` controls persistence alone. Keep the override after the selection flags, and change no stored configuration, trust, account or home.
 
-Every launch, including an allowed replacement, requires [review-pr.md § Process launch admission](../workflows/review-pr.md#process-launch-admission) immediately before this command. An earlier `alternate-review` verdict is not a fresh plain-context reading.
+The job's files are the [run files](waiter-launch.md#run-files) with `review` for `[WORD]`, under `[JOB_DIR]` beside `last-message.md` and the assigned artifact path. The job has no agent ID, thread, chat channel or child-wait target. Hold its completion through [waiter-launch.md § Completion](waiter-launch.md#completion), reading `review` for `wait`, and keep § Reviewer round wait's artifact watchdog running. The process's end and the measurement evidence in its log supply liveness. review-pr § 3 owns acceptance, failure and deadline actions; neither a launch nor a last message is acceptance.
 
-This is a transparent job launch: [job-units.md](job-units.md) owns the inherited environment, lifetime, runner identity and stop. Record `review.runner`, `review.exit`, `review.log`, `last-message.md` and the assigned artifact path under the job's exact directory in existing status and ownership prose. The job has no attached agent ID, reusable thread, chat channel or child-wait target. Hold completion through [waiter-launch.md § Completion](waiter-launch.md#completion), substituting `review` for `wait`, and keep § Reviewer round wait's artifact watchdog active. Process completion and actual measurement evidence in the log supply liveness. review-pr § 3 owns all acceptance, failure and deadline actions; neither a launch nor a last message supplies acceptance.
-
-For review-pr § 3.1's process collection, run the exact assigned-file check only after a zero runner exit. `[CHECK_BOUNDARY]` is the original batch's evidence boundary, or its stricter rejection boundary under § 3.2. Read the retained log beside this result. A failed exit read or nonzero execution result supplies no artifact verdict and leaves required evidence unread under that workflow's failure route:
+For review-pr § 3.1's process collection, run the assigned-file check only after a zero exit. `[CHECK_BOUNDARY]` is the original batch's evidence boundary, or its stricter rejection boundary under § 3.2. Read the log beside the result. A failed exit read or a nonzero exit supplies no artifact verdict, and leaves the required evidence unread under that workflow's failure route:
 
 ```bash
-sh -c 'code=$(cat "$1/review.exit") || exit 2; case "$code" in 0) ;; *) printf "codex-review: execution-exit=%s\n" "$code" >&2; exit 1 ;; esac; exec .agents/skills/orch/scripts/review-artifact-check --file "$2" "$3" "$4" --issue "$5"' sh "[JOB_DIR]" "[ASSIGNED_ARTIFACT_PATH]" "[WORKTREE_PATH]" "[CHECK_BOUNDARY]" "[ISSUE_ID]"
+sh -c 'code=$(cat "$1/review.exit") || exit 2; case "$code" in 0) ;; *) printf "codex-review: execution-exit=%s\n" "$code" >&2; exit 1 ;; esac; exec .agents/skills/orch/scripts/orch-runtime review-artifact --text check --file "$2" --worktree "$3" --delegated-at "$4" --issue "$5"' sh "[JOB_DIR]" "[ASSIGNED_ARTIFACT_PATH]" "[WORKTREE_PATH]" "[CHECK_BOUNDARY]" "[ISSUE_ID]"
 ```
 
 ## Lane mailbox
 
-A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): a lane idle at its prompt holds no turn, and Codex starts none for a monitor's output. The overseer follows each `lane-mail send` to a Codex lane with `open-terminal --wake` ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)), which resumes the lane's newest session in print mode with one line that runs `lane-mail inbox`. Codex publishes no idle signal, so the wake refuses a lane whose Codex process still runs, as `working` or `unjudged` ([lane-reach.md § Wake refusals](lane-reach.md#wake-refusals)). The wake refuses a hosted Codex lane as `wake-invalid`. Mail to a Codex lane the wake refuses takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
+A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)), since Codex starts no turn for a monitor's output; its launch brief carries no arm line. Mail reaches it at its turn ends and through the watch's wake duty. The wake types the inbox line into an idle local Codex lane and confirms it by a user turn in the session's rollout ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)). A Codex lane that waits on an answer or a job ends its turn after the ask or the launch, and the answer or the completion reaches it as mail. `wake-limit` is the wake's own limit: a session no record binds, an unknown home, or an absent session file. Mail that cannot wait for those takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
 
 ## Spawning Codex collaboration agents
 
-Spawn generated agents without a full-history fork. A full-history fork inherits the parent's runtime settings. Resolve parameters with `scripts/spawn-adapter spawn <canonical-agent-name>`: the canonical hyphenated name is the identity everywhere orch records anything, and the adapter confines the runtime spelling to `record.runtime_metadata`. `--fallback-reason` is for a deliberate generic-worker fallback, never one a name-schema rejection caused. Use the fork option this surface exposes: `fork_turns: "none"` on MultiAgentV2, `fork_context: false` on V1. Prepare the complete `DELEGATION:` message under [skill-rules.md § Codex thread reuse](skill-rules.md#codex-thread-reuse), including the target agent's full instructions and workflow. Give a V2 `spawn_agent` that initial message in `message`. Use `followup_task` for a new task on a finished V2 thread and `send_message` for guidance to a running one. On V1, use `send_input` after spawning.
+Spawn a generated agent without a full-history fork. Resolve the spawn with `.agents/skills/agent-runtime/scripts/agent-runtime subagent spawn --harness codex [CANONICAL_AGENT_NAME]`. Hand the answer's `spawn` fields to MultiAgent V2's `spawn_agent`. The canonical hyphenated name is the identity everywhere orch records anything; the runtime spelling stays in `record.runtime_metadata`. `--fallback-reason [REASON]` spawns the generic `worker` for a deliberate fallback, never for a name the schema rejected.
 
-`scripts/spawn-adapter slots` prints the effective thread cap and the `REVIEWER_SLOT_BUDGET` it implies, warning when only the legacy key is set (it is ignored); a running session keeps its old cap until restarted. It reads configuration, not threads in use. Before each spawn, count threads with `list_agents` under [skill-rules.md § Codex thread reuse](skill-rules.md#codex-thread-reuse). On a V2 surface with no `close_agent`, finished threads still hold slots and `interrupt_agent` releases none. Reuse an eligible finished thread through `followup_task` before reporting a cap blocker. On V1, keep `close_agent` retirement. Set the reported budget in `kendex.settings.toml` `[env]`.
+Prepare the complete `DELEGATION:` message under [skill-rules.md § Codex thread reuse](skill-rules.md#codex-thread-reuse), the target agent's full instructions and workflow included. Give it to MultiAgent V2's `spawn_agent` as `message`. On MultiAgent V1, which exposes `close_agent`, pass `fork_context: false` as the fork setting, spawn without `message`, then send the `DELEGATION:` message with `send_input`. Use `followup_task` for a new task on a finished thread, and `send_message` for guidance to a running one.
+
+`.agents/skills/agent-runtime/scripts/agent-runtime subagent room --harness codex` prints the session's thread cap and its source. A running session keeps its cap until restarted. The verb cannot read the threads in use: count them with `list_agents` before each spawn under [skill-rules.md § Codex thread reuse](skill-rules.md#codex-thread-reuse). Finished threads still hold slots, and `interrupt_agent` releases none. Reuse an eligible finished thread through `followup_task` before reporting a cap blocker.
 
 ## Codex Desktop app handoff
 
-`workflows/handoff.md` with `harness=codex-app`, the default for multi-issue handoff when the runtime exposes `codex_app` thread tools. Create exactly one thread per issue with `codex_app.create_thread`, targeting a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}` from `resolve-base-branch`. Start it with `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, and record the returned thread ID. If the runtime separates creation from prompting, call `codex_app.send_message_to_thread` once with that same prompt.
+[handoff.md](../workflows/handoff.md) with `harness=codex-app` is the default for a multi-issue handoff when the runtime exposes `codex_app` thread tools. Create exactly one thread per issue with `codex_app.create_thread`. Target a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}`, the branch `.agents/skills/orch/scripts/resolve-base-branch` prints. Start the thread with `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, and record the returned thread ID. Where the runtime separates creation from prompting, call `codex_app.send_message_to_thread` once with that prompt.
 
-Use a `working-tree` starting state only when the user explicitly asks for a dirty local snapshot (it can start the child before generated Codex agents are visible, forcing a `worker` fallback). Generated agents must be tracked under `.codex/agents/*.toml` in the saved project branch to be discoverable: setup hooks and worktree symlinks run too late.
+Use a `working-tree` starting state only when the user asks for a dirty local snapshot. Generated agents are discoverable only when tracked under `.codex/agents/*.toml` in the saved project branch; setup hooks and worktree links run too late.
 
-The Codex CLI does not expose these tools. Do not emulate app handoff with terminal launch, `codex debug app-server`, raw `codex app-server`, or manual app-thread instructions.
+The Codex CLI has no app tools. Do not emulate an app handoff with a terminal launch, `codex debug app-server`, raw `codex app-server` or manual app-thread instructions.

@@ -1,0 +1,36 @@
+#!/bin/bash
+# A stub harness named `claude` for a session that is not signed in: it
+# behaves as stub-confirm (draws Claude Code's composer, takes
+# `--session-id`, records each line it reads as a user turn in a session
+# file of Claude Code's shape under CLAUDE_CONFIG_DIR), and answers every
+# turn with the login wall below the echoed turn, the drawing the runtime's
+# screen judge reads as an auth wall (agent-runtime `observe.rs`
+# `AUTH_FAILURE`), then its composer again. It launches no model and reaches
+# no account.
+printf '\xe2\x9d\xaf\xc2\xa0\n'
+printf '  ? for shortcuts\n'
+session="stub-$$"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-id) session="${2:-$session}"; shift ;;
+  esac
+  shift
+done
+rows=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  slug="${PWD//[\/.]/-}"
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/$slug"
+  rows="$CLAUDE_CONFIG_DIR/projects/$slug/$session.jsonl"
+  printf '{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"%s"}\n' "$session" > "$rows"
+fi
+while IFS= read -r line; do
+  if [ -n "$rows" ]; then
+    escaped="${line//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    printf '{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"%s"},"uuid":"%s-%s","timestamp":"%s","sessionId":"%s","cwd":"%s"}\n' \
+      "$escaped" "$session" "$RANDOM" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$session" "$PWD" >> "$rows"
+  fi
+  printf '\xe2\x9d\xaf %s\n' "$line"
+  printf '  \xe2\x8e\xbf  Not logged in \xc2\xb7 Please run /login\n\n'
+  printf '\xe2\x9d\xaf\xc2\xa0\n'
+done

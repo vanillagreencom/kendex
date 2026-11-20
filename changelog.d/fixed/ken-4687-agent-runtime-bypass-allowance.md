@@ -1,0 +1,1 @@
+- Accept the safety finding on the launch flag table of the agent-runtime skill's runtime, which emits `--dangerously-skip-permissions` only for a caller's bypass permission intent.

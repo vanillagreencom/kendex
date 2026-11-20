@@ -64,10 +64,10 @@ Every mode runs:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
-.agents/skills/orch/scripts/reconcile-work-items
+.agents/skills/orch/scripts/orch-runtime reconcile-items
 ```
 
-Run `reconcile-work-items` only where the orch skill is installed (skip the line otherwise). Exit 0 is a clean tracker; exit 1 is findings — carry them into the audit as facts; exit 2 is a broken sweep to fix before auditing.
+Run `orch-runtime reconcile-items` only where the orch skill is installed. Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts. A refused reply exits 1; fix the failed read before auditing. A usage error exits 2. A dropped verification check stays unticked. The linear skill's completion route, `linear.sh issues complete`, owns the box and has no retire option: record its criterion, the person’s reason and their authority in an owner comment on the item that names that route as the box's owner.
 
 Keep the issue-label inventory for every create/update preflight.
 
@@ -277,7 +277,7 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 | `priority_misalignment` | `issues update [ID] --priority [P]` + reason comment |
 | `agent_mismatch`, `label_cooccurrence` | § Labels (run § 7.0 first) |
 | `add_relations`, `remove_relations` | § Hierarchy and Relations |
-| `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild). `close_parent` closes through the verifier's route instead: `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/container-close . [ID]` from the checkout root, which derives the shared main repository itself and keeps a parent with an open child and reports its own result |
+| `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild). `close_parent` closes through the verifier's route instead: `.agents/skills/orch/scripts/orch-runtime container-close . [ID]` from the checkout root, which derives the shared main repository itself, keeps a parent with an open child as `deferred [ID...]`, and prints `closed [ID]`, `held [ID] [RESET]` or a `container-close: [KEY]` refusal on stderr |
 | `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
 | `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
 | `project_needed`, `map_findings` | Reported in § 8, never applied: [project-map.md § Audit](../references/project-map.md#audit) |
@@ -339,7 +339,7 @@ Every create's body carries `create_fields.supersession` as its `**Supersession*
 Once every create has landed and its relations and parent are attached — never per create — position each created issue in Todo unless any of these hold: the project state is not `started`, the issue's `blocked_by_open` names an issue in another project (linear SKILL.md § Blocked Label vs Issue Relations), or it is P4 with no blocking relations.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh projects get [PROJECT_ID] | jq -r '.state'
+.agents/skills/linear/scripts/linear.sh graphql --query 'query { project(id: "[PROJECT_ID]") { state } }' | jq -r '.project.state'
 .agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT]" --state "Todo" --max --format=safe | jq 'sort_by(.sort_order)'
 .agents/skills/linear/scripts/linear.sh issues update [NEW_ID] --state "Todo" --sort-order [CALCULATED]
 ```
@@ -350,7 +350,7 @@ Once every create has landed and its relations and parent are attached — never
 
 **Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); add or extend its research and decision references per [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules, using the parent's template for a container. Preserve existing references. Apply by file (`--description-file` / `--body-file`). Apply the § 7 artifact rule even when the reference already exists.
 
-Propagate to children — Linear `issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
+Propagate to children — Linear `issues get [ISSUE_ID] | jq -r '.children[].id'`, then repeat per child. `issues get` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
 
 ### 7.4 Post-Cancellation Cleanup
 

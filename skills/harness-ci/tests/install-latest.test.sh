@@ -23,6 +23,8 @@ run_install_latest() { # SCRIPT RELEASE COMMIT FAIL_AT INSTALL_RC [GITHUB_ASSIGN
     cp -- "$installer" "$checkout/.agents/skills/harness-ci/scripts/install-latest.sh"
     cp -- "$script" "$checkout/.agents/skills/$entry/scripts/install-latest.sh"
     cp "$SKILL_DIR/../harness-ci/scripts/lib/change-class.sh" "$checkout/.agents/skills/harness-ci/scripts/lib/"
+    mkdir -p "$checkout/.agents/skills/change-scope/scripts/lib"
+    cp "$SKILL_DIR/../change-scope/scripts/lib/change-scope.sh" "$checkout/.agents/skills/change-scope/scripts/lib/"
     rm -f "${checkout:?}/.github/workflows/kendex-refresh.yml"
   fi
   if [ -n "$pin" ]; then

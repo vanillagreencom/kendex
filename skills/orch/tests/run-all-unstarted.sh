@@ -28,17 +28,15 @@ for phase, marker in (
   for variant in ("normal", "missing-report"):
     battery = root / phase / variant / "orch" / "tests"
     (battery / "lib").mkdir(parents=True)
-    (battery.parent / "scripts" / "lib").mkdir(parents=True)
     github = battery.parent.parent / "github" / "scripts" / "lib"
     github.mkdir(parents=True)
     shutil.copy(source / "lib" / "git-env.sh", battery / "lib")
     shutil.copy(source / "lib" / "suite-process.sh", battery / "lib")
-    shutil.copy(source.parent / "scripts" / "lib" / "lane-state.sh", battery.parent / "scripts" / "lib")
     shutil.copy(source.parent.parent / "github" / "scripts" / "lib" / "group-leader.sh", github)
     text = (source / "run-all.sh").read_text()
     if marker:
         assert text.count(marker) == 1
-        text = text.replace(marker, 'printf ready > "$ACK"\nread -r line < "$FIFO"\n' + marker)
+        text = text.replace(marker, 'printf ready > "$ACK"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\n' + marker)
     if variant == "missing-report":
         needle = "    printf 'unstarted suite=%s\\n' \"$name\""
         assert text.count(needle) == 1
@@ -46,7 +44,7 @@ for phase, marker in (
     runner = battery / "run-all.sh"
     runner.write_text(text)
     ack = battery / "ready"
-    (battery / "a-block.sh").write_text('test -z "${RUN_ALL_PENDING_SUITES+x}" || exit 1\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n')
+    (battery / "a-block.sh").write_text('test -z "${RUN_ALL_PENDING_SUITES+x}" || exit 1\nprintf ready > "$ACK"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\n')
     (battery / "z-wait.sh").write_text('echo "pass: 1   fail: 0"\n')
     fifo = battery / "hold"
     os.mkfifo(fifo)
@@ -66,10 +64,9 @@ for phase, marker in (
             assert time.monotonic() < deadline, "suite acknowledgement deadline"
             time.sleep(0.01)
         os.killpg(process.pid, signal.SIGTERM)
-        # dev-validate-run's teardown sends KILL after the job-unit grace.
-        grace_text = (source.parent / "scripts/lib/job-unit.sh").read_text()
-        grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
-                         if line.startswith("JOB_UNIT_KILL_GRACE=")))
+        # The runner's teardown sends KILL after its own stop grace.
+        grace = int(next(line.split("=", 1)[1] for line in text.splitlines()
+                         if line.startswith("STOP_GRACE=")))
         output, _ = process.communicate(timeout=grace)
         assert process.returncode == 143, output
         selected = [line for line in output.splitlines() if line.startswith("selected suite=")]

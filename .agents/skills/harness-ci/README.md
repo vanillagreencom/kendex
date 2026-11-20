@@ -44,12 +44,12 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | `HARNESS_CI_QUEUE_SELECTOR` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository command that identifies merge-group jobs. Before you set it: [references/wiring.md § The CI template](references/wiring.md#the-ci-template). |
 | `HARNESS_CI_TRIVIAL_PATHS` | Paths eligible for the trivial-change class. |
 | `HARNESS_CI_TRIVIAL_MAX_LINES` | The line ceiling for that class. A diff of admitted settings files alone has none. |
-| `HARNESS_CI_TRIVIAL_SETTINGS` | `[env]` keys whose change can be trivial, beside those their declaring package marks `# ci: unread`. Add only keys that no CI job or review gate reads. A glob starting with `!` removes keys, such as a marked key your own CI reads. |
-| `ORCH_SIZE_TEST_PATHS` | Test paths outside orch's default patterns. |
+| `HARNESS_CI_TRIVIAL_SETTINGS` | Adjust the installed packages' CI-unread keys: add key globs, or prefix a glob with `!` to remove them. List only keys that no CI job or review gate reads. |
+| `ORCH_SIZE_TEST_PATHS` | Test paths outside the branch measurement's default patterns. |
 
 For several test groups, declare their input paths in `.github/ci-lanes.conf`. The [per-lane wiring contract](references/wiring.md#per-lane-verdicts) defines the declaration, the queue mark, the nightly mark for platform lanes and the steps before a queue mark lands. A `:queue` mark removed while an open pull request predates it can need one step before that pull request merges: [§ The endpoint expressions](references/wiring.md#the-endpoint-expressions).
 
-Arguments, defaults and setting precedence: `harness-only --help`, `change-class --help` and `aggregate-needs --help`. Maintainer rules and tests: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/DEVELOPMENT.md).
+Arguments, defaults and setting precedence: `harness-only --help`, `change-class --help`, `aggregate-needs --help` and, for the class and its settings, change-scope's `change-scope --help`. Maintainer rules and tests: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/DEVELOPMENT.md).
 
 ## Licence
 

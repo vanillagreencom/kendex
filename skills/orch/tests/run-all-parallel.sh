@@ -36,8 +36,10 @@
 #      suite, which still sets its own
 #   8. --battery — the suites of the directory it names run in place of the
 #      runner's own, and the verdict line names that directory's tree
-#   9. --alone — with --battery, the suites it names run alone, and a suite
-#      sharing a name with one in the runner's own ALONE list runs pooled
+#   9. --alone — with --battery, the suites it names run alone, a suite
+#      sharing a name with one in the runner's own ALONE list runs pooled,
+#      and a name no suite file in the battery answers to refuses the run
+#      before any suite starts
 #  10. the bounds — one table, a row for each rule run-all.sh's header states
 #      for RUN_ALL_SUITE_SECS and RUN_ALL_DEADLINE_EPOCH, each with the
 #      control that plants a defect in that rule alone; and a bound that is
@@ -46,6 +48,11 @@
 #      caller thresholds and margin arithmetic determine warnings, invalid
 #      inputs refuse before launch, batteries emit no partial job reports,
 #      and the final job mode runs no suites; each rule has a must-fail control
+#  12. the process reads — the walk lists every process below a root over
+#      synthetic tables, a held child reads live and a held zombie ended,
+#      each with its control; every battery above holds the runner's own
+#      files alone, so each run proves it starts, stops and reports with no
+#      other package's library
 #
 # Bash 3.2 compatible.
 
@@ -55,7 +62,23 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRATCH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/run-all-parallel.XXXXXX")" ||
   { echo "mktemp failed" >&2; exit 1; }
-trap 'rm -rf -- "${SCRATCH_ROOT:?}"' EXIT
+# The fixture runner in flight (§ 5 and § 10's run_bounded) that this file
+# has not reaped yet, and the pid file its suite writes. The runner leads a
+# process group of its own and the suite may too, out of reach of a signal to
+# this file's group, so whatever ends this file kills both, by group and by
+# pid, and no fixture outlives it.
+LIVE_RUNNER=""
+LIVE_PIDFILE=""
+stop_fixture() {
+  local suite_pid=""
+  [ -z "$LIVE_PIDFILE" ] || suite_pid="$(cat "$LIVE_PIDFILE" 2>/dev/null)"
+  [ -z "$LIVE_RUNNER" ] || kill -KILL -- "-$LIVE_RUNNER" 2>/dev/null
+  [ -z "$suite_pid" ] || kill -KILL -- "-$suite_pid" "$suite_pid" 2>/dev/null
+}
+trap 'stop_fixture; rm -rf -- "${SCRATCH_ROOT:?}"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # Copied runners resolve github two directories above their battery.
 TMP_ROOT="$SCRATCH_ROOT/fixture/tests"
 mkdir -p "$TMP_ROOT"
@@ -63,17 +86,17 @@ mkdir -p "$TMP_ROOT"
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
-source "$TEST_DIR/../scripts/lib/lane-state.sh"
+source "$TEST_DIR/lib/suite-process.sh"
 
-# A fresh battery directory holding run-all.sh and no suites, the process
-# library run-all.sh sources at its path beside the directory, and DIR.tmp for
-# its TMPDIR.
+# A fresh battery directory holding run-all.sh, its process library and no
+# suites, github's group leader at its path beside the battery's tree, and
+# DIR.tmp for its TMPDIR. Nothing of orch's scripts is copied: the runner
+# starts, stops and reports its suites without them.
 battery() { # DIR
-  mkdir -p "$1/lib" "$1.tmp" "${1%/*}/scripts/lib"
+  mkdir -p "$1/lib" "$1.tmp"
   cp "$TEST_DIR/run-all.sh" "$1/run-all.sh"
   cp "$TEST_DIR/lib/suite-process.sh" "$1/lib/suite-process.sh"
   printf '#!/usr/bin/env bash\n:\n' >"$1/lib/git-env.sh"
-  cp "$TEST_DIR/../scripts/lib/lane-state.sh" "${1%/*}/scripts/lib/lane-state.sh"
   mkdir -p "$1/../../github/scripts/lib"
   cp "$TEST_DIR/../../github/scripts/lib/group-leader.sh" "$1/../../github/scripts/lib/group-leader.sh"
 }
@@ -207,7 +230,7 @@ while [ "$i" -lt "${#RED_NAMES[@]}" ]; do
       mutate_file "$B/run-all.sh" 'if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]]; then' \
         'if [[ "$2" == 0 && -z "${4:-}" && "$fail" == 0 ]] || true; then'
     fi
-    run_battery "$B" 3 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+    run_battery "$B" 3 RUN_ALL_SUITE_SECS=900 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
       RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
       GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
     warnings="$(awk -v s="suite=$name" '/^::warning::run-all-budget / {for (i=1; i<=NF; i++) if ($i==s) n++} END {print n+0}' <<<"$OUT")"
@@ -303,11 +326,12 @@ assert_eq "rc=$RC $(printf '%s\n' "$OUT" | sed -n '1s/ printed.*//p')" "rc=1 run
   "a worker count that is not a number refuses before any suite runs"
 
 echo "=== 4. a suite in the ALONE list runs by itself ==="
-ALONE_NAMES="$(sed -n '/^ALONE=(/,/^)/p' "$TEST_DIR/run-all.sh" | sed '1d;$d' | awk '{print $1}')"
-assert_eq "$([ -n "$ALONE_NAMES" ] && echo found || echo 'none: the sed over run-all.sh ALONE=( ... ) is broken')" \
-  found "the ALONE list is read out of run-all.sh"
+# The shipped list is empty: no suite holds a window the pool could break.
+# The runner under test names one.
+ALONE_NAMES=solo-4
 B="$TMP_ROOT/alone"
 battery "$B"
+mutate_file "$B/run-all.sh" $'ALONE=(\n)' $'ALONE=(\n  solo-4\n)'
 event_suites "$B" pool-1 pool-2 pool-3 $ALONE_NAMES
 run_battery "$B" 4 EV="$B.ev"
 verdicts="$(printf '%s\n' "$ALONE_NAMES" | awk -v ev="$B.ev" '
@@ -325,9 +349,8 @@ echo "=== 5. a signal that ends the run ends its suites ==="
 # The runner leads its own process group here (set -m), so a group signal
 # never reaches this file; perl sets SIGINT back to its default, as a shell
 # started with it ignored could not trap it. The suite writes its pid and
-# blocks, so only the runner can end it. Its holder uses the shipped
-# oversee_watch_lifecycle stop_bound_case TERM-ignoring loop. TERM goes to the
-# runner alone, the case the group does not cover.
+# blocks, so only the runner can end it. Its holder is a TERM-ignoring loop.
+# TERM goes to the runner alone, the case the group does not cover.
 # SIGNAL|TARGET|EXPECTED RUNNER STATUS
 SIGNAL_ROWS='INT|group|130
 TERM|runner|143
@@ -355,15 +378,18 @@ SH
   perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$B.bin:$PATH" HOME="$HOME" \
     TMPDIR="$B.tmp" PIDFILE="$B.pid" HOLDERFILE="$B.holder" bash "$B/run-all.sh" >"$B.out" 2>&1 &
   runner=$!
+  LIVE_RUNNER=$runner LIVE_PIDFILE="$B.pid"
   set +m
   tick=0
   until { [ -s "$B.pid" ] && [ -s "$B.holder" ]; } || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
   suite_pid="$(cat "$B.pid" 2>/dev/null)"
   holder_pid="$(cat "$B.holder" 2>/dev/null)"
-  holder_start="$(lane_process_start "$holder_pid" 2>/dev/null)"
+  holder_start=""
+  [ -z "$holder_pid" ] || holder_start="$(started_at "$holder_pid")" || holder_start=""
   if [ "$target" = group ]; then kill -"$sig" -- "-$runner"; else kill -"$sig" "$runner"; fi
   RC=0
   wait "$runner" 2>/dev/null || RC=$?
+  LIVE_RUNNER=""
   # A suite orphaned by the runner's exit stays visible until it is reaped.
   tick=0
   while kill -0 "$suite_pid" 2>/dev/null && [ "$tick" -lt 50 ]; do sleep 0.1; tick=$((tick + 1)); done
@@ -371,12 +397,8 @@ SH
   [ -n "$suite_pid" ] || state=never-started
   holder_state=gone
   [ -n "$holder_start" ] || holder_state=never-started
-  if [ -n "$holder_start" ] &&
-    [ "$(lane_process_start "$holder_pid" 2>/dev/null)" = "$holder_start" ]; then
-    case "$(lane_process_state "$holder_pid" 2>/dev/null)" in
-      '' | Z) ;;
-      *) holder_state=alive ;;
-    esac
+  if [ -n "$holder_start" ] && [ "$(started_at "$holder_pid")" = "$holder_start" ]; then
+    holder_state=alive
   fi
   # The pid names this row's suite only while it runs, so a red row's survivor
   # is killed here and a pid proven gone is never signalled.
@@ -386,6 +408,7 @@ SH
   if [[ "$state" == alive || "$holder_state" == alive ]]; then
     kill -KILL -- "-$suite_pid" 2>/dev/null
   fi
+  LIVE_PIDFILE=""
   expected="rc=$want suite=gone holder=gone"
   [[ "$variant" != hup-unhandled ]] || expected="rc=$want suite=alive holder=alive"
   [[ "$variant" != kill-skipped ]] || expected="rc=$want suite=gone holder=alive"
@@ -436,12 +459,14 @@ mkdir -p "$B/tmp" "$B.planted"
 printf '{"marker":"fixture"}\n' >"$B/tmp/workflow-state-oversee.json"
 printf '{"marker":"caller"}\n' >"$B.planted/workflow-state-oversee.json"
 # Bash 3.2 does not apply errexit to [[ ... ]]; each assertion exits explicitly.
-printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$("$WS" get oversee .marker)" == fixture ]] || exit 1\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$("$WS" get oversee .marker)" == caller ]] || exit 1\necho "pass: 2   fail: 0"\n' \
+# The planted suite reads the fleet record where a state reader resolves it:
+# under ORCH_STATE_DIR where one is set, else the checkout's tmp.
+printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname "$0")"\n[[ "$(jq -r .marker "${ORCH_STATE_DIR:-tmp}/workflow-state-oversee.json")" == fixture ]] || exit 1\nexport ORCH_STATE_DIR="$PLANTED"\n[[ "$(jq -r .marker "${ORCH_STATE_DIR:-tmp}/workflow-state-oversee.json")" == caller ]] || exit 1\necho "pass: 2   fail: 0"\n' \
   >"$B/state.sh"
-run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
+run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted"
 assert_eq "$RC" 0 "the suite reads fixture state and can set its own ORCH_STATE_DIR"
 mutate_file "$B/run-all.sh" 'unset ORCH_STATE_DIR' ': ORCH_STATE_DIR'
-run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted" WS="$TEST_DIR/../scripts/workflow-state"
+run_battery "$B" 1 ORCH_STATE_DIR="$B.planted" PLANTED="$B.planted"
 assert_eq "rc=$RC failed=$(failed_of)" "rc=1 failed=state " "control: inherited lane state fails the fixture assertion"
 
 echo "=== 8. --battery runs another directory's suites and names its tree ==="
@@ -506,6 +531,7 @@ mkdir -p "$OTHER"
 for name in aaa-alone mmm-alone "$O" zzz-pool; do suite "$OTHER" "$name" 0 'pass: 1   fail: 0'; done
 alone_order() { # DIR [FROM TO] ; start order of a fresh runner in DIR, FROM edited to TO
   battery "$1"
+  mutate_file "$1/run-all.sh" $'ALONE=(\n)' $'ALONE=(\n  '"$O"$'\n)'
   [ "$#" -lt 3 ] || mutate_file "$1/run-all.sh" "$2" "$3"
   run_battery "$1" 1 -- --battery "$OTHER" --alone aaa-alone --alone mmm-alone
   printf 'rc=%s started=%s' "$RC" "$(started_of | tr '\n' ' ')"
@@ -517,6 +543,17 @@ assert_eq "$(alone_order "$TMP_ROOT/alone-keep/tests" '    TEST_DIRS+=("$TEST_DI
   "control: the runner's own list kept holds back the other tree's same-named suite"
 assert_eq "$(alone_order "$TMP_ROOT/alone-drop/tests" 'ALONE+=("$TEST_DIR/$2.sh")' ':')" "rc=0 started=aaa-alone mmm-alone $O zzz-pool " \
   "control: --alone left unread runs every suite pooled"
+# A stale --alone name, one left behind when its suite moved to another
+# battery, isolates nothing; the runner refuses it by key instead of pooling
+# the suite it meant. The row is a function so a control can run it alone.
+alone_missing_row() { # RUNNER_DIR
+  battery "$1"
+  run_battery "$1" 1 -- --battery "$OTHER" --alone aaa-alone --alone no-such-suite
+  assert_eq "rc=$RC started=$(started_of | tr '\n' ' ')refusal=$(printf '%s\n' "$OUT" | sed -n 's/^\(run-all.sh: alone-missing suite=[^ ]* \)battery=.*/\1/p')" \
+    "rc=1 started=refusal=run-all.sh: alone-missing suite=no-such-suite " \
+    "--alone naming no suite file refuses by key before any suite starts"
+}
+alone_missing_row "$TMP_ROOT/alone-missing/tests"
 
 echo "=== 10. a suite past its bound is stopped and reported under its own name ==="
 # Batteries, each run on one worker. suite-clock: three suites on a clock
@@ -580,6 +617,7 @@ run_bounded() { # DIR [VAR=VALUE]...
   env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$dir.bin:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" "$@" \
     PIDFILE="$dir.pid" MARK="$dir.mark" bash "$dir/run-all.sh" >"$dir.out" 2>&1 &
   runner=$!
+  LIVE_RUNNER=$runner LIVE_PIDFILE="$dir.pid"
   set +m
   while kill -0 "$runner" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
   RC=0
@@ -590,6 +628,7 @@ run_bounded() { # DIR [VAR=VALUE]...
   else
     wait "$runner" || RC=$?
   fi
+  LIVE_RUNNER=""
   OUT="$(cat "$dir.out")"
   child="$(cat "$dir.pid" 2>/dev/null)"
   CHILD=never-started
@@ -600,6 +639,7 @@ run_bounded() { # DIR [VAR=VALUE]...
       kill -KILL "$child" 2>/dev/null
     fi
   fi
+  LIVE_PIDFILE=""
 }
 
 # One line for a bounded run: its status, the red suites, each stop in report
@@ -622,14 +662,15 @@ edit_of() { # NAME
   case "$1" in
     suite-from-run) EDIT=('SLOT_DUE[k]=$((SECONDS + SUITE_SECS))' 'SLOT_DUE[k]=$((started + SUITE_SECS))') ;;
     deadline-from-suite) EDIT=('SLOT_DUE[k]=$DEADLINE' 'SLOT_DUE[k]=$((SECONDS + DEADLINE - started))' "$GATE" '{ :; }') ;;
-    deadline-always) EDIT=('if [ -n "$DEADLINE" ] && [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; then' 'if [ -n "$DEADLINE" ]; then') ;;
+    deadline-always) EDIT=('if [ -n "$DEADLINE" ] && { [ -z "${SLOT_DUE[k]}" ] || [ "$DEADLINE" -le "${SLOT_DUE[k]}" ]; }; then' 'if [ -n "$DEADLINE" ]; then') ;;
+    local-default) EDIT=('SUITE_SECS="${RUN_ALL_SUITE_SECS:-}"' 'SUITE_SECS="${RUN_ALL_SUITE_SECS:-1}"') ;;
     later-wins) EDIT=('[ "$DEADLINE" -le "${SLOT_DUE[k]}" ]' '[ "$DEADLINE" -ge "${SLOT_DUE[k]}" ]') ;;
     stop-skipped) EDIT=('      stop_overdue "$k"' '      :') ;;
     gate-removed) EDIT=("$GATE" '{ :; }') ;;
     unstarted-green) EDIT=('report "${SUITES[next]}" none 0 unstarted' 'report "${SUITES[next]}" 0 0') ;;
     term-skipped) EDIT=('  signal_tree TERM "$1"' '  :') ;;
     kill-skipped) EDIT=('  signal_tree KILL "$1"' '  :') ;;
-    tree-root-only) EDIT=('table="$(lane_process_table)" || table=""' 'table=""') ;;
+    tree-root-only) EDIT=('table="$(ps -A -o pid= -o ppid= 2>/dev/null)" || table=""' 'table=""') ;;
     red-by-status) EDIT=('[[ "$2" != 0 || -n "${4:-}" ]]' '[[ "$2" != 0 ]]') ;;
     last-dropped) EDIT=('SLOT_LAST[$1]="$(awk' 'SLOT_LAST[$1]="$(: awk') ;;
     *) echo "edit_of: no edit named '$1'" >&2; exit 1 ;;
@@ -653,6 +694,7 @@ edit_of() { # NAME
 BOUND_ROWS='the suite bound counts from the suite own start, so a suite that starts late keeps its whole bound|suite-clock|RUN_ALL_SUITE_SECS=15|rc=0 red= stops= child=never-started mark=|suite-from-run|rc=1 red=c3 stops=c3:suite-timeout:seconds=15:none child=never-started mark=
 the deadline counts from the run start, so a suite that starts late gets only the time left|suite-clock|RUN_ALL_DEADLINE_EPOCH=+15|rc=1 red=c3 stops=c3:run-deadline:started=yes:none child=never-started mark=|deadline-from-suite|rc=0 red= stops= child=never-started mark=
 a suite still running at the deadline is stopped|suite-clock|RUN_ALL_DEADLINE_EPOCH=+15|rc=1 red=c3 stops=c3:run-deadline:started=yes:none child=never-started mark=|stop-skipped|rc=0 red= stops= child=never-started mark=
+with neither bound set, as on a local run, no suite is stopped|clock||rc=0 red= stops= child=never-started mark=|local-default|rc=1 red=c1 c2 c3 stops=c1:suite-timeout:seconds=1:none c2:suite-timeout:seconds=1:none c3:suite-timeout:seconds=1:none child=never-started mark=
 a suite still running at its bound is stopped|clock|RUN_ALL_SUITE_SECS=1|rc=1 red=c1 c2 c3 stops=c1:suite-timeout:seconds=1:none c2:suite-timeout:seconds=1:none c3:suite-timeout:seconds=1:none child=never-started mark=|stop-skipped|rc=0 red= stops= child=never-started mark=
 with both bounds set and the suite bound the earlier, the suite bound stops the suite|trapped|RUN_ALL_SUITE_SECS=2 RUN_ALL_DEADLINE_EPOCH=+5|rc=1 red=trapped stops=trapped:suite-timeout:seconds=2:ok-before-hang child=never-started mark=|deadline-always|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=
 with both bounds set and the deadline the earlier, the deadline stops the suite|trapped|RUN_ALL_SUITE_SECS=6 RUN_ALL_DEADLINE_EPOCH=+3|rc=1 red=trapped stops=trapped:run-deadline:started=yes:ok-before-hang child=never-started mark=|later-wins|rc=1 red=trapped stops=trapped:suite-timeout:seconds=6:ok-before-hang child=never-started mark=
@@ -693,7 +735,7 @@ while IFS='|' read -r rule kind settings want edit control_want; do
         case "$setting" in *=+*) setting="${setting%%=*}=$(($(date +%s) + ${setting#*=+}))" ;; esac
         args+=("$setting")
       done
-      run_bounded "$B" "${args[@]}" RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+      run_bounded "$B" ${args[@]+"${args[@]}"} RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
         RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
         GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
       got="$(bound_outcome "$B")"
@@ -764,11 +806,11 @@ for row in \
   if [ "$expected" = warning ]; then
     want="::warning::run-all-budget run=202 attempt=2 os=macOS shard=orch-state suite=slow seconds=$seconds bound=$cap review=$review margin-percent=$percent"
   fi
-  assert_eq "$got" "$want" "$name annotation consumed by oversee-watch"
+  assert_eq "$got" "$want" "$name annotation the orch watch consumes"
 done
 
 # Restore the unchanged review rule, or drop the margin or annotation. Each
-# control drives the same budget oracle that oversee-watch consumes.
+# control drives the same budget oracle that the orch watch consumes.
 for row in 'review-only|301|900|300|125' 'margin|721|900|1000|125' 'annotation|721|900|300|125'; do
   IFS='|' read -r rule seconds cap review percent <<<"$row"
   cp "$B/run-all.sh" "$B/control"
@@ -789,13 +831,13 @@ done
 
 printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$B/slow.sh"
 mutate_file "$B/run-all.sh" 'report "$base" "$status" "$((SECONDS - SLOT_START[k]))"' 'report "$base" "$status" 721'
-run_battery "$B" 1 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+run_battery "$B" 1 RUN_ALL_SUITE_SECS=900 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
   RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)" \
   GITHUB_RUN_ID=202 GITHUB_RUN_ATTEMPT=2 RUNNER_OS=macOS RUN_ALL_SHARD=orch-state
 assert_eq "rc=$RC $(awk '/^::warning::run-all-budget / { for (i=1; i<=NF; i++) if ($i ~ /^suite=/) print $i }' <<<"$OUT" | sort | tr '\n' ' ')" \
   'rc=0 suite=slow ' 'green battery warns only for its completed suite'
 mutate_file "$B/run-all.sh" 'budget_warning "$1" "$3" "$SUITE_SECS"' ': "$1" "$3" "$SUITE_SECS"'
-run_battery "$B" 1 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
+run_battery "$B" 1 RUN_ALL_SUITE_SECS=900 RUN_ALL_REVIEW_SECS=1 RUN_ALL_MARGIN_PERCENT=125 \
   RUN_ALL_JOB_SECS=900 "RUN_ALL_JOB_STARTED_EPOCH=$(date +%s)"
 CONTROL_RC=0
 ( assert_eq "$(awk '/^::warning::run-all-budget .*suite=slow / { n++ } END { print n+0 }' <<<"$OUT")" 1 'runner annotation oracle'; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?
@@ -861,6 +903,96 @@ run_battery "$B" 1 RUN_ALL_REVIEW_SECS=0 RUN_ALL_MARGIN_PERCENT=125 \
 CONTROL_RC=0
 ( assert_eq "rc=$RC started=$(started_of | tr '\n' ' ')" 'rc=1 started=' 'budget-input oracle'; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?
 assert_eq "rc=$RC oracle=$CONTROL_RC" 'rc=0 oracle=1' 'control permits invalid timing policy and turns refusal oracle red'
+
+echo "=== 12. the process reads: the walk below a suite and a held process's identity ==="
+# Synthetic `pid ppid` rows as `ps -A -o pid= -o ppid=` prints them. 400 and
+# 401 name each other, as a table read mid-reparent can.
+PROC_TABLE='    1     0
+  100     1
+  101   100
+  102   100
+  201   101
+  301   201
+  150     1
+  151   150
+  400   401
+  401   400'
+# ROOT|EVERY PROCESS BELOW IT, sorted
+WALK_ROWS='100|101 102 201 301
+150|151
+301|
+400|401'
+walk_outcome() { # LIBRARY
+  local root want got
+  while IFS='|' read -r root want; do
+    got="$( (source "$1"; tree_below "$PROC_TABLE" "$root") | sort -n | tr '\n' ' ')"
+    printf '%s=[%s] ' "$root" "${got% }"
+  done <<<"$WALK_ROWS"
+  printf 'unread=[%s]' "$( (source "$1"; tree_below '' 100) )"
+}
+WALK_WANT="$(while IFS='|' read -r root want; do printf '%s=[%s] ' "$root" "$want"; done <<<"$WALK_ROWS")unread=[]"
+
+# A child this file holds reads live with its start. A zombie, a child its
+# parent has exited without reaping, reads ended: its pid is held, so no later
+# process can be handed it while the row reads it.
+identity_outcome() { # LIBRARY NAME
+  (
+    source "$1"
+    held="$TMP_ROOT/zombie-$2.pid"
+    child="" parent=""
+    trap '[ -z "$child$parent" ] || kill -KILL $child $parent 2>/dev/null' EXIT
+    sleep 1000 &
+    child=$!
+    rc=0
+    start="$(started_at "$child")" || rc=$?
+    live="$rc:${start:+read}"
+    kill -KILL "$child" 2>/dev/null
+    wait "$child" 2>/dev/null
+    child=""
+    perl -e 'defined(my $pid = fork) or die "fork: $!"; exit 0 unless $pid;
+      open my $f, ">", $ARGV[0] or die; print $f "$pid\n"; close $f; sleep 1000' "$held" &
+    parent=$!
+    tick=0
+    until [ -s "$held" ] || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
+    zombie="$(cat "$held" 2>/dev/null)"
+    rc=unread
+    tick=0
+    while [ -n "$zombie" ] && [ "$tick" -lt 100 ]; do
+      rc=0
+      started_at "$zombie" >/dev/null || rc=$?
+      [ "$rc" -eq 0 ] || break
+      sleep 0.1
+      tick=$((tick + 1))
+    done
+    kill -KILL "$parent" 2>/dev/null
+    wait "$parent" 2>/dev/null
+    parent=""
+    printf 'live=%s zombie=%s' "$live" "$rc"
+  )
+}
+
+assert_eq "$(walk_outcome "$TEST_DIR/lib/suite-process.sh")" "$WALK_WANT" \
+  "the walk lists every process below the root at any depth and no other, and a cycle ends"
+assert_eq "$(identity_outcome "$TEST_DIR/lib/suite-process.sh" row)" 'live=0:read zombie=1' \
+  "a held child reads live with its start, and a zombie reads ended"
+
+# CONTROL|TEXT|MUTANT TEXT
+PROCESS_CONTROLS='walk|seen[child[j]] = 1; queue[++n] = child[j]; print child[j]|print child[j]
+identity|    Z*) return 1 ;;|    Z*) ;;'
+while IFS='|' read -r control old new; do
+  P="$TMP_ROOT/process-$control"
+  mkdir -p "$P"
+  cp "$TEST_DIR/lib/suite-process.sh" "$P/suite-process.sh"
+  mutate_file "$P/suite-process.sh" "$old" "$new"
+  if [ "$control" = walk ]; then
+    got="$(walk_outcome "$P/suite-process.sh")" want="$WALK_WANT"
+  else
+    got="$(identity_outcome "$P/suite-process.sh" control)" want='live=0:read zombie=1'
+  fi
+  CONTROL_RC=0
+  ( assert_eq "$got" "$want" "$control oracle"; [ "$FAIL" -eq 0 ] ) >"$P/control.out" || CONTROL_RC=$?
+  assert_eq "$CONTROL_RC" 1 "control, $control: the mutant process read turns its row red"
+done <<<"$PROCESS_CONTROLS"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -14,6 +14,13 @@ SK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)"
 SK_RUN_FROM=""
 SK_FAKE="$SK_ROOT/skills/slack/tests/lib/fake_slack.py"
 SK_LANE_MAIL="$SK_ROOT/skills/mailbox/scripts/lane-mail"
+# `lane-mail compact` files the rows it drops through the orch runtime, found
+# in the cache the packages' set-up fills for this checkout's sources. A probe
+# runs the real lane-mail under `env -i` with a HOME of its own, so it is
+# handed this one cache by name.
+AGENT_RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$SK_ROOT/skills/agent-runtime/scripts/lib/key.sh")" ||
+  { printf 'slack-tests: runtime-cache=unresolved\n' >&2; exit 1; }
+export AGENT_RUNTIME_CACHE
 SK_TOKEN="test-token-$$"
 SK_APP_TOKEN="test-app-token-$$"
 OWNER="brad@example.test"
@@ -40,6 +47,11 @@ SK_TMP="$(cd -- "$SK_TMP" && pwd -P)" || { printf 'slack-tests: scratch=resolve-
 export GIT_CEILING_DIRECTORIES="${SK_TMP%/*}"
 set +e
 mkdir -p "$SK_TMP/home"
+# An overseer send asks the built agent-runtime through its wrapper, which
+# reads the cache under HOME where no AGENT_RUNTIME_CACHE is handed in, as
+# none is to the package runs under `env -i`.
+mkdir -p "$SK_TMP/home/.cache/kendex"
+ln -s "$AGENT_RUNTIME_CACHE" "$SK_TMP/home/.cache/kendex/agent-runtime"
 sk_cleanup() {
   [ -z "$FAKE_PID" ] || kill "$FAKE_PID" 2>/dev/null
   # shellcheck disable=SC2086
@@ -130,7 +142,7 @@ sk_new_root() {
   mkdir -p "$root/.agents/skills/mailbox"
   ln -sfn "$SK_ROOT/skills/mailbox/scripts" "$root/.agents/skills/mailbox/scripts"
   mkdir -p "$root/tmp"
-  printf '{"overseer":{"server":"7000","pane":"%%0"}}\n' > "$root/tmp/workflow-state-oversee.json"
+  printf '{"controller":{"server":"7000","pane":"%%0"}}\n' > "$root/tmp/workflow-state-oversee.json"
   # Ordinary Slack cases have a working tracker that matches none of their ids.
   # Tracker-link cases replace these keys or plant their own read failure.
   printf '{"urlKey":"workspace","keys":["FIXTURE"]}\n' > "$root/linear.json"
@@ -154,6 +166,7 @@ landed() {
 }
 # sk_stall_delivery ROOT: a real lane-mail send with no flock and a one-shot
 # stalled jq delivery scan. The marker proves the shipped guard holds its lock.
+# The PATH keeps ps: with no /proc, agent-runtime reads process identity there.
 sk_stall_delivery() {
   env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C python3 - "$1" "$SK_LANE_MAIL" <<'PY'
 import pathlib, shlex, shutil, sys
@@ -162,7 +175,7 @@ bin_dir = root / "tmp/no-flock-bin"
 bin_dir.mkdir()
 for name in ("bash", "sh", "cat", "tail", "mkdir", "mv", "rm", "rmdir", "date", "awk", "sed", "git",
              "tr", "head", "sleep", "cp", "ln", "wc", "sort", "grep", "dirname", "basename", "touch",
-             "chmod", "id", "uname", "mktemp", "env", "python3"):
+             "chmod", "id", "uname", "mktemp", "env", "python3", "find", "cut", "sha256sum", "ps"):
     command = shutil.which(name)
     if command is None:
         sys.exit("mutex fixture: command-missing=" + name)
@@ -236,13 +249,6 @@ PY
   [ "$?" -eq 0 ] || exit 1
 }
 
-# sk_historical_mailbox ROOT: install the unchanged historical writer and helpers.
-sk_historical_mailbox() {
-  rm -- "$1/.agents/skills/mailbox/scripts" || exit 1
-  cp -R "$SK_ROOT/skills/slack/tests/fixtures/mailbox-pre-read-events/scripts" \
-    "$1/.agents/skills/mailbox/scripts" || exit 1
-}
-
 # sk_event_filter ROOT JQ: the mailbox store produces changed event fields.
 sk_event_filter() {
   local body
@@ -290,7 +296,7 @@ sk_run() {
   [ $# -eq 0 ] || shift
   RC=0
   OUT="$(cd "${SK_RUN_FROM:-$SK_TMP/home}" && env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C \
-    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" ${AGENT_RUNTIME_CACHE:+AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE"} \
     SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" KENDEX_USER_HANDLE="$HANDLE" \
     SLACK_POLL_SECONDS=1 ${vars[@]+"${vars[@]}"} "$SK_BIN" "$@" 2>"$SK_TMP/err")" || RC=$?
   ERR="$(cat "$SK_TMP/err")"
@@ -404,6 +410,7 @@ sk_copy() {
   ln -sfn "$SK_ROOT/skills/orch" "$dir/skills/orch"
   mkdir -p "$dir/skills/mailbox"
   cp -R "${SK_SLACK%/slack/scripts/slack}/mailbox/scripts" "$dir/skills/mailbox/scripts"
+  ln -sfn "$SK_ROOT/skills/agent-runtime" "$dir/skills/agent-runtime"
   ln -sfn "$SK_LINEAR_STUB" "$dir/skills/linear"
   SK_BIN="$dir/skills/slack/scripts/slack"
 }
@@ -436,6 +443,7 @@ sk_tracker_fixture() {
   ln -s "$SK_ROOT/skills/orch" "$SK_TMP/tracker/skills/orch"
   mkdir -p "$SK_TMP/tracker/skills/mailbox"
   cp -R "$SK_ROOT/skills/mailbox/scripts" "$SK_TMP/tracker/skills/mailbox/scripts"
+  ln -s "$SK_ROOT/skills/agent-runtime" "$SK_TMP/tracker/skills/agent-runtime"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/tracker/skills/linear/scripts/linear.sh"
   cp "$SK_ROOT/skills/slack/tests/lib/tracker_stub.py" "$SK_TMP/bin/gh"
   chmod +x "$SK_TMP/tracker/skills/linear/scripts/linear.sh" "$SK_TMP/bin/gh"

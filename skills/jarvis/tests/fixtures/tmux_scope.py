@@ -48,10 +48,29 @@ def isolate():
     os.environ.update({SCOPE: str(root), "TMUX_TMPDIR": str(sockets),
                        "PATH": str(shims) + os.pathsep + os.environ["PATH"]})
     owner = os.getpid()
+    # SIGKILL runs no exit and no handler. The guard, in a session of its own
+    # and deaf to the signals a terminal or a runner sends the run's group,
+    # reads a pipe whose one writer is this process: the run's exit writes the
+    # word that lets it go, and the end of file alone, which the kernel gives
+    # however this process ends, makes it release the folder. It shares the
+    # run's stderr, so a caller reading that to its end waits for the release.
+    watch = ("import os, signal, sys\n"
+             "from pathlib import Path\n"
+             "for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):\n"
+             "    signal.signal(signum, signal.SIG_IGN)\n"
+             "if not sys.stdin.buffer.read() and Path(sys.argv[2]).is_dir():\n"
+             "    sys.path.insert(0, sys.argv[1])\n"
+             "    from tmux_scope import release\n"
+             "    release(Path(sys.argv[2]), sys.argv[3], os.getpid())\n")
+    guard = subprocess.Popen([sys.executable, "-I", "-c", watch, str(Path(__file__).resolve().parent), str(root), real],
+                             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, start_new_session=True)
+    # Registered first, so it runs after the release.
+    atexit.register(guard.communicate, b"released")
     atexit.register(release, root, real, owner)
     # SIGTERM's default action skips atexit. A disposition the caller set stands.
     if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
         signal.signal(signal.SIGTERM, lambda signum, frame: terminated(root, real, owner, signum))
+    return guard
 
 
 def serving(path):

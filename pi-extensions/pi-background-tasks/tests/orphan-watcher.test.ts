@@ -31,7 +31,7 @@ const rows: WatcherRow[] = [
 	},
 	{
 		name: "reused pid finalizes with pid-reused callback and termination annotation",
-		tasks: [{ id: "bg-3", pid: 12345, command: "approval-wait 81", procIdent: fakeIdent(12345) }],
+		tasks: [{ id: "bg-3", pid: 12345, command: "orch-runtime copilot-wait --pr 81", procIdent: fakeIdent(12345) }],
 		polls: [{ identities: { 12345: { ...fakeIdent(12345), startToken: "start-RECYCLED", comm: "unrelated" } }, expected: { finalized: 1, states: [["bg-3", "failed", null, true, true, "orphaned-pid-reused"]], events: [["bg-3", "orphaned-pid-reused"]], callbacks: [["bg-3", "pid-reused"]], hooks: [2, 2, 1, 1] } }],
 	},
 	{

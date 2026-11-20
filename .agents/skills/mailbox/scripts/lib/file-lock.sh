@@ -3,9 +3,9 @@
 #
 # flock(1) is taken where it exists, because the kernel releases it however
 # the holder dies. Stock macOS ships none — it is util-linux, which macOS is
-# not — and these writers must not run unguarded there: two `workflow-state
-# set` calls racing on one state file both read, both write, and the later
-# write drops the earlier transition. So a mkdir mutex carries the lock where
+# not — and these writers must not run unguarded there: two writers racing on
+# one state file both read, both write, and the later write drops the earlier
+# transition. So a mkdir mutex carries the lock where
 # flock is absent; mkdir is atomic on POSIX filesystems, so exactly one
 # contender creates the directory.
 #

@@ -18,9 +18,12 @@ import sys
 import time
 import uuid
 
-# The session record's owner, session.py, needs the session launcher's environment; home.py keeps its location.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from home import home_state
+# The controller record's owners: orch names its path for a home, and agent-runtime reads its controller.
+SKILLS = Path(__file__).resolve().parents[3]
+ORCH_RUNTIME = SKILLS / "orch/scripts/orch-runtime"
+AGENT_RUNTIME = SKILLS / "agent-runtime/scripts/agent-runtime"
+# Each runtime's answer to the session read, which the peer waits on.
+RECORD_SECONDS = 10
 
 CALL_SECONDS = 30
 CLIENT_SECONDS = 60
@@ -44,7 +47,7 @@ LEGACY_FIFOS = r"requests|[0-9a-f]{32}\.reply"
 SUBJECTS = {"read": "reference", "op": "args", "script": "path"}
 # The characters systemd.unit(5) allows in a unit name, with @ for a template instance.
 UNIT_NAME = r"[A-Za-z0-9:_.@\\-]+"
-# The caller the Jarvis session's recorded process and its descendants are.
+# The caller the Jarvis session's live controller process and its descendants are.
 SESSION_CALLER = "jarvis-session"
 # An allow-list key: the Jarvis session, or a service unit name that may hold one * for a generated part.
 CALLER_KEY = SESSION_CALLER + r"|[A-Za-z0-9:_.@\\-]*\*?[A-Za-z0-9:_.@\\-]*\.service"
@@ -217,19 +220,6 @@ def process_chain(pid, read):
         pid, (parent, started) = parent, above
 
 
-def start_text(ticks, boot):
-    """Name a start time as the session record's started_at does: ps -o lstart= in the C locale and UTC, blanks
-    squeezed, which procps computes as the boot time plus the start ticks in whole seconds."""
-    # Python sets no LC_TIME locale unless asked, so %a and %b are the C locale's names.
-    moment = time.gmtime(boot + ticks // os.sysconf("SC_CLK_TCK"))
-    return time.strftime("%a %b ", moment) + str(moment.tm_mday) + time.strftime(" %H:%M:%S %Y", moment)
-
-
-def boot_time(text):
-    """Return the boot time in /proc/stat text, its btime line."""
-    return int(next(line for line in text.split("\n") if line.startswith("btime ")).split()[1])
-
-
 def cgroup_unit(text):
     """Return the service unit that /proc/PID/cgroup text names as the cgroup v2 path's last component, or None."""
     paths = [line[3:] for line in text.split("\n") if line.startswith("0::")]
@@ -238,13 +228,13 @@ def cgroup_unit(text):
 
 
 def chain_caller(pid, session, read):
-    """Name the caller of process pid from its parent chain; session is the recorded Jarvis process, or None."""
+    """Name the caller of process pid from its parent chain; session is the (pid, start ticks) of the Jarvis
+    session's controller, or None."""
     try:
         chain = process_chain(pid, read)
-        boot = None if session is None else boot_time(read("stat"))
-    except (OSError, ValueError, IndexError, StopIteration):
+    except (OSError, ValueError, IndexError):
         raise Refusal("caller=unverified")
-    if session is not None and any((step, start_text(ticks, boot)) == session for step, ticks, _ in chain):
+    if session is not None and any((step, ticks) == session for step, ticks, _ in chain):
         return SESSION_CALLER
     # systemd-run --scope leaves a helper agent the child of its unit's wrapper shell, so a helper and every
     # process it starts name that unit.
@@ -255,27 +245,67 @@ def chain_caller(pid, session, read):
     raise Refusal("caller=unverified")
 
 
+def unreadable_record(operation, cause, stderr):
+    """Journal why the controller record could not be read, then refuse."""
+    print("op-broker: record=unreadable operation=" + operation + " " + cause, file=sys.stderr, flush=True)
+    for line in stderr.decode(errors="backslashreplace").splitlines():
+        print("op-broker: stderr=" + line, file=sys.stderr, flush=True)
+    raise Refusal("record=unreadable")
+
+
+def runtime_result(operation, argv, home, absent=None):
+    """Return the result of a runtime's JSON reply to argv run in home, or None where it refuses with the key
+    absent; any other answer refuses record=unreadable."""
+    # op's session and account stay with op's own calls.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("OP_")}
+    try:
+        run = subprocess.run(argv, cwd=home, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                             timeout=RECORD_SECONDS)
+    except (OSError, subprocess.SubprocessError) as error:
+        unreadable_record(operation, "cause=" + type(error).__name__, b"")
+    try:
+        reply = json.loads(run.stdout.splitlines()[-1])
+        refusal, result = (reply.get("refusal") or {}).get("key"), reply.get("result")
+    except (IndexError, ValueError, AttributeError):
+        refusal = result = None
+    if absent is not None and refusal == absent:
+        return None
+    if run.returncode or not isinstance(result, dict):
+        unreadable_record(operation, "exit=%d" % run.returncode, run.stderr)
+    return result
+
+
 def session_process(home):
-    """Return the (pid, started_at) the home's Jarvis session record names, or None when it names no process."""
+    """Return the (pid, start ticks) of the live controller the home's controller record names, or None where it
+    names none: no record, no controller, a controller that no longer runs, or one whose process was never read."""
     if home is None:
         return None
     try:
-        record = home_state(str(Path(home).resolve(strict=True))) / "jarvis-session.json"
+        home = str(Path(home).resolve(strict=True))
     except OSError:
         raise Refusal("home=unreadable")
-    try:
-        with open(record, "rb") as stream:
-            process = json.load(stream).get("process")
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError, AttributeError):
+    # The home's own orch settings place the record, as jarvis-session finds it.
+    fleet = runtime_result("orch-runtime-state-path", [str(ORCH_RUNTIME), "state", "path", "--fleet"], home)
+    if not isinstance(fleet.get("path"), str):
         raise Refusal("record=unreadable")
-    if process is None:
+    status = runtime_result("agent-runtime-controller-status",
+                            [str(AGENT_RUNTIME), "controller", "status", "--record", fleet["path"]], home,
+                            absent="record-missing")
+    if status is None or status.get("live") is not True:
         return None
-    if not isinstance(process, dict) or type(process.get("pid")) is not int \
-            or not isinstance(process.get("started_at"), str):
+    recorded = status.get("recorded")
+    if not isinstance(recorded, dict):
         raise Refusal("record=unreadable")
-    return process["pid"], process["started_at"]
+    pid, start = recorded.get("harness_pid"), recorded.get("harness_start")
+    if pid is None or start is None:
+        return None
+    # A pid is a number where agent-runtime writes it and a string where a shell does. On Linux agent-runtime
+    # records the start as /proc's ticks, the form the parent chain reads.
+    pid = str(pid)
+    ticks = start[len("ticks:"):] if isinstance(start, str) and start.startswith("ticks:") else ""
+    if not (pid.isascii() and pid.isdecimal() and ticks.isascii() and ticks.isdecimal()):
+        raise Refusal("record=unreadable")
+    return int(pid), int(ticks)
 
 
 def proc_read(name):
@@ -885,8 +915,8 @@ def main(kind):
                "startup with keepalive=unsupported cause=per-terminal-authorization. "
                "Without an allow list the broker serves every request and logs protection=none. "
                "The broker reads its allow list again for each request. On Linux it serves only what the "
-               "caller's entry lists: jarvis-session for the process the --home session record names and its "
-               "descendants, otherwise the first systemd service in the caller's parent chain. On macOS, which "
+               "caller's entry lists: jarvis-session for the live controller process the --home controller "
+               "record names and its descendants, otherwise the first systemd service in the caller's parent chain. On macOS, which "
                "proves no caller, it serves a read of a reference any entry lists. Anything else replies not-allowed. Each request writes one op-broker: request line "
                "to stderr, never a value. "
                "Clients need Python 3, not op. read writes the raw value to --output; op and @SCRIPT write one "
@@ -906,7 +936,7 @@ def main(kind):
                                  "\"script\": [PATH]}}}, where CALLER is jarvis-session or a NAME.service unit that "
                                  "may hold one * for a generated part; unset, every request is served")
         parser.add_argument("--home", type=Path,
-                            help="Linux: absolute Jarvis home whose session record names the jarvis-session "
+                            help="Linux: absolute Jarvis home whose controller record names the jarvis-session "
                                  "caller, otherwise JARVIS_OP_HOME; unset, no caller is jarvis-session")
     else:
         parser.usage = "opq [--directory DIR] --output FILE (read op://REF | op -- ARG... | @/absolute/script)"

@@ -10,10 +10,13 @@
 # line, the JSON list of suites the narrowed row skips. Every lane condition in
 # that workflow reads one of those lines, the Linux shard matrix `shards` and
 # the queue's macOS matrix `queue_macos_shards` on a classified group, so the
-# selection is made once instead of re-derived in each `if:`.
+# selection is made once instead of re-derived in each `if:`. Where
+# CI_SELECTION names a file, a class selection also writes its
+# `skipped_suites` and `rust_targets` there as one JSON object, which the
+# merge group publishes for the push at its head.
 #
-# On a push to main the shard lines and their runner lines name the shards
-# that main run still owes; see THE PUSH ROUTE below.
+# On a push to main the shard, skip and target lines name what that main run
+# still owes; see THE PUSH ROUTE below.
 #
 # Usage: tools/ci-job-set [--event-parity]
 #        tools/ci-job-set --suite-list CANDIDATE...
@@ -23,8 +26,9 @@
 #                   skill-tests.yml passes it, so the check runs once per
 #                   workflow run over the real changed paths; a call without
 #                   it derives the one event, at half the cost, for the
-#                   suites that call this script many times. A push has no
-#                   class selection to compare, so the push route ignores it.
+#                   suites that call this script many times. A push or a
+#                   schedule has no class selection to compare, so their
+#                   routes ignore it.
 #
 # Environment:
 #   CHANGE_CLASS   render|trivial|micro|small|standard
@@ -36,76 +40,64 @@
 #                  the same class, docs verdict and paths, which
 #                  --event-parity checks. The workflow classifies on
 #                  merge_group alone; tools/guard --full asks at
-#                  pull_request. `push` reads PUSH_BEFORE/PUSH_AFTER from the event instead.
-#   MAIN_ONLY_SUITES  workflow-owned dedicated suite declarations (JSON).
-#   PUSH_BEFORE, PUSH_AFTER  actual main push endpoints; unread ranges refuse.
-#   schedule compares GITHUB_SHA to the latest successful scheduled main run
-#                  and publishes nightly=true|false.
+#                  pull_request. `push` takes the push route and `schedule`
+#                  the night route, which read none of the three variables
+#                  above.
 #   GITHUB_OUTPUT  the step output file the selection is appended to
+#   CI_SELECTION   the file a class selection writes its skips and targets
+#                  to, where set
+#   PUSH_BEFORE, PUSH_AFTER  the actual main push endpoints
+#   MAIN_ONLY_SUITES  the workflow-owned dedicated declarations as JSON
+#   GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_RUN_ID  the proof lookup identity
 #
-# THE PUSH ROUTE, for EVENT=push, which the workflow runs on main alone. A
-# main push carries the head its merge group proved, and its shell shards run
-# the same steps with the same filters, so the push owes only the shards no
-# same-head merge-group job proved. It reads this workflow's merge-group
-# runs for GITHUB_SHA and each run's latest jobs through `gh api`, as
-# GITHUB_REPOSITORY and GH_TOKEN allow, and emits `shards=` and
-# `queue_macos_shards=`, the Linux roster and the macOS-capable roster, each
-# selected by the push range, less the shards proved on that runner, with `shell_shards=` and `shell_os=`
-# as emit() derives them, plus main_suites and cache_compile. A shard is proved on a runner
-# where at least one job named `Skill suites shard (<shard>, <runner>)`
-# exists across those runs and every such job completed with success; each
-# run and job is checked for the event, head and run it claims, because
-# GitHub ignores a query filter it does not recognise. A failed, pending or
-# absent job proves nothing, and a read that fails or finds no run proves
-# nothing either: the step warns, emits the selected rosters and exits 0, since
-# a red step on main would report a push failure for an API outage while the
-# selected roster is the safe answer. Its one diagnostic line starts
-# `ci-job-set: main-proof=read|none|unread`. A merge-group shard job whose
-# suite list left out one of its own candidates ran a step named
-# NARROWED_STEP, which --suite-list arms, and proves nothing: the push runs
-# that shard whole. A job whose steps the read does not hold, or whose
-# NARROWED_STEP did anything but skip, proves nothing either. A leg that
-# kept every candidate is proved as any other. The push skips no suite.
+# THE PUSH ROUTE, for EVENT=push on main: read PUSH_BEFORE/PUSH_AFTER,
+# then select the range since the latest successful main push of this workflow.
+# Pending pushes may be replaced, so the event before head alone cannot
+# bound catch-up work. An absent, unread or non-ancestor successful head
+# selects every suite, shard and target and cache compilation. An unread
+# event range refuses selection, leaving the workflow full fallback.
+#
+# tools/guard --suite-reach owns the selected suites and Rust targets.
+# Per runner, subtract only suites the same-head merge groups selections
+# kept and whose every owning shard job completed successfully. Each group
+# must select a Rust target and every orch-rest Linux job must succeed to
+# prove that target. A failed, pending, absent or unread proof subtracts
+# nothing. Lists of suites outside the reach and suites proved by the group
+# become skipped_suites and skipped_suites_macos. main_suites selects the
+# workflow-owned dedicated declarations; cache_compile selects build inputs.
+# main-proof=read|none|unread reports proof availability on stderr.
+#
+# THE NIGHT ROUTE, for EVENT=schedule: nightly=false only where the latest
+# successful scheduled main run of this workflow has GITHUB_SHA. Otherwise
+# nightly=true selects the full night. An unread history retains the night.
+# A manual dispatch runs the full night without a selection.
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
 #
 #   - On every measured class (`micro`, `small`, `standard`) two Linux lanes
 #     always run: cargo_linux and bot_instructions.
-#   - The shell shards run per package. A package is a skill
-#     (`skills/<name>/`, its render under `.agents/skills/<name>/` included),
-#     `tools/`, `hooks/` (its renders under `.claude/hooks/`, `.codex/hooks/`
-#     and `.pi/kendex/hooks/` included), or a Pi package under
-#     `pi-extensions/`. A changed package selects the shards whose steps run
-#     its suites. A changed skill also selects the shards that run the
-#     tools/ and hooks/ suites, which read skills' scripts, some by glob.
-#   - Who reads a change is searched for, not listed. Every tracked file a
-#     shard runs, as consumers() maps it to a package, is searched for each
-#     changed skill's name and for the path of each changed file outside
-#     skills/, save a root file of prose. A suite that names one selects its
-#     own shard. A skill's script that names a skill, or a skill declaring
-#     it under `dependencies.required` in its SKILL.md, carries the change
-#     on: that skill counts as changed and is searched for in turn, until no
-#     search finds a new one. A reference the search cannot see, a path a
-#     script assembles at run time, is outside this rule, save the two
-#     want_package states: pi-hooks runs hooks by name, so hooks/ also
-#     selects `node`, and harness-smoke reads hooks/*.sh by glob, so
-#     hooks/ also selects `guards-tools-tail`.
-#   - A changed file citing a shard by name in backticks selects
-#     `guards-tools-tail`, whose orch-shard-partition suite holds every
-#     citation to the roster.
-#   - A measured diff whose every path is Markdown of a skill package,
-#     under skills/<name>/ or its render under .agents/skills/<name>/, and
-#     that selects no build lane, takes the narrowed row: the row its paths
-#     select, the same shards included, with `skipped_suites=` listing each
-#     suite tools/guard --note-skips names, whose own `# Inputs:` note covers
-#     no changed document. A suite with no note runs. Each shell suite step
-#     runs only the candidates --suite-list keeps. Where --note-skips
-#     refuses, a suite's code naming a document its note leaves out among
-#     its causes, the row skips no suite. Every other row skips none.
-#   - `guards-scans` runs where a path under skills/, hooks/ or tools/
-#     changed, the trees its scans read. The CHECKOUT_KENDEX_SHARDS
-#     also run where a build input changed, because their consumer rows use
-#     kendex-cli built from the checkout. A diff that reaches no package selects no shard.
+#   - The suites and Rust targets a measured diff runs are its reach, the one
+#     reach local validation selects by: `tools/guard --suite-reach` over the
+#     changed paths, whose mapped_suites header states which suites and
+#     skill runtime targets can depend on each path. The shards are the
+#     reach's projection: each reached suite selects the shards whose steps
+#     run it (want_package; orch's suites the shard run-all.sh --shard-of
+#     gives on either runner), a reached Pi-package tree its package's
+#     shards, and a reached Rust target `orch-rest`, whose Linux leg runs
+#     them. `skipped_suites=` lists every other shell suite, so each shard
+#     step runs only the reach's candidates. `rust_targets=` lists the
+#     targets. A reach that cannot be read runs every shard, suite and
+#     target.
+#   - Beside the reach, four reads its text scan cannot see select a shard
+#     whole: a changed hook selects `node`, whose pi-hooks suite runs hooks by
+#     name, and harness-smoke, which reads hooks/*.sh by glob; a changed file
+#     citing a shard by name in backticks selects orch-shard-partition, which
+#     holds every citation to the roster; `.bun-version` selects `node`; and
+#     a build input selects the CHECKOUT_KENDEX_SHARDS whole, whose consumer
+#     rows run kendex-cli built from the checkout.
+#   - `guards-scans` runs where a path under skills/, hooks/, refresh/ or
+#     tools/ changed, the trees its scans read. A diff that reaches no suite
+#     and no target selects no shard.
 #   - The platform selections (the macOS shell bit, cargo_macos,
 #     cargo_windows) are false on a diff whose every path is prose,
 #     whose content no platform reads differently, and true on any other
@@ -126,11 +118,11 @@
 #     ui/package.json script, and nothing under ui/ imports or configures a
 #     path outside ui/.
 #   - A diff to what defines the lanes, a path under .github/workflows/ or
-#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate,
-#     tools/rust-reads or tools/lib/skill-requirements.awk, runs every
-#     lane, so a change to a lane or to its selection runs every lane in
-#     the merge group that lands it. Any path under .github/ selects every
-#     shard.
+#     .github/actions/ or tools/ci-job-set, tools/ci-aggregate, tools/guard,
+#     tools/rust-reads or the macOS contracts, runs every lane, so a change
+#     to a lane or to its selection runs every lane in the merge group that
+#     lands it. Any path under .github/ and either runner (RUNNERS) selects
+#     every shard whole.
 #   - A `render` or `trivial` diff runs bot_instructions, the one
 #     seconds-long verify job, whose steps its lane entry below lists. The
 #     classifier proved a `render` diff by re-rendering it, and a `trivial`
@@ -168,15 +160,27 @@
 #   ui                  the vitest, tsc and biome lane.
 #   catalog             the released engine's strict check and catalog render.
 #   smoke               the rendered sample trees read by real harness CLIs.
-#   skipped_suites      the narrowed row's JSON list of suites, `[]` on
-#                       every other row; each shell suite step leaves the
-#                       listed suites out of its own.
+#   skipped_suites      the JSON list of shell suites outside the reach, `[]`
+#                       where every shard runs whole; each shell suite step
+#                       leaves the listed suites out of its own. On a push,
+#                       also the selected suites the same-head group proved
+#                       on Linux.
+#   skipped_suites_macos
+#                       a push's alone: suites outside its reach and suites
+#                       proved on macOS at the head, which its macOS legs
+#                       leave out in place of skipped_suites.
+#   rust_targets        the JSON list of skill runtime Rust targets the
+#                       reach holds, each `<package>/<target>` (`lib` or a
+#                       [[test]] name), run by one step of the orch-rest Linux
+#                       leg; every target of every skill runtime where a
+#                       lane source changed or the reach could not be read.
+#                       On a push, the selected targets the group left
+#                       unproved.
 #   queue_macos_shards  the selected shards less LINUX_ONLY_SHARDS, as a JSON
 #                       list in roster order, and empty where the macOS
 #                       shell bit is false. Merge groups run these on macOS,
-#                       a main push the macOS shards its group left
-#                       unproved; the nightly run runs the whole macOS
-#                       roster.
+#                       a main push the selected macOS shards its group left
+#                       unproved. A selected night uses its fixed full matrix.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -188,7 +192,7 @@
 # table does not name is one of those: the step goes red, every lane's status
 # function runs it, and the required contexts refuse the skip, which is the
 # loud way to learn a sixth class shipped. A read set tools/rust-reads could
-# not derive is another.
+# not derive is another. An unread reach is no refusal: it runs everything.
 set -euo pipefail
 
 # --suite-list CANDIDATE... prints, one per line in argument order, the
@@ -200,10 +204,7 @@ set -euo pipefail
 # candidates and runs what it prints, and a step it leaves with none runs no
 # suite. A pooled step turns the kept paths into base-name selectors, which
 # can run a same-named suite of another battery beside a kept one but never
-# drop one. Where SUITE_LIST_DROPS names a file, a shard step's GITHUB_ENV,
-# leaving a candidate out appends `SUITE_LIST_DROPPED=true` to it, which
-# runs the leg's NARROWED_STEP; a failed append fails the call, so no leg
-# passes for whole unmarked.
+# drop one.
 if [ "${1-}" = --suite-list ]; then
   shift
   skipped="${SKIPPED_SUITES-}"
@@ -224,19 +225,12 @@ if [ "${1-}" = --suite-list ]; then
       ;;
   esac
   listed=" $(printf '%s' "$skipped" | sed 's/[][]//g; s/"//g; s/,/ /g') "
-  dropped=0
   for candidate in "$@"; do
     case "$listed" in
-      *" $candidate "*) dropped=1 ;;
+      *" $candidate "*) ;;
       *) printf '%s\n' "$candidate" ;;
     esac
   done
-  if [ "$dropped" -eq 1 ] && [ -n "${SUITE_LIST_DROPS-}" ]; then
-    printf 'SUITE_LIST_DROPPED=true\n' >>"$SUITE_LIST_DROPS" || {
-      printf 'ci-job-set: cause=suite-list-unrecorded\n' >&2
-      exit 2
-    }
-  fi
   exit 0
 fi
 
@@ -266,12 +260,14 @@ JOBS="ui bot_instructions cargo_linux cargo_macos cargo_lint cargo_windows cargo
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate refresh guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls worktree worktree-restack rest jarvis slack mailbox node pi-claude-bridge"
+SHARDS="review-gate refresh orch-state orch-rest guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls worktree worktree-restack rest jarvis slack mailbox node pi-claude-bridge"
 # The shards whose Linux legs build kendex-cli from the checkout, for the
 # consumer rows that run the real binary: the build rule and --suite-kendex
 # read this one list, and tools/tests/orch-shard-partition.test.sh holds the
 # workflow's `kendex from this checkout` condition to it.
-CHECKOUT_KENDEX_SHARDS="refresh rest jarvis"
+CHECKOUT_KENDEX_SHARDS="refresh orch-rest rest jarvis"
+# The shards that run orch's suites, each one run-all.sh's shard_of names.
+ORCH_SHARDS="orch-state orch-rest"
 # The native eligibility owner declares the macOS shards that are empty,
 # unsupported, or whose families another macOS job retains.
 # The ownership proof compares those declarations with actual suite coverage
@@ -305,75 +301,205 @@ esac
 # and the macOS shard list, JSON in roster order; shell_os names each runner
 # whose list is non-empty and shell_shards is true where it names one, so a
 # merge group and a main push read alike. The JOB=VALUE words of a class row
-# follow; the push route skips no suite.
-emit() { # SHARDS QUEUE SKIPPED [JOB=VALUE ...]
-  local shards="$1" queue="$2" skipped="$3" legs="" shell=false
-  shift 3
+# follow, and RUST, the `rust_targets=` value, comes last. SKIPPED_MACOS is
+# the push route's alone: a class row passes it empty and every leg reads
+# SKIPPED.
+emit() { # SHARDS QUEUE SKIPPED SKIPPED_MACOS RUST [JOB=VALUE ...]
+  local shards="$1" queue="$2" skipped="$3" skipped_macos="$4" rust="$5" legs="" shell=false
+  shift 5
   [ "$shards" = "[]" ] || legs='"ubuntu-latest"'
   [ "$queue" = "[]" ] || legs="${legs:+$legs,}\"macos-latest\""
   [ -z "$legs" ] || shell=true
   set -- "shell_shards=$shell" "shell_os=[$legs]" "$@" "shards=$shards" "queue_macos_shards=$queue" "skipped_suites=$skipped"
+  [ -z "$skipped_macos" ] || set -- "$@" "skipped_suites_macos=$skipped_macos"
+  set -- "$@" "rust_targets=$rust"
   printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
   printf '%s\n' "$@" >&2
 }
 
 # The push route, as the header states it. A read that fails proves nothing,
-# so the rosters it emits are whole.
+# so it emits the whole rosters, no skip and every target.
 PROOF_WORKFLOW=.github/workflows/skill-tests.yml
-# The shard step that runs where a suite list left out a candidate of its
-# leg; skill-tests.yml declares it under this name.
-NARROWED_STEP="narrowed by the suite list"
+# The artifact a merge group's changes job publishes CI_SELECTION under.
+SELECTION_ARTIFACT=ci-selection
+# The shards whose steps hand --suite-list no candidate, so a green leg
+# proves the shard whole and the skip lists never narrow it.
+LISTLESS_SHARDS="guards-scans node pi-claude-bridge"
+
+# Every universe suite with each shard whose steps run it on each runner, one
+# `<runner>\t<shard>\t<suite>` line per pair: orch's by run-all.sh
+# --shard-of per RUNNER_OS, every other by want_package as --suite-shards
+# reads it, a macOS line only for a macOS-capable shard. It is the class
+# route's projection, so a suite a group kept had every one of these shards
+# selected. Status 1 is a suite list that could not be read or a run-all.sh
+# that could not place orch's suites.
+suite_map() {
+  local suites suite orch os runner placed package shard
+  suites="$(universe)" || return 1
+  orch="$(printf '%s\n' "$suites" | awk '/^skills\/orch\/tests\//')" || return 1
+  for os in Linux macOS; do
+    runner=ubuntu-latest
+    [ "$os" = Linux ] || runner=macos-latest
+    [ -n "$orch" ] || continue
+    placed="$(printf '%s\n' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null)" || return 1
+    printf '%s\n' "$placed" | awk -v runner="$runner" 'NF == 2 { print runner "\t" $1 "\t" $2 }'
+  done
+  while IFS= read -r suite; do
+    case "$suite" in "" | skills/orch/tests/*) continue ;; esac
+    case "$suite" in
+      skills/*) package="${suite#skills/}"; package="skills/${package%%/*}" ;;
+      *) package="${suite%%/*}" ;;
+    esac
+    want=" "
+    suite_path=$suite
+    want_package "$package"
+    for shard in $want; do
+      printf 'ubuntu-latest\t%s\t%s\n' "$shard" "$suite"
+      case " $MACOS_SHARDS " in *" $shard "*) printf 'macos-latest\t%s\t%s\n' "$shard" "$suite" ;; esac
+    done
+  done <<<"$suites"
+  suite_path=""
+}
+
+# Every Rust target of every skill runtime, one `<package>/<target>` per
+# line: `lib` and each [[test]] name of skills/<package>/runtime/Cargo.toml,
+# the names tools/guard's reach gives targets.
+runtime_targets() {
+  local manifest package
+  for manifest in skills/*/runtime/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    package="${manifest#skills/}"
+    package="${package%%/*}"
+    printf '%s/lib\n' "$package"
+    awk -v package="$package" '
+      /^\[/ { section = $0; next }
+      section == "[[test]]" && /^name *=/ { name = $0; sub(/^[^"]*"/, "", name); sub(/".*/, "", name); print package "/" name }
+    ' "$manifest" || return 1
+  done
+}
+
+# A failed proof read subtracts nothing from the selected work.
 main_proof() {
-  local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause=""
-  local runs ids="" id page jobs="" owed linux macos linux_n macos_n
+  local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
+  local runs ids="" id page jobs="" sels="" listing artifact sel work owed
+  local linux macos skipped skipped_macos rust linux_n macos_n targets_n
   if ! runs="$(gh api --paginate "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100")"; then
     state=unread cause=runs-read-failed
   elif ! ids="$(jq -rs --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
       [.[].workflow_runs[] | select(.event == "merge_group" and .head_sha == $sha and .path == $path) | .id]
       | unique | .[]' <<<"$runs")"; then
     state=unread cause=runs-unparseable ids=""
-  elif [ -z "$ids" ]; then
+  fi
+  if [ "$state" = read ] && [ -z "$ids" ]; then
     state=none cause=no-merge-group-run
   fi
+  work="$(mktemp -d)" || die proof-scratch "mktemp could not make the proof's scratch directory"
+  # Each run's latest jobs, each checked for the head and run it claims.
+  run_jobs() { # RUN
+    page="$(gh api --paginate "$api/runs/$1/jobs?filter=latest&per_page=100")" || { cause="jobs-read-failed run=$1"; return 1; }
+    page="$(jq -cs --arg sha "$sha" --argjson id "$1" '
+        [.[].jobs[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion}]' <<<"$page")" ||
+      { cause="jobs-unparseable run=$1"; return 1; }
+  }
   for id in $ids; do
-    if ! page="$(gh api --paginate "$api/runs/$id/jobs?filter=latest&per_page=100")"; then
-      state=unread cause="jobs-read-failed run=$id"
-      break
-    fi
-    if ! page="$(jq -cs --arg sha "$sha" --argjson id "$id" '
-        [.[].jobs[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion, steps}]' <<<"$page")"; then
-      state=unread cause="jobs-unparseable run=$id"
-      break
-    fi
+    run_jobs "$id" || { state=unread; break; }
     jobs="$jobs$page"
+    # The run's newest unexpired selection: a rerun of its changes job
+    # overwrites it, and a run that published none proves nothing.
+    if ! listing="$(gh api --paginate "$api/runs/$id/artifacts?name=$SELECTION_ARTIFACT&per_page=100")" ||
+      ! artifact="$(jq -rs --argjson id "$id" --arg name "$SELECTION_ARTIFACT" '
+          [.[].artifacts[] | select(.name == $name and .expired == false and .workflow_run.id == $id)]
+          | max_by(.created_at) | .id // empty' <<<"$listing")" ||
+      [ -z "$artifact" ] ||
+      ! gh api "$api/artifacts/$artifact/zip" >"$work/selection.zip" ||
+      ! sel="$(unzip -p "$work/selection.zip" | jq -ce '
+          select((.skipped_suites | type) == "array" and all(.skipped_suites[]; type == "string")
+            and (.rust_targets | type) == "array" and all(.rust_targets[]; type == "string"))
+          | {skipped_suites, rust_targets}')"; then
+      state=unread cause="selection-unread run=$id"
+      break
+    fi
+    sels="$sels$sel"
   done
-  [ "$state" = read ] || jobs=""
-  # Each roster less the shards proved on its runner, with the proved
-  # counts: `<linux> <macos> <linux proved> <macos proved>`.
-  owed="$(jq -rs --argjson linux "$main_linux" --argjson macos "$main_macos" --arg narrowed "$NARROWED_STEP" '
-    (add // []) as $jobs
-    | def owed($roster; $os):
-        [$roster[] | select(. as $shard
-          | [$jobs[] | select(.name == "Skill suites shard (\($shard), \($os))")]
-          | length == 0 or any(.[]; .status != "completed" or .conclusion != "success"
-              or (.steps | type) != "array" or any(.steps[]; .name == $narrowed and .conclusion != "skipped")))];
-    owed($linux; "ubuntu-latest") as $l | owed($macos; "macos-latest") as $m
-    | "\($l | tojson) \($m | tojson) \(($linux | length) - ($l | length)) \(($macos | length) - ($m | length))"' <<<"$jobs")" ||
-    die main-proof-unevaluated "jq could not subtract the proved shards from the rosters"
-  read -r linux macos linux_n macos_n <<<"$owed"
-  emit "$linux" "$macos" '[]' "main_suites=$main_suites" "cache_compile=$main_build"
+  linux_n=0 macos_n=0 targets_n=0
+  if [ "$state" != read ]; then
+    rm -rf -- "$work"
+    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" "main_suites=$main_suites" "cache_compile=$main_build"
+  else
+    jq -cs 'add // []' <<<"$jobs" >"$work/jobs.json" &&
+      jq -cs '.' <<<"$sels" >"$work/selections.json" &&
+      suite_map | jq -Rcs 'split("\n") | map(select(length > 0) | split("\t"))' >"$work/map.json" &&
+      runtime_targets | jq -Rcs 'split("\n") | map(select(length > 0))' >"$work/targets.json" ||
+      die main-proof-unevaluated "the proof's inputs could not be gathered"
+    # Per runner the proved suites and the shards that still run one, the
+    # targets left unproved and the counts, as whitespace-separated JSON.
+    owed="$(jq -rn --slurpfile jobs "$work/jobs.json" \
+      --slurpfile sels "$work/selections.json" --slurpfile map "$work/map.json" --slurpfile targets "$work/targets.json" \
+      --argjson selected_linux "$main_linux" --argjson selected_macos "$main_macos" \
+      --argjson selected_skip "$main_skipped" --argjson selected_targets "$main_targets" \
+      --arg listless "$LISTLESS_SHARDS" '
+      $jobs[0] as $jobs | $sels[0] as $sels
+      | [$map[0][] | select(.[2] as $s | $selected_skip | index($s) | not)] as $map
+      | $targets[0] as $universe_targets
+      | [$universe_targets[] | select(. as $t | any($selected_targets[]; . as $e | $e == $t or
+          (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))] as $targets
+      | ($listless | split(" ")) as $whole
+      | ($sels | length > 0) as $read
+      | ([$sels[].skipped_suites[]] | map({(.): true}) | add // {}) as $left
+      | def all_green: length > 0 and all(.[]; .status == "completed" and .conclusion == "success");
+        def green($pool; $shard; $os):
+          [$pool[] | select(.name == "Skill suites shard (\($shard), \($os))")] | all_green;
+        def proved($os):
+          [$map[] | select(.[0] == $os)] | group_by(.[2])
+          | map(select($read and ($left[.[0][2]] | not) and all(.[]; green($jobs; .[1]; $os))) | .[0][2]);
+        def owed($os; $roster; $proved):
+          ($proved | map({(.): true}) | add // {}) as $done
+          | ([$map[] | select(.[0] == $os and ($done[.[2]] | not)) | .[1]] | unique) as $need
+          | [$roster | split(" ")[] | select(. as $shard
+              | if any($whole[]; . == $shard) then (green($jobs; $shard; $os) | not)
+                else any($need[]; . == $shard) end)];
+        def expand: . as $list
+          | [$targets[] | select(. as $t
+              | any($list[]; . as $e | $e == $t or (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))];
+      (if $read and green($jobs; "orch-rest"; "ubuntu-latest")
+        then [$sels[] | .rust_targets | expand] as $sets
+          | [$targets[] | select(. as $t | all($sets[]; any(.[]; . == $t)))]
+        else [] end) as $done
+      | ($targets - $done) as $open
+      | [$targets | map(split("/")[0]) | unique[] as $package
+          | [$universe_targets[] | select(startswith($package + "/"))] as $all
+          | [$open[] | select(startswith($package + "/"))] as $mine
+          | if ($mine | length) == 0 then empty
+            elif ($mine | length) == ($all | length) then "\($package)/*"
+            else $mine[] end] as $rust
+      | proved("ubuntu-latest") as $pl | proved("macos-latest") as $pm
+      | ($selected_linux | join(" ")) as $linux | ($selected_macos | join(" ")) as $macos
+      | owed("ubuntu-latest"; $linux; $pl) as $ol
+      | [$linux | split(" ")[] | select(. as $shard | any($ol[]; . == $shard) or ($shard == "orch-rest" and ($rust | length) > 0))] as $ol
+      | owed("macos-latest"; $macos; $pm) as $om
+      | "\($ol | tojson) \($om | tojson) \(($pl + $selected_skip | unique) | tojson) \(($pm + $selected_skip | unique) | tojson) \($rust | tojson) \($pl | length) \($pm | length) \($done | length)"')" ||
+      die main-proof-unevaluated "jq could not subtract the proved suites and targets"
+    rm -rf -- "$work"
+    read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n <<<"$owed"
+    emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" "main_suites=$main_suites" "cache_compile=$main_build"
+  fi
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
-  printf 'ci-job-set: main-proof=%s runs=%s proved-linux=%d proved-macos=%d%s\n' \
-    "$state" "${ids:-none}" "$linux_n" "$macos_n" "${cause:+ cause=$cause}" >&2
-  [ -z "$cause" ] || printf '::warning title=main push runs its selected shell roster::ci-job-set: main-proof=%s cause=%s\n' \
-    "$state" "$cause"
+  ids="${ids#,}"
+  ids="${ids%,}"
+  printf 'ci-job-set: %s=%s runs=%s proved-linux=%d proved-macos=%d proved-targets=%d%s\n' \
+    "$mark" "$state" "${ids:-none}" "$linux_n" "$macos_n" "$targets_n" "${cause:+ cause=$cause}" >&2
+  [ -z "$cause" ] || printf '::warning title=%s runs its selected roster::ci-job-set: %s=%s cause=%s\n' \
+    'main push' "$mark" "$state" "$cause"
 }
 
-[ -n "$suite_path" ] || [ "${EVENT:-}" = push ] || [ "${EVENT:-}" = schedule ] || [ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
+# The proof routes read no class and no paths.
+proof_route=false
+[ -n "$suite_path" ] || case "${EVENT:-}" in push | schedule) proof_route=true ;; esac
+[ -n "$suite_path" ] || [ "$proof_route" = true ] || [ -n "${CHANGE_CLASS:-}" ] || die missing-class "CHANGE_CLASS is required"
 
 # Present-but-empty is a state of its own, and not the same as absent.
 paths="${CHANGED_PATHS-__unset__}"
-[ -n "$suite_path" ] || [ "${EVENT:-}" = push ] || [ "${EVENT:-}" = schedule ] || [ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
+[ -n "$suite_path" ] || [ "$proof_route" = true ] || [ "$paths" != __unset__ ] || die missing-paths "CHANGED_PATHS is required"
 
 # The value SELECTION holds for NAME. A selection naming no value for a lane
 # ends the step, before any lane has read a selection with it missing.
@@ -403,20 +529,20 @@ any_outside() { # REGEX — is some changed path NOT inside it?
 # Prose, the one input the platform and compile lanes stand down on.
 PROSE='\.(md|markdown)$'
 # What defines the lanes: the workflows and actions that run them, and the
-# scripts that select them.
-LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|rust-reads|macos-test-contracts|macos-test-contracts\.json)$|tools/lib/skill-requirements\.awk$)'
+# scripts that select them, tools/guard's reach among them.
+LANE_SOURCES='^(\.github/(workflows|actions)/|tools/(ci-job-set|ci-aggregate|guard|rust-reads|macos-test-contracts|macos-test-contracts\.json)$)'
+# The runners every shell shard runs its battery through.
+RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # kendex.toml uses the explicit default layout in source/config.rs and
 # source/layout.rs. The release check also reads Git ignore rules. Smoke
 # builds its own catalog in cli_smoke.rs; its compiled inputs come from
 # rust-reads below. Both jobs use this union, including catalog prose.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
-# A skill package's Markdown, source or render: a diff of these alone takes
-# the narrowed row.
-SKILL_PROSE='^(\.agents/)?skills/[^/]+/.+\.(md|markdown)$'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
-# What selects every shell shard: the lane sources and the rest of .github/.
-ALL_SHARDS="^\\.github/|$LANE_SOURCES"
+# What selects every shell shard whole: the lane sources, the rest of
+# .github/ and the runners.
+ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
 
 # Which changed paths tools/rust-reads rows name: named=1 where
 # an include or manifest row other than `.` names one, build=1 where a path
@@ -446,76 +572,12 @@ reads() {
   ' <<<"$rows"
 }
 
-# `SKILL<tab>NAME` for each name a skill's SKILL.md declares under
-# `dependencies.required`, and `?<tab>FILE` for a dependencies block the
-# reader cannot take, read from the checkout this script runs in by
-# lib/skill-requirements.awk, whose header states the grammar.
-requirements() {
-  local f
-  set --
-  for f in skills/*/SKILL.md; do
-    [ ! -f "$f" ] || set -- "$@" "$f"
-  done
-  [ "$#" -gt 0 ] || return 0
-  awk -f "$TOOLS_DIR/lib/skill-requirements.awk" "$@"
-}
-
-# Who reads a path: `<package> <how>` for each tracked file naming one of the
-# paths on stdin. The package is the one a shard runs the file in:
-# `skills/<name>` for its scripts/ and tests/, `tools`, `hooks`, and
-# `pi-extensions/pi-claude-bridge` or `pi-extensions` for a Pi package; a
-# tracked file anywhere else is no shard's and is not read. <how> is `suite`
-# for a file under a tests/ directory or a Pi package, which reads the path
-# when its own shard runs, and `script` for any other, whose behaviour now
-# depends on it. A path is named where it stands whole: no path character
-# touches either end, save a `/` before it or a path ending in one, so
-# `install.sh` is not read out of `atomic-install.sh`. A skill is also named as
-# `skills/<name>` or `../<name>/`. Exit 2 where the search failed.
-consumers() {
-  local path paths="" exact candidates files status=0
-  set --
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    set -- "$@" -e "$path"
-    paths="$paths$path
-"
-  done
-  [ "$#" -gt 0 ] || return 0
-  # git grep's fixed-string pass narrows every tracked file present in the
-  # working tree to the few holding a path at all, at one speed on every
-  # platform; the bounded match then reads those few alone, since BSD grep
-  # runs a long -E alternation over many files far slower than GNU grep.
-  candidates="$(git -c core.quotePath=false grep -l -I -F "$@")" || status=$?
-  case "$status" in
-    0) ;;
-    1) return 0 ;;
-    *) return 2 ;;
-  esac
-  candidates="$(printf '%s\n' "$candidates" | awk -v mode=path "$PACKAGE_AWK")" || return 2
-  [ -n "$candidates" ] || return 0
-  exact="$(printf '%s' "$paths" | awk '{
-    end = /\/$/ ? "" : "([^A-Za-z0-9_.-]|$)"
-    gsub(/[][\\.*^$+?(){}|]/, "\\\\&")
-    print "(^|[^A-Za-z0-9_.-])" $0 end
-  }')" || return 2
-  local IFS='
-'
-  set -f
-  set --
-  for path in $exact; do
-    set -- "$@" -e "$path"
-  done
-  # shellcheck disable=SC2086 # one file per line
-  set -- "$@" -- $candidates
-  set +f
-  files="$(grep -lE "$@")" || status=$?
-  [ "$status" -le 1 ] || return 2
-  [ -n "$files" ] || return 0
-  printf '%s\n' "$files" | awk -v mode=package "$PACKAGE_AWK" | sort -u
-}
-# The one mapping from a tracked file to the package a shard runs it in, as
-# consumers() above states it. mode=path prints each file that has one,
-# mode=package its `<package> <how>`.
+# The one mapping from a tracked file to the package a shard runs it in:
+# `skills/<name>` for its scripts/ and tests/, `refresh`, `tools`, `hooks`,
+# and `pi-extensions/pi-claude-bridge` or `pi-extensions` for a Pi package;
+# a skill's tests/rust/ file is no shell suite's. mode=path prints each file
+# that has one, mode=package its `<package> <how>`, <how> `suite` under a
+# tests/ directory or in a Pi package and `script` elsewhere.
 PACKAGE_AWK='
   /^skills\/[^\/]+\/(scripts|tests)\// { split($0, part, "/"); package = "skills/" part[2] }
   /^refresh\// { package = "refresh" }
@@ -523,6 +585,7 @@ PACKAGE_AWK='
   /^hooks\// { package = "hooks" }
   /^pi-extensions\// { package = "pi-extensions" }
   /^pi-extensions\/pi-claude-bridge\// { package = "pi-extensions/pi-claude-bridge" }
+  /^skills\/[^\/]+\/tests\/rust\// { package = "" }
   package == "" { next }
   mode == "path" { print; package = ""; next }
   { print package " " (($0 ~ /\/tests\// || package ~ /^pi-extensions/) ? "suite" : "script"); package = "" }
@@ -548,8 +611,10 @@ want_shard() { # SHARD...
 want_package() { # PACKAGE
   local suite
   case "$1" in
-    # REVISIT(D026): orch coverage is removed from CI until KEN-4733.
-    skills/orch) ;;
+    skills/orch)
+      # shellcheck disable=SC2086 # the list is a word list
+      if [ -n "$suite_shard" ]; then want_shard "$suite_shard"
+      else want_shard $ORCH_SHARDS; fi ;;
     skills/github) want_shard rest ;;
     skills/review-gate | refresh)
       if [ -n "$suite_path" ]; then want_shard "${1#skills/}"
@@ -571,10 +636,7 @@ want_package() { # PACKAGE
       done ;;
     skills/*) want_shard rest ;;
     tools) want_shard guards-tools guards-tools-tail ;;
-    # pi-hooks' suite runs real hooks by a path it builds from each hook's
-    # name, and tools/tests/harness-smoke.test.sh reads every hooks/*.sh by
-    # glob; no search for the path can find either.
-    hooks) want_shard guards-hooks guards-hooks-tail guards-tools-tail node ;;
+    hooks) want_shard guards-hooks guards-hooks-tail ;;
     pi-extensions/pi-claude-bridge) want_shard node pi-claude-bridge ;;
     pi-extensions) want_shard node ;;
   esac
@@ -596,83 +658,120 @@ if [ -n "$suite_path" ]; then
       case " $CHECKOUT_KENDEX_SHARDS " in *" $shard "*) kendex=checkout ;; esac
     done
   fi
-  # Offline orch runs retain their existing checkout environment.
-  if [ "$suite_os" = Linux ] && [ "${package% *}" = skills/orch ]; then
-    case "$suite_shard" in orch-terminal | orch-rest) kendex=checkout ;; esac
-  fi
   printf '%s\n' "$kendex"
   exit 0
 fi
 
-# A skill whose behaviour the diff changes: its own shards, every skill
-# declaring it under dependencies.required, and its name queued for the
-# search, whose scripts reach on in turn.
-reached=" "
-pending=""
-reqs=""
-reqs_read=false
-reach_skill() { # NAME
-  local skill required
-  case "$reached" in *" $1 "*) return 0 ;; esac
-  reached="$reached$1 "
-  want_package "skills/$1"
-  pending="$pending
-skills/$1
-../$1/"
-  if [ "$reqs_read" = false ]; then
-    reqs="$(requirements)" ||
-      die "requirements-failed" "the dependencies.required lists of skills/*/SKILL.md could not be read"
-    while IFS="$(printf '\t')" read -r skill required; do
-      [ -n "$skill" ] || continue
-      [ "$skill" != "?" ] || die "requirements-unreadable path=$required" \
-        "dependencies: holds a line this reader cannot take"
-      [ -d "skills/$required" ] || die "requirements-unreadable path=skills/$skill/SKILL.md" \
-        "dependencies.required names $required, which is no skill under skills/"
-    done <<<"$reqs"
-    reqs_read=true
+# The reach, read once for every event's selection: tools/guard
+# --suite-reach over the changed paths. REACH_SUITES holds its suites and
+# Pi-package trees, one per line, and REACH_TARGETS its Rust targets as a
+# JSON list. REACH_READ stays false where the query failed: the selection
+# then runs every shard, suite and target. The query's notes that a tree ran
+# whole, and its findings, are forwarded on stderr as reach-note lines, and
+# its progress lines as they are, each as it arrives.
+REACH_READ=false
+REACH_SUITES=""
+REACH_TARGETS='[]'
+reach_notes() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      'guard: '* | 'guard-note: suites=all '*) printf 'ci-job-set: reach-note: %s\n' "$line" >&2 ;;
+      'guard-progress: '*) printf '%s\n' "$line" >&2 ;;
+    esac
+  done
+}
+reach_read() {
+  local out status=0 list="" target
+  # The query's answer reaches the substitution on fd 3; its stderr streams
+  # through reach_notes.
+  out="$( { printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach 2>&1 >&3 3>&- | reach_notes 3>&-; } 3>&1)" ||
+    status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'ci-job-set: reach=unread status=%s\n' "$status" >&2
+    return 0
   fi
-  while IFS="$(printf '\t')" read -r skill required; do
-    [ "$required" != "$1" ] || reach_skill "$skill"
-  done <<<"$reqs"
+  REACH_SUITES="$(printf '%s\n' "$out" | sed '/^target /d; /^$/d')"
+  while IFS= read -r target; do
+    [ -z "$target" ] || list="$list,\"$target\""
+  done <<<"$(printf '%s\n' "$out" | sed -n 's/^target //p')"
+  REACH_TARGETS="[${list#,}]"
+  REACH_READ=true
 }
 
-# The `shards=` value for a measured row: the JSON list, in roster order.
+# Every target of every skill runtime, as the workflow's Rust step reads a
+# whole manifest: `<package>/*`.
+all_targets() {
+  local manifest list="" package
+  for manifest in skills/*/runtime/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    package="${manifest#skills/}"
+    list="$list,\"${package%%/*}/*\""
+  done
+  printf '[%s]' "${list#,}"
+}
+
+# Every shell suite a shard step can hand --suite-list, one per line.
+universe() {
+  local listed
+  listed="$(git -c core.quotePath=false ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
+    ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh')" ||
+    die universe-unread "git could not list the shell suites a shard step runs"
+  printf '%s\n' "$listed" | awk 'NF && !/\/run-all\.sh$/'
+}
+
+# Each suite on stdin into `want` by the shards whose steps run it: orch's
+# by the shard run-all.sh --shard-of gives it on either runner, every orch
+# shard where that cannot answer; any other suite, and a Pi-package tree
+# spelled DIR/, by its package's want_package shards.
+project() {
+  local suite package packages orch="" other="" os shard
+  while IFS= read -r suite; do
+    [ -n "$suite" ] || continue
+    case "$suite" in
+      skills/orch/tests/*) orch="$orch$suite
+" ;;
+      *) other="$other$suite
+" ;;
+    esac
+  done
+  # One mapping over every other suite: PACKAGE_AWK prints a line for each
+  # suite that has a package, in order.
+  packages="$(printf '%s' "$other" | awk -v mode=package "$PACKAGE_AWK")" ||
+    die suite-package-unread "the reached suites could not be mapped to their packages"
+  while read -r package _; do
+    [ -z "$package" ] || want_package "$package"
+  done <<<"$packages"
+  [ -n "$orch" ] || return 0
+  for os in Linux macOS; do
+    if ! shard="$(printf '%s' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null | cut -d' ' -f1 | sort -u)"; then
+      printf 'ci-job-set: orch-shards=unread os=%s\n' "$os" >&2
+      # shellcheck disable=SC2086 # the list is a word list
+      want_shard $ORCH_SHARDS
+      return 0
+    fi
+    # shellcheck disable=SC2086 # one shard per word
+    [ -z "$shard" ] || want_shard $shard
+  done
+}
+
+# A measured row's `shards=` value, the JSON list in roster order, then its
+# `skipped_suites=` value: every universe suite outside the kept set, save
+# those a shard selected whole runs. The two lists are separated by a blank.
 select_shards() { # BUILD(true|false)
-  local build="$1" path skill batch found package list="" shard cited
+  local build="$1" path list="" shard cited kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites
+  want=" "
   set --
   while IFS= read -r path; do
-    # The install record changes installed revisions, not suite inputs.
-    # Suites naming it construct private records in their fixture trees.
-    [ "$path" != .kendex-lock.json ] || continue
     case "$path" in
-      .bun-version) want_shard node ;;
-      skills/*/* | .agents/skills/*/*)
-        skill="${path#.agents/}"
-        skill="${skill#skills/}"
-        reach_skill "${skill%%/*}"
-        # tools/ and hooks/ suites read every skill's scripts, some by glob.
-        # hooks/ is named by its two shards: the package's `node` is there
-        # for pi-hooks, which runs hooks by name.
-        want_package tools
-        want_shard guards-hooks guards-hooks-tail
-        ;;
-      refresh/*) want_package refresh ;;
-      tools/*) want_package tools ;;
-      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*) want_package hooks ;;
-      pi-extensions/pi-claude-bridge/*) want_package pi-extensions/pi-claude-bridge ;;
-      pi-extensions/*) want_package pi-extensions ;;
+      .bun-version) whole="$whole node" ;;
+      hooks/tests/* | *.md) ;;
+      hooks/* | .claude/hooks/* | .codex/hooks/* | .pi/kendex/hooks/*)
+        whole="$whole node"
+        kept="$kept
+tools/tests/harness-smoke.test.sh" ;;
     esac
-    case "$path" in skills/* | hooks/* | tools/* | refresh/*) want_shard guards-scans ;; esac
-    # A file outside every skill is searched for by its own path, save a
-    # root file of prose: a bare AGENTS.md or README.md is every fixture's.
-    case "$path" in
-      skills/* | .agents/skills/*) ;;
-      */*) pending="$pending
-$path" ;;
-      *.md | *.markdown) ;;
-      *) pending="$pending
-$path" ;;
-    esac
+    case "$path" in skills/* | hooks/* | tools/* | refresh/*) whole="$whole guards-scans" ;; esac
     [ ! -f "$path" ] || set -- "$@" "$path"
   done <<<"$paths"
   # A changed file citing a shard by name, in the form
@@ -682,58 +781,65 @@ $path" ;;
     cited=0
     grep -qE -- "$SHARD_CITATION" "$@" || cited=$?
     case "$cited" in
-      0) want_shard guards-tools-tail ;;
+      0) kept="$kept
+tools/tests/orch-shard-partition.test.sh" ;;
       1) ;;
       *) die "citation-read-failed" "the changed files could not be read for shard citations" ;;
     esac
   fi
-  # Until no search finds a skill it has not searched for.
-  while [ -n "$pending" ]; do
-    batch="$pending"
-    pending=""
-    found="$(consumers <<<"$batch")" ||
-      die "consumers-failed" "the scripts and suites naming a changed path could not be searched"
-    # A suite that reads a path runs; a skill's script that reads one
-    # carries the change on to that skill's readers. The chain ends at
-    # tools/, hooks/ and pi-extensions/: a change to one of those is
-    # searched for by its own path, above.
-    while read -r package how; do
-      case "$package:$how" in
-        skills/*:script) reach_skill "${package#skills/}" ;;
-        skills/*:suite | refresh:* | tools:* | hooks:* | pi-extensions*:*) want_package "$package" ;;
-        :) ;;
-      esac
-    done <<<"$found"
-  done
-  # The checkout-kendex shards build kendex-cli for their real consumer rows,
-  # so a build input runs each.
-  # shellcheck disable=SC2086 # the list is a word list
-  [ "$build" = false ] || want_shard $CHECKOUT_KENDEX_SHARDS
-  # shellcheck disable=SC2086 # the roster is a word list
-  ! any "$ALL_SHARDS" || want_shard $SHARDS
+  [ "$build" = false ] || whole="$whole $CHECKOUT_KENDEX_SHARDS"
+  if [ "$REACH_READ" = false ] || any "$ALL_SHARDS"; then
+    whole=" $SHARDS"
+  fi
+  project <<<"$kept"
+  [ "$REACH_TARGETS" = '[]' ] || want_shard orch-rest
+  # shellcheck disable=SC2086 # the lists are word lists
+  want_shard $whole
   for shard in $SHARDS; do
     case "$want" in *" $shard "*) list="$list,\"$shard\"" ;; esac
   done
-  printf '[%s]' "${list#,}"
-}
-
-# The narrowed row's skips, for a measured diff of skill Markdown alone:
-# each suite tools/guard --note-skips names, whose own input note covers no
-# changed document, as one JSON list in NARROW_SKIPS. Any other answer from
-# it, a suite whose code names a document its note leaves out among them,
-# skips none, and its diagnostics stand above the row.
-NARROW_SKIPS='[]'
-narrow_suites() {
-  local skips status=0 list="" suite
-  skips="$(printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --note-skips)" || status=$?
-  if [ "$status" -ne 0 ]; then
-    printf 'ci-job-set: suite-skips=none status=%s\n' "$status" >&2
+  if [ "$whole" = " $SHARDS" ]; then
+    printf '[%s] []' "${list#,}"
     return 0
   fi
+  suites="$(universe)"
+  # The whole shards whose steps hand --suite-list candidates, and orch's
+  # suites by shard where one is orch's.
+  for shard in $whole; do
+    case " $LISTLESS_SHARDS " in *" $shard "*) ;; *) need="$need $shard" ;; esac
+  done
+  case " $need " in
+    *" orch-"*)
+      orch="$(printf '%s\n' "$suites" | awk '/^skills\/orch\/tests\//')"
+      for os in Linux macOS; do
+        orch_map="$orch_map$(printf '%s\n' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null)
+" || need=" $SHARDS"
+      done ;;
+  esac
+  skipped=""
   while IFS= read -r suite; do
-    [ -z "$suite" ] || list="$list,\"$suite\""
-  done <<<"$(printf '%s\n' "$skips" | LC_ALL=C sort -u)"
-  NARROW_SKIPS="[${list#,}]"
+    [ -n "$suite" ] || continue
+    case $'\n'"$kept"$'\n' in *$'\n'"$suite"$'\n'*) continue ;; esac
+    if [ -n "$need" ]; then
+      case "$suite" in
+        skills/orch/tests/*)
+          suite_shards=" $(printf '%s' "$orch_map" | awk -v suite="$suite" '$2 == suite { printf "%s ", $1 }')" ;;
+        *)
+          case "$suite" in
+            skills/*) package="${suite#skills/}"; package="skills/${package%%/*}" ;;
+            *) package="${suite%%/*}" ;;
+          esac
+          want=" "
+          want_package "$package"
+          suite_shards=$want ;;
+      esac
+      for shard in $need; do
+        case "$suite_shards" in *" $shard "*) continue 2 ;; esac
+      done
+    fi
+    skipped="$skipped,\"$suite\""
+  done <<<"$suites"
+  printf '[%s] [%s]' "${list#,}" "${skipped#,}"
 }
 
 # Whether one shard of the JSON list SHARDS is one the matrix runs on macOS.
@@ -748,11 +854,12 @@ macos_shard() { # SHARDS
 # One selection, printed as a word list: the lanes and shards CLASS, DOCS
 # and PATHS select at EVENT. Every rule on those four inputs is here, the
 # refusals included. Run it in a subshell: the readers above take the paths
-# from `paths`, which it sets, and the shard search starts empty each time.
+# from `paths`, which it sets, and the shard projection starts empty each
+# time. The reach it projects is read once, before any selection.
 select_row() { # CLASS DOCS PATHS EVENT
-  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards skipped macos catalog=false known=false each
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards skipped macos catalog=false known=false each rust
   paths="$3"
-  want=" " reached=" " pending=""
+  want=" "
   case "$docs" in
     true | false) ;;
     *) die "invalid-docs-only value=$docs" "DOCS_ONLY is true or false" ;;
@@ -760,7 +867,7 @@ select_row() { # CLASS DOCS PATHS EVENT
   for each in $EVENTS; do
     [ "$each" != "$event" ] || known=true
   done
-  [ "$known" = true ] || die "unsupported-event event=$event" "EVENT is one of: $EVENTS push"
+  [ "$known" = true ] || die "unsupported-event event=$event" "EVENT is one of: $EVENTS push schedule"
   row="$class"
   case "$class" in
     render) ;;
@@ -786,7 +893,7 @@ select_row() { # CLASS DOCS PATHS EVENT
   case "$read_lines" in *compiled=1*) catalog=true ;; esac
   case "$row" in
     render | trivial)
-      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[] skipped_suites=[]"
+      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[] skipped_suites=[] rust_targets=[]"
       ;;
     micro | small | standard | trivial-read)
       platform=false
@@ -797,8 +904,8 @@ select_row() { # CLASS DOCS PATHS EVENT
       build=false
       case "$read_lines" in *build=1*) build=true ;; esac
       shards="$(select_shards "$build")" || exit 2
-      skipped='[]'
-      [ "$build" = true ] || skipped=$NARROW_SKIPS
+      skipped="${shards#* }"
+      shards="${shards%% *}"
       if any "$LANE_SOURCES"; then
         platform=true
         uitree=true
@@ -807,18 +914,21 @@ select_row() { # CLASS DOCS PATHS EVENT
       macos=$platform
       # The runner arithmetic uses the nightly macOS matrix's exclusions.
       macos_shard "$shards" || macos=false
-      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards skipped_suites=$skipped"
+      # The Rust targets are the reach's; a lane source or an unread reach
+      # runs every target.
+      rust=$REACH_TARGETS
+      if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then
+        rust="$(all_targets)"
+      fi
+      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards skipped_suites=$skipped rust_targets=$rust"
       ;;
   esac
 }
 
-# GitHub REST workflow-runs supplies event, branch, path and immutable head:
-# https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow
-# Only a successful scheduled run proves a night. API failure retains work.
 if [ "${EVENT:-}" = schedule ]; then
   nightly=true
   if runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=schedule&branch=main&status=success&per_page=100")"; then
-    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "$GITHUB_RUN_ID" '
+    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
       [.[].workflow_runs[] | select(.event == "schedule" and .head_branch == "main" and .path == $path
         and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
       | sort_by(.created_at) | last | .head_sha | select(type == "string" and length > 0)' <<<"$runs")"; then
@@ -829,21 +939,43 @@ if [ "${EVENT:-}" = schedule ]; then
   exit 0
 fi
 
-# Select main's actual push range before subtracting whole-leg proof. A
-# failed read never becomes an empty diff; refusal makes the workflow run
-# its full fallback. Main always runs a selected shard whole.
 if [ "${EVENT:-}" = push ]; then
   [[ ${PUSH_BEFORE:-} =~ ^[0-9a-f]{40}$ && ${PUSH_AFTER:-} =~ ^[0-9a-f]{40}$ ]] ||
     die push-range-unread "the push event endpoints are missing or invalid"
   paths="$(git diff --name-only --no-renames "$PUSH_BEFORE" "$PUSH_AFTER" --)" ||
     die push-range-unread "the push event range could not be read"
-  read_lines="$(reads)" || exit 2
-  main_build=false
-  case "$read_lines" in *build=1*) main_build=true ;; esac
+  # A queued push can replace an unstarted push. Only a successful main run
+  # bounds all work the newest head must catch up; the event's before alone
+  # cannot prove that its preceding head was tested.
+  range_read=false
+  if runs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/${PROOF_WORKFLOW##*/}/runs?event=push&branch=main&status=success&per_page=100")"; then
+    if previous="$(jq -ers --arg path "$PROOF_WORKFLOW" --arg id "${GITHUB_RUN_ID:-}" '
+      [.[].workflow_runs[] | select(.event == "push" and .head_branch == "main" and .path == $path
+        and .status == "completed" and .conclusion == "success" and (.id | tostring) != $id)]
+      | sort_by(.created_at) | last | .head_sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$runs")" &&
+      git merge-base --is-ancestor "$previous" "$PUSH_AFTER" &&
+      paths="$(git diff --name-only --no-renames "$previous" "$PUSH_AFTER" --)"; then
+      range_read=true
+    fi
+  fi
+  main_build=true
+  REACH_READ=false
+  REACH_TARGETS="$(all_targets)"
+  if [ "$range_read" = true ]; then
+    reach_read
+    read_lines="$(reads)" || exit 2
+    main_build=false
+    case "$read_lines" in *build=1*) main_build=true ;; esac
+    any "$LANE_SOURCES" && main_build=true
+  else
+    printf 'ci-job-set: main-range=unread coverage=full\n' >&2
+  fi
   main_linux="$(select_shards "$main_build")" || exit 2
+  main_skipped="${main_linux#* }"
+  main_linux="${main_linux%% *}"
+  main_targets="$REACH_TARGETS"
+  if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then main_targets="$(all_targets)"; fi
   main_macos="$(jq -c --arg roster "$MACOS_SHARDS" '[.[] | select(. as $s | $roster | split(" ") | index($s))]' <<<"$main_linux")" || exit 2
-  # The workflow owns the four declarations and their native eligibility.
-  # Package reach selects them before ordinary proof, which excludes them.
   main_suites="$(jq -ce --argjson selected "$main_linux" '
     if type != "array" or length == 0 then error("missing main declarations") else
       [.[] | select(.shard as $s | $selected | index($s))] end' <<<"${MAIN_ONLY_SUITES:-}")" ||
@@ -852,13 +984,34 @@ if [ "${EVENT:-}" = push ]; then
   exit 0
 fi
 
-# The narrowed row's skips, read once for every event's selection, and for
-# a measured class alone: any other class reaches select_row without them.
+# The class route says on stderr which step it starts, so the CI step that
+# waits on it shows what it is doing: `ci-job-set: progress=<step>
+# at=<n>/<steps> elapsed=<s>s`, with ` event=<event>` for a selection. The
+# reach's own guard-progress lines come between.
+reach_steps=0
 case "$CHANGE_CLASS:$paths" in
-  micro:?* | small:?* | standard:?*)
-    any_outside "$SKILL_PROSE" || narrow_suites
-    ;;
+  micro:?* | small:?* | standard:?* | trivial:?*) reach_steps=1 ;;
 esac
+progress_steps=$((reach_steps + 2))
+if [ "$parity" = true ]; then
+  for event in $EVENTS; do
+    [ "$event" = "${EVENT:-}" ] || progress_steps=$((progress_steps + 1))
+  done
+fi
+progress_step=0
+progress() { # STEP [DETAIL]
+  progress_step=$((progress_step + 1))
+  printf 'ci-job-set: progress=%s at=%s/%s elapsed=%ss%s\n' "$1" "$progress_step" "$progress_steps" "$SECONDS" \
+    "${2:+ $2}" >&2
+}
+
+# The reach, read once for every event's selection, and for a class whose
+# row can run a shard: render and trivial run none.
+if [ "$reach_steps" -eq 1 ]; then
+  progress reach
+  reach_read
+fi
+progress select "event=${EVENT:-}"
 now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
 
 # Event parity: pull requests and merge groups receive equal lane, shard and
@@ -870,12 +1023,14 @@ now="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "${EVENT:-}")" || exit 2
 if [ "$parity" = true ]; then
   for event in $EVENTS; do
     [ "$event" != "$EVENT" ] || continue
+    progress select "event=$event"
     other="$(select_row "$CHANGE_CLASS" "$DOCS_ONLY" "$paths" "$event")" || exit 2
     [ "$other" = "$now" ] || die "event-parity event=$event" \
       "$EVENT selects '$now' and $event selects '$other' for the same class, docs verdict and paths"
   done
 fi
 
+progress emit
 now_shards="$(sel_get "$now" shards)"
 # A plain assignment, so a row that omits the bit ends the step here: read
 # inside a test, the refusal would end only the substitution.
@@ -895,4 +1050,10 @@ if [ "$macos_on" = true ]; then
 fi
 
 # shellcheck disable=SC2086 # one `lane=value` word per job
-emit "$now_shards" "[$queue]" "$(sel_get "$now" skipped_suites)" $jobs
+skipped="$(sel_get "$now" skipped_suites)"
+rust="$(sel_get "$now" rust_targets)"
+emit "$now_shards" "[$queue]" "$skipped" '' "$rust" $jobs
+# The group's selection, which the push at its head reads.
+[ -z "${CI_SELECTION:-}" ] ||
+  printf '{"skipped_suites":%s,"rust_targets":%s}\n' "$skipped" "$rust" >"$CI_SELECTION" ||
+  die selection-unwritten "the selection could not be written to CI_SELECTION"

@@ -189,6 +189,11 @@ def owner_row(envelope):
             and isinstance(key, str) and bool(key) and not key.startswith(BATCH_KEY))
 
 
+def voice_request(row):
+    """An owner-unanswered row the relay forwarded from a voice call: an owner note opening `voice-request: caller=`."""
+    return row["kind"] != "answer" and row.get("text", "").split("\n", 1)[0].startswith("voice-request: caller=")
+
+
 def config(bash, root):
     return json.loads(checked([bash, LIB / "jarvis-env.sh", "config", root]))
 
@@ -1060,8 +1065,8 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             self.state.pop("report_failure", None)
             # Retain the emitted event's identity in the existing pass cursor,
             # so restart reads only the uncheckpointed tail, never a due row.
-            if result and report_key(result) != self.cursors.get("report", {}).get("event"):
-                self.append(pass_output("report", {"event": report_key(result)}, [(None, result)]))
+            if result and (report_key(result) != (held := self.cursors.get("report", {})).get("event") or 0 < int(self.settings.get("ORCH_REPORT_EVERY_MINUTES") or 0) * 60 <= epoch() - held.get("posted", 0)):
+                self.append(pass_output("report", {"event": report_key(result), "posted": epoch()}, [(None, result)]))
 
     def relay_status(self):
         try:
@@ -1179,18 +1184,28 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         else:
             checked_ids = {row["id"] for row in waiting}
             listed = {row["id"] for row in rows}
+            # With a period, an open voice request is reminded each period
+            # from its arrival; every other row once, at OWNER_WAIT_SECS.
+            period = int(self.settings["JARVIS_VOICE_REMIND_SECS"])
+            voiced = {row["id"] for row in rows if period and voice_request(row)}
+            reminded = memory.get("reminded", {})
             due = [row for row in rows if row["id"] in checked_ids
-                   and now - instant(row["at"]).timestamp() >= OWNER_WAIT_SECS]
+                   and now - instant(row["at"]).timestamp() >= (period if row["id"] in voiced else OWNER_WAIT_SECS)]
+            owed = [row for row in due if (now - reminded.get(row["id"], 0) >= period if row["id"] in voiced
+                                           else row["id"] not in memory.get("reported", []))]
             blocks.extend(event("owner-unanswered", id=row["id"], at=row["at"], kind=row["kind"]) +
                           line_value(row.get("text", ""), limit=4000) + "\n"
-                          for row in due if row["id"] not in memory.get("reported", []))
+                          for row in owed)
             # A checked row the helper no longer lists is covered; a row
             # delivered during the check waits for the next one. Only rows
             # old enough to remind are remembered as reported.
             self.state["unanswered"] = {
                 "pending": [row for row in memory.get("pending", [])
                             if row["id"] not in checked_ids or row["id"] in listed],
-                "reported": [row["id"] for row in due], "failed": False}
+                "reported": [row["id"] for row in due],
+                "reminded": {row["id"]: now if row in owed else reminded[row["id"]]
+                             for row in due if row["id"] in voiced},
+                "failed": False}
         if blocks:
             self.append(pass_output("local", self.cursors.get("local", {}),
                                     [(str(self.home), block) for block in blocks]))
@@ -1211,7 +1226,8 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         # Only a delivered owner row that no check has found covered starts a check.
         waiting = self.state.get("unanswered", {}).get("pending", [])
         if self.unanswered_pending is None and waiting and now >= self.next_unanswered:
-            self.next_unanswered = now + UNANSWERED_EVERY_SECS
+            self.next_unanswered = now + min(UNANSWERED_EVERY_SECS,
+                                             int(self.settings["JARVIS_VOICE_REMIND_SECS"]) or UNANSWERED_EVERY_SECS)
             self.unanswered_pending = passes.submit(self.unanswered, list(waiting))
         if self.satellite:
             # A satellite renews no fleet presence and owes no checkpoint;
@@ -1329,6 +1345,8 @@ def main():
         settings = config(args.bash, home)
         if not re.fullmatch(r"0|[1-9][0-9]*", settings["JARVIS_WAKE_SETTLE_SECS"]):
             raise RuntimeError("settle-invalid")
+        if not re.fullmatch(r"0|[1-9][0-9]*", settings["JARVIS_VOICE_REMIND_SECS"]):
+            raise RuntimeError("voice-remind-invalid")
         os.chdir(home)
         # A second launch can reach the same log through a repeated session
         # start. Hold the OS lock for this loop's whole lifetime.

@@ -4,13 +4,13 @@ The caller applies [orch § Delegation](../../orch/references/skill-rules.md#del
 
 Read [code-quality](../../code-quality/SKILL.md) before writing or modifying code, including for ad-hoc requests.
 
-The workflow for a dev or QA agent receiving a work-item delegation. Skip every tracker update for ad-hoc requests (no issue reference).
+The workflow for a dev or QA agent receiving a work-item delegation. Run it first line to last for one round. Skip every tracker update for ad-hoc requests (no issue reference).
 
 Run `pwd -P` before the first repo-relative command; it must print the delegation's `Worktree:` path. On any other path, stop and report where the shell started.
 
 | Delegation | Detection | Flow |
 |------|-----------|------|
-| Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return |
+| Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return; § 2.3's no-change route: § 1 → § 2 → § 9.1 → § 10 → return |
 | Bundled | `Parent: [ISSUE_ID]` + `Sub-Issues: [...]` | § 1 → § 2 → [§ 4-10]×N → § 11 |
 
 **A bundle needs `in_pr_bundle`.** A parent with children is a CONTAINER, whatever its title, unless its safe read reports `in_pr_bundle`, the review audit's in-PR bundle root. A leaf issue carrying an internal checklist is one work item, delegated single. Read the parent before the first sub-issue; with `in_pr_bundle` false, stop and report the mis-delegation:
@@ -53,7 +53,7 @@ git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
 
 Determine the tracker: `Issue:`/`Parent: ABC-123` → Linear; `GitHub Issue: OWNER/REPO#N` → GitHub; no reference → ad-hoc (delegation text is the source of truth; skip every tracker write).
 
-Linear only — activate the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
+Linear only: activate the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues activate [ISSUE_ID] --agent [AGENT_TYPE]
@@ -75,7 +75,7 @@ Ad-hoc: no tracker reads.
 
 ### 2.2 Research Context
 
-Read the issue description — `.description` from the read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. For a sub-issue, read the parent's description too; for a bundle, read the unique paths across its sub-issues.
+Read the issue description, `.description` from the read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. For a sub-issue, read the parent's description too; for a bundle, read the unique paths across its sub-issues.
 
 Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and the principle docs; a doc whose claim the change makes false is updated in the change. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`, and `decisions search "[KEYWORDS]"` for the area) rather than duplicating it, reading the full record and its status before treating it as binding; record a new one only under the decider bar.
 
@@ -83,15 +83,17 @@ For a missing planning or research path in a brief, find it by the route the pro
 
 ### 2.3 Evaluate Feasibility
 
-Check your domain's code before planning: do the required APIs and types exist, is another domain's work a prerequisite, is an existing issue blocking? Search prior decisions with `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"` and read the full decision file rather than the index summary — never implement an approach a decision explicitly rejects, and report back with the reference if the issue description contradicts one. Optimization work with no `baseline` label takes the label now, before any code change.
+Check your domain's code before planning: do the required APIs and types exist, is another domain's work a prerequisite, is an existing issue blocking? Search prior decisions with `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"` and read the full decision file rather than the index summary; never implement an approach a decision explicitly rejects, and report back with the reference if the issue description contradicts one. Optimization work with no `baseline` label takes the label now, before any code change.
 
-Blocked → **§ 3**, then STOP. Clear → § 2.4.
+**No change needed.** A Linear item whose description permits ending with no change, by a sentence such as "if no change is needed, record the comparison and make no commit", takes the no-change route when the comparison that sentence names finds no change needed: make no edit and no commit, run no check, write the comparison as § 9.1's summary and write § 10's no-change receipt quoting that sentence. Ask no one whether the round may end so: orch's acceptance judges the quoted sentence. A round on a GitHub or ad-hoc item, or one whose item holds no such sentence, takes the normal route.
+
+Blocked → **§ 3**, then STOP. No change needed → § 9.1, then § 10. Clear → § 2.4.
 
 ### 2.4 Plan Approach
 
 - Linear only, when scope differs from the estimate: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N`, a relative size class from 1, smallest, through 5, largest (project-management SKILL.md § Disposition).
 - **If bundled**: order sub-issues by dependency and overlap.
-- A required command written as `VAR=value cmd args` is normalized here into an ambient-environment precondition plus the bare `cmd args` (orch SKILL.md § Harness-Safe Shell). An unsatisfiable precondition is a blocker to report, never a license to run under the wrong environment.
+- A required command the delegation names runs in the shape orch's SKILL.md § Harness-Safe Shell admits. A command whose environment this session cannot satisfy is a blocker to report, never a license to run it under the wrong environment.
 
 ### 2.5 Domain Setup
 
@@ -141,13 +143,13 @@ Your return states the blocker, the domain and labels for the new issue, and tha
 
 ### 4.1 Verify Branch
 
-`git branch --show-current` must report `[BRANCH_NAME]` — the parent's branch when bundled.
+`git branch --show-current` must report `[BRANCH_NAME]`, the parent's branch when bundled.
 
 Record `git -C [WORKTREE_PATH] rev-parse HEAD` as `[ROUND_BASE]` before implementation. A fix round uses its delegated record's `base_sha` instead.
 
 ### 4.2 Implement
 
-Implement per your domain expertise and run quality gates before completion.
+Implement per your domain expertise; § 5 runs the quality gates.
 
 Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
@@ -173,6 +175,8 @@ Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository
 
 ## 5. Validate
 
+**Skip if** the round takes § 2.3's no-change route: it runs no check, and its receipt records `not-run`.
+
 Stage the final edits before running these checks, using the index policy in [§ 7. Commit](#7-commit).
 
 ```bash
@@ -181,48 +185,51 @@ git -C [WORKTREE_PATH] add -A
 
 The validation gate is this complete list:
 
-- The affected suite passes. It consists of installed preflight and doc-limits gates, the delegation's required verification commands in their § 2.4 normalized form, and Visual QA under the current workflow's rule below.
+- The affected suite passes. It consists of the installed preflight and doc-limits gates the stage policy runs, the delegation's required verification commands, and Visual QA under the current workflow's rule below.
+- When the delegation carries a `Validation admission:` line, run that exact command before every validation start of this round, including a rerun this gate permits. It records the run's admission in the orchestrator's state before any work starts and prints one JSON reply; pass the reply's `.result.report.run_id` to the start as `--run-id [RUN_ID]`, so the run's directory is the one the admission named. That start is the runtime's: `orch-runtime validate start` resolves the mode from the project's declaration, records the run's mode and job on the round's admitted `validate` entry before the launch, and when the run ends closes the entry with the run's verdict and sends this lane its end notice, mail on the lane's channel. A run past its memory bound, the host's room at its start or `ORCH_VALIDATE_MEMORY_MAX` where set, ends `validate=FAILING cause=memory-cap limit=<bytes> peak=<bytes>`, and a start the host cannot hold is refused `memory-short`. The command is idempotent: run again before the first start, it names the same run. Before a rerun this gate permits, add `"attempt": "next"` to the request file the line names, with the harness file tool, then run the command: the reply names the rerun's own run id, and the first run keeps its record. A reply whose `ok` is false, or a command that cannot run, stops the round before validation: report its keyed line. A delegation without the line skips this step, and the validation entry names the directory itself.
 - Run the must-fail controls [code-quality § Tests](../../code-quality/SKILL.md#tests) requires, each scoped as [§ Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) sets. A workflow sentence has no test and adds no control. A changed test file takes no run of its own: the runner's result covers it, locally or through required CI.
-- `DEV_VALIDATE_CMD` passes once against the round's final worktree contents, run through `.agents/skills/orch/scripts/dev-validate-run` as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. The runner hands the command the diff's change class as `DEV_VALIDATE_CLASS`, with the docs verdict and changed paths beside it (`dev-validate-run --help`). A full battery the class does not need is a failure of the project's `DEV_VALIDATE_CMD` configuration, which reads the class to stand lanes down; the round's verdict is still the run's `validate=` value, and the agent never picks a class or a narrower command by hand. An empty value is a validation failure named `DEV_VALIDATE_CMD`, which that runner refuses before starting anything, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
-- A project whose own policy forbids `dev-validate-run` and requires its validation entry point in the foreground runs that entry point here, in the foreground as the policy sets out, in place of `dev-validate-run`, and records the run in `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]`. An admitted recovery below uses `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]-recovery` instead and preserves the original record. Before the entry point starts, write the lines `validate-mode=full`, `head=` with `git -C [WORKTREE_PATH] rev-parse HEAD`, and `started-at=` with `date -u +%Y-%m-%dT%H:%M:%SZ`. After it ends, add `ended-at=` the same way, `exit=` with its exit status, and `selection=` and `lanes=` from its `validate:` line, or `selection=unreported` where it printed none. A run cut off before its exit status is known is `FAILING: [ENTRY_POINT]`. Preserve its unfinished record and log, omit both evidence flags, and explain the interruption in `--validate-note`. `dev-return-write --help` gives each line's grammar.
-- A run ended by the bound or an unavailable host check prints `validate=no-verdict`: neither a pass nor a failure. So does a start that an earlier run's bound already answered, which runs nothing (`dev-validate-run --help`). Read the run's record with `.agents/skills/orch/scripts/dev-validate-run --record --run-dir [RUN_DIR]`. A record carrying `validate-mode=ci` takes no further run: required CI, the merge group for queue-only work, holds the full proof. A scoped record whose `validate-mode` is not `ci` takes no further start. A record that is not scoped and whose `validate-mode` is not `ci` takes at most one further runner start, `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --validate-mode ci --base [ROUND_BASE]`, and the round's verdict is that run's. Run no suite list by hand in place of either. A final `no-verdict` is `--validate no-verdict` with its run's `run-dir=` as `--validate-run-dir` and a `--validate-note` naming the host cause or timeout, and the return reads `Validate: no-verdict: [CAUSE]`. Only a final record with `validate-mode=ci` leaves the proof to required CI. Any other final `no-verdict` is unproved: its `--validate-note` says so, and the round never presents it as covered by CI.
-- `fleet-mac-run test` passes once for an item the Apple gate in `dev-return-write --help` names, run through the orch job runner as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. The gate names an item when the base branch holds its workflow and an entry of the delegation's `Labels:` line, or a path the branch changes, matches its trigger. Fleet installs `fleet-mac-run` on the `PATH` of a lane in a repository it runs Apple builds for. A nonzero exit, or no `fleet-mac-run` on `PATH`, is `FAILING: mac run test`. A pass is the `--validate-note` line `mac run test: pass run=[RUN_ID]`, with the run id `fleet-mac-run` prints. An item the gate does not name runs nothing here.
-- A `ci` run accepts completed local edits and records CI as pending. Where the project sets `DEV_VALIDATE_SELECTION_CMD`, it first runs that selector's changed-file suites once, scoped, at the round's final contents, and a red scoped run is a failing `validate=` value like any other. It starts no local full command and waits on no unpublished head. This does not satisfy a CI gate; submit's existing § 5 wait proves the required checks on the exact published head.
+- The declared validation command passes once against the round's final worktree contents, run through `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] [--run-id [RUN_ID]]` as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out, `--run-id` present exactly when the admission step above ran. The runtime reads the change classifier before choosing the command. A docs-only tree runs the declared selector's text suites with `DEV_VALIDATE_SCOPED=true`, else `DEV_VALIDATE_TEXT_CMD` where declared. With neither declaration it runs the range command, or the full command where no range command is declared. The record names the mode and command that ran. A scoped `docs` pass proves that docs-only snapshot for submission. The classifier owns which paths count as text, including product text it classifies as docs-only. Every command receives the class as `DEV_VALIDATE_CLASS`, with the docs verdict and changed paths beside it. The agent never chooses a class or a narrower command. A run that needs `DEV_VALIDATE_CMD` refuses an empty declaration before starting. Run nothing in its place.
+- A project whose own policy forbids orch's validation runner and requires its validation entry point in the foreground runs that entry point here, in the foreground as the policy sets out, in place of the runner, and records the run in `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]`. A recovery attempt below records itself in `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]-recovery` and preserves the original record. Before the entry point starts, commit the final edits, where any exist, with the active workflow's commit instructions and metadata and no `[validate: ...]` line, since no verdict exists yet; reuse that commit through completion and skip the workflow's later commit step. Then write the lines `validate-mode=full`, `head=` with `git -C [WORKTREE_PATH] rev-parse HEAD`, and `started-at=` with `date -u +%Y-%m-%dT%H:%M:%SZ`. `orch-runtime dev-return --text write --kind fix` takes the record's tree from its `head=` only while that HEAD is the worktree's HEAD and `git status --porcelain --untracked-files=all` reports nothing, and otherwise refuses `run-off-round`: a commit after the record leaves a fix round no receipt. After it ends, add `ended-at=` the same way, `exit=` with its exit status, and `selection=` and `lanes=` from its `validate:` line, or `selection=unreported` where it printed none. A run cut off before its exit status is known is `FAILING: [ENTRY_POINT]`. Preserve its unfinished record and log, omit both evidence flags, and explain the interruption in `--validate-note`. `orch-runtime dev-return --text write --help` gives each line's grammar.
+- A command's exit 3 or an unavailable host check prints `validate=no-verdict`: neither a pass nor a failure. Read the run's record with `.agents/skills/orch/scripts/orch-runtime validate entry --record --run-dir [RUN_DIR]`. A record carrying `validate-mode=ci` takes no further run: required CI, the merge group for queue-only work, holds the full proof. A scoped record whose `validate-mode` is not `ci` takes no further start. A record that is not scoped and whose `validate-mode` is not `ci` takes at most one further runner start, `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --validate-mode ci --base [ROUND_BASE] [--run-id [RUN_ID]]`, `--run-id` carrying the rerun's own id from the admission step above exactly when the delegation carries an admission, and the round's verdict is that run's. Run no suite list by hand in place of either. A final `no-verdict` is `--validate no-verdict` with its run's `run-dir=` as `--validate-run-dir` and a `--validate-note` naming the host cause or the command's exit 3, and the return reads `Validate: no-verdict: [CAUSE]`. Only a final record with `validate-mode=ci` leaves the proof to required CI. Any other final `no-verdict` is unproved: its `--validate-note` says so, and the round never presents it as covered by CI.
+- `fleet-mac-run test` passes once for an item the Apple gate in `orch-runtime dev-return --text write --help` names, run through the orch job runner as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. The gate names an item when the base branch holds its workflow and an entry of the delegation's `Labels:` line, or a path the branch changes, matches its trigger. Fleet installs `fleet-mac-run` on the `PATH` of a lane in a repository it runs Apple builds for. A nonzero exit, or no `fleet-mac-run` on `PATH`, is `FAILING: mac run test`. A pass is the `--validate-note` line `mac run test: pass run=[RUN_ID]`, with the run id `fleet-mac-run` prints. An item the gate does not name runs nothing here.
+- A `ci` run accepts completed local edits and records CI as pending. Where the project sets `DEV_VALIDATE_SELECTION_CMD`, the runtime first invokes that selector once, scoped, at the round's final contents. The project owns what the selector runs, and a red scoped run is a failing `validate=` value like any other. It starts no local full command and waits on no unpublished head. This does not satisfy a CI gate; submit's existing § 5 wait proves the required checks on the exact published head.
 - After the dev agent returns its local result, the orchestrator gets green CI and a passing review gate. The dev agent does not claim or reproduce these downstream results.
 
 Read the run's selection and per-check time, where the project's output reports them, against [code-quality § Tests](../../code-quality/SKILL.md#tests): they are evidence for its selection and protection-against-cost rules, never a limit on the round, and change no verdict. Report under § 9's Discovered Work a shared-input change that selected every check where the entry point could trace which checks reach it, and a selected check outside this round's changes whose time goes to a real-clock wait or a real device effect its claim does not need.
 
-A start `dev-validate-run` refuses as `run-live`, with exit 2 and the line `dev-validate-run: run-live run-dir=[RUN_DIR] pid=[PID]`, ran nothing: another run in the worktree still holds the host. It is no verdict on the change, never a validation failure, and does not end the round. Wait for that run with `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, polled as a cut-off start is, or end it with `.agents/skills/orch/scripts/dev-validate-run --stop --worktree [WORKTREE_PATH]` where it belongs to an abandoned round, then start the run again. The verdict of a run that refusal named is this round's only where this round started that run.
+A start the validation entry refuses as `run-live`, with exit 2, ran nothing: another run in the worktree still holds the host. Its line names that run, `validate: run-live run-dir=[RUN_DIR] pid=[PID]` for a start without `--run-id` and `validate: run-live round_id=[ROUND] run_dir=[RUN_DIR]` for an admitted one. It is no verdict on the change, never a validation failure, and does not end the round. Wait for that run with `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]`, polled as a cut-off start is, or end it with `.agents/skills/orch/scripts/orch-runtime validate entry --stop --worktree [WORKTREE_PATH]` where it belongs to an abandoned round, then start the run again, under the same `--run-id` where the delegation carries an admission: the admission names the same run before its first start. The verdict of a run that refusal named is this round's only where this round started that run.
 
 For a test-only PR whose validation runs longer than 30 minutes and fails, run the failed target alone once under load, as an investigation run under [dev SKILL.md § Validation](../SKILL.md#validation). Record both results in `--validate-note` with the prefix `Test-only validation ceiling:`. Report the result and do not extend validation.
 
-A `validate=FAILING`, a failing required verification command, or another failing run in this gate permits one recovery sequence when every failing check has a named cause fixed within the delegated scope. Stage the repaired final contents. Run the focused failed checks once to prove the repair. If that proof fails or remains unread, stop. Read the existing native project preview for those contents with the original base and validation mode, and compare its usable time estimate with the unchanged configured bound. An absent, unread or over-bound estimate stops. `--resolve-mode` and `selection=subset` alone prove no duration. Add no estimate provider, selector override, smaller base or replacement command.
+A `validate=FAILING`, a failing required verification command, or another failing run in this gate permits one recovery sequence when every failing check has a named cause fixed within the delegated scope. Stage the repaired final contents. Where `orch-runtime validate policy --stage focused-proof`, with `--base-checkout` naming the main checkout, answers `run`, run the focused failed checks once to prove the repair; if that proof fails or remains unread, stop. Where it answers `skip`, run no focused check: the rerun below is the proof. Add no selector override, smaller base or replacement command.
 
-When all those conditions hold and this round has not spent its correction/rerun allowance, run the unchanged configured validation once through its existing execution owner, preserving the real base, mode and bound. A failed required verification command's focused rerun above must pass first. Record the causes, scoped repair, focused execution, native preview, estimate and bound, both evidence locations and final verdict in the round notes, summary and `--validate-note`. Existing fix-round calls into this section keep their delegated fix base and mode. This sequence grants no additional allowance after an earlier correction/rerun, validation refresh or recovery attempt.
+When all those conditions hold and this round has not spent its correction/rerun allowance, run the unchanged configured validation once through its existing execution owner, preserving the real base and mode: the admission step's `"attempt": "next"` mints the rerun's own run id, and the rerun writes its own receipt under it, the failed receipt standing. Where the focused proof runs, a failed required verification command's focused rerun above must pass first. Record the causes, scoped repair, focused execution, both evidence locations and final verdict in the round notes, summary and `--validate-note`. Existing fix-round calls into this section keep their delegated fix base and mode. This sequence grants no additional allowance after an earlier correction/rerun, validation refresh or recovery attempt.
 
-An unknown or outside-scope cause, unproved repair/admission, refused start, another failed gate, timeout, lost run or unproved result stops this sequence. Keep the existing `run-live` wait ownership. Do not chain recovery into another start through the no-verdict route. The no-verdict and recorded context-handoff routes above still govern their original results; they grant no new allowance after recovery. Preserve the result and complete the tail.
+An unknown or outside-scope cause, unproved repair/admission, refused start, another failed gate, stalled or lost run or unproved result stops this sequence. Keep the existing `run-live` wait ownership. Do not chain recovery into another start through the no-verdict route. The no-verdict and recorded context-handoff routes above still govern their original results; they grant no new allowance after recovery. Preserve the result and complete the tail.
 
-A stopped round whose failed receipt already exists uses the same qualification above and the original delegation, round id and baseline. For every caller using the foreground route, commit any tracked repair after focused proof and admission, before the configured recovery entry point records HEAD. Use the active workflow's commit instructions and metadata. Reuse that commit through completion and skip that workflow's later commit step. The native route keeps its staged-tree binding. After the admitted attempt, complete the active workflow's tail with `dev-return-write --recovery` and the actual round commit and validation result. Keep the original failed receipt and run records. Evidence-only recovery can name the same round commit; create no empty commit. The fixed companion is terminal even when failing or unproved. Its immutable slot preserves evidence; this workflow controls the execution allowance.
+A stopped round whose failed receipt already exists uses the same qualification above and the original delegation, round id and baseline; its rerun is the round's next admitted attempt, and `orch-runtime dev-return --text write` writes the attempt's receipt under the rerun's run id with the actual round commit and validation result, the failed receipt and run records kept. On the foreground route, commit any tracked repair after focused proof and admission, before the recovery entry point records HEAD, with the active workflow's commit instructions and metadata; reuse that commit through completion and skip the workflow's later commit step, and name the recovery record with `--validate-record`. A foreground round whose `FAILING` receipt already stands under the round's no-run name can write no second receipt, since the writer refuses `receipt-exists`: that round is final. Evidence-only recovery can name the same round commit; create no empty commit. The attempt's receipt is terminal even when failing or unproved; this workflow controls the execution allowance.
 
 For this validation gate, run no proof, rerun, receipt, isolation step, or approval step outside this list. Investigation runs follow [dev SKILL.md § Validation](../SKILL.md#validation). If an agent believes the list misses a rule, it records the proposal once under `### Proposed Rules` in the completion summary and in the matching return line. The orchestrator puts it once in the PR body. Neither role performs the proposed rule.
 
-Run preflight when installed (`test -x .agents/skills/preflight/scripts/preflight`) through the orch job runner per [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation):
+Where `orch-runtime validate policy --stage git-hooks`, with `--base-checkout` naming the main checkout, answers `run`, and `.agents/skills/commit-guards/scripts/install-git-hooks --check --repo [WORKTREE_PATH]` exits 0, the round's commit through those hooks runs preflight and doc-limits, so this gate runs neither. Otherwise the two stage routes below decide.
+
+Where `orch-runtime validate policy --stage preflight`, with `--base-checkout` naming the main checkout, answers `run`, run preflight when installed (`test -x .agents/skills/preflight/scripts/preflight`) through the orch job runner per [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation). Where it answers `skip`, run no preflight:
 
 ```bash
 .agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]
 ```
 
-Use the same orch job runner route for doc-limits when installed (`test -x .agents/skills/doc-limits/scripts/doc-limits`):
+Where `orch-runtime validate policy --stage doc-limits`, with `--base-checkout` naming the main checkout, answers `run`, use the same orch job runner route for doc-limits when installed (`test -x .agents/skills/doc-limits/scripts/doc-limits`). Where it answers `skip`, run no doc-limits:
 
 ```bash
 .agents/skills/doc-limits/scripts/doc-limits
 ```
 
-Run the delegation's required verification commands through their route in [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation). Then run `DEV_VALIDATE_CMD` through `dev-validate-run`, or the project's entry point by the foreground route above. Record the full validation result in the completion artifact for submit to reuse on the same contents.
+Run the delegation's required verification commands through their route in [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation). Then run `DEV_VALIDATE_CMD` through `orch-runtime validate entry`, or the project's entry point by the foreground route above. Record the full validation result in the completion artifact for submit to reuse on the same contents.
 
 A script written only to produce a number for the issue is not committed; report its result in the return for the orchestrator to put in the PR body. An uncommitted measurement is not a check the change adds or modifies.
 
-**Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
+**Visual QA**, **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines.
 
 ---
 
@@ -234,13 +241,15 @@ Reflection is complete in § 4.4. Make no repository edit here.
 
 ## 7. Commit
 
+**Skip if** the round takes § 2.3's no-change route: HEAD stays where the round started.
+
 ```bash
 git -C [WORKTREE_PATH] add -A
 git -C [WORKTREE_PATH] commit -m "[PREFIX]([ISSUE_ID]): [DESCRIPTION]"
 git -C [WORKTREE_PATH] log -1 --oneline
 ```
 
-Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. When validation failures remain, add `[validate: FAILING_CHECK]` to the body as a second `-m`, never to the header.
+Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores; stage specific files by name. When validation failures remain, add `[validate: FAILING_CHECK]` to the body as a second `-m`, never to the header.
 
 ---
 
@@ -255,7 +264,7 @@ Based on the FINAL validated code, decide which extra QA passes the change needs
 | New module, public API | `needs-review` |
 | Changed view, layout, styling or UI copy | `needs-ui-review` |
 
-A round that raises `needs-ui-review`, or changes a file a `QA_UI_PATHS` glob matches (`.agents/skills/orch/scripts/orch-env QA_UI_PATHS ""`), builds each changed view to the polish bar in [code-quality references/ui.md](../../code-quality/references/ui.md) and the design-system doc `QA_UI_DESIGN_DOC` names (`.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""`), and captures its screenshot set by [reviewer references/ui-screenshots.md § Screenshots](../../reviewer/references/ui-screenshots.md#screenshots), listed in § 9.1's Screenshots section. The `needs-ui-review` QA pass judges each view from that set.
+A round that raises `needs-ui-review`, or changes a file a `QA_UI_PATHS` glob matches (`.agents/skills/orch/scripts/orch-env QA_UI_PATHS ""`), builds each changed view to the polish bar in [code-quality references/ui.md](../../code-quality/references/ui.md) and the design-system doc `QA_UI_DESIGN_DOC` names (`.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""`), and captures its screenshot set by [reviewer references/ui-screenshots.md § Screenshots](../../reviewer/references/ui-screenshots.md#screenshots), listed in § 9.1's Screenshots section and named to the writer, one `--screenshot` per file (§ 10). The `needs-ui-review` QA pass judges each view from that set.
 
 `needs-perf-test` needs a performance surface and a measurement route. The surface is the operation or path the final code changes, and the reason the change can alter its cost. A broad label such as "shared build" gives no reason, and an identity or permission change alone has no performance surface. The route is the project's documented benchmark, runner or regression check, with a workload and a baseline that can answer that concern. Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and signal only if shared or feature-off paths are affected. Record the surface, the reason and the route in the Completion Summary's Key Decisions (§ 9.1). A real concern with no measurement route takes no signal: record the concern and the exact missing prerequisite (workload, baseline or runner) there, for disposition. Never report a missing benchmark as evidence that the change is safe or at risk.
 
@@ -263,15 +272,15 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ---
 
-## 9. Post Completion Summary
+## 9. Write the Completion Summary
 
-### 9.1 Completion Comment
+### 9.1 Completion Summary File
 
-Always required. Linear posts it to the issue you implemented: write `tmp/completion-summary-[ISSUE_ID].md`, then `linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md`, with one `--attach` per screenshot § 8 captured. GitHub and ad-hoc rounds return the same content to the orchestrator instead and ALSO carry it in the artifact via `--summary-file` (§ 10).
+Always required. On § 2.3's no-change route it holds the comparison: what was compared, against what, and the finding that no change is needed; its Validation Routes section holds one line, `none: no check ran (no-change route)`. Write `tmp/completion-summary-[ISSUE_ID].md`, in a bundled round `tmp/completion-summary-[SUB_ISSUE_ID].md` for the current sub-issue; a single round's artifact carries it via `--summary-file` (§ 10). A single round posts nothing: on Linear, orch's acceptance of the round posts this file to the issue as the item's one Completion Summary comment, with the screenshots § 10 names attached, and updates that comment on every later round. A bundled round's acceptance posts no summary, since its request names no `summary_file`, so on Linear post each sub-issue's summary yourself once its commit stands: `linear.sh comments create [SUB_ISSUE_ID] --body-file tmp/completion-summary-[SUB_ISSUE_ID].md`, with one `--attach` per screenshot § 8 captured for it; § 11 posts the parent's. GitHub and ad-hoc rounds return the same content to the orchestrator.
 
-**Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `dev-validate-run --record --run-dir [RUN_DIR]` evidence while available. Use `--record` for its reported fields and `start` for that run's actual `timeout-secs` bound. Include one row per run, with its original round id and kind, run directory, recorded head/start identity, and source references. Keep implementation, fix and restack runs separate; a restack has no dev round id. Preserve earlier attempts and recovery or reused-run references rather than replacing their outcomes with the final verdict.
+**Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `orch-runtime validate entry --record --run-dir [RUN_DIR]` evidence while available. Use `--record` for its reported fields and `start` for that run's actual `quiet-secs`. Include one row per run, with its original round id and kind, run directory, recorded head/start identity, and source references. Keep implementation, fix and restack runs separate; a restack has no dev round id. Preserve earlier attempts and recovery or reused-run references rather than replacing their outcomes with the final verdict.
 
-Print every field in the Validation Routes template below. Each missing, legacy or unread field is `unknown`, including absent `scoped` or `ci-fallback`; retain reported values such as `selection=unreported` and `verdict=unfinished`. An unread source keeps its reference and diagnostic. Preserve `FAILING` and required CI's `pending` separately from local `pass`. Keep native bound-hit and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel and any bound-run source reference; never infer fallback, scope or a bound hit from prose or elapsed seconds. `dev-validate-run --help` owns those classifications. A refused start is recorded as such and creates no validation run or verdict.
+Print every field in the Validation Routes template below. Each field a record does not carry, or a source left unread, is `unknown`, including absent `scoped` or `ci-fallback`; retain reported values such as `selection=unreported` and `verdict=unfinished`. An unread source keeps its reference and diagnostic. Preserve `FAILING` and required CI's `pending` separately from local `pass`. Keep native `cause=stalled` and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel; never infer fallback, scope or a stall from prose or elapsed seconds. The run's `--record` line and its sentinel own those classifications. A refused start is recorded as such and creates no validation run or verdict.
 
 A validation-routing check reads these durable comments on the originating item. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
 
@@ -282,7 +291,7 @@ A validation-routing check reads these durable comments on the originating item.
 **Branch**: `[BRANCH]`
 
 ### Validation Routes
-- round=[ORIGINAL_ROUND_ID_OR_UNKNOWN] kind=[implement|fix|restack] run-dir=[RUN_DIR_OR_UNKNOWN] head=[RECORDED_HEAD_OR_UNKNOWN] start=[RECORDED_START_OR_UNKNOWN] source=[NATIVE_START_AND_RECORD_REFERENCES] validate-mode=[VALUE_OR_UNKNOWN] selection=[VALUE_OR_UNKNOWN] ci-fallback=[VALUE_OR_UNKNOWN] scoped=[VALUE_OR_UNKNOWN] seconds=[VALUE_OR_UNKNOWN] timeout-secs=[ACTUAL_BOUND_OR_UNKNOWN] verdict=[VALUE_OR_UNKNOWN] outcome=[NATIVE_CLASSIFICATION_OR_UNKNOWN]
+- round=[ORIGINAL_ROUND_ID_OR_UNKNOWN] kind=[implement|fix|restack] run-dir=[RUN_DIR_OR_UNKNOWN] head=[RECORDED_HEAD_OR_UNKNOWN] start=[RECORDED_START_OR_UNKNOWN] source=[NATIVE_START_AND_RECORD_REFERENCES] validate-mode=[VALUE_OR_UNKNOWN] selection=[VALUE_OR_UNKNOWN] ci-fallback=[VALUE_OR_UNKNOWN] scoped=[VALUE_OR_UNKNOWN] seconds=[VALUE_OR_UNKNOWN] quiet-secs=[ACTUAL_QUIET_SECS_OR_UNKNOWN] verdict=[VALUE_OR_UNKNOWN] outcome=[NATIVE_CLASSIFICATION_OR_UNKNOWN]
 
 ### Files Created/Modified
 - `path/to/file` - Description
@@ -313,9 +322,9 @@ Omit any section that has nothing in it. Discovered Work is backlog work beyond 
 
 **Discovered Work marker prefixes.** A bullet belonging to a later stage of THIS PR rather than to the backlog carries a marker as the first token of the bullet text, before `[Type]`. Unmarked bullets go through the TPM audit as backlog work.
 
-- `handoff_to_submit_pr:` — content the upcoming submit-pr step produces, e.g. PR-body material.
-- `handoff_to_merge_pr:` — something the eventual merge-pr step handles.
-- `current_workflow_action:` — something the current review-pr cycle should handle itself.
+- `handoff_to_submit_pr:`, content the upcoming submit-pr step produces, e.g. PR-body material.
+- `handoff_to_merge_pr:`, something the eventual merge-pr step handles.
+- `current_workflow_action:`, something the current review-pr cycle should handle itself.
 
 ### 9.2 Downstream Handoff
 
@@ -332,14 +341,22 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 `[BASE_BRANCH]` is what § 1's `resolve-base-branch` reported; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because § 1 fetched that remote ref and left the local branch where it was.
 
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR] | --validate-record [FILE]] [--validate-note [TEXT]] [--label [LABEL]]... [--no-labels] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
+.agents/skills/orch/scripts/orch-runtime dev-return --text write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|no-verdict|handed-over|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR] | --validate-record [FILE]] [--exception-file [FILE]] [--validate-note [TEXT]] [--label [LABEL]]... [--no-labels] [--qa-label [LABEL]]... [--screenshot [PATH]]... --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
-`[RUN_DIR]` is the `run-dir=` value `dev-validate-run` printed, and a `pass` needs that run to have passed, a `no-verdict` a run that recorded that result; omit the flag when validation failed before any run started or when § 5's interrupted foreground route has no completed record. A project whose own policy forbids `dev-validate-run` and runs its validation entry point in the foreground passes `--validate-record [FILE]` in place of `--validate-run-dir`, `[FILE]` being the original or recovery record § 5's foreground route wrote for this attempt.
+On § 2.3's no-change route, write this receipt in its place, `[HEAD_SHA]` being the HEAD the round started at and `[ITEM_SENTENCE]` the item's sentence that permits the route, quoted as the description holds it:
 
-One `--qa-label` per § 8 signal, none if nothing triggered. One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`.
+```bash
+.agents/skills/orch/scripts/orch-runtime dev-return --text write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA] --validate not-run --no-change "[ITEM_SENTENCE]" --summary-file tmp/completion-summary-[ISSUE_ID].md [--label [LABEL]]... [--no-labels] --near-ceiling-base origin/[BASE_BRANCH]
+```
 
-Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
+The writer refuses it where the item's description does not hold the sentence, HEAD moved, the tree is dirty or a run is named ([dev-return.md § No-change receipt](../../orch/schemas/dev-return.md#no-change-receipt)). Report a refusal's line in the return; never rewrite the round as a pass.
+
+`[RUN_DIR]` is the `run-dir=` value the validation entry printed, and a `pass` needs that run to have passed, a `no-verdict` a run that recorded that result; omit the flag when validation failed before any run started or when § 5's interrupted foreground route has no completed record. A project whose own policy forbids orch's validation runner and runs its validation entry point in the foreground passes `--validate-record [FILE]` in place of `--validate-run-dir`, `[FILE]` being the original or recovery record § 5's foreground route wrote for this attempt. `--validate handed-over`, with no run flag, passes a group's committed work to the group after it, which validates: the writer takes it only where the round began with a group that is not the last, the commit moved past the round's base and the receipt names its items. `--exception-file [FILE]` cites, beside a `FAILING` run, the exception `{by, id, excused}` the round began with; the receipt keeps its `FAILING` line.
+
+One `--qa-label` per § 8 signal, none if nothing triggered. One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`. One `--screenshot` per file § 8 captured, the path the Screenshots section lists; the writer refuses a path it cannot read, and the acceptance attaches each to the summary comment.
+
+Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. Bundled rounds add `--bundled` and one `--item` per sub-issue, § 11.
 
 **Issue state.** A bundled Linear sub-issue stays In Progress through the dev round; make no tracker state write here. Read its current description, tick each branch-provable Done-when box verified by this round, and add a nonblank indented `Evidence:` line directly below each ticked box. Cite the proving artifact at its revision and conditions. Save the updated description under `tmp/` and run `linear.sh issues update [SUB_ISSUE_ID] --description-file [DESCRIPTION_FILE]` with no state flag. Leave unproved boxes open. Its proof also stays in its completion summary and the bundle artifact's `--item` result (§ 11). Orch's merge-pr workflow § 5 alone owns the completion-time box selections, writes its evidence file and completes the child at merge. The worktree's top-level managed issue stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 
@@ -351,7 +368,7 @@ Carry a child with proved branch work and open post-merge checks into the parent
 Branch: [BRANCH_NAME]
 Commit: [SHA]
 QA: [signals or "none"]
-Validate: [pass, "no-verdict: [CAUSE]", or "FAILING: check1, check2"]
+Validate: [pass, "no-verdict: [CAUSE]", "FAILING: check1, check2", or "not-run: no change"]
 Proposed rule: [proposal or "none"]
 Summary: [ISSUE_ID] ✓
 </output_format>
@@ -362,11 +379,11 @@ Summary: [ISSUE_ID] ✓
 
 ## 11. Return (Bundled)
 
-**Skip if** single — you returned at § 10.
+**Skip if** single: you returned at § 10.
 
-1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation. The near-ceiling lines need no union: the writer's probe measures the whole branch, every sub-issue's commits included.
+1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags, the union of every sub-issue's § 8 signals. No tracker mutation. The near-ceiling lines need no union: the writer's probe measures the whole branch, every sub-issue's commits included.
 
-2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`, with one `--attach` per screenshot. Its Screenshots section is the union of the sub-issues' lists.
+2. **Post the parent summary** (Linear only), beside each sub-issue's own from § 9.1: write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`, with one `--attach` per screenshot. Its Screenshots section is the union of the sub-issues' lists.
 
    ```markdown
    ## Bundle Complete
@@ -388,10 +405,10 @@ Summary: [ISSUE_ID] ✓
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 
    ```bash
-   .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR] | --validate-record [FILE]] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--label [LABEL]]... [--no-labels] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
+   .agents/skills/orch/scripts/orch-runtime dev-return --text write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR] | --validate-record [FILE]] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--label [LABEL]]... [--no-labels] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
    ```
 
-   `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
+   `--bundled` requires one `--item` per sub-issue result: `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks, populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
 
 4. **Return.** Posting the parent summary is not a return.
 

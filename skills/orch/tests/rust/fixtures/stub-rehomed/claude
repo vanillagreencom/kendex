@@ -1,0 +1,6 @@
+#!/bin/bash
+# A wrapper named `claude` that hands the harness another config dir than
+# the one its launch named, as an account shim on PATH can, then runs
+# stub-confirm in its place under that environment.
+export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}-wrapped"
+exec "${0%/*}/../stub-confirm/claude" "$@"

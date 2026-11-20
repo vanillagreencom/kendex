@@ -137,14 +137,14 @@ an ordinary delimiter needs an exact terminator|command|2|block-bare-cd: refused
 a second body on one opening line keeps its judgement|command|2|block-bare-cd: refused=bare-cd|cat <<FIRST <<SECOND\ntext\nFIRST\ncd /tmp\nSECOND
 "
 
-# The disposable hook runs this same suite: the legacy copy restores the
-# original whole-command judgement.
+# The disposable hook runs this same suite: the whole-command copy judges
+# the command as one string.
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  mkdir "$TMP_ROOT/legacy"
+  mkdir "$TMP_ROOT/whole"
   marker_count=$(grep -cF 'STRIPPED=$(echo "$JUDGED"' "$HOOK")
-  assert_eq "$marker_count" 1 'the legacy mutation has one target'
-  sed 's/echo "\$JUDGED"/echo "$COMMAND"/' "$HOOK" >"$TMP_ROOT/legacy/block-bare-cd.sh"
-  for mutant in legacy; do
+  assert_eq "$marker_count" 1 'the whole-command mutation has one target'
+  sed 's/echo "\$JUDGED"/echo "$COMMAND"/' "$HOOK" >"$TMP_ROOT/whole/block-bare-cd.sh"
+  for mutant in whole; do
     if cmp -s "$HOOK" "$TMP_ROOT/$mutant/block-bare-cd.sh"; then
       assert_eq unchanged changed "$mutant changes its disposable hook"
       continue

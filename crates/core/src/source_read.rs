@@ -83,6 +83,18 @@ const TOOL_STATE: [&str; 5] = {
     [".git", "node_modules", ".venv", pycache, pytest]
 };
 
+/// The file a build tool leaves at the top of the directory it builds
+/// into, under the Cache Directory Tagging Specification
+/// (<https://bford.info/cachedir/>): Cargo writes one into every target
+/// directory the moment it creates it, before any artifact. A directory
+/// holding one is build output wherever it sits in a skill, so a skill
+/// that ships a crate built in place is read without its `target/` and no
+/// `build/` or `target/` an author wrote by hand is dropped on its name.
+/// Only a tag carrying the specification's signature counts: a file that
+/// merely bears the name is content, like everything beside it.
+const CACHE_TAG: &str = "CACHEDIR.TAG";
+const CACHE_TAG_SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
 /// The entries at a skill's own top level that a render leaves out: the
 /// package's test suites, its evaluation sets and its maintainer notes. An
 /// agent never reads them at run time, and a consumer never runs a
@@ -120,11 +132,14 @@ impl ItemBytes {
 }
 
 /// What a tree walk leaves out: `skip` names at every depth, `top` names
-/// only among the walked directory's own entries.
+/// only among the walked directory's own entries, and, where
+/// `build_output` is set, every directory a build tool tagged as its own
+/// ([`CACHE_TAG`]) at every depth.
 #[derive(Clone, Copy)]
 struct Prune<'a> {
     skip: &'a [&'a str],
     top: &'a [&'a str],
+    build_output: bool,
 }
 
 impl Prune<'_> {
@@ -326,12 +341,20 @@ impl SealedSource {
     /// behind skill trees and package copies. `skip` prunes directory names
     /// that are never content (dependency trees, VCS internals).
     pub fn collect_tree(&self, dir: &Path, skip: &[&str]) -> Result<Vec<(PathBuf, Vec<u8>)>> {
-        self.walk(dir, Prune { skip, top: &[] })
+        self.walk(
+            dir,
+            Prune {
+                skip,
+                top: &[],
+                build_output: false,
+            },
+        )
     }
 
     /// A skill's whole authored tree, what a copy of the package keeps. All
-    /// skill trees exclude `TOOL_STATE`. Only repository-root skills also
-    /// exclude `NOT_CONTENT`.
+    /// skill trees exclude `TOOL_STATE` and tagged build output
+    /// ([`CACHE_TAG`]). Only repository-root skills also exclude
+    /// `NOT_CONTENT`.
     pub fn collect_skill_tree(&self, dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
         self.skill_tree(dir, &[])
     }
@@ -371,7 +394,25 @@ impl SealedSource {
             false => &[],
         };
         let skip: Vec<_> = skip.iter().chain(&TOOL_STATE).copied().collect();
-        self.walk(dir, Prune { skip: &skip, top })
+        self.walk(
+            dir,
+            Prune {
+                skip: &skip,
+                top,
+                build_output: true,
+            },
+        )
+    }
+
+    /// Whether `dir` is a build tool's own output, by the tag the tool
+    /// left there ([`CACHE_TAG`]). A tag the source will not hand over is
+    /// the walk's refusal, as any other file of the tree would be.
+    fn is_build_output(&self, dir: &Path) -> Result<bool> {
+        let tag = dir.join(CACHE_TAG);
+        if !self.entry(&tag)?.is_some_and(|meta| meta.is_file()) {
+            return Ok(false);
+        }
+        Ok(self.read(&tag)?.starts_with(CACHE_TAG_SIGNATURE))
     }
 
     fn walk(&self, dir: &Path, prune: Prune<'_>) -> Result<Vec<(PathBuf, Vec<u8>)>> {
@@ -414,6 +455,9 @@ impl SealedSource {
                 });
             }
             if meta.is_dir() {
+                if prune.build_output && self.is_build_output(&path)? {
+                    continue;
+                }
                 self.collect_into(&path, &rel, prune, depth + 1, total, files)?;
             } else {
                 let bytes = self.read(&path)?;

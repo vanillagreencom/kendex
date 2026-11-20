@@ -88,4 +88,4 @@ Every mutation a control declares is staged and run on its own copy of the skill
 
 A control proves its suite's instrument once, so it declares one mutation, not one per row. A second mutation stands only where the suite holds a second instrument the first cannot redden, with a comment naming the failure that instrument guards: `controls/mutation-isolation.control.sh` (the suite cap) and `controls/oauth-auth.control.sh` (the token store).
 
-The runner copies the linear skill alone, so a suite that also runs another skill's script cannot live here. It lives in that skill's `tests/` and skips under Bash 3, the shell the macOS leg runs other skills' suites in: `skills/orch/tests/reconcile-work-items-complete.test.sh`.
+The runner copies the linear skill alone, so a suite that also runs another skill's script cannot live here. It lives in that skill's `tests/` and skips under Bash 3, the shell the macOS leg runs other skills' suites in.

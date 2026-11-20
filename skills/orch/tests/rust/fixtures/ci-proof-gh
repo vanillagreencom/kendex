@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# The fake gh for the classifier-evidence rows. It accepts the forms the
+# evidence reader sends and no other: `api repos/O/R/pulls/N`, `api
+# repos/O/R/pulls/N/files?per_page=100&page=K`, `api
+# repos/O/R/commits/SHA/check-runs?check_name=Classify%20the%20diff&filter=latest&per_page=100&page=K`,
+# `api repos/O/R/actions/jobs/ID`, `api repos/O/R/actions/runs/ID` and `api
+# repos/O/R/actions/jobs/ID/logs --allow-escape-sequences`; any other argv
+# exits 64. It answers from the JSON map `gh.json` beside the path this was
+# invoked as, keyed by the path, or by the path with `#N` appended for the
+# Nth read of it: `{exit?, body?, text?}`, `body` printed as JSON, `text`
+# as raw bytes, the status 0 when absent; a path with no entry is GitHub's
+# 404 as gh exits on it. A job log read without the raw-output option fails
+# as gh refuses a reply holding control bytes. Every call appends its
+# arguments to `gh.log` there. Bash 3.2.
+set -u
+here="$(dirname "${BASH_SOURCE[0]}")"
+printf '%s\n' "$*" >> "$here/gh.log"
+[ "${1:-}" = api ] || { printf 'ci-proof-gh: unexpected-call args=[%s]\n' "$*" >&2; exit 64; }
+path="${2:-}"
+form_ok() {
+  case "$1" in
+    repos/*/*/pulls/*/files\?per_page=100\&page=*) return 0 ;;
+    repos/*/*/pulls/*/*) return 1 ;;
+    repos/*/*/pulls/*) return 0 ;;
+    repos/*/*/commits/*/check-runs\?check_name=Classify%20the%20diff\&filter=latest\&per_page=100\&page=*) return 0 ;;
+    repos/*/*/actions/jobs/*/logs) return 0 ;;
+    repos/*/*/actions/jobs/*/*) return 1 ;;
+    repos/*/*/actions/jobs/* | repos/*/*/actions/runs/*) return 0 ;;
+  esac
+  return 1
+}
+form_ok "$path" || { printf 'ci-proof-gh: unexpected-path path=[%s]\n' "$path" >&2; exit 64; }
+case "$path" in
+  */logs)
+    if [ "$#" -ne 3 ] || [ "${3:-}" != --allow-escape-sequences ]; then
+      [ "$#" -eq 2 ] || { printf 'ci-proof-gh: unexpected-call args=[%s]\n' "$*" >&2; exit 64; }
+      printf 'gh: the reply holds control characters\n' >&2
+      exit 1
+    fi ;;
+  *) [ "$#" -eq 2 ] || { printf 'ci-proof-gh: unexpected-call args=[%s]\n' "$*" >&2; exit 64; } ;;
+esac
+prior="$(grep -cxF -- "$*" "$here/gh.log")" || prior=0
+reply="$(jq -c --arg p "$path" --arg n "#$prior" '.[$p + $n] // .[$p] // empty' -- "$here/gh.json")" || {
+  printf 'ci-proof-gh: replies-unreadable\n' >&2
+  exit 65
+}
+if [ -z "$reply" ]; then
+  printf 'gh: Not Found (HTTP 404)\n' >&2
+  exit 1
+fi
+if [ "$(jq -r 'has("text")' <<<"$reply")" = true ]; then
+  jq -j '.text' <<<"$reply"
+elif [ "$(jq -r 'has("body")' <<<"$reply")" = true ]; then
+  jq -c '.body' <<<"$reply"
+fi
+exit "$(jq -r '.exit // 0' <<<"$reply")"

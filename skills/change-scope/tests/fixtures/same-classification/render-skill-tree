@@ -1,0 +1,7 @@
+exit=0
+stdout=change_class=render
+changed-path: path=.agents/skills/orch/SKILL.md
+changed-path: path=.agents/skills/orch/app.ts
+render-proof: checked=4 failed=0
+render-coverage: named=4
+class: class=render measured=true cause=renders-match-their-sources

@@ -1,0 +1,5 @@
+ Create a file named probe-1.txt in the current directory containing exactly the word one and a newline. Use a shell command. Do not create anything else. When it exists, say done and wait for the next instruction.      
+── ⠹ Working ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/dev/.worktrees/kendex/ken-4687/tmp/orch-rebuild/native/run2/pi/work (main)
+0.4%/1.0M                                                                                                                                                                      (vercel-ai-gateway) zai/glm-5.3-fast • medium

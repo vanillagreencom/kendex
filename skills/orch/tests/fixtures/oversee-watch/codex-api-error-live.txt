@@ -1,0 +1,50 @@
+ 
+  >_ OpenAI Codex (v0.169.0)
+     <redacted>
+  permissions: YOLO mode
+ 
+⚠ Your ChatGPT model list doesn't include `gpt-live-check-none`. Check the spelling or use /model to choose another model.
+ 
+ 
+› Reply with the one word FAILURE-PROBE.
+ 
+ 
+↳ Hook · lane-mail-check: session-unjudged=missing-pane
+    this session is unjudged because TMUX_PANE is absent and no controller identity could be recovered
+    no controller record binds this native session to a live pane
+ 
+■ The 'gpt-live-check-none' model is not supported when using Codex with a ChatGPT account.
+                                                                                                               
+                                                                                                                        
+                                                                                                                          
+                                                                                                                           
+                                                                                                                            
+                                                                                                                            
+                                                                                                                             
+                                                                                                                              
+                                                                                                                              
+                                                                                                                               
+                                                                                                                              
+                                                                                                                              
+                                                                                                                             
+                                                                                                                           
+                                                                                                                        
+                                                                                                                       
+                                                                                                                     
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+                                                                
+ 
+ 
+› Ask Codex to do anything              
+                                        
+  gpt-live-check-none default · <redacted> · Return FAILURE-PROBE
+  ← for agents · ? for shortcuts                                                                                                                                                                  ⚠ 4 warnings · f2 to view

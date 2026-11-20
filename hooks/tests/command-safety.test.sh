@@ -207,9 +207,9 @@ oracle_runs_env() { # COMMAND: whether real bash runs env with no operands
 # Named-method rows use the Jarvis config command and lane-host-ssh settings
 # lookups. Mapping methods, line-end aliases and executable xargs input cover
 # the corresponding whole-object and downstream-receiver restrictions.
-# The reported-public-selection-log row is attributed KEN-4584 command text;
-# the hook classifies it without executing the command or opening its log.
-# The Python replacement-source row models KEN-4586's attributed edit; its
+# The reported-public-selection-log row is a command a lane ran; the hook
+# classifies it without executing the command or opening its log.
+# The Python replacement-source row models a lane's edit command; its
 # pathlib and environment text are submitted data, never executed here.
 # Target rows keep the reported failed-cd/delete class as hook input only.
 # They carry no actual-Bash oracle mark and never execute their targets.
@@ -756,7 +756,11 @@ environment_rows() {
 [0,"env -- git status","launcher-options-end"]
 [0,"env -u env git status","launcher-option-value"]
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args","wrapper-launcher"]
-[0,"sh /workspace/tmp/waiter.ABC123/launch.sh /workspace/tmp/waiter.ABC123/wait .agents/skills/worktree/scripts/worktree push KEN-4156 --set-upstream","waiter-launch-worktree-set-upstream"]
+[0,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait --owner KEN-4156 -- .agents/skills/worktree/scripts/worktree push KEN-4156 --set-upstream < /dev/null","waiter-launch-job-worktree-set-upstream"]
+[2,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait --owner KEN-4156 -- printenv < /dev/null","waiter-launch-job-printenv"]
+[2,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait -- cat ~/.fleet/env < /dev/null","private-launch-job-cat"]
+[2,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait -- .agents/skills/reviewer/scripts/mutation-stability --worktree REPO --sha db24bb747a1a55a77082dbdf1ec6f441542641c0 --test 'timeout 5 env' --build 'true' --mutate 'true' < /dev/null","waiter-launch-job-quoted-test-env"]
+[0,".agents/skills/orch/scripts/orch-runtime launch-job --name wait-ABC123 --run /workspace/tmp/waiter.ABC123/wait --owner KEN-4156 -- env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE scripts/validate logic < /dev/null","waiter-launch-job-unset-validation"]
 [0,"bash wrapper.sh env NAME=value OTHER=value command-name args > out","wrapper-launcher-redirect"]
 [0,"env -u NAME -u OTHER command-name args","unset-launcher"]
 [0,"time env -u A -u B CMD ARGS > LOG","timed-unset-command-redirect"]
@@ -1328,20 +1332,20 @@ environment_rows() {
 [0,"python3 - <<'PY'\nfrom pathlib import Path\np=Path('scripts/test-plugin-logic.js')\ntext=p.read_text(); lines=text.splitlines(keepends=True)\nfor i,line in enumerate(lines):\n    if '\"a description link to a plugin\\'s page\"' in line:\n        lines[i]=line.replace('null],', r'\"schema.a.link has unknown key \\\"pane\\\"\"],')\n    elif '\"a description link with both an address and a page\"' in line:\n        lines[i]=line.replace('\"schema.a.link must declare exactly one of url and pane\"', r'\"schema.a.link has unknown key \\\"pane\\\"\"')\n    elif '\"a description link with neither an address nor a page\"' in line:\n        lines[i]=line.replace('\"schema.a.link must declare exactly one of url and pane\"','\"schema.a.link.url must be an https address\"')\n    elif '\"a description link to a page that is no plugin id\"' in line or '\"a description link to a page that is not a string\"' in line:\n        lines[i]=''\n    elif '\"a status hint link to a plugin\\'s page\"' in line:\n        lines[i]=line.replace('\"status.a.link.pane needs a setting description\"', r'\"status.a.link has unknown key \\\"pane\\\"\"')\n    elif '\"a description link may name a page\"' in line:\n        lines[i]='    [\"a description link refuses the old pane key\", \\'var LINK_KEYS = [\"text\", \"url\"];\\', \\'var LINK_KEYS = [\"text\", \"url\", \"pane\"];\\'],\\n'\n    elif any(x in line for x in ['\"a description link declares no address beside its page\"','\"a description link declares an address or a page\"','\"only a description link names a page\"','\"a description link\\'s page is a plugin id\"','\"a description link\\'s page is a string\"']):\n        lines[i]=''\nassert ''.join(lines)!=text\np.write_text(''.join(lines))\nPY","ken-3998-allow-original-source-edit"]
 [0,"python3 - <<'PY'\nfrom pathlib import Path\nimport struct\nr=Path('tmp/ui-shots/VG-563')\npaths=sorted(p for folder in ['after','after-consumers'] for p in (r/folder).rglob('*.png'))\nlines=[]\nfor p in paths:\n w,h=struct.unpack('>II',p.read_bytes()[16:24]); lines.append(f'- `{p}`: {w} \u00d7 {h}')\nPath('tmp/qa-after-inventory-VG-563.md').write_text('# After images available\\n\\n'+'\\n'.join(lines)+'\\n')\nprint('After completed-set images',len(paths))\nPY","ken-3998-allow-png-inventory"]
 [0,"sh tmp/runtime-tests/launch.sh /home/method/dev/.worktrees/vgshell/vgs-1686/tmp/runtime-tests/tui env VGS_TEST_RUN=1 scripts/test-tui.sh","ken-3998-allow-launcher-report"]
-[0,"sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/launch.sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/copilot-wait 1034 --item HT-970","ken-3998-allow-waiter-report"]
+[0,"sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/launch.sh /home/dev/dev/.worktrees/hyprtrade/ht-970/tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/orch-runtime copilot-wait --pr 1034","ken-3998-allow-waiter-report"]
 [0,"python3 - <<PY\nfor name in ['NAME']:\n    print('env', name)\nPY","ken-3998-allow-unquoted-python-data"]
 [0,"mkdir -p build && cat > build/x.py <<'PY'\nfor name in ['NAME']:\n    print('The printed run set passed.')\nPY\npython3 build/x.py","ken-3998-allow-file-write-and-run"]
 [0,"cat > build/x.py <<'PY' && python3 build/x.py\nfor name in ['NAME']:\n    print('The printed run set passed.')\nPY","ken-3998-allow-file-write-inline-run"]
 [0,"cat > build/control.py <<'PY'\nimport os, subprocess\nfor directory in ['build']:\n    subprocess.run(['python3', 'check.py'], env={'PATH': os.defpath, 'HOME': directory, 'VGS_TEST_RUN': '1'})\nPY\npython3 build/control.py && echo ok","ken-3998-allow-subprocess-environment-data"]
 [0,"mkdir -p notes && cat > notes/brief.md <<'EOF'\nIf a command prints the environment, use a named variable.\nfor example: replace env, printenv, export -p, declare -x, /proc/*/environ and show-environment with named reads.\nEOF","ken-3998-allow-brief-data"]
-[0,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/queue-wait 610 180 2400 --json --no-guard --no-check-probe","vsys-queue-wait-named-unset"]
+[0,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/orch-runtime queue-watch --pr 610 --poll 180 --max-wait 2400","vsys-queue-wait-named-unset"]
 [2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN printenv","vsys-queue-wait-environment-output"]
-[2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/queue-wait $(env)","vsys-queue-wait-executable-substitution"]
-[2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/queue-wait `printenv`","vsys-queue-wait-executable-backtick"]
+[2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/orch-runtime queue-watch $(env)","vsys-queue-wait-executable-substitution"]
+[2,"sh tmp/waiter.KfIa0R/launch.sh tmp/waiter.KfIa0R/wait env -u GH_TOKEN .agents/skills/orch/scripts/orch-runtime queue-watch `printenv`","vsys-queue-wait-executable-backtick"]
 [2,"sh tmp/runtime-tests/launch.sh tmp/runtime-tests/tui env VGS_TEST_RUN=1 env","launcher-report-environment-output"]
 [2,"sh tmp/runtime-tests/launch.sh tmp/runtime-tests/tui env VGS_TEST_RUN=1 scripts/test-tui.sh $(env)","launcher-report-executable-substitution"]
 [2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY env","documented-waiter-environment-output"]
-[2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/copilot-wait $(printenv)","documented-waiter-executable-substitution"]
+[2,"sh tmp/waiter.q9BEPa/launch.sh tmp/waiter.q9BEPa/wait env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/orch-runtime copilot-wait $(printenv)","documented-waiter-executable-substitution"]
 [2,"sh wrap.sh env","ken-3998-refuse-wrapper-no-program"]
 [0,"receiver one two env -u NAME","ken-3998-refuse-ordinary-receiver-no-program"]
 [0,"receiver one two env -i -u NAME --unset=OTHER -C build NAME=value program extra words > out","ken-3998-launcher-any-receiver-arity"]
@@ -2264,7 +2268,7 @@ exec-literal-option|elif [ "$exec_word" = literal ] && [[ $value =~ $exec_option
 exec-stdin-shell|if [ -n "$stdin_program" ] &&|if [ "$program" = bash ] &&|exit=0 expected=2|process-environ-exec-chdir-sh-heredoc-claude process-environ-exec-chdir-dash-pipe-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
-forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc
+forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc waiter-launch-job-unset-validation
 ENVIRONMENT_CONTROLS
 fi
 # This repository's own policy, the Quickshell example in

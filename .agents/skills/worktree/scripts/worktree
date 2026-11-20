@@ -2,10 +2,10 @@
 # stdout protocol: create/path return a worktree path, exists returns a boolean,
 # merged returns a merge commit, check returns JSON, and push emits
 # rebase-map: <old-sha> <new-sha|dropped> for
-# skills/orch/scripts/worktree-push. A completed restack (create --reuse,
+# orch's record-push. A completed restack (create --reuse,
 # create --restack, restack continue|skip) reports the same map lines on
 # stderr, because create's stdout is the worktree path, and appends them to
-# the worktree-private kendex-rebase-map file that worktree-push consumes.
+# the worktree-private kendex-rebase-map file that record-push consumes.
 # These data records remain separate from worktree-<key>: <value> notices.
 # English explanation is not a parsed protocol.
 # Portable git worktree manager. Run with --help for the command index,
@@ -38,8 +38,8 @@ fi
 source "$MESSAGE_DIR/lib/messages.sh"
 
 readonly ACTIVE_WORK_EXIT=75
-# create --reuse --keep-on-conflict handed back a tree its conflicting rebase
-# left where it stood: the path is on stdout as for exit 0, and the caller
+# create --reuse --keep-on-conflict handed back a tree whose head does not
+# contain the base: the path is on stdout as for exit 0, and the caller
 # learns the tree is not on the base without parsing a notice.
 readonly REUSE_UNREBASED_EXIT=76
 
@@ -155,7 +155,29 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 # committed_settings_keys.
 CALLER_ENV_NAMES=""
 case "${1:-}" in path|exists) ;; *) CALLER_ENV_NAMES="$(compgen -e)" ;; esac
-kendex_load_project_env "$PROJECT_ROOT"
+# The names worktree takes from the project's files: its own settings and
+# the private file's selector, then the list of each sibling package that
+# stands beside it: github's, which its GitHub reads take, and
+# commit-guards', which the hooks of its git commands read from the
+# environment it hands them (committed_settings_keys).
+WORKTREE_SETTINGS_NAMES=(
+  BOT_EMAIL BOT_NAME BOT_REMOTE_NAME BOT_REMOTE_URL BOT_SIGNING_KEY KENDEX_ENV_FILE
+  WORKTREE_BASE_DIR WORKTREE_COPIES WORKTREE_DEFAULT_BRANCH WORKTREE_HOSTED_NAME
+  WORKTREE_MKDIRS WORKTREE_RELATIVE_SYMLINKS WORKTREE_SETUP_CMD WORKTREE_SYMLINKS
+)
+GITHUB_NAMES_LIB="$SCRIPT_DIR/../../github/scripts/lib/settings-names.sh"
+if [[ -f "$GITHUB_NAMES_LIB" ]]; then
+  # shellcheck source=../../github/scripts/lib/settings-names.sh
+  source "$GITHUB_NAMES_LIB"
+  WORKTREE_SETTINGS_NAMES+=("${github_settings_names[@]}")
+fi
+COMMIT_GUARDS_NAMES_LIB="$SCRIPT_DIR/../../commit-guards/scripts/lib/settings-names.sh"
+if [[ -f "$COMMIT_GUARDS_NAMES_LIB" ]]; then
+  # shellcheck source=../../commit-guards/scripts/lib/settings-names.sh
+  source "$COMMIT_GUARDS_NAMES_LIB"
+  WORKTREE_SETTINGS_NAMES+=("${commit_guards_settings_names[@]}")
+fi
+kendex_load_project_env "$PROJECT_ROOT" -- "${WORKTREE_SETTINGS_NAMES[@]}"
 
 # Worktree link setup, health and repair.
 # shellcheck source=lib/links.sh
@@ -685,7 +707,7 @@ emit_rebase_map() {
 # rewrite of one restack, and a reader must apply the hops in order and one at
 # a time: a record that moved X -> Y in the first hop moves Y -> Z in the
 # second, and a reconciliation that saw both at once would compare Y against
-# the record's pre-hop value X and stop at Y. `worktree-push` splits the file
+# the record's pre-hop value X and stop at Y. `record-push` splits the file
 # on this line.
 readonly RESTACK_HOP_MARK='rebase-hop:'
 
@@ -751,7 +773,7 @@ refuse_unidentified_worktree() { # TARGET PHYSICAL_PATH
 # The worktree-private file a completed restack leaves its rebase map in. It
 # lives in the worktree's own git dir, so it is untracked, invisible to
 # `git status`, private to this checkout, and outlives the process that wrote
-# it. `skills/orch/scripts/worktree-push` asks git for the same path.
+# it. orch's `record-push` asks git for the same path.
 restack_rebase_map_file() {
   local wt="$1" path=""
   path="$(git -C "$wt" rev-parse --git-path kendex-rebase-map 2>/dev/null)" || return 1
@@ -764,7 +786,7 @@ restack_rebase_map_file() {
 # but could not derive a map for it. The rewrite outlives the process that
 # refused, and a retry finds the base already contained, so it rebases nothing,
 # derives nothing and would publish a rewrite no map ever described. The marker
-# is what carries the refusal across those processes. `worktree-push` reads the
+# is what carries the refusal across those processes. `record-push` reads the
 # same line.
 readonly RESTACK_UNMAPPED_MARK='rebase-unmapped:'
 
@@ -868,7 +890,7 @@ restack_map_refusal() {
 # uses: a map that was only printed lives in its reader's temporary capture,
 # which that reader does not act on until this process has already returned and
 # which its own exit trap then removes, so printing is not recording.
-# `orch/scripts/worktree-push` reconciles from this file.
+# orch's `record-push` reconciles from this file.
 REBASE_HOP_FILE=""
 append_rebase_hop() {
   local wt="$1" map_lines="$2"
@@ -888,7 +910,7 @@ append_rebase_hop() {
 # The map goes to stderr, not stdout: `create --reuse/--restack` hands its
 # caller the worktree path on stdout and a map printed there would be read as
 # part of it. The machine channel for a restack is the appended file, which
-# the separate `worktree-push` process consumes. The append opens its own hop
+# the separate `record-push` process consumes. The append opens its own hop
 # under RESTACK_HOP_MARK, so two restacks before one push stay two hops that
 # the reader applies in order rather than one merged map that would strand
 # every record on the first restack's rewritten SHA. A restack whose map
@@ -941,7 +963,7 @@ committed_settings_keys() (
     git -C "$PROJECT_ROOT" ls-files --error-unmatch -- "$file" >/dev/null 2>&1 || rc=$?
     # --error-unmatch keeps exit 1 for an untracked path alone.
     case "$rc" in
-      0) kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1 ;;
+      0) kendex_load_settings_file "$PROJECT_ROOT/$file" -- "${WORKTREE_SETTINGS_NAMES[@]}" || exit 1 ;;
       1) untracked+=("$file") ;;
       *) exit 1 ;;
     esac
@@ -951,9 +973,9 @@ committed_settings_keys() (
     caller_exported "$name" || unset "$name"
   done <<<"$tracked"
   for file in ${untracked[@]+"${untracked[@]}"}; do
-    kendex_load_settings_file "$PROJECT_ROOT/$file" || exit 1
+    kendex_load_settings_file "$PROJECT_ROOT/$file" -- "${WORKTREE_SETTINGS_NAMES[@]}" || exit 1
   done
-  kendex_source_env_file "$PROJECT_ROOT/$private" || exit 1
+  kendex_source_env_file "$PROJECT_ROOT/$private" -- "${WORKTREE_SETTINGS_NAMES[@]}" || exit 1
   while IFS= read -r name; do
     [[ -n "${!name+x}" ]] || printf '%s\n' "$name"
   done <<<"$tracked"
@@ -1427,14 +1449,45 @@ keep_unrebased_worktree() { # rebase|replay CONFLICT_FILES
   esac
   release_issue_claim_lock
   setup_app_worktree "$WT_PATH" true true || exit 1
-  worktree_message reuse-unrebased "$WT_PATH" "$operation onto origin/$DEFAULT_BRANCH conflicts, so it was aborted and $WT_PATH is kept on its pre-$1 head." >&2
-  if [[ -n "$2" ]]; then
+  hand_back_unrebased "$operation onto origin/$DEFAULT_BRANCH conflicts, so it was aborted and $WT_PATH is kept on its pre-$1 head." "$restack_flags" "$2"
+}
+
+# The one exit of a --keep-on-conflict tree whose head does not contain the
+# base, whatever kept it there.
+hand_back_unrebased() { # SENTENCE RESTACK_FLAGS [CONFLICT_FILES]
+  worktree_message reuse-unrebased "$WT_PATH" "$1" >&2
+  if [[ -n "${3:-}" ]]; then
     echo "Conflicting files:" >&2
-    sed 's/^/  /' <<<"$2" >&2
+    sed 's/^/  /' <<<"$3" >&2
   fi
-  echo "Restack it when ready: $0 create $ISSUE $restack_flags" >&2
+  if [[ -n "$2" ]]; then
+    echo "Restack it when ready: $0 create $ISSUE $2" >&2
+  fi
   report_created_worktree
   exit "$REUSE_UNREBASED_EXIT"
+}
+
+# Every reuse exit that hands the tree back without a conflict. Under
+# --keep-on-conflict exit 0 means the head contains the base, so a caller
+# reading the exit alone never takes a kept tree for a rebased one. A merged
+# branch owes no restack and stays 0.
+report_reused_worktree() {
+  local branch=""
+  if [[ "$KEEP_ON_CONFLICT" == true && -z "$REUSE_MERGED_COMMIT" ]]; then
+    resolve_default_branch || exit 1
+    if ! git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null; then
+      branch="$(git -C "$WT_PATH" branch --show-current 2>/dev/null)" || branch=""
+      if [[ -n "$REUSE_STATUS" ]]; then
+        hand_back_unrebased "$WT_PATH holds uncommitted work, so no rebase onto origin/$DEFAULT_BRANCH was attempted and it is kept on its own head." "${branch:+--restack}"
+      fi
+      if [[ -z "$branch" ]]; then
+        hand_back_unrebased "$WT_PATH has a detached HEAD, so no rebase onto origin/$DEFAULT_BRANCH was attempted and it is kept as it stands." ""
+      fi
+      hand_back_unrebased "$WT_PATH is at its published head, which does not contain origin/$DEFAULT_BRANCH; its next push rebases it, and it is kept on that head." "--restack"
+    fi
+  fi
+  report_created_worktree
+  exit 0
 }
 
 recorded_worktree_issue() { # WT
@@ -1914,7 +1967,7 @@ merged_pr_for_branch() {
   # and fail the parse, turning the proof off for every branch at once.
   # Every merged PR sharing the name is scanned, not just the newest row.
   #
-  # The query answers for THIS checkout, the way reconcile-work-items does it:
+  # The query answers for THIS checkout:
   # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
   # repository's same-named branch at the same commit authorize a delete here,
   # and a fork's PR is someone else's merge, so cross-repository rows are cut.
@@ -2526,11 +2579,20 @@ reuse_respects_session_lease() {
   REUSE_LEASE_OWNER=""
   # Relaunch and start-worktree both reuse this tree. Orch owns activity
   # detection: moving its branch here would invalidate a running proof.
-  # Partial installs may lack the live reader.
-  local orch_scripts="$SCRIPT_DIR/../../orch/scripts" activity_cause="" live_answer=""
-  if [[ -e "$orch_scripts/dev-validate-run" || -L "$orch_scripts/dev-validate-run" ]]; then
+  # Partial installs may lack the live reader. Only the printed line live=none
+  # admits reuse: the runtime prints a run it cannot read as a held run, and a
+  # runtime that cannot answer, such as one setup has not built, holds too.
+  # A runtime that runs this package names itself in ORCH_RUNTIME_BINARY and
+  # is asked in place of the wrapper, whose cached build may not exist.
+  local live_reader="$SCRIPT_DIR/../../orch/scripts/orch-runtime" activity_cause="" live_answer=""
+  if [[ -n "${ORCH_RUNTIME_BINARY:-}" ]]; then
+    live_reader="$ORCH_RUNTIME_BINARY"
+  elif [[ ! -e "$live_reader" && ! -L "$live_reader" ]]; then
+    live_reader=""
+  fi
+  if [[ -n "$live_reader" ]]; then
     rc=0
-    live_answer="$("$orch_scripts/dev-validate-run" --live --worktree "$wt" 2>/dev/null)" || rc=$?
+    live_answer="$("$live_reader" validate entry --live --worktree "$wt" 2>/dev/null)" || rc=$?
     case "$rc" in
       0) activity_cause=run-live ;;
       1) [[ "$live_answer" == live=none ]] || activity_cause=activity-unreadable ;;
@@ -3190,7 +3252,7 @@ case "${1:-}" in
       exit 1
     fi
     if [[ "$KEEP_ON_CONFLICT" == true && ( "$REUSE" != true || "$RESTACK" == true ) ]]; then
-      worktree_message keep-mode-required "--keep-on-conflict" "Error: --keep-on-conflict keeps a --reuse tree whose rebase conflicts; combine it with --reuse and not --restack." >&2
+      worktree_message keep-mode-required "--keep-on-conflict" "Error: --keep-on-conflict hands back a --reuse tree it leaves without the base; combine it with --reuse and not --restack." >&2
       exit 1
     fi
     if [[ -n "$TRANSFER" ]] && { [[ -n "$BASE" || -n "$FROM" || -n "$PR" || -n "$BRANCH" ]] || [[ "$REUSE" == true || "$RESTACK" == true || "$REPLAY" == true ]]; }; then
@@ -3258,14 +3320,14 @@ case "${1:-}" in
           require_clean_restack "$WT_PATH" || exit 1
         fi
       fi
-      REUSE_STATUS=""
+      REUSE_STATUS="" REUSE_MERGED_COMMIT=""
       REUSE_STATUS="$(GIT_OPTIONAL_LOCKS=0 git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
       if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
         if [[ "$REUSE_CHECKOUT_MODE" == claim || -n "${WORKTREE_SETUP_CMD:-}" ]]; then
           setup_app_worktree "$WT_PATH" true true || exit 1
         fi
         worktree_message reuse-dirty "$WT_PATH" "Reused $WT_PATH with uncommitted work; refreshed its lease and skipped the rebase." >&2
-        report_created_worktree; exit 0
+        report_reused_worktree
       fi
 
       # Network/ref discovery must succeed before the claim lock or any setup
@@ -3530,8 +3592,7 @@ case "${1:-}" in
       # Refresh setup (rebase may have replaced symlinks with tracked content)
       release_issue_claim_lock
       setup_app_worktree "$WT_PATH" true true
-      report_created_worktree
-      exit 0
+      report_reused_worktree
     fi
 
     # A directory is reusable only when its exact canonical path is registered
@@ -3808,6 +3869,13 @@ case "${1:-}" in
       worktree_message remove-target-required "target" "Error: remove requires an issue ID or path" >&2
       exit 1
     fi
+    # A confined lane's process may write its own worktree but not the
+    # folders that hold it: git would delete the content and then fail on
+    # the folder. The overseer's close of the lane removes it.
+    if [[ "${AGENT_RUNTIME_CONFINED:-}" == "1" ]]; then
+      echo "worktree-remove: left cause=confined owner=overseer"
+      exit 0
+    fi
     # A path-addressed close-out gets its issue from the private Git record,
     # so a relaunched session does not need its predecessor's environment.
     REMOVE_ISSUE_OWNER=""
@@ -3842,7 +3910,7 @@ case "${1:-}" in
     if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
       worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
       echo "Nothing was released, removed or pruned." >&2
-      echo "Let orch/scripts/worktree-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
+      echo "Let orch's record-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
       echo "  rm -f \"$REMOVE_MAP_FILE\"" >&2
       exit 1
     fi
@@ -4479,7 +4547,7 @@ case "${1:-}" in
           if [[ -n "$PUSH_MAP_LINES" ]]; then
             printf '%s\n' "$PUSH_MAP_LINES"
             # Printing is not recording: the hop on disk is what reaches
-            # worktree-push, and the pending record stands until it lands.
+            # record-push, and the pending record stands until it lands.
             if ! append_rebase_hop "$WT_PATH" "$PUSH_MAP_LINES"; then
               worktree_message push-map-unrecorded "${REBASE_HOP_FILE:-$WT_PATH}" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its map could not be recorded, so SHAs recorded before it cannot be reconciled; refusing to push. The map's only copy is on stdout above." >&2
               exit 1

@@ -1,0 +1,49 @@
+#!/bin/bash
+# A Copilot stub named `copilot` that opens its session and draws its
+# composer as `stub-confirm/copilot` does, then refuses submits the way
+# Copilot CLI 1.0.112 refused one on an enterprise seat still loading its
+# managed account policy: it draws Copilot's refusal line, keeps the line it
+# read as the composer's draft and records no turn. It refuses while the
+# submits it refused are fewer than `.stub-refusals` in its working
+# directory says, read at each submit, so a row moves the policy's end; one
+# without the file is refused once. A submit it takes is a bare Enter as the
+# draft held or a line as itself, each a `user.message` row as
+# `stub-confirm/copilot` writes one. Every line read is appended to
+# `.stub-reads`, so a row counts what was typed into it.
+rule() {
+  printf '\xe2\x94\x80%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+  printf '\n'
+}
+id="0199c002-0000-7000-8000-$(printf '%012d' "$$")"
+state="$COPILOT_HOME/session-state/$id"
+mkdir -p "$state"
+printf 'id: %s\ncwd: %s\n' "$id" "$PWD" > "$state/workspace.yaml"
+printf '%s\n' "$id" > .stub-session-id
+printf '\xe2\x9d\xaf \n'
+rule
+refused=0
+draft=""
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> .stub-reads
+  refusals=1
+  if [ -f .stub-refusals ]; then
+    refusals=$(cat .stub-refusals)
+  fi
+  if [ "$refused" -lt "$refusals" ]; then
+    refused=$((refused + 1))
+    if [ -n "$line" ]; then
+      draft=$line
+    fi
+    printf '! Managed account policy is still loading. Please wait a moment and try again.\n'
+    printf '\xe2\x9d\xaf %s\n' "$draft"
+    rule
+    continue
+  fi
+  if [ -z "$line" ]; then
+    line=$draft
+  fi
+  draft=""
+  escaped="${line//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{"type":"user.message","data":{"content":"%s"}}\n' "$escaped" >> "$state/events.jsonl"
+done
