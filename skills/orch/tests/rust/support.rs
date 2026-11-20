@@ -1180,9 +1180,9 @@ impl Runner {
     }
 
     /// Spawn a fleet `op` as a background child with `extra` environment and
-    /// `path_prefix` ahead of the inherited `PATH`, so a wrapper there (the
-    /// tmux-hold shim) intercepts the tool. The child blocks where the shim
-    /// blocks; the test drives it and reaps it.
+    /// `path_prefix` ahead of `tools` and the inherited `PATH`, so a wrapper
+    /// there (the tmux-hold shim) intercepts the tool. The child blocks where
+    /// the shim blocks; the test drives it and reaps it.
     pub fn spawn_op_fleet(
         &self,
         request: &Value,
@@ -1203,7 +1203,10 @@ impl Runner {
     ) -> Child {
         let path = self.state_dir().join("request.json");
         std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
-        let combined = tool_path(&[path_prefix]);
+        let combined = match &self.tools {
+            Some(tools) => tool_path(&[path_prefix, tools.as_path()]),
+            None => tool_path(&[path_prefix]),
+        };
         let mut command = isolated();
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
@@ -2033,21 +2036,37 @@ pub fn planted_pick(shape: &str) -> Value {
     planted[shape]["reply"].clone()
 }
 
-/// A copy of `sleep` named `name` under `dir`, so a pane holds a process the
-/// kernel names as a harness; written by a child shell (support's reason).
+/// A native program named `name` under `dir` that sleeps its first
+/// argument's whole seconds, so a pane holds a process the kernel and its
+/// own argv name as a harness; built by the shell suites' fixture,
+/// `tests/lib/named-process.sh`, in a child shell (support's reason). A
+/// renamed or linked coreutils `sleep` cannot stand in: where coreutils is
+/// one multicall executable that dispatches by its name, as uutils' is, the
+/// copy refuses to run.
 pub fn named_sleep(dir: &Path, name: &str) -> PathBuf {
     let path = dir.join(name);
-    let out = std::process::Command::new("sh")
-        .args([
-            "-c",
-            "cp \"$(command -v sleep)\" \"$1\" && chmod 755 \"$1\"",
-            "_",
-        ])
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/lib/named-process.sh");
+    let out = std::process::Command::new("bash")
+        .args(["-c", ". \"$1\" && fixture_named_process \"$2\"", "_"])
+        .arg(&fixture)
         .arg(&path)
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     path
+}
+
+/// A folder outside `/tmp`, and its canonical path, for a row whose world a
+/// confined lane must see: the lane's wrapper mounts a private `/tmp` and
+/// binds back only its grants, and with `TMPDIR` unset, as on a default
+/// Linux host, [`tempfile::tempdir`] answers under `/tmp`. A seat, a planted
+/// program or a state directory bound only as the tree is stays in sight
+/// here, as an operator's under their home does.
+pub fn outside_tmp() -> (TempDir, PathBuf) {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    assert!(!root.starts_with("/tmp"), "{}", root.display());
+    (dir, root)
 }
 
 /// The identity of the pane's process once its shell has exec'd `name`.

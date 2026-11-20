@@ -260,7 +260,8 @@ impl Repo {
         .to_owned();
         let act = match behaviour {
             "fail" => "printf 'fatal: fixture transport down\\n' >&2; exit 128",
-            "kill" => "pg=$(ps -o pgid= -p $$ | tr -d ' '); kill -KILL -- -$pg; exit 128",
+            // No `--`: dash's `kill` reads it as a process number and refuses.
+            "kill" => "pg=$(ps -o pgid= -p $$ | tr -d ' '); kill -KILL -$pg; exit 128",
             _ => unreachable!(),
         };
         write_executable(

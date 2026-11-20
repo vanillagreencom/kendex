@@ -4154,10 +4154,9 @@ fn a_moved_close_stops_the_old_roots_descendants_by_the_recorded_harness() {
         let server = Server::start(dir.path(), "fleet");
         let runner = Runner::new(&server, "stub-confirm");
         runner.init_fleet();
-        // The recorded root: a bash whose child is a sleep named `claude`, so
-        // the kernel names it as the recorded harness's own process.
-        let claude = dir.path().join("claude");
-        std::os::unix::fs::symlink("/bin/sleep", &claude).unwrap();
+        // The recorded root: a bash whose child is a sleeper named `claude`,
+        // so the kernel names it as the recorded harness's own process.
+        let claude = named_sleep(dir.path(), "claude");
         let pidfile = dir.path().join("descendant");
         let mut root = std::process::Command::new("bash")
             .arg("-c")
@@ -6502,7 +6501,8 @@ fn a_launch_writes_its_marker_and_mailbox_before_the_window_and_a_crash_between_
 #[test]
 #[cfg(target_os = "linux")]
 fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_opens_none() {
-    let dir = tempfile::tempdir().unwrap();
+    // The planted cargo and the shared cache stand outside the worktree.
+    let (dir, _) = outside_tmp();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
@@ -10747,9 +10747,9 @@ fn probe_script(harness: &Path) -> String {
 /// second private server at `wayland-1` standing for the display), a `gh`
 /// that answers the bus's login, `GH_TOKEN` before it, and a probe harness
 /// that writes what it reached into `probe-<item>.txt` in its worktree,
-/// then runs the confirming stub. Every planted program stands inside the
-/// worktree, which the lane's grants bind; the runtime folder and the
-/// seats stand outside it.
+/// then runs the confirming stub. The world, its state directory with it,
+/// stands outside `/tmp` ([`outside_tmp`]), so what the lane's grants do not
+/// bind stays readable to the lane as the rest of the tree is.
 #[cfg(target_os = "linux")]
 struct Confined {
     dir: tempfile::TempDir,
@@ -10762,9 +10762,12 @@ struct Confined {
 #[cfg(target_os = "linux")]
 impl Confined {
     fn new() -> Confined {
-        let dir = tempfile::tempdir().unwrap();
+        let (dir, _) = outside_tmp();
         let server = Server::start(dir.path(), "fleet");
-        let mut runner = Runner::new(&server, "stub-confirm");
+        let mut runner = Runner {
+            dir: outside_tmp().0,
+            ..Runner::new(&server, "stub-confirm")
+        };
         runner.verify = Some(30);
         runner.init_fleet();
         let root = runner.state_dir().to_path_buf();
@@ -11112,16 +11115,6 @@ fn a_lane_on_a_seat_whose_settings_are_a_link_reads_them_and_is_refused_a_write(
         std::fs::symlink_metadata(world.dir.path().join("operator/gone.toml")).is_err(),
         "nothing made at an absent target"
     );
-}
-
-/// A folder outside the wrapper's private `/tmp`, where a seat bound only as
-/// the tree is stays in sight.
-#[cfg(target_os = "linux")]
-fn outside_tmp() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    assert!(!root.starts_with("/tmp"), "{}", root.display());
-    (dir, root)
 }
 
 /// A probe line that makes and writes into each of `folders` under `root`,

@@ -1260,8 +1260,8 @@ fn fleet_origin(fleet: &Fleet, checkout: &Path) {
 /// through the real entry runs with the word and no bypass word.
 #[test]
 fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    // The walled stub and the seats stand outside the confined worktree.
+    let (dir, root) = outside_tmp();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let work = root.join("KEN-5");
