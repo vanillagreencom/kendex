@@ -166,10 +166,15 @@ jobs:
     permissions:
       contents: read
       actions: read
-    # The render proof re-renders every installed item, so its cost grows with
-    # this repository's catalog rather than with the diff. This ceiling sits
-    # ahead of every lane below and is the whole budget a `render` merge
-    # group's CI answers to.
+    # This ceiling sits ahead of every lane below and holds the longer of two
+    # routes. The render proof re-renders every installed item, so its cost
+    # grows with this repository's catalog rather than with the diff, and it
+    # is the whole budget a `render` merge group's CI answers to. The select
+    # step grows with the diff: over 1857 changed paths it starts about 1,100
+    # processes and spends about 65 CPU seconds on four cores of a
+    # workstation, about 7 minutes on a hosted runner at the slowest
+    # runner-to-workstation ratio measured, beside about a minute for the
+    # checkouts and the class.
     timeout-minutes: 20
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
