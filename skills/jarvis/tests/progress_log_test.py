@@ -215,12 +215,12 @@ class ProgressLog(MailWorld):
     def action_calls(self, full=False):
         return [tuple(call if full else call[:2]) for call in map(json.loads, self.action_trace.read_text().splitlines())]
 
-    def assert_action(self, item, action, state_change, comment=COMMENT):
+    def assert_action(self, item, action, state_change):
         row, = json.loads(self.action_store.read_text())["comments"][item]
-        self.assertEqual(row, {"id": comment, "body": "Jarvis next action: " + action + "\n"})
+        self.assertEqual(row, {"id": COMMENT, "body": "Jarvis next action: " + action + "\n"})
         saved = records(self.handoff.read_text())[-1]
         self.assertEqual(saved["State change"], state_change)
-        self.assertIn(item + " comment=" + comment, saved["Observed result and source"])
+        self.assertIn(item + " comment=" + COMMENT, saved["Observed result and source"])
 
     def test_next_action_named(self):
         for key in ("KEN-1", "KEN-1:", "`KEN-1`", "`" + REQUEST + ":`"):
@@ -257,53 +257,61 @@ class ProgressLog(MailWorld):
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assert_action("KEN-2", "Ask the vendor to verify the receipt.", "none")
         self.assertEqual(self.action_calls(), [
-            ("issues", "list"), ("auth-check", "--strict"), ("issues", "create"), ("issues", "get"),
+            ("issues", "list"), ("comments", "bulk-list"), ("auth-check", "--strict"), ("issues", "create"), ("issues", "get"),
             ("comments", "list"), ("comments", "create"), ("comments", "list"),
-            ("issues", "list"), ("comments", "list"), ("comments", "update"), ("comments", "list")])
+            ("issues", "list"), ("comments", "bulk-list"), ("comments", "list"), ("comments", "update"), ("comments", "list")])
 
-    def test_next_action_legacy_binding(self):
+    def binding_cases(self):
         source = "Original request: [thread](" + REQUEST + ")"
-        matches = (
-            (self.issue(description=source), []),
-            (self.issue(title="Vendor follow-up", description=source), [{"id": "legacy", "body": "Outcome: " + OUTCOME}]),
-            (self.issue(), [{"id": "legacy", "body": source}]),
-            (self.issue(title="Vendor follow-up"), [{"id": "legacy", "body": source + "\nOutcome: " + OUTCOME}]),
-            (self.issue(title="Vendor follow-up", description="Original request: `" + OTHER_REQUEST +
-                                                              "`\nOutcome: Send the invoice"),
-             [{"id": "legacy", "body": source + "\nOutcome: " + OUTCOME}]),
+        paired = [{"id": "binding", "body": source + "\nOutcome: " + OUTCOME}]
+        return (
+            ("description-source-and-title", self.issue(description=source), [], "KEN-1"),
+            ("one-source-across-records", self.issue(title="Vendor follow-up", description=source),
+             [{"id": "outcome", "body": "Outcome: " + OUTCOME}], "KEN-1"),
+            ("comment-source-and-title", self.issue(), [{"id": "source", "body": source}], "KEN-1"),
+            ("legacy-comment-only", self.issue(title="Vendor follow-up"), paired, "KEN-1"),
+            ("legacy-description-and-later-binding",
+             self.issue(title="Vendor follow-up", description="Original request: `" + OTHER_REQUEST +
+                                                              "`\nOutcome: Send the invoice"), paired, "KEN-1"),
+            ("unrelated-action-cites-request",
+             self.issue(description="Original request: " + OTHER_REQUEST + "\nOutcome: " + OUTCOME),
+             [{"id": OTHER_COMMENT, "body": "Jarvis next action: Read the reply to " + REQUEST +
+                                            " before following up on the vendor receipt.\n"}], "KEN-2"),
+            ("canonical-description-and-later-binding",
+             self.issue(title="Vendor follow-up", description="Jarvis request source: " + OTHER_REQUEST +
+                                                              "\n\nJarvis requested outcome: Send the invoice"),
+             paired, "KEN-1"),
+            ("canonical-description-and-different-outcome",
+             self.issue(title="Vendor follow-up", description="Jarvis request source: " + REQUEST +
+                                                              "\n\nJarvis requested outcome: Send the invoice"),
+             paired, "KEN-1"),
         )
-        for issue, comments in matches:
-            with self.subTest(issue=issue, comments=comments):
-                self.handoff.write_text(state_handoff("- KEN-1: retry\n"))
-                self.action_world(issues={"KEN-1": issue, "KEN-3": self.issue("KEN-3", title="Different work")},
-                                  comments={"KEN-1": comments})
-                result = self.next_action(discover=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                saved = records(self.handoff.read_text())[-1]
-                self.assertEqual(saved["State change"], "remove State KEN-1")
-                self.assertNotIn(("issues", "create"), self.action_calls())
-                bulk, = [call for call in self.action_calls(full=True) if call[:2] == ("comments", "bulk-list")]
-                self.assertEqual(bulk[2:], ("--stdin", "--format=safe", "KEN-1", "KEN-3"))
-                self.assertEqual(json.loads(self.action_store.read_text())["comments"]["KEN-1"],
-                                 comments + [{"id": COMMENT, "body": "Jarvis next action: " + ACTION + "\n"}])
 
-    def test_next_action_reference_does_not_bind_a_different_request(self):
-        self.handoff.write_text(state_handoff("- " + OTHER_REQUEST + ": retry\n- " + REQUEST + ": retry\n"))
-        self.action_world(issues={"KEN-1": self.issue(description="Original request: " + OTHER_REQUEST +
-                                                                  "\nOutcome: " + OUTCOME)})
-        other_action = "Read the reply to " + REQUEST + " before following up on the vendor receipt."
-        first = self.next_action(action=other_action, state_key=OTHER_REQUEST)
-        self.assertEqual(first.returncode, 0, first.stderr)
-        self.assert_action("KEN-1", other_action, "remove State " + OTHER_REQUEST)
-        world = json.loads(self.action_store.read_text())
-        other_comments = world["comments"]["KEN-1"]
-        world["comment"] = OTHER_COMMENT
-        self.action_store.write_text(json.dumps(world))
+    def assert_binding_case(self, issue, comments, expected_item):
+        self.handoff.write_text(state_handoff("- " + REQUEST + ": retry\n"))
+        self.action_world(issues={"KEN-1": issue, "KEN-3": self.issue("KEN-3", title="Different work")},
+                          comments={"KEN-1": comments})
+        result = self.next_action(discover=True, state_key=REQUEST)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved = records(self.handoff.read_text())[-1]
+        item = saved["Observed result and source"].splitlines()[-1].split()[3]
+        self.assertEqual(item, expected_item, "discovery chose the wrong binding")
+        self.assertEqual(saved["State change"], "remove State " + REQUEST)
+        bulk, = [call for call in self.action_calls(full=True) if call[:2] == ("comments", "bulk-list")]
+        self.assertEqual(bulk[2:], ("--stdin", "--format=safe", "KEN-1", "KEN-3"))
+        action = {"id": COMMENT, "body": "Jarvis next action: " + ACTION + "\n"}
+        actual = json.loads(self.action_store.read_text())["comments"]
+        if expected_item == "KEN-1":
+            self.assertEqual(actual, {"KEN-1": comments + [action]})
+            self.assertNotIn(("issues", "create"), self.action_calls())
+        else:
+            self.assertEqual(actual, {"KEN-1": comments, expected_item: [action]})
+            self.assertEqual(self.action_calls().count(("issues", "create")), 1)
 
-        second = self.next_action(discover=True, state_key=REQUEST)
-        self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertEqual(json.loads(self.action_store.read_text())["comments"]["KEN-1"], other_comments)
-        self.assert_action("KEN-2", ACTION, "remove State " + REQUEST, comment=OTHER_COMMENT)
+    def test_next_action_binding_evidence(self):
+        for name, *case in self.binding_cases():
+            with self.subTest(case=name):
+                self.assert_binding_case(*case)
 
     def test_next_action_discovery_refusals(self):
         before = state_handoff("- " + REQUEST + ": retry\n").encode()
@@ -316,7 +324,13 @@ class ProgressLog(MailWorld):
         for mode, diagnostic, last in cases:
             with self.subTest(mode=mode):
                 self.handoff.write_bytes(before)
-                self.action_world(issues={} if mode == "no-team" else None, mode=mode)
+                issues = None
+                if mode == "no-team":
+                    issues = {}
+                elif mode == "legacy-incomplete":
+                    issues = {"KEN-1": self.issue(description="Jarvis request source: " + REQUEST +
+                                                              "\n\nJarvis requested outcome: " + OUTCOME)}
+                self.action_world(issues=issues, mode=mode)
                 result = self.next_action(discover=True, state_key=REQUEST)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertTrue(result.stderr.startswith("progress-log: " + diagnostic + " "), result.stderr)
@@ -363,6 +377,9 @@ class ProgressLog(MailWorld):
             ({"KEN-1": self.issue(description=marker), "KEN-2": self.issue("KEN-2", description=marker)}, {}, True,
              before, "tracker-item-ambiguous=KEN-1,KEN-2"),
             ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request: " + REQUEST)}, {}, True,
+             before, "tracker-item-ambiguous=KEN-1"),
+            ({"KEN-1": self.issue(description="Original request: " + REQUEST + "\nOutcome: " + OUTCOME)},
+             {"KEN-1": [{"id": "outcome", "body": "Outcome: Send the invoice"}]}, True,
              before, "tracker-item-ambiguous=KEN-1"),
             ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request: " + OTHER_REQUEST)},
              {"KEN-1": [{"id": "source", "body": "Original request: " + REQUEST},

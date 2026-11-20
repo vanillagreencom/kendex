@@ -87,11 +87,11 @@ LINEAR = PACKAGE.parent / "linear/scripts/linear.sh"
 ACTION_PREFIX = "Jarvis next action: "
 SOURCE_PREFIX = "Jarvis request source: "
 OUTCOME_PREFIX = "Jarvis requested outcome: "
-LEGACY_FIELD = r"^(?:[-*+] )?(?:\*\*)?(?:%s)(?::\*\*|\*\*:|:)[ \t]+(.+)$"
-LEGACY_SOURCE = re.compile(LEGACY_FIELD % r"Jarvis request source|Original request(?: reference)?|Request source|Source",
-                           re.MULTILINE | re.IGNORECASE)
-LEGACY_OUTCOME = re.compile(LEGACY_FIELD % r"Jarvis requested outcome|Requested outcome|Outcome",
+BINDING_FIELD = r"^(?:[-*+] )?(?:\*\*)?(?:%s)(?::\*\*|\*\*:|:)[ \t]+(.+)$"
+BINDING_SOURCE = re.compile(BINDING_FIELD % r"Jarvis request source|Original request(?: reference)?|Request source|Source",
                             re.MULTILINE | re.IGNORECASE)
+BINDING_OUTCOME = re.compile(BINDING_FIELD % r"Jarvis requested outcome|Requested outcome|Outcome",
+                             re.MULTILINE | re.IGNORECASE)
 MARKDOWN_REF = re.compile(r"\[[^]\n]+\]\((\S+)\)|<([^<>\s]+)>|`([^`\s]+)`")
 # The clock stamps every record; a value that opens with a time was typed.
 TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}(?!\d))")
@@ -230,12 +230,12 @@ def comments(home, item):
                         "id", "body")
 
 
-def legacy_comments(home, items):
+def project_comments(home, items):
     if not items:
         return {}
     rows = linear_json(home, "comments", "bulk-list", "--stdin", "--format=safe",
                        data="".join(item + "\n" for item in items))
-    if not isinstance(rows, dict) or rows.keys() != items.keys():
+    if not isinstance(rows, dict) or rows.keys() != set(items):
         raise Refusal("tracker-unread", "comments bulk-list")
     return {item: tracker_rows(rows[item], "comments bulk-list " + item, "id", "body") for item in items}
 
@@ -244,27 +244,33 @@ def marked(description, prefix):
     return [line[len(prefix):] for line in description.splitlines() if line.startswith(prefix)]
 
 
-def legacy_source(value):
+def binding_source(value):
     value = value.strip()
     match = MARKDOWN_REF.fullmatch(value)
     return next(part for part in match.groups() if part is not None) if match else value
 
 
-def legacy_binding(title, bodies, source, outcome, source_token):
-    """True for an explicit binding, False for another request, None for unresolved evidence."""
-    evidence = [({legacy_source(value) for value in LEGACY_SOURCE.findall(body) if value.strip()},
-                 {value.strip() for value in LEGACY_OUTCOME.findall(body) if value.strip()})
-                for body in bodies if not body.startswith(ACTION_PREFIX)]
+def issue_binding(title, description, comments, source, outcome, source_token):
+    """True for a matching binding, False for a different one, None for unresolved evidence."""
+    bodies = [description] + [row["body"] for row in comments if not row["body"].startswith(ACTION_PREFIX)]
+    evidence = [({binding_source(value) for value in BINDING_SOURCE.findall(body) if value.strip()},
+                 {value.strip() for value in BINDING_OUTCOME.findall(body) if value.strip()})
+                for body in bodies]
     sources = set().union(*(declared for declared, _ in evidence))
     if source not in sources:
         # Text inside a source field can name the request without declaring it
         # precisely. Prose and next-action comments supply no source evidence.
         return None if any(source_token.search(value) for value in sources) else False
+    unpaired = [outcomes for declared, outcomes in evidence
+                if (declared or outcomes) and (len(declared) != 1 or len(outcomes) != 1)]
+    # A later pair can name a distinct outcome. A conflicting unpaired
+    # outcome for the only declared source still needs reconciliation.
+    if ({source}, {outcome}) in evidence:
+        return None if sources == {source} and any(values - {outcome} for values in unpaired) else True
+    if not unpaired:
+        return False
     if sources != {source}:
-        # Other declared requests rule out combining sources and outcomes
-        # across records. A single paired outcome can still bind this request.
-        paired = set().union(*(outcomes for declared, outcomes in evidence if declared == {source}))
-        return True if paired == {outcome} else None
+        return None
     outcomes = set().union(*(declared for _, declared in evidence))
     if len(outcomes) == 1:
         return outcome in outcomes
@@ -276,23 +282,14 @@ def project_matches(home, project, source, outcome):
                                     "--format=safe"), "issues list " + project, "id", "title", "description", "project_id")
     if any(row["project_id"] != project or state_ids(row["id"])[0] != [row["id"]] for row in rows):
         raise Refusal("tracker-unread", "issues list " + project)
+    source, outcome = binding_source(source), outcome.strip()
     source_token = re.compile(r"(?<![\w:/.-])" + re.escape(source) + r"(?![\w:/?#&=-]|\.[\w])")
-    matches, uncertain, legacy = [], [], {}
+    # Either description form may have been followed by a binding comment.
+    retained = project_comments(home, [row["id"] for row in rows])
+    matches, uncertain = [], []
     for row in rows:
-        item, title, description = row["id"], row["title"], row["description"]
-        sources = marked(description, SOURCE_PREFIX)
-        outcomes = marked(description, OUTCOME_PREFIX)
-        if len(sources) == len(outcomes) == 1:
-            if sources == [source] and outcomes == [outcome]:
-                matches.append(item)
-        else:
-            legacy[item] = (title, description)
-    # Older items can carry a later source and outcome entirely in comments.
-    # Read every legacy item's comments before treating a binding as absent.
-    retained = legacy_comments(home, legacy)
-    for item, (title, description) in legacy.items():
-        bodies = [description] + [row["body"] for row in retained[item]]
-        bound = legacy_binding(title, bodies, source, outcome, source_token)
+        item = row["id"]
+        bound = issue_binding(row["title"], row["description"], retained[item], source, outcome, source_token)
         if bound is True:
             matches.append(item)
         elif bound is None:
