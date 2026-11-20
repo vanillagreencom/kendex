@@ -24,7 +24,9 @@ use serde_json::{Map, Value, json};
 
 use super::cache::{self, FigureRead, REFUSAL_WINDOW_S, Refusal};
 use super::renewal;
-use super::usage::{self, CopilotLogin, Credential, FIVE_HOURS_S, Rounding};
+use super::usage::{
+    self, CopilotLogin, Credential, FIVE_HOURS_S, ROUNDING_STEP, Rounding, same_reset,
+};
 use super::{AccountRow, Reads, TAG, WINDOWS, grant};
 use super::{Env, wall};
 use crate::settings::{AccountSettings, CopilotPool};
@@ -351,8 +353,11 @@ pub struct Reading {
     pub plan: String,
     pub usage: Option<Usage>,
     pub age: Option<u64>,
-    /// The sample the figure displaced and the seconds between them.
+    /// The rate's anchor and the seconds from it to the figure.
     pub prior: Option<(Value, u64)>,
+    /// The anchor before `prior` and the seconds from it to `prior`: the
+    /// pair the last measured rate stands on, its age that of `prior`.
+    pub rated_from: Option<(Value, u64)>,
     /// The fall of the weekly figure the account's record holds.
     pub fall: Option<cache::Fall>,
 }
@@ -366,6 +371,7 @@ impl Reading {
             usage: None,
             age: None,
             prior: None,
+            rated_from: None,
             fall: None,
         }
     }
@@ -387,6 +393,7 @@ impl Reading {
             }),
             age: None,
             prior: None,
+            rated_from: None,
             fall: None,
         }
     }
@@ -738,18 +745,36 @@ fn credential_newer(harness: Harness, dir: &str, record: &Path) -> bool {
     }
 }
 
-fn served(figure: cache::Figure, status: &str, detail: String) -> Reading {
+fn served(figure: Box<cache::Figure>, status: &str, detail: String) -> Reading {
+    let figure = *figure;
+    let (prior, rated_from) = spans(figure.prior, figure.rated_from, figure.fetched_at);
     Reading {
         status: status.to_owned(),
         detail,
         plan: String::new(),
         usage: Some(Usage::Body(figure.usage)),
         age: Some(figure.age),
-        prior: figure
-            .prior
-            .map(|p| (p.usage, figure.fetched_at.saturating_sub(p.fetched_at))),
+        prior,
+        rated_from,
         fall: figure.fall,
     }
+}
+
+/// A sample and the seconds from it to the sample after it.
+type Span = Option<(Value, u64)>;
+
+/// The record's anchor and the anchor before it as [`Reading`] carries
+/// them, the figure stamped `figure_at`.
+fn spans(
+    prior: Option<cache::Prior>,
+    rated_from: Option<cache::Prior>,
+    figure_at: u64,
+) -> (Span, Span) {
+    let rated_from = rated_from
+        .zip(prior.as_ref())
+        .map(|(from, to)| (from.usage, to.fetched_at.saturating_sub(from.fetched_at)));
+    let prior = prior.map(|p| (p.usage, figure_at.saturating_sub(p.fetched_at)));
+    (prior, rated_from)
 }
 
 /// A recorded refusal as the account's reading: a 429 answered from the
@@ -837,11 +862,8 @@ fn fetch(
     if !usage.is_object() {
         return Reading::refused("error", "usage response was not a JSON object".to_owned());
     }
-    let prior = cache::read(path, harness.name(), dir).and_then(|r| {
-        let at = r.usage_fetched_at.unwrap_or(r.fetched_at);
-        r.usage.map(|u| (u, ctx.now.saturating_sub(at)))
-    });
-    let fall = cache::write_figure(path, harness.name(), dir, usage.clone(), ctx.now);
+    let written = cache::write_figure(path, harness.name(), dir, usage.clone(), ctx.now);
+    let (prior, rated_from) = spans(written.prior, written.rated_from, ctx.now);
     Reading {
         status: "ok".to_owned(),
         detail: String::new(),
@@ -849,7 +871,8 @@ fn fetch(
         usage: Some(Usage::Body(usage)),
         age: Some(0),
         prior,
-        fall,
+        rated_from,
+        fall: written.fall,
     }
 }
 
@@ -1039,7 +1062,7 @@ fn buckets_of(harness: Harness, usage: &Usage) -> Value {
 }
 
 /// One account's record: the reading's windows, the binding window and
-/// its rate against the displaced sample, the weekly wall a harness banner
+/// its rate against the record's anchor, the weekly wall a harness banner
 /// stated held at 100 until its reset or a fall after it, and the owner's
 /// words as flags.
 pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
@@ -1050,6 +1073,7 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         usage,
         age,
         prior,
+        rated_from,
         fall,
     } = &e.reading;
     let mut status = status.clone();
@@ -1059,7 +1083,10 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         .map(|u| buckets_of(e.harness, u))
         .unwrap_or_else(|| json!({}));
     usage::utc_resets(&mut buckets);
-    if wall_overlay(ctx, e.dir, fall.as_ref(), &mut buckets).is_err() {
+    if wall_overlay(ctx, e.dir, fall.as_ref(), &mut buckets)
+        .and_then(|()| session_overlay(ctx, e.dir, &mut buckets))
+        .is_err()
+    {
         buckets = json!({});
         status = "error".to_owned();
         detail = "wall record unreadable".to_owned();
@@ -1128,9 +1155,46 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
             row[key] = value.clone();
         }
     }
-    binding_and_rate(&mut row, e.harness, prior.as_ref());
+    binding_and_rate(&mut row, e.harness, prior.as_ref(), rated_from.as_ref());
+    // Carried only while ahead, so a row with no spent window keeps the
+    // shape every reader of it parses.
+    if let Some(until) = buckets
+        .get("session_spent_until")
+        .and_then(Value::as_str)
+        .filter(|s| clock::epoch_secs(s).is_some_and(|at| at > ctx.now))
+    {
+        row["session_spent_until"] = json!(until);
+    }
     integral(&mut row);
     row
+}
+
+/// The 5-hour window the harness's own session-limit report spent
+/// ([`wall::session_wall_path`]), held as `session_spent_until` while its
+/// reset is ahead, the later of it and the reading's own; an unreadable
+/// record is the error, as [`wall_overlay`]'s is.
+fn session_overlay(ctx: &Ctx, dir: &str, buckets: &mut Value) -> Result<(), String> {
+    let path = wall::session_wall_path(&ctx.account_state, dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let record: wall::AccountWall = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if record.config_dir != wall::canon(dir) || record.resets_at <= ctx.now {
+        return Ok(());
+    }
+    let read = buckets
+        .get("session_spent_until")
+        .and_then(Value::as_str)
+        .and_then(clock::epoch_secs);
+    if read.is_none_or(|at| at < record.resets_at) {
+        if !buckets.is_object() {
+            *buckets = json!({});
+        }
+        buckets["session_spent_until"] = json!(clock::iso_utc(record.resets_at));
+    }
+    Ok(())
 }
 
 /// Every integral figure spelled as an integer, the form the record's
@@ -1194,12 +1258,22 @@ fn wall_overlay(
     Ok(())
 }
 
-/// The binding window (`wall`) and the rate the displaced sample exposes:
+/// The binding window (`wall`) and the rate the record's anchor exposes:
 /// measured where both samples are at least a minute apart, neither is an
-/// unlimited pool, the figure rose, and the prior's window is the one
-/// judged now (same bucket, its
-/// label in the normalized spelling, its reset within five minutes).
-fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u64)>) {
+/// unlimited pool, the figure rose by more than [`ROUNDING_STEP`], and the
+/// prior's window is the one judged now (same bucket, its
+/// label in the normalized spelling, its reset within five minutes). A
+/// figure within that step of the anchor reads the rate the record last
+/// measured on the same window, `rated_from` to the anchor, its age the
+/// anchor's, where that pair measures one and its own prediction stands: a
+/// held rate whose span since the anchor predicts a rise of more than two
+/// steps, where none past one came, is a stopped burn, and reads none.
+fn binding_and_rate(
+    row: &mut Value,
+    harness: Harness,
+    prior: Option<&(Value, u64)>,
+    rated_from: Option<&(Value, u64)>,
+) {
     let ended = row["status"] == json!("plan_ended");
     let measured = matches!(row["status"].as_str(), Some("ok" | "rate_limited"));
     let headroom = row["headroom_pct"].as_f64();
@@ -1240,16 +1314,11 @@ fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u6
     row["wall"] = json!(pct);
     row["binding_bucket"] = json!(bucket);
     row["binding_resets_at"] = resets_at.clone();
-    let mut prior_pct: Option<f64> = None;
-    let mut elapsed = 0u64;
-    // An unlimited pool reads 0 percent used, so a pair with an unlimited
-    // side measures the switch, not a spend.
-    let mut unlimited = row["unlimited"] == json!(true);
-    if let Some((prior_usage, secs)) = prior {
-        elapsed = *secs;
-        let mut prior_buckets = usage::parse_body(harness, prior_usage, Rounding::Rounded);
+    // The judged window's figure in an earlier sample, and whether that
+    // sample is an unlimited pool.
+    let figure_in = |sample: &Value| -> (Option<f64>, bool) {
+        let mut prior_buckets = usage::parse_body(harness, sample, Rounding::Rounded);
         usage::utc_resets(&mut prior_buckets);
-        unlimited |= prior_buckets["unlimited"] == json!(true);
         let candidates: Vec<(Option<String>, Option<f64>, Value)> = if bucket == "model" {
             prior_buckets["model_buckets"]
                 .as_array()
@@ -1275,22 +1344,41 @@ fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u6
             )]
         };
         let norm = |l: &Option<String>| l.as_deref().map(super::norm);
-        prior_pct = candidates
+        let pct = candidates
             .iter()
             .find(|(l, _, reset)| norm(l) == norm(&label) && same_reset(reset, &resets_at))
             .and_then(|(_, p, _)| *p);
-    }
-    let delta = prior_pct.map(|p| pct - p);
-    let state = match delta {
-        _ if unlimited => "unlimited",
-        None => "one-sample",
-        Some(_) if elapsed < 60 => "samples-too-close",
-        Some(d) if d <= 0.0 => "not-increasing",
-        Some(_) => "measured",
+        (pct, prior_buckets["unlimited"] == json!(true))
     };
+    // An unlimited pool reads 0 percent used, so a pair with an unlimited
+    // side measures the switch, not a spend.
+    let unlimited_now = row["unlimited"] == json!(true);
+    let ((prior_pct, unlimited), elapsed) =
+        prior.map_or(((None, unlimited_now), 0), |(s, secs)| {
+            let (pct, unlimited) = figure_in(s);
+            ((pct, unlimited || unlimited_now), *secs)
+        });
+    let delta = prior_pct.map(|p| pct - p);
+    let mut state = rate_state(delta, elapsed, unlimited);
+    let mut rated = delta.filter(|_| state == "measured").map(|d| (d, elapsed));
+    // Within one step of the anchor the figure measures nothing new, so the
+    // rate last measured on this window stands rather than the set burn.
+    if !unlimited
+        && delta.is_some_and(|d| (0.0..=ROUNDING_STEP).contains(&d))
+        && let Some((from, span)) = rated_from
+    {
+        let (from_pct, from_unlimited) = figure_in(from);
+        let kept = from_pct.zip(prior_pct).map(|(from, to)| to - from);
+        let unrefuted =
+            kept.is_some_and(|k| k * elapsed as f64 <= 2.0 * ROUNDING_STEP * *span as f64);
+        if rate_state(kept, *span, from_unlimited) == "measured" && unrefuted {
+            state = "measured";
+            rated = kept.map(|d| (d, *span));
+        }
+    }
     row["usage_rate_state"] = json!(state);
-    match delta.filter(|_| state == "measured") {
-        Some(d) => {
+    match rated {
+        Some((d, elapsed)) => {
             row["usage_rate_pct_per_min"] = json!(d * 60.0 / elapsed as f64);
             row["projected_wall_minutes"] =
                 json!(((100.0 - pct) * elapsed as f64 / (d * 60.0)).ceil());
@@ -1302,16 +1390,15 @@ fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u6
     }
 }
 
-/// Whether two reset stamps name one window: both present, and parsed to
-/// epochs no more than five minutes apart (a stamp read either side of a
-/// second boundary is still the same reset), else equal as text.
-fn same_reset(a: &Value, b: &Value) -> bool {
-    let (Some(a), Some(b)) = (a.as_str(), b.as_str()) else {
-        return false;
-    };
-    match (clock::epoch_secs(a), clock::epoch_secs(b)) {
-        (Some(x), Some(y)) => x.abs_diff(y) <= 300,
-        (_, _) => a == b,
+/// The rate state of a rise `delta` over `elapsed` seconds.
+fn rate_state(delta: Option<f64>, elapsed: u64, unlimited: bool) -> &'static str {
+    match delta {
+        _ if unlimited => "unlimited",
+        None => "one-sample",
+        Some(_) if elapsed < 60 => "samples-too-close",
+        Some(d) if d <= 0.0 => "not-increasing",
+        Some(d) if d <= ROUNDING_STEP => "within-rounding",
+        Some(_) => "measured",
     }
 }
 
@@ -1392,6 +1479,7 @@ mod tests {
                         usage: Some(Usage::Body(body(40, 40))),
                         age: Some(0),
                         prior,
+                        rated_from: None,
                         fall: None,
                     },
                     words: None,
@@ -1452,6 +1540,7 @@ mod tests {
                         usage: Some(Usage::Body(now.clone())),
                         age: Some(0),
                         prior: Some((prior.clone(), 60)),
+                        rated_from: None,
                         fall: None,
                     },
                     words: None,

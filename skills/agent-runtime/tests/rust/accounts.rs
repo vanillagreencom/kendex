@@ -882,6 +882,301 @@ fn a_measured_rate_with_no_lane_live_at_the_sample_is_no_lanes_rate() {
     }
 }
 
+/// Two whole-percent readings one point apart show a rise of a hundredth
+/// as readily as one of a point, so the step measures no burn: with one
+/// lane live at the sample and the week resetting a day on, the step over
+/// the shortest span the reader rates (60 s) and over its default TTL
+/// (300 s), at 1 and at 71 used, admits a second lane on the account and a
+/// controller start choosing it. Twenty points in ten minutes is a burn no
+/// rounding makes, and walls both.
+#[test]
+fn a_one_point_rounding_step_admits_a_start_and_a_real_burn_walls_it() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 0)]);
+    let dir = world.dir("aclaude");
+    let canon = agent_runtime::accounts::wall::canon(&dir);
+    let reset = now() + 24 * 3600;
+    let facts = FleetFacts {
+        charges: [(canon.clone(), 1)].into_iter().collect(),
+        started: [(canon, vec![now() - 3600])].into_iter().collect(),
+        ..FleetFacts::default()
+    };
+    let controller = PickRequest {
+        for_overseer: true,
+        ..claude(None)
+    };
+    for (used, rise, span, room) in [
+        (1, 1, 60, true),
+        (1, 1, 300, true),
+        (71, 1, 60, true),
+        (71, 1, 300, true),
+        (21, 20, 600, false),
+    ] {
+        std::fs::write(
+            world.record_path("claude", "aclaude"),
+            json!({"harness": "claude", "config_dir": dir, "fetched_at": now(),
+                   "usage": weekly_body(used, reset),
+                   "prior": {"fetched_at": now() - span, "usage": weekly_body(used - rise, reset)},
+                   "sample_claims": 1})
+            .to_string(),
+        )
+        .unwrap();
+        let row = listed_row(&world, "aclaude");
+        let case = format!("{used} used, {rise} up over {span} s");
+        let rows = [row];
+        let lane = judged(&world, &rows, &named(&dir, claude(None)), &facts);
+        let start = judged(&world, &rows, &controller, &facts);
+        if room {
+            assert_eq!(
+                picked(&lane).as_deref(),
+                Some(dir.as_str()),
+                "{case}: {lane:?}"
+            );
+            assert_eq!(
+                picked(&start).as_deref(),
+                Some(dir.as_str()),
+                "{case}: {start:?}"
+            );
+        } else {
+            assert_eq!(verdict(&lane), "walled", "{case}: {lane:?}");
+            assert_eq!(
+                exclusions(&start),
+                vec![(dir.clone(), "walled".to_owned())],
+                "{case}: {start:?}"
+            );
+        }
+    }
+}
+
+/// A burn that shows only as one-point steps a fetch apart is measured over
+/// the span its readings rise past one rounding step: three readings 300 s
+/// apart, one point each, rate two points over 600 s and project the wall
+/// from it, while the first step alone still measures none. A reset between
+/// readings starts the span again from the first reading of the new window.
+#[test]
+fn a_slow_burn_of_one_point_steps_is_rated_over_the_span_its_readings_rise_two() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 0)]);
+    let dir = world.dir("aclaude");
+    let path = world.record_path("claude", "aclaude");
+    let week = now() + 24 * 3600;
+    let ended = now() - 700;
+    let next = ended + 7 * 24 * 3600;
+    let rate = |row: &Value| {
+        (
+            row["usage_rate_state"].clone(),
+            row["usage_rate_pct_per_min"].clone(),
+            row["projected_wall_minutes"].clone(),
+        )
+    };
+    let unrated = |state: &str| (json!(state), Value::Null, Value::Null);
+    let measured_slow = (json!("measured"), json!(0.2), json!(440));
+    let cases = [
+        (
+            "one step",
+            vec![(10, 300, week), (11, 0, week)],
+            unrated("within-rounding"),
+        ),
+        (
+            "two steps",
+            vec![(10, 600, week), (11, 300, week), (12, 0, week)],
+            measured_slow.clone(),
+        ),
+        (
+            "a reset between",
+            vec![
+                (40, 1200, ended),
+                (41, 900, ended),
+                (10, 600, next),
+                (11, 300, next),
+                (12, 0, next),
+            ],
+            measured_slow,
+        ),
+    ];
+    for (case, readings, expected) in cases {
+        let _ = std::fs::remove_file(&path);
+        for (pct, ago, reset) in readings {
+            accounts::cache::write_figure(
+                &path,
+                "claude",
+                &dir,
+                weekly_body(pct, reset),
+                now() - ago,
+            );
+        }
+        let row = listed_row(&world, "aclaude");
+        assert_eq!(rate(&row), expected, "{case}: {row}");
+    }
+}
+
+/// A burn of one point a fetch, readings 300 s apart, reads its measured
+/// rate on every fetch from its first measurement on, the fetch between two
+/// measurements included, and a start beside one lane live at the sample
+/// is charged that rate each time, 0.2 a minute being 12 points a
+/// lane-hour; the set burn, 5 × 5/168 on the week, stands only where no rate
+/// was measured. A weekly reset drops the rate: the first fetch of the new
+/// week reads none, and so does the next, one step up, until a second step
+/// measures it again.
+#[test]
+fn a_measured_rate_stands_on_every_fetch_between_measurements_until_a_reset() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 0)]);
+    let dir = world.dir("aclaude");
+    let path = world.record_path("claude", "aclaude");
+    let canon = agent_runtime::accounts::wall::canon(&dir);
+    let facts = FleetFacts {
+        charges: [(canon.clone(), 1)].into_iter().collect(),
+        started: [(canon, vec![now() - 3600])].into_iter().collect(),
+        ..FleetFacts::default()
+    };
+    let launch = named(&dir, claude(None));
+    let set_burn = 5.0 * 5.0 / 168.0;
+    let none = |state: &str| (json!(state), Value::Null, Value::Null, set_burn);
+    let rated = |minutes: u64| (json!("measured"), json!(0.2), json!(minutes), 12.0);
+    // The readings' figures, the week's last reading the fifth; each fetch's
+    // expected state, rate, projected minutes and charged burn.
+    let figures = [10, 11, 12, 13, 14, 2, 3, 4];
+    let expected = [
+        none("one-sample"),
+        none("within-rounding"),
+        rated(440),
+        rated(435),
+        rated(430),
+        none("one-sample"),
+        none("within-rounding"),
+        rated(480),
+    ];
+    for (fetch, want) in expected.into_iter().enumerate() {
+        // The old week resets between its last reading and the new week's
+        // first, at this fetch's stamps; before that fetch it resets a day on.
+        let old = if fetch >= 5 {
+            now() - 300 * (fetch as u64 - 5) - 150
+        } else {
+            now() + 24 * 3600
+        };
+        let _ = std::fs::remove_file(&path);
+        for (reading, pct) in figures.iter().enumerate().take(fetch + 1) {
+            let reset = if reading < 5 {
+                old
+            } else {
+                old + 7 * 24 * 3600
+            };
+            accounts::cache::write_figure(
+                &path,
+                "claude",
+                &dir,
+                weekly_body(*pct, reset),
+                now() - 300 * (fetch - reading) as u64,
+            );
+        }
+        let row = listed_row(&world, "aclaude");
+        let start = judged(&world, std::slice::from_ref(&row), &launch, &facts);
+        let (PickAnswer::Lane(start) | PickAnswer::Walled(start)) = &start else {
+            panic!("fetch {fetch}: {start:?}");
+        };
+        let burn = start.record()["burn_pct_per_lane_hour"].as_f64().unwrap();
+        let (state, rate, minutes, charged) = want;
+        assert_eq!(
+            (
+                row["usage_rate_state"].clone(),
+                row["usage_rate_pct_per_min"].clone(),
+                row["projected_wall_minutes"].clone(),
+            ),
+            (state, rate, minutes),
+            "fetch {fetch}: {row}"
+        );
+        assert!((burn - charged).abs() < 1e-9, "fetch {fetch}: {burn}");
+    }
+}
+
+/// A rate measured at 0.2 a minute, 10 to 12 over 600 s, needs 300 s to rise
+/// past one step. Readings flat at 12 for up to twice that since the anchor
+/// read the held rate, and a start beside one lane live at the sample is
+/// charged it, 12 points a lane-hour. Flat for longer, or one step up only,
+/// the rate's prediction failed: the row reads none and the start is charged
+/// the set burn, 5 × 5/168 on the week. A reset drops the held rate too.
+#[test]
+fn a_held_rate_reads_none_once_a_flat_spell_outlasts_twice_its_time_to_rise_a_step() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 0)]);
+    let dir = world.dir("aclaude");
+    let path = world.record_path("claude", "aclaude");
+    let canon = agent_runtime::accounts::wall::canon(&dir);
+    let facts = FleetFacts {
+        charges: [(canon.clone(), 1)].into_iter().collect(),
+        started: [(canon, vec![now() - 3600])].into_iter().collect(),
+        ..FleetFacts::default()
+    };
+    let launch = named(&dir, claude(None));
+    let set_burn = 5.0 * 5.0 / 168.0;
+    let none = |state: &str| (json!(state), Value::Null, Value::Null, set_burn);
+    let held = (json!("measured"), json!(0.2), json!(440), 12.0);
+    let week = now() + 24 * 3600;
+    let ended = now() - 150;
+    let next = ended + 7 * 24 * 3600;
+    // Each case's readings (figure, seconds ago, weekly reset), the last one
+    // now; the anchor is the first 12, `flat` readings before the last.
+    let measuring = |flat: u64| {
+        let start = 600 + 300 * flat;
+        let mut readings = vec![(10, start, week), (11, start - 300, week)];
+        readings.extend((0..=flat).map(|i| (12, 300 * (flat - i), week)));
+        readings
+    };
+    let one_step_up = {
+        let mut readings = measuring(3);
+        readings.last_mut().unwrap().0 = 13;
+        readings
+    };
+    let reset = {
+        let mut readings: Vec<_> = measuring(1)
+            .into_iter()
+            .map(|(pct, ago, _)| (pct, ago + 300, ended))
+            .collect();
+        readings.push((2, 0, next));
+        readings
+    };
+    let cases = [
+        ("flat 300 s", measuring(1), held.clone()),
+        ("flat 600 s", measuring(2), held),
+        ("flat 900 s", measuring(3), none("not-increasing")),
+        ("900 s, one step up", one_step_up, none("within-rounding")),
+        ("a reset after 300 s flat", reset, none("one-sample")),
+    ];
+    for (case, readings, (state, rate, minutes, charged)) in cases {
+        let _ = std::fs::remove_file(&path);
+        for (pct, ago, reset) in readings {
+            accounts::cache::write_figure(
+                &path,
+                "claude",
+                &dir,
+                weekly_body(pct, reset),
+                now() - ago,
+            );
+        }
+        let row = listed_row(&world, "aclaude");
+        let start = judged(&world, std::slice::from_ref(&row), &launch, &facts);
+        let (PickAnswer::Lane(start) | PickAnswer::Walled(start)) = &start else {
+            panic!("{case}: {start:?}");
+        };
+        let burn = start.record()["burn_pct_per_lane_hour"].as_f64().unwrap();
+        assert_eq!(
+            (
+                row["usage_rate_state"].clone(),
+                row["usage_rate_pct_per_min"].clone(),
+                row["projected_wall_minutes"].clone(),
+            ),
+            (state, rate, minutes),
+            "{case}: {row}"
+        );
+        assert!((burn - charged).abs() < 1e-9, "{case}: {burn}");
+    }
+}
+
 /// A seat whose window states no reset keeps its overseer's spend for the
 /// window's whole length, a week at the set burn being 25 points, never one
 /// hour of it: a seat at 75 used is past its reserve.
@@ -1866,23 +2161,47 @@ fn two_refreshers_under_the_lock_fetch_once() {
 }
 
 /// Room is judged on the plan windows alone: a Claude account whose body
-/// still reports its 5-hour window full is a lane on its week at 20, and a
+/// reports its 5-hour window at 99 is a lane on its week at 20, and a
 /// Codex account whose one window is a 5-hour one has no plan window read,
-/// so it is unmeasured, never room.
+/// so it is unmeasured, never room. A 5-hour window at 100 is spent: no
+/// start runs on it until its reset, which the refusal names, while a
+/// running lane's own question still reads its week; with every account
+/// spent the chooser names the earliest reset, and past it picks.
 #[test]
-fn a_full_five_hour_window_is_no_wall_and_a_five_hour_figure_alone_is_no_reading() {
+fn a_five_hour_window_at_99_is_no_wall_and_a_spent_one_admits_no_start_until_its_reset() {
     let mut world = World::new(&[]);
     world.write_fleet(Vec::new(), None);
     let mut codex = measured("acodex", 20, 0);
     codex["harness"] = json!("codex");
-    world.plant_listing(&[measured("aclaude", 20, 0), codex]);
-    for (harness, alias) in [("claude", "aclaude"), ("codex", "acodex")] {
+    let mut codex_week = measured("bcodex", 20, 0);
+    codex_week["harness"] = json!("codex");
+    world.plant_listing(&[
+        measured("aclaude", 20, 0),
+        measured("bclaude", 20, 0),
+        codex,
+        codex_week,
+    ]);
+    for (harness, alias) in [
+        ("claude", "aclaude"),
+        ("claude", "bclaude"),
+        ("codex", "acodex"),
+        ("codex", "bcodex"),
+    ] {
         std::fs::remove_file(world.record_path(harness, alias)).unwrap();
     }
+    let session = |used: u64, reset: u64| {
+        json!({"five_hour": {"utilization": used, "resets_at": stamp(reset)},
+               "seven_day": {"utilization": 20, "resets_at": stamp(now() + 7 * 86_400)}})
+    };
+    let (soon, later) = (now() + 3 * 3600, now() + 4 * 3600);
+    world.plant_answer("token-aclaude", "usage", &session(99, soon), None);
+    world.plant_answer("token-bclaude", "usage", &session(100, later), None);
     world.plant_answer(
-        "token-aclaude",
+        "token-bcodex",
         "usage",
-        &claude_body(json!(99), json!(20), &[]),
+        &json!({"rate_limit": {
+            "primary_window": {"used_percent": 100, "reset_at": soon, "limit_window_seconds": 18_000},
+            "secondary_window": {"used_percent": 20, "reset_at": now() + 7 * 86_400, "limit_window_seconds": 604_800}}}),
         None,
     );
     world.plant_answer(
@@ -1918,6 +2237,101 @@ fn a_full_five_hour_window_is_no_wall_and_a_five_hour_figure_alone_is_no_reading
         (&codex["answer"], &codex["exit"], &codex["record"]["status"]),
         (&json!("unmeasured"), &json!(5), &json!("no_usage_data")),
         "{codex}"
+    );
+    let spent = [
+        ("bclaude", PickRequest::new(Harness::Claude), later),
+        ("bcodex", PickRequest::new(Harness::Codex), soon),
+    ];
+    for (alias, req, reset) in &spent {
+        let dir = world.dir(alias);
+        let start = world.pick(&named(&dir, req.clone()));
+        assert_eq!(
+            (
+                &start["answer"],
+                &start["record"]["projected_window"]["bucket"],
+                &start["record"]["projected_window"]["resets_at"]
+            ),
+            (&json!("walled"), &json!("session"), &json!(stamp(*reset))),
+            "{alias}: {start}"
+        );
+        let running = world.pick(&PickRequest {
+            lane: Some(dir.clone()),
+            ..req.clone()
+        });
+        assert_eq!(running["answer"], json!("lane"), "{alias}: {running}");
+    }
+    let skipped = world.pick(&PickRequest {
+        exclude: vec![world.dir("aclaude")],
+        ..claude(None)
+    });
+    assert_eq!(
+        (&skipped["answer"], &skipped["record"]["walled_resets_at"]),
+        (&json!("none"), &json!(stamp(later))),
+        "{skipped}"
+    );
+    let listed = [listed_row(&world, "bclaude")];
+    let before = judged(&world, &listed, &claude(None), &FleetFacts::default());
+    assert_eq!(picked(&before), None, "{before:?}");
+    let past = accounts::pick(
+        &rows(&listed, &world.settings),
+        &claude(None),
+        &FleetFacts::default(),
+        &world.settings.accounts.get().unwrap(),
+        later + 1,
+    );
+    assert_eq!(
+        picked(&past).as_deref(),
+        Some(world.dir("bclaude").as_str()),
+        "the start the reset frees: {past:?}"
+    );
+}
+
+/// The harness's own session-limit report on a lane's screen records its
+/// account spent until the reset it names, so the next start skips the
+/// account; a quoted report records nothing.
+#[test]
+fn a_session_limit_report_records_the_account_spent_and_the_next_start_skips_it() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 0), measured("bclaude", 40, 0)]);
+    let dir = world.dir("aclaude");
+    let reset = now() + 3 * 3600;
+    let report = |banner: &str| {
+        agent_runtime::accounts::wall::record_account_wall(
+            &world.settings.account_state.get().unwrap(),
+            &agent_runtime::accounts::wall::AccountWallWrite {
+                config_dir: dir.clone(),
+                reset: Some(reset),
+                now: now(),
+                first_seen: now(),
+                banner: banner.to_owned(),
+                channel: agent_runtime::accounts::wall::WallChannel::Pane,
+            },
+        )
+        .unwrap()
+    };
+    let quoted = report("You've hit your session limit \u{b7} resets 9:50am");
+    assert_eq!(quoted, None);
+    assert_eq!(
+        chosen(&world.pick(&claude(None))).as_deref(),
+        Some(dir.as_str())
+    );
+    let own = report("  \u{23bf} \u{a0}You've hit your session limit \u{b7} resets 9:50am");
+    assert!(own.is_some());
+    let next = world.pick(&claude(None));
+    assert_eq!(
+        chosen(&next).as_deref(),
+        Some(world.dir("bclaude").as_str()),
+        "{next}"
+    );
+    let named_start = world.pick(&named(&dir, claude(None)));
+    assert_eq!(
+        (
+            &named_start["answer"],
+            &named_start["record"]["projected_window"]["resets_at"]
+        ),
+        (&json!("walled"), &json!(stamp(reset))),
+        "{named_start}"
     );
 }
 

@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::usage::{Rounding, parse_body};
+use super::usage::{ROUNDING_STEP, Rounding, parse_body, same_reset, utc_resets};
 use super::{MODEL, WINDOWS};
 use crate::harness::Harness;
 
@@ -41,7 +41,8 @@ pub struct Refusal {
     pub expires_at: u64,
 }
 
-/// A figure kept beside a refusal, or the sample a fresh figure displaced.
+/// A figure kept beside a refusal, or the rate's anchor a fresh figure
+/// is measured from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Prior {
     pub fetched_at: u64,
@@ -72,6 +73,13 @@ pub struct Record {
     pub usage_fetched_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prior: Option<Prior>,
+    /// The anchor before `prior`, kept while `prior` rose past one rounding
+    /// step from it in the same windows: the pair the last measured rate
+    /// stands on, so a fetch within the step of `prior` reads that rate,
+    /// never the set burn. A pair, not a rate, since the binding window is
+    /// chosen after the write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rated_from: Option<Prior>,
     #[serde(default = "one")]
     pub sample_claims: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -171,13 +179,14 @@ pub struct Figure {
     pub fetched_at: u64,
     pub age: u64,
     pub prior: Option<Prior>,
+    pub rated_from: Option<Prior>,
     pub fall: Option<Fall>,
 }
 
 /// What a read of the figure found: the figure, nothing, or a figure
 /// whose consumed bucket reset (the stamp named), which no reader serves.
 pub enum FigureRead {
-    Served(Figure),
+    Served(Box<Figure>),
     Miss,
     Reset(String),
 }
@@ -197,13 +206,14 @@ pub fn figure(record: &Record, harness: Harness, max_age: Option<u64>, now: u64)
     if let Some(reset) = consumed_reset(&buckets, now) {
         return FigureRead::Reset(reset);
     }
-    FigureRead::Served(Figure {
+    FigureRead::Served(Box::new(Figure {
         usage: usage.clone(),
         fetched_at: at,
         age,
         prior: record.prior.clone(),
+        rated_from: record.rated_from.clone(),
         fall: record.held_fall(),
-    })
+    }))
 }
 
 /// The reset stamp of a consumed plan window whose reset has arrived at
@@ -249,11 +259,14 @@ pub fn refusal(record: &Record, endpoint: &str, now: u64) -> Option<(Refusal, u6
     Some((refusal.clone(), now - record.fetched_at))
 }
 
-/// Write `usage` as the record's figure at `now`, the figure it displaces
-/// kept as the prior sample and the fall from it recorded, else the fall
-/// the record held kept. Renamed into place whole, so a concurrent reader
+/// Write `usage` as the record's figure at `now`, the fall from the figure
+/// it displaces recorded, else the fall the record held kept. The prior
+/// sample is the rate's anchor: the record's own prior while the displaced
+/// figure stands within one rounding step of it ([`step`]), else the
+/// displaced figure, the anchor it rose past the step from kept as
+/// `rated_from`. Renamed into place whole, so a concurrent reader
 /// never parses half a record. A record that cannot be written costs the
-/// next run a fetch, never a wrong figure. The fall the record now holds.
+/// next run a fetch, never a wrong figure. The record as written.
 #[allow(
     clippy::disallowed_methods,
     reason = "the usage record under the claim store's directory, the listing's own file, written whole and renamed into place as every reader of it expects"
@@ -264,19 +277,28 @@ pub fn write_figure(
     config_dir: &str,
     usage: Value,
     now: u64,
-) -> Option<Fall> {
+) -> Record {
     let existing = read(path, harness, config_dir);
     let held = existing.as_ref().and_then(Record::held_fall);
-    let prior = existing.and_then(|r| {
-        Some(Prior {
-            fetched_at: r.figure_at()?,
-            usage: r.usage?,
-        })
+    let (displaced, anchor, rated_from) = existing.map_or((None, None, None), |r| {
+        let at = r.figure_at();
+        let displaced = at
+            .zip(r.usage)
+            .map(|(fetched_at, usage)| Prior { fetched_at, usage });
+        (displaced, r.prior, r.rated_from)
     });
-    let fall = prior
+    let fall = displaced
         .as_ref()
         .and_then(|p| fall(harness, (p.fetched_at, &p.usage), (now, &usage)))
         .or(held);
+    let (prior, rated_from) = match (anchor, displaced) {
+        (Some(anchor), Some(displaced)) => match step(harness, &anchor.usage, &displaced.usage) {
+            Step::Within => (Some(anchor), rated_from),
+            Step::Past => (Some(displaced), Some(anchor)),
+            Step::Broken => (Some(displaced), None),
+        },
+        (_, displaced) => (displaced, None),
+    };
     let record = Record {
         harness: harness.to_owned(),
         config_dir: config_dir.to_owned(),
@@ -284,12 +306,85 @@ pub fn write_figure(
         usage: Some(usage),
         usage_fetched_at: None,
         prior,
+        rated_from,
         sample_claims: 1,
         refusal: None,
         fall,
     };
     let _ = replace(path, &record);
-    record.fall
+    record
+}
+
+/// How a later reading stands to the rate's anchor ([`step`]).
+enum Step {
+    /// No window rose past [`ROUNDING_STEP`]: the anchor stands.
+    Within,
+    /// A window rose past it: the later reading anchors what follows, the
+    /// anchor it rose from kept as the measured pair's start.
+    Past,
+    /// A reset, a fall, a window or label change, an unlimited pool, or a
+    /// record of no harness: both the anchor and the measured pair go.
+    Broken,
+}
+
+/// [`Step`] of `later` from `anchor`, in the same windows with the same
+/// resets, fallen in none: every window is judged since the binding one is
+/// chosen after the write.
+fn step(harness: &str, anchor: &Value, later: &Value) -> Step {
+    let Some(harness) = Harness::parse(harness) else {
+        return Step::Broken;
+    };
+    let windows = |usage: &Value| {
+        let mut buckets = parse_body(harness, usage, Rounding::Rounded);
+        utc_resets(&mut buckets);
+        if buckets["unlimited"] == Value::Bool(true) {
+            return None;
+        }
+        let shared = WINDOWS
+            .iter()
+            .filter(|w| w.bucket != MODEL)
+            .filter_map(|w| {
+                let pct = buckets.get(w.field)?.as_f64()?;
+                Some((
+                    w.bucket.to_owned(),
+                    pct,
+                    buckets["resets"][w.bucket].clone(),
+                ))
+            });
+        let scoped = buckets["model_buckets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|b| {
+                let label = super::norm(b["label"].as_str().unwrap_or_default());
+                Some((
+                    format!("{MODEL}:{label}"),
+                    b["pct"].as_f64()?,
+                    b["resets_at"].clone(),
+                ))
+            });
+        Some(shared.chain(scoped).collect::<Vec<_>>())
+    };
+    let (Some(from), Some(to)) = (windows(anchor), windows(later)) else {
+        return Step::Broken;
+    };
+    let rises: Option<Vec<f64>> = (!to.is_empty() && from.len() == to.len())
+        .then(|| {
+            to.iter()
+                .map(|(key, pct, reset)| {
+                    from.iter()
+                        .find(|(k, _, r)| k == key && same_reset(r, reset))
+                        .map(|(_, p, _)| pct - p)
+                        .filter(|rise| *rise >= 0.0)
+                })
+                .collect()
+        })
+        .flatten();
+    match rises {
+        None => Step::Broken,
+        Some(rises) if rises.iter().all(|rise| *rise <= ROUNDING_STEP) => Step::Within,
+        Some(_) => Step::Past,
+    }
 }
 
 /// Write a refusal over the account's record at `now`, keeping the figure
@@ -312,10 +407,20 @@ pub fn write_refusal(
 ) -> Result<(), String> {
     let kept = read(path, harness, config_dir)
         .filter(|_| refusal.status != "plan_ended")
-        .and_then(|r| Some((r.figure_at()?, r.held_fall(), r.usage?, r.prior)));
-    let (usage_fetched_at, fall, usage, prior) = match kept {
-        Some((at, fall, usage, prior)) => (Some(at), fall, Some(usage), prior),
-        None => (None, None, None, None),
+        .and_then(|r| {
+            Some((
+                r.figure_at()?,
+                r.held_fall(),
+                r.usage?,
+                r.prior,
+                r.rated_from,
+            ))
+        });
+    let (usage_fetched_at, fall, usage, prior, rated_from) = match kept {
+        Some((at, fall, usage, prior, rated_from)) => {
+            (Some(at), fall, Some(usage), prior, rated_from)
+        }
+        None => (None, None, None, None, None),
     };
     let record = Record {
         harness: harness.to_owned(),
@@ -324,6 +429,7 @@ pub fn write_refusal(
         usage,
         usage_fetched_at,
         prior,
+        rated_from,
         sample_claims: 1,
         refusal: Some(refusal),
         fall,

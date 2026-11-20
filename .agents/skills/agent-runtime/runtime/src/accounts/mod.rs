@@ -457,6 +457,13 @@ impl AccountRow {
         )
     }
 
+    /// The reset of the row's spent 5-hour window, the listing's
+    /// `session_spent_until`, while it is ahead of `now`.
+    fn session_spent_until(&self, now: u64) -> Option<String> {
+        string(&self.raw, "session_spent_until")
+            .filter(|reset| reset_epoch(Some(reset)).is_some_and(|at| at > now))
+    }
+
     /// The row's identity:
     /// two accounts sharing an alias are told apart by `config_dir`.
     pub fn key(&self) -> String {
@@ -1090,6 +1097,26 @@ pub struct Projection {
     pub burn: f64,
     pub kept: f64,
     pub room: f64,
+}
+
+impl Projection {
+    /// A start on a spent 5-hour window: that window full until `reset`,
+    /// the wall and the retry time a refused start names. No rate or room
+    /// is read from it: below spent, the window is used in full.
+    fn spent(reset: &str) -> Projection {
+        Projection {
+            headroom: 0.0,
+            window: Binding {
+                bucket: "session".to_owned(),
+                pct: 100.0,
+                resets_at: Some(reset.to_owned()),
+                label: None,
+            },
+            burn: 0.0,
+            kept: 0.0,
+            room: 0.0,
+        }
+    }
 }
 
 /// Whether the window a lane is judged on is the one the reader rated: the
@@ -1743,6 +1770,14 @@ fn judge(
             now,
         )
     });
+    // A spent 5-hour window admits no start until its reset, whatever the
+    // plan windows hold; a running lane's or controller's own question
+    // never reads it.
+    let spent = req.launch().then(|| row.session_spent_until(now)).flatten();
+    let projection = match &spent {
+        Some(reset) => binding.as_ref().map(|_| Projection::spent(reset)),
+        None => projection,
+    };
     let judged_wall = if req.launch() {
         projection.as_ref().map(|p| 100.0 - p.headroom)
     } else {
@@ -1765,10 +1800,12 @@ fn judge(
         Standing::EndUnread { .. } => "plan-end-invalid",
         Standing::Open if seated => SEATED,
         Standing::Open => match reads {
-            Reads::Wall(_) if seat => match wall_verdict(judged_wall.map(|w| w + kept), limit) {
-                "walled" => "seat-reserve",
-                plan => plan,
-            },
+            Reads::Wall(_) if seat && spent.is_none() => {
+                match wall_verdict(judged_wall.map(|w| w + kept), limit) {
+                    "walled" => "seat-reserve",
+                    plan => plan,
+                }
+            }
             Reads::PlanEnded | Reads::Grant(_) | Reads::Credits | Reads::Wall(_) => reads.verdict(),
         },
     };

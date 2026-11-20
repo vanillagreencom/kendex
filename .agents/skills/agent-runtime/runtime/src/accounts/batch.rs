@@ -351,6 +351,7 @@ fn line_row(ctx: &Ctx, read: Line, host_pool: &str, through: &str) -> Value {
                 usage: Some(Usage::Provider(buckets)),
                 age: None,
                 prior: None,
+                rated_from: None,
                 // The protocol states no time a figure was read, so no
                 // fall of it can follow a wall's sighting; a record of
                 // this spelling here is this machine's.

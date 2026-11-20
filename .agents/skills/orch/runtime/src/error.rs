@@ -15,6 +15,9 @@ pub struct WalledWindow {
     pub bucket: String,
     /// The projected room, `None` where the judge read the wall alone.
     pub projected_headroom: Option<f64>,
+    /// The window's reset, when a start can next be judged on it; `None`
+    /// where the reading states none.
+    pub resets_at: Option<String>,
 }
 
 /// The end a retired account's refusal names: the
@@ -666,6 +669,13 @@ impl Error {
                         window
                             .projected_headroom
                             .map_or_else(|| "none".to_owned(), number),
+                    ),
+                    pair(
+                        "resets-at",
+                        window
+                            .resets_at
+                            .clone()
+                            .unwrap_or_else(|| "none".to_owned()),
                     ),
                 ]
             }

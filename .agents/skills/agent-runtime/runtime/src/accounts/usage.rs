@@ -134,8 +134,20 @@ fn f64_value(n: Option<f64>) -> Value {
     n.map_or(Value::Null, Value::from)
 }
 
+/// The reset of a 5-hour window that is spent, its figure at or past 100
+/// before any rounding (99.6 is not spent), else null: no rate or room is
+/// read from that window, only that no session started on it until the
+/// reset can run.
+fn spent_until(used: Option<&Value>, resets_at: Value) -> Value {
+    match used.and_then(Value::as_f64) {
+        Some(used) if used >= 100.0 && resets_at.is_string() => resets_at,
+        Some(_) | None => Value::Null,
+    }
+}
+
 /// Claude: `.seven_day` carries utilization and resets_at; the 5-hour
-/// `.five_hour` is no plan window and is not read;
+/// `.five_hour` is no plan window, read only for its reset where it is
+/// spent ([`spent_until`]);
 /// `.iguana_necktie`, the cloud credit in dollars, is kept as `credits`.
 /// The model-scoped weekly windows are the `limits[]` entries of kind
 /// `weekly_scoped`; the older `seven_day_sonnet` and `seven_day_opus`
@@ -224,6 +236,10 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
             "resets_at": s.get("resets_at").cloned().unwrap_or(Value::Null),
         })).collect::<Vec<Value>>(),
         "credits": credit,
+        "session_spent_until": spent_until(
+            body.get("five_hour").and_then(|w| w.get("utilization")),
+            body.pointer("/five_hour/resets_at").cloned().unwrap_or(Value::Null),
+        ),
         "resets": {
             "weekly": weekly.map_or(Value::Null, |w| w.get("resets_at").cloned().unwrap_or(Value::Null)),
             "model": most.as_ref().map_or(Value::Null, |m| m.get("resets_at").cloned().unwrap_or(Value::Null)),
@@ -235,7 +251,8 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
 /// position (a weekly-only account reports its 7-day limit as the primary
 /// window), so each is routed by its own `limit_window_seconds`: one longer
 /// than 150 percent of five hours, or unstated, is the weekly window; a
-/// shorter one is no plan window and is not read. `credits`
+/// shorter one is no plan window, read only for its reset where it is
+/// spent ([`spent_until`]). `credits`
 /// is the balance spent past the plan windows with the body's
 /// `spend_control.reached` beside it; a flag or balance that does not
 /// parse is null, which the credit rule never reads as room.
@@ -265,17 +282,19 @@ pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
             })
         })
         .unwrap_or(Value::Null);
-    struct Window {
+    struct Window<'a> {
+        used: Option<&'a Value>,
         pct: Option<f64>,
         resets_at: Value,
         window_s: u64,
     }
     let bound = FIVE_HOURS_S * 3 / 2;
-    let long = ["primary_window", "secondary_window"]
+    let windows: Vec<Window> = ["primary_window", "secondary_window"]
         .iter()
         .filter_map(|key| body.pointer(&format!("/rate_limit/{key}")))
         .filter(|w| !w.is_null())
         .map(|w| Window {
+            used: w.get("used_percent"),
             pct: pct(w.get("used_percent"), rounding, round),
             resets_at: w
                 .get("reset_at")
@@ -289,14 +308,22 @@ pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
                 .unwrap_or(0.0)
                 .max(0.0) as u64,
         })
+        .collect();
+    let long = windows
+        .iter()
         .find(|w| w.window_s == 0 || w.window_s > bound);
+    let session = windows
+        .iter()
+        .find(|w| w.window_s != 0 && w.window_s <= bound);
     json!({
-        "weekly_pct": f64_value(long.as_ref().and_then(|w| w.pct)),
+        "weekly_pct": f64_value(long.and_then(|w| w.pct)),
         "model_pct": Value::Null,
         "model_label": Value::Null,
         "credits": credits,
+        "session_spent_until": session
+            .map_or(Value::Null, |w| spent_until(w.used, w.resets_at.clone())),
         "resets": {
-            "weekly": long.as_ref().map_or(Value::Null, |w| w.resets_at.clone()),
+            "weekly": long.map_or(Value::Null, |w| w.resets_at.clone()),
             "model": Value::Null,
         },
     })
@@ -430,10 +457,31 @@ pub fn utc_resets(buckets: &mut Value) {
             }
         }
     }
-    if let Some(reset) = buckets.pointer_mut("/credits/resets_at")
-        && let Some(s) = reset.as_str()
-    {
-        *reset = Value::from(utc_stamp(s));
+    for pointer in ["/credits/resets_at", "/session_spent_until"] {
+        if let Some(reset) = buckets.pointer_mut(pointer)
+            && let Some(s) = reset.as_str()
+        {
+            *reset = Value::from(utc_stamp(s));
+        }
+    }
+}
+
+/// The largest rise two whole-percent readings show for a spend of a
+/// hundredth of a point (40.49 then 40.50 read 40 then 41): such a rise
+/// measures no burn, so the set burn stands and the usage record keeps its
+/// older reading as the rate's anchor until the rise from it passes this.
+pub(super) const ROUNDING_STEP: f64 = 1.0;
+
+/// Whether two reset stamps name one window: both present, and parsed to
+/// epochs no more than five minutes apart (a stamp read either side of a
+/// second boundary is still the same reset), else equal as text.
+pub(super) fn same_reset(a: &Value, b: &Value) -> bool {
+    let (Some(a), Some(b)) = (a.as_str(), b.as_str()) else {
+        return false;
+    };
+    match (crate::clock::epoch_secs(a), crate::clock::epoch_secs(b)) {
+        (Some(x), Some(y)) => x.abs_diff(y) <= 300,
+        (_, _) => a == b,
     }
 }
 

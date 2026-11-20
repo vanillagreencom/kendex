@@ -1121,6 +1121,11 @@ fn room(
                     projected_headroom: record
                         .get("projected_headroom_pct")
                         .and_then(Value::as_f64),
+                    resets_at: projected
+                        .and_then(|w| w.get("resets_at"))
+                        .or_else(|| record.get("binding_resets_at"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
                 }),
             })
         }

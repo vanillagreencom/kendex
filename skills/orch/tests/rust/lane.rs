@@ -310,6 +310,11 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     assert_eq!(fields["model"], "opus");
     assert_eq!(fields["bucket"], "weekly");
     assert_eq!(fields["pct"], "90");
+    assert_eq!(
+        fields["resets-at"],
+        clock::iso_utc(now + 7 * 86_400),
+        "the walled window's reset, when the start can next be judged"
+    );
     let headroom: f64 = fields["projected-headroom"].parse().unwrap();
     assert!(
         (3.9..4.2).contains(&headroom),

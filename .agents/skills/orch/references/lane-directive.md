@@ -6,7 +6,7 @@ Read the matching section when [oversee.md § Lane directive](../workflows/overs
 
 The account judge is `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]`; `--lane [CONFIG_DIR]` judges one named account. A request with `judge_account: true` checks its named account through the same judge.
 
-Read `.result.answer`. `lane` names the account in `.result.record.config_dir`. `unjudged` is never a verdict: repair what `.result.record.cause` names. `cloud-repo-unset` is a cloud-session account with no access to this checkout's repository under `ORCH_LANE_CLOUD_REPOS`. Any other answer refuses; on a walled one, read the roster. The 5-hour window is no wall.
+Read `.result.answer`. `lane` names the account in `.result.record.config_dir`. `unjudged` is never a verdict: repair what `.result.record.cause` names. `cloud-repo-unset` is a cloud-session account with no access to this checkout's repository under `ORCH_LANE_CLOUD_REPOS`. Any other answer refuses; on a walled one, read the roster. The 5-hour window is no wall for a running lane, but a spent one admits no start on its account until its reset: the window at 100, or the harness's own session-limit report on a lane there. Its refusal's `projected_window` names the `session` bucket and its `resets_at`.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime lane roster

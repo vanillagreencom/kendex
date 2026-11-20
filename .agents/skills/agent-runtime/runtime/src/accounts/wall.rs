@@ -1,7 +1,9 @@
 //! The account wall record: one file per account under `walls/` in the
 //! account records' root, written for a wall a reader judged current from
 //! the harness's own weekly report, and read by the listing, which holds
-//! the account walled until the reset the banner named.
+//! the account walled until the reset the banner named; beside it the
+//! harness's own session-limit report, which the listing reads as a spent
+//! 5-hour window, no start on the account until its reset.
 
 use std::path::{Path, PathBuf};
 
@@ -63,22 +65,38 @@ pub enum WallChannel {
 /// measured in Claude Code 2.1.288 (`ACCOUNT_WALL_DRAWN`).
 const DRAWN: &str = "  \u{23bf} \u{a0}";
 
-/// Whether a line of `banner` is the harness's own weekly-limit report on
-/// `channel`.
-pub fn harness_own_weekly(banner: &str, channel: WallChannel) -> bool {
-    banner.lines().any(|line| {
+/// Which window the harness's own limit report names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitReport {
+    Weekly,
+    /// The 5-hour window: no wall for a running lane, but no session
+    /// starts on the account until its reset.
+    Session,
+}
+
+/// The harness's own limit report a line of `banner` makes on `channel`,
+/// or `None`.
+pub fn harness_own_limit(banner: &str, channel: WallChannel) -> Option<LimitReport> {
+    banner.lines().find_map(|line| {
         let body = match channel {
-            WallChannel::Pane => match line.strip_prefix(DRAWN) {
-                Some(body) => body,
-                None => return false,
-            },
+            WallChannel::Pane => line.strip_prefix(DRAWN)?,
             WallChannel::Row => line,
         };
-        let Some(rest) = body.find("You").map(|at| &body[at + 3..]) else {
-            return false;
-        };
-        rest.contains("ve hit your weekly limit")
+        let rest = &body[body.find("You")? + 3..];
+        if rest.contains("ve hit your weekly limit") {
+            Some(LimitReport::Weekly)
+        } else if rest.contains("ve hit your session limit") {
+            Some(LimitReport::Session)
+        } else {
+            None
+        }
     })
+}
+
+/// The record file of the account's spent 5-hour window, beside its weekly
+/// wall's ([`account_wall_path`]): `walls/<cksum of the canon>.session.json`.
+pub fn session_wall_path(account_state: &Path, config_dir: &str) -> PathBuf {
+    account_wall_path(account_state, config_dir).with_extension("session.json")
 }
 
 /// What the duty asks recorded for a walled lane each pass it stands.
@@ -95,7 +113,8 @@ pub struct AccountWallWrite {
 }
 
 /// Record the wall where it is one (`account_wall_record`): a named
-/// account, a reset ahead of `now`, the harness's own weekly report. The
+/// account, a reset ahead of `now`, the harness's own weekly report, or
+/// its session-limit report under [`session_wall_path`]. The
 /// path written, or `None` where nothing is. Renamed into place whole, so
 /// `agent-runtime accounts` never reads half a record.
 #[allow(
@@ -109,13 +128,14 @@ pub fn record_account_wall(
     let Some(reset) = write.reset else {
         return Ok(None);
     };
-    if write.config_dir.is_empty()
-        || reset <= write.now
-        || !harness_own_weekly(&write.banner, write.channel)
-    {
+    if write.config_dir.is_empty() || reset <= write.now {
         return Ok(None);
     }
-    let path = account_wall_path(account_state, &write.config_dir);
+    let path = match harness_own_limit(&write.banner, write.channel) {
+        Some(LimitReport::Weekly) => account_wall_path(account_state, &write.config_dir),
+        Some(LimitReport::Session) => session_wall_path(account_state, &write.config_dir),
+        None => return Ok(None),
+    };
     let dir = path.parent().unwrap_or(&path);
     std::fs::create_dir_all(dir).map_err(|e| crate::Error::io("create", dir, e))?;
     let config_dir = canon(&write.config_dir);
@@ -163,28 +183,32 @@ mod tests {
         );
     }
 
-    /// A quoted banner, a session wall or a Pi row read through the pane's
-    /// rule must record no wall.
+    /// A quoted banner or a Pi row read through the pane's rule must record
+    /// no wall; a session-limit report is the 5-hour window's, never the
+    /// week's.
     #[test]
-    fn only_the_harness_s_own_weekly_report_is_a_wall() {
+    fn only_the_harness_s_own_report_is_a_wall_and_names_its_window() {
         let drawn = format!("{DRAWN}You've hit your weekly limit \u{b7} resets Oct 4, 6pm");
-        assert!(harness_own_weekly(&drawn, WallChannel::Pane));
-        assert!(!harness_own_weekly(
-            &format!("  {drawn}"),
-            WallChannel::Pane
-        ));
-        assert!(!harness_own_weekly(
-            &format!("{DRAWN}You've hit your session limit \u{b7} resets 9:50am"),
-            WallChannel::Pane
-        ));
-        assert!(harness_own_weekly(
-            "429 You've hit your weekly limit \u{b7} resets Oct 4, 6pm (UTC)",
-            WallChannel::Row
-        ));
-        assert!(!harness_own_weekly(
-            "You've hit your weekly limit \u{b7} resets Oct 4, 6pm (UTC)",
-            WallChannel::Pane
-        ));
+        let session = format!("{DRAWN}You've hit your session limit \u{b7} resets 9:50am");
+        let rows = [
+            (drawn.as_str(), WallChannel::Pane, Some(LimitReport::Weekly)),
+            (&format!("  {drawn}"), WallChannel::Pane, None),
+            (&session, WallChannel::Pane, Some(LimitReport::Session)),
+            (&format!("  {session}"), WallChannel::Pane, None),
+            (
+                "429 You've hit your weekly limit \u{b7} resets Oct 4, 6pm (UTC)",
+                WallChannel::Row,
+                Some(LimitReport::Weekly),
+            ),
+            (
+                "You've hit your weekly limit \u{b7} resets Oct 4, 6pm (UTC)",
+                WallChannel::Pane,
+                None,
+            ),
+        ];
+        for (banner, channel, want) in rows {
+            assert_eq!(harness_own_limit(banner, channel), want, "{banner:?}");
+        }
     }
 
     /// Two walled lanes on one account renew one record: a lane whose
