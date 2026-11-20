@@ -212,7 +212,7 @@ check_app_archive() {
 # Match only this check's image: the runner also holds macOS system images.
 # Python's standard plist parser avoids parsing the human-readable listing.
 detach_image() { # DMG — release every attachment of this image
-  local dmg=$1 device
+  local dmg=$1 device attempt
   hdiutil info -plist >"$TMP/images.plist" || return 1
   python3 - "$dmg" "$TMP/images.plist" >"$TMP/devices" <<'PY' || return 1
 import os
@@ -230,7 +230,14 @@ for image in images:
         print(devices[0])
 PY
   while IFS= read -r device; do
-    hdiutil detach -force "$device" >/dev/null || return 1
+    # A runner can hold a device briefly after reading the image. Give it
+    # the same retry window as attach and report only the final refusal.
+    for attempt in 1 2 3; do
+      hdiutil detach -force "$device" >/dev/null 2>"$TMP/detach" && continue 2
+      [ "$attempt" -eq 3 ] || sleep 2
+    done
+    cat "$TMP/detach" >&2
+    return 1
   done <"$TMP/devices"
 }
 
