@@ -5,12 +5,16 @@ use super::*;
 const OLD: &str = "bot-instructions";
 const NEW: &str = "github-repository-settings";
 
+/// `configured_by` names the manifest table the package renders from, as
+/// both shipped configuration packages declare `bot-instructions`.
 #[allow(clippy::unwrap_used)]
-fn package(project: &Path, name: &str) {
+fn package(project: &Path, name: &str, configured_by: Option<&str>) {
     let package = project.join("catalog/skills").join(name);
     fs::create_dir_all(&package).unwrap();
+    let configured_by =
+        configured_by.map_or(String::new(), |table| format!("  configured-by: {table}\n"));
     fs::write(package.join("SKILL.md"), format!(
-        "---\nname: {name}\ndescription: fixture configuration\nrepo-effects:\n  summary: fixture {name} effect\n  writes: ['.github/copilot-instructions.md', '{name}.effect']\n  installer: scripts/effect render\n  uninstaller: scripts/effect retire\n  checker: scripts/effect check\n---\n"
+        "---\nname: {name}\ndescription: fixture configuration\nrepo-effects:\n{configured_by}  summary: fixture {name} effect\n  writes: ['.github/copilot-instructions.md', '{name}.effect']\n  installer: scripts/effect render\n  uninstaller: scripts/effect retire\n  checker: scripts/effect check\n---\n"
     )).unwrap();
     // A write appends to `../renders-<name>`, beside every checkout the
     // fixtures make, and `../refuse-<name>` makes the write refuse.
@@ -46,7 +50,7 @@ fn existing_setup_consent_transfers_the_configuration_effect() {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = unarmed_consumer(&tmp);
-        package(&project, OLD);
+        package(&project, OLD, None);
         git(&project, &["add", "-A"]);
         git(&project, &["commit", "-q", "-m", "old installer"]);
         let initial = kendex(
@@ -57,7 +61,7 @@ fn existing_setup_consent_transfers_the_configuration_effect() {
         assert!(initial.status.success(), "{}", said(&initial));
         assert!(armed(&project, OLD));
 
-        package(&project, NEW);
+        package(&project, NEW, None);
         let manifest = project.join("kendex.toml");
         let mut text = fs::read_to_string(&manifest).unwrap();
         text.push_str("\n[skills.github-repository-settings]\nsource = \"cat\"\n");
@@ -108,6 +112,28 @@ enum Arrival {
     /// setup the walkthrough asks for after the offer: the offer sets
     /// nothing up and commits nothing, and the setup runs once.
     DeclinedAtTerminal,
+    /// The same add with `--commit` at a terminal in a linked work tree
+    /// that carries neither record, saying yes to the new owner's setup in
+    /// the walkthrough: the old owner, set up in the main checkout, is not
+    /// offered a setup here that the new owner's would retire, and the
+    /// offer commits nothing.
+    LinkedAtTerminal,
+    /// The same add at a terminal with no commit choice and neither owner
+    /// installed before, saying yes to the walkthrough's setup of the new
+    /// owner alone: the old owner not set up here is not offered a setup
+    /// that would let the offer commit before the new owner's setup, and
+    /// the walkthrough leaves it out, as `--allow-repo-effects` does.
+    FreshAtTerminal,
+    /// The `Declined` add where the new owner names a configuring table
+    /// the manifest lacks: its setup would render nothing, so the offer
+    /// commits.
+    Unconfigured,
+    /// An apply with `--commit` at a terminal of the requirer of both
+    /// owners, neither installed before, each naming a configuring table
+    /// that only the working tree's manifest carries, saying yes to the
+    /// walkthrough's setup of the new owner alone: that setup reads the
+    /// table the commit leaves out, so the offer commits nothing.
+    TableOnDiskAtTerminal,
     /// `--allow-repo-effects`: the setup moves the files before the offer.
     Consented,
     /// The same, in a linked work tree that carries neither record.
@@ -136,17 +162,83 @@ impl Arrival {
     fn applied(self) -> bool {
         matches!(
             self,
-            Arrival::DeclinedApply | Arrival::ConsentedApply | Arrival::RefusedApply
+            Arrival::DeclinedApply
+                | Arrival::ConsentedApply
+                | Arrival::RefusedApply
+                | Arrival::TableOnDiskAtTerminal
         )
     }
 
-    /// Run with `--commit` and without `--allow-repo-effects`.
+    /// Run with `--commit` and without `--allow-repo-effects`, with nobody
+    /// at a terminal, and the offer holds the commit.
     fn declined(self) -> bool {
         matches!(self, Arrival::Declined | Arrival::DeclinedApply)
     }
 
     fn at_terminal(self) -> bool {
-        matches!(self, Arrival::DeclinedAtTerminal)
+        matches!(
+            self,
+            Arrival::DeclinedAtTerminal
+                | Arrival::LinkedAtTerminal
+                | Arrival::FreshAtTerminal
+                | Arrival::TableOnDiskAtTerminal
+        )
+    }
+
+    /// Run with `--commit`.
+    fn commit_flag(self) -> bool {
+        !matches!(self, Arrival::DeclinedAtTerminal | Arrival::FreshAtTerminal)
+    }
+
+    /// Run with `--allow-repo-effects`.
+    fn allowed(self) -> bool {
+        !self.declined() && !self.at_terminal() && !matches!(self, Arrival::Unconfigured)
+    }
+
+    /// The offer refuses the commit `--commit` chose, which exits 1.
+    fn refuses_commit(self) -> bool {
+        self.declined()
+            || matches!(
+                self,
+                Arrival::LinkedAtTerminal | Arrival::TableOnDiskAtTerminal
+            )
+    }
+
+    /// The action runs in a linked work tree of the main checkout.
+    fn linked(self) -> bool {
+        matches!(self, Arrival::ConsentedLinked | Arrival::LinkedAtTerminal)
+    }
+
+    /// The manifest table the new owner renders from.
+    fn configured_by(self) -> Option<&'static str> {
+        matches!(self, Arrival::Unconfigured | Arrival::TableOnDiskAtTerminal).then_some(OLD)
+    }
+
+    /// The manifest table the old owner renders from.
+    fn old_configured_by(self) -> Option<&'static str> {
+        matches!(self, Arrival::TableOnDiskAtTerminal).then_some(OLD)
+    }
+
+    /// The questions asked at the terminal, in order, and the answers.
+    fn steps(self) -> Vec<(String, &'static str)> {
+        let walkthrough = (format!("make {NEW}'s repository changes?"), "y");
+        match self {
+            Arrival::DeclinedAtTerminal
+            | Arrival::LinkedAtTerminal
+            | Arrival::FreshAtTerminal
+            | Arrival::TableOnDiskAtTerminal => vec![walkthrough],
+            Arrival::Declined
+            | Arrival::DeclinedApply
+            | Arrival::Consented
+            | Arrival::ConsentedLinked
+            | Arrival::ConsentedFresh
+            | Arrival::ConsentedBeside
+            | Arrival::Refused
+            | Arrival::ConsentedApply
+            | Arrival::RefusedApply
+            | Arrival::RefusedOwner
+            | Arrival::Unconfigured => Vec::new(),
+        }
     }
 
     /// The action's offer commits.
@@ -156,7 +248,13 @@ impl Arrival {
 
     /// Neither owner is installed before the action.
     fn fresh(self) -> bool {
-        matches!(self, Arrival::ConsentedFresh | Arrival::RefusedOwner)
+        matches!(
+            self,
+            Arrival::ConsentedFresh
+                | Arrival::RefusedOwner
+                | Arrival::FreshAtTerminal
+                | Arrival::TableOnDiskAtTerminal
+        )
     }
 
     /// The new owner's installer refuses.
@@ -177,12 +275,24 @@ impl Arrival {
                 | Arrival::ConsentedBeside
                 | Arrival::ConsentedApply
                 | Arrival::DeclinedAtTerminal
+                | Arrival::LinkedAtTerminal
+                | Arrival::FreshAtTerminal
+                | Arrival::TableOnDiskAtTerminal
         )
     }
 
     /// The armed old owner keeps the files.
     fn kept(self) -> bool {
-        self.declined() || matches!(self, Arrival::Refused | Arrival::RefusedApply)
+        self.declined()
+            || matches!(
+                self,
+                Arrival::Refused | Arrival::RefusedApply | Arrival::Unconfigured
+            )
+    }
+
+    /// The old owner's render names the new owner's pending setup.
+    fn names_pending(self) -> bool {
+        self.kept() || matches!(self, Arrival::DeclinedAtTerminal)
     }
 }
 
@@ -191,7 +301,12 @@ impl Arrival {
 /// keeps rendering, the commit is held on the setup, its check still fails
 /// drift under `verify`, a refresh names the pending setup, and a later
 /// apply commits. At a terminal the setup the walkthrough asks for runs
-/// once, after an offer that set nothing up. With `--allow-repo-effects`
+/// once, after an offer that set nothing up and committed nothing, in a
+/// linked work tree whose old owner is set up only in the main checkout,
+/// and with no owner installed before too, where the old owner the add
+/// brings is not set up. A new owner
+/// with no configuring table in the manifest holds nothing, so the offer
+/// commits. With `--allow-repo-effects`
 /// and a commit choice, the setup runs once, disclosed once, before the offer,
 /// so the new owner's render is in the action's own commit, in a linked
 /// work tree too, with no owner installed before, beside another held
@@ -207,6 +322,10 @@ fn a_dependency_only_arrival_leaves_the_armed_owner_until_its_setup() {
         Arrival::Declined,
         Arrival::DeclinedApply,
         Arrival::DeclinedAtTerminal,
+        Arrival::LinkedAtTerminal,
+        Arrival::FreshAtTerminal,
+        Arrival::Unconfigured,
+        Arrival::TableOnDiskAtTerminal,
         Arrival::Consented,
         Arrival::ConsentedLinked,
         Arrival::ConsentedFresh,
@@ -226,7 +345,7 @@ fn assert_arrival(arrival: Arrival) {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let main = unarmed_consumer(&tmp);
-    package(&main, OLD);
+    package(&main, OLD, arrival.old_configured_by());
     git(&main, &["add", "-A"]);
     git(&main, &["commit", "-q", "-m", "old installer"]);
     let initial = match arrival.fresh() {
@@ -245,9 +364,11 @@ fn assert_arrival(arrival: Arrival) {
         !arrival.fresh()
     );
 
-    package(&main, NEW);
+    package(&main, NEW, arrival.configured_by());
     let required = match arrival {
-        Arrival::ConsentedFresh => format!("{NEW}, {OLD}"),
+        Arrival::ConsentedFresh | Arrival::FreshAtTerminal | Arrival::TableOnDiskAtTerminal => {
+            format!("{NEW}, {OLD}")
+        }
         Arrival::ConsentedBeside => {
             let other = main.join("catalog/skills/workfx");
             fs::create_dir_all(&other).unwrap();
@@ -265,6 +386,8 @@ fn assert_arrival(arrival: Arrival) {
         Arrival::Declined
         | Arrival::DeclinedApply
         | Arrival::DeclinedAtTerminal
+        | Arrival::LinkedAtTerminal
+        | Arrival::Unconfigured
         | Arrival::Consented
         | Arrival::ConsentedLinked
         | Arrival::Refused
@@ -287,8 +410,14 @@ fn assert_arrival(arrival: Arrival) {
     }
     git(&main, &["add", "-A"]);
     git(&main, &["commit", "-q", "-m", "requirer"]);
-    let project = match arrival {
-        Arrival::ConsentedLinked => {
+    if matches!(arrival, Arrival::TableOnDiskAtTerminal) {
+        let manifest = main.join("kendex.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str("\n[bot-instructions]\nschema = 1\n");
+        fs::write(&manifest, text).unwrap();
+    }
+    let project = match arrival.linked() {
+        true => {
             let linked = main.parent().unwrap().join("linked");
             git(
                 &main,
@@ -303,16 +432,7 @@ fn assert_arrival(arrival: Arrival) {
             );
             linked
         }
-        Arrival::Declined
-        | Arrival::DeclinedApply
-        | Arrival::DeclinedAtTerminal
-        | Arrival::Consented
-        | Arrival::ConsentedFresh
-        | Arrival::ConsentedBeside
-        | Arrival::Refused
-        | Arrival::ConsentedApply
-        | Arrival::RefusedApply
-        | Arrival::RefusedOwner => main.clone(),
+        false => main.clone(),
     };
     let refusing = if matches!(arrival, Arrival::ConsentedFresh) {
         Some(OLD)
@@ -337,21 +457,22 @@ fn assert_arrival(arrival: Arrival) {
             "requirer",
         ],
     };
-    if !arrival.at_terminal() {
+    if arrival.commit_flag() {
         args.push("--commit");
     }
-    if !arrival.declined() && !arrival.at_terminal() {
+    if arrival.allowed() {
         args.push("--allow-repo-effects");
     }
     let output = match arrival.at_terminal() {
         true => {
             let mut command = kendex_command(&home, &project, &args);
             command.env("KENDEX_UI", "plain");
-            crate::pty::conversation(
-                command,
-                &[(&format!("make {NEW}'s repository changes?"), "y")],
-                crate::pty::Stderr::Terminal,
-            )
+            let steps = arrival.steps();
+            let steps: Vec<(&str, &str)> = steps
+                .iter()
+                .map(|(question, answer)| (question.as_str(), *answer))
+                .collect();
+            crate::pty::conversation(command, &steps, crate::pty::Stderr::Terminal)
         }
         false => kendex(&home, &project, &args),
     };
@@ -359,7 +480,7 @@ fn assert_arrival(arrival: Arrival) {
     let moved = arrival.moved();
     assert_eq!(
         output.status.code(),
-        Some(if arrival.refused() || arrival.declined() {
+        Some(if arrival.refused() || arrival.refuses_commit() {
             1
         } else {
             0
@@ -380,7 +501,7 @@ fn assert_arrival(arrival: Arrival) {
     assert_eq!(armed(&project, OLD), arrival.kept(), "{arrival:?}\n{text}");
     assert_eq!(
         text.contains(PENDING),
-        arrival.kept() || arrival.at_terminal(),
+        arrival.names_pending(),
         "{arrival:?}\n{text}"
     );
     // The package's own summary is in every disclosure block, so it counts
@@ -405,11 +526,18 @@ fn assert_arrival(arrival: Arrival) {
         writes,
         "{arrival:?}\n{text}"
     );
-    // A predecessor that was never armed here is never set up.
+    // A predecessor that was never armed here, arriving beside the new
+    // owner, is never set up: not before the offer, and not by the
+    // walkthrough after it, whose one setup is the new owner's.
     if arrival.fresh() {
         assert_eq!(
             renders(&project, OLD),
             old_rendered_before,
+            "{arrival:?}\n{text}"
+        );
+        assert_eq!(
+            text.matches(&format!("fixture {OLD} effect")).count(),
+            0,
             "{arrival:?}\n{text}"
         );
     }

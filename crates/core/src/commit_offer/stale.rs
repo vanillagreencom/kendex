@@ -41,6 +41,23 @@ pub struct Stale {
     pub why: Staleness,
 }
 
+/// What the action making the offer sets up only after it, which a commit
+/// made now would leave out. Empty for a surface that sets nothing up after
+/// its offer.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Deferred<'a> {
+    /// A configuration successor the action installed whose setup it leaves
+    /// until after this offer:
+    /// [`crate::bot_instructions::pending_successor`]. That setup moves the
+    /// review files after the commit, so the successor holds the commit as
+    /// [`Staleness::NotSetUp`] under the same configuring-table rule, though
+    /// no check of the predecessor that judges its files holds it.
+    pub successor: Option<&'a DeclaredEffects>,
+    /// The packages the action's walkthrough after this offer sets up once
+    /// it has its yes, read by the configuring-table rule.
+    pub walked: &'a [DeclaredEffects],
+}
+
 /// Why a package's checkout files are not known to be current.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Staleness {
@@ -86,7 +103,9 @@ pub enum Staleness {
 /// changed paths, even where none of its own paths changed. A package
 /// declaring no installer holds nothing, since no setup could clear the
 /// hold. One not set up here holds the commit without any of its code
-/// running, unless its declared configuring table is absent.
+/// running, unless its declared configuring table is absent: from the
+/// commit's manifest, and for a package `deferred` names as walked, from
+/// the working tree's too.
 ///
 /// One set up here that declares a staged checker is judged by it, run
 /// over the commit itself, built once per call in an index of its own. It
@@ -106,12 +125,19 @@ pub enum Staleness {
 /// A declaration that will not read is passed over: it names neither the
 /// files nor the check, and `repo_effects::lapsed` is the reading that
 /// reports it where kendex set it up.
+///
+/// `deferred` is what the action making this offer sets up only after it.
+/// Its successor, where it holds, stands for the configuration owner: that
+/// setup takes the files over from the owner, retiring it where it is set
+/// up here, so the owner's row is dropped, save a [`Staleness::Split`],
+/// which no setup clears.
 pub fn stale(
     env: &Env,
     scope: &Scope,
     scan: &Scan,
     generated: &GeneratedPaths,
     carried: &BTreeSet<String>,
+    deferred: Deferred<'_>,
 ) -> crate::error::Result<Vec<Stale>> {
     let mut candidate: Option<Candidate> = None;
     let mut held = Vec::new();
@@ -143,11 +169,15 @@ pub fn stale(
         }
         let why = match crate::repo_effects::armed_here(scope, &declared)? {
             false => {
-                if let Some(key) = &declared.effects.configured_by {
-                    let built = Candidate::ensure(&mut candidate, &scan.root, generated, carried)?;
-                    if !built.configured(&scan.root, key)? {
-                        continue;
-                    }
+                if !configured(
+                    &mut candidate,
+                    scan,
+                    generated,
+                    carried,
+                    &declared,
+                    deferred,
+                )? {
+                    continue;
                 }
                 Staleness::NotSetUp
             }
@@ -176,10 +206,77 @@ pub fn stale(
         };
         held.push((declared, why));
     }
+    if let Some(successor) = deferred.successor
+        && !held
+            .iter()
+            .any(|(declared, _)| declared.name == successor.name)
+        && configured(
+            &mut candidate,
+            scan,
+            generated,
+            carried,
+            successor,
+            deferred,
+        )?
+    {
+        held.retain(|(declared, why)| {
+            !crate::bot_instructions::is_configuration_package(&declared.name)
+                || matches!(why, Staleness::Split { .. })
+        });
+        held.push((successor.clone(), Staleness::NotSetUp));
+    }
     if let Some(candidate) = candidate {
         candidate.close()?;
     }
     disclosed(env, scope, held)
+}
+
+/// Whether a package not set up here has anything to render from: a
+/// package naming a configuring table the commit's manifest lacks renders
+/// nothing once set up, so it holds nothing. A setup the action's
+/// walkthrough runs after the commit reads the working tree's manifest
+/// instead, which can carry a table the commit leaves out, so for a walked
+/// package that table holds the commit too.
+fn configured(
+    candidate: &mut Option<Candidate>,
+    scan: &Scan,
+    generated: &GeneratedPaths,
+    carried: &BTreeSet<String>,
+    declared: &DeclaredEffects,
+    deferred: Deferred<'_>,
+) -> crate::error::Result<bool> {
+    let Some(key) = &declared.effects.configured_by else {
+        return Ok(true);
+    };
+    if Candidate::ensure(candidate, &scan.root, generated, carried)?.configured(&scan.root, key)? {
+        return Ok(true);
+    }
+    match deferred
+        .walked
+        .iter()
+        .any(|walked| walked.name == declared.name)
+    {
+        true => configured_on_disk(&scan.root, key),
+        false => Ok(false),
+    }
+}
+
+/// Whether the working tree's manifest, the one a setup reads, declares
+/// the table `key`. A manifest that will not parse refuses rather than
+/// reading as one without the table.
+fn configured_on_disk(root: &Path, key: &str) -> crate::error::Result<bool> {
+    let path = crate::manifest::project_manifest_path(root);
+    let Some(text) = crate::fs::read_if_exists(&path)? else {
+        return Ok(false);
+    };
+    let table: toml::Table =
+        text.parse().map_err(
+            |error: toml::de::Error| crate::error::CoreError::TomlParse {
+                path,
+                message: error.to_string(),
+            },
+        )?;
+    Ok(table.contains_key(key))
 }
 
 /// What one reading of a set-up package's check holds the commit with,

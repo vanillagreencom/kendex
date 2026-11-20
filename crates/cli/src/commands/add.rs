@@ -296,7 +296,7 @@ fn write_and_close(
     let walked = super::repo_effects::disclose_and_finish(
         env,
         scope,
-        &first.remaining(&report.repo_effects),
+        first.remaining(),
         allow_effects,
         || {
             // "done" answered whether the process ended, never what it

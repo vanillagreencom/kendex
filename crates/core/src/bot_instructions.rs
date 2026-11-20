@@ -153,6 +153,26 @@ pub fn configuration_setup(effects: &[DeclaredEffects]) -> Option<ConfigurationS
     })
 }
 
+/// The configuration successor among `walked`, the effects one action
+/// installed and leaves to its walkthrough, that selection passes over for
+/// an installed predecessor until its own setup moves the files:
+/// [`Selection::pending`].
+///
+/// Read from the selection when asked, never from a render's
+/// [`RenderedPaths::pending`]: a render through a predecessor not armed here
+/// names no successor, and a setup the action takes after that render, in a
+/// linked work tree or at its commit offer, can arm that predecessor before
+/// the offer. Arming the predecessor does not change which successor
+/// yields, so this reading still names it.
+pub fn pending_successor(
+    env: &Env,
+    scope: &Scope,
+    walked: &[DeclaredEffects],
+) -> Result<Option<DeclaredEffects>> {
+    let pending = configuration_selection(env, scope)?.and_then(|selection| selection.pending);
+    Ok(pending.filter(|successor| walked.iter().any(|effect| effect.name == successor.name)))
+}
+
 /// The installed, locally armed predecessor whose licence this package's
 /// explicit setup replaces: a later candidate in [`ORDER`]. The setup is
 /// the consent that moves the effect, so a successor that yields to the
@@ -382,6 +402,17 @@ impl Skipped {
                 crate::paths::slashed(main)
             ),
         }
+    }
+
+    /// The line a surface prints where the action that rendered installed
+    /// `successor`, a configuration successor whose setup that action asks
+    /// for after this render: that setup takes the files over from this
+    /// package, so it is the one step named.
+    pub fn line_left_to(&self, successor: &str) -> String {
+        format!(
+            "{name}: render skipped; {successor} renders this repository's review files once it is set up here: use Set up on the {successor} package page",
+            name = self.declared.name
+        )
     }
 }
 

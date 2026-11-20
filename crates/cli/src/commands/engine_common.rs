@@ -375,21 +375,24 @@ pub(super) fn apply_report_accounted(
     };
     let applied = write_report(env, report)?;
     let first = super::repo_effects::set_up_first(env, report);
-    let after = match rendered(env, report) {
-        Ok((generated, pending)) => left_to_walkthrough(env, report, pending)
-            .and_then(|left| {
-                super::commit_offer::after_writing(
-                    env,
-                    &report.plan.scope,
-                    &generated,
-                    &before,
-                    &super::commit_offer::Earlier {
-                        ran: first.ran(),
-                        left_to_walkthrough: left.as_ref(),
-                    },
-                )
-            })
-            .map_err(AfterFailed::Offer),
+    let walked = walked(&first);
+    let rendered = left_to_walkthrough(env, report, &first)
+        .and_then(|left| Ok((rendered(env, report, left.as_ref())?, left)));
+    let after = match rendered {
+        Ok((generated, left)) => super::commit_offer::after_writing(
+            env,
+            &report.plan.scope,
+            &generated,
+            &before,
+            &super::commit_offer::Earlier {
+                ran: first.ran(),
+                deferred: kendex_core::commit_offer::Deferred {
+                    successor: left.as_ref(),
+                    walked,
+                },
+            },
+        )
+        .map_err(AfterFailed::Offer),
         Err(error) => Err(AfterFailed::Render { error, before }),
     };
     Ok(Wrote {
@@ -399,69 +402,85 @@ pub(super) fn apply_report_accounted(
     })
 }
 
-/// The configuration successor this action installed, whose setup the
+/// The configuration successor this action installed whose setup the
 /// action can consent to only after the offer, at a terminal, or not at
-/// all: an
-/// `add` or `apply` without `--allow-repo-effects`, where the predecessor
-/// armed in this checkout rendered because the successor arrived as a
-/// dependency. Its disclosure, the one the walkthrough shows; `None` where
-/// the walkthrough would not offer it.
+/// all: an `add` or `apply` without `--allow-repo-effects` whose
+/// walkthrough batch, [`super::repo_effects::SetUpFirst::remaining`],
+/// carries a successor selection passes over for an installed predecessor,
+/// [`kendex_core::bot_instructions::pending_successor`]. Arming the
+/// predecessor does not change which successor yields, so the reading
+/// before the render holds at the offer too. `None` where the walkthrough
+/// would not offer it.
 fn left_to_walkthrough(
     env: &Env,
     report: &EngineReport,
-    pending: Option<kendex_core::repo_effects::DeclaredEffects>,
-) -> Result<Option<kendex_core::repo_effects::Disclosure>, Box<dyn std::error::Error>> {
-    let Some(successor) = pending else {
-        return Ok(None);
-    };
-    if super::commit_offer::walk() != super::commit_offer::Walk::Asking
-        || !report
-            .repo_effects
-            .iter()
-            .any(|effect| effect.name == successor.name)
-    {
+    first: &super::repo_effects::SetUpFirst,
+) -> Result<Option<kendex_core::repo_effects::DeclaredEffects>, Box<dyn std::error::Error>> {
+    if super::commit_offer::walk() != super::commit_offer::Walk::Asking {
         return Ok(None);
     }
-    let offers = kendex_core::repo_effects::offers_for(
+    Ok(kendex_core::bot_instructions::pending_successor(
         env,
         &report.plan.scope,
-        std::slice::from_ref(&successor),
-    )?;
-    Ok(offers.shown.into_iter().next())
+        first.remaining(),
+    )?)
+}
+
+/// The effects the action's walkthrough after its commit offer sets up once
+/// it has its yes: [`super::repo_effects::SetUpFirst::remaining`]. None for
+/// a verb that walks no effects, or where nobody is at a terminal to ask
+/// and no flag said yes.
+fn walked(
+    first: &super::repo_effects::SetUpFirst,
+) -> &[kendex_core::repo_effects::DeclaredEffects] {
+    let allowed = match super::commit_offer::walk() {
+        super::commit_offer::Walk::No => return &[],
+        super::commit_offer::Walk::Asking => false,
+        super::commit_offer::Walk::Allowed => true,
+    };
+    match super::repo_effects::yes(allowed, std::io::stdin().is_terminal()) {
+        super::repo_effects::Yes::Nobody => &[],
+        super::repo_effects::Yes::Given | super::repo_effects::Yes::Ask => first.remaining(),
+    }
 }
 
 /// Render the configuration a plan's packages own after its write, and
 /// hand back the generated paths the offer after it covers, the plan's
-/// own and the render's, and the successor whose setup the render names
-/// as pending.
+/// own and the render's.
+///
+/// `left` is the successor [`left_to_walkthrough`] names. Its setup takes
+/// the files over from the skipped predecessor, so the skip names that
+/// setup alone, and the predecessor is not offered a setup beside the main
+/// checkout that the successor's setup would retire, as
+/// [`kendex_core::bot_instructions::configuration_setup`] leaves a
+/// predecessor that arrives beside it.
 fn rendered(
     env: &Env,
     report: &EngineReport,
-) -> Result<
-    (
-        kendex_core::engine::GeneratedPaths,
-        Option<kendex_core::repo_effects::DeclaredEffects>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+    left: Option<&kendex_core::repo_effects::DeclaredEffects>,
+) -> Result<kendex_core::engine::GeneratedPaths, Box<dyn std::error::Error>> {
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
-        ui::report::notice(&skipped.line());
-        if super::repo_effects::set_up_beside_main(env, &report.plan.scope, skipped)? {
-            kendex_core::bot_instructions::add_to_generated(
-                env,
-                &report.plan.scope,
-                &mut generated,
-            )?;
+        match left {
+            Some(successor) => ui::report::notice(&skipped.line_left_to(&successor.name)),
+            None => {
+                ui::report::notice(&skipped.line());
+                if super::repo_effects::set_up_beside_main(env, &report.plan.scope, skipped)? {
+                    kendex_core::bot_instructions::add_to_generated(
+                        env,
+                        &report.plan.scope,
+                        &mut generated,
+                    )?;
+                }
+            }
         }
     }
-    let pending = bot_instructions.pending().map(|pending| {
+    if let Some(pending) = bot_instructions.pending() {
         ui::report::notice(&pending.line());
-        pending.successor.clone()
-    });
+    }
     bot_instructions.add_to(&mut generated);
-    Ok((generated, pending))
+    Ok(generated)
 }
 
 /// What the project held before `report` writes, read the only time it

@@ -263,6 +263,10 @@ class ProgressLog(MailWorld):
              state_handoff("- KEN-1: next\n"), []),
             ("duplicate", good, state_handoff("- KEN-1: next\n- KEN-1: other\n"),
              [("state/handoff.md", "6", "state-entry-ambiguous")]),
+            ("duplicate colon spelling", good, state_handoff("- KEN-1: next\n- KEN-1:: other\n"),
+             [("state/handoff.md", "6", "state-entry-ambiguous")]),
+            ("duplicate backtick spelling", good, state_handoff("- KEN-1: next\n- `KEN-1`: other\n"),
+             [("state/handoff.md", "6", "state-entry-ambiguous")]),
             ("missing agents", good, state_handoff("- KEN-1: next\n").replace("## Sub-agents", "## Others"),
              [("state/handoff.md", "1", "handoff-sub-agents")]),
             ("missing archive", good, state_handoff("Predecessor archive: [earlier](archive/earlier.md)\n"),
@@ -343,7 +347,8 @@ class ProgressLog(MailWorld):
         # progress-log's State writer is the producer; the commit lane reads its output.
         rows = (
             ("named session", "", "session=control", "Hold", "control"),
-            ("named session colon id", "", "session=control:west:", "Hold", "control:west:"),
+            # A trailing colon is key spelling; an inner one is part of the id.
+            ("named session colon id", "", "session=control:west:", "Hold", "control:west"),
             ("named ask", "", "ask=owner", "Hold session=control", "control"),
             ("bare session", "- session=control Hold\n", None, None, "control"),
             ("SESSION label", "- SESSION control session=control\n", None, None, "control"),
@@ -479,6 +484,28 @@ class ProgressLog(MailWorld):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stderr.split('=', 1)[0], 'progress-log: ' + key)
                 self.assertEqual(self.handoff.read_text(), before)
+
+    def test_state_key_spellings_name_one_entry(self):
+        retained = '- KEN-2: keep\n'
+        self.handoff.write_text(state_handoff(retained))
+        for index, key in enumerate(('KEN-1', 'KEN-1:', '`KEN-1`')):
+            with self.subTest(set=key):
+                suffix = '' if index == 0 else '-' + str(index + 1)
+                self.assert_state_change('set State %s step %d' % (key, index),
+                                         [retained, '- KEN-1: step %d (record=P-20261018T230501Z%s)\n' % (index, suffix)])
+        self.assert_state_change('remove State KEN-1', [retained])
+        before = self.handoff.read_text()
+        result = self.log(dict(FIELDS, **{"--state-change": 'remove State KEN-1'}))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr.split('=', 1)[0], 'progress-log: state-entry-missing')
+        self.assertEqual(self.handoff.read_text(), before)
+        # Openings earlier writers and agents stored, reached by every typed spelling.
+        for stored in ('- KEN-1:: old\n', '- `KEN-1`: old\n'):
+            for key in ('KEN-1', 'KEN-1:', '`KEN-1`'):
+                with self.subTest(stored=stored, remove=key):
+                    lines = state_handoff(retained + stored).splitlines(keepends=True)
+                    removed = change_state(lines, 'remove State ' + key, 'P-1')
+                    self.assertEqual([entry for _, entry in state_entries(removed)], [retained])
 
     def test_successor_rebuilds_checkpoint_and_later_records(self):
         # Each fixture is a checkpoint and later records, never the live home.
