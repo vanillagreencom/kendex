@@ -55,7 +55,7 @@
 - Within that user, the allow list limits each caller to its listed secrets, commands and scripts only while each confined caller has none of these:
   - A view of the broker and its `op` and script children in `/proc`. [A process of the same user can read another's `/proc/PID/environ`](https://man7.org/linux/man-pages/man5/proc_pid_environ.5.html), which holds the session token. Run the caller in a separate PID namespace with its own `/proc`.
   - Read access to the unit's `EnvironmentFile=`.
-  - Write access to any file that is read or run to start or run the broker or a program it starts, or to a parent directory of one. A caller that writes such a file runs its own code with the session, or changes which caller the broker names. These files are:
+  - Write access to any file that the broker, or any program it starts directly or through another, reads or runs, `PATH` lookups included, or to any directory above one. A caller with such access runs its own code with the session, or changes which caller the broker names. Examples:
     - The broker unit's file and its `EnvironmentFile=`.
     - The `python3` that `env` finds on the unit's `PATH`, and its standard library. `op-broker` runs Python in isolated mode, `-I`, so Python's user site directory and `PYTHON*` settings run no code in the broker.
     - The broker's install directory: `op-broker` and `lib/`, which the broker loads when it starts.

@@ -1221,17 +1221,22 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
             # macOS names it by path: the longest directory whose socket path fits sun_path serves.
             self.assertEqual(served(longest), b"line")
             # One byte longer refuses before anything exists.
-            for kind, argv in (("broker", ["op-broker", "--directory", str(too_long)]),
-                               ("client", ["opq", "--directory", str(too_long), "--output", str(output), "read",
-                                           "op://fixture/item/password"])):
-                with self.subTest(kind=kind):
-                    with patch.object(sys, "argv", argv), redirect_stderr(io.StringIO()) as stderr:
-                        with self.assertRaises(SystemExit) as refused:
-                            module.main(kind)
-                    self.assertEqual((refused.exception.code, stderr.getvalue().splitlines()[0]),
-                                     (2, "op-" + kind + ": directory=path-too-long"))
-                    self.assertFalse(too_long.exists())
-                    self.assertFalse(output.exists())
+            with patch.object(sys, "argv", ["op-broker", "--directory", str(too_long)]), \
+                    redirect_stderr(io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit) as refused:
+                    module.main("broker")
+            self.assertEqual((refused.exception.code, stderr.getvalue().splitlines()[0]),
+                             (2, "op-broker: directory=path-too-long"))
+            self.assertFalse(too_long.exists())
+            # A FIFO broker a refresh left running there has no socket path to bound, and opq still reaches it.
+            self.start(args=["--directory", str(too_long), "--account", "fixture-account"], grants=None,
+                       protection=None, directory=too_long, launch=(sys.executable, "-B", str(FIFO_BROKER)))
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                self.addCleanup(signal.signal, signum, signal.getsignal(signum))
+            with patch.object(sys, "argv", ["opq", "--directory", str(too_long), "--output", str(output), "read",
+                                            "op://fixture/item/password"]):
+                module.main("client")
+            self.assertEqual(output.read_bytes(), b"fixture-value")
 
 
 def deadline_worker():

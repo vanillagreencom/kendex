@@ -138,7 +138,7 @@ def socket_address(directory, root):
     """Name the request socket in the opened directory for bind and connect.
 
     On Linux the name goes through the directory's descriptor, so a deep directory meets no sun_path limit; on
-    macOS, which has no such name, it is the path, which main bounds."""
+    macOS, which has no such name, it is the path, which main bounds for the broker that binds it."""
     return "/proc/self/fd/%d/%s" % (directory, SOCKET) if sys.platform == "linux" else str(root / SOCKET)
 
 
@@ -926,9 +926,10 @@ def main(kind):
         args.request = client_request(parser, args.request)
     if not args.directory.is_absolute() or (kind == "client" and not args.output.is_absolute()):
         parser.exit(2, "op-" + kind + ": path=absolute-required\n")
-    if sys.platform != "linux" and len(os.fsencode(args.directory / SOCKET)) >= SUN_PATH:
-        parser.exit(2, "op-" + kind + ": directory=path-too-long\n")
     if kind == "broker":
+        # Only the broker binds the socket. opq refuses nothing here: a running FIFO broker has no socket path to bound.
+        if sys.platform != "linux" and len(os.fsencode(args.directory / SOCKET)) >= SUN_PATH:
+            parser.exit(2, "op-broker: directory=path-too-long\n")
         if args.allow_list is None and os.environ.get("JARVIS_OP_ALLOW_LIST"):
             args.allow_list = Path(os.environ["JARVIS_OP_ALLOW_LIST"])
         if args.home is None and os.environ.get("JARVIS_OP_HOME"):
