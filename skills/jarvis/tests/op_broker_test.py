@@ -1013,6 +1013,7 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                         module.caller_entry(callers, caller)
                     self.assertEqual(str(refused.exception), expected)
 
+    @unittest.skipUnless(sys.platform == "linux", "verified callers and caller work are Linux only")
     def test_caller_requests(self):
         module = load("lib/op_fifo.py")
         self.executable("op", OP)
@@ -1041,7 +1042,7 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                 (None, {"verb": "script", "path": str(script)}, "not-allowed", "caller=unverified"),
                 ("jarvis-neon.service", {"verb": "script", "path": str(script)}, "ok", "listed"))
         for caller, request, outcome, cause in rows:
-            with self.subTest(caller=caller, request=request), patch.object(module, "sys", Platform("linux")):
+            with self.subTest(caller=caller, request=request):
                 calls = len(self.calls()) if self.log.exists() else 0
                 ran = (self.root / "ran").exists()
                 reply, stderr = self.exchange(module, json.dumps(request).encode(), op, caller=caller, env=self.env)
@@ -1059,7 +1060,7 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         # A list the broker cannot use refuses every caller and every verb.
         self.allowed.unlink()
         for caller, request, _, _ in rows:
-            with self.subTest(list="missing", caller=caller, request=request), patch.object(module, "sys", Platform("linux")):
+            with self.subTest(list="missing", caller=caller, request=request):
                 reply, stderr = self.exchange(module, json.dumps(request).encode(), op, caller=caller, env=self.env)
                 self.assertEqual((reply, request_fields(stderr[-1])["cause"]), ({"status": "not-allowed"}, "list=missing"))
 
