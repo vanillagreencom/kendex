@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import select
+import shlex
 import shutil
 import signal
 import socket
@@ -49,13 +50,13 @@ FIXTURE_GRANTS = {"read": ["op://fixture/item/" + field for field in ("password"
                   "op": [["vault", "list"], ["item", "get", "Fixture Item", "--fields", "password", "--reveal"],
                          ["item", "edit", "fixture", "exit-two"], ["item", "get", "first"], ["item", "get", "restarted"],
                          ["item", "get", "fixture"]]}
-# The caller an in-process answer sees. End-to-end rows on Linux record this test process as the Jarvis
-# session's, so every client it starts is jarvis-session; macOS proves no caller, so any key serves there.
+# The caller an in-process answer sees. End-to-end rows on Linux record this test process as the controller of
+# the home's controller record, so every client it starts is jarvis-session; macOS proves no caller, so any key
+# serves there.
 CALLER = "jarvis-fixture.service"
 HOST_CALLER = "jarvis-session" if sys.platform == "linux" else None
 PROTECTION = "unit" if sys.platform == "linux" else "listed-any-caller"
 LOG_FIELDS = ["time", "protection", "caller", "verb", "reference", "outcome", "cause"]
-BACKEND = SCRIPTS / "lib" / "session-backend.sh"
 # The FIFO broker a consumer's unit still runs after a refresh brings opq's socket transport: op-broker and
 # lib/op_fifo.py as 7ae1357d3 last changed them on main. Delete it with op_fifo.fifo_exchange.
 FIFO_BROKER = Path(__file__).resolve().parent / "fixtures" / "fifo_broker" / "op-broker"
@@ -73,6 +74,11 @@ def request_fields(line):
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", fields.pop("time")), line
     fields["reference"] = json.loads(fields["reference"])
     return fields
+
+
+def start_ticks(pid):
+    """The start of pid in clock ticks after boot, field 22 of /proc/PID/stat (proc(5)), as agent-runtime records it."""
+    return int(Path("/proc/%d/stat" % pid).read_text().rpartition(")")[2].split()[19])
 
 
 def logged(caller, verb, reference, outcome, cause, protection=PROTECTION):
@@ -100,41 +106,51 @@ class Broker(World):
                         XDG_DATA_HOME=str(self.root / "data"), XDG_CACHE_HOME=str(self.root / "cache"))
         # op-broker starts through its own #! line, as the unit's ExecStart= does, which finds python3 on PATH.
         (self.bin / "python3").symlink_to(sys.executable)
+        # The home is its own repository, so its orch settings place its controller record wherever the scratch
+        # stands.
+        for words in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            subprocess.run(["git", "-C", str(self.home), *words], check=True, capture_output=True,
+                           env={"PATH": os.environ["PATH"], "HOME": str(self.root), "GIT_CONFIG_NOSYSTEM": "1"})
+        self.fleet = self.root / "orch-state" / "workflow-state-oversee.json"
+        self.settings = "[env]\nORCH_STATE_DIR = " + json.dumps(str(self.fleet.parent)) + "\n"
+        (self.home / "kendex.settings.toml").write_text(self.settings)
+        if sys.platform == "linux":
+            # What the broker's controller read runs: the runtime wrappers under bash, which digest their sources
+            # with find, sort, sha256sum, cut, wc and awk; git, which places the record; and ps, which reads an
+            # lstart start. The runtimes' cache stays the caller's, whatever HOME is.
+            for tool in ("bash", "find", "sort", "sha256sum", "cut", "wc", "awk", "git", "ps"):
+                (self.bin / tool).symlink_to(shutil.which(tool))
+            cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "kendex/agent-runtime"
+            self.env["AGENT_RUNTIME_CACHE"] = os.environ.get("AGENT_RUNTIME_CACHE") or str(cache)
 
     def allow(self, grants, caller=None):
         """Write the allow list with one entry, for the caller end-to-end clients are unless caller names another."""
         self.callers({caller or HOST_CALLER or "jarvis-any.service": grants})
 
-    def session_file(self):
-        """The home's Jarvis session record, where the broker reads it."""
-        with patch.dict(os.environ, {"XDG_STATE_HOME": self.env["XDG_STATE_HOME"]}):
-            return load("lib/home.py").home_state(str(self.home)) / "jarvis-session.json"
+    def record_controller(self, controller):
+        """Write the home's controller record, orch's fleet record, holding controller."""
+        self.fleet.parent.mkdir(exist_ok=True)
+        self.fleet.write_text(json.dumps({"controller": controller}))
 
-    def record_session(self, process):
-        """Write the home's Jarvis session record naming process."""
-        self.session_file().parent.mkdir(parents=True, exist_ok=True)
-        self.session_file().write_text(json.dumps({"v": 1, "home": str(self.home), "process": process}))
-
-    def record_test_process(self):
-        """Record this test process as the Jarvis session's, by the identity session-backend.sh records."""
-        result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(BACKEND), "process", str(os.getpid())],
-                                capture_output=True, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.record_session(json.loads(result.stdout))
+    def own_controller(self, start=None):
+        """A controller that is this test process, under its own start unless start names another."""
+        return {"runtime": "tmux", "generation": 1, "harness": "claude", "harness_pid": os.getpid(),
+                "harness_start": start or "ticks:%d" % start_ticks(os.getpid()), "seat": "jarvis"}
 
     def callers(self, callers):
         self.allowed.write_text(json.dumps({"callers": callers}))
         self.allowed.chmod(0o600)
 
     def start(self, body=None, args=None, terminal=True, leader=False, grants=FIXTURE_GRANTS, protection=PROTECTION,
-              home=True, directory=None, launch=(str(SCRIPTS / "op-broker"),)):
-        """Start a broker and wait for its readiness line; protection None is the FIFO broker's line, which names none."""
+              home=True, directory=None, launch=(str(SCRIPTS / "op-broker"),), controller=None):
+        """Start a broker and wait for its readiness line; protection None is the FIFO broker's line, which names none.
+        On Linux the home's controller is controller, otherwise this test process."""
         self.executable("op", body or OP)
         self.directory = directory or self.root / "broker"
         if grants is not None:
             self.allow(grants)
         if sys.platform == "linux":
-            self.record_test_process()
+            self.record_controller(controller or self.own_controller())
         if home:
             self.env["JARVIS_OP_HOME"] = str(self.home)
         else:
@@ -840,15 +856,14 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
 
     def test_caller_identity(self):
         module = load("lib/op_fifo.py")
-        tick = os.sysconf("SC_CLK_TCK")
         manager = "0::/user.slice/user-1000.slice/user@1000.service"
         # A helper agent's scope beside the session's, its wrapper shell in its unit, the user manager and init.
-        # Each process: parent, start ticks, cgroup text. The agent started 250 s and a fraction after boot.
+        # Each process: parent, start ticks, cgroup text.
         tree = {30: (20, 900, "0::/agents.slice/agent-confine-20-1.scope\n"),
-                20: (10, 250 * tick + tick - 1, "0::/agents.slice/agent-confine-20-1.scope\n"),
+                20: (10, 250, "0::/agents.slice/agent-confine-20-1.scope\n"),
                 10: (2, 200, manager + "/app.slice/jarvis-neon.service\n"),
                 2: (1, 100, manager + "/init.scope\n"), 1: (0, 1, "0::/init.scope\n")}
-        session = (20, "Thu Nov 5 00:04:10 2026")
+        session = (20, 250)
 
         def wrapper(cgroup):
             """The tree with the wrapper shell, process 10, in cgroup."""
@@ -859,8 +874,6 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
             processes = dict(processes)
 
             def read(name):
-                if name == "stat":
-                    return "cpu 1 2 3\nbtime 1793836800\nprocesses 9\n"
                 pid, _, entry = name.partition("/")
                 if int(pid) not in processes:
                     raise FileNotFoundError(name)
@@ -875,7 +888,7 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         rows = (("helper-agent", 30, tree, None, None, "jarvis-neon.service"),
                 ("session-descendant", 30, tree, session, None, "jarvis-session"),
                 ("session-itself", 20, tree, session, None, "jarvis-session"),
-                ("stale-record", 30, tree, (20, "Thu Nov 5 00:04:11 2026"), None, "jarvis-neon.service"),
+                ("stale-record", 30, tree, (20, 251), None, "jarvis-neon.service"),
                 ("record-elsewhere", 30, tree, (99, session[1]), None, "jarvis-neon.service"),
                 ("peer-in-unit", 10, tree, None, None, "jarvis-neon.service"),
                 ("hybrid-cgroup", 30, wrapper("12:pids:/user.slice\n" + manager + "/app.slice/jarvis-a.service\n"), None, None,
@@ -901,24 +914,33 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                 else:
                     self.assertEqual(module.chain_caller(pid, recorded, read), expected)
 
-    def test_session_record_states(self):
+    @unittest.skipUnless(sys.platform == "linux", "only Linux names a jarvis-session caller")
+    def test_controller_record_states(self):
         module = load("lib/op_fifo.py")
-        process = {"pid": 4242, "started_at": "Thu Nov 5 00:04:10 2026"}
-        # Each state of the session record the broker reads; None names no session process.
-        rows = (("recorded", lambda: self.record_session(process), (4242, "Thu Nov 5 00:04:10 2026")),
+        own = (os.getpid(), start_ticks(os.getpid()))
+        lstart = subprocess.run(["ps", "-o", "lstart=", "-p", str(os.getpid())], check=True, text=True,
+                                capture_output=True, env=dict(os.environ, LC_ALL="C", TZ="UTC")).stdout.split()
+        settings = self.home / "kendex.settings.toml"
+        # Each state of the controller record the broker reads, in the broker's environment; None names no
+        # session caller.
+        rows = (("live", lambda: self.record_controller(self.own_controller()), own),
+                ("pid-text", lambda: self.record_controller(dict(self.own_controller(), harness_pid=str(own[0]))), own),
                 ("no-record", lambda: None, None),
-                ("no-process", lambda: self.record_session(None), None),
-                ("pid-not-number", lambda: self.record_session({"pid": "4242", "started_at": "x"}), "record=unreadable"),
-                ("not-json", lambda: self.record_session(process) or self.session_file().write_text("{"),
+                ("no-controller", lambda: self.record_controller(None), None),
+                # This process's id under another start: the recorded controller ended and its id was reused.
+                ("ended", lambda: self.record_controller(self.own_controller("ticks:%d" % (own[1] + 1))), None),
+                # agent-runtime reads this live, in a form the parent chain cannot compare.
+                ("lstart-start", lambda: self.record_controller(self.own_controller("lstart:" + " ".join(lstart))),
                  "record=unreadable"),
-                ("not-object", lambda: self.record_session(process) or self.session_file().write_text("[]"),
-                 "record=unreadable"))
+                ("not-json", lambda: self.fleet.write_text("{"), "record=unreadable"),
+                ("settings-unreadable", lambda: settings.write_text("[env"), "record=unreadable"))
         for name, prepare, expected in rows:
             with self.subTest(row=name):
-                if self.session_file().exists():
-                    self.session_file().unlink()
+                settings.write_text(self.settings)
+                if self.fleet.exists():
+                    self.fleet.unlink()
                 prepare()
-                with patch.dict(os.environ, {"XDG_STATE_HOME": self.env["XDG_STATE_HOME"]}):
+                with patch.dict(os.environ, self.env, clear=True), redirect_stderr(io.StringIO()):
                     if expected == "record=unreadable":
                         with self.assertRaises(module.Refusal) as refused:
                             module.session_process(self.home)
@@ -929,6 +951,54 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         with self.assertRaises(module.Refusal) as refused:
             module.session_process(self.root / "no-home")
         self.assertEqual(str(refused.exception), "home=unreadable")
+
+    @unittest.skipUnless(sys.platform == "linux", "only Linux proves a caller")
+    def test_tmux_session_caller(self):
+        password = "op://fixture/item/password"
+        tmux = shutil.which("tmux")
+        label = "jarvis-broker-" + self.root.name
+
+        def run(*args, timeout=10):
+            return subprocess.run([tmux, "-L", label, "-f", os.devnull, *args], env=self.env, check=True, text=True,
+                                  capture_output=True, timeout=timeout)
+
+        # The Jarvis session as agent-runtime leaves it: its harness, the shell here, in a pane of its own tmux
+        # server, which no service unit holds, recorded as the home's controller. tmux 3.8 prints a tab in this
+        # format as "_", and none of these fields holds a blank. The shell saves no history into the scratch as it
+        # ends after the test.
+        created = run("new-session", "-d", "-s", "jarvis", "-n", "jarvis", "-e", "HISTFILE=", "-P", "-F",
+                      "#{socket_path} #{pid} #{start_time} #{pane_id}", shutil.which("bash"), "--noprofile", "--norc")
+        self.addCleanup(subprocess.run, [tmux, "-L", label, "kill-server"], env=self.env, capture_output=True,
+                        timeout=10)
+        server_socket, server, started, pane = created.stdout.split()
+        harness = int(run("display-message", "-p", "-t", pane, "#{pane_pid}").stdout)
+        process = self.start(grants={"read": [password]}, controller={
+            "runtime": "tmux", "generation": 1, "server": server, "server_start": int(started),
+            "server_socket": server_socket, "pane": pane, "harness": "claude", "harness_pid": harness,
+            "harness_start": "ticks:%d" % start_ticks(harness), "seat": "jarvis"})
+        output, status = self.root / "value", self.root / "status"
+
+        def logged_request():
+            self.assertTrue(select.select([process.stderr], [], [], 10)[0], "broker logged no request")
+            return request_fields(process.stderr.readline())
+
+        # A request from the harness's own command line is the session's, and its listed secret serves.
+        command = shlex.join([sys.executable, "-B", str(SCRIPTS / "opq"), "--directory", str(self.directory),
+                              "--output", str(output), "read", password])
+        signal_done = shlex.join([tmux, "-L", label, "wait-for", "-S", "served"])
+        run("send-keys", "-t", pane, command + "; echo $? > " + shlex.quote(str(status)) + "; " + signal_done, "Enter")
+        run("wait-for", "served", timeout=30)
+        self.assertEqual(logged_request(), logged("jarvis-session", "read", password, "ok", "listed"))
+        self.assertEqual((status.read_text(), output.read_bytes()), ("0\n", b"fixture-value"))
+        output.unlink()
+        # This test process runs outside the session's process tree, and the list names no other caller.
+        result = self.opq("read", password, output=output)
+        self.refused(result, output, b"op-client: read=not-allowed")
+        fields = logged_request()
+        self.assertNotEqual(fields["caller"], "jarvis-session")
+        cause = "caller=unverified" if fields["caller"] == "unverified" else "caller=unlisted"
+        self.assertEqual(fields, logged(fields["caller"], "read", password, "not-allowed", cause))
+        self.assertEqual([call["verb"] for call in self.calls()].count("read"), 1)
 
     def test_allow_list_states(self):
         module = load("lib/op_fifo.py")
