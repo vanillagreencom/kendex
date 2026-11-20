@@ -1012,7 +1012,7 @@ runtime_control "a sibling spelling read as a whole path alone" \
 runtime_control "a script's source line read as no read" \
   's/^        if (sources) keep\[count\] = 1$//' 4
 runtime_control "another tree's runtime that offers no program name" \
-  's/^  \[ "$(path_role "$home" "$rel")" = runtime \] || return 1$/  return 1/' 0
+  's/^  path_role "$home" "$rel" && \[ "$ROLE" = runtime \] || return 1$/  return 1/' 0
 runtime_control "a Rust test module that adds the lib" \
   's/^        \[\[ \$rel =~ .* \]\] || REACH_TARGETS+=/        REACH_TARGETS+=/' 6
 runtime_control "a Rust fixture that adds no lib" \

@@ -725,17 +725,23 @@ universe() {
 # shard where that cannot answer; any other suite, and a Pi-package tree
 # spelled DIR/, by its package's want_package shards.
 project() {
-  local suite package orch="" os shard
+  local suite package packages orch="" other="" os shard
   while IFS= read -r suite; do
     [ -n "$suite" ] || continue
     case "$suite" in
       skills/orch/tests/*) orch="$orch$suite
-"; continue ;;
+" ;;
+      *) other="$other$suite
+" ;;
     esac
-    package="$(printf '%s\n' "$suite" | awk -v mode=package "$PACKAGE_AWK")" ||
-      die suite-package-unread "the suite path $suite could not be mapped to its package"
-    [ -z "$package" ] || want_package "${package% *}"
   done
+  # One mapping over every other suite: PACKAGE_AWK prints a line for each
+  # suite that has a package, in order.
+  packages="$(printf '%s' "$other" | awk -v mode=package "$PACKAGE_AWK")" ||
+    die suite-package-unread "the reached suites could not be mapped to their packages"
+  while read -r package _; do
+    [ -z "$package" ] || want_package "$package"
+  done <<<"$packages"
   [ -n "$orch" ] || return 0
   for os in Linux macOS; do
     if ! shard="$(printf '%s' "$orch" | RUNNER_OS=$os bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null | cut -d' ' -f1 | sort -u)"; then

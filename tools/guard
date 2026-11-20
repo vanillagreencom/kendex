@@ -1644,44 +1644,45 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # anything else.
 # mapped_suites' header says what a scoped run reads for a test module or
 # such a path.
-path_role() { # DIR REL
+path_role() { # DIR REL — sets ROLE, empty with status 1
+  ROLE=""
   case "$1:$2" in
     skills/*:kendex.settings.toml.example)
       [ "$scoped_only" -eq 1 ] || return 1
-      echo settings-example
+      ROLE=settings-example
       ;;
     *:tests/run-all.sh) return 1 ;;
-    skills/*:runtime/*.md) echo doc ;;
+    skills/*:runtime/*.md) ROLE=doc ;;
     skills/*:runtime/*)
       [ -f "$1/runtime/Cargo.toml" ] || return 1
-      echo runtime
+      ROLE=runtime
       ;;
     skills/*:tests/rust/*)
-      if [[ $RUNTIME_FACTS == *$'\n'"$1 test "*" $2"$'\n'* ]]; then echo rust-target; else echo rust-input; fi
+      if [[ $RUNTIME_FACTS == *$'\n'"$1 test "*" $2"$'\n'* ]]; then ROLE=rust-target; else ROLE=rust-input; fi
       ;;
-    *:scripts/*/*.sh | *:scripts/*/*.bash) echo lib ;;
-    *:tests/*/*.sh | *:tests/*/*.bash) echo helper ;;
-    *:scripts/*/*) echo module ;;
-    *:tests/lib/*) echo test-module ;;
+    *:scripts/*/*.sh | *:scripts/*/*.bash) ROLE=lib ;;
+    *:tests/*/*.sh | *:tests/*/*.bash) ROLE=helper ;;
+    *:scripts/*/*) ROLE=module ;;
+    *:tests/lib/*) ROLE=test-module ;;
     *:tests/*/*.py)
       [ "$scoped_only" -eq 1 ] || return 1
-      echo test-import
+      ROLE=test-import
       ;;
     *:tests/*/*) return 1 ;;
     *:tests/*.py)
       [ "$scoped_only" -eq 1 ] || return 1
-      echo test-program
+      ROLE=test-program
       ;;
-    *:tests/*.sh) echo suite ;;
-    *:tests/*.test.mjs) echo suite ;;
-    hooks:*.md) echo doc ;;
+    *:tests/*.sh) ROLE=suite ;;
+    *:tests/*.test.mjs) ROLE=suite ;;
+    hooks:*.md) ROLE=doc ;;
     hooks:*/*) return 1 ;;
-    hooks:*.sh) echo script ;;
+    hooks:*.sh) ROLE=script ;;
     hooks:*) return 1 ;;
-    tools:*.md) echo doc ;;
-    tools:*) echo script ;;
-    *:scripts/*) echo script ;;
-    *:references/* | *.md) echo doc ;;
+    tools:*.md) ROLE=doc ;;
+    tools:*) ROLE=script ;;
+    *:scripts/*) ROLE=script ;;
+    *:references/* | *.md) ROLE=doc ;;
     *) return 1 ;;
   esac
 }
@@ -1691,7 +1692,7 @@ skill_suites() { # DIR [shell]
   local t
   for t in "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
     [ -f "$t" ] || continue
-    [ "$(path_role "$1" "${t#"$1"/}")" = suite ] || continue
+    path_role "$1" "${t#"$1"/}" && [ "$ROLE" = suite ] || continue
     if [ "${2:-}" = shell ]; then
       case "$t" in *.sh) ;; *) continue ;; esac
     fi
@@ -1706,7 +1707,8 @@ skill_files() { # DIR
     "$1"/runtime/* "$1"/runtime/src/*.rs "$1"/runtime/src/*/*.rs "$1"/runtime/src/*/*/*.rs "$1"/runtime/src/*/*/*/*.rs \
     "$1"/tests/rust/*.rs; do
     [ -f "$f" ] || continue
-    role=$(path_role "$1" "${f#"$1"/}") || continue
+    path_role "$1" "${f#"$1"/}" || continue
+    role=$ROLE
     case "$role" in
       script | lib | helper | module | test-module | test-program | suite | runtime | rust-target | rust-input)
         printf '%s %s\n' "$role" "$f" ;;
@@ -1741,9 +1743,13 @@ runtime_facts() {
 # [[bin]] names joins next_any, a needle any file may name, since every
 # caller of those programs runs the changed code. Once per tree in a reach.
 reach_runtime() { # TREE
-  local tree line
+  local tree line deps="" of kind dep
   [ -f "$1/runtime/Cargo.toml" ] || return 0
-  for tree in "$1" $(awk -v tree="$1" '$2 == "dep" && $3 == tree { print $1 }' <<<"$RUNTIME_FACTS"); do
+  while read -r of kind dep _; do
+    if [ "$kind" = dep ] && [ "$dep" = "$1" ]; then deps="$deps $of"; fi
+  done <<<"$RUNTIME_FACTS"
+  # shellcheck disable=SC2086 # one tree per word
+  for tree in "$1" $deps; do
     [[ $runtime_reached != *" $tree "* ]] || continue
     runtime_reached+=" $tree "
     REACH_TARGETS+="${tree#skills/}/lib"$'\n'
@@ -1837,8 +1843,9 @@ PY
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or per example_areas key of a
 # changed settings example beside its path query, that key in SCAN_KEYS and
-# empty for every other query. SCAN_ROW_QUERIES holds, for the Nth
-# tree_paths row of this tree counted from 0, the queries of its doc,
+# empty for every other query. The tree's rows are tree_rows, its
+# tree_paths rows, which the tree loop sets. SCAN_ROW_QUERIES holds, for the
+# Nth row counted from 0, the queries of its doc,
 # whichever row asked them, and SCAN_NOTED the files with an input note, so
 # mapped_suites reads neither list whole per changed path. One batch extracts file metadata and compares
 # the document-read lines, retaining source text inside that process.
@@ -1847,7 +1854,7 @@ PY
 # `/orch` none in `/orch-runtime`. Status 2 is a file it could not read.
 scan_load() { # DIR
   local role f files tree rel path i q kind value record cache key key_tree row
-  local scan_input="" reader_patterns=() query_keys=() nl=$'\n'
+  local scan_input="" scan_parts=() reader_patterns=() query_keys=() nl=$'\n'
   SCAN_DIR=""
   SCAN_PATH=()
   SCAN_ROLE=()
@@ -1868,7 +1875,7 @@ scan_load() { # DIR
     SCAN_NAMES+=("")
     SCAN_SOURCED+=("")
     SCAN_INPUTS+=("")
-    scan_input="${scan_input}F $i $role $f$nl"
+    scan_parts+=("F $i $role $f$nl")
   done <<<"$files"
   row=-1
   while IFS=$'\t' read -r tree rel path; do
@@ -1878,7 +1885,8 @@ scan_load() { # DIR
     case "$rel" in
       ../*) ;;
       *)
-        role=$(path_role "$1" "$rel") || continue
+        path_role "$1" "$rel" || continue
+        role=$ROLE
         case "$role" in
           doc) ;;
           settings-example)
@@ -1897,11 +1905,22 @@ scan_load() { # DIR
       SCAN_KEYS+=("$key")
       SCAN_READERS+=("")
       doc_readers "$rel" "$key" || return 2
-      scan_input="${scan_input}Q $q $row$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl$rel$nl"
+      scan_parts+=("Q $q $row$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl$rel$nl")
     done
-  done <<<"$tree_paths"
+  done <<<"$tree_rows"
+  # Joined once, as the plan is.
+  [ "${#scan_parts[@]}" -eq 0 ] || printf -v scan_input '%s' "${scan_parts[@]}"
   # File text stays inside the batch. Bash receives only reach metadata.
   cache=$(awk "$INPUTS_NOTE_AWK"'
+    # TEXT read literally in an extended regex: each of []\.*^$+?(){}| escaped.
+    function literal_ere(text, out, i, c) {
+      out = ""
+      for (i = 1; i <= length(text); i++) {
+        c = substr(text, i, 1)
+        out = out (index("[]\\.*^$+?(){}|", c) ? "\\" c : c)
+      }
+      return out
+    }
     function scan_names(reader, text, kind, rest, name) {
       rest = text
       while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
@@ -2016,6 +2035,8 @@ scan_load() { # DIR
         if (getline <= 0) { failed = 1; exit 2 }
         query_patterns[q, p] = $0
       }
+      if (query_patterns[q, 1] == "@token")
+        query_patterns[q, 1] = "(^|[^[:alnum:]._/-])" literal_ere(query_patterns[q, 4]) "([^[:alnum:]_/-]|$)"
       # Every query of a doc, whichever row asked it, answers for each row
       # that names the doc.
       if (getline <= 0) { failed = 1; exit 2 }
@@ -2107,7 +2128,7 @@ scan_load() { # DIR
 # that only writes a settings file of its own names no changed key; a file
 # that reads the repository's whole file declares it in an input note.
 doc_readers() { # REL [KEY]
-  local rel="$1" dir token external=0 source_rel source_tree fixed
+  local rel="$1" dir external=0 source_rel source_tree fixed
   local skill_root catalog_root walk_root walk
   if [ -n "${2-}" ]; then
     # A key the regex spells literally is also its needle.
@@ -2123,8 +2144,6 @@ doc_readers() { # REL [KEY]
   skill_root='\$\{?[A-Z_]*SKILL[A-Z_]*\}?'
   catalog_root='[^[:space:]"]*/skills'
   case "$rel" in ../*) external=1; rel=${rel#../} ;; esac
-  token=$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel") || return 2
-  token="(^|[^[:alnum:]._/-])$token([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
       dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])|[\"'](\\\$|[./])[^\"']*/${rel%%/*}[\"']([[:space:]]|\\)|\$)"
@@ -2141,7 +2160,7 @@ doc_readers() { # REL [KEY]
         source_rel=${rel#skills/}
         source_tree=skills/${source_rel%%/*}
         source_rel=${source_rel#*/}
-        if [ "$(path_role "$source_tree" "$source_rel")" = doc ]; then
+        if path_role "$source_tree" "$source_rel" && [ "$ROLE" = doc ]; then
           walk_root=$catalog_root
         fi
         ;;
@@ -2157,8 +2176,11 @@ doc_readers() { # REL [KEY]
   if [ "$external" -eq 1 ]; then
     case "$rel" in skills/*/*) fixed="/${rel#skills/}" ;; esac
   fi
-  # The token's escaped path, read literally, is a needle every match holds.
-  reader_patterns=("$fixed" "$token" "$dir" "$walk" "$rel")
+  # The whole-token pattern is the path between the token bounds, its regex
+  # characters escaped: `@token` leaves that to scan_load's batch, so no
+  # process starts per query. The token's escaped path, read literally, is a
+  # needle every match holds.
+  reader_patterns=("$fixed" @token "$dir" "$walk" "$rel")
 }
 # A changed runtime file of another tree, PATH, offers its programs' names
 # into the caller's next_any, as reach_runtime adds them: a program name is
@@ -2170,13 +2192,13 @@ home_seed() { # PATH
   rel=${path#skills/}
   home="skills/${rel%%/*}"
   rel=${rel#*/}
-  [ "$(path_role "$home" "$rel")" = runtime ] || return 1
+  path_role "$home" "$rel" && [ "$ROLE" = runtime ] || return 1
   reach_runtime "$home"
 }
 # A file in the reach adds its name as a needle by its role, into the
 # caller's next_any, next_script and reach_scripts.
 reach_join() { # ROLE PATH [changed]
-  local tree rel line
+  local tree rel line of kind name file
   if [ "$scoped_only" -eq 1 ] && [ "${3:-reader}" != changed ]; then
     case "$1" in script | lib | module | runtime) return 0 ;; esac
   fi
@@ -2198,7 +2220,12 @@ reach_join() { # ROLE PATH [changed]
       [ -f "$tree/runtime/Cargo.toml" ] || return 0
       line=""
       if [ "$1" = rust-target ]; then
-        line=$(awk -v tree="$tree" -v rel="$rel" '$1 == tree && $2 == "test" && $4 == rel { print $3; exit }' <<<"$RUNTIME_FACTS")
+        while read -r of kind name file _; do
+          if [ "$of:$kind" = "$tree:test" ] && [ "$file" = "$rel" ]; then
+            line=$name
+            break
+          fi
+        done <<<"$RUNTIME_FACTS"
       fi
       if [ -n "$line" ]; then
         REACH_TARGETS+="${tree#skills/}/$line"$'\n'
@@ -2326,7 +2353,9 @@ mapped_suites() { # DIR REL ROW, ROW the path's tree_paths row of DIR from 0
   case "$rel" in
     ../*) role=doc ;;
     *)
-      if ! role=$(path_role "$dir" "$rel"); then
+      if path_role "$dir" "$rel"; then
+        role=$ROLE
+      else
         [ "$scoped_only" -eq 1 ] || return 1
         role=none
       fi
@@ -2664,8 +2693,10 @@ runtime_reached=""
 if [ "$MODE" != default ] && lane_on shell_shards; then
   runtime_facts || { say scan runtime-manifests; RUNTIME_FACTS=$'\n'; }
   # Each touched path of a tree with suites, as `<tree> TAB <path inside
-  # it> TAB <path>`: a render reads as the source it renders.
+  # it> TAB <path>`: a render reads as the source it renders. plan_rows holds
+  # each path's rows until the plan is joined.
   tree_paths=""
+  plan_rows=()
   consumer_trees=()
   # A tree reads another's path through its suites, or through the Rust
   # targets of its runtime.
@@ -2776,11 +2807,10 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     esac
     if [ -n "$release_version" ]; then
       [ "$tree" != tools ] || continue
-      tree_paths="$tree_paths$tree	$rel	$f
-"
+      plan_rows+=("$tree	$rel	$f
+")
       continue
     fi
-    # One append per path: each append copies the whole list.
     path_rows="$tree	$rel	$f
 "
     if [ "$tree" != tools ]; then
@@ -2792,8 +2822,11 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       path_rows="${path_rows}$consumer	../$f	$f
 "
     done
-    tree_paths="$tree_paths$path_rows"
+    plan_rows+=("$path_rows")
   done <<<"$touched"
+  # Joined once: an append to one string copies all of it, so appending per
+  # path costs paths times the whole plan.
+  [ "${#plan_rows[@]}" -eq 0 ] || printf -v tree_paths '%s' "${plan_rows[@]}"
   # Publish only a complete plan. Pi launch probes and tests execute below,
   # after every later battery is available to cancellation reporting.
   reach_trees=$(cut -f1 <<<"$tree_paths" | sort -u)
@@ -2841,12 +2874,15 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       release_suites=$release_share
       [ -n "$release_suites" ] || continue
     fi
+    # The tree's own rows, in plan order, so no pass over them below or in
+    # scan_load reads another tree's.
+    tree_rows=$(awk -F '\t' -v d="$d" '$1 == d' <<<"$tree_paths") || { say scan "$d"; continue; }
     case "$d" in
       pi-extensions/*)
         [ -f "$d/package.json" ] || continue
         # Another tree's path runs a Pi package's suites only where one of
         # its files names that path, whole or as `/<name>/<file>`.
-        if ! awk -F '\t' -v d="$d" '$1 == d && $2 !~ /^\.\.\// { own = 1 } END { exit !own }' <<<"$tree_paths"; then
+        if ! awk -F '\t' -v d="$d" '$1 == d && $2 !~ /^\.\.\// { own = 1 } END { exit !own }' <<<"$tree_rows"; then
           # One search for every path's needles: a file names one of them
           # exactly where it names some path's.
           pi_needles=()
@@ -2854,7 +2890,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
             [ "$tree" = "$d" ] || continue
             pi_needles+=(-e "${rel#../}")
             case "$rel" in ../skills/*/*) pi_needles+=(-e "/${rel#../skills/}") ;; esac
-          done <<<"$tree_paths"
+          done <<<"$tree_rows"
           [ "${#pi_needles[@]}" -gt 0 ] || continue
           git -c core.quotePath=false grep -q -F "${pi_needles[@]}" -- "$d" || continue
         fi
@@ -2883,9 +2919,6 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ "$scoped_only" -eq 0 ] || run=""
         if [ "$run" != all ]; then
           tree_ci=""
-          # The tree's own rows, in plan order, so no pass over them reads
-          # another tree's.
-          tree_rows=$(awk -F '\t' -v d="$d" '$1 == d' <<<"$tree_paths") || { say scan "$d"; continue; }
           rows_total=$(count_lines "$tree_rows")
           # scan_load counts this tree's rows the same way.
           tree_row=-1
@@ -2903,7 +2936,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
                 fi
                 [ "$tree_ci" -ne 0 ] || continue
               fi
-              if [[ $rel != ../* ]] && [ "$(path_role "$d" "$rel")" = doc ]; then continue; fi
+              if [[ $rel != ../* ]] && path_role "$d" "$rel" && [ "$ROLE" = doc ]; then continue; fi
             fi
             map_status=0
             mapped_suites "$d" "$rel" "$tree_row" || map_status=$?
