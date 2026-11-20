@@ -3,7 +3,7 @@
 # Inputs: skills/jarvis/scripts/op-broker, skills/jarvis/scripts/opq,
 # skills/jarvis/scripts/lib/op_fifo.py, skills/jarvis/scripts/lib/home.py,
 # skills/jarvis/scripts/lib/session-backend.sh, skills/orch/scripts/, skills/mailbox/scripts/,
-# skills/jarvis/tests/op_broker_test.py,
+# skills/jarvis/tests/op_broker_test.py, skills/jarvis/tests/fixtures/fifo_broker/,
 # skills/jarvis/tests/desktop_world.py.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"

@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import time
+import uuid
 
 # The session record's owner, session.py, needs the session launcher's environment; home.py keeps its location.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -36,7 +37,8 @@ SUN_PATH = 104
 # The only entries a broker leaves in its directory, with their file types.
 OWN_ENTRIES = {"lock": stat.S_ISREG, SOCKET: stat.S_ISSOCK}
 # The FIFO broker this one replaced can leave its request FIFO after a crash, and a killed client its reply FIFO.
-# A restart removes them; drop this once no consumer's directory can still hold one from that broker.
+# A restart removes them. A refresh restarts no broker unit, so opq also speaks that broker's protocol while one
+# still serves (fifo_exchange). Drop both once every consumer's broker has restarted onto the socket transport.
 LEGACY_FIFOS = r"requests|[0-9a-f]{32}\.reply"
 # Each verb's request field, which its allow-list entry lists and its log line names as the reference.
 SUBJECTS = {"read": "reference", "op": "args", "script": "path"}
@@ -78,6 +80,11 @@ def private(fd, kind, mode, refusal):
 def open_directory(path):
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     return private(fd, stat.S_ISDIR, 0o700, "directory=private-owner-required")
+
+
+def open_fifo(directory, name, flags):
+    fd = os.open(name, flags | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+    return private(fd, stat.S_ISFIFO, 0o600, "fifo=private-owner-required")
 
 
 def check_socket(directory):
@@ -782,9 +789,47 @@ def record(verb, response):
     return json.dumps({"exit": exit_status, "stdout": stdout}).encode() + b"\n"
 
 
+def socket_exchange(directory, root, request, deadline):
+    """Send one request over the broker's socket and return its reply."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(CLIENT_SECONDS)
+        connection.connect(socket_address(directory, root))
+        connection.setblocking(False)
+        send(connection.fileno(), json.dumps(request).encode() + b"\n", deadline)
+        return json.loads(receive(connection.fileno(), deadline))
+
+
+def fifo_exchange(directory, root, request, deadline):
+    """Send one request through a running FIFO broker's request FIFO and return its reply (see LEGACY_FIFOS)."""
+    name = uuid.uuid4().hex + ".reply"
+    line = json.dumps(dict(request, reply=name)).encode() + b"\n"
+    # A single nonblocking write up to PIPE_BUF is atomic across clients.
+    if len(line) > os.fpathconf(directory, "PC_PIPE_BUF"):
+        raise Refusal("request=too-large")
+    # Held before the reply FIFO exists, so a directory with no FIFO broker gains no entry.
+    fifo = open_fifo(directory, "requests", os.O_WRONLY)
+    reply = None
+    try:
+        # Python builds without mkfifoat still support exclusive absolute creation.
+        if os.mkfifo in os.supports_dir_fd:
+            os.mkfifo(name, 0o600, dir_fd=directory)
+        else:
+            os.mkfifo(root / name, 0o600)
+        try:
+            reply = open_fifo(directory, name, os.O_RDWR)
+            if os.write(fifo, line) != len(line):
+                raise Refusal("request=incomplete")
+            return json.loads(receive(reply, deadline))
+        finally:
+            if reply is not None:
+                os.close(reply)
+            os.unlink(name, dir_fd=directory)
+    finally:
+        os.close(fifo)
+
+
 def client(args):
     directory = open_directory(args.directory)
-    connection = None
     output = None
     created_output = False
     success = False
@@ -794,14 +839,13 @@ def client(args):
             raise Refusal("request=too-large")
         output = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created_output = True
-        check_socket(directory)
         deadline = time.monotonic() + CLIENT_SECONDS
-        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        connection.settimeout(CLIENT_SECONDS)
-        connection.connect(socket_address(directory, args.directory))
-        connection.setblocking(False)
-        send(connection.fileno(), request, deadline)
-        content = record(args.request["verb"], json.loads(receive(connection.fileno(), deadline)))
+        try:
+            check_socket(directory)
+            exchange = socket_exchange
+        except FileNotFoundError:
+            exchange = fifo_exchange
+        content = record(args.request["verb"], exchange(directory, args.directory, args.request, deadline))
         with os.fdopen(output, "wb") as stream:
             output = None
             stream.write(content)
@@ -809,8 +853,6 @@ def client(args):
     finally:
         if output is not None:
             os.close(output)
-        if connection is not None:
-            connection.close()
         os.close(directory)
         if not success and created_output:
             args.output.unlink()

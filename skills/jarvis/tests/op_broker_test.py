@@ -56,6 +56,9 @@ HOST_CALLER = "jarvis-session" if sys.platform == "linux" else None
 PROTECTION = "unit" if sys.platform == "linux" else "listed-any-caller"
 LOG_FIELDS = ["time", "protection", "caller", "verb", "reference", "outcome", "cause"]
 BACKEND = SCRIPTS / "lib" / "session-backend.sh"
+# The FIFO broker a consumer's unit still runs after a refresh brings opq's socket transport: op-broker and
+# lib/op_fifo.py as 7ae1357d3 last changed them on main. Delete it with op_fifo.fifo_exchange.
+FIFO_BROKER = Path(__file__).resolve().parent / "fixtures" / "fifo_broker" / "op-broker"
 
 
 def request_fields(line):
@@ -95,6 +98,8 @@ class Broker(World):
         self.home.mkdir()
         self.env.update(XDG_STATE_HOME=str(self.root / "state"), XDG_CONFIG_HOME=str(self.root / "config"),
                         XDG_DATA_HOME=str(self.root / "data"), XDG_CACHE_HOME=str(self.root / "cache"))
+        # op-broker starts through its own #! line, as the unit's ExecStart= does, which finds python3 on PATH.
+        (self.bin / "python3").symlink_to(sys.executable)
 
     def allow(self, grants, caller=None):
         """Write the allow list with one entry, for the caller end-to-end clients are unless caller names another."""
@@ -122,9 +127,10 @@ class Broker(World):
         self.allowed.chmod(0o600)
 
     def start(self, body=None, args=None, terminal=True, leader=False, grants=FIXTURE_GRANTS, protection=PROTECTION,
-              home=True):
+              home=True, directory=None, launch=(str(SCRIPTS / "op-broker"),)):
+        """Start a broker and wait for its readiness line; protection None is the FIFO broker's line, which names none."""
         self.executable("op", body or OP)
-        self.directory = self.root / "broker"
+        self.directory = directory or self.root / "broker"
         if grants is not None:
             self.allow(grants)
         if sys.platform == "linux":
@@ -143,7 +149,7 @@ class Broker(World):
             self.addCleanup(os.close, controller)
         else:
             stdin = subprocess.DEVNULL
-        process = subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "op-broker"), *args],
+        process = subprocess.Popen([*launch, *args],
             env=self.env, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=leader)
         if terminal:
             os.close(stdin)
@@ -160,8 +166,8 @@ class Broker(World):
 
         self.addCleanup(stop)
         self.assertTrue(select.select([process.stdout], [], [], 10)[0], "broker did not report readiness")
-        self.assertEqual(process.stdout.readline(),
-                         b"op-broker: state=ready protection=" + protection.encode() + b"\n")
+        self.assertEqual(process.stdout.readline(), b"op-broker: state=ready"
+                         + (b"" if protection is None else b" protection=" + protection.encode()) + b"\n")
         return process
 
     def journal(self, process):
@@ -194,6 +200,13 @@ class Broker(World):
         self.assertFalse((self.root / "missing").exists())
 
     def test_session_and_parallel_clients(self):
+        # Each Python process that processes the user site directory names its program in HOME/user-site.
+        user_site = Path(subprocess.run([sys.executable, "-c", "import site; print(site.getusersitepackages())"],
+                                        env=self.env, capture_output=True, check=True, text=True).stdout.strip())
+        user_site.mkdir(parents=True)
+        (user_site / "usercustomize.py").write_text(
+            "import os, sys\nwith open(os.environ['HOME'] + '/user-site', 'a') as f:\n"
+            "    f.write(os.path.basename(sys.argv[0]) + '\\n')\n")
         process = self.start()
         outputs = [self.root / name for name in ("one", "two")]
         clients = [subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "opq"), "--directory",
@@ -223,6 +236,10 @@ class Broker(World):
         _, stderr = process.communicate(timeout=10)
         self.assertEqual(process.returncode, 0, stderr)
         self.assertFalse(self.directory.exists())
+        # The clients run Python with the user site directory, and the broker, which holds the session, without it.
+        programs = (self.root / "user-site").read_text().split()
+        self.assertIn("opq", programs)
+        self.assertNotIn("op-broker", programs)
 
     def test_exact_field_bytes(self):
         self.start()
@@ -416,7 +433,8 @@ elif sys.argv[1]=='read':
 
     @unittest.skipUnless(sys.platform == "linux", "op requests are Linux only")
     def test_op_request_record(self):
-        self.start()
+        # The socket path is past Linux's 108-byte sun_path; broker and opq both name it through their descriptors.
+        self.start(directory=self.root / ("d" * 200))
         output = self.root / "record"
         for words, status in ((["vault", "list"], 0), (["item", "get", "Fixture Item", "--fields", "password", "--reveal"], 0),
                               (["item", "edit", "fixture", "exit-two"], 2)):
@@ -1159,6 +1177,21 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         self.assertEqual(fields, logged(fields["caller"], "read", password, "not-allowed", cause))
         stop(process)
 
+    def test_fifo_broker(self):
+        # A refresh replaces opq but restarts no broker unit, so opq still reaches the FIFO broker the unit started.
+        self.start(args=["--directory", str(self.root / "broker"), "--account", "fixture-account"], grants=None,
+                   protection=None, launch=(sys.executable, "-B", str(FIFO_BROKER)))
+        output = self.root / "value"
+        result = self.opq("read", "op://fixture/item/password", output=output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_bytes(), b"fixture-value")
+        output.unlink()
+        if sys.platform == "linux":
+            self.assertEqual(self.record(self.opq("op", "--", "vault", "list", output=output), output),
+                             (0, b"vault list\n"))
+        # Each client removes its reply FIFO, so a broker that restarts over the directory finds only the FIFO broker's.
+        self.assertEqual(sorted(path.name for path in self.directory.iterdir()), ["lock", "requests"])
+
     def test_socket_path_bound(self):
         module = load("lib/op_fifo.py")
         # The socket path, directory and separator included, of a directory named n bytes long under the root.
@@ -1183,9 +1216,6 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                 os.close(client)
                 shutil.rmtree(directory)
 
-        # Linux names the socket through the directory's descriptor, so a directory past the macOS bound serves.
-        if sys.platform == "linux":
-            self.assertEqual(served(self.root / ("d" * 200)), b"line")
         output = self.root / "out"
         with patch.object(module, "sys", Platform("darwin")):
             # macOS names it by path: the longest directory whose socket path fits sun_path serves.
