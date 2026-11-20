@@ -29,7 +29,7 @@ Do not hand-copy code-owned inventories or defaults. A reference may define a co
 - Use active voice and name the actor. Say what the code does, not what is done.
 - Use plain words. Basic technical terms are fine: CLI, API, repo, PR, hook, lock, glob.
 - Use one term per thing, the same term every time.
-- State each fact once. Point at the first statement instead of repeating it.
+- State each fact once. In a reference read by section, state the fact in its home section and point to it from elsewhere. In other documents, point at the first statement instead of repeating it.
 - Write a heading that names the subject. A heading never makes a claim.
 - Write in the present tense. A rule states what holds.
 - Delete sales language, quips, metaphors, and hedges.

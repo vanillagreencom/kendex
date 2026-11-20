@@ -10,6 +10,6 @@ Read by an agent when the task loads the file. `SKILL.md` gives activation, esse
 
 Agent files hold the role's rules. Worked examples live in named supporting files.
 
-To choose a folder, name the file's job and its reader. If the reader runs it from first line to last to finish that job, it is a workflow. If the reader opens it at one section while doing another job, it is a reference. Split a file that does both: put the steps in a workflow and keep the contract in a reference. One cites the other.
+To choose a folder, name the file's job and its reader. If the reader runs it from first line to last to finish that job, it is a workflow. If the reader opens it at one section while doing another job, it is a reference. Split a file that does both: put the steps in a workflow and keep the contract in a reference. One cites the other. Put shared setup steps in one cited workflow, and shared setup contracts in one cited reference.
 
 Give each supporting file an explicit reading trigger. Cite a rule another file owns. Never: implementation narration, rationale or history. Rationale belongs in an admitted principle doc, a decision under decider's bar or a comment at the code. Example: [examples/skill-entry.md](../examples/skill-entry.md).
