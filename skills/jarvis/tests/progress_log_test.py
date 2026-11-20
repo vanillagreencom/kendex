@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-from mail_world import SCRIPTS, MailWorld, make_project
+from mail_world import BASH, SCRIPTS, MailWorld, make_project
 
 sys.path.insert(0, str(SCRIPTS / "lib"))
 from progress import change_state, index_ends, records, state_entries  # noqa: E402
@@ -51,6 +51,75 @@ print(json.dumps([{"id": row[0], "title": "", "state": row[1], "state_type": row
 DONE, CANCELED, OPEN = ("Done", "completed"), ("Canceled", "canceled"), ("In Progress", "started")
 DUPLICATE = ("Duplicate", "duplicate")
 BULK_GET = ["issues", "bulk-get", "--stdin", "--format=compact"]
+PROJECT = "fbb9620e-91bb-4e78-9cb3-907fa7dd72a7"
+REQUEST = "C0123ABC:1793515695.587049"
+OUTCOME = "Check the vendor receipt"
+ACTION = "Jarvis reads the vendor's [receipt](https://example.org/receipt)."
+COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04248"
+# Safe reads use lib/formatters.sh. Mutation fields and the trailing body
+# newline come from commands/comments.sh and lib/common.sh's normalizer.
+LINEAR_ACTION = '''#!/usr/bin/env python3
+import json, os, subprocess, sys
+from pathlib import Path
+
+home = Path(os.environ["HOME"])
+store = home / "action-world.json"
+world = json.loads(store.read_text())
+args = sys.argv[1:]
+with (home / "action-calls").open("a") as calls:
+    calls.write(json.dumps(args) + "\\n")
+verb = tuple(args[:2])
+mode = world["mode"]
+issues, comments = world["issues"], world["comments"]
+if verb == ("issues", "list"):
+    assert args[2:] == ["--project-id", world["project"], "--include-archived", "--max", "--format=safe"]
+    print(json.dumps(list(issues.values())))
+elif verb == ("auth-check", "--strict"):
+    assert len(args) == 2
+elif verb == ("issues", "create"):
+    assert args[2:4] == ["--project", world["project"]] and args[-1] == "--format=ids"
+    assert world["created"] not in issues
+    title, description = args[args.index("--title") + 1], args[args.index("--description") + 1]
+    # Exercise the authoring checks from Linear's real create path.
+    subprocess.run([world["bash"], "-c",
+                    'source "$1"; LINEAR_REQUIRE_REACH=1; require_issue_reach "$2" 0 && require_issue_header_shape "$2"',
+                    "validate-description", world["validator"], description], check=True)
+    issue = {"id": world["created"], "title": title, "description": description, "project_id": world["project"]}
+    issues[issue["id"]] = issue
+    store.write_text(json.dumps(world))
+    print(issue["id"])
+elif verb == ("issues", "get"):
+    print(json.dumps(issues[args[2]]))
+elif verb == ("comments", "list"):
+    assert args[2] in issues
+    if mode == "unavailable" or (mode == "readback-unavailable" and world.get("written")):
+        sys.exit(5)
+    print(json.dumps(comments.get(args[2], [])))
+elif verb in (("comments", "create"), ("comments", "update")):
+    assert args[3] == "--body"
+    if mode == "reject":
+        print(json.dumps({"success": False, "data": {"success": False, "comment": None}}))
+        sys.exit(0)
+    if verb == ("comments", "create"):
+        assert args[2] in issues
+        row = {"id": world["comment"]}
+        comments.setdefault(args[2], []).append(row)
+    else:
+        row, = [row for rows in comments.values() for row in rows if row["id"] == args[2]]
+    row["body"] = args[4] + "\\n"
+    if mode == "wrong-body":
+        row["body"] = "Jarvis next action: earlier\\n"
+    if mode == "extra-newline":
+        row["body"] += "\\n"
+    receipt = {"id": "0bcc794a-4f64-4e43-b62c-d5ad21591aab" if mode == "wrong-id" else row["id"]}
+    world["written"] = True
+    store.write_text(json.dumps(world))
+    if mode == "lost-receipt":
+        sys.exit(5)
+    print(json.dumps({"success": True, "data": {"success": True, "comment": receipt}}))
+else:
+    sys.exit(9)
+'''
 
 
 def state_handoff(state):
@@ -76,6 +145,168 @@ class ProgressLog(MailWorld):
         if handoff is not None:
             args += ["--handoff", str(handoff)]
         return self.command([sys.executable, "-B", self.scripts / "progress-log", *args], cwd or self.home)
+
+    def action_world(self, issues=None, comments=None, mode=""):
+        packages = self.root / "action-packages"
+        scripts = packages / "jarvis/scripts"
+        if not scripts.exists():
+            shutil.copytree(self.scripts, scripts)
+            sibling = packages / "linear/scripts/linear.sh"
+            sibling.parent.mkdir(parents=True)
+            sibling.write_text(LINEAR_ACTION)
+            sibling.chmod(0o755)
+        self.scripts = scripts
+        self.action_store = self.root / "action-world.json"
+        self.action_trace = self.root / "action-calls"
+        self.action_trace.write_text("")
+        self.action_store.write_text(json.dumps({"project": PROJECT, "created": "KEN-2", "comment": COMMENT,
+                                                 "bash": BASH,
+                                                 "validator": str(SCRIPTS.parents[1] / "linear/scripts/lib/issue-validation.sh"),
+                                                 "issues": issues if issues is not None else {"KEN-1": self.issue()},
+                                                 "comments": comments or {}, "mode": mode}))
+
+    def issue(self, item="KEN-1", title=OUTCOME, description=""):
+        return {"id": item, "title": title, "description": description, "project_id": PROJECT}
+
+    def next_action(self, *, discover=False, action=ACTION, state_key=None):
+        fields = {key: value for key, value in FIELDS.items() if key != "--state-change"}
+        fields["--next-action"] = action
+        if discover:
+            fields.update({"--task-project": PROJECT, "--source": REQUEST, "--outcome": OUTCOME})
+        else:
+            fields["--item"] = "KEN-1"
+        if state_key is not None:
+            fields["--state-key"] = state_key
+        return self.log(fields)
+
+    def action_calls(self):
+        return [tuple(json.loads(line)[:2]) for line in self.action_trace.read_text().splitlines()]
+
+    def assert_action(self, item, action, state_change):
+        row, = json.loads(self.action_store.read_text())["comments"][item]
+        self.assertEqual(row, {"id": COMMENT, "body": "Jarvis next action: " + action + "\n"})
+        saved = records(self.handoff.read_text())[-1]
+        self.assertEqual(saved["State change"], state_change)
+        self.assertIn(item + " comment=" + COMMENT, saved["Observed result and source"])
+
+    def test_next_action_named(self):
+        for key in ("KEN-1", "KEN-1:", "`KEN-1`", "`" + REQUEST + ":`"):
+            with self.subTest(key=key):
+                target = REQUEST if REQUEST in key else "KEN-1"
+                kept = "- session=control: retained\n"
+                self.handoff.write_text(state_handoff("- `" + target + "`: retry\n  earlier context\n" + kept))
+                self.action_world()
+                result = self.next_action(state_key=key)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_action("KEN-1", ACTION, "remove State " + target)
+                self.assertEqual(state_entries(self.handoff.read_text().splitlines(keepends=True))[0][1], kept)
+                result = self.next_action(action="Check with the vendor after approval.")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_action("KEN-1", "Check with the vendor after approval.", "none")
+                self.assertEqual(len(records(self.handoff.read_text())), 2)
+                self.assertEqual(self.action_calls(), [
+                    ("issues", "get"), ("comments", "list"), ("comments", "create"), ("comments", "list"),
+                    ("issues", "get"), ("comments", "list"), ("comments", "update"), ("comments", "list")])
+
+    def test_next_action_discovery(self):
+        kept = "- session=control: retained\n"
+        self.handoff.write_text(state_handoff("- " + REQUEST + ": retry\n" + kept))
+        self.action_world(issues={"KEN-1": self.issue(description=("Jarvis request source: " + REQUEST + "\n\n"
+                                                                 "Jarvis requested outcome: Send the invoice"))})
+        first = self.next_action(discover=True, state_key=REQUEST)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assert_action("KEN-2", ACTION, "remove State " + REQUEST)
+        self.assertEqual(state_entries(self.handoff.read_text().splitlines(keepends=True))[0][1], kept)
+        second = self.next_action(discover=True, action="Ask the vendor to verify the receipt.")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assert_action("KEN-2", "Ask the vendor to verify the receipt.", "none")
+        self.assertEqual(self.action_calls(), [
+            ("issues", "list"), ("auth-check", "--strict"), ("issues", "create"), ("issues", "get"),
+            ("comments", "list"), ("comments", "create"), ("comments", "list"),
+            ("issues", "list"), ("comments", "list"), ("comments", "update"), ("comments", "list")])
+
+    def test_next_action_legacy_binding(self):
+        source = "Original request: [thread](" + REQUEST + ")"
+        matches = (
+            (self.issue(description=source), []),
+            (self.issue(title="Vendor follow-up", description=source), [{"id": "legacy", "body": "Outcome: " + OUTCOME}]),
+            (self.issue(), [{"id": "legacy", "body": source}]),
+        )
+        for issue, comments in matches:
+            with self.subTest(issue=issue, comments=comments):
+                self.handoff.write_text(state_handoff("- KEN-1: retry\n"))
+                self.action_world(issues={"KEN-1": issue}, comments={"KEN-1": comments})
+                result = self.next_action(discover=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                saved = records(self.handoff.read_text())[-1]
+                self.assertEqual(saved["State change"], "remove State KEN-1")
+                self.assertNotIn(("issues", "create"), self.action_calls())
+                self.assertEqual(json.loads(self.action_store.read_text())["comments"]["KEN-1"],
+                                 comments + [{"id": COMMENT, "body": "Jarvis next action: " + ACTION + "\n"}])
+
+    def test_next_action_refusals(self):
+        for mode, key, mutations in (
+            ("wrong-body", "tracker-comment-unconfirmed", 1),
+            ("extra-newline", "tracker-comment-unconfirmed", 1),
+            ("wrong-id", "tracker-comment-unconfirmed", 1),
+            ("reject", "tracker-comment-rejected", 1),
+            ("unavailable", "tracker-unavailable", 0),
+            ("readback-unavailable", "tracker-unavailable", 1),
+            ("lost-receipt", "tracker-unavailable", 1),
+        ):
+            with self.subTest(mode=mode):
+                self.assert_next_action_refusal(mode, key, mutations)
+        world = json.loads(self.action_store.read_text())
+        world["mode"] = ""
+        self.action_store.write_text(json.dumps(world))
+        result = self.next_action()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_action("KEN-1", ACTION, "remove State KEN-1")
+        self.assertEqual(self.action_calls().count(("comments", "create")), 1)
+        self.assertEqual(self.action_calls().count(("comments", "update")), 1)
+
+    def assert_next_action_refusal(self, mode, key, mutations):
+        before = state_handoff("- KEN-1: retry\n").encode()
+        self.handoff.write_bytes(before)
+        self.action_world(mode=mode)
+        result = self.next_action()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: " + key)
+        self.assertEqual(self.handoff.read_bytes(), before)
+        self.assertEqual(self.action_calls().count(("comments", "create")), mutations)
+
+    def test_next_action_writes_nothing_when_ambiguous(self):
+        marker = "Jarvis request source: " + REQUEST + "\n\nJarvis requested outcome: " + OUTCOME
+        before = state_handoff("- KEN-1: retry\n").encode()
+        for issues, comments, discover, local, reason in (
+            ({"KEN-1": self.issue(description=marker), "KEN-2": self.issue("KEN-2", description=marker)}, {}, True,
+             before, "tracker-item-ambiguous=KEN-1,KEN-2"),
+            ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request " + REQUEST)}, {}, True,
+             before, "tracker-item-ambiguous=KEN-1"),
+            (None, {"KEN-1": [{"id": key, "body": "Jarvis next action: existing\n"} for key in ("first", "second")]},
+             False, before, "tracker-comment-ambiguous=KEN-1"),
+            (None, {}, False, state_handoff("- KEN-1: retry\n- `KEN-1`: retry\n").encode(), "state-entry-ambiguous=KEN-1"),
+        ):
+            with self.subTest(reason=reason):
+                self.handoff.write_bytes(local)
+                self.action_world(issues, comments)
+                result = self.next_action(discover=discover)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stderr.split(" (", 1)[0].split(" fix=", 1)[0], "progress-log: " + reason)
+                self.assertEqual(self.handoff.read_bytes(), local)
+                self.assertTrue(all(verb in ("get", "list") for _, verb in self.action_calls()))
+
+    def test_next_action_readback_control(self):
+        scripts = self.root / "action-control/scripts"
+        shutil.copytree(self.scripts, scripts)
+        entry = scripts / "progress-log"
+        source = entry.read_text()
+        check = 'if [(row["id"], row["body"]) for row in retained] != [(comment, body + "\\n")]:'
+        self.assertEqual(source.count(check), 1)
+        entry.write_text(source.replace(check, "if not retained:"))
+        self.scripts = scripts
+        with self.assertRaises(AssertionError):
+            self.assert_next_action_refusal("wrong-body", "tracker-comment-unconfirmed", 1)
 
     def assert_home_check(self, expected, handoff=None):
         args = [] if handoff is None else ["--handoff", str(handoff)]
@@ -457,9 +688,9 @@ class ProgressLog(MailWorld):
             shutil.copytree(SCRIPTS.parent / 'scripts', copy / 'scripts')
             script = copy / 'scripts/progress-log'
             source = script.read_text()
-            target = 'lines = change_state(lines, values["State change"], identity)'
+            target = 'return change_state(lines, change, identity), change'
             self.assertEqual(source.count(target), 1)
-            script.write_text(source.replace(target, 'lines = list(lines)'))
+            script.write_text(source.replace(target, 'return list(lines), change'))
             original, self.scripts = self.scripts, copy / 'scripts'
             try:
                 self.handoff.write_text(old)

@@ -3,6 +3,8 @@
 
 Usage: progress-log [--handoff PATH]  # check the candidate commit
        progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --state-change TEXT
+       progress-log [--handoff PATH] --operation TEXT --result TEXT --decision TEXT --next-action TEXT
+                    (--item ID | --task-project UUID --source REF --outcome TEXT) [--state-key KEY]
        progress-log [--handoff PATH] --archived FILE
        progress-log [--handoff PATH] --check-state
 
@@ -25,6 +27,12 @@ A set replaces the whole matching entry with ID, NEXT ACTION and this record id;
 a remove deletes it, and a remove that matches no entry refuses.
 Session entries use durable session, wake or ask ids.
 Success prints `progress-log: recorded id=ID at=TIME`.
+
+--next-action sets one inline tracker comment and confirms it by reading it
+back before recording the action and clearing its State entry. A missing
+entry is allowed. --state-key selects a local entry keyed by another id.
+Discovery uses the configured Linear team to create in the named project.
+A tracker refusal leaves the handoff intact. See workflows/tasks.md.
 
 --archived FILE, an absolute or home-relative path inside the archive beside
 the selected handoff, adds or enriches FILE's line in that archive's INDEX.md in the
@@ -60,19 +68,26 @@ import posixpath
 import re
 import subprocess
 import sys
+from uuid import UUID
 
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "scripts/lib"))
 from progress import (DEFAULT_HANDOFF, FIELDS, INDEX, archive_dir, check_state, format_record,  # noqa: E402
                       change_state, enrich_index, handoff_path, ids, index_line, named_entry, record_id, state_entries,
-                      state_ids)
+                      state_ids, state_key)
 from sections import headings, section  # noqa: E402
 import watch  # noqa: E402
 
 FIX = "fix=" + str(PACKAGE / "references/long-session.md") + "#progress-records"
 FIX_HANDOFF = "fix=" + str(PACKAGE / "references/long-session.md") + "#handoff"
+FIX_TASKS = "fix=" + str(PACKAGE / "workflows/tasks.md") + "#5-retain-the-next-action"
 # The sibling package's own CLI, located as watch.lane_mail locates the mailbox.
 LINEAR = PACKAGE.parent / "linear/scripts/linear.sh"
+ACTION_PREFIX = "Jarvis next action: "
+SOURCE_PREFIX = "Jarvis request source: "
+OUTCOME_PREFIX = "Jarvis requested outcome: "
+LEGACY_OUTCOME = re.compile(r"^(?:- )?(?:\*\*)?(?:Requested outcome|Outcome)(?::\*\*|\*\*:|:) (.+)$",
+                            re.MULTILINE | re.IGNORECASE)
 # The clock stamps every record; a value that opens with a time was typed.
 TYPED_TIME = re.compile(r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}(?!\d))")
 
@@ -92,7 +107,27 @@ def clock():
     return stamp
 
 
-def append(handoff, values):
+def progress_section(lines, heading):
+    try:
+        return section(lines, heading)
+    except LookupError as error:
+        raise Refusal("section-missing" if error.args[0] == "unknown-heading" else "section-ambiguous",
+                      heading) from error
+
+
+def edit_state(lines, change, identity, *, missing_ok=False):
+    try:
+        return change_state(lines, change, identity), change
+    except LookupError as error:
+        raise Refusal("section-missing" if error.args[0] == "unknown-heading" else "section-ambiguous",
+                      "State") from error
+    except ValueError as error:
+        if missing_ok and error.args[0] == "state-entry-missing":
+            return lines, "none"
+        raise Refusal(*error.args) from error
+
+
+def append(handoff, values, *, home=None, action=None):
     stamp = clock()
     try:
         out = handoff.open("r+b")
@@ -108,18 +143,20 @@ def append(handoff, values):
             raise Refusal("handoff-unreadable", handoff) from error
         lines = text.splitlines(keepends=True)
         identity = record_id(stamp, ids(text))
-        try:
-            lines = change_state(lines, values["State change"], identity)
-        except LookupError as error:
-            raise Refusal("section-missing" if error.args[0] == "unknown-heading" else "section-ambiguous",
-                          "State") from error
-        except ValueError as error:
-            raise Refusal(*error.args) from error
-        try:
-            start, end = section(lines, "Progress log")
-        except LookupError as error:
-            raise Refusal("section-missing" if error.args[0] == "unknown-heading" else "section-ambiguous",
-                          "Progress log") from error
+        if action is None:
+            lines, _ = edit_state(lines, values["State change"], identity)
+        else:
+            progress_section(lines, "Progress log")
+            progress_section(lines, "State")
+            if action.state_key is not None:
+                lines, values["State change"] = edit_state(lines, "remove State " + state_key(action.state_key),
+                                                          identity, missing_ok=True)
+            item = resolve_item(home, action)
+            if action.state_key is None:
+                lines, values["State change"] = edit_state(lines, "remove State " + item, identity, missing_ok=True)
+            comment = retain_action(home, item, action.next_action)
+            values["Observed result and source"] += "\nTracker next action: %s comment=%s" % (item, comment)
+        start, end = progress_section(lines, "Progress log")
         last = next((index for index in range(end - 1, start, -1) if lines[index].strip()), start)
         prefix = "".join(lines[:last + 1])
         # An unterminated last line gets its newline before the record.
@@ -136,6 +173,133 @@ def append(handoff, values):
         except OSError as error:
             raise Refusal("handoff-unwritable", handoff) from error
     return identity, stamp
+
+
+def linear_call(home, *args):
+    operation = " ".join(args[:2])
+    try:
+        return watch.checked([LINEAR, *args], home, operation=operation)
+    except (watch.Failure, UnicodeError) as error:
+        detail = str(error).splitlines()
+        raise Refusal("tracker-unavailable", "%s (%s)" % (operation, detail[0] if detail else "unread")) from error
+
+
+def linear_json(home, *args):
+    try:
+        return json.loads(linear_call(home, *args))
+    except ValueError as error:
+        raise Refusal("tracker-unread", " ".join(args[:2])) from error
+
+
+def tracker_rows(value, operation, *fields):
+    if isinstance(value, list) and all(isinstance(row, dict) and all(isinstance(row.get(field), str)
+                                                                    for field in fields) for row in value):
+        if all(row["id"] for row in value) and len({row["id"] for row in value}) == len(value):
+            return value
+    raise Refusal("tracker-unread", operation)
+
+
+def read_issue(home, ref):
+    row = linear_json(home, "issues", "get", ref, "--format=safe")
+    item = row.get("id") if isinstance(row, dict) else None
+    if not isinstance(item, str) or state_ids(item)[0] != [item]:
+        raise Refusal("tracker-unread", "issues get " + ref)
+    return row
+
+
+def comments(home, item):
+    return tracker_rows(linear_json(home, "comments", "list", item, "--format=safe"), "comments list " + item,
+                        "id", "body")
+
+
+def marked(description, prefix):
+    return [line[len(prefix):] for line in description.splitlines() if line.startswith(prefix)]
+
+
+def project_matches(home, project, source, outcome):
+    rows = tracker_rows(linear_json(home, "issues", "list", "--project-id", project, "--include-archived", "--max",
+                                    "--format=safe"), "issues list " + project, "id", "title", "description", "project_id")
+    if any(row["project_id"] != project or state_ids(row["id"])[0] != [row["id"]] for row in rows):
+        raise Refusal("tracker-unread", "issues list " + project)
+    source_token = re.compile(r"(?<![\w:/.-])" + re.escape(source) + r"(?![\w:/?#&=-]|\.[\w])")
+    matches, uncertain = [], []
+    for row in rows:
+        item, title, description = row["id"], row["title"], row["description"]
+        sources = marked(description, SOURCE_PREFIX)
+        outcomes = marked(description, OUTCOME_PREFIX)
+        if len(sources) == len(outcomes) == 1:
+            if sources == [source] and outcomes == [outcome]:
+                matches.append(item)
+            continue
+        # Older bindings keep the request in prose or a filing field. A title
+        # alone never identifies the request, and unknown outcomes block create.
+        legacy_outcomes = LEGACY_OUTCOME.findall(description)
+        if not (source_token.search(description) or title == outcome or outcome in legacy_outcomes):
+            continue
+        bodies = [description] + [row["body"] for row in comments(home, item)]
+        if not any(source_token.search(body) for body in bodies):
+            continue
+        declared = {value for body in bodies for value in LEGACY_OUTCOME.findall(body)}
+        if declared == {outcome} or (not declared and title == outcome):
+            matches.append(item)
+        elif len(declared) != 1:
+            uncertain.append(item)
+    if uncertain or len(matches) > 1:
+        raise Refusal("tracker-item-ambiguous", ",".join(matches + uncertain) + " (resolve with --item)")
+    return matches[0] if matches else None
+
+
+def resolve_item(home, action):
+    if action.item is not None:
+        return read_issue(home, action.item)["id"]
+    project, source, outcome = action.task_project, action.source, action.outcome
+    existing = project_matches(home, project, source, outcome)
+    if existing is not None:
+        return existing
+    linear_call(home, "auth-check", "--strict")
+    description = (
+        "> **Story:** " + outcome + "\n\n"
+        "> **Why this matters:** The work needs a tracker item so a later session can continue it.\n\n"
+        "## Done when\n\n"
+        "- [ ] Verify the outcome below against the original request. The session reconciling the request records acceptance.\n\n"
+        "## Filing record\n\n"
+        "**Reached by**: A Jarvis session acts on the original request referenced below.\n\n"
+        "**Supersession**: none found; searched: " + source + " and " + outcome + "\n\n"
+        + SOURCE_PREFIX + source + "\n\n" + OUTCOME_PREFIX + outcome
+    )
+    # issues create --format=ids emits the confirmed mutation's identifier alone.
+    created = linear_call(home, "issues", "create", "--project", project, "--title", outcome, "--description",
+                          description, "--format=ids").rstrip("\n")
+    if state_ids(created)[0] != [created]:
+        raise Refusal("tracker-item-unconfirmed", project)
+    row = read_issue(home, created)
+    description = row.get("description")
+    if (row["id"] != created or row.get("project_id") != project or not isinstance(description, str)
+            or marked(description, SOURCE_PREFIX) != [source] or marked(description, OUTCOME_PREFIX) != [outcome]):
+        raise Refusal("tracker-item-unconfirmed", created)
+    return created
+
+
+def retain_action(home, item, action):
+    current = [row["id"] for row in comments(home, item) if row["body"].startswith(ACTION_PREFIX)]
+    if len(current) > 1:
+        raise Refusal("tracker-comment-ambiguous", item)
+    body = ACTION_PREFIX + action
+    verb, target = ("update", current[0]) if current else ("create", item)
+    receipt = linear_json(home, "comments", verb, target, "--body", body)
+    if not isinstance(receipt, dict) or receipt.get("success") is not True:
+        raise Refusal("tracker-comment-rejected", item)
+    try:
+        comment = receipt["data"]["comment"]["id"]
+    except (KeyError, TypeError) as error:
+        raise Refusal("tracker-comment-unconfirmed", item) from error
+    if not isinstance(comment, str) or not comment or (current and comment != current[0]):
+        raise Refusal("tracker-comment-unconfirmed", item)
+    retained = [row for row in comments(home, item) if row["body"].startswith(ACTION_PREFIX)]
+    # Linear's comments create and update frame --body with one echo newline.
+    if [(row["id"], row["body"]) for row in retained] != [(comment, body + "\n")]:
+        raise Refusal("tracker-comment-unconfirmed", item)
+    return comment
 
 
 def index(handoff, archived):
@@ -469,11 +633,38 @@ def main():
     options = ("--operation", "--result", "--decision", "--state-change")
     for option, field in zip(options, FIELDS):
         parser.add_argument(option, help=field)
+    parser.add_argument("--next-action", help="inline action to retain on the tracker")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--item", help="existing Linear item")
+    target.add_argument("--task-project", help="Linear project UUID to search")
+    parser.add_argument("--source", help="original request reference for discovery")
+    parser.add_argument("--outcome", help="requested outcome for discovery")
+    parser.add_argument("--state-key", help="local entry key when it differs from the item id")
     args = parser.parse_args()
     values = dict(zip(FIELDS, (args.operation, args.result, args.decision, args.state_change)))
     given = [option for option, value in zip(options, values.values()) if value is not None]
+    action_fields = {field: getattr(args, field) for field in
+                     ("next_action", "item", "task_project", "source", "outcome", "state_key")
+                     if getattr(args, field) is not None}
+    if action_fields:
+        if args.next_action is None or args.state_change is not None or args.check_state or args.archived is not None:
+            parser.error("tracker options require --next-action and take no --state-change, --check-state or --archived")
+        if args.item is not None and (args.source is not None or args.outcome is not None):
+            parser.error("--item takes no --source or --outcome")
+        if args.item is None and None in (args.task_project, args.source, args.outcome):
+            parser.error("--next-action requires --item or --task-project with --source and --outcome")
+        for field, value in action_fields.items():
+            if not value.strip() or value.splitlines() != [value]:
+                parser.error("--" + field.replace("_", "-") + " requires one nonempty line")
+        if args.item is not None and (args.item.startswith("-") or len(args.item.split()) != 1):
+            parser.error("--item requires one Linear item reference")
+        if args.task_project is not None:
+            try:
+                args.task_project = str(UUID(args.task_project))
+            except ValueError:
+                parser.error("--task-project requires a Linear project UUID")
     home = watch.home_root(Path.cwd())
-    if not given and not args.check_state and args.archived is None:
+    if not given and not action_fields and not args.check_state and args.archived is None:
         try:
             return home_check(home, handoff_path(home, args.handoff))
         except Refusal as refusal:
@@ -497,7 +688,8 @@ def main():
             return 2
         print("progress-log: indexed " + line, end="")
         return 0
-    missing = [option for option in options if option not in given]
+    required = options[:3] if action_fields else options
+    missing = [option for option in required if option not in given]
     if missing:
         parser.error("the following arguments are required: " + ", ".join(missing))
     try:
@@ -505,11 +697,16 @@ def main():
             if not values[field].strip():
                 raise Refusal("field-empty", option)
         for field, value in values.items():
-            if TYPED_TIME.match(value):
+            if value is not None and TYPED_TIME.match(value):
                 raise Refusal("time-typed", field.lower().replace(" ", "-"))
-        identity, stamp = append(handoff_path(home, args.handoff), values)
+        if action_fields:
+            identity, stamp = append(handoff_path(home, args.handoff), values, home=home, action=args)
+        else:
+            identity, stamp = append(handoff_path(home, args.handoff), values)
     except Refusal as refusal:
-        print("progress-log: %s=%s %s" % (refusal.args[0], refusal.args[1], FIX), file=sys.stderr)
+        key, detail = refusal.args
+        print("progress-log: %s=%s %s" % (key, detail, FIX_TASKS if key.startswith("tracker-") else FIX),
+              file=sys.stderr)
         return 2
     print("progress-log: recorded id=%s at=%s" % (identity, stamp))
     return 0
