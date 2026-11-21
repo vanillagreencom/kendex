@@ -446,9 +446,7 @@ pub struct ClosingMail {
 
 /// The mail a close's observation carries ([`ClosingMail`]) said as the
 /// duty says a lane's drain, and the lane's cursor moved past it, so no
-/// later read says it again. A close asked again carries the mail its
-/// lane's park recorded again: mail whose count and first id the cursor
-/// already names was said. An observation with no `mail` says nothing.
+/// later read says it again. An observation with no `mail` says nothing.
 pub fn closing_mail(
     item: &str,
     observation: Option<&serde_json::Value>,
@@ -463,9 +461,6 @@ pub fn closing_mail(
         return;
     };
     let cursor = MailCursor::parse(baseline.get(LANE_MAIL, item));
-    if cursor.announced == mail.count && cursor.first == mail.first {
-        return;
-    }
     let mut turn = Turn::default();
     turn.say_lane(
         baseline,
@@ -1140,9 +1135,8 @@ mod tests {
 
     /// A close's observation says its lane's last mail as a drain says it,
     /// each line with its payload, and moves the lane's cursor to the count
-    /// the close read; the same mail on a later close's observation, as a
-    /// park's mark carries it again, is said once; an observation with no
-    /// mail says nothing and moves nothing.
+    /// the close read; an observation with no mail says nothing and moves
+    /// nothing.
     #[test]
     fn a_closes_last_mail_is_said_as_a_drain_and_moves_the_lanes_cursor() {
         let observation = serde_json::json!({"host_close": "standing", "mail": {
@@ -1176,19 +1170,7 @@ mod tests {
                 value: "3 a-1".to_owned(),
             }]
         );
-        let mut said = Baseline::default();
-        for change in changes {
-            said.apply(change);
-        }
         let (mut events, mut changes) = (Vec::new(), Vec::new());
-        closing_mail(
-            "KEN-1",
-            Some(&observation),
-            &said,
-            &mut events,
-            &mut changes,
-        );
-        assert!(events.is_empty() && changes.is_empty(), "{events:?}");
         let none = serde_json::json!({"host_close": "kept=none"});
         closing_mail("KEN-1", Some(&none), &baseline, &mut events, &mut changes);
         closing_mail("KEN-1", None, &baseline, &mut events, &mut changes);

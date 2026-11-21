@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use crate::error::{Error, Result};
 use crate::ops::{
     self, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, Ended, NoLanding, OwedPark,
-    ParkLane, ParkMail, ParkWait, Report, Request, Terminal, boxes,
+    ParkLane, ParkWait, Report, Request, Terminal, boxes,
 };
 use crate::settings::Settings;
 use crate::state::{self, CloseKind, FleetState, Lane, LaneStatus};
@@ -573,27 +573,18 @@ impl Close<'_> {
     /// A record an earlier keep or a failed park left stopped: no pane, no
     /// harness; its asks are read only for an item its tracker holds open,
     /// and a sandbox its provider no longer lists has none to read. A park
-    /// judged in full records the lane's last mail on its owed mark before
-    /// the sandbox stop. A park the record already owes reads its sandbox
-    /// for nothing: its mailbox was read when the mark was written, the mail
-    /// is the mark's, and no session has run since to write to it. A mark
-    /// that holds the box unread is read again, its sandbox standing.
+    /// the record already owes reads its sandbox for nothing: its mailbox
+    /// was read when the mark was written, and no session has run since to
+    /// add an ask.
     fn stopped(self) -> Result<Closed> {
         if let Some(wait) = self.park() {
             let owed = self.owed(wait);
             if owed.is_none() {
                 self.refuse_ask()?;
             }
-            let mut judged = self.park_judge(wait, owed.as_ref().map(|o| o.head.clone()))?;
-            match owed.map(|mark| mark.mail) {
-                Some(mail) if mail != Some(ParkMail::UNREAD) => judged.mail = mail,
-                _ => {
-                    let unread = self.park_mail(&mut judged);
-                    self.owe_park(&judged)?;
-                    if let Some(refusal) = unread {
-                        return Err(refusal);
-                    }
-                }
+            let judged = self.park_judge(wait, owed.clone())?;
+            if owed.is_none() {
+                self.owe_park(&judged)?;
             }
             return self.park_sandbox(&judged, Vec::new());
         }
@@ -680,24 +671,16 @@ impl Close<'_> {
         }
         let mut notes = Vec::new();
         if let Some(wait) = self.park() {
-            let mut park = self.park_judge(wait, None)?;
+            let park = self.park_judge(wait, None)?;
             if !matches!(judged, LaneState::Exited) || wait.hold {
                 self.refuse_ask()?;
             }
             if !matches!(judged, LaneState::Exited) {
                 self.host_stop(&mut notes)?;
             }
-            // Read once the harness can write no more, and written with the
-            // owed mark, so a sandbox stop that fails keeps it for the retry;
-            // a box that did not read refuses once the mark holds it unread,
-            // the sandbox standing for the retry to read it.
-            let unread = self.park_mail(&mut park);
             let closed = self.close_on(Ground::Keep(Some(park.owed_mark())))?;
             if closed.word != Word::Stopped {
                 return Ok(closed);
-            }
-            if let Some(refusal) = unread {
-                return Err(refusal);
             }
             return self.park_sandbox(&park, notes);
         }
@@ -1111,28 +1094,6 @@ impl Close<'_> {
             .map_err(|unread| self.unread(unread))
     }
 
-    /// The lane's last mail past the watch's cursor
-    /// ([`lane_operation::last_mail`]) on `park`, for its owed mark: a box
-    /// that did not read is `unread` there, and its refusal is returned for
-    /// the park to answer once the mark is written.
-    fn park_mail(&self, park: &mut ParkLane) -> Option<Error> {
-        match lane_operation::last_mail(
-            &self.settings.lane_mail_cli,
-            self.scripts,
-            self.path,
-            &self.lane,
-        ) {
-            Ok(mail) => {
-                park.mail = mail.map(|mail| ParkMail::Read(Box::new(mail)));
-                None
-            }
-            Err(unread) => {
-                park.mail = Some(ParkMail::UNREAD);
-                Some(self.unread(unread))
-            }
-        }
-    }
-
     /// The refusal of a box that did not read: `host-busy` with its step,
     /// which the caller asks again, else `mail-read-failed` with the cause.
     /// A sandbox gone is the caller's to pass where it can; one that cannot
@@ -1542,7 +1503,6 @@ impl Close<'_> {
             ask: wait.ask.clone(),
             reservation: None,
             owed: false,
-            mail: None,
         })
     }
 
@@ -1612,18 +1572,18 @@ impl Close<'_> {
         Ok(())
     }
 
-    /// The mark of the park this record owes for `wait`, the one reading
-    /// that says a park is owed: the record's mark asks the same wait, its
-    /// dependency repository in the lower case the judge records. A mark
-    /// carrying no head owes nothing, and its park is judged in full.
-    fn owed(&self, wait: &ParkWait) -> Option<OwedPark> {
+    /// The judged head of the park this record owes for `wait`, the one
+    /// reading that says a park is owed: the record's mark asks the same
+    /// wait, its dependency repository in the lower case the judge records.
+    /// A mark carrying no head owes nothing, and its park is judged in full.
+    fn owed(&self, wait: &ParkWait) -> Option<String> {
         let mark = self.lane.extra.get(state::PARK_OWED)?;
         let mark: OwedPark = serde_json::from_value(mark.clone()).ok()?;
         let asked = ParkWait {
             until_repo: wait.until_repo.as_ref().map(|r| r.to_ascii_lowercase()),
             ..wait.clone()
         };
-        (mark.wait == asked).then_some(mark)
+        (mark.wait == asked).then_some(mark.head)
     }
 
     /// A stopped record's park, judged in full, recorded owed with its judged
@@ -1806,8 +1766,7 @@ impl Close<'_> {
     /// The sandbox stop and the record it earns, from a lane whose harness
     /// is gone and whose window is closed: the record reads stopped, so a
     /// stop that fails or answers without its line refuses with the record
-    /// stopped, and only the confirmed line records parked, with the lane's
-    /// last mail the park read on its answer.
+    /// stopped, and only the confirmed line records parked.
     fn park_sandbox(&self, park: &ParkLane, notes: Vec<String>) -> Result<Closed> {
         match hosted::stop_sandbox(self.scripts, self.host, self.item(), false) {
             Ok(()) => {}
@@ -1838,9 +1797,6 @@ impl Close<'_> {
                 .extra
                 .get("parked")
                 .map(|p| json!({"parked": p}));
-        }
-        if let Some(ParkMail::Read(mail)) = &park.mail {
-            closed.observation.get_or_insert_with(|| json!({}))["mail"] = json!(mail);
         }
         Ok(closed)
     }
