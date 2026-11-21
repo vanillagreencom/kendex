@@ -1418,16 +1418,6 @@ struct GithubLabel {
     name: String,
 }
 
-/// The first non-empty stderr line, the cause a failed call names.
-fn first_line(stderr: &str) -> String {
-    stderr
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .map(str::trim)
-        .unwrap_or("")
-        .to_owned()
-}
-
 /// Run `cli` with `args` through the one runner, answering its stdout; a
 /// run that could not start or exited nonzero is the failure's cause.
 #[allow(
@@ -1446,7 +1436,7 @@ fn read_stdout(
         return Err(format!(
             "{read} {}: {}",
             output.status,
-            first_line(&host::stderr_text(&output))
+            crate::provider::cause_line(&host::stderr_text(&output))
         ));
     }
     Ok(output.stdout)
@@ -1508,7 +1498,7 @@ pub(super) fn read_item(
                     return Err(format!(
                         "{read} {}: {}",
                         failed.status,
-                        first_line(&failed.stderr)
+                        crate::provider::cause_line(&failed.stderr)
                     ));
                 }
             };
@@ -1609,7 +1599,7 @@ fn read_checkout(clis: &Clis, dir: &Path) -> std::result::Result<Option<Reposito
         return Err(format!(
             "common-dir {}: {}",
             output.status,
-            first_line(&host::stderr_text(&output))
+            crate::provider::cause_line(&host::stderr_text(&output))
         ));
     }
     let common = host::stdout_text(&output);

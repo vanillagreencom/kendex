@@ -37,7 +37,7 @@ A host declares its kind in one capability line: tab-separated `key=value` field
 
 ## Provider protocol
 
-Exit `0` is the verb done. Exit `2` is an absent verb, and for `cat` a missing file. Any other non-zero status is a failed verb, its cause on stderr. The runtime reads a status of `128` or more, or no answer within its bound, as a call that may have acted. A launch that meets one on `create`, `wait` or `start` stays held at that step until a close supersedes it.
+Exit `0` is the verb done. Exit `2` is an absent verb, and for `cat` a missing file. Any other non-zero status is a failed verb, its cause on stderr. A failed `capabilities`, `create`, `wait`, `start`, `cat`, `touch`, `put`, `status`, `capture`, `send`, `list` or `close` records one stderr line as its cause: the last line carrying a `fix=` field, else the first non-blank line, else `stderr=empty`. Two failures record no stderr line: a `create` that exits `75` without `state=preparing` records `item-owned exit=75`, and a `close` that exits `3` records the path its `close-refused path=` line names, `unknown` without one. Print any notice before a `fix=` refusal; a refusal without `fix=` that follows other stderr output is not recorded. The runtime reads a status of `128` or more, or no answer within its bound, as a call that may have acted. A launch that meets one on `create`, `wait` or `start` stays held at that step until a close supersedes it.
 
 | Verb | Arguments | Answer |
 |---|---|---|
@@ -62,7 +62,7 @@ Exit `0` is the verb done. Exit `2` is an absent verb, and for `cat` a missing f
 
 A provider puts no bytes of a file it carries, a credential among them, in an argument list or a diagnostic. The bytes travel on stdin.
 
-A provider that confines transfers refuses paths outside its development root before attempting the transfer, including a probe of `/`. It exits `1` with `cat-path-outside-root` or `put-path-outside-root` as the first diagnostic key on stderr, optionally after a provider name and `: `. Providers that support home-relative paths can serve the default account files in § Launch on a provider.
+A provider that confines transfers refuses paths outside its development root before attempting the transfer, including a probe of `/`. It exits `1` with `cat-path-outside-root` or `put-path-outside-root` as the first diagnostic key of its cause line, optionally after a provider name and `: `. Providers that support home-relative paths can serve the default account files in § Launch on a provider.
 
 A provider refuses `cat`, `put` and `append` on a path under `tmp/lane-mail/` before reading or writing, with a status other than `2`, when its `tmp/lane-mail` or item directory is a symlink or not a directory, or the file is a symlink or not a regular file.
 

@@ -140,12 +140,32 @@ impl fmt::Display for Failure {
                 "host-busy count={count} cap={cap} verb={verb} item={item}"
             ),
             Failure::Exit { status, stderr } => {
-                let line = stderr.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-                write!(f, "capabilities exit={status} {line}")?;
-                Ok(())
+                write!(f, "capabilities exit={status} {}", cause_line(stderr))
             }
         }
     }
+}
+
+/// The line of a failed call's stderr that names its cause: the last line
+/// carrying a `fix=` field, else the first non-blank line, else
+/// `stderr=empty`. The rule reads two shapes: notices printed before a
+/// `fix=` refusal (Fleet's provider), or a keyed refusal leading its own
+/// stderr, then prose or a trailing notice (git or the linear CLI). A
+/// refusal that carries no `fix=` and is not the first line goes
+/// unrecorded: that call records its first line.
+pub(crate) fn cause_line(stderr: &str) -> &str {
+    let mut lines = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    lines
+        .clone()
+        .rfind(|line| {
+            line.split_ascii_whitespace()
+                .any(|field| field.starts_with("fix="))
+        })
+        .or_else(|| lines.next())
+        .unwrap_or("stderr=empty")
 }
 
 fn refused(key: &'static str, fields: Vec<(&'static str, String)>, exit: i32) -> Failure {

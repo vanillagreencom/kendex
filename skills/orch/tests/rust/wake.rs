@@ -2311,7 +2311,7 @@ fn a_pane_verb_send_that_failed_is_final_and_never_sent_again() {
         rendered(&produced),
         vec![
             "EVENT idle-unread KEN-1",
-            "EVENT wake-unconfirmed KEN-1 cause=send-failed exit=1"
+            "EVENT wake-unconfirmed KEN-1 cause=send-failed exit=1 stderr=empty"
         ]
     );
     let asked = calls(&log);

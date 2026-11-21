@@ -8300,9 +8300,69 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
                         .is_some_and(|c| c.starts_with("host-start-failed ")),
                     "{case}: {report}"
                 );
+                if case == "refused" {
+                    assert_eq!(
+                        report["intent"]["observation"]["cause"],
+                        "host-start-failed start exit=1 stderr=empty",
+                        "{case}: a start refused with no stderr says so"
+                    );
+                }
             }
         }
         effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    }
+}
+
+/// A failed host call's cause is the provider's refusal: the last stderr
+/// line carrying `fix=`, else its first line, never a notice printed before
+/// a `fix=` refusal nor one printed after a keyed refusal, and
+/// `stderr=empty` where the provider printed nothing.
+#[test]
+fn a_failed_host_create_records_the_provider_s_refusal_line() {
+    let notices = "lane-host-fixture: gh-token-rotated lane=lane-ken-h source=app\n\
+                   lane-host-fixture: credit-low balance=3\n";
+    let refusal = "lane-host-fixture: create-preparation-failed item=KEN-H fix=retry-create";
+    let keyed = "lane-host-ssh: marker-script-missing path=/srv/clone/.lane-marker";
+    for (case, stderr, line) in [
+        ("refusal last", format!("{notices}{refusal}\n"), refusal),
+        (
+            "refusal before a trailing notice",
+            format!("{notices}{refusal}\nlane-host-fixture: cleanup-done\n"),
+            refusal,
+        ),
+        (
+            "no fix= line",
+            notices.to_owned(),
+            "lane-host-fixture: gh-token-rotated lane=lane-ken-h source=app",
+        ),
+        (
+            "keyed refusal leading its stderr, prose, trailing notice",
+            format!(
+                "{keyed}\nThe marker script is not on the host.\n\
+                 lane-host-ssh: remote-failed target=lane@host exit=1\n"
+            ),
+            keyed,
+        ),
+        ("stderr empty", String::new(), "stderr=empty"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let world = HostedLaunch::new(&server, dir.path(), record);
+        let account = world.runner.state_dir().display().to_string();
+        let path = world.scripts.join("lane-host.json");
+        let mut answers: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] =
+            json!({"exit": 1, "stderr": stderr});
+        std::fs::write(&path, serde_json::to_string(&answers).unwrap()).unwrap();
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        assert_eq!(
+            report["intent"]["observation"]["cause"],
+            format!("host-create-failed create exit=1 {line}"),
+            "{case}: {report}"
+        );
     }
 }
 

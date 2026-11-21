@@ -355,10 +355,6 @@ fn exit_code(out: &std::process::Output) -> i32 {
     out.status.code().unwrap_or(-1)
 }
 
-fn first_line(text: &str) -> &str {
-    text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")
-}
-
 /// One provider read on `host` under [`READ_BOUND`]; `Err` is a call the
 /// dispatch refused (`host-busy` among them), or one that could not run or
 /// answer within the bound. The scripts directory the hosted readings carry
@@ -368,15 +364,13 @@ fn lane_host(_scripts: &Path, host: &str, args: &[&str]) -> Result<std::process:
 }
 
 /// The cause word of a call that answered non-zero: the verb, the status
-/// and the first line of its stderr.
+/// and its refusal line ([`crate::provider::cause_line`]).
 fn cause_of(verb: &str, out: &std::process::Output) -> String {
     format!(
         "{verb} exit={} {}",
         exit_code(out),
-        first_line(&host::stderr_text(out))
+        crate::provider::cause_line(&host::stderr_text(out))
     )
-    .trim_end()
-    .to_owned()
 }
 
 /// The capability line `host` declares, parsed, or the cause.
@@ -429,7 +423,7 @@ pub(crate) fn development_root_refusal(
         format!("host-path-probe-failed path={directory} host={host} cause={cause}")
     })?;
     let stderr = host::stderr_text(&out);
-    let line = first_line(&stderr);
+    let line = crate::provider::cause_line(&stderr);
     let detail = line.split_once(": ").map_or(line, |(_, detail)| detail);
     Ok((exit_code(&out) == 1
         && detail.split_ascii_whitespace().next() == Some("cat-path-outside-root"))
@@ -664,15 +658,11 @@ pub fn send_text(
     if out.status.success() {
         return Ok(());
     }
-    Err(Asked::Failed(
-        format!(
-            "send-failed exit={} {}",
-            exit_code(&out),
-            first_line(&host::stderr_text(&out))
-        )
-        .trim_end()
-        .to_owned(),
-    ))
+    Err(Asked::Failed(format!(
+        "send-failed exit={} {}",
+        exit_code(&out),
+        crate::provider::cause_line(&host::stderr_text(&out))
+    )))
 }
 
 /// What the provider's close answered: the archive line its close printed
@@ -752,8 +742,8 @@ pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Resu
 
 /// `start --item ITEM`, confirmed by `sandbox-started item=ITEM`,
 /// which a provider answers for a sandbox already up as for a stopped one.
-/// A refusal is `Asked::Failed` with `exit=N`, `cause=answer-unparsed` or
-/// [`BUSY`].
+/// A refusal is `Asked::Failed` with its [`cause_of`],
+/// `cause=answer-unparsed` or [`BUSY`].
 pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
     let out = call(
         scripts,
@@ -763,9 +753,8 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
         PREPARE_BOUND,
         "start",
     )?;
-    match exit_code(&out) {
-        0 => {}
-        code => return Err(Asked::Failed(format!("exit={code}"))),
+    if !out.status.success() {
+        return Err(Asked::Failed(cause_of("start", &out)));
     }
     if host::stdout_text(&out) == format!("sandbox-started item={item}") {
         Ok(())
@@ -1135,13 +1124,13 @@ fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> Closed {
 fn ended(out: &std::process::Output) -> Closed {
     let Ok(reply) = serde_json::from_slice::<Value>(&out.stdout) else {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let line = first_line(&stderr);
+        let line = crate::provider::cause_line(&stderr);
         return match out.status.code() {
             Some(rc @ (1 | 2)) => Closed::Failed {
-                cause: format!("exit={rc} {line}").trim_end().to_owned(),
+                cause: format!("exit={rc} {line}"),
             },
             Some(_) | None => Closed::Unanswered {
-                cause: format!("{} {line}", out.status).trim_end().to_owned(),
+                cause: format!("{} {line}", out.status),
             },
         };
     };
@@ -2629,7 +2618,7 @@ mod tests {
                 9,
                 "",
                 Closed::Unanswered {
-                    cause: "signal: 9 (SIGKILL)".to_owned(),
+                    cause: "signal: 9 (SIGKILL) stderr=empty".to_owned(),
                 },
             ),
         ];
