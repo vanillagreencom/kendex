@@ -296,7 +296,10 @@ def source_rows(source):
         for ask in mailbox["asks"]:
             link = mailbox["links"].get(ask["id"])
             if link is None:
-                raise Unavailable("The original owner-ask conversation has no confirmed link.")
+                # Quoting keeps a path's own bytes from breaking the one
+                # printable sentence the consumer shows.
+                raise Unavailable("Owner ask %r in the mailbox at %r on destination %r has no confirmed "
+                                  "tracker link; post it to the tracker or close it." % (ask["id"], root, destination))
             identity = ["mailbox", destination, root, ask["id"]]
             add(identity, "fleet-approval" if ask.get("draft") else "jarvis-ask",
                 ask["text"], {"id": ask["from"], "name": ask["from"]}, ask["at"],

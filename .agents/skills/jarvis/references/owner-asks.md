@@ -19,7 +19,7 @@ Every read runs the main's own package code with the main home's settings, as th
 
 The main home's mailbox `owner-tracker-settings` command supplies the existing posting configuration judgement. An unconfigured tracker adds no tracker requests. A configured tracker uses Linear `comments owner-requests` with that judgement's email and label. This reader uses the existing assigned-issue filters and exact-email resolver. Each comment mentioning the resolved owner's canonical profile URL is a separate request. Its immutable comment identity, author, creation time, parent and server URL remain the original request metadata. No owner, team, account, profile URL or view name is a package default.
 
-A row's link is the request comment's server URL. A mailbox ask's link is the URL of its exact tracker mirror. A mailbox ask with no tracker mirror has no confirmed link, and it makes the list unavailable. An unread source also makes the list unavailable.
+A row's link is the request comment's server URL. A mailbox ask's link is the URL of its exact tracker mirror. A mailbox ask with no tracker mirror has no confirmed link, and it makes the list unavailable. The cause names the ask, its mailbox root and destination, and the fix: post the ask to the tracker or close it. An unread source also makes the list unavailable.
 
 Cross-source suppression requires confirmed tracker posting and equality of workspace, issue UUID and request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A mailbox ask's exact tracker mirror stays suppressed while the ask's tracker-posting record remains in the mailbox events, open or closed.
 
