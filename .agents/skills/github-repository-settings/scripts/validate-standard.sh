@@ -17,11 +17,14 @@
 # a match. Human explanation is not parsed. Full contract: print_usage or --help.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+# Resolve the skills directory before the kernel follows a linked package:
+# a sibling delivered as a copy sits beside the link, not beside its target.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" &&
+  SKILLS_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd -L)" || {
   printf 'review-gate-error=script-directory value=%q\n' "${BASH_SOURCE[0]}" >&2
   exit 2
 }
-REVIEW_LIB="$SCRIPT_DIR/../../review-gate/scripts/lib"
+REVIEW_LIB="$SKILLS_DIR/review-gate/scripts/lib"
 if [ ! -r "$REVIEW_LIB/diagnostics.sh" ] || ! . "$REVIEW_LIB/diagnostics.sh" 2>/dev/null; then
   printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$REVIEW_LIB/diagnostics.sh" 'Could not load the diagnostics library.' >&2
   exit 2
