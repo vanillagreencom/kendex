@@ -570,19 +570,24 @@ impl Server {
         // a known server through that server's own program only where it is
         // named `tmux`: this server runs a copy named otherwise, so every
         // call reaches it through `PATH`. Copied by a child, so no write descriptor of this process
-        // is inherited by a sibling test's child when the copy is run.
+        // is inherited by a sibling test's child when the copy is run. A
+        // second server in one directory runs the copy already there: `cp`
+        // keeps the source's mode, and a tmux installed without its owner's
+        // write bit leaves a copy `cp` cannot open again.
         let copy = dir.join("server-bin/multiplexer");
-        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
-        let copied = Command::new("cp")
-            .arg(which_tmux())
-            .arg(&copy)
-            .output()
-            .expect("cp");
-        assert!(
-            copied.status.success(),
-            "the server's program: {}",
-            stderr(&copied)
-        );
+        if !copy.exists() {
+            std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+            let copied = Command::new("cp")
+                .arg(which_tmux())
+                .arg(&copy)
+                .output()
+                .expect("cp");
+            assert!(
+                copied.status.success(),
+                "the server's program: {}",
+                stderr(&copied)
+            );
+        }
         // The server's environment is every pane's: selected, never the
         // test process's own.
         let mut command = Command::new(&copy);
