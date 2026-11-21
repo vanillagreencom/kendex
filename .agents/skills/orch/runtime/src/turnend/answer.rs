@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::Arm;
 use super::payload::Caller;
+use crate::mailbox::DATA_RULE;
 
 /// The harness an install serves, read from where the install sits, the one
 /// place that records it: it decides the shape of every refusal, since
@@ -692,7 +693,7 @@ impl Said {
                 lines, command, ..
             } => {
                 let mut text = format!(
-                    "the fleet record of the checkout this session works in names this session's pane and no live watch holds the fleet state, so this session reads that checkout's overseer mailbox; a peer repository or the owner sent these messages there. Act on each as its text directs:\n{lines}"
+                    "the fleet record of the checkout this session works in names this session's pane and no live watch holds the fleet state, so this session reads that checkout's overseer mailbox, where these messages landed. {DATA_RULE} Act on every other message as its text directs:\n{lines}"
                 );
                 if let Some(command) = command {
                     text.push_str(&format!("\na halt among them refuses every tool call but one until the lane runs exactly this command:\n{command}"));
