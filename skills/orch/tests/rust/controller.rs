@@ -9014,6 +9014,71 @@ fn a_fast_burn_reaches_the_rate_mark_at_the_minutes_the_sample_projects() {
     assert_eq!(off["key"], json!("below-mark"), "{off}");
 }
 
+/// A Copilot pool the endpoint answers unlimited reads 0 percent used, so
+/// a sample pair with an unlimited side measures the switch, not a spend:
+/// unlimited then 85 percent a minute later would project a wall within
+/// two minutes. The controller's rate mark on such a pair, either way
+/// round, is `mark-unmeasured kind=rate`; two counted samples the same
+/// minute apart still reach it.
+#[test]
+fn a_copilot_sample_pair_with_an_unlimited_side_leaves_the_rate_mark_unmeasured() {
+    let reset = agent_runtime::clock::iso_utc(now_secs() + 20 * 86_400)[..10].to_owned();
+    let counted = |used: u64| {
+        json!({"copilot_plan": "business", "quota_reset_date_utc": reset,
+               "quota_snapshots": {"premium_interactions":
+                   {"unlimited": false, "entitlement": 1_000_000, "remaining": 1_000_000 - used * 10_000}}})
+    };
+    let unlimited = json!({"copilot_plan": "business", "quota_reset_date_utc": reset,
+        "quota_snapshots": {"premium_interactions": {"unlimited": true, "entitlement": 1_000_000}}});
+    let mut world = MarksWorld::new();
+    world.plant(
+        None,
+        &[
+            json!({"alias": "ecopilot", "harness": "copilot", "config_dir": "/home/me/.ecopilot",
+                 "measured_through": "local", "status": "ok", "plan": "business",
+                 "monthly_pct": 85, "resets": {"monthly": reset}}),
+        ],
+    );
+    world.write_fleet_on(json!("copilot"), &world.dir("ecopilot"));
+    let record = std::fs::read_dir(world.path().join("usage"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("copilot-")
+        })
+        .unwrap();
+    let marks_on = |now: &Value, prior: &Value| {
+        let mut held: Value =
+            serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+        let at = held["fetched_at"].as_u64().unwrap();
+        held["usage"] = now.clone();
+        held["prior"] = json!({"fetched_at": at - 60, "usage": prior});
+        std::fs::write(&record, held.to_string()).unwrap();
+        world.marks(
+            &["--context", "100000:1000000"],
+            &[("ORCH_OVERSEER_WALL_MINUTES", "20")],
+        )
+    };
+    let rows: [(&str, &Value, &Value); 2] = [
+        ("unlimited, then 85 percent", &counted(85), &unlimited),
+        ("85 percent, then unlimited", &unlimited, &counted(85)),
+    ];
+    for (name, now, prior) in rows {
+        let answer = marks_on(now, prior);
+        assert_eq!(answer["key"], json!("mark-unmeasured"), "{name}: {answer}");
+        assert_eq!(answer["kind"], json!("rate"), "{name}: {answer}");
+        assert_eq!(answer["reason"], json!("unlimited"), "{name}: {answer}");
+    }
+    let answer = marks_on(&counted(85), &counted(70));
+    assert_eq!(answer["key"], json!("mark-reached"), "{answer}");
+    assert_eq!(answer["kind"], json!("rate"), "{answer}");
+    assert_eq!(answer["value"], json!("1"), "{answer}");
+}
+
 /// A Codex controller whose plan windows are spent at the trigger and
 /// whose credits hold a balance short of the launch floor reaches the
 /// headroom mark `reserve_only`: the watch keeps it working on its reserve
