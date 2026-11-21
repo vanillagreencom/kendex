@@ -47,6 +47,7 @@ use crate::verify::wire::{Branch, Nullable, Pull};
 use super::Produced;
 use super::baseline::Change;
 use super::events::Event;
+use super::github::{FinishedMerge, finished_merge};
 use super::lanes::{
     Counters, HandoffReading, Pass, STATE_UNREAD, clear, counters_of, doc_of, fail, handoff_places,
     lane_name, set, standing_record, step_of, validation_runs_of, watch_state_dir,
@@ -92,9 +93,6 @@ pub const PARK_OWED_ROW: &str = "park-owed";
 /// `.git` named on the last pass that read it, kept once the worktree is
 /// gone, since the merge's saved state stays in that clone.
 pub const CLONE_ROW: &str = "clone-root";
-/// The row the GitHub duty writes for an item's merged pull requests, which
-/// admits the finished close.
-const MERGED_ROW: &str = super::github::MERGED_ROW;
 
 /// The reads the hosted arms take beyond the scripts directory, injected
 /// so a row plants them: `gh` as the GitHub duty resolves it, the account
@@ -1047,7 +1045,7 @@ pub enum Closed {
 /// two passes keeps its sandbox; a stopped record's owed park is that park
 /// again, its wait alone, as an operator asks it: the verb takes the judged
 /// head from the record; a finished lane's delivery is the merge the GitHub
-/// duty read last for its item (`merged`, `REPO#N ...`).
+/// duty read for this launch.
 fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
     let mut request = serde_json::json!({"op": "close-lane", "item": lane.item});
     if reason == KEEP_REASON {
@@ -1062,14 +1060,8 @@ fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
         }
         request["mode"] = serde_json::json!({ "park": wait });
     }
-    let merged = pass
-        .baseline
-        .get(MERGED_ROW, &lane.item)
-        .and_then(|row| row.split(' ').next_back())
-        .and_then(|key| key.rsplit_once('#'))
-        .and_then(|(repo, number)| Some((repo, number.parse::<u64>().ok()?)));
     if reason == "finished"
-        && let Some((repo, pr)) = merged
+        && let FinishedMerge::Eligible { repo, pr } = finished_merge(pass.baseline, lane)
     {
         request["delivery"] = serde_json::json!({"pr": {"pr": pr, "repo": repo}});
     }
@@ -2221,37 +2213,34 @@ fn clone_of(gitfile: &str) -> Option<PathBuf> {
 }
 
 /// What a hosted lane's work leaves on its host, the proof a merged lane is
-/// done: its worktree's `.git`, then the item's live state record
-/// `<clone>/tmp/items/<ITEM>/workflow-state-<ITEM>.json`, each through `cat`, the clone the
-/// one that `.git` names. `Gone` is the close-out done, the worktree gone or
-/// the record removed; `Live` the record standing, a close-out still running
-/// or a lane resumed; `Unreadable` a read that failed, the provider's cause
-/// kept, or a `.git` naming no linked worktree's clone. The host's state
-/// directory is read as the clone's `tmp/`, the default: a state directory
-/// set elsewhere on the host is not seen from the control machine, and its
-/// item reads closed out once the worktree's `.git` stands without a record
-/// there.
+/// done. The configured state directory and the worktree's `tmp` are the
+/// same places the handoff reads. A record in either means the close-out
+/// may still be running. Absence must be confirmed in both places.
 pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
     let Some(root) = root_of(lane) else {
         return Answer::Gone;
     };
-    let host = host_of(lane);
-    let gitfile = match fetch(scripts, host, &lane.item, &format!("{root}/.git")) {
-        Answer::Live(gitfile) => gitfile,
-        Answer::Gone => return Answer::Gone,
-        Answer::Unreadable { cause } => return Answer::Unreadable { cause },
+    let dir = match configured_state_dir(scripts, lane, root) {
+        Ok(Some((dir, _))) => dir,
+        Ok(None) => Path::new(root).join("tmp"),
+        Err(cause) => return Answer::Unreadable { cause },
     };
-    let Some(clone) = clone_of(&gitfile) else {
-        return Answer::Unreadable {
-            cause: format!("gitfile-unread path={root}/.git"),
-        };
-    };
-    let record = state::item_path(&clone.join("tmp"), &lane.item);
-    match fetch(scripts, host, &lane.item, &record.display().to_string()) {
-        Answer::Live(_) => Answer::Live(()),
-        Answer::Gone => Answer::Gone,
-        Answer::Unreadable { cause } => Answer::Unreadable { cause },
+    let mut unread = None;
+    for place in handoff_places(&dir, &lane.item, Some(Path::new(root))) {
+        match fetch(
+            scripts,
+            host_of(lane),
+            &lane.item,
+            &place.display().to_string(),
+        ) {
+            Answer::Live(_) => return Answer::Live(()),
+            Answer::Gone => {}
+            Answer::Unreadable { cause } => {
+                unread.get_or_insert(cause);
+            }
+        }
     }
+    unread.map_or(Answer::Gone, |cause| Answer::Unreadable { cause })
 }
 
 /// [`record_left`] for a lane on this machine, read by the close verb and
@@ -2365,8 +2354,9 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// sandbox kept: the attempt ends and its record stops charging a slot,
 /// the sandbox standing for a relaunch; a host whose status read fails
 /// reads no exit and keeps the slot. Failed and deferred closes and
-/// unreadable prerequisites keep `close-pending` while the notification
-/// remains reported. An unanswered close keeps its marker because it
+/// unreadable prerequisites, including an undated merge for a dated
+/// attempt, keep `close-pending` while the notification remains reported.
+/// An unanswered close keeps its marker because it
 /// may have acted. `row` and `key` identify the notification.
 pub fn close_finished(
     lane: &Lane,
@@ -2377,14 +2367,16 @@ pub fn close_finished(
     out: &mut Produced,
 ) {
     let name = lane_name(lane);
+    let merge = finished_merge(pass.baseline, lane);
+    if matches!(merge, FinishedMerge::Undated) {
+        out.changes
+            .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+        return;
+    }
     let Ok(caps) = hosts.of(lane) else {
         return;
     };
-    let merged = pass
-        .baseline
-        .get(MERGED_ROW, &lane.item)
-        .is_some_and(|row| !row.is_empty());
-    let reason = if merged {
+    let reason = if matches!(merge, FinishedMerge::Eligible { .. }) {
         let left = if host_of(lane) == "local" {
             left_locally(pass.state_dir, lane)
         } else if caps.files == Files::Verb {
@@ -2409,6 +2401,9 @@ pub fn close_finished(
     } else if row == "lane-exited" && caps.status == Status::Verb {
         KEEP_REASON
     } else {
+        if pass.baseline.get(CLOSE_PENDING_ROW, &name).is_some() {
+            out.changes.push(clear(CLOSE_PENDING_ROW, &name));
+        }
         return;
     };
     let pending = format!("{row}|{key}");
@@ -2435,11 +2430,10 @@ pub fn close_finished(
 /// work left nothing behind, and closed through [`close_finished`] where it
 /// did, since the screen of a lane whose work is over proves nothing.
 pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut Produced) {
-    let merged = pass
-        .baseline
-        .get(MERGED_ROW, &lane.item)
-        .is_some_and(|row| !row.is_empty());
-    if !merged {
+    if !matches!(
+        finished_merge(pass.baseline, lane),
+        FinishedMerge::Eligible { .. }
+    ) {
         return;
     }
     let name = lane_name(lane);

@@ -26,7 +26,7 @@ use std::time::Duration;
 use agent_runtime::accounts::Roster;
 use agent_runtime::accounts::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
 use agent_runtime::accounts::wall::{self as account_wall, AccountWall};
-use agent_runtime::clock;
+use agent_runtime::clock::{self, Clock};
 use agent_runtime::controller::transition::{DeathCause, RequestTransfer};
 use agent_runtime::controller::views::{Caller, MarkKind};
 use agent_runtime::harness::Harness;
@@ -42,12 +42,12 @@ use orch_runtime::ops::wall::{self, RecordWallPauses};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::state::{self, FleetState, Record};
 use orch_runtime::watch::context;
-use orch_runtime::watch::hosted;
 use orch_runtime::watch::lanes::{self, Readers, Relaunch, WallRoute, WindowRow};
 use orch_runtime::watch::overseer::{
     self, ContextRead, Judges, MarkKey, Marks, Pick, Slot, Source, Verdict,
 };
 use orch_runtime::watch::{Baseline, Change, Event, Produced};
+use orch_runtime::watch::{github, hosted};
 use serde_json::{Value, json};
 use std::ffi::OsString;
 use support::*;
@@ -5377,6 +5377,150 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
     assert_eq!(closes(&fleet, "issue-1"), 1, "one ask per screen");
 }
 
+#[test]
+fn a_finished_hosted_close_uses_the_latest_eligible_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-1"]);
+    drop(host.lead("KEN-1", "claude"));
+    host.leave("KEN-1");
+    let (mut lane, _) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
+    lane["mail_root"] = json!(host.lane_root("KEN-1").display().to_string());
+    lane["session_since"] = json!("2026-09-20T11:00:00Z");
+    fleet.set_lanes(vec![lane]);
+    let mut earlier = pull_seven_timeline();
+    let pull = &mut earlier["body"]["data"]["repository"]["pullRequest"];
+    pull["number"] = json!(8);
+    pull["mergedAt"] = json!("2026-09-20T11:19:00Z");
+    world.plant_gh(json!({
+        "graphql number=7 cursor=": pull_seven_timeline(),
+        "graphql number=8 cursor=": earlier,
+    }));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    let latest = clock::epoch_secs("2026-09-20T11:20:00Z").unwrap();
+    let older = clock::epoch_secs("2026-09-20T11:19:00Z").unwrap();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-1".into(),
+        value: format!("o/r#7@{latest} o/r#8@{older}"),
+    });
+    assert_eq!(driver.pass(&fleet.read()).failed, None);
+    assert_eq!(driver.pass(&fleet.read()).failed, None);
+    let written = fleet.runner.fleet();
+    let written = &written["lanes"][0];
+    assert_eq!(written["status"], "done");
+    assert_eq!(written["cycle"]["pr"], 7);
+}
+
+#[test]
+fn a_merge_before_the_launch_leaves_a_working_hosted_lane_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window(
+        "gh-1",
+        dir.path(),
+        "printf '✻ Working… (esc to interrupt)\\n'; exec sleep 600",
+    );
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["issue-1"]);
+    let _lane = host.lead("issue-1", "claude");
+    host.leave("issue-1");
+    let root = host.lane_root("issue-1").display().to_string();
+    let mut lane = hosted_lane(dir.path(), "issue-1", "gh-1", &root);
+    lane["repo"] = json!("o/r");
+    lane["launch"] = json!({"pane": pane, "server": server.pid});
+    lane["launched_at"] = json!("2026-09-20T11:20:01Z");
+    fleet.set_lanes(vec![lane.clone()]);
+    let state = fleet.read();
+    let since = "2026-09-20T10:00:00Z";
+    world.plant_gh(json!({
+        "repos/o/r/actions/workflows?per_page=100&page=1": {"body": {"total_count": 0, "workflows": []}},
+        "repos/o/r/pulls?state=closed&head=o%3Aissue-1&per_page=100&page=1": {"body": [{
+            "number": 7, "state": "closed", "title": "work", "merged_at": "2026-09-20T11:20:00Z",
+            "body": "", "author_association": "NONE", "merge_commit_sha": null, "user": null,
+            "head": {"sha": "h2", "ref": "issue-1", "repo": {"full_name": "o/r", "owner": {"login": "o", "type": "User"}}},
+            "base": {"ref": "main", "sha": "b1"}
+        }]},
+        "search/issues?q=repo%3Ao%2Fr%20is%3Apr%20is%3Amerged%20%22issue-1%22%20in%3Atitle%2Cbody%20merged%3A%3E%3D2026-09-20T10%3A00%3A00Z&per_page=100&page=1": {"body": {"total_count": 0, "incomplete_results": false, "items": []}},
+        "graphql number=7 cursor=": pull_seven_timeline(),
+    }));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    let mut github = github::body(github::Context {
+        fleet: fleet.path(),
+        settings: driver.settings.clone(),
+        since: clock::epoch_secs(since),
+        since_iso: Some(since.to_owned()),
+        repos: Vec::new(),
+        gh: world.gh(),
+        pr_watch: PathBuf::new(),
+        shared: Default::default(),
+    });
+    let clock = FakeClock::new();
+    let read = github(&orch_runtime::watch::Tick {
+        duty: orch_runtime::schedule::Duty::GitHub,
+        now: clock.now(),
+        wall: driver.now,
+        baseline: &driver.baseline,
+        clock: &clock,
+    })
+    .unwrap();
+    assert!(event_lines(&read).contains(&"EVENT merged 7 issue-1 o/r".to_owned()));
+    apply(&mut driver.baseline, &read);
+
+    let observed = driver.pass(&state);
+    assert_eq!(observed.failed, None);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Running);
+    assert_eq!(closes(&fleet, "issue-1"), 0);
+
+    // A reused fleet row keeps the first launch and dates the new attempt.
+    lane["launched_at"] = json!("2026-09-20T11:00:00Z");
+    lane["session_since"] = json!("2026-09-20T11:30:00Z");
+    fleet.set_lanes(vec![lane.clone()]);
+    let observed = driver.pass(&fleet.read());
+    assert_eq!(observed.failed, None);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Running);
+    assert_eq!(closes(&fleet, "issue-1"), 0);
+
+    // A merge at the current attempt's timestamp can still finish it.
+    lane["session_since"] = json!("2026-09-20T11:20:00Z");
+    fleet.set_lanes(vec![lane]);
+    let observed = driver.pass(&fleet.read());
+    assert_eq!(observed.failed, None);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Done);
+    assert_eq!(closes(&fleet, "issue-1"), 1);
+}
+
+#[test]
+fn a_hosted_lanes_worktree_record_still_stands_for_the_finished_close() {
+    let dir = tempfile::tempdir().unwrap();
+    let scripts = provider_world(dir.path());
+    let root = "/remote/KEN-4";
+    let disk = scripts.join("disk");
+    on_disk(
+        &disk,
+        "/remote/KEN-4/.git",
+        "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
+    );
+    on_disk(
+        &disk,
+        "/remote/KEN-4/kendex.settings.toml",
+        "[env]\nORCH_STATE_DIR = \"tmp\"\n",
+    );
+    on_disk(
+        &disk,
+        "/remote/KEN-4/tmp/items/KEN-4/workflow-state-KEN-4.json",
+        "{}",
+    );
+    let lane = serde_json::from_value(hosted_lane(dir.path(), "KEN-4", "gh-4", root)).unwrap();
+    assert_eq!(
+        hosted::record_left(&scripts, &lane),
+        hosted::Answer::Live(())
+    );
+}
+
 /// The scripts directory a pass runs the real close verb from: `orch-runtime`
 /// a wrapper that starts this build's binary in `project` under a cleared
 /// environment, the `gh` fixture in `bin` first on its `PATH` with a fixture
@@ -5740,11 +5884,10 @@ fn pull_seven_timeline() -> Value {
     }}}}})
 }
 
-/// A finished close the tracker's standing quota hold deferred has its
-/// `lane-exited` line already reported, so it keeps `close-pending` as
-/// `lane-exited|<pane key>` and asks nothing; the next pass, the hold gone
-/// and its line still reported under that key, asks the real close verb
-/// and closes.
+/// While the GitHub duty has yet to date its old baseline row, the watch
+/// retains the close instead of ending the attempt with its sandbox kept.
+/// Once dated, a tracker hold still defers the finished close until the
+/// watch can retry on the already reported exit.
 #[test]
 fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_stands() {
     let dir = tempfile::tempdir().unwrap();
@@ -5756,10 +5899,12 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     host.leave("KEN-1");
     let (mut one, pane) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
     one["mail_root"] = json!(host.lane_root("KEN-1").display().to_string());
+    one["launched_at"] = json!("2026-09-20T11:00:00Z");
     fleet.set_lanes(vec![one]);
     let state = fleet.read();
     world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
     lane_driver!(server, fleet, readers, driver);
+    driver.now = clock::epoch_secs("2026-09-20T11:30:00Z").unwrap();
     driver.scripts = world.scripts.clone();
     driver.baseline.apply(Change::Set {
         kind: "merged".into(),
@@ -5768,13 +5913,8 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     });
     let first = driver.pass(&state);
     assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
-    let now = driver.now;
-    driver.baseline.apply(Change::Set {
-        kind: "tracker-quota".into(),
-        identity: "fleet".into(),
-        value: json!({"limit": "requests", "status": "future", "reset": clock::iso_utc(now + 7200), "reset_epoch": now + 7200}).to_string(),
-    });
     let second = driver.pass(&state);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Running);
     assert_eq!(event_lines(&second), vec!["EVENT lane-exited gh-1"]);
     assert_eq!(second.failed, None);
     let pane_key = format!("{} {pane}", server.pid);
@@ -5782,6 +5922,23 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
         driver.baseline.get("close-pending", "gh-1"),
         Some(format!("lane-exited|{pane_key}").as_str())
     );
+    assert_eq!(closes(&fleet, "KEN-1"), 0);
+
+    let at = clock::epoch_secs("2026-09-20T11:20:00Z").unwrap();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-1".into(),
+        value: format!("o/r#7@{at}"),
+    });
+    let now = driver.now;
+    driver.baseline.apply(Change::Set {
+        kind: "tracker-quota".into(),
+        identity: "fleet".into(),
+        value: json!({"limit": "requests", "status": "future", "reset": clock::iso_utc(now + 7200), "reset_epoch": now + 7200}).to_string(),
+    });
+    let held = driver.pass(&state);
+    assert!(event_lines(&held).is_empty(), "{:?}", lines(&held));
+    assert_eq!(held.failed, None);
     assert_eq!(closes(&fleet, "KEN-1"), 0, "a standing hold asks nothing");
     driver.baseline.apply(Change::Clear {
         kind: "tracker-quota".into(),
