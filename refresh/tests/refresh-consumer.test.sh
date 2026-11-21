@@ -3290,8 +3290,9 @@ RECORD_CONTROL
             KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" "$verb" --scope project --yes --leave)
         done
       fi
+      # The historical runner is committed, so it starts from a clean tree.
+      [ "$row" != before-control ] || cp "$TMP/unheld-runner" "$repo/refresh/refresh-consumer.sh"
       publish_real_fixture
-      [ "$row" != before-control ] || cp "$TMP/unheld-runner" "$runner"
       [ "$row" != existing ] || printf '1\n' >"$TMP/state/pr"
     fi
     for marker in refreshed push-refused arm-attempted armed queued merged arm-state.json disarm-attempted; do
@@ -3303,7 +3304,8 @@ RECORD_CONTROL
     unset REAL_LAND_TOKEN
     case "$row" in
       before-control)
-        if [ "$RC" -ne 0 ] && [ ! -s "$TMP/state/creates" ] &&
+        if [ "$RC" -ne 0 ] && [ "$(tail -n 1 "$TMP/state/kendex")" = 'verify --scope project' ] &&
+            [ ! -s "$TMP/state/creates" ] &&
             ! git --git-dir="$real_root/remote" show-ref --verify --quiet refs/heads/kendex/refresh; then
           ok 'control: the runner before the held route stops at verify with no pull request'
         else bad 'held control' "$OUT"; fi ;;
@@ -3326,17 +3328,18 @@ RECORD_CONTROL
             git --git-dir="$real_root/remote" cat-file -e "$head:kendex.toml" &&
             grep -qF -- '- hook `needer`: withheld: ' "$TMP/state/body" &&
             grep -qF "(\`kendex.toml\` line $pin_line: \`harnesses = [\"codex\"]\`)" "$TMP/state/body" &&
-            ! grep -qE '^pr merge 1 --repo acme/test --(auto|squash)|^git push main ' "$TMP/state/calls"; then
+            ! grep -qE '^pr merge 1 --repo acme/test --(auto|squash)|^git push main |^pr ready 1 --repo acme/test$' "$TMP/state/calls"; then
           case "$row" in
             new)
               if grep -qxF created "$TMP/state/creates" && grep -qF -- '-F draft=true --jq .number' "$TMP/state/calls" &&
                   ! grep -q '^pr merge ' "$TMP/state/calls"; then held=yes; fi ;;
             retained)
-              disarm_line="$(grep -nxF 'pr merge 1 --repo acme/test --disable-auto' "$TMP/state/calls" | cut -d: -f1 || true)"
-              ready_line="$(grep -n '^pr ready ' "$TMP/state/calls" | head -1 | cut -d: -f1 || true)"
+              # The pull request is already a draft, so the held run changes
+              # no draft state.
               if [ "$head" = "$retained_head" ] && ! grep -qxF 'git push' "$TMP/state/calls" &&
                   [ ! -s "$TMP/state/creates" ] && grep -qF 'api --method PATCH repos/acme/test/pulls/1 ' "$TMP/state/calls" &&
-                  [ -n "$disarm_line" ] && { [ -z "$ready_line" ] || [ "$disarm_line" -lt "$ready_line" ]; }; then held=yes; fi ;;
+                  grep -qxF 'pr merge 1 --repo acme/test --disable-auto' "$TMP/state/calls" &&
+                  ! grep -q '^pr ready ' "$TMP/state/calls"; then held=yes; fi ;;
             existing)
               if [ ! -s "$TMP/state/creates" ] && grep -qF 'api --method PATCH repos/acme/test/pulls/1 ' "$TMP/state/calls" &&
                   grep -qxF 'pr ready 1 --repo acme/test --undo' "$TMP/state/calls" &&
