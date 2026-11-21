@@ -304,6 +304,11 @@ pub struct Drain {
     pub root: PathBuf,
 }
 
+enum DrainLines {
+    Omitted,
+    Included,
+}
+
 /// What `events --box to-lane --after N` answered for the overseer's box:
 /// the header and every envelope past line N, each with its line.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -735,6 +740,34 @@ impl Mailbox {
         host: Option<&str>,
         snapshot: Option<&Path>,
     ) -> Result<Drained, Refusal> {
+        self.read_drain(lane, host, snapshot, DrainLines::Omitted)
+    }
+
+    /// Classified outbound mail and its logical positions from one cached read.
+    pub(crate) fn drain_with_lines(
+        &self,
+        lane: &Drain,
+        host: &str,
+        snapshot: &Path,
+    ) -> Result<BoxEvents, Refusal> {
+        let drained = self.read_drain(lane, Some(host), Some(snapshot), DrainLines::Included)?;
+        if let Some(envelope) = drained.envelopes.iter().find(|e| e.line.is_none()) {
+            return Err(reply("drain", "line", envelope.id()));
+        }
+        Ok(BoxEvents {
+            count: drained.count,
+            first: drained.first,
+            envelopes: drained.envelopes,
+        })
+    }
+
+    fn read_drain(
+        &self,
+        lane: &Drain,
+        host: Option<&str>,
+        snapshot: Option<&Path>,
+        lines: DrainLines,
+    ) -> Result<Drained, Refusal> {
         const VERB: &str = "drain";
         let after = lane.after.to_string();
         let root = lane.root.display().to_string();
@@ -748,6 +781,9 @@ impl Mailbox {
             "--receipts",
         ];
         let mut env: Vec<(&str, &std::ffi::OsStr)> = Vec::new();
+        if matches!(lines, DrainLines::Included) {
+            args.push("--with-lines");
+        }
         if let Some(host) = host {
             args.push("--host");
             env.push(("ORCH_LANE_HOST", std::ffi::OsStr::new(host)));
@@ -768,42 +804,17 @@ impl Mailbox {
     /// checkout `root`: the overseer's box read by logical line, no cursor
     /// touched.
     pub fn box_events(&self, root: &Path, after: u64) -> Result<BoxEvents, Refusal> {
+        const VERB: &str = "events";
         let after = after.to_string();
         let root = root.display().to_string();
-        self.read_box_events(
-            &[
-                "--item", "overseer", "--root", &root, "--box", "to-lane", "--after", &after,
-            ],
-            &[],
-        )
-    }
-
-    /// Read logical positions from the same snapshot the drain classifies.
-    pub(crate) fn outbox(
-        &self,
-        item: &str,
-        root: &str,
-        host: &str,
-        snapshot: &Path,
-    ) -> Result<BoxEvents, Refusal> {
-        let outbox = "to-overseer";
-        let args = ["--item", item, "--root", root, "--box", outbox, "--host"];
-        self.read_box_events(
-            &args,
-            &[
-                ("ORCH_LANE_HOST", host.as_ref()),
-                ("LANE_HOST_READ_DIR", snapshot.as_os_str()),
-            ],
-        )
-    }
-
-    fn read_box_events(
-        &self,
-        args: &[&str],
-        env: &[(&str, &std::ffi::OsStr)],
-    ) -> Result<BoxEvents, Refusal> {
-        const VERB: &str = "events";
-        let stdout = self.call_in(VERB, args, env, None)?.ok(VERB)?;
+        let stdout = self
+            .call(
+                VERB,
+                &[
+                    "--item", "overseer", "--root", &root, "--box", "to-lane", "--after", &after,
+                ],
+            )?
+            .ok(VERB)?;
         let mut lines = stdout.lines();
         let (count, first) = header(VERB, lines.next().ok_or_else(|| reply(VERB, "short", ""))?)?;
         let mut envelopes = Vec::new();

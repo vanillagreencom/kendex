@@ -459,7 +459,7 @@ impl<'a> LaneOperation<'a> {
     /// sandbox has since disappeared.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the close drops its own disposable provider snapshot after both mailbox reads"
+        reason = "the close drops its own disposable provider snapshot after the mailbox read"
     )]
     pub(super) fn finish_host_mail(
         &self,
@@ -481,15 +481,7 @@ impl<'a> LaneOperation<'a> {
         let scratch = agent_runtime::record::receipt_path(dir, id).with_extension("close-read");
         let files: Vec<_> = crate::watch::mail::snapshot_files(&drain).collect();
         crate::provider::snapshot(host, &files, &scratch, "mail").map_err(|e| e.to_string())?;
-        let capture = mailbox
-            .drain(&drain, Some(host), Some(&scratch))
-            .and_then(|classified| {
-                let mut snapshot = mailbox.outbox(&lane.item, root, host, &scratch)?;
-                snapshot
-                    .envelopes
-                    .retain(|envelope| classified.envelopes.iter().any(|e| e.id == envelope.id));
-                Ok(snapshot)
-            });
+        let capture = mailbox.drain_with_lines(&drain, host, &scratch);
         let _ = std::fs::remove_dir_all(&scratch);
         let snapshot = match capture {
             Ok(snapshot) => snapshot,

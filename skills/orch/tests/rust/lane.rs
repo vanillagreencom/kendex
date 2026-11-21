@@ -3044,15 +3044,17 @@ fn a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on
         .join("provider-disk")
         .join(MAILBOX.trim_start_matches('/'));
     let closed_box = dir.join("closed-box");
+    let capture_log = dir.join("capture-log");
     let mut lane = hosted_lane("KEN-1");
     let provider_wrapper = dir.join("close-provider");
     write_executable(
         &provider_wrapper,
         format!(
-            "#!/bin/sh\nif [ \"$1\" = close ]; then mv '{}' '{}' || exit 1; fi\nexec '{}' \"$@\"\n",
-            source.display(),
-            closed_box.display(),
-            provider(),
+            "#!/bin/sh\ncase \"$1\" in\n  read-many) echo snapshot >> '{log}' ;;\n  cat) if [ -s '{log}' ]; then echo live-read-refused >> '{log}'; exit 1; fi ;;\n  close) mv '{source}' '{closed}' || exit 1 ;;\nesac\nexec '{provider}' \"$@\"\n",
+            log = capture_log.display(),
+            source = source.display(),
+            closed = closed_box.display(),
+            provider = provider(),
         ),
     );
     lane["host"] = json!(provider_wrapper);
@@ -3080,11 +3082,19 @@ fn a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on
     let request = json!({"op": "close-lane", "item": "KEN-1"});
     let held = fleet.close(request.clone());
     assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
+    assert_eq!(
+        held["result"]["observation"]["host_close"], "standing",
+        "{held}"
+    );
     assert!(!source.exists());
     std::fs::write(&source, format!("{old}\n{last}\n{ASK_A1}\n{late}\n")).unwrap();
     fleet.answer("LIST", "");
     let closed = fleet.close(request);
     assert_eq!(closed["result"]["word"], "closed", "{closed}");
+    assert_eq!(
+        std::fs::read_to_string(capture_log).unwrap(),
+        "snapshot\nsnapshot\n"
+    );
     assert!(!source.exists());
     let mut next_phase = fleet.fleet();
     next_phase["lanes"][0]["status"] = json!("preparing");

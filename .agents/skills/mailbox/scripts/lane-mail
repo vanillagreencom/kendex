@@ -158,9 +158,11 @@ Overseer side:
               accounts roster`, "unread" where that read failed. The send writes no fleet
               record: orch's `orch-runtime send` records the receipt on the
               lane.
-  drain --item ITEM --after N [--receipts]
+  drain --item ITEM --after N [--receipts] [--with-lines]
               print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers.
+              --with-lines includes each envelope's logical `line` number
+              from that read, including gaps left by answered asks.
               --receipts then prints `receipts cursor=<N> count=<complete
               lines> first=<id>` for to-lane.jsonl, N being the count
               to-lane.cursor holds and never more than the lines listed, 0
@@ -765,6 +767,7 @@ HALT=0
 PEEK=0
 ACK=""
 RECEIPTS=0
+WITH_LINES=0
 TO=""
 REF=""
 PROGRESS=0
@@ -824,6 +827,7 @@ while [ "$#" -gt 0 ]; do
     --halt) DIRECTIVE=1; HALT=1; shift ;;
     --peek) PEEK=1; shift ;;
     --receipts) RECEIPTS=1; shift ;;
+    --with-lines) WITH_LINES=1; shift ;;
     --ack) need_val "$@"; ACK="$2"; shift 2 ;;
     --to) need_val "$@"; TO="$2"; shift 2 ;;
     --purpose) need_val "$@"; PURPOSE="$2"; shift 2 ;;
@@ -884,6 +888,7 @@ fi
 # landed that never did. The refusal names the spelling typed, so a `--id` on
 # a peer ask does not send its reader to `--re`.
 [ "$RECEIPTS" -eq 0 ] || [ "$VERB" = drain ] || refuse option-unknown --receipts
+[ "$WITH_LINES" -eq 0 ] || [ "$VERB" = drain ] || refuse option-unknown --with-lines
 if [ "$VERB" = peer ]; then
   [ -n "$REPO" ] || refuse option-required --repo
   for given in $OPTS_GIVEN; do
@@ -2392,7 +2397,7 @@ fi
 # AFTER and the lm_box paths name the mailbox. A refusal ends the process.
 lm_fast_read() {
   READ_BOX="$BOX"
-  READ_ARGS=("$ITEM" "$READ_VERB" "$AFTER" "$READ_RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER")
+  READ_ARGS=("$ITEM" "$READ_VERB" "$AFTER" "$READ_RECEIPTS" "$TO" "$DUE" "$PEEK" "$ACK" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ" "$READ_DELIVER" "$WITH_LINES")
   if [ "$CACHED_READ" -eq 1 ]; then
     # A failed batch says nothing of any file it asked for, whatever status
     # it stored: refused here, never read past and never asked again.
