@@ -5378,6 +5378,43 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
 }
 
 #[test]
+fn a_finished_hosted_close_uses_the_latest_eligible_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-1"]);
+    drop(host.lead("KEN-1", "claude"));
+    host.leave("KEN-1");
+    let (mut lane, _) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
+    lane["mail_root"] = json!(host.lane_root("KEN-1").display().to_string());
+    lane["session_since"] = json!("2026-09-20T11:00:00Z");
+    fleet.set_lanes(vec![lane]);
+    let mut earlier = pull_seven_timeline();
+    let pull = &mut earlier["body"]["data"]["repository"]["pullRequest"];
+    pull["number"] = json!(8);
+    pull["mergedAt"] = json!("2026-09-20T11:19:00Z");
+    world.plant_gh(json!({
+        "graphql number=7 cursor=": pull_seven_timeline(),
+        "graphql number=8 cursor=": earlier,
+    }));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    let latest = clock::epoch_secs("2026-09-20T11:20:00Z").unwrap();
+    let older = clock::epoch_secs("2026-09-20T11:19:00Z").unwrap();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-1".into(),
+        value: format!("o/r#7@{latest} o/r#8@{older}"),
+    });
+    assert_eq!(driver.pass(&fleet.read()).failed, None);
+    assert_eq!(driver.pass(&fleet.read()).failed, None);
+    let written = fleet.runner.fleet();
+    let written = &written["lanes"][0];
+    assert_eq!(written["status"], "done");
+    assert_eq!(written["cycle"]["pr"], 7);
+}
+
+#[test]
 fn a_merge_before_the_launch_leaves_a_working_hosted_lane_open() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");

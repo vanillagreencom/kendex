@@ -1068,7 +1068,7 @@ pub(super) fn terminal_of(gh: &Gh, lane: &Lane) -> Result<TerminalState> {
     }
 }
 
-fn merge_row(value: &str) -> impl DoubleEndedIterator<Item = (&str, Option<u64>)> {
+fn merge_row(value: &str) -> impl Iterator<Item = (&str, Option<u64>)> {
     value.split_whitespace().map(|entry| {
         entry
             .split_once('@')
@@ -1084,12 +1084,14 @@ pub(super) enum FinishedMerge<'a> {
 
 /// A hosted lane can see a baseline written before this attempt, while its
 /// first launch time persists across attempts. An undated row can still
-/// qualify once the GitHub duty refreshes it.
+/// qualify once the GitHub duty refreshes it. The latest eligible hosted
+/// merge is the delivery, even when the GitHub reads return it out of order.
 pub(super) fn finished_merge<'a>(baseline: &'a Baseline, lane: &Lane) -> FinishedMerge<'a> {
     let Some(row) = baseline.get(MERGED_ROW, &lane.item) else {
         return FinishedMerge::None;
     };
-    let floor = if super::hosted::host_of(lane) != "local"
+    let hosted = super::hosted::host_of(lane) != "local";
+    let floor = if hosted
         && let Some(stamp) = lane
             .session_since
             .as_deref()
@@ -1102,22 +1104,28 @@ pub(super) fn finished_merge<'a>(baseline: &'a Baseline, lane: &Lane) -> Finishe
     } else {
         None
     };
-    let mut result = FinishedMerge::None;
-    for (key, at) in merge_row(row).rev() {
-        let Some((repo, pr)) = key
-            .rsplit_once('#')
-            .and_then(|(repo, pr)| Some((repo, pr.parse().ok()?)))
-        else {
-            continue;
-        };
-        match (floor, at) {
-            (None, _) => return FinishedMerge::Eligible { repo, pr },
-            (Some(floor), Some(at)) if at >= floor => return FinishedMerge::Eligible { repo, pr },
-            (Some(_), None) => result = FinishedMerge::Undated,
-            (Some(_), Some(_)) => {}
-        }
+    let mut undated = false;
+    let latest = merge_row(row)
+        .filter_map(|(key, at)| {
+            let (repo, pr) = key.rsplit_once('#')?;
+            let pr = pr.parse().ok()?;
+            if let Some(floor) = floor {
+                let Some(at) = at else {
+                    undated = true;
+                    return None;
+                };
+                if at < floor {
+                    return None;
+                }
+            }
+            Some((repo, pr, at))
+        })
+        .max_by_key(|(_, _, at)| if hosted { *at } else { None });
+    match latest {
+        Some((repo, pr, _)) => FinishedMerge::Eligible { repo, pr },
+        None if undated => FinishedMerge::Undated,
+        None => FinishedMerge::None,
     }
-    result
 }
 
 /// One lane item's own merged pull requests at or after the floor, per
