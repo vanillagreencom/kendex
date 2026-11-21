@@ -355,13 +355,6 @@ fn exit_code(out: &std::process::Output) -> i32 {
     out.status.code().unwrap_or(-1)
 }
 
-/// The first non-blank line, where a clap usage error or a panic of the
-/// runtime's own close verb names its cause; a provider's cause is
-/// [`crate::provider::cause_line`].
-fn first_line(text: &str) -> &str {
-    text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")
-}
-
 /// One provider read on `host` under [`READ_BOUND`]; `Err` is a call the
 /// dispatch refused (`host-busy` among them), or one that could not run or
 /// answer within the bound. The scripts directory the hosted readings carry
@@ -1131,13 +1124,13 @@ fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> Closed {
 fn ended(out: &std::process::Output) -> Closed {
     let Ok(reply) = serde_json::from_slice::<Value>(&out.stdout) else {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let line = first_line(&stderr);
+        let line = crate::provider::cause_line(&stderr);
         return match out.status.code() {
             Some(rc @ (1 | 2)) => Closed::Failed {
-                cause: format!("exit={rc} {line}").trim_end().to_owned(),
+                cause: format!("exit={rc} {line}"),
             },
             Some(_) | None => Closed::Unanswered {
-                cause: format!("{} {line}", out.status).trim_end().to_owned(),
+                cause: format!("{} {line}", out.status),
             },
         };
     };
@@ -2625,7 +2618,7 @@ mod tests {
                 9,
                 "",
                 Closed::Unanswered {
-                    cause: "signal: 9 (SIGKILL)".to_owned(),
+                    cause: "signal: 9 (SIGKILL) stderr=empty".to_owned(),
                 },
             ),
         ];

@@ -37,7 +37,7 @@ A host declares its kind in one capability line: tab-separated `key=value` field
 
 ## Provider protocol
 
-Exit `0` is the verb done. Exit `2` is an absent verb, and for `cat` a missing file. Any other non-zero status is a failed verb, its cause on stderr. Print any notice before the refusal: the runtime records as the cause the last stderr line carrying a `fix=` field, else the last non-blank line. The runtime reads a status of `128` or more, or no answer within its bound, as a call that may have acted. A launch that meets one on `create`, `wait` or `start` stays held at that step until a close supersedes it.
+Exit `0` is the verb done. Exit `2` is an absent verb, and for `cat` a missing file. Any other non-zero status is a failed verb, its cause on stderr. A failed `capabilities`, `create`, `wait`, `start`, `cat`, `touch`, `put`, `status`, `capture`, `send`, `list` or `close` records one stderr line as its cause: the last line carrying a `fix=` field, else the first non-blank line, else `stderr=empty`. Print any notice before a `fix=` refusal. The runtime reads a status of `128` or more, or no answer within its bound, as a call that may have acted. A launch that meets one on `create`, `wait` or `start` stays held at that step until a close supersedes it.
 
 | Verb | Arguments | Answer |
 |---|---|---|

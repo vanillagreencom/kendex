@@ -8314,13 +8314,15 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
 }
 
 /// A failed host call's cause is the provider's refusal: the last stderr
-/// line carrying `fix=`, else its last line, never a notice printed before
-/// it, and `stderr=empty` where the provider printed nothing.
+/// line carrying `fix=`, else its first line, never a notice printed before
+/// a `fix=` refusal nor one printed after a keyed refusal, and
+/// `stderr=empty` where the provider printed nothing.
 #[test]
 fn a_failed_host_create_records_the_provider_s_refusal_line() {
     let notices = "lane-host-fixture: gh-token-rotated lane=lane-ken-h source=app\n\
                    lane-host-fixture: credit-low balance=3\n";
     let refusal = "lane-host-fixture: create-preparation-failed item=KEN-H fix=retry-create";
+    let keyed = "lane-host-ssh: marker-script-missing path=/srv/clone/.lane-marker";
     for (case, stderr, line) in [
         ("refusal last", format!("{notices}{refusal}\n"), refusal),
         (
@@ -8331,7 +8333,15 @@ fn a_failed_host_create_records_the_provider_s_refusal_line() {
         (
             "no fix= line",
             notices.to_owned(),
-            "lane-host-fixture: credit-low balance=3",
+            "lane-host-fixture: gh-token-rotated lane=lane-ken-h source=app",
+        ),
+        (
+            "keyed refusal, prose, remote-failed trailer",
+            format!(
+                "{keyed}\nThe marker script is not on the host.\n\
+                 lane-host-ssh: remote-failed target=lane@host exit=1\n"
+            ),
+            keyed,
         ),
         ("stderr empty", String::new(), "stderr=empty"),
     ] {

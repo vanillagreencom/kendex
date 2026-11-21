@@ -147,9 +147,11 @@ impl fmt::Display for Failure {
 }
 
 /// The line of a failed call's stderr that names its cause: the last line
-/// carrying a `fix=` field, a keyed refusal, else the last non-blank line,
-/// else `stderr=empty`. Fleet's provider prints keyed notices before its
-/// refusal, so its first line is a notice and never the cause.
+/// carrying a `fix=` field, else the first non-blank line, else
+/// `stderr=empty`. A stderr holds one of two shapes: notices printed before
+/// a `fix=` refusal (Fleet's provider), or a keyed refusal first, then
+/// prose or a trailing notice (`lane-host-ssh`'s `remote-failed`, gh, git
+/// and linear).
 pub(crate) fn cause_line(stderr: &str) -> &str {
     let mut lines = stderr
         .lines()
@@ -161,7 +163,7 @@ pub(crate) fn cause_line(stderr: &str) -> &str {
             line.split_ascii_whitespace()
                 .any(|field| field.starts_with("fix="))
         })
-        .or_else(|| lines.next_back())
+        .or_else(|| lines.next())
         .unwrap_or("stderr=empty")
 }
 

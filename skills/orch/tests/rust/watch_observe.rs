@@ -6017,8 +6017,14 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
             Some("stop-failed exit=4"),
         ),
         (ok("stopped item=KEN-4\n"), Some("stop-failed exit=0")),
-        (json!({"exit": 137}), Some("stop-unanswered stop exit=137")),
-        (json!({"exit": 255}), Some("stop-unanswered stop exit=255")),
+        (
+            json!({"exit": 137}),
+            Some("stop-unanswered stop exit=137 stderr=empty"),
+        ),
+        (
+            json!({"exit": 255}),
+            Some("stop-unanswered stop exit=255 stderr=empty"),
+        ),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
