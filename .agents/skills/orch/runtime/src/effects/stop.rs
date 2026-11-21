@@ -24,12 +24,14 @@ use serde_json::{Value, json};
 
 use super::close::{StopRead, read_stop};
 use super::grants;
-use super::lane_operation::{LaneOperation, WorktreeRelease};
+use super::lane_operation::{LaneOperation, Unread, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
+use crate::ops::OwedPark;
 use crate::state::{CloseGround, Lane, LaneMembers, LaneStatus, TerminalVerdict};
 use crate::watch::hosted::{self, Asked, HostClosed};
 use crate::watch::lanes::{self, LaneState};
+use crate::watch::mail::ClosingMail;
 use agent_runtime::effects::{
     EffectOutcome, Foreground, Identity, Observed, ProcessRead, ProcessReading, Reading, State,
     Stop, Word,
@@ -263,9 +265,12 @@ impl Close<'_> {
         )
     }
 
+    /// Every outcome's observation: the item, and the [`RECEIPTS`] an
+    /// earlier run of the intent recorded that this run did not.
     fn observed(&self, observation: Value) -> Value {
         let mut observation = observation;
         observation["item"] = json!(self.item);
+        keep_receipts(&mut observation, self.prior);
         observation
     }
 
@@ -498,6 +503,28 @@ impl Close<'_> {
         }
     }
 
+    /// The lane's last mail, read before the provider's close takes its
+    /// box. A stopped sandbox answers no read: a parked lane's mail was said
+    /// at its park, and one whose sandbox stop failed and owes the park
+    /// carries the mail the park read on its mark.
+    fn last_mail(
+        &self,
+        operation: &LaneOperation,
+    ) -> std::result::Result<Option<ClosingMail>, Unread> {
+        if let Some(mark) = self.lane.extra.get(crate::state::PARK_OWED) {
+            return Ok(serde_json::from_value::<OwedPark>(mark.clone())
+                .ok()
+                .and_then(|mark| mark.mail.map(|mail| *mail)));
+        }
+        match self.lane.status {
+            LaneStatus::Parked => Ok(None),
+            LaneStatus::Preparing
+            | LaneStatus::Running
+            | LaneStatus::Stopped
+            | LaneStatus::Done => operation.last_mail(self.lane),
+        }
+    }
+
     /// The close of what remains once every process the close names has
     /// ended: the worktree's validation runs are stopped, whose answer
     /// discharges that obligation, unless a `no-landing` disposition keeps
@@ -528,8 +555,6 @@ impl Close<'_> {
                     observation["item_files"] = json!("removed");
                     if let Some(archive) = archive {
                         observation["archive"] = json!(archive.display().to_string());
-                    } else if let Some(kept) = self.prior.and_then(|p| p.get("archive")) {
-                        observation["archive"] = kept.clone();
                     }
                 }
                 Err(cause) => {
@@ -545,21 +570,13 @@ impl Close<'_> {
             return Ok(self.hold(operation, observation));
         }
         if provider_closes(self.ground, self.lane) {
-            // The lane's last mail, read before the provider's close takes
-            // its box. A parked lane's was read at its park, and so was the
-            // mail of one whose sandbox stop failed and owes the park: a
-            // stopped sandbox answers no read.
-            if self.lane.status != LaneStatus::Parked
-                && self.lane.extra.get(crate::state::PARK_OWED).is_none()
-            {
-                match operation.last_mail(self.lane) {
-                    Ok(None) => {}
-                    Ok(Some(mail)) => observation["mail"] = json!(mail),
-                    Err(cause) => {
-                        observation["mail"] = json!("unread");
-                        observation["cause"] = json!(cause);
-                        return Ok(self.hold(operation, observation));
-                    }
+            match self.last_mail(&operation) {
+                Ok(None) => {}
+                Ok(Some(mail)) => observation["mail"] = json!(mail),
+                Err(unread) => {
+                    observation["mail"] = json!("unread");
+                    observation["cause"] = json!(unread.to_string());
+                    return Ok(self.hold(operation, observation));
                 }
             }
             let merged = self.merged(&operation, &mut observation);
@@ -894,6 +911,13 @@ fn reconcile_observation(item: &str, observation: Value, prior: Option<&Value>) 
     let mut observation = observation;
     observation["reconcile"] = json!("close");
     observation["item"] = json!(item);
+    keep_receipts(&mut observation, prior);
+    observation
+}
+
+/// The [`RECEIPTS`] `prior` recorded, on an observation that records none of
+/// its own.
+fn keep_receipts(observation: &mut Value, prior: Option<&Value>) {
     for key in RECEIPTS {
         if let Some(kept) = prior.and_then(|p| p.get(key))
             && observation.get(key).is_none()
@@ -901,7 +925,6 @@ fn reconcile_observation(item: &str, observation: Value, prior: Option<&Value>) 
             observation[key] = kept.clone();
         }
     }
-    observation
 }
 
 /// The close cells of the reconcile matrix. The durable set the close

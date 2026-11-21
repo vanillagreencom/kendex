@@ -8247,7 +8247,8 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
 /// a start the provider refuses, or answers without its `sandbox-started`
 /// line, fails the launch with no create asked. A start that answers the
 /// item unknown, a sandbox the provider no longer holds, creates a fresh
-/// one: `create` with no `--relaunch`.
+/// one: `create` with no `--relaunch`, the outcome naming the start's
+/// answer and its route fresh for the sandbox absent.
 #[test]
 fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
     for (case, start, outcome) in [
@@ -8308,8 +8309,28 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
             .iter()
             .any(|c| c.contains(" create --item KEN-H") && !c.ends_with(" --relaunch"));
         assert_eq!(fresh, case == "item unknown", "{case}: {calls:?}");
+        let observation = &report["intent"]["observation"];
         match outcome {
-            "confirmed" => assert!(at("start") < at("create"), "{case}: {calls:?}"),
+            "confirmed" => {
+                assert!(at("start") < at("create"), "{case}: {calls:?}");
+                if case == "item unknown" {
+                    assert_eq!(
+                        (
+                            &observation["host_start"],
+                            &observation["route"],
+                            &observation["route_cause"]
+                        ),
+                        (
+                            &json!("item-unknown"),
+                            &json!("fresh"),
+                            &json!("sandbox-absent")
+                        ),
+                        "{case}: {report}"
+                    );
+                } else {
+                    assert_eq!(observation["host_start"], Value::Null, "{case}: {report}");
+                }
+            }
             _ => {
                 assert_eq!(at("create"), None, "{case}: no create: {calls:?}");
                 assert!(

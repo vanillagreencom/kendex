@@ -528,15 +528,19 @@ pub struct ParkWait {
     pub ask: Option<String>,
 }
 
-/// A park owed on a stopped lane: the wait it asked and the head its judge
-/// read. A stopped lane runs no session, so nothing moves that head, its
-/// clean status or its mailbox's asks until a relaunch; its completion takes
-/// the head from here and reads its sandbox for nothing.
+/// A park owed on a stopped lane: the wait it asked, the head its judge
+/// read and the lane's last mail it read before the sandbox stop. A stopped
+/// lane runs no session, so nothing moves that head, its clean status or its
+/// mailbox until a relaunch; its completion, or a close in its place, takes
+/// the head and the mail from here and reads its sandbox for nothing. A mark
+/// with no `mail` holds none to say.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwedPark {
     #[serde(flatten)]
     pub wait: ParkWait,
     pub head: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mail: Option<Box<crate::watch::mail::ClosingMail>>,
 }
 
 impl ParkLane {
@@ -551,6 +555,7 @@ impl ParkLane {
                 ask: self.ask.clone(),
             },
             head: self.head.clone(),
+            mail: self.mail.clone(),
         }
     }
 }
@@ -598,6 +603,11 @@ pub struct ParkLane {
     /// fails leaves the park for the watch to complete.
     #[serde(default)]
     pub owed: bool,
+    /// The lane's last mail the park read before its sandbox stop, which the
+    /// owed mark keeps until a park or close says it: a stopped sandbox
+    /// answers no read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mail: Option<Box<crate::watch::mail::ClosingMail>>,
 }
 
 /// Hold a lane's cap slot deliberately until `until`, an ISO 8601 UTC stamp
@@ -3990,6 +4000,7 @@ mod tests {
                 ask: None,
                 reservation,
                 owed: false,
+                mail: None,
             })
         };
         fleet_with(&path, &[record("KEN-H", "stopped", None)]);
