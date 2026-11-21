@@ -133,7 +133,7 @@ ORCH_WAKE_PROCESS = ""
 ORCH_WAKE_START = ""
 
 # The account folders the account reading lists, each relative to the home folder.
-AGENT_RUNTIME_ACCOUNT_DIRS = ".claude:.1claude:.2claude:.3claude:.4claude:.5claude:.6claude:.codex:.3codex:.1copilot"
+AGENT_RUNTIME_ACCOUNT_DIRS = ".claude:.1claude:.2claude:.3claude:.4claude:.5claude:.6claude:.7claude:.codex:.3codex:.1copilot"
 
 # The orch account judge refuses an account at or above 95 percent used on the
 # window that binds the lane: with --native-model the fullest of the plan
