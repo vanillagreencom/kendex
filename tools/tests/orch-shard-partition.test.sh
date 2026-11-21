@@ -1684,7 +1684,7 @@ check "the runtimes' targets run on the orch-rest Linux leg where a target is li
   "true true false false false" \
   "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-state Linux '["orch/lib"]')"
 check "one step runs the listed runtime targets" "1" \
-  "$(grep -cF 'cargo test --no-run --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"}' "$WORKFLOW")"
+  "$(grep -cF 'cargo test --no-fail-fast --locked --manifest-path "$MANIFEST" "$@"' "$WORKFLOW")"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.
@@ -1752,20 +1752,24 @@ check "must-fail: a linear roster without its retention loses its unresolved sui
   skills/linear/tests/native-future.test.sh \
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
 
-# Linux rest releases Jarvis to its shard; macOS rest keeps the family, mixed
-# and unresolved suites alike, because macOS runs no jarvis leg, less the four
-# suites the macOS guards-hooks, guards-tools and orch-state legs run by path.
-# Releasing on both loses the rest of the family on macOS; releasing on
-# neither runs each suite twice on Linux; a macOS rest blind to those paths
-# runs the four twice there. A deleted path step returns its suites to macOS
-# rest.
+# Linux rest releases Jarvis to its shard; macOS rest keeps the family's
+# unresolved suites, because macOS runs no jarvis leg, less the four suites
+# the macOS guards-hooks, guards-tools and orch-state legs run by path, both
+# mixed suites among them. Releasing on both loses the rest of the family on
+# macOS; releasing on neither runs each suite twice on Linux; a macOS rest
+# blind to those paths runs the four twice there. A deleted path step returns
+# its suites to macOS rest.
 jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;'
 jarvis_skip='                grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")'
 jarvis_moved="$(printf '%s\n' skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession.test.sh \
   skills/jarvis/tests/controls.test.sh skills/jarvis/tests/watch-loop.test.sh | sort)"
 (cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.test.sh) > "$TMP/jarvis-suites"
-grep -qxF skills/jarvis/tests/controls.test.sh "$TMP/jarvis-suites" ||
-  bad "no mixed Jarvis suite was discovered, so the Jarvis retention controls prove nothing"
+# Each moved suite is a required member of the discovered family; each row
+# below refuses a fault whose expected set is empty, so a macOS rest left no
+# unmoved Jarvis suite fails there.
+undiscovered="$(grep -vxF -f "$TMP/jarvis-suites" <<<"$jarvis_moved" || true)"
+[[ -z "$undiscovered" ]] ||
+  bad "the moved Jarvis suites ${undiscovered//$'\n'/ } were not discovered, so the Jarvis retention controls prove nothing"
 jarvis_universe() { # OS ; the eligible Jarvis suites, unresolved ones included, into os-universe
   cp "$TMP/jarvis-suites" "$TMP/jarvis-eligible"
   if [[ "$1" == macos-latest ]]; then
