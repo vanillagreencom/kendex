@@ -268,8 +268,8 @@ P_NATIVE=skills/github/tests/native-contracts.test.sh
 P_MAIN_ONLY=tools/tests/orch-shard-partition.test.sh
 UNIVERSE="$(cd "$ROOT" && git ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
   ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh' | grep -v '/run-all\.sh$')"
-# The suites a group can prove: MAIN_ONLY_FILTERS holds every declared
-# main-only suite out of each group leg by base name.
+# The suites a group can prove: no group leg runs a declared main-only
+# suite, and MAIN_ONLY_FILTERS drops each shell one by base name.
 UNIVERSE="$(jq -r '.[].suite + ".sh"' <<<"$MAIN_ONLY_SUITES" | awk '
   NR == FNR { main_only[$0] = 1; next } { base = $0; sub(/.*\//, "", base) } !(base in main_only)' - <(printf '%s\n' "$UNIVERSE"))"
 count() { # PREFIX — the universe suites under PREFIX

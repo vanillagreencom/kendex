@@ -446,9 +446,10 @@ main_proof() {
       --argjson main_only "$MAIN_ONLY_SUITES" --argjson replacements "$replacements" \
       --arg listless "$LISTLESS_SHARDS" '
       $jobs[0] as $jobs | $sels[0] as $sels
-      # MAIN_ONLY_FILTERS holds a declared main-only suite out of every
-      # group leg by base name, so no group proves it, and the push runs it
-      # in its dedicated job, never on a shard leg it would owe.
+      # No group leg runs a declared main-only suite, so no group proves
+      # it, and the push runs it in its dedicated job, never on a shard leg
+      # it would owe. A shell one matches by base name, as MAIN_ONLY_FILTERS
+      # drops it.
       | [$main_only[].suite + ".sh"] as $main_only
       | [$map[0][] | select(.[2] as $s | ($selected_skip | index($s) | not)
           and ($main_only | index($s | split("/") | last) | not))] as $map
