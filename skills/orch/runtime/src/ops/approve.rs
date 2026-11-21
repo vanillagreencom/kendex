@@ -186,6 +186,27 @@ fn update<T>(
     )
 }
 
+/// The item record the approval's ledger lives in. A hosted lane keeps its
+/// own record on its host, so the overseer's checkout may hold none: the
+/// approval then creates the item's record as `state init` writes it, and
+/// its `head_approvals` still answers a second request once.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "an approval of a hosted lane's head creates the local record its ledger lives in"
+)]
+fn ledger(path: &Path) -> Result<Document> {
+    match loaded(path) {
+        Err(e) if e.key() == "record-missing" => {
+            match crate::state::init(path, &crate::state::InitFields::default()) {
+                Err(e) if e.key() != "state-exists" => return Err(e),
+                _ => {}
+            }
+            Ok(loaded(path)?.doc)
+        }
+        read => Ok(read?.doc),
+    }
+}
+
 /// The app's file credential outranks any reader credential the caller's
 /// environment holds, so GitHub sees the app on every approval call.
 fn credential(settings: &Settings, token: &str) -> Vec<(String, OsString)> {
@@ -502,7 +523,7 @@ pub fn run(
         .approval_login
         .as_deref()
         .ok_or_else(|| refuse("approval-login", &[]))?;
-    let mut doc = loaded(path)?.doc;
+    let mut doc = ledger(path)?;
     let matching: Vec<_> = entries(&mut doc, r)?
         .iter()
         .filter(|(head, _)| head.starts_with(&r.head))

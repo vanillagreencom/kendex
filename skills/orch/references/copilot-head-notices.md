@@ -4,7 +4,7 @@ Read when the overseer handles a Copilot head notice: the three notices [review-
 
 ## Approve a head
 
-Every approval on this page is one `approve-head` request on an item's record. The item is the owning lane's item. A pull request no lane owns takes a dedicated item, made once with `.agents/skills/orch/scripts/orch-runtime state init --item [ITEM]` and reused for that pull request.
+Every approval on this page is one `approve-head` request on an item's record in the overseer's checkout. The item is the owning lane's item. A hosted lane's record is on its host, so that checkout can hold none for the item: the request then needs no setup, and the approval creates the record, as `state init` writes it, for its `head_approvals` ledger. A pull request no lane owns takes a dedicated item, reused for that pull request.
 
 Write the approval body to `[BODY_PATH]` and the request to `[PATH]`. `head` is the SHA the notice or the pr-watch line names, as printed. `repo` is the repository the pr-watch line leads with; for a notice, it is the owning lane's repository:
 
