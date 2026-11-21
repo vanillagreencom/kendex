@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 5.0.7
+
+- Update the bridge's HTTP dependencies to proxy-addr 2.0.8, hono 4.13.19 and ip-address 10.7.6, which fix GHSA-jqcg-44mw-7w3h (critical), five hono advisories and an ip-address advisory.
+
 ### 5.0.6
 
 - A turn that carries no Pi tools no longer gets Claude Code's own file, shell and web tools. Since 4.0.4, an ordinary or embedding-host session that asked for a tool-free answer ran the child with those tools enabled and permission checks bypassed. Such a turn now has no tools, and the bridge shows no notice for it. Sessions with Pi tools, Pi's own one-shot calls and connectors sessions keep their existing restrictions.
