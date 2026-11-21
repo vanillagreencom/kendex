@@ -179,6 +179,60 @@ rm -f -- "$BASE_TREE/ignored-clobber"
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/sync.err")"
 assert_eq "$out" "main" "cleaned ignored clobber base can catch up"
 
+# A move whose target gives a runtime a key with no installed program waits
+# on a machine with no cargo, and moves where cargo builds it or the cache
+# holds it.
+NOCARGO_PATH=""
+IFS=: read -r -a path_dirs <<<"$PATH"
+for dir in "${path_dirs[@]}"; do
+  [[ -x "$dir/cargo" ]] || NOCARGO_PATH="${NOCARGO_PATH:+$NOCARGO_PATH:}$dir"
+done
+PATH="$NOCARGO_PATH" command -v cargo >/dev/null && fail "key fixture PATH holds no cargo" || pass "key fixture PATH holds no cargo"
+mkdir -p "$TMP_ROOT/cargo-bin"
+printf '#!/bin/sh\nexit 0\n' > "$TMP_ROOT/cargo-bin/cargo"
+chmod +x "$TMP_ROOT/cargo-bin/cargo"
+KEY_CACHE="$TMP_ROOT/runtime-cache"
+mkdir -p "$KEY_CACHE/bin"
+for crate in agent-runtime orch; do
+  mkdir -p "$SEED/.agents/skills/$crate/runtime/src"
+  printf '[package]\nname = "%s"\n' "$crate" > "$SEED/.agents/skills/$crate/runtime/Cargo.toml"
+  printf '# lock\n' > "$SEED/.agents/skills/$crate/runtime/Cargo.lock"
+done
+printf '[dependencies]\nagent-runtime = { path = "../../agent-runtime/runtime" }\n' >> "$SEED/.agents/skills/orch/runtime/Cargo.toml"
+runtime_keys() {
+  bash -c 'refuse(){ echo "refuse $*" >&2; exit 1; }; . "$1"; agent_runtime_key "$2/.agents/skills/agent-runtime/runtime"; agent_runtime_key "$2/.agents/skills/orch/runtime"' _ \
+    "$REPO_ROOT/skills/agent-runtime/scripts/lib/key.sh" "$SEED"
+}
+key_commit() {
+  printf '%s\n' "$1" > "$SEED/.agents/skills/orch/runtime/src/main.rs"
+  printf 'pub fn lib() {}\n' > "$SEED/.agents/skills/agent-runtime/runtime/src/lib.rs"
+  git -C "$SEED" add .agents
+  git -C "$SEED" commit -q -m "$1"
+  git -C "$SEED" push -q "$UPSTREAM" main
+  { read -r AGENT_KEY; read -r ORCH_KEY; } < <(runtime_keys)
+}
+key_commit 'fn main() { /* unplaced */ }'
+touch "$KEY_CACHE/bin/agent-runtime-$AGENT_KEY"
+chmod +x "$KEY_CACHE/bin/agent-runtime-$AGENT_KEY"
+before="$(git -C "$BASE_TREE" rev-parse HEAD)"
+rc=0
+out="$(PATH="$NOCARGO_PATH" AGENT_RUNTIME_CACHE="$KEY_CACHE" "$SYNC" "$CLONE" 2>"$TMP_ROOT/key-unplaced.err")" || rc=$?
+[[ $rc -ne 0 ]] && pass "unplaced runtime key without cargo fails closed" || fail "unplaced runtime key without cargo fails closed"
+assert_eq "$out" "" "unplaced runtime key prints no branch"
+assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$before" "unplaced runtime key leaves the base where it was"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/key-unplaced.err")" "sync-base: key-unplaced runtime=orch-runtime key=$ORCH_KEY" "unplaced runtime key names the runtime and its key"
+out="$(PATH="$TMP_ROOT/cargo-bin:$NOCARGO_PATH" AGENT_RUNTIME_CACHE="$KEY_CACHE" "$SYNC" "$CLONE" 2>"$TMP_ROOT/key-cargo.err")"
+assert_eq "$out" "main" "a machine with cargo moves past an unplaced key"
+assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse main)" "cargo machine fast-forwards the base"
+key_commit 'fn main() { /* placed */ }'
+for name in "agent-runtime-$AGENT_KEY" "orch-runtime-$ORCH_KEY"; do
+  touch "$KEY_CACHE/bin/$name"
+  chmod +x "$KEY_CACHE/bin/$name"
+done
+out="$(PATH="$NOCARGO_PATH" AGENT_RUNTIME_CACHE="$KEY_CACHE" "$SYNC" "$CLONE" 2>"$TMP_ROOT/key-placed.err")"
+assert_eq "$out" "main" "placed runtime keys move without cargo"
+assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse main)" "placed keys fast-forward the base"
+
 CASE_PROBE="$BASE_TREE/case-probe"
 mkdir "$CASE_PROBE"
 printf 'probe\n' > "$CASE_PROBE/MixedCase"

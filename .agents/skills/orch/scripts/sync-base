@@ -27,8 +27,42 @@ message() {
   ref-update-failed) printf '%s\n' 'The local base branch reference could not be updated.' ;;
   ref-unresolved) printf '%s\n' 'The branch reference could not be resolved after the fast-forward.' ;;
   base-mismatch) printf '%s\n' 'The local and remote base commits differ after the fast-forward.' ;;
+  key-unplaced) printf '%s\n' 'The move needs a runtime program this machine neither holds nor can build.' ;;
   esac
 }
+
+# key.sh's diagnostics, under this script's name.
+refuse() { message "$@" >&2; exit 1; }
+
+# The runtime wrappers in .agents/skills run the program keyed on the sources
+# beside them, and build none. A machine without cargo cannot build one
+# (agent-runtime's scripts/setup), so a move that changes those sources waits
+# until the cache holds every program the target keys.
+check_runtime_keys() ( # WORKTREE TARGET
+  local paths=(.agents/skills/agent-runtime/runtime .agents/skills/orch/runtime)
+  command -v cargo >/dev/null 2>&1 && exit 0
+  rc=0
+  git -C "$1" diff --quiet HEAD "$2" -- "${paths[@]}" || rc=$?
+  [[ "$rc" -eq 1 ]] || exit "$rc"
+  # shellcheck source=../../agent-runtime/scripts/lib/key.sh
+  . "$SCRIPT_DIR/../../agent-runtime/scripts/lib/key.sh"
+  stage="$(mktemp -d)"
+  trap 'rm -rf -- "$stage"' EXIT
+  present=()
+  for path in "${paths[@]}"; do
+    ! git -C "$1" cat-file -e "$2:$path" 2>/dev/null || present+=("$path")
+  done
+  # Bash 3.2 reads an empty array as unbound under set -u.
+  [[ ${#present[@]} -gt 0 ]] || exit 0
+  git -C "$1" archive --format=tar "$2" -- "${present[@]}" | tar -x -C "$stage"
+  for path in "${present[@]}"; do
+    name="${path#.agents/skills/}"
+    name="${name%%/*}"
+    [[ "$name" == agent-runtime ]] || name="$name-runtime"
+    key="$(agent_runtime_key "$stage/$path")"
+    [[ -x "$(agent_runtime_cache)/bin/$name-$key" ]] || refuse key-unplaced "runtime=$name" "key=$key"
+  done
+)
 
 usage() {
   cat <<'EOF'
@@ -40,7 +74,9 @@ the base branch name on success. Tracked dirtiness, any untracked collision,
 or a divergent base fails closed, ignored files included. The fast-forward is
 the sole judge, through Git's no-overwrite-ignore rule, so a colliding path
 appearing at any moment before the merge still fails it. Unrelated untracked
-files are preserved.
+files are preserved. On a machine without cargo, a move that changes the
+runtime sources under .agents/skills refuses with key-unplaced until the
+runtime cache holds the program each runtime source at the target keys.
 EOF
 }
 
@@ -95,6 +131,7 @@ if [[ -n "$BASE_WORKTREE" ]]; then
     printf '%s\n' "$DIRTY" >&2
     exit 1
   fi
+  check_runtime_keys "$BASE_WORKTREE" "origin/$BASE_BRANCH"
   # `--ff-only --no-overwrite-ignore` is the collision judge: it refuses the
   # merge when an incoming path would clobber an untracked or ignored file,
   # and it refuses without touching the tree. Nothing scans ahead of it.
