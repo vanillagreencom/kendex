@@ -553,6 +553,180 @@ fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file(
     }
 }
 
+/// A transfer to the named account `account`, which holds no stored login,
+/// under `env` and the server variables `server_env`: the intent once it
+/// settles, the panes that stood before it and the predecessor.
+fn transfer_to_account(
+    server: &Server,
+    runner: &Runner,
+    account: &Path,
+    env: &[(&str, &str)],
+    server_env: &[(&str, &str)],
+) -> (Value, Vec<String>, Owned) {
+    for (name, value) in server_env {
+        let out = tmux(&server.socket, &["set-environment", "-g", name, value]);
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    std::fs::create_dir_all(account).unwrap();
+    let predecessor = Owned::sleep();
+    plant_transfer(runner, server, predecessor.pid(), &predecessor.start());
+    let mut named = pending(runner.state_dir());
+    named["account"] = json!(account.display().to_string());
+    named["home"] = json!(account.display().to_string());
+    let mut fleet = runner.fleet();
+    fleet["controller"]["pending"] = named.clone();
+    runner.write_fleet(&fleet);
+    let panes = server.panes();
+    let mut request = transfer_request(server, runner.state_dir());
+    request["expected"]["pending"] = named.clone();
+    request["successor"] = named;
+    runner.transfer_started_env(&request, env);
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    (intent, panes, predecessor)
+}
+
+/// A named Claude account whose declared token file holds a token signs
+/// the successor in with that token in its own window alone: the harness's
+/// environment carries it, a key the server holds that would outrank it and
+/// an endpoint it would be sent to are cleared, and neither the tmux
+/// server's environment nor the pane's screen holds it.
+#[test]
+fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let account = runner.state_dir().join("6claude");
+    let token = runner.state_dir().join("6claude.token");
+    std::fs::write(&token, "planted-token\n").unwrap();
+    let setting = format!("{}={}", account.display(), token.display());
+    let (intent, _, _predecessor) = transfer_to_account(
+        &server,
+        &runner,
+        &account,
+        &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
+        &[
+            ("ANTHROPIC_API_KEY", "planted-key"),
+            ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
+        ],
+    );
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(
+        intent["observation"]["sign_in"],
+        json!({"token_file": token.display().to_string()}),
+        "{intent}"
+    );
+    let pane = runner.fleet()["controller"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let environ = std::fs::read(format!("/proc/{}/environ", server.pane_pid(&pane))).unwrap();
+    let entries: Vec<&[u8]> = environ.split(|b| *b == 0).collect();
+    assert!(
+        entries.contains(&&b"CLAUDE_CODE_OAUTH_TOKEN=planted-token"[..]),
+        "the harness signs in with the file's token"
+    );
+    assert!(
+        !entries.iter().any(|e| e.starts_with(b"ANTHROPIC_API_KEY=")),
+        "a key that outranks the token is cleared"
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e.starts_with(b"ANTHROPIC_BASE_URL=")),
+        "an endpoint that would receive the token is cleared"
+    );
+    for scope in [vec!["-g"], vec!["-t", runner.session.as_str()]] {
+        let mut args = vec!["show-environment"];
+        args.extend(&scope);
+        args.push("CLAUDE_CODE_OAUTH_TOKEN");
+        let out = tmux(&server.socket, &args);
+        assert!(
+            !out.status.success(),
+            "{scope:?}: the server holds no token: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+    let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
+    assert!(
+        !String::from_utf8_lossy(&screen.stdout).contains("planted-token"),
+        "the pane's screen never shows the token"
+    );
+}
+
+/// An account whose declared token file holds no token is no successor,
+/// whatever token the server's environment holds, and the refusal names
+/// the file; an account the setting does not declare is judged as before.
+/// Either way nothing opens, no trust record is written into the account and
+/// the predecessor keeps running.
+#[test]
+fn a_named_account_the_token_setting_does_not_sign_in_opens_nothing() {
+    struct Row {
+        name: &'static str,
+        /// The declared account is the transfer's own, else another.
+        declares_own: bool,
+        cause: &'static str,
+    }
+    let rows = [
+        Row {
+            name: "declared file absent",
+            declares_own: true,
+            cause: "declared-token-absent",
+        },
+        Row {
+            name: "another account declared",
+            declares_own: false,
+            cause: "no-credential",
+        },
+    ];
+    for row in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let account = runner.state_dir().join("6claude");
+        let declared = match row.declares_own {
+            true => account.clone(),
+            false => runner.state_dir().join("7claude"),
+        };
+        let token = runner.state_dir().join("absent.token");
+        let setting = format!("{}={}", declared.display(), token.display());
+        let server_env: &[(&str, &str)] = match row.declares_own {
+            true => &[("CLAUDE_CODE_OAUTH_TOKEN", "planted")],
+            false => &[],
+        };
+        let (intent, panes, predecessor) = transfer_to_account(
+            &server,
+            &runner,
+            &account,
+            &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
+            server_env,
+        );
+        assert_eq!(intent["outcome"], "failed", "{}: {intent}", row.name);
+        let observation = &intent["observation"];
+        assert_eq!(observation["note"], "successor-not-signed-in", "{intent}");
+        let mut fields = json!({
+            "account": account.display().to_string(),
+            "cause": row.cause,
+        });
+        if row.declares_own {
+            fields["file"] = json!(token.display().to_string());
+        }
+        assert_eq!(observation["fields"], fields, "{}", row.name);
+        assert!(
+            std::fs::symlink_metadata(account.join(".claude.json")).is_err(),
+            "{}: no trust record was written into the account",
+            row.name
+        );
+        assert_eq!(server.panes(), panes, "{}: nothing opened", row.name);
+        assert!(
+            live(predecessor.pid()),
+            "{}: the predecessor keeps running",
+            row.name
+        );
+    }
+}
+
 /// A runner a wrapper handed another account than its launch named is
 /// refused before its brief is typed, the predecessor left running.
 #[test]

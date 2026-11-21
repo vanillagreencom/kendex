@@ -3138,6 +3138,7 @@ fn a_confined_setup_whose_words_fail_names_the_wrapper_and_one_that_fails_itself
             args: Vec::new(),
             env: std::collections::BTreeMap::new(),
             env_remove: Vec::new(),
+            env_files: Default::default(),
             cwd: wt.clone(),
             brief_arg: None,
             brief_path: None,

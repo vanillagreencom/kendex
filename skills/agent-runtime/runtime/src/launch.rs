@@ -142,6 +142,12 @@ pub struct LaunchCommand {
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub env_remove: Vec<String>,
+    /// Variables the pane's shell sets from a file's text when the line
+    /// runs, for a secret: the value is never in the line, the launch
+    /// script or any process's argv, only in the environment the harness
+    /// inherits through `exec`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env_files: BTreeMap<String, PathBuf>,
     pub cwd: PathBuf,
     /// Where the brief sits in `args`: the index whose word is replaced by
     /// the file's text when the line is rendered for a shell.
@@ -454,6 +460,7 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
         args,
         env,
         env_remove,
+        env_files: BTreeMap::new(),
         cwd: intent.cwd.clone(),
         brief_arg,
         brief_path,
@@ -556,7 +563,10 @@ impl LaunchCommand {
     /// process, and runs the wrapper as the program, the harness its
     /// command: the wrapper's process holds the pane, the harness below it.
     /// A launch variable of a name the wrapper sets is left out, so the
-    /// wrapper's value stands.
+    /// wrapper's value stands. A variable read from a file is exported the
+    /// same way, as `NAME="$(cat FILE)"`, so its value reaches `env` and the
+    /// harness through the environment alone; a name it sets is left out of
+    /// the `env` words, since `env -u` would clear what the export set.
     pub fn shell_line(&self) -> String {
         let mut line = String::new();
         line.push_str("cd ");
@@ -580,9 +590,18 @@ impl LaunchCommand {
                 line.push_str(" && ");
             }
         }
-        let wrapped = |name: &str| wrapper.is_some_and(|w| w.env.iter().any(|(n, _)| n == name));
-        let env_remove: Vec<&String> = self.env_remove.iter().filter(|n| !wrapped(n)).collect();
-        let env: Vec<(&String, &String)> = self.env.iter().filter(|(n, _)| !wrapped(n)).collect();
+        for (name, file) in &self.env_files {
+            line.push_str(&format!(
+                "export {name}=\"$(cat {})\" && ",
+                shell_quote(&file.display().to_string())
+            ));
+        }
+        let set = |name: &str| {
+            wrapper.is_some_and(|w| w.env.iter().any(|(n, _)| n == name))
+                || self.env_files.contains_key(name)
+        };
+        let env_remove: Vec<&String> = self.env_remove.iter().filter(|n| !set(n)).collect();
+        let env: Vec<(&String, &String)> = self.env.iter().filter(|(n, _)| !set(n)).collect();
         if !env_remove.is_empty() || !env.is_empty() {
             line.push_str("exec env");
             for name in env_remove {
@@ -705,6 +724,68 @@ mod tests {
             .lines()
             .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
             .collect()
+    }
+
+    /// A variable read from a file reaches the harness's environment with
+    /// the file's text, over an inherited value and a removal naming it,
+    /// and never any process's argv or the line: `env`, first on `PATH`,
+    /// records the words it was given before it runs the harness.
+    #[test]
+    fn a_variable_read_from_a_file_reaches_the_harness_environment_and_no_argv() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        let token = dir.join("token");
+        fs::write(&token, "planted-token\n").unwrap();
+        let bin = dir.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let words = dir.join("env.words");
+        crate::host::write_executable(
+            &bin.join("env"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexec /usr/bin/env \"$@\"\n",
+                words.display()
+            ),
+        );
+        let seen = dir.join("harness.env");
+        let harness = dir.join("harness");
+        crate::host::write_executable(
+            &harness,
+            format!("#!/bin/sh\n/usr/bin/env > '{}'\n", seen.display()),
+        );
+        let mut i = bare(Harness::Claude);
+        i.cwd = dir.to_path_buf();
+        i.program = Some(harness.clone());
+        i.env_remove = vec!["CLAUDE_CODE_OAUTH_TOKEN".into()];
+        let mut cmd = build(&i).unwrap();
+        cmd.env_files
+            .insert("CLAUDE_CODE_OAUTH_TOKEN".into(), token.clone());
+        let line = cmd.shell_line();
+        assert!(!line.contains("planted-token"), "{line}");
+        let out = Command::new("sh")
+            .args(["-c", &line])
+            .env_clear()
+            .env("HOME", dir)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("CLAUDE_CODE_OAUTH_TOKEN", "inherited")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{line}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let words = fs::read_to_string(&words).unwrap();
+        assert!(
+            words.lines().any(|w| w == harness.display().to_string()),
+            "the line ran through the recording env: {words}"
+        );
+        assert!(!words.contains("planted-token"), "{words}");
+        let seen = fs::read_to_string(&seen).unwrap();
+        assert!(
+            seen.lines()
+                .any(|l| l == "CLAUDE_CODE_OAUTH_TOKEN=planted-token"),
+            "{seen}"
+        );
     }
 
     /// The fixed session id goes before the brief, so a harness that reads

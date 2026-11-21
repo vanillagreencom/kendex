@@ -24,7 +24,7 @@ use super::{
     Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
     predecessor_identity,
 };
-use crate::accounts::usage::{StoredLogin, stored_login};
+use crate::accounts::usage::{StoredLogin, declared_token, stored_login};
 use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted};
 use crate::error::{Error, Result};
 use crate::intent::Intent;
@@ -458,6 +458,9 @@ pub enum SignIn {
     Held,
     /// The launch environment carries this token variable.
     Token(&'static str),
+    /// The account's declared token file holds a token, which the launch
+    /// exports for the harness alone.
+    File,
     /// The account holds nothing the harness signs in with.
     Missing { cause: &'static str },
     /// Nothing here reads this sign-in: the first turn alone judges it.
@@ -646,7 +649,10 @@ impl Operation<'_> {
     }
 
     /// The sign-in a successor's launch on `account` starts with, read
-    /// before anything is written for it: a token variable the window on
+    /// before anything is written for it. An account that declares a token
+    /// file is judged by that file alone, since the launch exports its text
+    /// over anything the window inherits: no other source stands in for a
+    /// file that is wrong. Otherwise a token variable the window on
     /// `server` inherits in `session`, which signs the harness in whatever
     /// the account holds; else the account's stored login on this machine
     /// ([`stored_login`]).
@@ -656,7 +662,15 @@ impl Operation<'_> {
         session: &str,
         harness: Harness,
         account: &Path,
+        declared: Option<&Path>,
     ) -> SignIn {
+        if let Some(file) = declared {
+            return match declared_token(file) {
+                StoredLogin::Held => SignIn::File,
+                StoredLogin::Missing { cause } => SignIn::Missing { cause },
+                StoredLogin::Unjudged { cause } => SignIn::Unjudged { cause },
+            };
+        }
         let tokens: &[&'static str] = match harness {
             Harness::Claude => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
             Harness::Codex => &["OPENAI_API_KEY"],

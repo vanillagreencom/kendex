@@ -1224,10 +1224,10 @@ mod tests {
     use agent_runtime::launch::{Permission, QuestionTool};
     use agent_runtime::settings::{
         ACCOUNT_BURN_PCT_KEY, ACCOUNT_EXCLUDE_KEY, ACCOUNT_MAX_PCT_KEY, ACCOUNT_RETIRE_KEY,
-        CLOUD_CREDIT_FLOOR_KEY, CODEX_CREDIT_FLOOR_KEY, CONTROLLER_HEADROOM_PCT_KEY,
-        COPILOT_POOL_KEY, HARNESS_BINARIES_KEY, JOB_CLAIM_SECS_KEY, LAUNCH_PERMISSION_KEY,
-        QUESTION_TOOL_KEY, QuestionToolSetting, SUCCESSION_KEY, Succession, USAGE_MAX_AGE_KEY,
-        USAGE_TTL_KEY, VERIFY_SECS_KEY,
+        ACCOUNT_TOKEN_FILES_KEY, CLOUD_CREDIT_FLOOR_KEY, CODEX_CREDIT_FLOOR_KEY,
+        CONTROLLER_HEADROOM_PCT_KEY, COPILOT_POOL_KEY, HARNESS_BINARIES_KEY, JOB_CLAIM_SECS_KEY,
+        LAUNCH_PERMISSION_KEY, QUESTION_TOOL_KEY, QuestionToolSetting, SUCCESSION_KEY, Succession,
+        USAGE_MAX_AGE_KEY, USAGE_TTL_KEY, VERIFY_SECS_KEY,
     };
 
     use super::*;
@@ -1371,6 +1371,10 @@ mod tests {
         );
         assert_eq!(settings.linear_team, None);
         assert!(settings.engine.harness_binaries.get().unwrap().is_empty());
+        assert!(
+            settings.controller.account_tokens.get().unwrap().is_empty(),
+            "unset, no account declares a token file"
+        );
         assert_eq!(
             settings.worktree_cli,
             roots.project.join(WORKTREE_CLI_DEFAULT)
@@ -1405,6 +1409,10 @@ mod tests {
                 ),
                 (WORKTREE_CLI_KEY, "/opt/worktree"),
                 (SUCCESSION_KEY, "off"),
+                (
+                    ACCOUNT_TOKEN_FILES_KEY,
+                    "/home/o/.6claude=/run/t6, /home/o/.7claude = /run/t7",
+                ),
                 (LANE_CAP_KEY, "7"),
                 (CLOUD_LANE_CAP_KEY, "2"),
                 (CLAIM_STATE_DIR_KEY, "/var/watch"),
@@ -1461,6 +1469,13 @@ mod tests {
             settings.controller.succession.get().unwrap(),
             Succession::Off
         );
+        assert_eq!(
+            settings.controller.account_tokens.get().unwrap(),
+            vec![
+                ("/home/o/.6claude".to_owned(), PathBuf::from("/run/t6")),
+                ("/home/o/.7claude".to_owned(), PathBuf::from("/run/t7")),
+            ]
+        );
         assert_eq!(settings.lane_cap.get().unwrap(), 7);
         assert_eq!(settings.cloud_lane_cap.get().unwrap(), 2);
         assert_eq!(settings.claim_store, PathBuf::from("/var/watch/claims"));
@@ -1507,6 +1522,10 @@ mod tests {
             (HARNESS_BINARIES_KEY, "claude=/a,claude=/b"),
             (HARNESS_BINARIES_KEY, "claude"),
             (SUCCESSION_KEY, "maybe"),
+            (ACCOUNT_TOKEN_FILES_KEY, "/home/o/.6claude"),
+            (ACCOUNT_TOKEN_FILES_KEY, ".6claude=/run/t6"),
+            (ACCOUNT_TOKEN_FILES_KEY, "~/.6claude=/run/t6"),
+            (ACCOUNT_TOKEN_FILES_KEY, "/home/o/.6claude=run/t6"),
             (LANE_CAP_KEY, "0"),
             (LANE_CAP_KEY, "03"),
             (LANE_CAP_KEY, "+4"),
@@ -1573,6 +1592,17 @@ mod tests {
                 "{key}={value}: refused by its own carrier alone"
             );
         }
+        // A directory spelled twice refuses, naming the second pair.
+        let settings = load(
+            &roots,
+            &env(&[(ACCOUNT_TOKEN_FILES_KEY, "/a=/t, /a=/u")]),
+            &FLAGS,
+        )
+        .unwrap();
+        assert_eq!(
+            refusals(&settings),
+            vec![(ACCOUNT_TOKEN_FILES_KEY.to_owned(), "/a=/u".to_owned())]
+        );
     }
 
     /// Every carrier's refusal, as its key and refused value, in one list:
@@ -1588,6 +1618,7 @@ mod tests {
             s.launch.permission.get().map(drop),
             s.engine.harness_binaries.get().map(drop),
             s.controller.succession.get().map(drop),
+            s.controller.account_tokens.get().map(drop),
             s.marks.wall_minutes.get().map(drop),
             s.marks.memory_pct.get().map(drop),
             s.marks.context_pct.get().map(drop),

@@ -583,6 +583,7 @@ mod tests {
             args: Vec::new(),
             env: BTreeMap::new(),
             env_remove: Vec::new(),
+            env_files: Default::default(),
             cwd: dir.path().to_path_buf(),
             brief_arg: None,
             brief_path: None,

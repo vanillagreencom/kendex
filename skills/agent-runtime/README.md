@@ -65,6 +65,7 @@ Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`
 | `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended. `native` keeps the harness's own prompts. |
 | `AGENT_RUNTIME_HARNESS_BINARIES` | Where a harness is installed when it is not on `PATH`, as `harness=/absolute/path` pairs. |
 | `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | Where account usage and limit records live: an absolute or `~/` path. |
+| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | The token file a successor on each Claude account signs in with, as `<account dir>=<token file>` pairs. The value names paths, never a token. Declare it in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every successor inherits. |
 
 ## Licence
 
