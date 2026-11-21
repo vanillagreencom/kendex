@@ -35,18 +35,25 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "${work:?}"' EXIT
 seen=()
 for root in "$@"; do
-  # A folder outside any git repository holds no overseer mailbox; lane-mail
-  # refuses root-unresolved there. Git's discovery failure is the die text in
-  # its setup.c, read untranslated; any other failure refuses the read.
-  if ! probe="$(LC_ALL=C git -C "$root" rev-parse --is-inside-work-tree 2>&1 >/dev/null)"; then
-    case "$probe" in
-      'fatal: not a git repository (or any '* | *$'\n''fatal: not a git repository (or any '*)
-        jq -cn --arg root "$root" '{registered: $root, mailbox: null}'
-        continue ;;
-    esac
-    printf '%s\n' "$probe" >&2
-    exit 1
-  fi
+  # Only a work tree holds an overseer mailbox; lane-mail refuses
+  # root-unresolved elsewhere. rev-parse answers true there and false in git
+  # metadata with no work tree, a bare or .git directory. Outside every
+  # repository it dies with 128, git's status for every fatal error, so that
+  # outcome is known only by the first line of its untranslated die text.
+  # Running inside the folder keeps the folder's path out of that line.
+  status=0
+  inside="$( { cd -- "$root" && LC_ALL=C git rev-parse --is-inside-work-tree; } 2>"$work/probe")" || status=$?
+  first=
+  IFS= read -r first <"$work/probe" || true
+  case "$status:$inside:$first" in
+    0:true:*) ;;
+    0:false:* | '128::fatal: not a git repository (or any '*)
+      jq -cn --arg root "$root" '{registered: $root, mailbox: null}'
+      continue ;;
+    *)
+      cat -- "$work/probe" >&2
+      exit 1 ;;
+  esac
   # The sentinel keeps a path's own trailing line feeds; the function adds one.
   common="$(mailbox_common_root "$root" && printf .)"
   common="${common%.}"
@@ -194,7 +201,7 @@ class Sources:
             raise source_failure(package + "/" + script, "local:" + self.session.home, error) from error
 
     def registered(self, target):
-        """Every folder the destination's registry names; one it cannot read hides its asks."""
+        """Every folder the destination's registry names; any registration not in state ok makes the list unavailable."""
         argv = watch.host_args(target, "kendex project list --json") if target.host else ["kendex", "project", "list", "--json"]
         try:
             roots = []
@@ -279,7 +286,8 @@ def source_rows(source):
 
     def add(identity, kind, what, author, at, link, thread):
         instant(at)
-        if not printable(author["id"]) or not printable(author["name"]) or not http(link["url"]):
+        if (not printable(author["id"]) or not printable(author["name"])
+                or link is not None and not http(link["url"])):
             raise Unavailable("An original request author or conversation link is not confirmed.")
         key = digest(identity)
         if key in rows:
@@ -294,16 +302,12 @@ def source_rows(source):
                 posted = mailbox["posted"][ask["issue"]]
                 mirrors.add((posted["workspace"], posted["uuid"], ask["tracker_comment"]))
         for ask in mailbox["asks"]:
+            # An ask with no confirmed tracker mirror has no conversation link.
             link = mailbox["links"].get(ask["id"])
-            if link is None:
-                # Quoting keeps a path's own bytes from breaking the one
-                # printable sentence the consumer shows.
-                raise Unavailable("Owner ask %r in the mailbox at %r on destination %r has no confirmed "
-                                  "tracker link; post it to the tracker or close it." % (ask["id"], root, destination))
             identity = ["mailbox", destination, root, ask["id"]]
             add(identity, "fleet-approval" if ask.get("draft") else "jarvis-ask",
                 ask["text"], {"id": ask["from"], "name": ask["from"]}, ask["at"],
-                {"label": "Original ask", "url": link["url"]}, identity)
+                None if link is None else {"label": "Original ask", "url": link["url"]}, identity)
     tracker = source["tracker"]
     if tracker is not None:
         for request in tracker["requests"]:

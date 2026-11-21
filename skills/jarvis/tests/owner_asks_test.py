@@ -154,17 +154,27 @@ class OwnerAsksContract(unittest.TestCase):
         data["mailboxes"][0]["links"]["another-real-ask"] = {"url": first["url"]}
         self.assertEqual(len(owner_asks.source_rows(data)), 4)
 
-    def test_unlinked_open_mailbox_ask_names_itself_in_the_refusal(self):
-        # The cause is the console's copy: it must name the ask and the
-        # mailbox the owner fixes, as one printable sentence.
-        self.source.data = mailbox_projection(str(self.home))
-        self.source.data["mailboxes"][0]["links"] = {}
-        with self.assertRaises(owner_asks.Unavailable) as raised:
-            self.page()
-        cause = str(raised.exception)
-        for named in ("mail-ask", "/canonical/repo", "local"):
-            self.assertIn(named, cause)
-        self.assertTrue(cause.isprintable())
+    def test_mailbox_ask_links_are_its_tracker_mirror_or_null(self):
+        # Beside a linked ask, one with no tracker mirror lists with a null
+        # link; a mirror link that is not HTTP is never shown.
+        mirror = "https://linear.app/example/issue/KEN-1#comment-mirror"
+        cases = [("mirror", {"url": mirror}, mirror), ("unposted", None, None),
+                 ("not-http", {"url": "javascript:alert(1)"}, owner_asks.Unavailable)]
+        for name, link, expected in cases:
+            with self.subTest(link=name):
+                self.source.data = data = mailbox_projection(str(self.home))
+                mailbox = data["mailboxes"][0]
+                beside = dict(mailbox["asks"][0], id="beside-ask", text="Linked neighbour")
+                mailbox["asks"].append(beside)
+                mailbox["links"] = {beside["id"]: {"url": mirror}}
+                if link is not None:
+                    mailbox["links"]["mail-ask"] = link
+                if expected is owner_asks.Unavailable:
+                    with self.assertRaises(owner_asks.Unavailable):
+                        self.page()
+                    continue
+                links = {row["what"]: row["link"] and row["link"]["url"] for row in self.page()["rows"]}
+                self.assertEqual(links, {"Mailbox question": expected, "Linked neighbour": mirror})
 
     def test_complete_row_and_byte_paging_and_stale_cursors(self):
         self.source.data = projection(str(self.home), 70)
@@ -375,10 +385,12 @@ class OwnerAsksContract(unittest.TestCase):
                 ("jarvis/scripts/lib/owner_asks.py", '"$BASH" "$mail" pending --item overseer',
                  '"$BASH" .agents/skills/mailbox/scripts/lane-mail pending --item overseer',
                  "PublicOwnerAsks.test_remote_list_runs_caller_code_on_checkout_data", "(checkout_code=True)"),
-                ("jarvis/scripts/lib/owner_asks.py",
-                 "      'fatal: not a git repository (or any '* | *$'\\n''fatal: not a git repository (or any '*)",
-                 "      'no answer git gives')",
-                 "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='outside-git')"),
+                ("jarvis/scripts/lib/owner_asks.py", "    0:false:* | '128::fatal: not a git repository (or any '*)",
+                 "    '128::fatal: not a git repository (or any '*)",
+                 "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='git-metadata')"),
+                ("jarvis/scripts/lib/owner_asks.py", "    0:false:* | '128::fatal: not a git repository (or any '*)",
+                 "    0:false:* | 128::*)",
+                 "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='dangling-gitfile')"),
                 ("jarvis/scripts/lib/owner_asks.py", 'common="$(mailbox_common_root "$root" && printf .)"',
                  'common="$(mailbox_common_root "$root")"',
                  "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='trailing\\n')"),
@@ -483,17 +495,25 @@ class PublicOwnerAsks(MailWorld):
     def test_each_registered_folder_answers_through_its_own_mailbox(self):
         self.tracker_api([request_comment("mirror", "Tracker copy")])
         # Folder names reach the reads exactly: a carriage return and a
-        # trailing line feed are path bytes. A folder outside any git
-        # repository holds no mailbox; lane-mail itself refuses an ask there,
-        # and so it does under a trailing line feed.
-        cases = [("outside-git", False, False), ("carriage\rreturn", True, True), ("trailing\n", True, False)]
-        for name, repository, asked in cases:
+        # trailing line feed are path bytes. Only a work tree holds a
+        # mailbox: a folder outside any git repository, or git metadata with
+        # no work tree, adds no asks. lane-mail itself refuses an ask there,
+        # and so it does under a trailing line feed. A repository git cannot
+        # read may hold asks, so it makes the list unavailable.
+        cases = [("outside-git", "plain", False), ("git-metadata", "bare", False),
+                 ("carriage\rreturn", "project", True), ("trailing\n", "project", False),
+                 ("dangling-gitfile", "dangling", None)]
+        for name, kind, asked in cases:
             with self.subTest(folder=name):
                 folder = self.root / "registered" / name
-                if repository:
+                if kind == "project":
                     make_project(folder)
                 else:
                     folder.mkdir(parents=True)
+                if kind == "bare":
+                    self.command(["git", "init", "-q", "--bare", folder], folder).check_returncode()
+                if kind == "dangling":
+                    (folder / ".git").write_text("gitdir: " + str(self.root / "gone") + "\n")
                 expected = []
                 if asked:
                     expected.append("Asked in " + name)
@@ -501,6 +521,10 @@ class PublicOwnerAsks(MailWorld):
                                 "mirror")
                 self.register(self.registry, self.home, folder)
                 result, page = self.run_cli()
+                if asked is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(page["kind"], "unavailable")
+                    continue
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 self.assertEqual([row["what"] for row in page["rows"]], expected)
 
