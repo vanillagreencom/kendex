@@ -480,24 +480,10 @@ fi
 CONSUMER="$TMP/consumer-full"
 REPORT="$SKILL/scripts/validate-standard.sh"
 
-# The control ignores the private-file selector in a disposable copy.
-cp "$SKILL/scripts/validate-standard.sh" "$TMP/standard-report.keep"
-file_edit "$SKILL" scripts/validate-standard.sh 1 '^private_file=.*:-\.env\.local' \
-  's/^private_file=\${private_file:-\.env\.local}$/private_file=.env.local/'
-CONSUMER="$TMP/consumer-selected-private-off"
-run "$BASE" repository
-if [ "$RC" -ne 0 ] && ! grep -qx 'note check=standard-platform-checks value=disabled' <<<"$RAW"; then
-  ok "control: a report that ignores KENDEX_ENV_FILE turns the selected opt-out red"
-else
-  bad "control: a report that ignores KENDEX_ENV_FILE" "$RAW"
-fi
-CONSUMER="$TMP/consumer-full"
-cp "$TMP/standard-report.keep" "$SKILL/scripts/validate-standard.sh"
-
 # The control reads one retired key in a disposable copy of the loader.
 cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
 file_edit "$SKILL" scripts/lib/standard.sh 1 '^  WANT_CHECKS_BYPASS=' \
-  's/^  WANT_CHECKS_BYPASS=.*$/&\n  rg_standard_actors GITHUB_STANDARD_LAND_BYPASS REVIEW_GATE_STANDARD_SECRETS "$private_file" >\/dev\/null || return 1/'
+  's/^  WANT_CHECKS_BYPASS=.*$/&\n  rg_standard_actors GITHUB_STANDARD_LAND_BYPASS REVIEW_GATE_STANDARD_SECRETS >\/dev\/null || return 1/'
 drift_case "control: a retired key read" "" "" "" "" retired
 # The planted retired value, read and refused, is the red result.
 if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
@@ -505,26 +491,52 @@ if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
   ok "control: a loader that reads a retired key turns the retired-key case red"
 else bad "control: a loader that reads a retired key" "$CASE_DIFF"; fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
-file_edit "$SKILL" scripts/lib/standard.sh 1 '^  rg_setting "\$1" "" "\$3" 3' \
-  's/^  rg_setting "\$1" "" "\$3" 3.*$/  status=3/'
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  rg_setting "\$1" "" "\$private_file" 3' \
+  's/^  rg_setting "\$1" "" "\$private_file" 3.*$/  status=3/'
 drift_case "control: prefer legacy keys" "" "" "" "" precedence
 if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
   grep -qx 'review-gate-error=standard-bypass-invalid value=invalid' <<<"$RAW"; then
   ok "control: ignoring replacement settings turns precedence red"
 else bad "control: ignoring replacement settings" "$CASE_DIFF"; fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
-# The standard settings read the selected private file, not .env.local.
-drift_case "the standard settings read the selected private file" "" "" "" "" selected-private
+
+# The standard settings read the selected private file, not .env.local: it
+# alone admits the actors the queue and checks rulesets carry here.
+selected_private_case() { # NAME
+  drift_case "$1" "" ruleset-3.json,ruleset-4.json \
+    '.bypass_actors = [{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]' \
+    'ok:standard-bypass-actors=2' selected-private
+}
+selected_private_case "the standard settings read the selected private file"
 if [ "$CASE_MATCH" = true ]; then ok "the standard settings read the selected private file"
 else bad "the standard settings read the selected private file" "$CASE_DIFF"; fi
-file_edit "$SKILL" scripts/lib/standard.sh 4 ' "\$private_file"\)" \|\| return 1$' \
-  's/ "\$private_file")" || return 1$/ .env.local)" || return 1/'
-drift_case "control: the loader ignores the selected private file" "" "" "" "" selected-private
+# The control drops the selected private file from the bypass reads alone.
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  raw="\$\(rg_standard_setting ' \
+  's/^  raw="\$(rg_standard_setting .*$/  raw="$(rg_setting "$1" "" "")" || return 1/'
+selected_private_case "control: the bypass reads drop the selected private file"
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 1 ] &&
+  grep -qx 'FAIL check=standard-bypass-actors value=3=Integration:5115517:pull_request\\,4=Integration:5115517:pull_request' <<<"$OUT"; then
+  ok "control: bypass reads that drop the selected private file turn the selected-private case red"
+else bad "control: bypass reads that drop the selected private file" "$CASE_DIFF"; fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+# The control's shared reader ignores KENDEX_ENV_FILE and reads .env.local.
+cp "$TMP/review-gate/scripts/lib/settings.sh" "$TMP/settings-lib.keep"
+file_edit "$TMP/review-gate" scripts/lib/settings.sh 1 '^  file=.*rg_setting KENDEX_ENV_FILE' \
+  's/^  file=.*rg_setting KENDEX_ENV_FILE.*$/  file=/'
+CONSUMER="$TMP/consumer-selected-private-off"
+run "$BASE" repository
+if [ "$RC" -ne 0 ] && ! grep -qx 'note check=standard-platform-checks value=disabled' <<<"$RAW"; then
+  ok "control: a reader that ignores KENDEX_ENV_FILE turns the selected opt-out red"
+else
+  bad "control: a reader that ignores KENDEX_ENV_FILE" "$RAW"
+fi
+CONSUMER="$TMP/consumer-full"
+selected_private_case "control: the reader ignores the selected private file"
 if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
   grep -qx 'review-gate-error=standard-bypass-invalid value=invalid' <<<"$RAW"; then
-  ok "control: a loader that reads .env.local turns the selected-private case red"
-else bad "control: a loader that reads .env.local" "$CASE_DIFF"; fi
-cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+  ok "control: a reader that reads .env.local turns the selected-private case red"
+else bad "control: a reader that reads .env.local" "$CASE_DIFF"; fi
+cp "$TMP/settings-lib.keep" "$TMP/review-gate/scripts/lib/settings.sh"
 
 echo "=== a ruleset holding one rule type admits the standard's actors there ==="
 # The matching world's repository rulesets, the merge queue in ruleset 3

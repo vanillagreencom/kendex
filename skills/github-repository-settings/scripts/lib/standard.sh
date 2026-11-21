@@ -7,8 +7,7 @@
 # so their shape is judged in one place. Requires settings.sh loaded first.
 
 # Sets WANT_CI (the CI context) and WANT_GATE (the gate context, which the
-# target layout no longer requires) from MANIFEST, and from settings, with
-# PRIVATE_FILE as their private layer,
+# target layout no longer requires) from MANIFEST, and, from settings,
 # WANT_CONTEXTS (GITHUB_STANDARD_CONTEXTS, sorted, `;`-joined) and the
 # bypass actors a ruleset holding one rule type alone may carry, one
 # TYPE:ID:MODE per line: WANT_QUEUE_BYPASS
@@ -23,8 +22,8 @@
 # manifest, an unreadable setting, or a bypass entry that is not
 # TYPE:ID:MODE, it prints the refusal to stderr and returns 1; the caller
 # exits with its could-not-run status.
-rg_standard_load() { # MANIFEST PRIVATE_FILE
-  local contexts private_file="$2"
+rg_standard_load() { # MANIFEST
+  local contexts
   if ! command -v jq >/dev/null 2>&1; then
     rg_message error jq-missing jq "jq is not on PATH; the standard manifest is read with it, so install jq" >&2
     return 1
@@ -50,10 +49,10 @@ rg_standard_load() { # MANIFEST PRIVATE_FILE
     return 1
   }
 
-  WANT_QUEUE_BYPASS="$(rg_standard_actors GITHUB_STANDARD_QUEUE_BYPASS REVIEW_GATE_STANDARD_QUEUE_BYPASS "$private_file")" || return 1
-  WANT_CHECKS_BYPASS="$(rg_standard_actors GITHUB_STANDARD_CHECKS_BYPASS REVIEW_GATE_STANDARD_CHECKS_BYPASS "$private_file")" || return 1
-  WANT_LAND_BYPASS="$(rg_standard_actors GITHUB_STANDARD_LAND_BYPASS REVIEW_GATE_STANDARD_LAND_BYPASS "$private_file")" || return 1
-  contexts="$(rg_standard_setting GITHUB_STANDARD_CONTEXTS REVIEW_GATE_STANDARD_CONTEXTS "$private_file")" || return 1
+  WANT_QUEUE_BYPASS="$(rg_standard_actors GITHUB_STANDARD_QUEUE_BYPASS REVIEW_GATE_STANDARD_QUEUE_BYPASS)" || return 1
+  WANT_CHECKS_BYPASS="$(rg_standard_actors GITHUB_STANDARD_CHECKS_BYPASS REVIEW_GATE_STANDARD_CHECKS_BYPASS)" || return 1
+  WANT_LAND_BYPASS="$(rg_standard_actors GITHUB_STANDARD_LAND_BYPASS REVIEW_GATE_STANDARD_LAND_BYPASS)" || return 1
+  contexts="$(rg_standard_setting GITHUB_STANDARD_CONTEXTS REVIEW_GATE_STANDARD_CONTEXTS)" || return 1
   WANT_CONTEXTS="$(rg_pack "$contexts" ';' | LC_ALL=C sort -u | paste -sd ';' -)" || {
     rg_message error standard-read GITHUB_STANDARD_CONTEXTS "could not split the required contexts" >&2
     return 1
@@ -62,16 +61,17 @@ rg_standard_load() { # MANIFEST PRIVATE_FILE
 
 # An explicit empty replacement wins in every settings layer. Only absence
 # enables the compatibility read, which leaves at the 2.0 release.
-rg_standard_setting() { # KEY LEGACY_KEY PRIVATE_FILE
-  local status=0
-  rg_setting "$1" "" "$3" 3 || status=$?
+rg_standard_setting() { # KEY LEGACY_KEY
+  local status=0 private_file
+  private_file="$(rg_private_file)" || return 1
+  rg_setting "$1" "" "$private_file" 3 || status=$?
   case "$status" in
     0) return 0 ;;
     3) ;;
     *) return "$status" ;;
   esac
   status=0
-  rg_setting "$2" "" "$3" 3 || status=$?
+  rg_setting "$2" "" "$private_file" 3 || status=$?
   case "$status" in
     0) ;;
     3) return 0 ;;
@@ -85,9 +85,9 @@ rg_standard_setting() { # KEY LEGACY_KEY PRIVATE_FILE
 # actor_type, its actor_id (empty for an actor GitHub gives none, such as
 # OrganizationAdmin) and its bypass_mode. An unset or empty key admits none.
 # An entry of any other shape is refused: it would never match an actor.
-rg_standard_actors() { # KEY LEGACY_KEY PRIVATE_FILE
+rg_standard_actors() { # KEY LEGACY_KEY
   local raw actors invalid rc=0
-  raw="$(rg_standard_setting "$1" "$2" "$3")" || return 1
+  raw="$(rg_standard_setting "$1" "$2")" || return 1
   actors="$(rg_pack "$raw" ';' | LC_ALL=C sort -u)" || {
     rg_message error standard-read "$1" "could not split the bypass actors" >&2
     return 1

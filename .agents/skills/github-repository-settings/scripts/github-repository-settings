@@ -186,12 +186,10 @@ if [ "$staged" = true ]; then
   trap 'rm -rf -- "$staged_settings"' EXIT
   rg_settings_index_sources "$staged_settings" || exit 2
 fi
-private_file="$(rg_setting KENDEX_ENV_FILE '' '')" || exit 2
-private_file=${private_file:-.env.local}
-location="$(rg_setting GITHUB_STANDARD_CHECK_LOCATION '' "$private_file")" || exit 2
+location="$(rg_setting GITHUB_STANDARD_CHECK_LOCATION '')" || exit 2
 review_default=off
 [ "$verb" != check ] || review_default=''
-review="$(rg_setting GITHUB_STANDARD_BOT_REVIEW "$review_default" "$private_file")" || exit 2
+review="$(rg_setting GITHUB_STANDARD_BOT_REVIEW "$review_default")" || exit 2
 case "$location" in
   hosted|local|'') ;;
   *) fail setting GITHUB_STANDARD_CHECK_LOCATION 'Choose hosted or local.' ;;

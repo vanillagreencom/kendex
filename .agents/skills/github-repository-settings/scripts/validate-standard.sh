@@ -199,10 +199,7 @@ die() { # CODE VALUE MESSAGE
 
 [ -r "$REVIEW_LIB/settings.sh" ] || die settings-load "$REVIEW_LIB/settings.sh" "could not load the settings library"
 . "$REVIEW_LIB/settings.sh" || exit 2
-# The selected private file is the one the package's review-file command reads.
-private_file="$(rg_setting KENDEX_ENV_FILE '' '')" || exit 2
-private_file=${private_file:-.env.local}
-platform_checks="$(rg_setting GITHUB_STANDARD_PLATFORM_CHECKS "$platform_default" "$private_file")" || exit 2
+platform_checks="$(rg_setting GITHUB_STANDARD_PLATFORM_CHECKS "$platform_default")" || exit 2
 case "$platform_checks" in
   "" | false)
     rg_report note standard-platform-checks disabled "Set GITHUB_STANDARD_PLATFORM_CHECKS to true to report GitHub settings."
@@ -211,14 +208,14 @@ case "$platform_checks" in
   true) ;;
   *) die settings-value GITHUB_STANDARD_PLATFORM_CHECKS "Use true, false or an empty string." ;;
 esac
-WANT_WORKFLOW_REPOSITORY="$(rg_setting GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID "$workflow_repository_default" "$private_file")" || exit 2
+WANT_WORKFLOW_REPOSITORY="$(rg_setting GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID "$workflow_repository_default")" || exit 2
 if [[ ! "$WANT_WORKFLOW_REPOSITORY" =~ ^[1-9][0-9]*$ ]]; then
   die settings-value GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID "Set the positive numeric GitHub repository ID of the required review workflow."
 fi
 if [ ! -r "$SCRIPT_DIR/lib/standard.sh" ] || ! . "$SCRIPT_DIR/lib/standard.sh" 2>/dev/null; then
   die standard-lib-load "$SCRIPT_DIR/lib/standard.sh" "could not load the standard library"
 fi
-rg_standard_load "$SCRIPT_DIR/../standard.json" "$private_file" || exit 2
+rg_standard_load "$SCRIPT_DIR/../standard.json" || exit 2
 
 SCRATCH="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf -- "$SCRATCH"' EXIT
