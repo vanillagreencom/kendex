@@ -199,10 +199,6 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = "tools/* crates/* ui/* skills/* hooks/* a
 # Package manifests keep their own adjacent release records.
 COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "crates/app/tauri.conf.json pi-extensions/*/package.json"
 
-# Disable catalog package fragments. Independent Pi package versions keep
-# their own checks through COMMIT_GUARDS_CHANGELOG_VERSION_PATHS above.
-COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = ""
-
 # Paths whose change obliges a changelog entry, checked by the commit-msg
 # lane: crates/ and ui/ are what a consumer sees. The escape for a change no
 # consumer notices: AGENTS.md § Conventions.
