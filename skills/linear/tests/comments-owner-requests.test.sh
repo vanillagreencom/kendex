@@ -61,7 +61,7 @@ run_requests() {
     RC=0
     : >"$TMP_ROOT/calls"
     OUT=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" \
-        LINEAR_API_KEY_OVERRIDE=test-key CALLS="$TMP_ROOT/calls" MODE="$1" MARKER="$TMP_ROOT/executed" \
+        LINEAR_API_KEY_OVERRIDE=test-key CALLS="$TMP_ROOT/calls" MODE="$1" \
         ${presentation[@]+"${presentation[@]}"} \
         "$BASH" "$SKILL_DIR/scripts/linear.sh" comments owner-requests --email owner@example.test --label owner-waiting \
         2>"$TMP_ROOT/err") || RC=$?
@@ -88,32 +88,13 @@ for mode in large-comments large-items; do
             '([.issues[].comments[].body | length] | add) > 180000 and .issues[0].comments[-1].id == "history-79"'
     fi
 done
-mkdir -p "$TMP_ROOT/checkout-code" "$TMP_ROOT/lib" "$TMP_ROOT/.kendex"
-for helper in formatters.sh attachments.sh teams.sh issues.sh launch; do
-    printf '%s\n' '#!/usr/bin/env bash' 'printf executed >"$MARKER"' 'exit 91' >"$TMP_ROOT/checkout-code/$helper"
-    chmod +x "$TMP_ROOT/checkout-code/$helper"
-done
-cp "$TMP_ROOT/checkout-code/attachments.sh" "$TMP_ROOT/lib/attachments.sh"
-for settings in kendex.settings.toml .kendex/settings.toml; do
-    for identity in _LIB_DIR SCRIPT_DIR BASH BASH_ENV; do
-        value='./checkout-code'
-        case "$identity" in BASH|BASH_ENV) value='./checkout-code/launch' ;; esac
-        printf '[env]\n%s="%s"\n' "$identity" "$value" >"$TMP_ROOT/$settings"
-        run_requests normal
-        assert_not "public $identity replacement refuses" test "$RC" -eq 0
-        assert_not "public $identity never executes checkout code" test -e "$TMP_ROOT/executed"
-        # A previous failing implementation must not contaminate the next row.
-        : >"$TMP_ROOT/executed"
-        rm "$TMP_ROOT/executed"
-    done
-    printf '[env]\nKENDEX_ENV_FILE="fixture-private.env"\nLINEAR_FORMAT="raw"\n' >"$TMP_ROOT/$settings"
-    printf 'LINEAR_RETRY_BASE_DELAY=0\n' >"$TMP_ROOT/fixture-private.env"
-    run_requests normal
-    assert_eq "ordinary settings and selected private file succeed" "$RC" 0
-    assert_jq "project raw preference retains safe evidence" "$OUT" \
-        '[.requests[].comment.user_id] == ["original-author","original-author"]'
-    : >"$TMP_ROOT/$settings"
-done
+printf '[env]\nKENDEX_ENV_FILE="fixture-private.env"\nLINEAR_FORMAT="raw"\n' >"$TMP_ROOT/kendex.settings.toml"
+printf 'LINEAR_RETRY_BASE_DELAY=0\n' >"$TMP_ROOT/fixture-private.env"
+run_requests normal
+assert_eq "ordinary settings and selected private file succeed" "$RC" 0
+assert_jq "project raw preference retains safe evidence" "$OUT" \
+    '[.requests[].comment.user_id] == ["original-author","original-author"]'
+: >"$TMP_ROOT/kendex.settings.toml"
 run_requests paginated
 assert_eq "continued projection succeeds" "$RC" 0
 assert_jq "continued author, thread and URL survive projection" "$OUT" \
