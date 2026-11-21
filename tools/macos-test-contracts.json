@@ -144,6 +144,7 @@
     "skills/github/tests/post-reply.test.sh": "linux-duplicate",
     "skills/github/tests/pr-create-ahead-count.test.sh": "native",
     "skills/github/tests/pr-cross-check-many-prs.test.sh": "native",
+    "skills/github/tests/pr-cross-check-pr-read.test.sh": "linux-duplicate",
     "skills/github/tests/pr-data-paging.test.sh": "linux-duplicate",
     "skills/github/tests/pr-list-ready-rollup.test.sh": "linux-duplicate",
     "skills/github/tests/pr-list-ready-unknown-refresh.test.sh": "native",
