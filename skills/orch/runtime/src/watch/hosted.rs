@@ -776,7 +776,7 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
 
 /// The state of the sandbox the provider's `list` names for `item`: the
 /// second field of a row whose first ends in `/ITEM`, in any case, outside
-/// an `available` row; `None` where no such row stands, the sandbox gone.
+/// an `available`, `exited` or `teardown` row; `None` where no such row stands.
 /// `list` is the protocol's one presence read. `Err` is a list that failed
 /// or was refused at the bound ([`BUSY`]).
 pub fn lists_item(
@@ -793,7 +793,8 @@ pub fn lists_item(
         let mut fields = row.split('\t');
         let name = fields.next().unwrap_or("").to_ascii_lowercase();
         let state = fields.next().unwrap_or("");
-        (state != "available" && name.ends_with(&suffix)).then(|| state.to_owned())
+        (!matches!(state, "available" | "exited" | "teardown") && name.ends_with(&suffix))
+            .then(|| state.to_owned())
     }))
 }
 
@@ -1185,6 +1186,7 @@ fn closed_of(reply: &Value) -> Closed {
     let observation = result.and_then(|r| r.get("observation"));
     let seen = |key: &str| text(observation.and_then(|o| o.get(key)));
     let host_close = seen("host_close");
+    let cause = seen("cause");
     match text(result.and_then(|r| r.get("word"))).as_str() {
         // The harness ended with its sandbox kept.
         "stopped" => Closed::Closed {
@@ -1216,7 +1218,11 @@ fn closed_of(reply: &Value) -> Closed {
             cause: format!(
                 "word={} cause={}",
                 if word.is_empty() { "unread" } else { word },
-                seen("cause")
+                if cause.is_empty() {
+                    "close-cause-unreported"
+                } else {
+                    &cause
+                }
             ),
         },
     }

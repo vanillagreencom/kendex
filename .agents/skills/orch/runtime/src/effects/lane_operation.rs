@@ -454,6 +454,31 @@ impl<'a> LaneOperation<'a> {
         pending_ask(&self.run.engine.reach.mail_program, lane)
     }
 
+    /// Preserve the last outbound mail before the provider removes its box.
+    /// A repeat reads the host again, retaining the prior snapshot if the
+    /// sandbox has since disappeared.
+    pub(super) fn finish_host_mail(&self, lane: &Lane) -> std::result::Result<(), String> {
+        let Some(host) = lane.mail_host() else {
+            return Ok(());
+        };
+        let root = lane.mail_root.as_deref().ok_or("mail-root-unrecorded")?;
+        let mailbox = Mailbox::new(self.run.engine.reach.mail_program.clone());
+        let snapshot = match mailbox.outbox(&lane.item, root, host) {
+            Ok(snapshot) => snapshot,
+            Err(_) if matches!(self.host_listed(lane), Ok(None)) => return Ok(()),
+            Err(cause) => return Err(format!("mail-read-failed: {cause}")),
+        };
+        if !snapshot.envelopes.is_empty() {
+            crate::watch::mail::keep_close_mail(
+                &self.run.engine.state_dir,
+                self.engine.intent_id(),
+                &snapshot,
+            )
+            .map_err(|e| format!("close-mail-unwritten: {e}"))?;
+        }
+        Ok(())
+    }
+
     /// End every validation run in a local lane's worktree before the
     /// window closes, by the validation runner's own worktree stop, and
     /// discharge the validation obligation by its answer. A hosted lane's

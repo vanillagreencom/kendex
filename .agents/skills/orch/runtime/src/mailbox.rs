@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::host::{self, Place};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ops::mail::DirectiveSend;
 use crate::state::Lane;
@@ -197,7 +197,7 @@ impl From<Refusal> for crate::Error {
 
 /// One envelope as the mailbox prints it, the fields the watch reads; the
 /// rest of the object is not carried.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Envelope {
     #[serde(default)]
     pub id: Option<String>,
@@ -306,7 +306,7 @@ pub struct Drain {
 
 /// What `events --box to-lane --after N` answered for the overseer's box:
 /// the header and every envelope past line N, each with its line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BoxEvents {
     pub count: u64,
     pub first: String,
@@ -768,17 +768,26 @@ impl Mailbox {
     /// checkout `root`: the overseer's box read by logical line, no cursor
     /// touched.
     pub fn box_events(&self, root: &Path, after: u64) -> Result<BoxEvents, Refusal> {
-        const VERB: &str = "events";
         let after = after.to_string();
         let root = root.display().to_string();
-        let stdout = self
-            .call(
-                VERB,
-                &[
-                    "--item", "overseer", "--root", &root, "--box", "to-lane", "--after", &after,
-                ],
-            )?
-            .ok(VERB)?;
+        self.read_box_events(
+            &[
+                "--item", "overseer", "--root", &root, "--box", "to-lane", "--after", &after,
+            ],
+            None,
+        )
+    }
+
+    /// Read the final outbound box whole so the watch can detect replacement.
+    pub(crate) fn outbox(&self, item: &str, root: &str, host: &str) -> Result<BoxEvents, Refusal> {
+        let outbox = "to-overseer";
+        let args = ["--item", item, "--root", root, "--box", outbox, "--host"];
+        self.read_box_events(&args, Some(host))
+    }
+
+    fn read_box_events(&self, args: &[&str], host: Option<&str>) -> Result<BoxEvents, Refusal> {
+        const VERB: &str = "events";
+        let stdout = self.call_on(VERB, args, host, None)?.ok(VERB)?;
         let mut lines = stdout.lines();
         let (count, first) = header(VERB, lines.next().ok_or_else(|| reply(VERB, "short", ""))?)?;
         let mut envelopes = Vec::new();

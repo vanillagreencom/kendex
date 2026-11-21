@@ -340,6 +340,29 @@ fn replaced(prior: u64, seen: &str, count: u64, first: &str) -> bool {
     }
 }
 
+fn render_lane_mail(item: &str, envelope: &Envelope, events: &mut Vec<Event>) {
+    if let Ok(Some(event)) = classify(item, envelope) {
+        events.push(event);
+        payload(envelope, events);
+    }
+}
+
+pub(super) fn close_mail_path(dir: &Path, intent: &str) -> PathBuf {
+    agent_runtime::record::receipt_path(dir, intent).with_extension("close-mail")
+}
+
+/// The close writes a local receipt for the watch before making its final
+/// provider call. The mail duty alone publishes the corresponding events.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the close's own final mailbox receipt, written before provider teardown"
+)]
+pub(crate) fn keep_close_mail(dir: &Path, intent: &str, mail: &BoxEvents) -> Result<()> {
+    let path = close_mail_path(dir, intent);
+    agent_runtime::record::replace_atomically(&path, &serde_json::to_value(mail)?)
+        .map_err(Error::from)
+}
+
 /// The wake slot's value for a box of `count` lines whose newest line past
 /// the target's cursor the read carries as `newest` (its line and id): the
 /// id where that is the box's last line and carries one, else the last
@@ -555,6 +578,7 @@ impl MailDuty {
     /// named and left for the next turn.
     fn lanes_turn(&self, tick: &Tick, turn: &mut Turn) -> Result<()> {
         let fleet = fleet(&self.config.fleet)?;
+        self.closed_lanes(tick.baseline, &fleet, turn);
         let mut local = Vec::new();
         let mut hosted = Vec::new();
         for lane in &fleet.lanes {
@@ -651,6 +675,53 @@ impl MailDuty {
         Ok(())
     }
 
+    /// A finished hosted close has no provider mailbox to revisit. Deliver
+    /// its receipt through the same event and cursor path as live mail.
+    fn closed_lanes(&self, baseline: &Baseline, fleet: &FleetState, turn: &mut Turn) {
+        use agent_runtime::{intent::EffectOp, protocol::Outcome};
+        let dir = self.config.fleet.parent().unwrap_or(Path::new("."));
+        let lanes = fleet.lanes.iter();
+        for lane in lanes.filter(|lane| lane.status == LaneStatus::Done) {
+            let Some(intent) = fleet.intents.iter().rev().find(|intent| {
+                intent.op == EffectOp::CloseResources
+                    && intent.target == lane.item
+                    && intent.outcome == Outcome::Confirmed
+            }) else {
+                continue;
+            };
+            let path = close_mail_path(dir, &intent.id);
+            let snapshot = std::fs::read(&path).and_then(|bytes| {
+                serde_json::from_slice::<BoxEvents>(&bytes).map_err(std::io::Error::other)
+            });
+            let snapshot = match snapshot {
+                Ok(snapshot) => snapshot,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    turn.refuse(
+                        &lane.item,
+                        format!("close-mail-unreadable path={} cause={e}", path.display()),
+                    );
+                    continue;
+                }
+            };
+            let prior = MailCursor::parse(baseline.get(LANE_MAIL, &lane.item));
+            let mut after = prior.announced;
+            if replaced(after, &prior.first, snapshot.count, &snapshot.first) {
+                after = 0;
+            }
+            for envelope in snapshot.envelopes.iter().filter(|e| e.line > Some(after)) {
+                render_lane_mail(&lane.item, envelope, &mut turn.events);
+            }
+            if snapshot.count > after {
+                let next = MailCursor {
+                    announced: snapshot.count,
+                    first: snapshot.first,
+                };
+                turn.set(baseline, LANE_MAIL, &lane.item, next.render());
+            }
+        }
+    }
+
     /// One provider snapshot per host the hosted lanes name, the files each
     /// lane's drain reads, made once per pass: the directory of each host
     /// whose snapshot was written, a failed batch among them, which the
@@ -745,10 +816,7 @@ impl MailDuty {
         for envelope in &drained.envelopes {
             // A lane writes asks and notices; any other kind is a line to
             // show rather than a line to drop silently.
-            if let Ok(Some(event)) = classify(item, envelope) {
-                turn.events.push(event);
-                payload(envelope, &mut turn.events);
-            }
+            render_lane_mail(item, envelope, &mut turn.events);
         }
         // A read shorter than what was drained moves no position: lowering
         // it would report the lines between again once the file reads whole.

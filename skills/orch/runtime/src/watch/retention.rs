@@ -375,13 +375,14 @@ fn laneless_records(
 }
 
 /// The files of an intent's effect that leave with it: the pane's receipt,
-/// a job's request and its job-unit record. The owner notice is not among
+/// a job's request and its job-unit record, and a close's final mailbox receipt. The owner notice is not among
 /// them: a reconcile writes it again for a closed intent that still owes
 /// it.
 const INTENT_FILES: &[fn(&Path, &str) -> PathBuf] = &[
     record::receipt_path,
     record::job_request_path,
     record::job_record_path,
+    super::mail::close_mail_path,
 ];
 
 /// The [`INTENT_FILES`] of every closed intent whose recorded end and the

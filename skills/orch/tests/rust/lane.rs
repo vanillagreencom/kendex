@@ -2874,7 +2874,7 @@ type CloseCase = (
 /// list asked, the item's files already gone.
 #[test]
 fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_items_files() {
-    let rows: [CloseCase; 9] = [
+    let rows: [CloseCase; 11] = [
         ("kept", &[], "closed", "kept=/srv/archive/KEN-1", "done"),
         (
             "listed standing",
@@ -2898,8 +2898,25 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
             "done",
         ),
         (
+            "listed exited",
+            &[("LIST", "o/r/KEN-1\texited\t-\tlane.example")],
+            "closed",
+            "kept=/srv/archive/KEN-1",
+            "done",
+        ),
+        (
+            "listed teardown",
+            &[("LIST", "o/r/KEN-1\tteardown\t-\tlane.example")],
+            "closed",
+            "kept=/srv/archive/KEN-1",
+            "done",
+        ),
+        (
             "absent",
-            &[("CLOSE_LINE", "closed=absent item=KEN-1")],
+            &[
+                ("CLOSE_LINE", "closed=absent item=KEN-1"),
+                ("LIST", "o/r/KEN-1\thosted\t-\tlane.example"),
+            ],
             "closed",
             "closed=absent item=KEN-1",
             "done",
@@ -2953,6 +2970,10 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
             assert_eq!(result["observation"]["path"], "/srv/clone", "{result}");
         }
         if case == "listed standing" {
+            assert_eq!(
+                result["observation"]["cause"], "host-still-listed",
+                "{result}"
+            );
             assert_eq!(result["observation"]["listed"], "hosted", "{result}");
             assert_eq!(
                 result["observation"]["closed"], "kept=/srv/archive/KEN-1",
@@ -2960,12 +2981,13 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
             );
         }
         assert_eq!(fleet.lane("KEN-1")["status"], status, "{case}");
+        assert_eq!(fleet.lane("KEN-1")["cycle"]["pr"], 7, "{case}");
         assert!(
             std::fs::symlink_metadata(&item_state).is_err(),
             "{case}: the item's files left before the provider's close"
         );
         let mut calls = RUNNING_CLOSE.to_vec();
-        if !matches!(case, "refused" | "failed" | "unanswered") {
+        if !matches!(case, "absent" | "refused" | "failed" | "unanswered") {
             calls.push("list");
         }
         assert_eq!(fleet.provider_calls(), calls, "{case}");
@@ -2975,6 +2997,114 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
                 .any(|line| line.contains(&format!("{REMOTE_ROOT}/tmp/lane-mail/KEN-1/"))),
             "{case}: the mailbox was read on the record's host: {mail:?}"
         );
+    }
+}
+
+#[test]
+fn a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on_retry() {
+    use orch_runtime::mailbox::Mailbox;
+    use orch_runtime::schedule::Duty;
+    use orch_runtime::watch::mail::{Config, MailDuty};
+    use orch_runtime::watch::{Baseline, Change, Event, Paths, Tick};
+
+    if !isolated_row(
+        "a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on_retry",
+    ) {
+        return;
+    }
+    let mut fleet = Fleet::hosted(4);
+    let dir = fleet.state_dir().to_path_buf();
+    let source = dir
+        .join("provider-disk")
+        .join(MAILBOX.trim_start_matches('/'));
+    let closed_box = dir.join("closed-box");
+    let mut lane = hosted_lane("KEN-1");
+    let provider_wrapper = dir.join("close-provider");
+    write_executable(
+        &provider_wrapper,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = close ]; then mv '{}' '{}' || exit 1; fi\nexec '{}' \"$@\"\n",
+            source.display(),
+            closed_box.display(),
+            provider(),
+        ),
+    );
+    lane["host"] = json!(provider_wrapper);
+    fleet.write_lanes(vec![lane]);
+    fleet.plant_tracker("KEN-1", "completed");
+    let paths = Paths::of(&fleet.fleet_path()).unwrap();
+    let mut baseline = Baseline::default();
+    baseline.apply(Change::Set {
+        kind: "lane-mail".to_owned(),
+        identity: "KEN-1".to_owned(),
+        value: "1 old".to_owned(),
+    });
+    baseline.store(&paths.baseline).unwrap();
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    let old = json!({"id": "old", "kind": "notice", "text": "Already delivered."});
+    let last = json!({"id": "last", "kind": "notice", "text": "Merged successfully."});
+    let late = json!({"id": "late", "kind": "notice", "text": "Verification finished."});
+    std::fs::write(&source, format!("{old}\n{last}\n")).unwrap();
+    fleet.answer("LIST", "o/r/KEN-1\thosted\t-\tlane.example");
+    let request = json!({"op": "close-lane", "item": "KEN-1"});
+    let held = fleet.close(request.clone());
+    assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
+    assert!(!source.exists());
+    std::fs::write(&source, format!("{old}\n{last}\n{late}\n")).unwrap();
+    fleet.answer("LIST", "");
+    let closed = fleet.close(request);
+    assert_eq!(closed["result"]["word"], "closed", "{closed}");
+    assert!(!source.exists());
+
+    let mail = dir.join("watch-mail");
+    write_executable(
+        &mail,
+        "#!/bin/sh\ncase \"$*\" in 'events --item overseer '*) echo 'count=0 first=';; 'pending --item overseer '*) ;; *) exit 2;; esac\n",
+    );
+    let mut duty = MailDuty::new(
+        Mailbox::new(mail),
+        Config {
+            fleet: paths.state,
+            common_root: dir.clone(),
+            request: dir.join("mail-request"),
+            snapshots: dir.join("mail-snapshots"),
+            interval: Duration::ZERO,
+            mark_repeat: 1,
+            unread: Duration::ZERO,
+            tracker_asks: false,
+        },
+    );
+    let clock = clock::SystemClock;
+    for expected in [
+        vec![
+            "EVENT lane-notice KEN-1 last",
+            "  Merged successfully.",
+            "EVENT lane-notice KEN-1 late",
+            "  Verification finished.",
+        ],
+        vec![],
+    ] {
+        let produced = duty
+            .run(&Tick {
+                duty: Duty::Mail,
+                now: std::time::Instant::now(),
+                wall: 1,
+                baseline: &baseline,
+                clock: &clock,
+            })
+            .unwrap();
+        assert_eq!(produced.failed, None);
+        assert_eq!(
+            produced
+                .events
+                .iter()
+                .map(Event::render)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for change in produced.changes {
+            baseline.apply(change);
+        }
     }
 }
 
@@ -3089,7 +3219,6 @@ fn a_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_archived_and_
             "touch --item KEN-1".to_owned(),
             "stop --item KEN-1 --harness claude".to_owned(),
             "close --item KEN-1 --merged".to_owned(),
-            "list".to_owned(),
         ]
     );
 }
@@ -3131,7 +3260,6 @@ fn an_unmerged_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_rem
             "status --item KEN-1 --harness claude",
             "stop --item KEN-1 --harness claude",
             "close --item KEN-1",
-            "list",
         ]
     );
 }

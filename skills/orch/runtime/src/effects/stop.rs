@@ -539,16 +539,25 @@ impl Close<'_> {
         }
         if provider_closes(self.ground, self.lane) {
             let merged = self.merged(&operation, &mut observation);
+            if (merged || record_merged(self.lane) || self.cycle.is_some_and(cycle_merged))
+                && let Err(cause) = operation.finish_host_mail(self.lane)
+            {
+                observation["cause"] = json!(cause);
+                return Ok(self.hold(operation, observation));
+            }
             match operation.host_close(self.lane, merged)? {
+                Ok(HostClosed::Closed { line }) if line.starts_with("closed=absent ") => {
+                    observation["host_close"] = json!(line);
+                }
                 // The provider's exit is no proof its sandbox is gone: its
-                // `list` is asked after it, and only a list naming no row
-                // for the item lets the close go on.
+                // `list` is asked after it to check for a standing sandbox.
                 Ok(HostClosed::Closed { line }) => match operation.host_listed(self.lane) {
                     Ok(None) => observation["host_close"] = json!(line),
                     Ok(Some(state)) => {
                         observation["host_close"] = json!("standing");
                         observation["listed"] = json!(state);
                         observation["closed"] = json!(line);
+                        observation["cause"] = json!("host-still-listed");
                         return Ok(self.hold(operation, observation));
                     }
                     Err(cause) => {
