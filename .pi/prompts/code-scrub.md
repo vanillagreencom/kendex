@@ -8,8 +8,6 @@ argument-hint: "<days>"
 <!-- kendex:project-instructions:start -->
 ## Project Instructions
 
-For a squash-merged pull request, audit the final squash diff against the issue requirements under Done-when and Not-in-scope. Resolve the actual merged diff and the current issue before judging what shipped.
-
 The code-scrub risk policy examines bloat for low-severity hypotheticals and edge cases below 1%. State missing evidence. Do not infer likelihood or an absent user population. Check accepted requirements and the real producer and consumer paths before proposing a removal.
 <!-- kendex:project-instructions:end -->
 

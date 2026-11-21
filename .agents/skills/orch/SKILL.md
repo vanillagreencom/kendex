@@ -19,15 +19,11 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 Before changing this skill's scripts, runtime or tests, read DEVELOPMENT.md.
 
-For lane or overseer settings in kendex.settings.toml, kendex-local.toml or kendex.toml, the overseer makes one direct commit with only existing light checks and no lane, design review, internal or external review or second opinion; simple JSON/settings use existing fast paths, while executable behavior, test commands and permissions retain their needed checks, and a queue or ruleset conflict is reported at its existing owner without added review rounds.
-
-A worktree created as an orch lane follows the Refresh ownership and committed outputs heading in these orch Project Instructions, including its local-fleet case when no refresh workflow exists. Respect the lane refresh restriction. A lane explicitly launched to refresh runs kendex refresh or kendex apply only with --lane-refresh, as its brief permits. An ordinary worktree follows its own project resolution and retains actionable drift repair details. Use the explicit lane record to distinguish them.
-
-The hosted overseer coordinates from the control VM. Run item implementation, builds, installation, tests and validation in an owned lane. Where the fleet runs a control-host guard, that guard reads control-host-toolchain.conf. It blocks cargo, npm, pnpm, yarn, npx, tsc, vitest, biome, eslint and next; tools/guard, post-merge, and orch's and agent-runtime's setup; orch-runtime validate; and commands from DEV_VALIDATE_CMD or ORCH_POST_MERGE_CMD. This block includes post-merge --refresh-only. The absence of a guard does not permit item builds, installation, tests or validation on the control host. For refresh ownership and synchronization after merge, follow the Refresh ownership and committed outputs heading in these orch Project Instructions. Do not run a blocked command through a wrapper.
+A change only to lane or overseer settings in kendex.settings.toml, kendex-local.toml or kendex.toml takes fleet's hosted quick-change route, the Member overseer quick change section of fleet's docs/runbook.md, only after Jarvis or the owner says "quick change". Without those words it takes the normal item route. Executable behavior, test commands and permissions keep their required checks.
 
 ### Refresh ownership and committed outputs
 
-Use the repository-declared owner for kendex refresh outputs. Kendex uses its lock-record Actions workflow and rolling kendex/lock pull request. Consumers with automatic refresh use their kendex-refresh Actions workflow and rolling kendex/refresh pull request. When no refresh workflow exists and the fleet is local, the overseer owns refresh in the base checkout. Keep the local-fleet full post-merge route. This local owner is not a hosted control VM. Confirm the execution owner and its output paths before adoption. A hosted consumer without a refresh workflow must confirm an authorized owner outside the control VM. The hosted overseer runs sync-base to receive committed outputs after they merge. It does not run post-merge or post-merge --refresh-only on the control VM. Post-merge does not refresh or verify a base checkout that holds .github/workflows/kendex-refresh.yml; in other base checkouts, it reports refresh changes and keeps them. Preserve unrelated tracked and untracked work. Keep each refresh workflow under its existing owner.
+This checkout's refresh record belongs to the lock-record Actions workflow, which lands it on main or through its rolling kendex/lock pull request. The hosted overseer receives committed outputs through sync-base.
 
 ### Validation routing
 
@@ -44,7 +40,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Consumer refresh review
 
-- This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages. Each consumer's committed `kendex.settings.toml` `[env]` declares `REVIEW_GATE_REFRESH_REVIEW = "overseer"`, `REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh"` and `REVIEW_GATE_REFRESH_AUTHOR = "vanillagreen-fleet-lanes[bot]"`. A consumer without them gets a Copilot request on that head; add them there through a lane in that repository.
+- This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages.
 
 ### Cargo round cleanup
 

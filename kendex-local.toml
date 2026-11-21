@@ -31,23 +31,17 @@ Enforce a rule on the platform where it can hold it (GitHub settings and ruleset
 From 1.0, kendex keeps a retired consumer-visible form reading, with one warning that names the new form, until the next major release. This overrides § Cleanup's no-shim line here; the rule is `changelog.d/README.md` § Release standard.
 '''
 docs-writing = '''
-After an authorized documentation rewrite changes kendex-owned inputs, use the repository refresh and verification route. Respect a launched lane's refresh restriction. Keep refresh with the existing owner: kendex uses its lock-record Actions workflow and rolling kendex/lock pull request; consumers with automatic refresh use their kendex-refresh Actions workflow and rolling kendex/refresh pull request. When no refresh workflow exists and the fleet is local, the overseer owns refresh in the base checkout. Keep the local-fleet full post-merge route. This local owner is not a hosted control VM. Confirm any other execution owner before adoption. A hosted consumer without a refresh workflow must confirm an authorized owner outside the control VM. The hosted control checkout receives committed outputs through sync-base after they merge.
-
 Migrate this repository hand-written harness instructions only through an authorized instruction migration. Put rules used by one installed skill in that skill's named [skill-instructions] key in kendex.toml, or kendex-local.toml only for a source catalog. Put agent-specific rules in the named [agent-additional-instructions] key and command-specific rules in the named [command-instructions] key. Keep only rules every agent needs in AGENTS.md. Keep operator instructions in consumer docs. Preserve every still-required rule. Remove an empty source instruction file only after its replacement is checked.
 '''
 
 orch = '''
 Before changing this skill's scripts, runtime or tests, read DEVELOPMENT.md.
 
-For lane or overseer settings in kendex.settings.toml, kendex-local.toml or kendex.toml, the overseer makes one direct commit with only existing light checks and no lane, design review, internal or external review or second opinion; simple JSON/settings use existing fast paths, while executable behavior, test commands and permissions retain their needed checks, and a queue or ruleset conflict is reported at its existing owner without added review rounds.
-
-A worktree created as an orch lane follows the Refresh ownership and committed outputs heading in these orch Project Instructions, including its local-fleet case when no refresh workflow exists. Respect the lane refresh restriction. A lane explicitly launched to refresh runs kendex refresh or kendex apply only with --lane-refresh, as its brief permits. An ordinary worktree follows its own project resolution and retains actionable drift repair details. Use the explicit lane record to distinguish them.
-
-The hosted overseer coordinates from the control VM. Run item implementation, builds, installation, tests and validation in an owned lane. Where the fleet runs a control-host guard, that guard reads control-host-toolchain.conf. It blocks cargo, npm, pnpm, yarn, npx, tsc, vitest, biome, eslint and next; tools/guard, post-merge, and orch's and agent-runtime's setup; orch-runtime validate; and commands from DEV_VALIDATE_CMD or ORCH_POST_MERGE_CMD. This block includes post-merge --refresh-only. The absence of a guard does not permit item builds, installation, tests or validation on the control host. For refresh ownership and synchronization after merge, follow the Refresh ownership and committed outputs heading in these orch Project Instructions. Do not run a blocked command through a wrapper.
+A change only to lane or overseer settings in kendex.settings.toml, kendex-local.toml or kendex.toml takes fleet's hosted quick-change route, the Member overseer quick change section of fleet's docs/runbook.md, only after Jarvis or the owner says "quick change". Without those words it takes the normal item route. Executable behavior, test commands and permissions keep their required checks.
 
 ### Refresh ownership and committed outputs
 
-Use the repository-declared owner for kendex refresh outputs. Kendex uses its lock-record Actions workflow and rolling kendex/lock pull request. Consumers with automatic refresh use their kendex-refresh Actions workflow and rolling kendex/refresh pull request. When no refresh workflow exists and the fleet is local, the overseer owns refresh in the base checkout. Keep the local-fleet full post-merge route. This local owner is not a hosted control VM. Confirm the execution owner and its output paths before adoption. A hosted consumer without a refresh workflow must confirm an authorized owner outside the control VM. The hosted overseer runs sync-base to receive committed outputs after they merge. It does not run post-merge or post-merge --refresh-only on the control VM. Post-merge does not refresh or verify a base checkout that holds .github/workflows/kendex-refresh.yml; in other base checkouts, it reports refresh changes and keeps them. Preserve unrelated tracked and untracked work. Keep each refresh workflow under its existing owner.
+This checkout's refresh record belongs to the lock-record Actions workflow, which lands it on main or through its rolling kendex/lock pull request. The hosted overseer receives committed outputs through sync-base.
 
 ### Validation routing
 
@@ -64,7 +58,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Consumer refresh review
 
-- This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages. Each consumer's committed `kendex.settings.toml` `[env]` declares `REVIEW_GATE_REFRESH_REVIEW = "overseer"`, `REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh"` and `REVIEW_GATE_REFRESH_AUTHOR = "vanillagreen-fleet-lanes[bot]"`. A consumer without them gets a Copilot request on that head; add them there through a lane in that repository.
+- This organization's consumers route their kendex refresh pull request to the overseer, never to Copilot, since kendex already reviewed its packages.
 
 ### Cargo round cleanup
 
@@ -100,13 +94,6 @@ audit-issues applies Intake to every kendex create it executes, whatever produce
 - § 7.2 writes each new-work create's `**Symptom**:` or `**Owner**:` header from the text § 6 showed for it, and writes no header that text lacks. A create that Intake exempts carries only the line the paragraph above gives it, or neither.
 
 No producer marks a candidate `skip` under this rule. A create the primary session runs outside audit-issues applies the same check and headers at its own create.
-
-These four kinds come filed with neither line, and Intake declines them:
-
-- A post-merge reading's remainder filed as a new item. The reading stays on its originating item, per § Disposition.
-- A plan follow-up that proposes a migration with no failing action.
-- An audit item that reclassifies a correct refusal.
-- A scanner or grammar extension with no live failure.
 
 An organization setup request, one that names a host, account, repository or person of this organization, is not filed as asked. Restate it as a need any catalog consumer has. Otherwise return it to its sender with its destination named: the overseer, or the repository or Linear team that owns this organization's setup.
 
@@ -176,8 +163,6 @@ Every kendex leaf that no other rule places is filed as a sub-issue of its subsy
 
 [command-instructions]
 code-scrub = '''
-For a squash-merged pull request, audit the final squash diff against the issue requirements under Done-when and Not-in-scope. Resolve the actual merged diff and the current issue before judging what shipped.
-
 The code-scrub risk policy examines bloat for low-severity hypotheticals and edge cases below 1%. State missing evidence. Do not infer likelihood or an absent user population. Check accepted requirements and the real producer and consumer paths before proposing a removal.
 '''
 
@@ -796,8 +781,6 @@ source = "."
 enabled = true
 
 [agent-frontmatter.claude.runtime]
-effort = "high"
-color = "orange"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -805,7 +788,6 @@ deny-tools = [
 background = false
 
 [agent-frontmatter.claude.maintainer]
-color = "green"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -813,8 +795,6 @@ deny-tools = [
 background = false
 
 [agent-frontmatter.claude.frontend]
-effort = "high"
-color = "cyan"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -822,8 +802,6 @@ deny-tools = [
 background = false
 
 [agent-frontmatter.claude.swift]
-effort = "high"
-color = "cyan"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -831,8 +809,6 @@ deny-tools = [
 background = false
 
 [agent-frontmatter.claude.iced]
-effort = "high"
-color = "cyan"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -840,12 +816,10 @@ deny-tools = [
 background = false
 
 [agent-frontmatter.claude.planner]
-color = "blue"
 deny-tools = ["Agent"]
 background = false
 
 [agent-frontmatter.claude.researcher]
-color = "purple"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -853,7 +827,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-arch]
-color = "yellow"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -861,7 +834,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-correctness]
-color = "red"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -869,7 +841,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-doc]
-color = "yellow"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -877,7 +848,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-error]
-color = "orange"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -885,7 +855,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-perf]
-color = "red"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -893,7 +862,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-quality]
-color = "purple"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -901,7 +869,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-safety]
-color = "red"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -909,7 +876,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-security]
-color = "red"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -917,7 +883,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.reviewer-test]
-color = "blue"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -925,8 +890,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.rust]
-effort = "high"
-color = "orange"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -934,7 +897,6 @@ deny-tools = [
 background = false
 
 [agent-frontmatter.claude.scout]
-color = "cyan"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -942,7 +904,6 @@ deny-tools = [
 background = true
 
 [agent-frontmatter.claude.tpm]
-color = "blue"
 deny-tools = [
     "Agent",
     "AskUserQuestion",
@@ -1159,7 +1120,6 @@ nickname-candidates = [
 ]
 
 [agent-frontmatter.pi.runtime]
-color = "orange"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1171,7 +1131,6 @@ allowed-subagents = ["scout"]
 pane = true
 
 [agent-frontmatter.pi.maintainer]
-color = "green"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1183,7 +1142,6 @@ allowed-subagents = ["scout"]
 pane = true
 
 [agent-frontmatter.pi.frontend]
-color = "cyan"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1195,7 +1153,6 @@ allowed-subagents = ["scout"]
 pane = true
 
 [agent-frontmatter.pi.swift]
-color = "cyan"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1207,7 +1164,6 @@ allowed-subagents = ["scout"]
 pane = true
 
 [agent-frontmatter.pi.iced]
-color = "cyan"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1219,7 +1175,6 @@ allowed-subagents = ["scout"]
 pane = true
 
 [agent-frontmatter.pi.planner]
-color = "blue"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1231,7 +1186,6 @@ allowed-subagents = []
 pane = true
 
 [agent-frontmatter.pi.researcher]
-color = "purple"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1244,7 +1198,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-arch]
-color = "yellow"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1258,7 +1211,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-correctness]
-color = "red"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1272,7 +1224,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-doc]
-color = "yellow"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1286,7 +1237,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-error]
-color = "orange"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1300,7 +1250,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-perf]
-color = "red"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1314,7 +1263,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-quality]
-color = "purple"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1328,7 +1276,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-safety]
-color = "red"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1342,7 +1289,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-security]
-color = "red"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1356,7 +1302,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.reviewer-test]
-color = "blue"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1370,7 +1315,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.rust]
-color = "orange"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1382,7 +1326,6 @@ allowed-subagents = ["scout"]
 pane = true
 
 [agent-frontmatter.pi.scout]
-color = "cyan"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1395,7 +1338,6 @@ allowed-subagents = []
 pane = false
 
 [agent-frontmatter.pi.tpm]
-color = "blue"
 deny-tools = [
     "subagent",
     "get_subagent_result",
@@ -1420,11 +1362,6 @@ kendex has a desktop app and CLI over a shared Rust core. It distributes skills,
 [bot-instructions.bots]
 codex = true
 copilot = true
-coderabbit = false
-qodo = false
-qodo_best_practices = false
-qodo_review_md = false
-macroscope = false
 
 [bot-instructions.exclusions]
 derive_render = true
