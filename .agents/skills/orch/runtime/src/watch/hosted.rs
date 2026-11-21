@@ -417,6 +417,24 @@ pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<Strin
     }
 }
 
+/// Probe a directory so the provider can report its transfer boundary
+/// without reading a settings file. Only the keyed refusal establishes
+/// confinement. Other answers leave preparation to its required reads.
+pub(crate) fn development_root_refusal(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    directory: &str,
+) -> Option<String> {
+    let out = lane_host(scripts, host, &["cat", "--item", item, directory]).ok()?;
+    let stderr = host::stderr_text(&out);
+    let line = first_line(&stderr);
+    let detail = line.split_once(": ").map_or(line, |(_, detail)| detail);
+    (exit_code(&out) == 1
+        && detail.split_ascii_whitespace().next() == Some("cat-path-outside-root"))
+    .then(|| cause_of("cat", &out))
+}
+
 /// What the provider's status verb answered of the lane's harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostStatus {
@@ -856,8 +874,8 @@ pub fn create(
     };
     for field in line.split('\t') {
         match field.split_once('=') {
-            Some(("pi-root", v)) => created.pi_root = Some(v.to_owned()),
-            Some(("copilot-home", v)) => created.copilot_home = Some(v.to_owned()),
+            Some(("pi-root", v)) if !v.is_empty() => created.pi_root = Some(v.to_owned()),
+            Some(("copilot-home", v)) if !v.is_empty() => created.copilot_home = Some(v.to_owned()),
             Some(("ssh-target", v)) => created.target = v.to_owned(),
             Some(("path", v)) => created.path = v.to_owned(),
             Some(("remote-prefix", v)) => created.prefix = v.to_owned(),

@@ -6978,6 +6978,7 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
             format!(
                 "ORCH_LANE_HOST={PROVIDER} create --item KEN-H --repo o/r --harness claude --account {account}"
             ),
+            format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H /"),
             format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H .claude/settings.json"),
             format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {host}/.git"),
             format!("ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {clone}/.git/lane-mail/ken-h"),
@@ -7017,6 +7018,135 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
         "claude"
     );
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+}
+
+#[test]
+fn a_development_root_provider_keeps_hosted_launches_out_of_the_home() {
+    for (harness, model, runtime, home, cause) in [
+        (
+            "claude",
+            "claude-fable-5-1",
+            Some("/cache/orch-runtime"),
+            None,
+            None,
+        ),
+        (
+            "claude",
+            "claude-fable-5-1",
+            None,
+            None,
+            Some("host-runtime-unbuilt"),
+        ),
+        (
+            "copilot",
+            "gpt-6",
+            Some("/cache/orch-runtime"),
+            None,
+            Some("host-create-field-required field=copilot-home"),
+        ),
+        (
+            "pi",
+            "github-copilot/gpt-6",
+            Some("/cache/orch-runtime"),
+            None,
+            Some("host-create-field-required field=pi-root"),
+        ),
+        (
+            "copilot",
+            "gpt-6",
+            Some("/cache/orch-runtime"),
+            Some("copilot-home=.copilot"),
+            Some("host-create-field-required field=copilot-home"),
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let server = Server::start(&root, "fleet");
+        let world = HostedLaunch::new(&server, &root, json!({}));
+        let git = root.join("clone/.git").display().to_string();
+        let marker = format!("{git}/lane-mail/ken-h");
+        let record = format!("{git}/lane-launch/ken-h.json");
+        let worktree = world.host();
+        let account = world.runner.state_dir().display().to_string();
+        let create_home = home.map_or(String::new(), |field| format!("\t{field}"));
+        world.plant_detached("exec bash -c", json!({
+            format!("create --item KEN-H --repo o/r --harness {harness} --account {account}"):
+                {"stdout": format!("ssh-target=lane.example\tpath={worktree}\tremote-prefix=exec bash -c{create_home}\n")},
+            format!("cat --item KEN-H {worktree}/.git"):
+                {"stdout": format!("gitdir: {git}/worktrees/lane\n")},
+            format!("cat --item KEN-H {marker}"): {"stdout": format!("{worktree}\n")},
+            format!("cat --item KEN-H {record}"):
+                {"stdout": json!({"identity_file": format!("{git}/lane-host-pid"), "runtime": runtime}).to_string()},
+        }));
+        std::fs::write(
+            world.scripts.join("development-root"),
+            format!("{}\n", root.display()),
+        )
+        .unwrap();
+        std::fs::remove_file(world.tools.join("claude")).unwrap();
+        std::os::unix::fs::symlink(
+            fixtures().join("stub-record/claude"),
+            world.tools.join("claude"),
+        )
+        .unwrap();
+        let mut request = world.request();
+        request["harness"] = json!(harness);
+        request["model"] = json!(model);
+        let report = effect_report(&world.runner.op_fleet(&request));
+        let verbs = world.verbs();
+        for verb in &verbs {
+            if verb == "cat --item KEN-H /"
+                || (home.is_some() && verb == "cat --item KEN-H .copilot/.")
+            {
+                continue;
+            }
+            if let Some(path) = verb
+                .strip_prefix("cat --item KEN-H ")
+                .or_else(|| verb.strip_prefix("put --item KEN-H "))
+            {
+                assert!(Path::new(path).starts_with(&root), "{verb}");
+            }
+        }
+        if let Some(cause) = cause {
+            assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+            assert!(
+                report["intent"]["observation"]["cause"]
+                    .as_str()
+                    .is_some_and(|observed| observed.starts_with(cause)),
+                "{report}"
+            );
+            assert!(!world.tools.join("ssh.log").exists());
+        } else {
+            assert_eq!(
+                report["intent"]["observation"]["note"], "session-hosted",
+                "{report}"
+            );
+            let recorded = launch_record_of(&world.host_path);
+            let args = recorded["argv"].as_array().unwrap();
+            let settings = args
+                .iter()
+                .enumerate()
+                .filter(|(_, arg)| {
+                    arg.as_str()
+                        .is_some_and(|word| word == "--settings" || word.starts_with("--settings="))
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(settings.len(), 1, "{args:?}");
+            assert_eq!(settings[0].1, "--settings");
+            assert_eq!(
+                serde_json::from_str::<Value>(args[settings[0].0 + 1].as_str().unwrap()).unwrap(),
+                json!({"skipDangerousModePermissionPrompt": true, "env": {"DISABLE_AUTO_COMPACT": "1"}})
+            );
+            assert!(
+                verbs.contains(&format!("cat --item KEN-H {record}")),
+                "{verbs:?}"
+            );
+            assert!(
+                verbs.contains(&"capture --item KEN-H".to_owned()),
+                "{verbs:?}"
+            );
+        }
+    }
 }
 
 /// A create whose line adds `tree=unrebased`, the shipped ssh provider's

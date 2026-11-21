@@ -419,17 +419,21 @@ impl Harness {
     /// The words that turn the harness's own compaction off, so the
     /// runtime's context judge sees the real window. `None` where the
     /// harness has no such word on the command line.
-    pub fn compaction_off_words(self) -> Option<Vec<&'static str>> {
+    pub fn compaction_off_words(self) -> Option<Vec<String>> {
         match self {
-            Harness::Claude => Some(vec![r#"--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}"#]),
-            Harness::Codex => Some(vec![
-                "-c",
-                "model_auto_compact_token_limit=9223372036854775807",
-                "-c",
-                "model_auto_compact_token_limit_scope=body_after_prefix",
-                "-c",
-                "model_post_turn_compact_threshold_percent=0",
-            ]),
+            Harness::Claude => Some(vec![format!("--settings={}", claude_settings(true, false))]),
+            Harness::Codex => Some(
+                [
+                    "-c",
+                    "model_auto_compact_token_limit=9223372036854775807",
+                    "-c",
+                    "model_auto_compact_token_limit_scope=body_after_prefix",
+                    "-c",
+                    "model_post_turn_compact_threshold_percent=0",
+                ]
+                .map(str::to_owned)
+                .into(),
+            ),
             Harness::Copilot | Harness::Pi => None,
         }
     }
@@ -461,6 +465,25 @@ impl Harness {
         }
     }
 }
+
+pub(crate) fn claude_settings(compaction_off: bool, bypass_consent: bool) -> String {
+    let mut settings = serde_json::Map::new();
+    if compaction_off {
+        settings.insert(
+            "env".to_owned(),
+            serde_json::json!({"DISABLE_AUTO_COMPACT": "1"}),
+        );
+    }
+    if bypass_consent {
+        settings.insert(
+            CLAUDE_BYPASS_CONSENT.to_owned(),
+            serde_json::Value::Bool(true),
+        );
+    }
+    serde_json::Value::Object(settings).to_string()
+}
+
+pub(crate) const CLAUDE_BYPASS_CONSENT: &str = "skipDangerousModePermissionPrompt";
 
 /// The Claude model families a launch may name by their alias alone, which
 /// Claude Code resolves to a concrete id only once the session runs.
