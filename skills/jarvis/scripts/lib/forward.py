@@ -290,6 +290,7 @@ class Forwarder:
         self.role = watch.role(self.settings)
         self.outbox = Outbox(home, directory)
         self.deadline = time.monotonic() + DRAIN_SECONDS
+        self.reach = None
 
     def satellite(self):
         if self.role.kind == "main":
@@ -320,10 +321,11 @@ class Forwarder:
         cause = code if category == "refusal" and code in HOST_CAUSES else fallback
         return cause, error.record["detail"].split("\n", 1)[0][:200]
 
-    def probe(self, cause):
+    def probe(self, cause, detail):
+        """Hold this call's reach as the run's; only a drain, the watch-loop's collection, records it."""
         reachable = cause != UNREACHABLE
-        with self.outbox.locked() as state:
-            state["probe"] = {"at": watch.epoch(), "reachable": reachable, "cause": None if reachable else UNREACHABLE}
+        self.reach = {"reachable": reachable, "cause": None if reachable else UNREACHABLE,
+                      "detail": None if reachable else detail}
 
     def take_cursor(self, keys):
         """Give the entries KEYS the main's current to-overseer end as their answer cursor.
@@ -333,7 +335,7 @@ class Forwarder:
         or the (cause, detail) that stopped it.
         """
         outcome, result = self.host(HOST_READ, [HEADER_ONLY])
-        self.probe(outcome)
+        self.probe(outcome, result)
         if outcome != "ok":
             return outcome, result
         if result.returncode:
@@ -375,7 +377,7 @@ class Forwarder:
             if unreachable:
                 continue
             outcome, result = self.host(owner_note.HOST_SEND, ["--delivery-id", entry["key"]], entry["text"])
-            self.probe(outcome)
+            self.probe(outcome, result)
             if outcome != "ok":
                 self.record([entry], outcome, result)
                 if outcome == UNREACHABLE:
@@ -416,7 +418,7 @@ class Forwarder:
             return
         after = min(entry["after"] for entry in state["entries"] if entry["key"] in keys)
         outcome, result = self.host(HOST_READ, [str(after), "receipts"])
-        self.probe(outcome)
+        self.probe(outcome, result)
         header = receipts = None
         if outcome == "ok" and result.returncode:
             outcome = self.refusal(result, "read-failed")[0]
@@ -479,7 +481,8 @@ class Forwarder:
                 state["last_answer"] = latest[1]
 
     def events(self):
-        """One forward-failed block per kept entry whose cause no retry clears, a closed answer-unseen one included.
+        """One forward-failed block per kept entry whose cause no retry clears, a closed answer-unseen one included,
+        and one forward-unreachable block while the last collection could not reach the main.
 
         The watch's pass cursor appends a printed block once, so a closed
         block prints on every drain until its keep ends, and a failed pass
@@ -489,6 +492,12 @@ class Forwarder:
         state = self.outbox.read()
         now = watch.epoch()
         blocks = []
+        probe = state.get("probe") or {}
+        if self.role.kind == "satellite" and probe.get("reachable") is False:
+            fields = {"cause": probe["cause"]}
+            if probe.get("detail"):
+                fields["detail"] = probe["detail"][:200]
+            blocks.append(watch.event("forward-unreachable", **fields))
         for entry in state["entries"]:
             if kept(entry, now) and entry.get("answer"):
                 blocks.append(watch.event("forward-answer", request=entry["request"], key=entry["key"],
@@ -514,6 +523,11 @@ class Forwarder:
         else:
             self.send()
             self.read_main()
+            if self.reach is not None:
+                # Status reports the loop's own reach: a forward's call can
+                # reach the main from an environment the loop lacks.
+                with self.outbox.locked() as state:
+                    state["probe"] = dict(self.reach, at=watch.epoch())
         return self.events()
 
     def forward(self, path):

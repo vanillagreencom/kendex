@@ -1,7 +1,10 @@
 """A satellite's forward, outbox drain and main status against a real main mailbox over an ssh shim."""
+import calendar
+import contextlib
 import hashlib
 from concurrent.futures import Future
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -29,6 +32,7 @@ shift
 mode="$(cat "$SSH_MODE")"
 case "$mode" in
   down) exit 255 ;;
+  denied) printf 'Permission denied (publickey).\n' >&2; exit 255 ;;
   hang) exec sleep 30 ;;
   drop-receipt) case "$*" in *--delivery-id*) sh -c "$*" >/dev/null 2>&1; exit 255 ;; esac ;;
 esac
@@ -404,7 +408,6 @@ class Forward(MailWorld):
                 self.assertEqual((answer["state"], answer["cause"], answer["forwarded"]), ("queued", cause, None))
                 self.assertEqual(self.directives(), [])
                 status = self.status()
-                self.assertEqual(status["reachable"], main != "down")
                 self.assertEqual([(row["state"], row["cause"]) for row in status["requests"]
                                   if row["request"] == record["request"]["ref"]], [("queued", cause)])
         # No retry clears a missing mailbox: the drain reports every request
@@ -427,7 +430,8 @@ class Forward(MailWorld):
                                          "queued_at": 0, "attempts": 0, "forwarded": None})
             forwarder.deadline = time.monotonic() + 2
             started = time.monotonic()
-            self.assertEqual(forwarder.drain(), "")
+            # A collection that times out names its cause in one event.
+            self.assertEqual(forwarder.drain(), "EVENT forward-unreachable cause=main-unreachable detail=timeout\n")
             self.assertLess(time.monotonic() - started, 10)
             state = forwarder.outbox.read()
         self.assertEqual((state["probe"]["reachable"], state["probe"]["cause"]), (False, "main-unreachable"))
@@ -747,7 +751,7 @@ class Forward(MailWorld):
             watch = module.Watch(self.satellite, BASH, settings)
             watch.next_relay = 10 ** 12
             watch.forward_pending = Future()
-            watch.forward_pending.set_result(("", 60))
+            watch.forward_pending.set_result(("", 60, (None, None, None)))
             before = int(time.time())
             passes = Submitted()
             watch._poll(passes, Future(), before)
@@ -763,6 +767,71 @@ class Forward(MailWorld):
             self.assertEqual(passes.names, [])
             watch._poll(passes, Future(), at + 5)
             self.assertEqual(passes.names, ["forward"])
+
+    def loop(self):
+        """A satellite Watch on this home's log, and a run of one completed collection: its stderr."""
+        self.env["JARVIS_LOG_DIR"] = str(self.root / "log")
+        spec = importlib.util.spec_from_file_location("collection_watch", self.scripts / "lib/watch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        settings = {"JARVIS_LOG_DIR": self.env["JARVIS_LOG_DIR"], "JARVIS_MAIN_HOST": self.env["JARVIS_MAIN_HOST"],
+                    "JARVIS_WAKE_SETTLE_SECS": "100000", "JARVIS_VOICE_REMIND_SECS": "0"}
+        with patch.dict(os.environ, self.env, clear=True):
+            watch = module.Watch(self.satellite, BASH, settings)
+        watch.next_relay = 10 ** 12
+
+        class Submitted:
+            def submit(self, work, *args):
+                return Future()
+
+        def collect(result=None):
+            with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stderr(io.StringIO()) as errors:
+                watch.forward_pending = Future()
+                watch.forward_pending.set_result(watch.forward() if result is None else result)
+                watch._poll(Submitted(), Future(), int(time.time()))
+            return errors.getvalue().splitlines()
+        return module, watch, collect
+
+    def events(self, watch, header):
+        return [line for line in watch.log.read_text().splitlines() if line.startswith("EVENT " + header + " ")]
+
+    def test_collection_reports_its_own_reach(self):
+        # The forward reaches the main from the caller's environment; the
+        # loop's unit reaches it only while its own ssh key is admitted.
+        _, watch, collect = self.loop()
+        self.delivered(self.record())
+        status = self.status()
+        self.assertEqual((status["reachable"], status["checked_at"], status["cause"]), (None, None, None))
+        unreachable = "EVENT forward-unreachable cause=main-unreachable detail=Permission\\u0020denied\\u0020(publickey)."
+        # Each row: ssh mode, status reach and cause, the loop's stderr keys, the unreachable events so far.
+        rows = (("denied", False, "main-unreachable", ["watch-loop: forward=unreachable cause=main-unreachable"], 1),
+                ("denied", False, "main-unreachable", [], 1),
+                ("up", True, None, ["watch-loop: forward=reachable"], 1),
+                ("denied", False, "main-unreachable", ["watch-loop: forward=unreachable cause=main-unreachable"], 2))
+        for step, (mode, reachable, cause, lines, raised) in enumerate(rows):
+            with self.subTest(step=step, mode=mode):
+                self.mode.write_text(mode)
+                before = int(time.time())
+                errors = collect()
+                status = self.status()
+                # The satellite's readiness reads the loop's reach, not the forward's.
+                self.assertEqual((status["reachable"], status["cause"]), (reachable, cause))
+                self.assertGreaterEqual(calendar.timegm(time.strptime(status["checked_at"], "%Y-%m-%dT%H:%M:%SZ")), before)
+                self.assertEqual([line.split(" checked_at=")[0] for line in errors], lines)
+                self.assertEqual(self.events(watch, "forward-unreachable"), [unreachable] * raised)
+
+    def test_failed_collection_reports_once(self):
+        module, watch, collect = self.loop()
+        # Each row: the loop's failure of the drain, and the stderr key it prints.
+        rows = (("timeout", module.Failure("forward-drain", "timeout", None, "timed out after 60 seconds")),
+                ("exit", module.Failure("forward-drain", "exit", 2, "jarvis-session: forward-drain=failed cause=x")))
+        for index, (name, failure) in enumerate(rows):
+            with self.subTest(row=name):
+                self.assertEqual([line.split(" cause=")[0] for line in collect(failure)], ["watch-loop: forward=failed"])
+                self.assertEqual(collect(failure), [])
+                causes = [line.split(" cause=", 1)[1] for line in self.events(watch, "root-unreachable")]
+                self.assertEqual(len(causes), index + 1)
+                self.assertEqual(causes[-1], failure.record["detail"].replace(" ", "\\u0020"))
 
     @unittest.skipUnless(Path("/proc/self/stat").exists(), "session grants require /proc")
     def test_offline_queue_stops_every_revoked_grant(self):
@@ -846,7 +915,21 @@ class Forward(MailWorld):
              'canonical_at(request["at"])).encode()', '"").encode()'),
             # A header without the key drops a reused reference's later failure as already appended.
             ("test_reused_reference_failures_report_once", "lib/forward.py",
-             '"key": entry["key"], "cause": entry["cause"]', '"cause": entry["cause"]'))
+             '"key": entry["key"], "cause": entry["cause"]', '"cause": entry["cause"]'),
+            # Status reads a forward call's reach, not the loop's collection.
+            ("test_collection_reports_its_own_reach", "lib/forward.py",
+             '"detail": None if reachable else detail}\n',
+             '"detail": None if reachable else detail}\n'
+             '        with self.outbox.locked() as state:\n            state["probe"] = dict(self.reach, at=watch.epoch())\n'),
+            # The collection records no reach.
+            ("test_collection_reports_its_own_reach", "lib/forward.py",
+             'state["probe"] = dict(self.reach, at=watch.epoch())', 'pass'),
+            # An unreachable collection raises no event.
+            ("test_collection_reports_its_own_reach", "lib/forward.py",
+             'blocks.append(watch.event("forward-unreachable", **fields))', 'pass'),
+            # The loop prints every collection, or none.
+            ("test_collection_reports_its_own_reach", "lib/watch.py", 'if outcome != self.collection:', 'if True:'),
+            ("test_failed_collection_reports_once", "lib/watch.py", 'self.collected(result)\n', 'pass\n'))
         for name, relative, old, new in rows:
             if getattr(getattr(Forward, name), "__unittest_skip__", False):
                 continue

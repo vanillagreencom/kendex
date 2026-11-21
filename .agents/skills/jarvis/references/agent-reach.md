@@ -173,7 +173,9 @@ The provenance cites satellite records Jarvis main cannot check. The owner or a 
 
 ### Status
 
-`jarvis-session status --home HOME --main` reads the local outbox and settings. Its reachability is the last call's observation, not a new probe. Its output names its fields, states and causes.
+`jarvis-session status --home HOME --main` reads the local outbox and settings. Its `reachable`, `cause` and `checked_at` come from the watch-loop's last forward collection that called Jarvis main, never from a `forward` call, and read null before the first. They are the satellite's readiness: a loop that cannot reach Jarvis main reads `reachable` false. Status starts no new probe. Its output names its fields, states and causes.
+
+While the last collection cannot reach Jarvis main, drain prints `EVENT forward-unreachable cause=main-unreachable`, with ssh's first diagnostic line as `detail`, and the watch-loop appends it once per outage. A drain that fails or times out under the loop raises `EVENT root-unreachable` once per cause. The loop writes one `watch-loop: forward=` line to its stderr at each change of the collection's outcome: `reachable`, `unreachable`, `unchecked` or `failed`, with its `cause`.
 
 A read answer closes the forward and can appear as `last_answer`. A forward whose answer goes unread closes as `answer-unseen`: compaction dropped the answer, or Jarvis answered without `--ref`. Drain then prints `EVENT forward-failed` and reads Jarvis main no more for that request.
 
