@@ -518,25 +518,28 @@ pub(crate) fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
     Some(out)
 }
 
-/// One alert list under the token handle, every page (`verify::list`):
-/// the typed rows, or how the read ended.
+/// One alert list under the token handle, every page: the typed rows, or
+/// how the read ended. GitHub's Dependabot list pages by cursor alone and
+/// refuses a `page` number with HTTP 400 (docs.github.com,
+/// dependabot/alerts: `before` and `after` are cursors "as given in the
+/// Link header"), so the read follows each page's `Link: rel="next"` URL
+/// through gh's `--paginate` (cli `pkg/cmd/api/pagination.go`
+/// `findNextPage`), which serves the page-numbered scanning lists as well;
+/// `--slurp` prints one outer array holding each page's array.
 fn alert_list<T: DeserializeOwned>(gh: &Gh, read: &'static str, path: &str) -> ReadEnd<Vec<T>> {
-    let read_all = verify::list(
-        path,
-        |page| match gh.run(read, &["api", page], None) {
-            Err(unrun) => Err(unanswered_read(&unrun)),
-            Ok(Answer::Failed(failed)) => Err(ReadEnd::Failed {
-                cause: read_cause(&failed.stderr, failed.exit),
-                stderr: failed.stderr,
-            }),
-            Ok(Answer::Printed { stdout, .. }) => serde_json::from_slice::<Vec<T>>(&stdout)
-                .map_err(|_| ReadEnd::Invalid(body_cause(&stdout))),
+    let path = format!("{path}&per_page={}", verify::PER_PAGE);
+    match gh.run(read, &["api", &path, "--paginate", "--slurp"], None) {
+        Err(unrun) => unanswered_read(&unrun),
+        Ok(Answer::Failed(failed)) => ReadEnd::Failed {
+            cause: read_cause(&failed.stderr, failed.exit),
+            stderr: failed.stderr,
         },
-        || ReadEnd::Invalid("invalid"),
-    );
-    match read_all {
-        Ok(members) => ReadEnd::Read(members),
-        Err(end) => end,
+        Ok(Answer::Printed { stdout, .. }) => {
+            match serde_json::from_slice::<Vec<Vec<T>>>(&stdout) {
+                Ok(pages) => ReadEnd::Read(pages.into_iter().flatten().collect()),
+                Err(_) => ReadEnd::Invalid(body_cause(&stdout)),
+            }
+        }
     }
 }
 

@@ -3,7 +3,11 @@
 # JSON map at $GH_FAKE_REPLIES, {PATH: {exit?, body?, text?}}: `body` is
 # printed as JSON, `text` as raw bytes (an answer that is not JSON), `exit`
 # is the status, 0 when absent. A path with no entry is a failed request,
-# as gh exits 1 on an HTTP error. The GraphQL form
+# as gh exits 1 on an HTTP error. `gh api PATH --paginate --slurp`
+# answers from the same entry, its `pages` the array of each page gh read
+# by following the `Link: rel="next"` URL and a `body` the one page, all
+# printed in one outer array as `--slurp` prints them (`gh api --help`;
+# recorded, gh 2.102.0: `[[...],[...],[...]]` for three pages). The GraphQL form
 # `gh api graphql -f query=… -f ids[]=…` answers from the map's `graphql`
 # entry: when its `body` holds `nodes`, a map from node id to node, the
 # reply is `{data: {nodes: […]}}` in the order asked, null for an id the map
@@ -253,6 +257,8 @@ elif [ "$#" -ge 4 ] && [ "${3:-}" = --method ] && [ "${4:-}" = POST ]; then
 elif [ "$#" -eq 3 ] && [ "$3" = --allow-escape-sequences ]; then
   raw=true
   reply=$(jq -c --arg p "$2" '.[$p] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+elif [ "$#" -eq 4 ] && [ "$3" = --paginate ] && [ "$4" = --slurp ]; then
+  reply=$(jq -c --arg p "$2" '.[$p] // empty | if has("pages") then .body = .pages | del(.pages) elif has("body") then .body = [.body] else . end' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
 elif [ "$#" -ne 2 ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
   exit 64
