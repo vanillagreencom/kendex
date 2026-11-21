@@ -240,13 +240,13 @@ assert_eq "$(rerun_calls)" "0" "nothing is rerun"
 
 echo "=== an unreadable rollup reruns nothing and says so ==="
 gh_stub_reset
-gh_stub_fail pr-checks 1 'HTTP 502'
+gh_stub_fail pr-checks 1 $'HTTP 502\nBad Gateway'
 gh_stub_answer run-view "$(cat "$transient_log")"
 gh_stub_answer run-rerun ''
 run_verb 42
 assert_eq "$RC $OUT" "0 no-rerun cause=checks-unread" "an unread rollup is checks-unread"
 assert_eq "$(rerun_calls)" "0" "nothing is rerun"
-assert_eq "$(grep -cx 'HTTP 502' <<<"$ERR")" "1" "stderr carries gh's line"
+assert_eq "$ERR" "ci-rerun: checks-unread: HTTP 502" "stderr is one prefixed line carrying gh's first line"
 
 # gh 2.105.0 writes a hint to stderr on a read that succeeds; the rollup is
 # stdout alone.

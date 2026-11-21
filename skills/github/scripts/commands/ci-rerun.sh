@@ -123,6 +123,12 @@ first_line() {
   sed -n '/[^[:space:]]/{p;q;}' "$1" | tr -d '\r'
 }
 
+gh_err="$(mktemp "${TMPDIR:-/tmp}/ci-rerun.XXXXXX")" || {
+  github_error "could not create a temporary file"
+  exit 1
+}
+trap 'rm -f "$gh_err"' EXIT
+
 requirements='[]'
 if [ "$required_only" = true ]; then
   requirements=$(required_contexts "$pr_num" "$repo") || requirements='{"state":"unreadable","contexts":[]}'
@@ -147,7 +153,8 @@ fi
 # run links an Actions run. A scoping that fails leaves the rollup unread
 # for this purpose.
 if [ -z "$run_id" ]; then
-  if ! checks=$(fetch_checks_rollup "$pr_num" "$repo"); then
+  if ! checks=$(fetch_checks_rollup "$pr_num" "$repo" 2>"$gh_err"); then
+    printf 'ci-rerun: checks-unread: %s\n' "$(first_line "$gh_err")" >&2
     echo "no-rerun cause=checks-unread"
     exit 0
   fi
@@ -163,12 +170,6 @@ if [ -z "$run_id" ]; then
   echo "no-rerun cause=no-failed-run"
   exit 0
 fi
-
-gh_err="$(mktemp "${TMPDIR:-/tmp}/ci-rerun.XXXXXX")" || {
-  github_error "could not create a temporary file"
-  exit 1
-}
-trap 'rm -f "$gh_err"' EXIT
 
 # The log is captured whole and windowed in-shell, and grep reads a
 # here-string, which has no producer to signal: `gh | head -200` SIGPIPEs gh
