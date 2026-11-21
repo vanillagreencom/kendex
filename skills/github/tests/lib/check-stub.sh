@@ -16,7 +16,8 @@
 # end is STUB_RANGE_HEAD where set, else STUB_HEAD, and STUB_RANGE_FAIL fails
 # the pull request's half of that read. STUB_BASE_OID is the other base end,
 # the base GitHub recorded on the pull request, its baseRefOid. STUB_REVIEW_DECISION and STUB_REVIEW_LATEST are the readiness check's
-# reviewDecision and latestReviews, and STUB_REQUIRE_TOKEN refuses a
+# reviewDecision and latestReviews, beside the stderr STUB_REVIEW_STDERR_FILE
+# holds on that successful read, and STUB_REQUIRE_TOKEN refuses a
 # merge-path call without the bot token. The repository read answers
 # STUB_MERGE_METHODS, STUB_DELETE_BRANCH_ON_MERGE, STUB_DEFAULT_BRANCH and
 # STUB_REPO_PUSHLESS, or fails on STUB_REPO_EXIT; check-review-replies' reads
@@ -412,6 +413,7 @@ case "${1:-}" in
                     exit "${STUB_MERGEABLE_EXIT:-0}"
                 fi
                 if [[ "$*" == *"--json reviewDecision,latestReviews"* ]]; then
+                    [[ -z "${STUB_REVIEW_STDERR_FILE:-}" ]] || cat -- "$STUB_REVIEW_STDERR_FILE" >&2
                     latest="${STUB_REVIEW_LATEST:-}"
                     [[ -n "$latest" ]] || latest='[{"state":"APPROVED"}]'
                     # Unset is a PR nobody set a decision for, which GitHub

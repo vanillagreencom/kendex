@@ -137,6 +137,7 @@
     "skills/github/tests/github-router.test.sh": "linux-duplicate",
     "skills/github/tests/graphql-threads-paging.test.sh": "linux-duplicate",
     "skills/github/tests/json-error.test.sh": "linux-duplicate",
+    "skills/github/tests/json-or-default.test.sh": "linux-duplicate",
     "skills/github/tests/label-add.test.sh": "linux-duplicate",
     "skills/github/tests/mutation-summary.test.sh": "linux-duplicate",
     "skills/github/tests/native-contracts.test.sh": "native",
