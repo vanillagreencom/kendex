@@ -62,6 +62,8 @@ A full close that answered `unconfirmed` leaves its intent open, and a keep refu
 
 `result.word` says how far the close got. On `unconfirmed`, end what `result.observation` names, then close again. On `failed`, nothing moved; fix the cause in `result.observation`. A refusal exits 1 with its key in `refusal.key`; nothing past the read it names has changed.
 
+A hosted lane's box is read from its host once before its sandbox goes: before the provider's close, and at a park before the sandbox stop. `result.observation.mail` holds what the watch had not yet announced: `envelopes`, each with its `id`, `kind`, `text` and `options`. Handle each one as its `lane-notice` or `lane-question` line ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)). The watch says the mail of the closes it makes as those lines. A sandbox the provider no longer lists has no box left to read.
+
 ### How a running lane is judged
 
 The close ends an exited lane, and a hosted lane whose provider holds no lane of the item. Any other lane closes where its merge stands and its work is over, whatever its screen reads. An `idle`, `rate-limit-switch` or `gone` lane, or one with no recorded pane, also closes where its tracker ended the item. Otherwise the close refuses `lane-live` or `pane-missing`. A merge stands where the record's `cycle` or the request's `delivery` names one. The work is over where the item's state was closed out or its worktree is gone. A recorded merge alone is no proof: a lane relaunched on a merged item works on with its `cycle` kept.

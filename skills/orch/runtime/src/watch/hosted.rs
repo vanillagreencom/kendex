@@ -750,11 +750,22 @@ pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Resu
     }
 }
 
+/// What a provider's `start` answered for an item it was asked to bring
+/// back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Started {
+    /// `sandbox-started item=ITEM`: the sandbox is up on its kept disk.
+    Up,
+    /// `item-unknown item=ITEM` on stderr: the provider holds no sandbox
+    /// for the item, so there is no disk to start.
+    Unknown,
+}
+
 /// `start --item ITEM`, confirmed by `sandbox-started item=ITEM`,
-/// which a provider answers for a sandbox already up as for a stopped one.
-/// A refusal is `Asked::Failed` with `exit=N`, `cause=answer-unparsed` or
-/// [`BUSY`].
-pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
+/// which a provider answers for a sandbox already up as for a stopped one,
+/// or answered [`Started::Unknown`]. Any other refusal is `Asked::Failed`
+/// with `exit=N`, `cause=answer-unparsed` or [`BUSY`].
+pub fn start(scripts: &Path, host: &str, item: &str) -> Result<Started, Asked> {
     let out = call(
         scripts,
         host,
@@ -765,20 +776,39 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
     )?;
     match exit_code(&out) {
         0 => {}
+        _ if item_unknown(&host::stderr_text(&out), item) => return Ok(Started::Unknown),
         code => return Err(Asked::Failed(format!("exit={code}"))),
     }
     if host::stdout_text(&out) == format!("sandbox-started item={item}") {
-        Ok(())
+        Ok(Started::Up)
     } else {
         Err(Asked::Failed("cause=answer-unparsed".to_owned()))
     }
 }
 
+/// Whether a provider's diagnostic names `item` unknown: the
+/// `item-unknown item=ITEM` words, behind the provider's own prefix where
+/// it prints one.
+fn item_unknown(stderr: &str, item: &str) -> bool {
+    let named = format!("item={item}");
+    stderr.lines().any(|line| {
+        let mut words = line
+            .split_whitespace()
+            .skip_while(|w| !w.ends_with("item-unknown"));
+        words.next().is_some() && words.next() == Some(named.as_str())
+    })
+}
+
+/// The states a provider lists a sandbox in once its close has begun its
+/// teardown: `destroying`, the state Daytona's provider lists after its
+/// close answered, and `exited`.
+const TORN_DOWN: [&str; 2] = ["destroying", "exited"];
+
 /// The state of the sandbox the provider's `list` names for `item`: the
 /// second field of a row whose first ends in `/ITEM`, in any case, outside
-/// an `available` row; `None` where no such row stands, the sandbox gone.
-/// `list` is the protocol's one presence read. `Err` is a list that failed
-/// or was refused at the bound ([`BUSY`]).
+/// an `available` row and the [`TORN_DOWN`] states; `None` where no such row
+/// stands, the sandbox gone. `list` is the protocol's one presence read.
+/// `Err` is a list that failed or was refused at the bound ([`BUSY`]).
 pub fn lists_item(
     scripts: &Path,
     host: &str,
@@ -793,7 +823,8 @@ pub fn lists_item(
         let mut fields = row.split('\t');
         let name = fields.next().unwrap_or("").to_ascii_lowercase();
         let state = fields.next().unwrap_or("");
-        (state != "available" && name.ends_with(&suffix)).then(|| state.to_owned())
+        (state != "available" && !TORN_DOWN.contains(&state) && name.ends_with(&suffix))
+            .then(|| state.to_owned())
     }))
 }
 
@@ -1101,7 +1132,7 @@ const PARK_REASON: &str = "park-owed";
     clippy::disallowed_methods,
     reason = "the lane duty's one irreversible call, the close verb through the runtime's entry from the scripts directory the pass carries, through the one runner under the duty's tag, its marker written first"
 )]
-fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> Closed {
+fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> (Closed, Option<Value>) {
     let dir = state_dir.display().to_string();
     let file = request.display().to_string();
     let out = match host::run_tagged(
@@ -1115,17 +1146,18 @@ fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> Closed {
         Ok(out) => out,
         // A close that never started closed nothing.
         Err(e @ agent_runtime::Error::NotStarted { .. }) => {
-            return Closed::Failed {
-                cause: e.to_string(),
-            };
+            let cause = e.to_string();
+            return (Closed::Failed { cause }, None);
         }
         Err(e) => {
-            return Closed::Unanswered {
-                cause: e.to_string(),
-            };
+            let cause = e.to_string();
+            return (Closed::Unanswered { cause }, None);
         }
     };
-    ended(&out)
+    let observation = serde_json::from_slice::<Value>(&out.stdout)
+        .ok()
+        .and_then(|reply| reply.pointer("/result/observation").cloned());
+    (ended(&out), observation)
 }
 
 /// The close verb's end read whole: its reply by its word, else its status.
@@ -1212,13 +1244,20 @@ fn closed_of(reply: &Value) -> Closed {
                 .trim_end()
                 .to_owned(),
         },
-        word => Closed::Failed {
-            cause: format!(
-                "word={} cause={}",
-                if word.is_empty() { "unread" } else { word },
-                seen("cause")
-            ),
-        },
+        word => {
+            let cause = seen("cause");
+            Closed::Failed {
+                cause: format!(
+                    "word={} cause={}",
+                    if word.is_empty() { "unread" } else { word },
+                    if cause.is_empty() {
+                        "unreported"
+                    } else {
+                        &cause
+                    }
+                ),
+            }
+        }
     }
 }
 
@@ -1470,12 +1509,22 @@ fn close_once(pass: &Pass, lane: &Lane, reason: &str, out: &mut Produced) -> Opt
     }
     let dir = watch_state_dir(pass.claim_store);
     let request = close_request_path(dir, item);
-    let closed = match write_request(&request, &close_request(pass, lane, reason)) {
+    let (closed, observation) = match write_request(&request, &close_request(pass, lane, reason)) {
         Ok(()) => run_close(pass.scripts, pass.state_dir, &request),
-        Err(cause) => Closed::Failed {
-            cause: format!("request-unwritten {cause}"),
-        },
+        Err(cause) => {
+            let cause = format!("request-unwritten {cause}");
+            (Closed::Failed { cause }, None)
+        }
     };
+    // The lane's last mail the close read before its sandbox went, said
+    // whatever the close's word: no later read reaches that box.
+    super::mail::closing_mail(
+        item,
+        observation.as_ref(),
+        pass.baseline,
+        &mut out.events,
+        &mut out.changes,
+    );
     if let Err(cause) = remove_marker(&request) {
         fail(
             out,

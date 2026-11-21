@@ -1910,17 +1910,27 @@ fn close_terminal_lanes(
             nonce: ctx.nonce,
             owner: ctx.owner.clone(),
         };
-        let closed =
-            close_one(ctx, tick, &env, &lane.item, verdict, cycle).and_then(
-                |closed| match closed {
+        let closed = close_one(ctx, tick, &env, &lane.item, verdict, cycle).and_then(
+            |(closed, observation)| {
+                // The lane's last mail the close read before its sandbox
+                // went, said whatever the close's outcome.
+                super::mail::closing_mail(
+                    &lane.item,
+                    observation.as_ref(),
+                    tick.baseline,
+                    &mut produced.events,
+                    &mut produced.changes,
+                );
+                match closed {
                     Closed::Confirmed => Ok(true),
                     Closed::Open => Ok(false),
                     Closed::Failed(cause) => Err(Error::Runtime(agent_runtime::Error::refused(
                         "close-failed",
                         &[("cause", &cause)],
                     ))),
-                },
-            );
+                }
+            },
+        );
         match closed {
             Ok(true) => {
                 produced.events.extend(lines.into_iter().map(Event::Tail));
@@ -2088,7 +2098,7 @@ fn close_one(
     item: &str,
     verdict: TerminalVerdict,
     cycle: Option<CycleRow>,
-) -> Result<Closed> {
+) -> Result<(Closed, Option<serde_json::Value>)> {
     let request = Request::CloseOwnedResources(CloseOwnedResources {
         item: item.to_owned(),
         terminal: Some(Terminal {
@@ -2116,17 +2126,18 @@ fn close_one(
         tick.clock,
     )?;
     let Some(crate::effects::Effected::Recorded(recorded)) = effected else {
-        return Ok(Closed::Open);
+        return Ok((Closed::Open, None));
     };
     let ops::Report::RecordOutcome(outcome) = &recorded.report else {
-        return Ok(Closed::Open);
+        return Ok((Closed::Open, None));
     };
     let intent = &outcome.intent;
+    let observation = intent.observation.clone();
     if intent.open() {
-        return Ok(Closed::Open);
+        return Ok((Closed::Open, observation));
     }
     if intent.outcome == agent_runtime::protocol::Outcome::Confirmed {
-        return Ok(Closed::Confirmed);
+        return Ok((Closed::Confirmed, observation));
     }
     let note = intent
         .observation
@@ -2134,7 +2145,7 @@ fn close_one(
         .and_then(|o| o.get("note").or_else(|| o.get("cause")))
         .and_then(serde_json::Value::as_str)
         .unwrap_or("failed");
-    Ok(Closed::Failed(note.to_owned()))
+    Ok((Closed::Failed(note.to_owned()), observation))
 }
 
 pub fn row_kinds() -> [&'static str; 4] {

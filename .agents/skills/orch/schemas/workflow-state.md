@@ -274,10 +274,10 @@ The duty archives each unit before it goes, into `ORCH_ARCHIVE_ROOT/[REPO]/overs
 `orch-runtime state remove --item ITEM [--archive PATH]...` closes an ended item out of the state directory. It removes:
 
 - every entry of the item's folder `items/[ITEM]/` but the record's lock file and mutex;
-- every other direct entry of the state directory named for the item;
+- every other direct file of the state directory named for the item, and each direct folder named `[ITEM].[KIND]`;
 - every file under `handoffs/` named for it.
 
-The item's lane mailbox, the fleet record and the watch's records stay. A lane's round artifacts live under its worktree's `tmp/` and leave with the worktree.
+The item's lane mailbox, the fleet record and the watch's records stay. So does a caller's own entry whose name holds the key: a file that begins with `[ITEM]-` or `[ITEM]_`, and any other folder, such as `[ITEM]-final/` or `final-[ITEM]/`. A lane's round artifacts live under its worktree's `tmp/` and leave with the worktree.
 
 Before it removes anything, `remove` writes one archive at `ORCH_ARCHIVE_ROOT/[REPO]/oversee/close-[ITEM]-[EPOCH]-[SUFFIX].tgz`. The archive holds every path `remove` removes, the lane mailbox, and each `--archive PATH` that stands, which the caller removes after. A relative `--archive` path is the caller's directory's. The archive's `records.json` lists each packed path as a member, with role `state` for the item's record and `along` for the rest. With `ORCH_ARCHIVE_ROOT` empty, `remove` removes with no copy. It holds the item record's lock across the archive and the removals.
 

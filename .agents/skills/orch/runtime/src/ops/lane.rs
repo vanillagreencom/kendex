@@ -1689,7 +1689,8 @@ pub(super) fn close_owned_resources(
     refuse_other_close(path, &open, &r.item, r.kind())?;
     match open_intent(&open, EffectOp::CloseResources, &r.item)? {
         Standing::Clear => {}
-        Standing::Same(intent) => {
+        Standing::Same(mut intent) => {
+            landing_on_repeat(path, doc, &mut intent, r)?;
             return Ok(CloseRequested {
                 lane,
                 effect: Effect::Reconciled { intent },
@@ -1721,6 +1722,41 @@ pub(super) fn close_owned_resources(
         lane,
         effect: Effect::Persisted { intent },
     })
+}
+
+/// A repeated close's landing on the open close it reconciles: a merge
+/// cycle or a disposal the open intent records none of, which the repeat's
+/// request carries (a delivery the first ask named none of), is written on
+/// it, so the close's outcome records it. One the intent records stands.
+fn landing_on_repeat(
+    path: &Path,
+    doc: &mut Document,
+    intent: &mut Intent,
+    r: &CloseOwnedResources,
+) -> Result<()> {
+    let mut members = LaneMembers::of(path, intent)?;
+    let cycle = members.cycle.is_none() && r.cycle.is_some();
+    let disposed = members.disposed.is_none() && r.disposed.is_some();
+    if !(cycle || disposed) {
+        return Ok(());
+    }
+    if cycle {
+        members.cycle = r.cycle.clone();
+    }
+    if disposed {
+        members.disposed = r.disposed.clone();
+    }
+    members.write(&mut intent.extra)?;
+    let rows = record::array_mut(path, doc, "intents")?;
+    let index = rows
+        .iter()
+        .position(|row| row.get("id").and_then(Value::as_str) == Some(intent.id.as_str()))
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: intent.id.clone(),
+            })
+        })?;
+    members.write(record::element_mut(path, rows, index, "intents")?)
 }
 
 /// The lane record with each identity field the close names written where

@@ -454,6 +454,20 @@ impl<'a> LaneOperation<'a> {
         pending_ask(&self.run.engine.reach.mail_program, lane)
     }
 
+    /// [`last_mail`] through this run's reach's mailbox program.
+    pub(super) fn last_mail(
+        &self,
+        lane: &Lane,
+    ) -> std::result::Result<Option<crate::watch::mail::ClosingMail>, String> {
+        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
+        last_mail(
+            &self.run.engine.reach.mail_program,
+            &scripts,
+            self.run.engine.path,
+            lane,
+        )
+    }
+
     /// End every validation run in a local lane's worktree before the
     /// window closes, by the validation runner's own worktree stop, and
     /// discharge the validation obligation by its answer. A hosted lane's
@@ -898,6 +912,55 @@ pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option
         .iter()
         .find(|e| e.kind() == "ask")
         .map(|e| e.id().to_owned()))
+}
+
+/// A hosted lane's box past the watch's cursor (`watch::mail::announced`),
+/// read from its host once before its sandbox goes, a provider's close or a
+/// park, since nothing reads it after: the provider keeps no archive an
+/// overseer can read. A box read replaced is read whole, as the mail duty
+/// reads one. `None` is a lane with no hosted box, a box with nothing past
+/// the cursor, or a sandbox the provider no longer lists, whose box is gone
+/// with it; a read that fails while the sandbox stands, or whose list
+/// fails, is the cause.
+pub(super) fn last_mail(
+    cli: &Path,
+    scripts: &Path,
+    fleet: &Path,
+    lane: &Lane,
+) -> std::result::Result<Option<crate::watch::mail::ClosingMail>, String> {
+    let (Some(host), Some(root)) = (lane.mail_host(), lane.mail_root.as_deref()) else {
+        return Ok(None);
+    };
+    let cursor = crate::watch::mail::announced(fleet, &lane.item);
+    let mailbox = Mailbox::new(cli.to_path_buf());
+    let read = |after: u64| {
+        let drain = crate::mailbox::Drain {
+            item: lane.item.clone(),
+            after,
+            root: PathBuf::from(root),
+        };
+        mailbox.drain(&drain, Some(host), None)
+    };
+    let drained = read(cursor.announced).and_then(|drained| {
+        if crate::watch::mail::replaced(
+            cursor.announced,
+            &cursor.first,
+            drained.count,
+            &drained.first,
+        ) {
+            read(0)
+        } else {
+            Ok(drained)
+        }
+    });
+    match drained {
+        Ok(drained) => Ok(crate::watch::mail::ClosingMail::of(&drained)),
+        Err(refusal) => match crate::watch::hosted::lists_item(scripts, host, &lane.item) {
+            Ok(None) => Ok(None),
+            Ok(Some(state)) => Err(format!("mail-read-failed listed={state} {refusal}")),
+            Err(cause) => Err(format!("mail-read-failed {refusal} list={cause}")),
+        },
+    }
 }
 
 #[cfg(test)]

@@ -1066,16 +1066,19 @@ fn hosted_launch(
     // A parked lane's sandbox is stopped with its disk kept: the provider's
     // start brings it back before `create --relaunch` resumes the harness on
     // that disk. A provider answers `sandbox-started` for a sandbox already
-    // up, so a relaunch after a start that failed asks it again. Each ask is
-    // recorded before it is made, so a launch cut after it leaves a step
-    // its reconcile holds.
+    // up, so a relaunch after a start that failed asks it again; one that
+    // holds no sandbox for the item has no disk to resume, and the create
+    // makes a fresh one. Each ask is recorded before it is made, so a
+    // launch cut after it leaves a step its reconcile holds.
+    let mut relaunch = relaunch;
     if parked {
         operation.record_phase(Phase::Preparing {
             step: HOST_START.to_owned(),
             at: provider.to_owned(),
         })?;
         match hosted::start(&scripts, provider, &r.item) {
-            Ok(()) => *stands = true,
+            Ok(hosted::Started::Up) => *stands = true,
+            Ok(hosted::Started::Unknown) => relaunch = false,
             Err(hosted::Asked::Failed(cause)) => {
                 return failed(operation, &format!("host-start-failed {cause}"));
             }
