@@ -9317,17 +9317,33 @@ fn a_hosted_copilot_lane_installs_its_context_reader_and_runs_only_where_its_hoo
 /// `launch-lane`, the shipped ssh provider and a private server: the typed line
 /// runs the session-environment step before the harness, so the pane agent
 /// the harness splits off reads the key its Pi `models.json` names and the
-/// proxy, as the parent does.
+/// proxy, as the parent does, byte for byte through tmux's parser. The
+/// values are secrets: the login shell traces every command it runs with
+/// its words expanded, which holds the argv of every process it starts, and
+/// no traced word carries either value.
 #[test]
 fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environment() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut world = HostedLaunch::ssh(&server, dir.path());
     world.runner.verify = Some(2);
-    // The host user's login shell sets the pool's key and proxy.
+    // Each value holds a run no shell or tmux quoting splits, the needle
+    // the trace is searched for, beside every character tmux's parser
+    // treats specially.
+    let key_needle = "pool-key-7f3a";
+    let key = format!("{key_needle}'q \"d\" $HOME;#~\\");
+    let proxy_needle = "proxy-pass-91c";
+    let proxy = format!("http://lane:{proxy_needle}@proxy.test:3128");
+    // The host user's login shell sets the pool's key and proxy, then
+    // traces itself.
+    let trace = dir.path().join("login-trace.log");
     std::fs::write(
         world.home().join(".bash_profile"),
-        "export POOL_KEY=fixture HTTPS_PROXY=http://proxy.test:3128\n",
+        format!(
+            "export POOL_KEY='{}' HTTPS_PROXY='{proxy}'\nexec 7>>'{}'\nBASH_XTRACEFD=7\nset -x\n",
+            key.replace('\'', "'\\''"),
+            trace.display()
+        ),
     )
     .unwrap();
     // The Pi root the provider names is the inventory's account on the host.
@@ -9392,16 +9408,29 @@ fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environm
         assert!(Instant::now() < deadline, "the pane agent never ran");
         std::thread::sleep(Duration::from_millis(20));
     }
+    let expected = format!("{key}|{proxy}\n");
     assert_eq!(
-        std::fs::read_to_string(&parent_env).unwrap().trim(),
-        "fixture|http://proxy.test:3128",
+        std::fs::read_to_string(&parent_env).unwrap(),
+        expected,
         "the harness reads the login shell's variables"
     );
     assert_eq!(
-        std::fs::read_to_string(&child_env).unwrap().trim(),
-        "fixture|http://proxy.test:3128",
+        std::fs::read_to_string(&child_env).unwrap(),
+        expected,
         "the pane agent reads the same from the session"
     );
+    let traced = std::fs::read_to_string(&trace).unwrap();
+    assert!(
+        traced.contains("printenv POOL_KEY"),
+        "the trace holds the step's read of the key: {traced}"
+    );
+    for needle in [key_needle, proxy_needle] {
+        let carried: Vec<&str> = traced.lines().filter(|l| l.contains(needle)).collect();
+        assert!(
+            carried.is_empty(),
+            "{needle} on a command line: {carried:?}"
+        );
+    }
 }
 
 /// A Pi lane billing a Claude seat runs under Pi's own root; the seat
