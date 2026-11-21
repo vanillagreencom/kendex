@@ -76,7 +76,7 @@ def destination_roots(destination):
 
 
 # lane-mail with every file it sources or runs for the overseer mailbox,
-# which a host pass and the owner-ask reads and sends carry to a host.
+# which a host pass and the owner-ask reads carry to a host.
 MAILBOX_FILES = ("mailbox/scripts/lane-mail", "mailbox/scripts/lib/file-lock.sh",
                  "mailbox/scripts/lib/mailbox-append.sh", "mailbox/scripts/lib/common-root.sh",
                  "mailbox/scripts/lib/kendex-env.sh", "mailbox/scripts/lib/lane-mail-store.py")
@@ -88,7 +88,7 @@ def package_files(names):
     return {name: base64.b64encode((packages / name).read_bytes()).decode() for name in names}
 
 
-def remote_command(files, entry, args, data=None, stdin=False, shell_args=()):
+def remote_command(files, entry, args, stdin=False, shell_args=()):
     """Shell text running ENTRY of FILES, the caller's package bytes, from a fresh folder on a host.
 
     The host supplies its shell, python3 and the data the command reads, never
@@ -105,13 +105,13 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
  for name,value in payload['files'].items():
   path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value))
  argv=[sys.argv[2],*json.loads(sys.argv[3]),str(root/sys.argv[4]),*sys.argv[5:]]
- result=subprocess.run(argv,input=payload['data'],text=True) if sys.argv[1] == 'stdin' else subprocess.run(argv)
+ result=subprocess.run(argv)
  sys.exit(result.returncode)
 """
     # -I: a -c program imports from its working directory otherwise.
     command = ("python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
                " \"$BASH\" " + shlex.join([json.dumps(list(shell_args)), entry, *map(str, args)]))
-    payload = json.dumps({"files": files, "data": data})
+    payload = json.dumps({"files": files})
     if stdin:
         return command, payload
     return command + " 3<<'jarvis-files'\n" + payload + "\njarvis-files\n", None

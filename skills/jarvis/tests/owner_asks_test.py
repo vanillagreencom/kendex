@@ -3,7 +3,6 @@ import base64
 import copy
 from contextlib import redirect_stderr
 import io
-import importlib.util
 import itertools
 import json
 import os
@@ -44,30 +43,65 @@ def mailbox_projection(home):
     ask = {"id": "mail-ask", "from": "overseer:repo", "at": "2026-11-01T02:00:00Z", "text": "Mailbox question"}
     return {"home": home, "config": {"configured": False}, "tracker": None,
             "mailboxes": [{"destination": "local", "root": "/canonical/repo", "asks": [ask],
-                           "outward": {"rows": [ask]}, "inward": {"rows": []}, "posted": {},
-                           "links": {ask["id"]: {"url": "https://workspace.slack.test/archives/C1/p1", "thread": "1"}}}]}
+                           "outward": {"rows": [ask]}, "posted": {},
+                           "links": {ask["id"]: {"url": "https://linear.app/example/issue/KEN-1#comment-mirror"}}}]}
+
+
+# Linear's GraphQL endpoint for the readers the list uses, over the comment
+# rows in TRACKER_DATABASE on one issue; a .mode file beside it fails,
+# truncates or omits the assigned view.
+TRACKER_API = r'''
+import json, os, sys
+from pathlib import Path
+config = sys.stdin.read()
+payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if line.startswith('data = '))))
+query = payload['query']
+path = Path(os.environ['TRACKER_DATABASE'])
+comments = json.loads(path.read_text())
+mode_path = path.with_suffix('.mode')
+mode = mode_path.read_text() if mode_path.exists() else 'present'
+def connection(nodes):
+    return {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}
+def comment(row):
+    return dict(id=row['id'], body=row['body'], createdAt=row['created_at'], updatedAt=row['updated_at'],
+                user={'id': row['user_id'], 'name': row['user'], 'email': row['user_email']},
+                parent={'id': row['parent_id']} if row['parent_id'] else None, url=row['url'])
+if 'GetUserByEmail' in query:
+    data = {'users': connection([dict(id='owner-id', name='Owner', email='owner@example.test',
+                                     url='https://linear.app/example/profiles/owner')])}
+elif 'TeamKeys' in query:
+    data = {'organization': {'urlKey': 'example', 'teams': connection([])}}
+elif 'ListIssues' in query:
+    if mode == 'failed':
+        print('___HTTP_CODE___403', end='')
+        sys.exit(0)
+    issues = connection([] if mode == 'omitted' else [dict(
+        id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
+        updatedAt='2026-11-01T01:00:00Z')])
+    if mode == 'incomplete':
+        issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
+    data = {'issues': issues}
+elif 'GetIssueWithBundle' in query:
+    data = {'issue': dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
+                          labels=connection([]), relations=connection([]), inverseRelations=connection([]),
+                          children=connection([]))}
+elif 'ListComments' in query:
+    data = {'issue': dict(id='issue-uuid', comments=connection(list(map(comment, comments))))}
+elif 'comments' in query:
+    data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', comments=connection(list(map(comment, comments))))])}
+else:
+    raise RuntimeError(query)
+print(json.dumps({'data': data})+'___HTTP_CODE___200', end='')
+'''
 
 
 class CanonicalFixture:
-    """The public source projection and append boundary, with positive/unknown receipts."""
+    """The public source projection."""
     def __init__(self, home, count=1):
         self.data = projection(home, count)
-        self.deliveries = []
-        self.confirm = True
-        self.land = True
 
     def stable(self):
         return copy.deepcopy(self.data)
-
-    def value(self, *args):
-        return {"viewer": {"id": "posting-app"}}
-
-    def send(self, route, text, key):
-        self.deliveries.append(key)
-        if self.land and route["source"] == "linear":
-            comment = dict(request_comment("reply"), body=text, user_id="posting-app", parent_id=route["thread"])
-            self.data["tracker"]["issues"][0]["comments"].append(comment)
-        return "reply" if self.confirm else None
 
 
 class OwnerAsksContract(unittest.TestCase):
@@ -92,11 +126,11 @@ class OwnerAsksContract(unittest.TestCase):
         with owner.session.locked():
             return owner.page(owner.read(), view, cursor)
 
-    def action(self, action, row, request_id, revision=None, owner=None, **fields):
+    def later(self, row, request_id, owner=None, **fields):
         owner = owner or self.owner
-        request = {"requestId": request_id, "expectedRevision": revision or row["revision"], **fields}
+        request = {"requestId": request_id, "expectedRevision": row["revision"], **fields}
         with owner.session.locked():
-            return owner.action(owner.read(), action, row["id"], request)
+            return owner.later(owner.read(), row["id"], request)
 
     def test_distinct_comments_exact_mirrors_and_original_metadata(self):
         data = projection(str(self.home), 2)
@@ -106,7 +140,7 @@ class OwnerAsksContract(unittest.TestCase):
         data["mailboxes"] = [{"destination": "local", "root": "/canonical/repo", "asks": [ask], "outward": {"rows": [ask]},
                               "links": {ask["id"]: {"url": first["url"]}},
                               "posted": {"KEN-1": {"workspace": "example", "uuid": "issue-uuid"}}}]
-        rows, _ = owner_asks.source_rows(data)
+        rows = owner_asks.source_rows(data)
         self.assertEqual(len(rows), 2)
         self.assertEqual({row["askedBy"]["id"] for row in rows.values()}, {"overseer:repo", "requester"})
         self.assertEqual({row["askedAt"] for row in rows.values()}, {"2026-10-30T01:00:00Z", first["created_at"]})
@@ -114,11 +148,11 @@ class OwnerAsksContract(unittest.TestCase):
             with self.subTest(confirmed=linked):
                 ask["tracker_posted"] = linked
                 ask["tracker_comment"] = "unrelated"
-                rows, _ = owner_asks.source_rows(data)
+                rows = owner_asks.source_rows(data)
                 self.assertEqual(len(rows), 3)
         data["mailboxes"][0]["asks"].append(dict(ask, id="another-real-ask"))
         data["mailboxes"][0]["links"]["another-real-ask"] = {"url": first["url"]}
-        self.assertEqual(len(owner_asks.source_rows(data)[0]), 4)
+        self.assertEqual(len(owner_asks.source_rows(data)), 4)
 
     def test_complete_row_and_byte_paging_and_stale_cursors(self):
         self.source.data = projection(str(self.home), 70)
@@ -147,62 +181,36 @@ class OwnerAsksContract(unittest.TestCase):
         with self.assertRaises(owner_asks.Unavailable):
             self.page()
 
-    def test_receipt_replay_precedes_revision(self):
+    def test_later_receipt_replay_precedes_revision(self):
         row = self.page()["rows"][0]
-        first = self.action("reply", row, "same-request", text="Owner answer")
-        self.assertEqual(first["kind"], "accepted")
-        self.assertEqual(self.action("reply", row, "same-request", text="Owner answer"), first)
-        self.assertEqual(len(self.source.deliveries), 1)
-        conflict = self.action("reply", row, "same-request", text="Different answer")
-        self.assertEqual(conflict["kind"], "refused")
-        stale = self.action("reply", row, "other-request", text="Owner answer")
-        self.assertEqual(stale["kind"], "refused")
-        self.assertEqual(len(self.source.deliveries), 1)
+        until = owner_asks.iso(self.now + 3600)
+        first = self.later(row, "same-request", until=until)
+        self.assertEqual((first["kind"], first["state"]), ("accepted", "snoozed"))
+        # The accepted snooze moved the revision; the retry still answers its receipt.
+        self.assertEqual(self.later(row, "same-request", until=until), first)
+        conflict = self.later(row, "same-request", until=owner_asks.iso(self.now + 7200))
+        self.assertEqual((conflict["kind"], conflict["state"]), ("refused", None))
+        stale = self.later(row, "other-request", until=until)
+        self.assertEqual((stale["kind"], stale["state"]), ("refused", "snoozed"))
 
-    def test_uncertain_delivery_needs_positive_evidence_and_never_resends(self):
-        for landed, newer_later in ((True, False), (True, True), (False, False), (False, True)):
-            with self.subTest(landed=landed, newer_later=newer_later):
-                self.now += 3600
-                self.source.confirm, self.source.land = False, landed
-                row = self.page()["rows"][0]
-                key = "uncertain-" + str((landed, newer_later))
-                with self.assertRaises(owner_asks.Unavailable):
-                    self.action("done", row, key, text="Evidence supplied")
-                deliveries = len(self.source.deliveries)
-                if newer_later:
-                    refreshed = self.page()["rows"][0]
-                    until = owner_asks.iso(self.now + 3600)
-                    later = self.action("later", refreshed, key + "-later", until=until)
-                    self.assertEqual((later["kind"], later["state"]), ("accepted", "snoozed"))
-                if landed:
-                    result = self.action("done", row, key, text="Evidence supplied")
-                    self.assertEqual((result["kind"], result["state"]), ("accepted", "checking"))
-                else:
-                    with self.assertRaises(owner_asks.Unavailable):
-                        self.action("done", row, key, text="Evidence supplied")
-                self.assertEqual(len(self.source.deliveries), deliveries)
-                if newer_later:
-                    self.assertEqual(self.page()["activeCount"], 0)
-                    snoozed = self.page("snoozed")["rows"][0]
-                    self.assertEqual((snoozed["id"], snoozed["snoozedUntil"]), (row["id"], until))
-
-    def test_done_and_snooze_follow_complete_current_view_membership(self):
+    def test_snooze_restores_and_follows_complete_current_view_membership(self):
         row = self.page()["rows"][0]
-        result = self.action("done", row, "done", text="Evidence")
-        self.assertEqual(result["state"], "checking")
-        checking = self.page()["rows"][0]
+        # KEN-5390 adds Reply and Done; each row says so and allows Later.
+        self.assertEqual({name: action["allowed"] for name, action in row["actions"].items()},
+                         {"reply": False, "done": False, "later": True})
+        self.assertTrue(all(owner_asks.printable(row["actions"][name]["reason"]) for name in ("reply", "done")))
+        self.assertEqual(row["actions"]["later"]["reason"], "")
         for until in ("2026-11-01T10:00:00", "2020-01-01T00:00:00Z", "not-time"):
-            self.assertEqual(self.action("later", checking, until, until=until)["kind"], "refused")
+            self.assertEqual(self.later(row, until, until=until)["kind"], "refused")
         later = owner_asks.iso(self.now + 3600)
-        self.assertEqual(self.action("later", checking, "later", until=later)["state"], "snoozed")
+        self.assertEqual(self.later(row, "later", until=later)["state"], "snoozed")
         self.assertEqual(self.page()["activeCount"], 0)
         snoozed = self.page("snoozed")["rows"][0]
+        self.assertEqual(snoozed["snoozedUntil"], later)
         self.now += 3600
         restored = self.page()["rows"][0]
-        self.assertEqual(restored["state"], "checking")
+        self.assertEqual((restored["state"], restored["snoozedUntil"]), ("open", None))
         self.assertEqual((restored["id"], restored["askedAt"], restored["link"]), (snoozed["id"], row["askedAt"], row["link"]))
-        self.source.data["tracker"]["requests"] = []
-        self.assertEqual(self.page()["rows"], [])
         # A complete read alone owns membership, for either source: a tracker
         # view that omits the request, a read mailbox that no longer holds the
         # ask (closed, or compacted after closing) and a root no longer read.
@@ -211,18 +219,16 @@ class OwnerAsksContract(unittest.TestCase):
             ("mailbox-closed", mailbox_projection, lambda data: data["mailboxes"][0].update(asks=[])),
             ("mailbox-root-unread", mailbox_projection, lambda data: data.update(mailboxes=[])),
         ]
-        for (name, world, omit), action in itertools.product(omissions, (None, "reply", "done", "later")):
+        for (name, world, omit), action in itertools.product(omissions, (None, "later")):
             with self.subTest(source=name, action=action):
                 # Each row starts from an empty action record of its own.
                 self.owner.session.path.unlink(missing_ok=True)
                 self.source.data = world(str(self.home))
                 row = self.page()["rows"][0]
                 if action:
-                    receipt = self.action(action, row, "membership-" + name + "-" + action, text="Evidence",
-                                          until=owner_asks.iso(self.now + 60))
-                    self.assertEqual((receipt["kind"], receipt["state"]),
-                                     ("accepted", {"reply": "open", "done": "checking", "later": "snoozed"}[action]))
-                if action in (None, "reply"):
+                    receipt = self.later(row, "membership-" + name, until=owner_asks.iso(self.now + 60))
+                    self.assertEqual((receipt["kind"], receipt["state"]), ("accepted", "snoozed"))
+                else:
                     self.assertEqual(self.owner.read()["deltas"], {})
                 before = self.owner.session.path.read_bytes()
                 # The canonical reader refuses failed/incomplete traversals;
@@ -246,7 +252,7 @@ class OwnerAsksContract(unittest.TestCase):
             try:
                 owner = self.new_owner()
                 barrier.wait(timeout=5)
-                answers.append(self.action("later", row, key, owner=owner, until=owner_asks.iso(self.now + 60)))
+                answers.append(self.later(row, key, owner=owner, until=owner_asks.iso(self.now + 60)))
             except BaseException as error:
                 failures.append(error)
         threads = [threading.Thread(target=act, args=(str(i),)) for i in range(2)]
@@ -288,7 +294,7 @@ class OwnerAsksContract(unittest.TestCase):
                 self.assertEqual(record["key"], key)
                 self.assertNotIn(secret, lines[0])
 
-    def test_reads_and_delivery_run_caller_code_as_the_destination_account(self):
+    def test_reads_run_caller_code_as_the_destination_account(self):
         session = self.owner.session
         session.env["JARVIS_BASH"] = BASH
         session.deadline = owner_asks.time.monotonic() + 10
@@ -296,14 +302,10 @@ class OwnerAsksContract(unittest.TestCase):
         caller = base64.b64encode((packages / "mailbox/scripts/lane-mail").read_bytes()).decode()
         installed = self.home / ".agents/skills/mailbox/scripts/lane-mail"
         root = str(self.home)
-        record = {"root": root, "pending": "", "outward": "count=0 first=\n", "inward": "count=0 first=\n",
-                  "binding": None, "journal": None}
+        answers = [{"registered": root, "mailbox": root}, {"root": root, "pending": "", "outward": "count=0 first=\n"}]
 
         def answer(argv, cwd=None, data=None, operation=None, timeout=60):
-            sent = "--re" in " ".join(map(str, argv))
-            stdout = ("lane-mail: sent item=overseer id=reply\n" if sent else
-                      root + "\0" if operation == "mailbox/lib/common-root.sh" else json.dumps(record) + "\n")
-            return subprocess.CompletedProcess(argv, 0, stdout, "")
+            return subprocess.CompletedProcess(argv, 0, "".join(json.dumps(line) + "\n" for line in answers), "")
 
         cases = [
             ("local", None, {}, False),
@@ -315,24 +317,20 @@ class OwnerAsksContract(unittest.TestCase):
                 sources = owner_asks.Sources(session, dict(settings, JARVIS_MAIN_HOST=""))
                 target = next(target for target in owner_asks.watch.destinations(sources.settings)
                               if target.key == destination)
-                route = {"source": "mailbox", "destination": destination, "host": host, "root": root, "ask": "original"}
                 with patch.object(owner_asks.watch, "run", side_effect=answer) as transport:
-                    self.assertEqual(sources.mailboxes(target, [root])[0]["root"], root)
-                    self.assertEqual(sources.send(route, "Owner reply", "delivery"), "reply")
-                # Reads and the send reach one account, and each runs the
+                    self.assertEqual([record["root"] for record in sources.mailboxes(target, [root])], [root])
+                # The read reaches one account in one call and runs the
                 # caller's lane-mail, never the one installed in the checkout.
-                self.assertEqual(len(transport.call_args_list), 3)
-                for call in transport.call_args_list:
-                    argv = list(map(str, call.args[0]))
-                    self.assertNotIn(str(installed), " ".join(argv))
-                    if host:
-                        self.assertEqual(argv[:2], ["ssh", host])
-                        self.assertEqual(argv[2].startswith("sudo -n -H -u overseer -- bash -l -c "), control)
-                        if call.kwargs["operation"] == "mailbox/lane-mail":
-                            self.assertEqual(json.loads(call.kwargs["data"])["files"]["mailbox/scripts/lane-mail"], caller)
-                    else:
-                        self.assertEqual(argv[0], BASH)
-                        self.assertTrue(any(arg.startswith(str(packages / "mailbox/scripts/")) for arg in argv))
+                call, = transport.call_args_list
+                argv = list(map(str, call.args[0]))
+                self.assertNotIn(str(installed), " ".join(argv))
+                if host:
+                    self.assertEqual(argv[:2], ["ssh", host])
+                    self.assertEqual(argv[2].startswith("sudo -n -H -u overseer -- bash -l -c "), control)
+                    self.assertEqual(json.loads(call.kwargs["data"])["files"]["mailbox/scripts/lane-mail"], caller)
+                else:
+                    self.assertEqual(argv[0], BASH)
+                    self.assertIn(str(packages / "mailbox/scripts/lane-mail"), argv)
 
     def test_controls_reject_each_guarded_regression(self):
         # Keep the mutant outside the worktree and acquire only its own
@@ -348,22 +346,30 @@ class OwnerAsksContract(unittest.TestCase):
             shutil.copyfile(REPO / "skills/orch/references/secret-value.ere", references / "secret-value.ere")
             mutations = [
                 ("jarvis/scripts/lib/owner_asks.py", 'previous = state["requests"].get(request["requestId"])', 'previous = None',
-                 "OwnerAsksContract.test_receipt_replay_precedes_revision", None),
+                 "OwnerAsksContract.test_later_receipt_replay_precedes_revision", None),
                 ("jarvis/scripts/lib/owner_asks.py", 'PAGE_BYTES = 16 * 1024', 'PAGE_BYTES = 32 * 1024',
                  "OwnerAsksContract.test_complete_row_and_byte_paging_and_stale_cursors", None),
-                ("jarvis/scripts/lib/owner_asks.py", 'if delta.get("until_sequence", 0) <= entry["sequence"]:', 'if True:',
-                 "OwnerAsksContract.test_uncertain_delivery_needs_positive_evidence_and_never_resends",
-                 "(landed=True, newer_later=True)"),
                 ("jarvis/scripts/lib/owner_asks.py", 'closed_keys = [key for key in state["deltas"] if key not in rows]', "closed_keys = []",
-                 "OwnerAsksContract.test_done_and_snooze_follow_complete_current_view_membership",
+                 "OwnerAsksContract.test_snooze_restores_and_follows_complete_current_view_membership",
                  "source='mailbox-root-unread'"),
-                ("jarvis/scripts/lib/owner_asks.py", 'state["deltas"].get(key, {}) if action == "reply" else ', '',
-                 "OwnerAsksContract.test_done_and_snooze_follow_complete_current_view_membership", "action='reply'"),
-                # The checkout's installed lane-mail, the route a reply took
+                # A plain ssh login, the account a control host's reads took
+                # before they went through watch.host_args.
+                ("jarvis/scripts/lib/owner_asks.py",
+                 'result = watch.run(watch.host_args(target, "bash -c " + shlex.quote(command)), data=payload,',
+                 'result = watch.run(["ssh", target.host, "bash -c " + shlex.quote(command)], data=payload,',
+                 "OwnerAsksContract.test_reads_run_caller_code_as_the_destination_account", "(destination='ssh:control')"),
+                # The checkout's installed lane-mail, the route a read took
                 # before Sources carried its own.
-                ("jarvis/scripts/lib/owner_asks.py", '"$BASH" "$mail" send --item overseer',
-                 '"$BASH" .agents/skills/mailbox/scripts/lane-mail send --item overseer',
-                 "PublicOwnerAsks.test_remote_list_and_reply_run_caller_code_on_checkout_data", "(checkout_code=True)"),
+                ("jarvis/scripts/lib/owner_asks.py", '"$BASH" "$mail" pending --item overseer',
+                 '"$BASH" .agents/skills/mailbox/scripts/lane-mail pending --item overseer',
+                 "PublicOwnerAsks.test_remote_list_runs_caller_code_on_checkout_data", "(checkout_code=True)"),
+                ("jarvis/scripts/lib/owner_asks.py",
+                 "      'fatal: not a git repository (or any '* | *$'\\n''fatal: not a git repository (or any '*)",
+                 "      'no answer git gives')",
+                 "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='outside-git')"),
+                ("jarvis/scripts/lib/owner_asks.py", 'common="$(mailbox_common_root "$root" && printf .)"',
+                 'common="$(mailbox_common_root "$root")"',
+                 "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='trailing\\n')"),
                 ("slack/scripts/lib/settings.py", 'exec "$reader" -I -c', 'exec "$reader" -c',
                  "PublicOwnerAsks.test_carried_presence_preserves_root_settings_and_permission", "(name='renew')"),
             ]
@@ -398,7 +404,7 @@ class PublicOwnerAsks(MailWorld):
         # kendex project list --json, the registry form a program reads.
         self.executable("kendex", '#!/bin/sh\ncase "$*" in "project list --json" | "project list") cat "$REGISTRY" ;; *) exit 97 ;; esac\n')
         self.register(self.registry, self.home)
-        self.env.update(XDG_STATE_HOME=str(self.root / "runtime"), SLACK_BOT_TOKEN="test-token")
+        self.env.update(XDG_STATE_HOME=str(self.root / "runtime"))
         self.env.pop("PYTHONPATH", None)
 
     @staticmethod
@@ -441,6 +447,51 @@ class PublicOwnerAsks(MailWorld):
                 self.assertEqual(record["key"], ["project-list", "registration-unreadable", state])
                 self.assertNotIn("activeCount", error)
 
+    def tracker_api(self, comments):
+        """Linear's API for the caller's reads, answered from COMMENTS on issue KEN-1."""
+        database = self.root / "tracker.json"
+        database.write_text(json.dumps(comments))
+        self.env.update(TRACKER_DATABASE=str(database), LINEAR_API_KEY_OVERRIDE="fixture", LINEAR_FORMAT="raw")
+        self.executable("curl", "#!" + sys.executable + "\n" + TRACKER_API)
+        return database
+
+    @staticmethod
+    def mirror(root, ask, comment):
+        """The tracker-posted record lane-mail appends once owner_tracker_ask retains COMMENT: the ask's link."""
+        path = root / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        # jq -c leaves U+2028/U+2029 raw inside its JSON lines: split at LF only.
+        records = [json.loads(line) for line in path.read_text().split("\n") if line]
+        envelope = next(record for record in records if record["id"] == ask)
+        envelope["issue"] = "KEN-1"
+        records.append({"id": ask + "-tracker", "kind": "tracker-posted", "at": envelope["at"],
+                        "from": envelope["from"], "re": ask, "issue": "KEN-1", "tracker_label": "owner-waiting",
+                        "tracker_comment": comment, "text": ""})
+        path.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+    def test_each_registered_folder_answers_through_its_own_mailbox(self):
+        self.tracker_api([request_comment("mirror", "Tracker copy")])
+        # Folder names reach the reads exactly: a carriage return and a
+        # trailing line feed are path bytes. A folder outside any git
+        # repository holds no mailbox; lane-mail itself refuses an ask there,
+        # and so it does under a trailing line feed.
+        cases = [("outside-git", False, False), ("carriage\rreturn", True, True), ("trailing\n", True, False)]
+        for name, repository, asked in cases:
+            with self.subTest(folder=name):
+                folder = self.root / "registered" / name
+                if repository:
+                    make_project(folder)
+                else:
+                    folder.mkdir(parents=True)
+                expected = []
+                if asked:
+                    expected.append("Asked in " + name)
+                    self.mirror(folder, self.mail(folder, "ask", expected[0], "--to", "owner", "--options", "a,b", "--reserved"),
+                                "mirror")
+                self.register(self.registry, self.home, folder)
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual([row["what"] for row in page["rows"]], expected)
+
     def test_checkout_supplies_data_never_code_or_settings(self):
         # The folder ends like a plain-row worktree note; the registry's
         # folder field names it exactly.
@@ -449,11 +500,8 @@ class PublicOwnerAsks(MailWorld):
         # lane-mail's jq -c leaves U+2028/U+2029 raw inside its JSON lines.
         what = "Local original second line next paragraph"
         ask = self.mail(local, "ask", what, "--to", "owner", "--options", "a,b", "--reserved")
-        self.slack_thread(local, ask)
-        # The caller leaves the endpoint out of its environment; its home's
-        # settings name it. No checkout setting may choose where the token goes.
-        endpoint = self.env.pop("SLACK_API_URL")
-        (self.home / "kendex.settings.toml").write_text("[env]\nSLACK_API_URL=" + json.dumps(endpoint) + "\n")
+        self.tracker_api([request_comment("mirror", "Tracker copy")])
+        self.mirror(local, ask, "mirror")
         marker = self.root / "executed-local-checkout"
         planted = 'from pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\nraise SystemExit(91)\n'
         for module in ("json", "base64"):
@@ -465,8 +513,7 @@ class PublicOwnerAsks(MailWorld):
         cases = [
             ("cwd", {}),
             ("pythonpath", {"PYTHONPATH": "./checkout-python"}),
-            ("endpoint", {"SLACK_API_URL": "http://127.0.0.1:1", "SLACK_BOT_TOKEN": "checkout-token"}),
-            ("invalid", {"SLACK_POLL_SECONDS": "invalid", "LINEAR_API_KEY": "invalid"}),
+            ("invalid", {"LINEAR_API_KEY": "invalid", "ORCH_STATE_DIR": "/nonexistent"}),
         ]
         for name, values in cases:
             with self.subTest(setting=name):
@@ -475,11 +522,11 @@ class PublicOwnerAsks(MailWorld):
                 result, page = self.run_cli()
                 self.assertFalse(marker.exists(), "local-source-checkout-executed: " + name)
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                self.assertEqual(page["activeCount"], 1)
-                self.assertEqual(page["rows"][0]["what"], what)
-                self.assertEqual(page["rows"][0]["link"]["url"], "https://workspace.slack.test/archives/C1/p100000001")
+                row, = page["rows"]
+                self.assertEqual((row["what"], row["askedAt"]), (what, self.box(local, "to-overseer")[0]["at"]))
+                self.assertEqual(row["link"]["url"], request_comment("mirror")["url"])
 
-    def test_remote_list_and_reply_run_caller_code_on_checkout_data(self):
+    def test_remote_list_runs_caller_code_on_checkout_data(self):
         remote = make_project(self.root / "remote (owner)")
         self.command(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
                       "commit", "--allow-empty", "-m", "fixture"], remote).check_returncode()
@@ -495,7 +542,8 @@ class PublicOwnerAsks(MailWorld):
                         'if [ "$2" = "kendex project list --json" ]; then cat "$REMOTE_REGISTRY"; exit; fi\n' +
                         'exec ' + BASH + ' -c "$2"\n')
         ask = self.mail(remote, "ask", "Remote original", "--to", "owner", "--options", "a,b", "--reserved")
-        self.slack_thread(remote, ask)
+        self.tracker_api([request_comment("mirror", "Tracker copy")])
+        self.mirror(remote, ask, "mirror")
         # The host's transport cost is per destination: a worktree beside its
         # main checkout adds no call.
         calls = []
@@ -515,7 +563,7 @@ class PublicOwnerAsks(MailWorld):
                     for module in ("base64", "json"):
                         (remote / (module + ".py")).write_text(marker)
                     for package, entry in (("jarvis", "lib/jarvis-env.sh"), ("mailbox", "lane-mail"),
-                                           ("linear", "linear.sh"), ("slack", "slack")):
+                                           ("mailbox", "lib/common-root.sh"), ("linear", "linear.sh")):
                         scripts = remote / ".agents/skills" / package / "scripts"
                         if scripts.is_symlink():
                             scripts.unlink()
@@ -527,20 +575,11 @@ class PublicOwnerAsks(MailWorld):
                     pythonpath.mkdir()
                     for module in ("argparse", "verbs"):
                         (pythonpath / (module + ".py")).write_text(marker)
-                    (remote / "kendex.settings.toml").write_text(
-                        '[env]\nSLACK_API_URL="http://127.0.0.1:1"\nPYTHONPATH="./checkout-python"\n')
+                    (remote / "kendex.settings.toml").write_text('[env]\nPYTHONPATH="./checkout-python"\n')
                 result, page = self.run_cli()
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 row, = page["rows"]
-                self.assertEqual(row["what"], "Remote original")
-                self.assertTrue(row["link"]["url"].startswith("https://workspace.slack.test/"))
-                payload = json.dumps({"requestId": "remote-reply-" + str(checkout_code), "expectedRevision": row["revision"],
-                                      "text": "Owner answer " + str(checkout_code)})
-                result, receipt = self.run_cli("reply", None, payload, "--id", row["id"])
-                self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("state")), (0, "accepted", "open"),
-                                 result.stderr)
-                answers = [entry for entry in self.box(remote, "to-lane") if entry.get("re") == ask]
-                self.assertEqual(answers[-1]["text"].strip(), "Owner answer " + str(checkout_code))
+                self.assertEqual((row["what"], row["link"]["url"]), ("Remote original", request_comment("mirror")["url"]))
                 self.assertFalse(executed.exists(), "checkout-code-executed")
 
     def test_carried_presence_preserves_root_settings_and_permission(self):
@@ -588,215 +627,41 @@ print(json.dumps(owner._presence('ssh:fixture')))
                 self.assertEqual(hold.exists(), expected == "ok")
                 self.assertFalse(marker.exists())
 
-    def slack_thread(self, home, ask):
-        # Exercise Slack's public mapping/permalink owner against its existing
-        # API fixture; no product reader or HTTP transport is replaced.
-        spec = importlib.util.spec_from_file_location("fake_slack", REPO / "skills/slack/tests/lib/fake_slack.py")
-        fake = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(fake)
-        fake.Handler.ws = fake.Workspace("test-token", "test-app", {}, 200)
-        fake.Handler.ws.channels["C1"] = {"id": "C1", "name": "owner"}
-        fake.Handler.ws.messages["C1"] = [{"ts": "100.000001", "text": "Original"}]
-        server = fake.Server(("127.0.0.1", 0), fake.Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(thread.join)
-        self.addCleanup(server.shutdown)
-        self.env["SLACK_API_URL"] = "http://127.0.0.1:" + str(server.server_port)
-        slack = home / "tmp/slack"
-        slack.mkdir()
-        (slack / "binding.json").write_text(json.dumps({"channel": "C1", "channel_name": "owner", "bound_at": "100", "owners": [], "owner_ids": {}}))
-        (slack / "journal.jsonl").write_text(json.dumps({"t": "out", "id": ask, "kind": "ask", "state": "open", "thread": "100.000001", "at": "2026-11-01T00:00:00Z"}) + "\n")
-        return fake.Handler.ws
-
-    def test_real_mailbox_link_reply_checking_and_verified_close(self):
-        # The caller's own lane-mail runs the real send, then loses its stdout
-        # once. Recovery must use canonical positive evidence without
-        # resending, including a body the mailbox normalizes at its boundary.
-        skills = self.root / "caller/skills"
-        for package in ("jarvis", "mailbox", "linear", "slack", "orch"):
-            shutil.copytree(LIB.parents[2] / package / "scripts", skills / package / "scripts")
-        (skills / "orch/references").mkdir()
-        shutil.copyfile(LIB.parents[2] / "orch/references/secret-value.ere", skills / "orch/references/secret-value.ere")
-        mail = skills / "mailbox/scripts/lane-mail"
-        mail.rename(mail.with_name("lane-mail.real"))
-        mail.write_text('#!' + BASH + '\nset -euo pipefail\nreal="${BASH_SOURCE[0]%/*}/lane-mail.real"\n' +
-                        'if [ "$1" = send ] && [ ! -f "' + str(self.root / "lost") + '" ]; then\n' +
-                        '  "$BASH" "$real" "$@" >/dev/null\n  touch "' + str(self.root / "lost") + '"\n' +
-                        'else\n  exec "$BASH" "$real" "$@"\nfi\n')
-        ask = self.mail(self.home, "ask", "Original owner ask", "--to", "owner", "--options", "a,b", "--reserved")
-        self.slack_thread(self.home, ask)
-        result, page = self.run_cli(skills=skills)
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        row = page["rows"][0]
-        self.assertEqual(row["askedAt"], self.box(self.home, "to-overseer")[0]["at"])
-        self.assertTrue(row["link"]["url"].startswith("https://workspace.slack.test/"))
-        payload = json.dumps({"requestId": "actual-done", "expectedRevision": row["revision"], "text": "Done evidence\n"})
-        result, unknown = self.run_cli("done", None, payload, "--id", row["id"], skills=skills)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(unknown["kind"], "unavailable")
-        result, refreshed = self.run_cli(skills=skills)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        until = owner_asks.iso(owner_asks.time.time() + 3600)
-        later_payload = json.dumps({"requestId": "newer-later", "expectedRevision": refreshed["revision"], "until": until})
-        result, later = self.run_cli("later", None, later_payload, "--id", row["id"], skills=skills)
-        self.assertEqual((result.returncode, later["state"]), (0, "snoozed"))
-        result, receipt = self.run_cli("done", None, payload, "--id", row["id"], skills=skills)
-        self.assertEqual(receipt["state"], "checking", result.stderr)
-        self.assertEqual(self.run_cli(skills=skills)[1]["activeCount"], 0)
-        self.assertEqual(self.run_cli(view="snoozed", skills=skills)[1]["rows"][0]["snoozedUntil"], until)
-        self.assertEqual(self.run_cli("done", None, payload, "--id", row["id"], skills=skills)[1], receipt)
-        answers = [entry for entry in self.box(self.home, "to-lane") if entry.get("re") == ask]
-        self.assertEqual(len(answers), 1)
-        self.assertEqual(answers[0]["kind"], "answer")
-        closed = self.command([REPO / "skills/mailbox/scripts/lane-mail", "resolve", "--item", "overseer", "--id", ask], self.home)
-        self.assertEqual(closed.returncode, 0, closed.stderr)
-        self.assertEqual(self.run_cli(skills=skills)[1]["rows"], [])
-
-    def test_actual_tracker_writer_recovers_lost_acknowledgement(self):
+    def test_tracker_view_membership_and_exact_mirror(self):
         (self.home / "kendex.settings.toml").write_text(
             '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
-        database = self.root / "tracker.json"
         original = request_comment("request", "https://linear.app/example/profiles/owner Question")
-        database.write_text(json.dumps([original]))
-        self.env.update(TRACKER_DATABASE=str(database), LINEAR_API_KEY_OVERRIDE="fixture", LINEAR_FORMAT="raw")
-        self.executable("curl", '#!' + sys.executable + '\n' + r'''
-import json, os, sys
-from pathlib import Path
-config = sys.stdin.read()
-payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if line.startswith('data = '))))
-query = payload['query']
-path = Path(os.environ['TRACKER_DATABASE'])
-comments = json.loads(path.read_text())
-mode_path = path.with_suffix('.mode')
-mode = mode_path.read_text() if mode_path.exists() else 'present'
-def connection(nodes):
-    return {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}
-def comment(row):
-    return dict(id=row['id'], body=row['body'], createdAt=row['created_at'], updatedAt=row['updated_at'],
-                user={'id': row['user_id'], 'name': row['user'], 'email': row['user_email']},
-                parent={'id': row['parent_id']} if row['parent_id'] else None, url=row['url'])
-if 'commentCreate' in query:
-    item = payload['variables']['input']
-    row = dict(comments[0], id='reply-'+str(len(comments)), body=item['body'],
-               user_id='posting-app', parent_id=item['parentId'])
-    comments.append(row)
-    path.write_text(json.dumps(comments))
-    # The real writer has posted; the transport loses its acknowledgement.
-    print('___HTTP_CODE___200', end='')
-    sys.exit(0)
-elif 'GetUserByEmail' in query:
-    data = {'users': connection([dict(id='owner-id', name='Owner', email='owner@example.test',
-                                     url='https://linear.app/example/profiles/owner')])}
-elif 'TeamKeys' in query:
-    data = {'organization': {'urlKey': 'example', 'teams': connection([])}}
-elif 'viewer' in query:
-    data = {'viewer': {'id': 'posting-app'}}
-elif 'ListIssues' in query:
-    if mode == 'failed':
-        print('___HTTP_CODE___403', end='')
-        sys.exit(0)
-    issues = connection([] if mode == 'omitted' else [dict(
-        id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
-        updatedAt='2026-11-01T01:00:00Z')])
-    if mode == 'incomplete':
-        issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
-    data = {'issues': issues}
-elif 'GetIssueWithBundle' in query:
-    data = {'issue': dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
-                          labels=connection([]), relations=connection([]), inverseRelations=connection([]),
-                          children=connection([]))}
-elif 'ListComments' in query:
-    data = {'issue': dict(id='issue-uuid', comments=connection(list(map(comment, comments))))}
-elif 'comments' in query:
-    data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', comments=connection(list(map(comment, comments))))])}
-else:
-    raise RuntimeError(query)
-print(json.dumps({'data': data})+'___HTTP_CODE___200', end='')
-''')
-        for action in ("reply", "done"):
-            with self.subTest(action=action):
-                result, page = self.run_cli()
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                row = page["rows"][0]
-                payload = json.dumps({"requestId": "actual-" + action, "expectedRevision": row["revision"],
-                                      "text": "Evidence\n\n"})
-                result, unknown = self.run_cli(action, None, payload, "--id", row["id"])
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(unknown["kind"], "unavailable")
-                record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
-                self.assertEqual(record["destination"], "local:" + str(self.home))
-                self.assertEqual(record["key"][0], "linear-delivery")
-                if action == "done":
-                    result, refreshed = self.run_cli()
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    until = owner_asks.iso(owner_asks.time.time() + 3600)
-                    later_payload = json.dumps({"requestId": "newer-tracker-later", "expectedRevision": refreshed["revision"],
-                                                "until": until})
-                    result, later = self.run_cli("later", None, later_payload, "--id", row["id"])
-                    self.assertEqual((result.returncode, later["state"]), (0, "snoozed"))
-                result, receipt = self.run_cli(action, None, payload, "--id", row["id"])
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                self.assertEqual((receipt["kind"], receipt["state"]),
-                                 ("accepted", "checking" if action == "done" else "open"))
-                if action == "done":
-                    self.assertEqual(self.run_cli()[1]["activeCount"], 0)
-                    result, snoozed = self.run_cli(view="snoozed")
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(snoozed["rows"][0]["snoozedUntil"], until)
-                    # A later Done still clears the earlier accepted snooze.
-                    newer_payload = json.dumps({"requestId": "newer-tracker-done", "expectedRevision": snoozed["revision"],
-                                                "text": "New evidence"})
-                    result, unknown = self.run_cli("done", None, newer_payload, "--id", row["id"])
-                    self.assertEqual(unknown["kind"], "unavailable")
-                    result, newer = self.run_cli("done", None, newer_payload, "--id", row["id"])
-                    self.assertEqual((result.returncode, newer["state"]), (0, "checking"))
-                    self.assertEqual(self.run_cli()[1]["rows"][0]["state"], "checking")
-        self.assertEqual(len(json.loads(database.read_text())), 4)
-        state_path, = (self.root / "runtime").rglob("owner-asks.json")
+        database = self.tracker_api([original])
         mode_path = database.with_suffix(".mode")
-        for state in ("checking", "snoozed"):
-            with self.subTest(state=state):
-                mode_path.write_text("present")
-                result, page = self.run_cli()
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                row = page["rows"][0]
-                if state == "snoozed":
-                    payload = json.dumps({"requestId": "membership-later", "expectedRevision": row["revision"],
-                                          "until": owner_asks.iso(owner_asks.time.time() + 3600)})
-                    result, receipt = self.run_cli("later", None, payload, "--id", row["id"])
-                    self.assertEqual((result.returncode, receipt["state"]), (0, state))
-                else:
-                    self.assertEqual(row["state"], state)
-                before = state_path.read_bytes()
-                for mode in ("failed", "incomplete"):
-                    mode_path.write_text(mode)
-                    result, unavailable = self.run_cli()
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(unavailable["kind"], "unavailable")
-                    self.assertEqual(state_path.read_bytes(), before)
-                mode_path.write_text("omitted")
-                result, page = self.run_cli()
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                self.assertEqual((page["activeCount"], page["snoozedCount"], page["rows"], page["complete"]),
-                                 (0, 0, [], True))
-                self.assertEqual(json.loads(state_path.read_text())["deltas"], {})
-        self.assertEqual(len(json.loads(database.read_text())), 4)
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        row, = page["rows"]
+        self.assertEqual((row["kind"], row["askedBy"]["id"], row["askedAt"], row["link"]["url"]),
+                         ("tracker-item", original["user_id"], original["created_at"], original["url"]))
+        payload = json.dumps({"requestId": "membership-later", "expectedRevision": row["revision"],
+                              "until": owner_asks.iso(owner_asks.time.time() + 3600)})
+        result, receipt = self.run_cli("later", None, payload, "--id", row["id"])
+        self.assertEqual((result.returncode, receipt["state"]), (0, "snoozed"))
+        state_path, = (self.root / "runtime").rglob("owner-asks.json")
+        before = state_path.read_bytes()
+        for mode in ("failed", "incomplete"):
+            with self.subTest(mode=mode):
+                mode_path.write_text(mode)
+                result, unavailable = self.run_cli()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(unavailable["kind"], "unavailable")
+                self.assertEqual(state_path.read_bytes(), before)
+        mode_path.write_text("omitted")
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual((page["activeCount"], page["snoozedCount"], page["rows"], page["complete"]), (0, 0, [], True))
+        self.assertEqual(json.loads(state_path.read_text())["deltas"], {})
 
-        # Seed the canonical mirror fixture with the tracker-posted envelope
-        # fields produced by lane-mail after owner_tracker_ask retains its ID.
-        # The real mailbox fold and both real Linear readers consume it.
+        # The real mailbox fold and both real Linear readers consume the
+        # tracker-posted record: the request comment is the ask's mirror.
         mode_path.write_text("present")
         ask = self.mail(self.home, "ask", "Mirrored owner ask", "--to", "owner", "--options", "a,b", "--reserved")
-        records = self.box(self.home, "to-overseer")
-        envelope = next(record for record in records if record["id"] == ask)
-        envelope["issue"] = "KEN-1"
-        records.append({"id": ask + "-tracker", "kind": "tracker-posted", "at": envelope["at"],
-                        "from": envelope["from"], "re": ask, "issue": "KEN-1", "tracker_label": "owner-waiting",
-                        "tracker_comment": "request", "text": ""})
-        (self.home / "tmp/lane-mail/overseer/to-overseer.jsonl").write_text(
-            "".join(json.dumps(record) + "\n" for record in records))
+        self.mirror(self.home, ask, "request")
         result, mirrored = self.run_cli()
         self.assertEqual(result.returncode, 0, "safe-mirror-read: " + result.stderr + result.stdout)
         self.assertEqual(mirrored["activeCount"], 1)

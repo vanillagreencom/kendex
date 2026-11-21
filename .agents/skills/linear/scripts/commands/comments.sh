@@ -43,7 +43,6 @@ Owner Requests:
                         exact-email resolver, existing issues filters and
                         complete comment reader. Preserves every distinct
                         request mentioning that user's canonical profile URL.
-                        Includes full comment evidence for delivery recovery.
                         A successful complete read defines current view
                         membership; failed reads publish no partial result.
 
@@ -85,18 +84,7 @@ read_body_file() {
         echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
         return 1
     fi
-    body=$(cat -- "$body_file" && printf '.') || return 1
-    body="${body%.}"
-}
-
-comment_body_json() {
-    # Recovery compares unmodified file bodies byte for byte. Inline and
-    # generated attachment bodies retain their final-newline contract.
-    if [[ -n "$2" && "${3:-0}" == 0 ]]; then
-        cat -- "$2"
-    else
-        printf '%s\n' "$1"
-    fi | jq -Rs '.'
+    body=$(<"$body_file")
 }
 
 list_comments() {
@@ -129,7 +117,7 @@ list_comments() {
                     createdAt
                     updatedAt
                     user { name email }
-                    user { id url }
+                    user { id }
                     parent { id }
                     url
                 }
@@ -203,7 +191,7 @@ bulk_list_comments() {
                         createdAt
                         updatedAt
                         user { name email }
-                        user { id url }
+                        user { id }
                         parent { id }
                         url
                     }
@@ -243,9 +231,8 @@ owner_requests() {
     jq -cs '
       .[0] as $owner | .[1] as $workspace | .[2] as $items | .[3] as $comments |
       def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
-      {workspace: $workspace.urlKey, owner: $owner,
-       issues: [$items[] | {id, uuid, url, updated_at, comments: $comments[.id]}]}
-      | . + {requests: [.issues[] | . as $issue | .comments[] | select(.body | mentions($owner.url))
+      {workspace: $workspace.urlKey,
+       requests: [$items[] | . as $issue | $comments[.id][] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
           | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \
       <<<"$owner"$'\n'"$workspace"$'\n'"$items"$'\n'"$comments"
@@ -311,10 +298,6 @@ create_comment() {
     # attachmentCreate surface, so the link IS the attachment). An upload
     # failure refuses here, before the comment exists — nothing partial.
     local attach_path attach_info attach_sep=$'\n\n'
-    if [[ -n "$body_file" && ${#attach_paths[@]} -gt 0 ]]; then
-        # Attachment composition supplies the separators and final newline.
-        body=$(printf '%s' "$body") || return 1
-    fi
     for attach_path in ${attach_paths[@]+"${attach_paths[@]}"}; do
         attach_info=$(attach_upload_file "$attach_path") || return 1
         local attach_url attach_name attach_type
@@ -332,7 +315,7 @@ create_comment() {
 
     # Escape body for JSON (handle newlines and quotes)
     local escaped_body
-    escaped_body=$(comment_body_json "$body" "$body_file" "${#attach_paths[@]}") || return 1
+    escaped_body=$(echo "$body" | jq -Rs '.')
 
     local input_parts=("\"issueId\": \"$comment_issue_id\"" "\"body\": $escaped_body")
 
@@ -392,7 +375,7 @@ update_comment() {
     fi
 
     local escaped_body
-    escaped_body=$(comment_body_json "$body" "$body_file") || return 1
+    escaped_body=$(echo "$body" | jq -Rs '.')
 
     local mutation='
     mutation UpdateComment($id: String!, $input: CommentUpdateInput!) {

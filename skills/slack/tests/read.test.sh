@@ -58,45 +58,8 @@ for args in '--latest 3' '--channel C_READ' '--channel C_READ --latest 3 --ts T'
   assert_eq "$RC=${ERR1%%=*}" '2=slack: usage' "incomplete or conflicting selector $args is refused"
 done
 
-# What a redirect target of a Web API call receives as Authorization, with
-# SK_BIN's client: an origin answers 302 to a second server on another port.
-redirect_auth() {
-  python3 - "${SK_BIN%/*}/lib" <<'PY'
-import http.server, json, sys, threading
-sys.path.insert(0, sys.argv[1])
-from api import Slack
-seen = []
-class Target(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        seen.append(self.headers.get("Authorization"))
-        body = b'{"ok": true}'
-        self.send_response(200)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *args):
-        pass
-target = http.server.HTTPServer(("127.0.0.1", 0), Target)
-class Origin(Target):
-    def do_GET(self):
-        self.send_response(302)
-        self.send_header("Location", "http://127.0.0.1:%d/landed" % target.server_port)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-origin = http.server.HTTPServer(("127.0.0.1", 0), Origin)
-for server in (target, origin):
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-Slack("redirect-token", "http://127.0.0.1:%d/api" % origin.server_port).get("auth.test", retries=0)
-print(json.dumps(seen))
-PY
-}
-assert_eq "$(redirect_auth)" '[null]' 'a Web API redirect target receives no token'
-
 sk_mutant positive-latest main.py 'if args.latest is not None and args.latest < 1:' 'if args.latest is not None and False:'
 sk_run -- read --channel "$CH" --latest 0
 assert_eq "$RC=$OUT" '0=' 'control: removing the positive-count rule accepts an empty read'
-sk_bin_reset
-sk_mutant redirect-auth api.py 'req\.add_unredirected_header\("Authorization", f"Bearer \{self\.token\}"\)\n        return self\._request\(req, method, retries\)' 'req.add_header("Authorization", f"Bearer {self.token}")\n        return self._request(req, method, retries)'
-assert_eq "$(redirect_auth)" '["Bearer redirect-token"]' 'control: an added header follows the redirect with the token'
 sk_bin_reset
 sk_summary

@@ -18,7 +18,7 @@ set -euo pipefail
 config=$(cat)
 payload=$(sed -n 's/^data = //p' <<<"$config" | jq -r)
 printf '%s\n' "$payload" >>"$CALLS"
-jq -cj --arg mode "$MODE" '
+response=$(jq -cj --arg mode "$MODE" '
 def user: {id:"owner-id",name:"Owner",email:"owner@example.test",url:"https://linear.app/example/profiles/owner"};
 def comment($id; $body): {id:$id,body:$body,createdAt:"2026-11-01T01:00:00Z",updatedAt:"2026-11-01T01:00:00Z",
   user:{id:"original-author",name:"Original asker",email:"asker@example.test",url:"https://linear.app/example/profiles/asker"},
@@ -37,7 +37,7 @@ elif (.query | contains("ListIssues")) then
 elif (.query | contains("ContinueConnection")) then
   if .variables.id != "issue-uuid" or .variables.after != "comment-page-2" then error("unexpected continuation")
   else
-    (.query | contains("user { id url }")) as $author |
+    (.query | contains("user { id }")) as $author |
     (.query | contains("parent { id }")) as $parent |
     (.query | contains("} url")) as $url |
     {data:{issue:{id:"issue-uuid",comments:{pageInfo:{hasNextPage:false,endCursor:null},nodes:([
@@ -51,8 +51,9 @@ elif (.query | contains("comments")) then
   else {data:{issues:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:"issue-uuid",identifier:"KEN-1",comments:(comments |
     if $mode == "paginated" then .pageInfo = {hasNextPage:true,endCursor:"comment-page-2"} |
       .nodes |= map(select(.id != "ask-b")) else . end)}]}}} end
-else error("unexpected query") end' <<<"$payload"
-printf '___HTTP_CODE___200'
+else error("unexpected query") end' <<<"$payload")
+printf '%s' "$response" >>"$RESPONSES"
+printf '%s___HTTP_CODE___200' "$response"
 STUB
 chmod +x "$TMP_ROOT/bin/curl"
 run_requests() {
@@ -60,8 +61,9 @@ run_requests() {
     [[ -z "${2:-}" ]] || presentation=("LINEAR_FORMAT=$2")
     RC=0
     : >"$TMP_ROOT/calls"
+    : >"$TMP_ROOT/responses"
     OUT=$(cd -- "$TMP_ROOT" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" \
-        LINEAR_API_KEY_OVERRIDE=test-key CALLS="$TMP_ROOT/calls" MODE="$1" \
+        LINEAR_API_KEY_OVERRIDE=test-key CALLS="$TMP_ROOT/calls" RESPONSES="$TMP_ROOT/responses" MODE="$1" \
         ${presentation[@]+"${presentation[@]}"} \
         "$BASH" "$SKILL_DIR/scripts/linear.sh" comments owner-requests --email owner@example.test --label owner-waiting \
         2>"$TMP_ROOT/err") || RC=$?
@@ -81,12 +83,9 @@ assert_jq "raw preference retains safe evidence" "$OUT" \
 for mode in large-comments large-items; do
     run_requests "$mode"
     assert_eq "$mode complete document succeeds" "$RC" 0
-    assert_jq "$mode retains requests and complete evidence" "$OUT" \
-        '[.requests[].comment.id] == ["ask-a","ask-b"] and (.issues[0].comments | length) >= 3'
-    if [[ "$mode" == large-comments ]]; then
-        assert_jq "retained conversation exceeds process argument size" "$OUT" \
-            '([.issues[].comments[].body | length] | add) > 180000 and .issues[0].comments[-1].id == "history-79"'
-    fi
+    assert_jq "$mode retains every request" "$OUT" '[.requests[].comment.id] == ["ask-a","ask-b"]'
+    # The answers the reader carried exceed a single process argument.
+    assert_not "$mode answers fit one process argument" test "$(wc -c <"$TMP_ROOT/responses")" -le 180000
 done
 printf '[env]\nKENDEX_ENV_FILE="fixture-private.env"\nLINEAR_FORMAT="raw"\n' >"$TMP_ROOT/kendex.settings.toml"
 printf 'LINEAR_RETRY_BASE_DELAY=0\n' >"$TMP_ROOT/fixture-private.env"
@@ -100,11 +99,7 @@ assert_eq "continued projection succeeds" "$RC" 0
 assert_jq "continued author, thread and URL survive projection" "$OUT" \
     '[.requests[].comment.id] == ["ask-a","ask-b"] and
      any(.requests[]; .comment.id == "ask-b" and .comment.user_id == "original-author" and
-       .comment.user_url == "https://linear.app/example/profiles/asker" and .thread == "original-thread" and
-       .comment.url == "https://linear.app/example/issue/KEN-1#comment-ask-b") and
-     any(.issues[].comments[]; .id == "posted-reply" and .user_id == "owner-id" and
-       .user_url == "https://linear.app/example/profiles/owner" and .parent_id == "original-thread" and
-       .body == "Owner reply evidence" and .url == "https://linear.app/example/issue/KEN-1#comment-posted-reply")'
+       .thread == "original-thread" and .comment.url == "https://linear.app/example/issue/KEN-1#comment-ask-b")'
 run_requests failed-comments
 assert_not "an unread configured source fails" test "$RC" -eq 0
 assert_eq "an unread source publishes no partial projection" "$OUT" ''
