@@ -612,11 +612,13 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// never resolved: it reports both readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in with this
-/// machine's sign-in of the home, never with the token a provider measured
-/// it through: the provider's reading stands for it only where that sign-in
-/// reads held ([`signed_in_here`]), else the account is judged on this
-/// machine's own row, and a provider's row with no home listed here is no
-/// candidate for it.
+/// machine's sign-in of the home ([`usage::sign_in_here`]), read for every
+/// row of this machine, never with the token a provider measured it
+/// through: a home that sign-in reads missing is judged on its row with no
+/// reading ([`signed_out`]), a provider's reading stands for it only where
+/// that sign-in reads held, else the account is judged on this machine's
+/// own row, and a provider's row with no home listed here is no candidate
+/// for it.
 fn resolve(
     rows: &[AccountRow],
     billed: Harness,
@@ -624,21 +626,33 @@ fn resolve(
     req: &PickRequest,
     now: u64,
 ) -> crate::error::Result<Vec<AccountRow>> {
-    let mut out: Vec<AccountRow> = Vec::new();
+    // Each row beside the sign-in of its home that a session opened here
+    // starts with, read once for each row of this machine; none for a
+    // provider's row or a session that opens elsewhere.
+    let mut out: Vec<(AccountRow, Option<usage::StoredLogin>)> = Vec::new();
     for row in rows {
-        let other = out.iter().position(|r| {
+        let login = (req.opens_here && !provider_reading(row))
+            .then(|| usage::sign_in_here(row.harness, &row.config_dir, &req.token_files, now))
+            .transpose()?;
+        let row = match login {
+            Some(usage::StoredLogin::Missing { cause }) => signed_out(row, cause),
+            Some(usage::StoredLogin::Held | usage::StoredLogin::Unjudged { .. }) | None => {
+                row.clone()
+            }
+        };
+        let other = out.iter().position(|(r, _)| {
             r.harness == row.harness
                 && r.canon == row.canon
-                && provider_reading(r) != provider_reading(row)
+                && provider_reading(r) != provider_reading(&row)
         });
         match other {
             Some(i) => {
-                let (own, provider) = if provider_reading(row) {
-                    (out[i].clone(), row.clone())
+                let ((own, login), provider) = if provider_reading(&row) {
+                    (out[i].clone(), row)
                 } else {
-                    (row.clone(), out[i].clone())
+                    ((row, login), out[i].0.clone())
                 };
-                let signed_in = !req.opens_here || signed_in_here(&own, req, now)?;
+                let signed_in = !req.opens_here || login == Some(usage::StoredLogin::Held);
                 let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
@@ -649,11 +663,12 @@ fn resolve(
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
                 }
-                out[i] = stands;
+                out[i] = (stands, login);
             }
-            None => out.push(row.clone()),
+            None => out.push((row, login)),
         }
     }
+    let mut out: Vec<AccountRow> = out.into_iter().map(|(row, _)| row).collect();
     if req.opens_here {
         out.retain(|r| {
             !provider_reading(r)
@@ -665,21 +680,19 @@ fn resolve(
     Ok(out)
 }
 
-/// Whether a session opened here on `own`'s home signs in, as the
-/// controller's transfer judges it: a Claude home the request declares a
-/// token file for by that file alone ([`usage::declared_token`]), with no
-/// fallback to its stored login; any other by its stored login
-/// ([`usage::stored_login`]).
-fn signed_in_here(own: &AccountRow, req: &PickRequest, now: u64) -> crate::error::Result<bool> {
-    let declared = match own.harness {
-        Harness::Claude => usage::declared_token_file(&req.token_files, &own.config_dir)?,
-        Harness::Codex | Harness::Copilot | Harness::Pi => None,
-    };
-    let login = match declared {
-        Some(file) => usage::declared_token(&file),
-        None => usage::stored_login(own.harness, &own.config_dir, now),
-    };
-    Ok(login == usage::StoredLogin::Held)
+/// This machine's `row` of a home a session opened here cannot sign in to:
+/// no reading, so no pick takes it, the sign-in's `cause` its detail.
+fn signed_out(row: &AccountRow, cause: &str) -> AccountRow {
+    let mut out = row.clone();
+    out.status = "no_credentials".to_owned();
+    out.headroom_pct = None;
+    out.detail = Some(cause.to_owned());
+    if let Value::Object(raw) = &mut out.raw {
+        raw.insert("status".to_owned(), Value::from(out.status.as_str()));
+        raw.insert("headroom_pct".to_owned(), Value::Null);
+        raw.insert("detail".to_owned(), Value::from(cause));
+    }
+    out
 }
 
 /// The reading of one account's two that stands for a pick.

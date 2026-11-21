@@ -10774,17 +10774,24 @@ fn measured_codex(alias: &str, used: u64) -> Value {
 /// token, is the successor where its declared token file holds a token.
 /// Undeclared, or its declared file absent, it is judged on this machine's
 /// row, so the real `successor` verb passes it over as `unmeasured` and
-/// opens on the next entry's credentialed home.
+/// opens on the next entry's credentialed home; so is a home whose declared
+/// file is absent while it holds a login here measured with room, since
+/// the transfer signs it in by that file alone.
 #[test]
 fn a_controller_is_placed_on_a_home_only_where_this_machine_signs_in_to_it() {
     enum Token {
         Undeclared,
         DeclaredAbsent,
+        DeclaredAbsentLoginHeld,
         DeclaredHeld,
     }
     for (name, token) in [
         ("undeclared", Token::Undeclared),
         ("declared file absent", Token::DeclaredAbsent),
+        (
+            "declared file absent, login held",
+            Token::DeclaredAbsentLoginHeld,
+        ),
         ("declared file holds a token", Token::DeclaredHeld),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -10795,16 +10802,23 @@ fn a_controller_is_placed_on_a_home_only_where_this_machine_signs_in_to_it() {
         let file = runner.state_dir().join("aclaude.token");
         match token {
             Token::Undeclared => {}
-            Token::DeclaredAbsent | Token::DeclaredHeld => runner.env.push((
-                "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES".to_owned(),
-                format!("{signed_out}={}", file.display()),
-            )),
+            Token::DeclaredAbsent | Token::DeclaredAbsentLoginHeld | Token::DeclaredHeld => {
+                runner.env.push((
+                    "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES".to_owned(),
+                    format!("{signed_out}={}", file.display()),
+                ))
+            }
         }
         if let Token::DeclaredHeld = token {
             std::fs::write(&file, "planted-token\n").unwrap();
         }
         let mut local = measured_account("aclaude", 10);
-        local["status"] = json!("no_credentials");
+        match token {
+            Token::DeclaredAbsentLoginHeld => {}
+            Token::Undeclared | Token::DeclaredAbsent | Token::DeclaredHeld => {
+                local["status"] = json!("no_credentials");
+            }
+        }
         let mut provider = measured_account("aclaude", 10);
         provider["measured_through"] = json!("host");
         provider["config_dir"] = json!(signed_out);
