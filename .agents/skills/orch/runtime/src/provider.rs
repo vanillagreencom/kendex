@@ -148,10 +148,11 @@ impl fmt::Display for Failure {
 
 /// The line of a failed call's stderr that names its cause: the last line
 /// carrying a `fix=` field, else the first non-blank line, else
-/// `stderr=empty`. A stderr holds one of two shapes: notices printed before
-/// a `fix=` refusal (Fleet's provider), or a keyed refusal first, then
-/// prose or a trailing notice (`lane-host-ssh`'s `remote-failed`, gh, git
-/// and linear).
+/// `stderr=empty`. The rule reads two shapes: notices printed before a
+/// `fix=` refusal (Fleet's provider), or a keyed refusal leading its own
+/// stderr, then prose or a trailing notice (git or the linear CLI). A
+/// refusal that carries no `fix=` and is not the first line goes
+/// unrecorded: that call records its first line.
 pub(crate) fn cause_line(stderr: &str) -> &str {
     let mut lines = stderr
         .lines()

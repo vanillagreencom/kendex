@@ -8336,7 +8336,7 @@ fn a_failed_host_create_records_the_provider_s_refusal_line() {
             "lane-host-fixture: gh-token-rotated lane=lane-ken-h source=app",
         ),
         (
-            "keyed refusal, prose, remote-failed trailer",
+            "keyed refusal leading its stderr, prose, trailing notice",
             format!(
                 "{keyed}\nThe marker script is not on the host.\n\
                  lane-host-ssh: remote-failed target=lane@host exit=1\n"
