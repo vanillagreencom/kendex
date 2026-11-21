@@ -312,6 +312,13 @@ roster_block() { # FILE ; a serial roster or a pooled battery invocation
     { grep -qF 'bash skills/orch/tests/run-all.sh' "$1" && grep -qF -- '--battery' "$1"; }
 }
 
+run_roster_step() (
+  cd "$PART" || exit 1
+  # The enclosing main-push job's selection applies to that job's candidates.
+  # The synthetic step judges the workflow's own unfiltered roster.
+  env -u SKIPPED_SUITES GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$1"
+)
+
 # Run the actual steps with GitHub's default bash -e and an unreadable list.
 split_run_blocks "$WORKFLOW" "$TMP/selector-blocks"
 for shard in orch-state orch-rest; do
@@ -365,7 +372,7 @@ claims_of() { # claims_of <workflow> ; every path its roster steps claim
   split_run_blocks "$wf" "$dir"
   for f in "$dir"/*.sh; do
     roster_block "$f" || continue
-    ( cd "$PART" && GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+    run_roster_step "$f" 2>/dev/null |
       sed -n 's/^suite-invoked: //p'
   done
   direct_claims "$wf"
@@ -387,7 +394,7 @@ shell_partition_args() { # <workflow> ; actual arguments from the shell roster i
   split_run_blocks "$wf" "$dir"
   for f in "$dir"/*.sh; do
     grep -qF "$ROSTER_MARK" "$f" || continue
-    ( cd "$PART" && GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+    run_roster_step "$f" 2>/dev/null |
       sed -n 's/^partition-arguments: //p'
   done
 }
@@ -540,7 +547,9 @@ awk '
   END { exit hits != 1 }
 ' "$TMP/wf-owner-removed-slack.yml" > "$wf_self_claim" || bad "Slack self-claim control matched other than once"
 edited "$TMP/wf-owner-removed-slack.yml" "$wf_self_claim" slack-self-claim
-claims_file "$wf_self_claim" "$TMP/claims-self-claim"
+# The enclosing main-push selection can skip an unrelated hook.
+SKIPPED_SUITES='["hooks/tests/block-argv-kill.test.sh"]' \
+  claims_file "$wf_self_claim" "$TMP/claims-self-claim"
 check "must-fail: a Slack declaration that claims itself loses the reclaimed package" \
   "$(grep '^skills/slack/tests/' "$UNIV")" \
   "$(comm -23 "$UNIV" <(sort -u "$TMP/claims-self-claim"))"
@@ -703,7 +712,7 @@ shard_claims() { # WORKFLOW SHARD ; sorted suite files that shard runs
   for f in "$dir"/*.sh; do
     [[ "$(one_shard "$(cat "${f%.sh}.cond")")" == "$shard" ]] || continue
     roster_block "$f" || continue
-    ( cd "$PART" && GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+    run_roster_step "$f" 2>/dev/null |
       sed -n 's/^suite-invoked: //p'
   done | sort
 }
@@ -1028,7 +1037,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       grep -qxF "$shard" <<< "$excluded" && continue
       # The runner names its platform in RUNNER_OS, and run-all.sh's shard_of
       # reads it.
-      ( cd "$PART" && RUNNER_OS="$PARTITION_RUNNER_OS" RUN_ALL_NATIVE_CONTRACTS="$native" GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+      RUNNER_OS="$PARTITION_RUNNER_OS" RUN_ALL_NATIVE_CONTRACTS="$native" run_roster_step "$f" 2>/dev/null |
         sed -n "s%^suite-invoked: %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
@@ -1083,8 +1092,8 @@ while IFS='|' read -r shard step battery stem; do
       grep -qE -- "--battery $battery([[:space:]]|\)|$)" "$block" || continue
     fi
     rc=0
-    (cd "$PART" && PARTITION_POOL="$bad_pool" PARTITION_POOL_CLAIMS="$bad_cache" \
-      GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$block") > "$TMP/assertion-step.log" 2>&1 || rc=$?
+    PARTITION_POOL="$bad_pool" PARTITION_POOL_CLAIMS="$bad_cache" \
+      run_roster_step "$block" > "$TMP/assertion-step.log" 2>&1 || rc=$?
     tree="${battery%/tests}"; tree="${tree##*/}"
     if [[ "$rc" -ne 0 ]] && grep -qxF -e "  - $stem" -e "  - $tree--$stem" -- "$bad_cache"/*.out; then
       result=failed
