@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# The planted rustup, linked as rustc too, so no row reads the computer's
+# toolchains. FAKE_TOOLCHAINS lists the installed ones, each named for the
+# rustc version it answers. rustc answers RUSTUP_TOOLCHAIN, else the channel
+# of a rust-toolchain.toml in the directory it runs in, as rustup's override
+# does, else the first installed toolchain.
+set -eu
+installed="$FAKE_TOOLCHAINS"
+if [ "${0##*/}" = rustup ]; then
+  # shellcheck disable=SC2086 # the list, split on purpose
+  case "$1" in
+    toolchain) printf '%s\n' $installed ;;
+    run) export RUSTUP_TOOLCHAIN="$2"; shift 2; exec "$@" ;;
+  esac
+  exit
+fi
+pin=""
+[ ! -f rust-toolchain.toml ] || pin="$(awk -F'"' '/^channel/ { print $2 }' rust-toolchain.toml)"
+t="${RUSTUP_TOOLCHAIN:-${pin:-${installed%% *}}}"
+case " $installed " in *" $t "*) ;; *) echo "error: toolchain '$t' is not installed" >&2; exit 1 ;; esac
+echo "rustc $t (fake)"

@@ -28,6 +28,9 @@ SETUP="$PKG/scripts/setup"
 WRAPPER="$PKG/scripts/agent-runtime"
 
 ln -s "$SRC/tests/setup/cargo" "$TMP_ROOT/bin/cargo"
+ln -s "$SRC/tests/setup/rustup" "$TMP_ROOT/bin/rustup"
+ln -s "$SRC/tests/setup/rustup" "$TMP_ROOT/bin/rustc"
+export FAKE_TOOLCHAINS=1.96.1
 
 # chmod as BSD reads its arguments, first on PATH for every row, so a Linux
 # run fails the placement a macOS one fails: getopt(3) stops at the first
@@ -139,6 +142,20 @@ assert_contains "$ERR" "agent-runtime-setup: build-failed status=1 key=$KEY" 'fa
 assert_contains "$ERR" 'fake cargo: build failed' "cargo's stderr passes through"
 assert_eq "$OUT" '' 'failed build prints no success line'
 assert_eq "$(ls -A "$TMP_ROOT/cache-failed/bin")" '' 'bin/ holds nothing after a failed build'
+
+# --- a caller's lower pin does not choose the build's toolchain -----------
+PIN="$TMP_ROOT/pinned"
+mkdir -p "$PIN"
+printf '[toolchain]\nchannel = "1.94.0"\n' >"$PIN/rust-toolchain.toml"
+cd "$PIN"
+FAKE_TOOLCHAINS='1.94.0 1.98.1' run "$PIN" cargo build --manifest-path "$PKG/runtime/Cargo.toml"
+assert_contains "$ERR" 'rustc 1.94.0 is not supported' "premise: cargo in the pinned directory refuses the caller's toolchain"
+FAKE_TOOLCHAINS='1.94.0 1.98.1' run "$TMP_ROOT/cache-pinned" "$SETUP"
+assert_eq "$RC" 0 'setup under a lower pin builds on a toolchain at the rust-version' "$TMP_ROOT/err"
+before="$(calls)"
+FAKE_TOOLCHAINS=1.94.0 run "$TMP_ROOT/cache-old" "$SETUP"
+assert_eq "$RC|$ERR|$(calls)" "1|agent-runtime-setup: toolchain-missing rust-version=1.96 key=$KEY fix=rustup toolchain install 1.96|$before" 'setup without such a toolchain refuses, names the install and builds nothing'
+cd "$ROOT"
 
 # --- a dependent crate is keyed on its inputs and its dependency's ----------
 # A crate that declares this runtime by path, laid out as orch's runtime is
