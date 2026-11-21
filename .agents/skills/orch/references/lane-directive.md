@@ -25,8 +25,6 @@ Wait only for an account over the threshold whose `status` is `ok`. Answer any o
 
 The judge can still refuse an account with roster room on its `projected_headroom_pct`, which charges each fleet lane live on the account. Wait for a lane on that account to close, or launch on another account.
 
-The judge keeps room on a seat for its overseer. A seat is the account this fleet's overseer runs on, or a provider row marked `seat=1`. A `none` answer's `seats` names each seat it left out, with its `need` and `projected_headroom_pct`. Wait until that projected room passes `need`, or launch on another account.
-
 A Codex account past its plan windows can still have room on its credits. A walled one reopens at `binding_resets_at`.
 
 ### Pi picks

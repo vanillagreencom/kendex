@@ -85,7 +85,10 @@
 #     gives on either runner), a reached Pi-package tree its package's
 #     shards, and a reached Rust target `orch-rest`, whose Linux leg runs
 #     them. `skipped_suites=` lists every other shell suite, so each shard
-#     step runs only the reach's candidates. `rust_targets=` lists the
+#     step runs only the reach's candidates. A kept suite that
+#     tools/macos-test-contracts.json declares a native replacement for
+#     keeps that replacement, which macOS runs in its place and without which
+#     macOS refuses the selection. `rust_targets=` lists the
 #     targets. A reach that cannot be read runs every shard, suite and
 #     target.
 #   - Beside the reach, four reads its text scan cannot see select a shard
@@ -755,11 +758,24 @@ project() {
   done
 }
 
+# Each native replacement tools/macos-test-contracts.json declares for a suite
+# KEPT names, one per line: macOS runs the replacement in the original's place
+# and refuses an original whose replacement is skipped.
+kept_replacements() { # KEPT
+  local pairs original replacement
+  pairs="$(jq -r '.native_replacements | to_entries[] | "\(.key) \(.value)"' "$TOOLS_DIR/macos-test-contracts.json")" ||
+    die "replacements-unread" "tools/macos-test-contracts.json's native_replacements could not be read"
+  while IFS=' ' read -r original replacement; do
+    [ -n "$original" ] || continue
+    case $'\n'"$1"$'\n' in *$'\n'"$original"$'\n'*) printf '%s\n' "$replacement" ;; esac
+  done <<<"$pairs"
+}
+
 # A measured row's `shards=` value, the JSON list in roster order, then its
 # `skipped_suites=` value: every universe suite outside the kept set, save
 # those a shard selected whole runs. The two lists are separated by a blank.
 select_shards() { # BUILD(true|false)
-  local build="$1" path list="" shard cited kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites
+  local build="$1" path list="" shard cited kept="$REACH_SUITES" whole="" suite need="" orch_map="" orch package suite_shards os skipped suites replacements
   want=" "
   set --
   while IFS= read -r path; do
@@ -791,6 +807,9 @@ tools/tests/orch-shard-partition.test.sh" ;;
   if [ "$REACH_READ" = false ] || any "$ALL_SHARDS"; then
     whole=" $SHARDS"
   fi
+  replacements="$(kept_replacements "$kept")" || exit 2
+  [ -z "$replacements" ] || kept="$kept
+$replacements"
   project <<<"$kept"
   [ "$REACH_TARGETS" = '[]' ] || want_shard orch-rest
   # shellcheck disable=SC2086 # the lists are word lists

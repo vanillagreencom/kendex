@@ -441,14 +441,6 @@ fn left_out(reply: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The room a seat [`measured`] plants keeps for its overseer at the
-/// trigger `trigger` with no rate measured: the trigger and the setting's
-/// default burn of 5 points an hour of five hours, 5/168 of it an hour of
-/// the week, charged for the 60 hours to the weekly reset, rounded up.
-fn seat_need(trigger: u64) -> u64 {
-    trigger + 9
-}
-
 /// The chooser's request for a Claude launch with `model`.
 fn claude(model: Option<&str>) -> PickRequest {
     PickRequest {
@@ -567,16 +559,13 @@ fn a_lane_is_charged_one_hour_of_the_binding_window_not_to_its_reset() {
     drop(child);
 }
 
-/// A seat keeps what its overseer will spend to the reset, measured in its
-/// own plan's points: the same work reads 0.12 points an hour on a larger
-/// plan and 0.3 on a smaller one, so with the week at 70 percent and 100
-/// hours to its reset the larger seat keeps 17 (the trigger 5 and 12) and
-/// still takes a worker, while the smaller keeps 35 (5 and 30) and is
-/// `seat-reserve`, where a flat reserve would hand its overseer's room to
-/// the worker. A lane live at the sample spent half the measured rate, so
-/// with one beside it the larger seat keeps 11 (5 and 6).
+/// A seat holds nothing back from a worker: with the week at 70 percent
+/// and 100 hours to its reset, a seat whose controller's account measured
+/// 0.002 or 0.005 a point a minute is a worker's lane, `room`, named or
+/// chosen, and with a lane live beside it, as an account with no controller
+/// is; its record names no room kept for the controller.
 #[test]
-fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_more() {
+fn a_seat_is_a_workers_lane_whatever_its_controller_spends() {
     let mut world = World::new(&[]);
     let reset = stamp(now() + 100 * 3600);
     let seat = |alias: &str, rate: f64| {
@@ -588,10 +577,7 @@ fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_mo
         row
     };
     world.plant_listing(&[seat("large", 0.002), seat("small", 0.005)]);
-    for (alias, answer, verdict, need) in [
-        ("large", "lane", "room", 17),
-        ("small", "walled", "seat-reserve", 35),
-    ] {
+    for alias in ["large", "small"] {
         let dir = world.dir(alias);
         world.write_fleet(Vec::new(), Some(&dir));
         let judged = world.pick(&named(&dir, claude(None)));
@@ -599,13 +585,14 @@ fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_mo
             (
                 &judged["answer"],
                 &judged["record"]["verdict"],
-                &judged["record"]["need"]
+                &judged["record"]["seat"],
+                judged["record"].get("need")
             ),
-            (&json!(answer), &json!(verdict), &json!(need)),
+            (&json!("lane"), &json!("room"), &json!(true), None),
             "{alias}: {judged}"
         );
     }
-    let dir = world.dir("large");
+    let dir = world.dir("small");
     let child = Owned::sleep();
     world.write_fleet(
         vec![lane("KEN-1", &dir, child.pid(), &child.start())],
@@ -613,23 +600,18 @@ fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_mo
     );
     let shared = world.pick(&named(&dir, claude(None)));
     assert_eq!(
-        (
-            &shared["answer"],
-            &shared["record"]["verdict"],
-            &shared["record"]["need"]
-        ),
-        (&json!("lane"), &json!("room"), &json!(11)),
-        "one sampled lane halves the overseer's share: {shared}"
+        (&shared["answer"], &shared["record"]["verdict"]),
+        (&json!("lane"), &json!("room")),
+        "{shared}"
     );
     drop(child);
 }
 
 /// A Copilot home or a Pi root is never a seat: a pick of a Copilot pool
 /// reads no seat, the fleet's overseer included. Named as the fleet's
-/// overseer at monthly 93 with the reset 30 days out, where a seat would
-/// keep 25 points and be `seat-reserve`, each is judged as an ordinary
-/// account under the turn-end hook's trigger of 3: `lane`, `room`, no
-/// `need`.
+/// overseer at monthly 93 with the reset 30 days out, each is judged as an
+/// ordinary account under the turn-end hook's trigger of 3: `lane`, `room`,
+/// no seat.
 #[test]
 fn a_copilot_home_or_a_pi_root_the_overseer_names_is_judged_as_an_ordinary_account() {
     let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
@@ -668,26 +650,26 @@ fn a_copilot_home_or_a_pi_root_the_overseer_names_is_judged_as_an_ordinary_accou
             reply["answer"],
             reply["record"]["verdict"],
             reply["record"]["wall"],
-            reply["record"].get("need")
+            reply["record"]["seat"]
         ])
     })
     .collect();
     assert_eq!(
         judged,
         vec![
-            json!(["copilot", "lane", "room", 93, null]),
-            json!(["pi", "lane", "room", 93, null]),
+            json!(["copilot", "lane", "room", 93, false]),
+            json!(["pi", "lane", "room", 93, false]),
         ]
     );
 }
 
 /// The provider's rows under a host are the judge's own, read from the
 /// roster with the host. Under `ORCH_LANE_HOST=fleet-vm` the listing
-/// carries the provider's rows: the seat with the most room after what it
-/// keeps is the lane, carrying its need; with the seat excluded the
-/// reserved row is never the lane and the ordinary row is; the seat is
-/// `seat-reserve` under a tighter headroom; the provider is asked for its
-/// capability line and its accounts under the host, and nothing else.
+/// carries the provider's rows: the seat with the most room is the lane;
+/// with the seat excluded the reserved row is never the lane and the
+/// ordinary row is; a tighter controller headroom keeps nothing of the seat
+/// from a worker; the provider is asked for its capability line and its
+/// accounts under the host, and nothing else.
 #[test]
 fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_its_host() {
     let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
@@ -701,8 +683,7 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
         "fleet-vm",
         &[seat, reserved, through_host(measured("worker", 60, 5))],
     );
-    // The seat at 10 used leaves 72.1 once it keeps its overseer's 8.9; the
-    // worker at 60 leaves 31.1.
+    // The seat at 10 used has more room than the worker at 60.
     let seat_first = world.pick(&claude(None));
     assert_eq!(
         chosen(&seat_first).as_deref(),
@@ -710,11 +691,6 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
         "{seat_first}"
     );
     assert_eq!(seat_first["record"]["seat"], json!(true));
-    assert_eq!(
-        seat_first["record"]["need"],
-        json!(seat_need(5)),
-        "the seat keeps the default headroom and its overseer's spend to the reset"
-    );
     let chosen_row = world.pick(&PickRequest {
         exclude: vec!["/home/me/.seat".to_owned()],
         ..claude(None)
@@ -731,8 +707,8 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
         })),
         vec![("/home/me/.held".to_owned(), "reserved".to_owned())]
     );
-    // The seat past the headroom under a tighter setting: omitted with its
-    // need, never spent by a worker.
+    // The seat at 55 under a controller headroom of 40 is still a worker's
+    // lane.
     let mut tight = World::new(&[
         ("ORCH_LANE_HOST", "fleet-vm"),
         ("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "40"),
@@ -742,9 +718,8 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     let mut spent_seat = through_host(measured("seat", 55, 5));
     spent_seat["seat"] = json!(1);
     tight.plant_host_listing("fleet-vm", &[spent_seat]);
-    let omitted = tight.pick(&claude(None));
-    assert_eq!(omitted["answer"], json!("none"), "{omitted}");
-    assert_eq!(omitted["record"]["seats"][0]["need"], json!(seat_need(40)));
+    let spent = tight.pick(&claude(None));
+    assert_eq!(chosen(&spent).as_deref(), Some("/home/me/.seat"), "{spent}");
     // A named reserved account under the host is refused by its word.
     let named = world.pick(&PickRequest {
         lane: Some("/home/me/.held".to_owned()),
@@ -781,29 +756,6 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
         Some("ORCH_LANE_HOST=fleet-vm capabilities"),
         "{log:?}"
     );
-}
-
-/// An account keeps what each controller seated on it spends to the reset:
-/// a seat at 30 used, 60 hours from its reset at the set burn, keeps the
-/// headroom 5 and 8.9 per controller. This fleet's own seat with the
-/// provider's mark on the account is one controller, need 14, since the
-/// mark names no controller and the recorded one is the one it marks;
-/// another record's controller seated there beside it is a second, need 23.
-#[test]
-fn an_account_two_controllers_sit_on_keeps_both_their_spends() {
-    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
-    world.plant_capabilities("fleet-vm", SSH_LINE);
-    let mut seat = through_host(measured("seat", 30, 5));
-    seat["seat"] = json!(1);
-    world.plant_host_listing("fleet-vm", &[seat]);
-    let dir = "/home/me/.seat";
-    world.write_fleet(Vec::new(), Some(dir));
-    let need = |world: &World| world.pick(&named(dir, claude(None)))["record"]["need"].clone();
-    assert_eq!(need(&world), json!(14), "one controller");
-    let elsewhere = world.path().join("elsewhere.json");
-    std::fs::write(&elsewhere, "{}").unwrap();
-    world.sit(&elsewhere, &own_identity(), dir);
-    assert_eq!(need(&world), json!(23), "two controllers");
 }
 
 /// A provider's reservation is a fact of the account, read apart from its
@@ -991,7 +943,7 @@ fn a_providers_codex_row_past_its_week_is_spent_on_a_credit_above_the_floor() {
 /// of a billed account and the provider's beside it, local first, and a
 /// pick judges one of them. The same account at local wall 0 and provider
 /// wall 99 on a seat: the chooser refuses and the named reading names the
-/// provider's `seat-reserve`. A Claude account the provider measured
+/// provider's wall. A Claude account the provider measured
 /// without the model's window: the local reading's model window decides,
 /// and with none the account is unmeasured for that model; without a model
 /// the provider's reading stands. A provider row that read nothing, an
@@ -1029,12 +981,11 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
     );
     assert_eq!(
         left_out(&refused),
-        vec![(world.dir("aclaude"), "seat-reserve".to_owned())]
+        vec![(world.dir("aclaude"), "walled".to_owned())]
     );
-    assert_eq!(refused["record"]["seats"][0]["need"], json!(seat_need(5)));
     let named_seat = world.pick(&named(&world.dir("aclaude"), claude(None)));
     assert_eq!(named_seat["answer"], json!("walled"), "{named_seat}");
-    assert_eq!(named_seat["record"]["verdict"], json!("seat-reserve"));
+    assert_eq!(named_seat["record"]["verdict"], json!("walled"));
     assert_eq!(named_seat["record"]["measured_through"], json!("host"));
     assert_eq!(named_seat["record"]["wall"], json!(99));
     // The model's window: the provider measured the shared windows alone.
@@ -2704,7 +2655,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             provider: Some(claude_row("\tsession-5h-pct=99\tweekly-pct=99\tseat=1")),
             env: vec![],
             asks: vec![
-                ask(claude_chooser(), "none", 3, Some(3), none(0, 0)),
+                ask(claude_chooser(), "none", 3, Some(3), none(1, 0)),
                 ask(
                     claude_named(),
                     "walled",
@@ -2712,13 +2663,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                     Some(3),
                     vec![
                         ("measured_through", json!("host")),
-                        ("verdict", json!("seat-reserve")),
+                        ("verdict", json!("walled")),
                         ("wall", json!(99)),
-                        // The default headroom 5 and the overseer's spend at
-                        // the setting's burn over the week's whole length
-                        // where no reset is stated, 25; the retained pick
-                        // kept 5.
-                        ("need", json!(30)),
                     ],
                 ),
             ],

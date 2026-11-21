@@ -117,6 +117,25 @@ skills/orch/runtime/src/ops/approve.rs|skills/jarvis/tests/controls.test.sh skil
 skills/agent-runtime/runtime/src/context.rs|skills/jarvis/tests/controls.test.sh skills/jarvis/tests/forward.test.sh skills/jarvis/tests/owner-note.test.sh skills/jarvis/tests/owner-unanswered.test.sh skills/jarvis/tests/presence.test.sh skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession-controls.test.sh skills/jarvis/tests/succession.test.sh skills/jarvis/tests/task.test.sh skills/jarvis/tests/watch-loop.test.sh
 ROWS
 
+# macOS runs a suite tools/macos-test-contracts.json replaces through its
+# replacement, and refuses a selection that keeps the original without it: a
+# path whose reach keeps an original keeps each declared replacement too.
+# The account judge's source reaches the github package's pr-merge suite and
+# not its replacement; at least one declared pair must apply.
+skipped="$(selection micro false skills/agent-runtime/runtime/src/accounts/mod.rs | field skipped_suites)"
+paired=0
+while IFS=' ' read -r original replacement; do
+  [ "$(jq --arg s "$original" 'index($s) == null' <<<"$skipped")" = true ] || continue
+  paired=$((paired + 1))
+  check "a kept $original keeps its replacement $replacement" false \
+    "$(jq --arg s "$replacement" 'index($s) != null' <<<"$skipped")"
+done <<<"$(jq -r '.native_replacements | to_entries[] | "\(.key) \(.value)"' "$ROOT/tools/macos-test-contracts.json")"
+if [ "$paired" -ge 1 ]; then
+  ok "a declared replacement's original is kept"
+else
+  bad "no declared replacement's original is kept, so the pairing went unjudged"
+fi
+
 # The copy stands beside the real reach, so only the planted rule differs.
 cp "$ROOT/tools/guard" "$TMP/rule/tools/guard"
 awk '

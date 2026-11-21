@@ -448,14 +448,6 @@ fn left_out(reply: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The room a seat [`measured`] plants keeps for its overseer at the
-/// trigger `trigger` with no rate measured: the trigger and the setting's
-/// default burn of 5 points an hour of five hours, 5/168 of it an hour of
-/// the week, charged for the 60 hours to the weekly reset, rounded up.
-fn seat_need(trigger: u64) -> u64 {
-    trigger + 9
-}
-
 /// The chooser's request for a Claude launch with `model`.
 fn claude(model: Option<&str>) -> PickRequest {
     PickRequest {
@@ -698,51 +690,62 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
     );
 }
 
-/// The seat's limit, `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 -
-/// AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT)` over the room left once the overseer's own
-/// spend to the reset is charged, and `pick-seat-omitted` naming `need=`.
-/// The account the fleet's controller's seat record names is a seat: ranked
-/// by the room it
-/// leaves once it keeps its overseer's need, held to that need beside the
-/// lane limit (`seat-reserve` under it, the record and the `none` answer's
-/// `seats` carrying `need` as the integer [`seat_need`], the room the seat
-/// keeps), and judged as any account when the overseer asks.
+/// A seated controller holds no account back from a worker: the account the
+/// fleet's controller sits on is held to the lane bound alone, as any
+/// account is. A worker on it at 50 used, on a week whose reader measured
+/// 0.06 a point a minute and that resets 150 hours on, has room at its own
+/// question and at a launch onto it, and its record names no room kept for
+/// the controller; at 96 used it is walled, as any account is.
 #[test]
-fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit() {
+fn a_worker_on_an_account_a_controller_sits_on_keeps_its_room() {
+    let world = World::new(&[]);
+    let seat = "/home/me/.seat";
+    let facts = seated_facts(Some(seat), seat, 1);
+    let busy = [rated("seat", 50, 0.06, Some(150))];
+    let running = judged(&world, &busy, &named(seat, claude(None)), &facts);
+    assert_eq!(verdict(&running), "room", "{running:?}");
+    let launch = judged(&world, &busy, &claude(None), &facts);
+    assert_eq!(picked(&launch).as_deref(), Some(seat), "{launch:?}");
+    let PickAnswer::Lane(chosen) = &launch else {
+        panic!("{launch:?}");
+    };
+    assert_eq!(chosen.record()["seat"], json!(true));
+    assert_eq!(chosen.record().get("need"), None, "{launch:?}");
+    let full = judged(
+        &world,
+        &[rated("seat", 96, 0.06, Some(150))],
+        &named(seat, claude(None)),
+        &facts,
+    );
+    assert_eq!(verdict(&full), "walled", "{full:?}");
+}
+
+/// The controller's own headroom setting holds nothing back from a worker:
+/// under `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT=50` the seat at 55 used is
+/// a worker's lane, named or chosen, and the overseer's own pick judges it
+/// as any account.
+#[test]
+fn the_controllers_headroom_setting_leaves_its_seat_to_workers() {
     let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "50")]);
-    world.plant_listing(&[measured("seat", 10, 5), measured("worker", 60, 5)]);
+    world.plant_listing(&[measured("seat", 55, 5)]);
     let seat_dir = world.dir("seat");
     world.write_fleet(Vec::new(), Some(&seat_dir));
-    // The seat at 10 used keeps 45 below the bound and 8.9 of its
-    // overseer's spend, leaving 27.1 beside the candidate's charge; the
-    // worker at 60 leaves 31.1.
     let worker = world.pick(&claude(None));
     assert_eq!(
         chosen(&worker).as_deref(),
-        Some(world.dir("worker").as_str()),
+        Some(seat_dir.as_str()),
         "{worker}"
     );
-    // The seat at 55 used projects past 50 and under 95: refused under the
-    // overseer's headroom alone.
-    world.plant_listing(&[measured("seat", 55, 5)]);
-    let reserved = world.pick(&claude(None));
-    assert_eq!(reserved["answer"], json!("none"), "{reserved}");
-    assert_eq!(
-        left_out(&reserved),
-        vec![(seat_dir.clone(), "seat-reserve".to_owned())]
-    );
-    let seats = reserved["record"]["seats"].as_array().unwrap();
-    assert_eq!(seats.len(), 1, "{reserved}");
-    assert_eq!(
-        seats[0]["need"],
-        json!(seat_need(50)),
-        "the omitted seat names the room it keeps, spelled as the callers read it"
-    );
     let named = world.pick(&named(&seat_dir, claude(None)));
-    assert_eq!(named["answer"], json!("walled"), "{named}");
-    assert_eq!(named["record"]["verdict"], json!("seat-reserve"));
-    assert_eq!(named["record"]["need"], json!(seat_need(50)));
-    assert_eq!(named["record"]["seat"], json!(true));
+    assert_eq!(
+        (
+            &named["answer"],
+            &named["record"]["verdict"],
+            &named["record"]["seat"]
+        ),
+        (&json!("lane"), &json!("room"), &json!(true)),
+        "{named}"
+    );
     let overseer = world.pick(&PickRequest {
         for_overseer: true,
         ..claude(None)
@@ -751,11 +754,6 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit() {
         chosen(&overseer).as_deref(),
         Some(seat_dir.as_str()),
         "{overseer}"
-    );
-    assert_eq!(
-        overseer["record"].get("need"),
-        None,
-        "no seat, no room kept"
     );
 }
 
@@ -806,71 +804,17 @@ fn verdict(answer: &PickAnswer) -> String {
     }
 }
 
-/// A seat is chosen by the room it leaves once it keeps its overseer's
-/// spend to the reset and the headroom its limit holds back, as any
-/// account is by its room: a seat at 1 used whose overseer spends 0.3 a
-/// point an hour keeps 7.2 to a reset a day on and leaves 91.5 beside the
-/// candidate's hour at that rate, so it is the lane over an account at 83
-/// used with 16.85; a seat at 40 used whose overseer spends 0.12 an hour
-/// keeps 12 to a reset a hundred hours on and leaves 47.88, so an account at
-/// 45 used with 54.85 is the lane over it, though the seat's own lanes-only
-/// room, 59.88, is the larger.
-#[test]
-fn a_lane_goes_to_the_account_with_the_most_room_after_its_seats_reserve() {
-    let world = World::new(&[]);
-    let facts = seated_facts(Some("/home/me/.seat"), "/home/me/.none", 0);
-    let first = judged(
-        &world,
-        &[
-            rated("ordinary", 83, 0.0, Some(24)),
-            rated("seat", 1, 0.005, Some(24)),
-        ],
-        &claude(None),
-        &facts,
-    );
-    assert_eq!(
-        picked(&first).as_deref(),
-        Some("/home/me/.seat"),
-        "{first:?}"
-    );
-    let after = judged(
-        &world,
-        &[
-            rated("seat", 40, 0.002, Some(100)),
-            rated("ordinary", 45, 0.0, Some(100)),
-        ],
-        &claude(None),
-        &facts,
-    );
-    assert_eq!(
-        picked(&after).as_deref(),
-        Some("/home/me/.ordinary"),
-        "{after:?}"
-    );
-}
-
 /// A measured rate is a lane's only where a lane was live at its sample:
 /// lanes charged on an account whose sample no lane was live at are
 /// charged no less than the set burn, 5 × 5/168 a point an hour on the
-/// week, and the measured rate where it is higher, one hour each. Eight
-/// lanes that began after the sample of a seat at 90 used whose overseer
-/// alone spent 0.03 an hour, with the candidate 1.34 at the set burn
-/// beside the 4.32 the seat keeps to a reset 144 hours on, put the seat
-/// past its reserve, where the measured rate would charge them 0.27; six
-/// such lanes on an account at 94 used wall it, 1.04 beside the 0.21 the
-/// measured rate would charge; and a rate of 30 an hour some other spender
-/// drew walls an account at 50 used that the set burn alone would leave
-/// room on.
+/// week, and the measured rate where it is higher, one hour each. Six
+/// lanes that began after the sample of an account at 94 used wall it,
+/// 1.04 beside the 0.21 the measured rate would charge; and a rate of 30 an
+/// hour some other spender drew walls an account at 50 used that the set
+/// burn alone would leave room on.
 #[test]
 fn a_measured_rate_with_no_lane_live_at_the_sample_is_no_lanes_rate() {
     let world = World::new(&[]);
-    let seat = judged(
-        &world,
-        &[rated("seat", 90, 0.0005, Some(144))],
-        &named("/home/me/.seat", claude(None)),
-        &seated_facts(Some("/home/me/.seat"), "/home/me/.seat", 8),
-    );
-    assert_eq!(verdict(&seat), "seat-reserve", "{seat:?}");
     for (used, rate, lanes) in [(94, 0.0005, 6), (50, 0.5, 1)] {
         let ordinary = judged(
             &world,
@@ -1177,24 +1121,6 @@ fn a_held_rate_reads_none_once_a_flat_spell_outlasts_twice_its_time_to_rise_a_st
     }
 }
 
-/// A seat whose window states no reset keeps its overseer's spend for the
-/// window's whole length, a week at the set burn being 25 points, never one
-/// hour of it: a seat at 75 used is past its reserve.
-#[test]
-fn a_seat_with_no_stated_reset_keeps_its_controllers_spend_to_the_windows_end() {
-    let world = World::new(&[]);
-    let mut seat = measured("seat", 75, 5);
-    seat["binding_resets_at"] = Value::Null;
-    seat["resets"]["weekly"] = Value::Null;
-    let answer = judged(
-        &world,
-        &[seat],
-        &named("/home/me/.seat", claude(None)),
-        &seated_facts(Some("/home/me/.seat"), "/home/me/.none", 0),
-    );
-    assert_eq!(verdict(&answer), "seat-reserve", "{answer:?}");
-}
-
 /// An overseer's choice among accounts refuses one another controller on
 /// this machine sits on, `seated`, whatever its room, while that
 /// controller's harness runs, and keeps the account its own seat names
@@ -1495,10 +1421,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         &world.settings.accounts.get().unwrap(),
         now(),
     );
-    assert!(
-        matches!(&named, PickAnswer::Walled(j) if j.limit == 80.0),
-        "{named:?}"
-    );
+    assert!(matches!(&named, PickAnswer::Walled(_)), "{named:?}");
     assert_eq!(named.exit(), 3);
     // The floor: the account's own binding bucket is its spent Opus window.
     let mut split = measured("split", 20, 5);

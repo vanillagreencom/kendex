@@ -387,7 +387,6 @@ mod tests {
             claims: 0,
             projection: None,
             seat: false,
-            limit: 80.0,
             credits: false,
             grant: None,
             score: None,

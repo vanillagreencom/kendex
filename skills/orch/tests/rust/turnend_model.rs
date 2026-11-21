@@ -499,13 +499,24 @@ fn account_row(weekly: u64) -> Value {
     })
 }
 
+/// [`account_row`] on a week in use: the reader measured 0.06 a point a
+/// minute, and the week resets 150 hours on.
+fn busy_row(weekly: u64) -> Value {
+    let reset = agent_runtime::clock::iso_utc(now_ms() / 1000 + 150 * 3600);
+    let mut row = account_row(weekly);
+    row["binding_resets_at"] = json!(reset);
+    row["resets"]["weekly"] = json!(reset);
+    row["usage_rate_pct_per_min"] = json!(0.06);
+    row
+}
+
 /// The line the account mark told, the first keyed line naming the account,
 /// its mark or its setting; `None` where it told nothing.
 fn account_line(out: &TurnOut) -> Option<String> {
     out.keyed()
         .into_iter()
         .find(|line| {
-            ["account=", "headroom=", "seat-reserve=", "setting-range="]
+            ["account=", "headroom=", "setting-range="]
                 .iter()
                 .any(|key| line.starts_with(key))
         })
@@ -576,8 +587,9 @@ fn plant_launch_record(lane: &Path, record: &[u8]) {
 
 /// A lane's account mark at a Stop that left its context mark nothing to
 /// hold, judged by this binary's own pick over the planted listing: room
-/// tells nothing; the headroom mark and a seat's reserve hold the turn end
-/// with the handoff; the owner's word, a directory the inventory does not
+/// tells nothing, on an account a controller sits on too, whatever that
+/// controller spends; the headroom mark holds the turn end with the
+/// handoff, on a seat as on any account; the owner's word, a directory the inventory does not
 /// hold, an account nothing measured, a hosted lane, a Pi reading that named
 /// no model and an install naming no harness are told and passed; a
 /// headroom setting outside its form holds on the setting.
@@ -617,14 +629,24 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
             Some("headroom=2 bucket=weekly mark=3"),
         ),
         (
-            "seat",
-            account_row(92),
+            "a seat with room on a measured week",
+            busy_row(50),
+            "claude",
+            &[],
+            ".aclaude",
+            Beside::Seat,
+            0,
+            None,
+        ),
+        (
+            "a seat at the headroom mark",
+            busy_row(98),
             "claude",
             &[],
             ".aclaude",
             Beside::Seat,
             2,
-            Some("seat-reserve=8 bucket=weekly need="),
+            Some("headroom=2 bucket=weekly mark=3"),
         ),
         (
             "the owner's word",
@@ -770,23 +792,18 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
     }
 }
 
-/// A lane past its seat's reserve is told to hand off once. A later turn
+/// A lane at its account's headroom mark is told to hand off once. A later turn
 /// end of the same session without the handoff, continued or fresh, ends
 /// the turn under `handoff-stopped` and sends the overseer a
 /// `lane-stopped` notice from the lane; a new session is told again; the
 /// handoff record written passes the turn end as it always did.
 #[test]
-fn a_lane_told_at_its_seat_reserve_is_held_once_and_its_stop_told_to_the_overseer() {
+fn a_lane_told_at_its_account_mark_is_held_once_and_its_stop_told_to_the_overseer() {
     let world = TurnWorld::new();
     let lane = lane_in(&world);
     let now = now_ms() / 1000;
-    let planted = plant_listing(&world.root, &world.account_state(), &[account_row(92)], now);
-    fs::write(fleet_path(&lane), json!({ "lanes": [] }).to_string()).unwrap();
-    let Reading::Live(own) = process::identity(std::process::id()) else {
-        panic!("this test's own identity reads");
-    };
+    let planted = plant_listing(&world.root, &world.account_state(), &[account_row(98)], now);
     let account = world.home.join(".aclaude").display().to_string();
-    agent_runtime::group::seat(&world.account_state(), &fleet_path(&lane), &own, &account).unwrap();
     let mut env = planted.env;
     env.push(("CLAUDE_CONFIG_DIR".to_owned(), account));
     env.push((
@@ -810,7 +827,7 @@ fn a_lane_told_at_its_seat_reserve_is_held_once_and_its_stop_told_to_the_oversee
     assert_eq!(told.code, 2, "{}", told.stderr);
     let line = account_line(&told).unwrap_or_default();
     assert!(
-        line.starts_with("seat-reserve=8 bucket=weekly"),
+        line.starts_with("headroom=2 bucket=weekly"),
         "{}",
         told.stderr
     );
@@ -829,7 +846,7 @@ fn a_lane_told_at_its_seat_reserve_is_held_once_and_its_stop_told_to_the_oversee
         );
         assert_eq!(
             out.keyed().first().copied(),
-            Some("handoff-stopped=seat-reserve"),
+            Some("handoff-stopped=headroom"),
             "{case}: {}",
             out.stderr
         );
@@ -860,7 +877,7 @@ fn a_lane_told_at_its_seat_reserve_is_held_once_and_its_stop_told_to_the_oversee
             out.stderr
         );
         assert_eq!(
-            keyed.contains(&"handoff-stopped=seat-reserve"),
+            keyed.contains(&"handoff-stopped=headroom"),
             stop,
             "{active}: {}",
             out.stderr

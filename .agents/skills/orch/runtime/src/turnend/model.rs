@@ -282,20 +282,6 @@ pub(super) fn account_mark(
             };
             Err(turn.refuse(said, ""))
         }
-        Told::SeatReserve {
-            headroom,
-            bucket,
-            need,
-        } => {
-            let instruction = judge.instruction(turn, Value::Null, None)?;
-            let said = Said::SeatReserve {
-                headroom,
-                bucket,
-                need,
-                instruction,
-            };
-            Err(turn.refuse(said, ""))
-        }
         Told::Gap(word, cause) => {
             turn.note(&Said::Account(word), &cause);
             Ok(())
@@ -449,12 +435,6 @@ enum Told {
         headroom: String,
         bucket: String,
     },
-    /// An overseer's seat at the room it keeps, `need`.
-    SeatReserve {
-        headroom: String,
-        bucket: String,
-        need: String,
-    },
     /// Unjudged: the account line's word and the words the read left.
     Gap(&'static str, String),
 }
@@ -505,11 +485,6 @@ fn told(read: agent_runtime::Result<Output>) -> Told {
                 .map_or_else(|| "unknown".to_owned(), |wall| figure(100.0 - wall));
             let bucket = text("binding_bucket");
             match record["verdict"].as_str().unwrap_or("walled") {
-                "seat-reserve" => Told::SeatReserve {
-                    headroom,
-                    bucket,
-                    need: text("need"),
-                },
                 "walled" => Told::Headroom { headroom, bucket },
                 "excluded" => Told::Gap("excluded", detail),
                 "reserved" => Told::Gap("reserved", detail),
@@ -1375,22 +1350,6 @@ mod tests {
                 Told::Headroom {
                     headroom: "unknown".to_owned(),
                     bucket: "unknown".to_owned(),
-                },
-            ),
-            (
-                "seat",
-                ran(
-                    0,
-                    &judged(
-                        3,
-                        json!({"verdict": "seat-reserve", "wall": 92, "binding_bucket": "weekly", "need": 11}),
-                    ),
-                    "",
-                ),
-                Told::SeatReserve {
-                    headroom: "8".to_owned(),
-                    bucket: "weekly".to_owned(),
-                    need: "11".to_owned(),
                 },
             ),
             (

@@ -360,14 +360,6 @@ pub enum Said {
         mark: u32,
         instruction: String,
     },
-    /// The lane's account an overseer's seat, held to the room the seat
-    /// keeps.
-    SeatReserve {
-        headroom: String,
-        bucket: String,
-        need: String,
-        instruction: String,
-    },
     /// A session already told at a handoff mark ends a turn without its
     /// handoff record: the key of the line it was told under.
     HandoffStopped(String),
@@ -552,15 +544,6 @@ impl Said {
             } => (
                 "headroom",
                 format!("{headroom} bucket={bucket} mark={mark}"),
-            ),
-            Said::SeatReserve {
-                headroom,
-                bucket,
-                need,
-                ..
-            } => (
-                "seat-reserve",
-                format!("{headroom} bucket={bucket} need={need}"),
             ),
             Said::HandoffStopped(told) => ("handoff-stopped", told.clone()),
             Said::LaneStopped { item, .. } => ("lane-stopped", item.clone()),
@@ -920,14 +903,6 @@ impl Said {
                 instruction,
             } => format!(
                 "The binding bucket {bucket} has {headroom} percent headroom left. This is at or below the ORCH_HANDOFF_HEADROOM_PCT mark of {mark}. No handoff record stands. Hand this lane off at the next safe point before the account reaches its limit.\n{instruction}"
-            ),
-            Said::SeatReserve {
-                headroom,
-                bucket,
-                need,
-                instruction,
-            } => format!(
-                "The account judge requires handoff from this overseer seat. The binding bucket {bucket} has {headroom} percent headroom left, and the seat keeps {need} percent of its window for the overseer, the room under min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 - AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT). No handoff record stands. Hand this lane off at the next safe point.\n{instruction}"
             ),
             Said::HandoffStopped(_) => "this session was already told to write its handoff record at a mark this turn end still meets, and ended this turn without it. The hook holds no further turn end of this session at a handoff mark, so a session that does not hand off spends no forced turns: the turn ends and the session stays stopped. A lane's overseer is sent that fact as a notice from the lane. The line this turn end met follows:".to_owned(),
             Said::LaneStopped { told, .. } => format!(

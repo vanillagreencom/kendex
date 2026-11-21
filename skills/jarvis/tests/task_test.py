@@ -444,7 +444,7 @@ sys.exit(task.main())
         named = self.plant("claude", 93, self.root / "named-claude")
         near = self.plant("claude", 98, self.root / "near-claude")
         rows = (("full task", (), 0, "account-none", False),
-                ("short task on the controller seat", ("--short",), 0, "account-none", True),
+                ("short task on the controller seat", ("--short",), 0, None, True),
                 ("short task", ("--short",), 0, None, False),
                 ("full task on a named account", ("--account", named), 100, None, False),
                 ("short task on a named account", ("--short", "--account", near), 100, "account-walled", False))
