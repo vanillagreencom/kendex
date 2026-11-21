@@ -587,9 +587,9 @@ fn transfer_to_account(
 
 /// A named Claude account whose declared token file holds a token signs
 /// the successor in with that token in its own window alone: the harness's
-/// environment carries it, a key the server holds that would outrank it is
-/// cleared, and neither the tmux server's environment nor the pane's screen
-/// holds it.
+/// environment carries it, a key the server holds that would outrank it and
+/// an endpoint it would be sent to are cleared, and neither the tmux
+/// server's environment nor the pane's screen holds it.
 #[test]
 fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
     let dir = tempfile::tempdir().unwrap();
@@ -605,7 +605,10 @@ fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
         &runner,
         &account,
         &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
-        &[("ANTHROPIC_API_KEY", "planted-key")],
+        &[
+            ("ANTHROPIC_API_KEY", "planted-key"),
+            ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
+        ],
     );
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert_eq!(
@@ -626,6 +629,12 @@ fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
     assert!(
         !entries.iter().any(|e| e.starts_with(b"ANTHROPIC_API_KEY=")),
         "a key that outranks the token is cleared"
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e.starts_with(b"ANTHROPIC_BASE_URL=")),
+        "an endpoint that would receive the token is cleared"
     );
     for scope in [vec!["-g"], vec!["-t", runner.session.as_str()]] {
         let mut args = vec!["show-environment"];
@@ -10760,35 +10769,67 @@ fn measured_codex(alias: &str, used: u64) -> Value {
 }
 
 /// A controller opens on this machine and signs in with this machine's
-/// stored login of its home: a home holding no credential here, which the
-/// provider measures with room through its own token, is judged on this
-/// machine's row, so the real `successor` verb passes it over as
-/// `unmeasured` and opens on the next entry's credentialed home.
+/// sign-in of its home, as the transfer judges it: a home holding no
+/// credential here, which the provider measures with room through its own
+/// token, is the successor where its declared token file holds a token.
+/// Undeclared, or its declared file absent, it is judged on this machine's
+/// row, so the real `successor` verb passes it over as `unmeasured` and
+/// opens on the next entry's credentialed home.
 #[test]
-fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let signed_out = planted(&runner, "aclaude");
-    let mut local = measured_account("aclaude", 10);
-    local["status"] = json!("no_credentials");
-    let mut provider = measured_account("aclaude", 10);
-    provider["measured_through"] = json!("host");
-    provider["config_dir"] = json!(signed_out);
-    let result = first_choice_on_vm(
-        &mut runner,
-        &[local, provider, measured_codex("xcodex", 20)],
-    );
-    assert_eq!(
-        result["successor"]["account"],
-        planted(&runner, "xcodex"),
-        "{result}"
-    );
-    let skipped = &result["walk"]["skipped"][0];
-    assert_eq!(skipped["entry"], "claude:fable:high", "{result}");
-    assert_eq!(skipped["reason"], "unmeasured", "{result}");
-    assert_eq!(skipped["lane"], signed_out, "{result}");
+fn a_controller_is_placed_on_a_home_only_where_this_machine_signs_in_to_it() {
+    enum Token {
+        Undeclared,
+        DeclaredAbsent,
+        DeclaredHeld,
+    }
+    for (name, token) in [
+        ("undeclared", Token::Undeclared),
+        ("declared file absent", Token::DeclaredAbsent),
+        ("declared file holds a token", Token::DeclaredHeld),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let signed_out = planted(&runner, "aclaude");
+        let file = runner.state_dir().join("aclaude.token");
+        match token {
+            Token::Undeclared => {}
+            Token::DeclaredAbsent | Token::DeclaredHeld => runner.env.push((
+                "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES".to_owned(),
+                format!("{signed_out}={}", file.display()),
+            )),
+        }
+        if let Token::DeclaredHeld = token {
+            std::fs::write(&file, "planted-token\n").unwrap();
+        }
+        let mut local = measured_account("aclaude", 10);
+        local["status"] = json!("no_credentials");
+        let mut provider = measured_account("aclaude", 10);
+        provider["measured_through"] = json!("host");
+        provider["config_dir"] = json!(signed_out);
+        let result = first_choice_on_vm(
+            &mut runner,
+            &[local, provider, measured_codex("xcodex", 20)],
+        );
+        if let Token::DeclaredHeld = token {
+            assert_eq!(
+                result["successor"]["account"], signed_out,
+                "{name}: {result}"
+            );
+            assert_eq!(result["successor"]["harness"], "claude", "{name}: {result}");
+            continue;
+        }
+        assert_eq!(
+            result["successor"]["account"],
+            planted(&runner, "xcodex"),
+            "{name}: {result}"
+        );
+        let skipped = &result["walk"]["skipped"][0];
+        assert_eq!(skipped["entry"], "claude:fable:high", "{name}: {result}");
+        assert_eq!(skipped["reason"], "unmeasured", "{name}: {result}");
+        assert_eq!(skipped["lane"], signed_out, "{name}: {result}");
+    }
 }
 
 /// A provider's row naming a home this machine does not list is no

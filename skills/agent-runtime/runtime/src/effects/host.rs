@@ -24,7 +24,7 @@ use super::{
     Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
     predecessor_identity,
 };
-use crate::accounts::usage::{StoredLogin, stored_login};
+use crate::accounts::usage::{StoredLogin, declared_token, stored_login};
 use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted};
 use crate::error::{Error, Result};
 use crate::intent::Intent;
@@ -467,23 +467,6 @@ pub enum SignIn {
     Unjudged { cause: &'static str },
 }
 
-/// The sign-in a declared token file gives: its text less trailing
-/// newlines, as the launch's `$(cat FILE)` takes it, must be non-empty.
-fn declared_token(file: &Path) -> SignIn {
-    match std::fs::read(file) {
-        Ok(text) if text.iter().any(|b| *b != b'\n') => SignIn::File,
-        Ok(_) => SignIn::Missing {
-            cause: "declared-token-absent",
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SignIn::Missing {
-            cause: "declared-token-absent",
-        },
-        Err(_) => SignIn::Missing {
-            cause: "declared-token-unreadable",
-        },
-    }
-}
-
 /// The file the harness records the session `id` for `cwd` in under `home`,
 /// for a harness whose launch fixes the id.
 pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option<PathBuf> {
@@ -682,7 +665,11 @@ impl Operation<'_> {
         declared: Option<&Path>,
     ) -> SignIn {
         if let Some(file) = declared {
-            return declared_token(file);
+            return match declared_token(file) {
+                StoredLogin::Held => SignIn::File,
+                StoredLogin::Missing { cause } => SignIn::Missing { cause },
+                StoredLogin::Unjudged { cause } => SignIn::Unjudged { cause },
+            };
         }
         let tokens: &[&'static str] = match harness {
             Harness::Claude => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],

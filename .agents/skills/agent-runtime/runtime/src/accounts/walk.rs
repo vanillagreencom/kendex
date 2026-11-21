@@ -891,6 +891,14 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 continue;
             }
         };
+        // An overseer's Claude successor signs in by the token file its
+        // account declares, which its launch exports; a lane's launch
+        // exports none.
+        let token_files = match (req.scope, harness) {
+            (Scope::Overseer, Harness::Claude) => settings.account_tokens.get()?,
+            (Scope::Overseer, Harness::Codex | Harness::Copilot | Harness::Pi)
+            | (Scope::Lane, _) => Vec::new(),
+        };
         let request = |max_pct: Option<u32>, lane: Option<String>, exclude: Vec<String>| {
             let overseer = req.scope == Scope::Overseer;
             PickRequest {
@@ -917,6 +925,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 // An overseer runs here; a lane does where its host opens
                 // it in a window of this machine.
                 opens_here: overseer || launch == Some("window"),
+                token_files: token_files.clone(),
             }
         };
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());

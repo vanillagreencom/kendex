@@ -104,28 +104,13 @@ const CLAUDE_OUTRANKING_TOKEN: [&str; 5] = [
     "ANTHROPIC_API_KEY",
 ];
 
-/// The token file `pairs` declares for `account`, the two sides matched by
-/// their one spelling (`accounts::wall::canon`). Two declarations matching
-/// one account refuse `setting-invalid`, since either file could be its.
-fn declared_token_file(pairs: &[(String, PathBuf)], account: &str) -> Result<Option<PathBuf>> {
-    let account = crate::accounts::wall::canon(account);
-    let matched: Vec<&(String, PathBuf)> = pairs
-        .iter()
-        .filter(|(dir, _)| crate::accounts::wall::canon(dir) == account)
-        .collect();
-    match matched.as_slice() {
-        [] => Ok(None),
-        [(_, file)] => Ok(Some(file.clone())),
-        _ => Err(crate::settings::value_refusal(
-            crate::settings::ACCOUNT_TOKEN_FILES_KEY,
-            &matched
-                .iter()
-                .map(|(dir, file)| format!("{dir}={}", file.display()))
-                .collect::<Vec<_>>()
-                .join(","),
-        )),
-    }
-}
+/// The endpoint a declared account's launch also clears: with a claude.ai
+/// login and no gateway credential, Claude Code sends the login's token in
+/// `Authorization` to the endpoint `ANTHROPIC_BASE_URL` names
+/// (https://code.claude.com/docs/en/llm-gateway-protocol § Request
+/// headers), so an inherited one would receive the account's subscription
+/// token.
+const CLAUDE_TOKEN_ENDPOINT: &str = "ANTHROPIC_BASE_URL";
 
 /// The operation handle over a controller intent, its set started from the
 /// controller operation's own bootstrap.
@@ -459,9 +444,10 @@ impl Successor {
     ) -> std::result::Result<(Successor, Option<Value>), Unready> {
         let (harness, cwd) = Self::checked(pending)?;
         let token_file = match (harness, pending.account.as_deref()) {
-            (Harness::Claude, Some(account)) => {
-                declared_token_file(&settings.controller.account_tokens.get()?, account)?
-            }
+            (Harness::Claude, Some(account)) => crate::accounts::usage::declared_token_file(
+                &settings.controller.account_tokens.get()?,
+                account,
+            )?,
             (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => None,
         };
         let file = token_file.as_deref().map(|f| f.display().to_string());
@@ -603,7 +589,7 @@ impl Successor {
     /// the runner is at its composer. A resume continues the recorded session in the
     /// harness's own resume form and fixes no fresh id. A declared token
     /// file is exported for the harness alone, the sources that outrank it
-    /// cleared.
+    /// and an endpoint that would receive it cleared.
     fn command(&self, settings: &Settings, session_id: Option<&str>) -> Result<LaunchCommand> {
         let compaction = match self.harness.compaction_off_words() {
             Some(_) => Compaction::Off,
@@ -650,7 +636,10 @@ impl Successor {
             command
                 .env_files
                 .insert(CLAUDE_TOKEN_VAR.to_owned(), file.clone());
-            for name in CLAUDE_OUTRANKING_TOKEN {
+            for name in CLAUDE_OUTRANKING_TOKEN
+                .into_iter()
+                .chain([CLAUDE_TOKEN_ENDPOINT])
+            {
                 if !command.env_remove.iter().any(|n| n == name) {
                     command.env_remove.push(name.to_owned());
                 }
