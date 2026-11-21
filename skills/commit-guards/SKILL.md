@@ -63,6 +63,8 @@ Before resolving a setting, writing a settings file, exclusions or a baseline, o
 
 The settings template also declares `COMMAND_SAFETY_HISTORY_POLICY` for the command-safety hook. Select its native Git history fence only with Git 2.45.1 or later, the floor kendex's command-safety reference derives under Git history policy.
 
+It declares `COMMAND_SAFETY_UPLOAD_HOSTS` too, the hosts the hook lets a command upload local data to; empty refuses every upload.
+
 ## Generated-file exclusions
 
 Before changing render exclusions or handling an unread inventory, read [Generated-file exclusions](references/hooks-and-settings.md#generated-file-exclusions). Keep inventory repair with the refresh owner and non-render exceptions in the reasoned excludes list.

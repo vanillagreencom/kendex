@@ -102,3 +102,10 @@ COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Me
 # Unreadable settings/support warn and leave this advisory check unavailable.
 # values: off | no-lazy-fetch
 COMMAND_SAFETY_HISTORY_POLICY = "off"
+
+# The hosts the command-safety hook lets a command upload local data to,
+# separated by spaces and compared without case: curl -T or a curl data or
+# form value that reads a file, wget --post-file, and scp or rsync to a
+# remote. Empty, the default, refuses every upload until the project lists
+# its hosts. Unreadable settings warn and leave this check unavailable.
+COMMAND_SAFETY_UPLOAD_HOSTS = ""
