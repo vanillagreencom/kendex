@@ -9,7 +9,8 @@
 #          `app-user` gh's user lookup refused (an App token),
 #          `gh-repo:<slug>` GH_REPO naming a repository,
 #          `label:<missing|fail>` the label lookup's answer, `target:fail` the
-#          PR or issue lookup failing,
+#          PR or issue lookup failing, `target:hint` it answering beside the
+#          hint gh 2.105.0 writes to stderr on success (cli/cli#15077),
 #          `mutation:<app-denied|pat-denied|hidden-denied|server-error>` the
 #          POST's failure; `-` for none. The caller's own tokens and GH_REPO
 #          are stripped.
@@ -86,6 +87,9 @@ case "${1:-} ${2:-}" in
       printf 'target unavailable\n' >&2
       exit 1
     fi
+    if [ "${STUB_TARGET_HINT:-0}" = "1" ]; then
+      printf 'hint: if you need to wait for this pull request to be reviewed, merged, or closed\n' >&2
+    fi
     [ "$1" = pr ] && printf '{"number":42}\n' || printf '{"number":84}\n'
     ;;
   "api repos/"*"/issues/"*"/labels")
@@ -117,6 +121,7 @@ build() {
       gh-repo:*) W_ENV+=("GH_REPO=${w#gh-repo:}") ;;
       label:*) W_ENV+=("STUB_LABEL=${w#label:}") ;;
       target:fail) W_ENV+=(STUB_TARGET_FAILURE=1) ;;
+      target:hint) W_ENV+=(STUB_TARGET_HINT=1) ;;
       mutation:*) W_ENV+=("STUB_MUTATION_RESULT=${w#mutation:}") ;;
       -) ;;
       *) echo "UNKNOWN-WORD: $w" >&2; exit 2 ;;
@@ -211,6 +216,7 @@ an App installation's denial of an optional label is the skip too|token:bot app-
 a permission-masked 404 on the mutation is the optional skip too|mutation:hidden-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|repo,label:$R:informational,pr:42,post:$R:42:informational
 optional mode does not hide a label lookup failure|label:fail|42 informational --optional|1|-|preflight_failed/label_lookup_failed label=informational repo=owner/repo|repo,label:$R:informational
 nor a target lookup failure|target:fail|42 informational --optional|1|-|preflight_failed/target_lookup_failed label=informational repo=owner/repo|repo,label:$R:informational,pr:42
+a success hint on the target lookup's stderr leaves its number the answer|target:hint|42 needs-review|0|updated|-|$PRE,pr:42,post:$R:42:needs-review
 nor a mutation server failure, whose output passes through|mutation:server-error|42 informational --optional|1|-|gh: server error (HTTP 500)|repo,label:$R:informational,pr:42,post:$R:42:informational
 the lookup URL-encodes the label; the mutation sends it literally|-|42 needs/review --required|0|updated|-|repo,label:$R:needs%2Freview,pr:42,post:$R:42:needs/review
 an @path label is a literal|-|42 @path|0|updated|-|repo,label:$R:%40path,pr:42,post:$R:42:@path

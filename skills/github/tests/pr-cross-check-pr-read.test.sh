@@ -13,6 +13,9 @@
 #                           when the verdict holds no such issue
 set -euo pipefail
 
+# The lib derives PROJECT_ROOT through git at source time.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_ROOT="$(mktemp -d)" || { echo "pr-cross-check-pr-read: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "pr-cross-check-pr-read: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }

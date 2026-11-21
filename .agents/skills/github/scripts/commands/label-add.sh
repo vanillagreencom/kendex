@@ -138,28 +138,23 @@ preflight_label_add() {
 resolve_target_number() {
     local kind="$1" ref="$2" policy="$3" repository="$4" label="$5"
     local target_json="" target_rc=0 number=""
+    local -a lookup=(gh "$kind" view)
+    [ -z "$ref" ] || lookup+=("$ref")
+    lookup+=(--json number)
 
-    if [ "$kind" = "issue" ]; then
-        if [ -n "$ref" ]; then
-            target_json="$(gh issue view "$ref" --json number 2>&1)" || target_rc=$?
-        else
-            target_json="$(gh issue view --json number 2>&1)" || target_rc=$?
-        fi
-    else
-        if [ -n "$ref" ]; then
-            target_json="$(gh pr view "$ref" --json number 2>&1)" || target_rc=$?
-        else
-            target_json="$(gh pr view --json number 2>&1)" || target_rc=$?
-        fi
-    fi
+    # json_or_default writes to stderr only for a failed command or a
+    # non-object answer, so the merged capture is the JSON on success and the
+    # diagnostic otherwise; gh's own stderr never joins the answer.
+    target_json="$(json_or_default '' object "${lookup[@]}" 2>&1)" || target_rc=$?
 
-    if [ "$target_rc" -ne 0 ]; then
+    # Exit 2 is an answer that is not an object: invalid metadata below.
+    if [ "$target_rc" -ne 0 ] && [ "$target_rc" -ne 2 ]; then
         emit_preflight_result \
             "preflight_failed" "$policy" "target_lookup_failed" "$repository" "$label" "$target_json" >&2
         return "$target_rc"
     fi
 
-    number="$(printf '%s' "$target_json" | jq -r '.number // empty')"
+    [ "$target_rc" -ne 0 ] || number="$(printf '%s' "$target_json" | jq -r '.number // empty')"
     if [ -z "$number" ]; then
         emit_preflight_result \
             "preflight_failed" "$policy" "invalid_target_metadata" "$repository" "$label" "$target_json" >&2
