@@ -1110,6 +1110,34 @@ fn hosted_launch(
             return Ok(preparing_held(operation, HOST_CREATE, provider, &cause));
         }
     };
+    let home_field = match harness {
+        Harness::Pi => Some(("pi-root", created.pi_root.as_deref())),
+        Harness::Copilot => Some(("copilot-home", created.copilot_home.as_deref())),
+        Harness::Claude | Harness::Codex => None,
+    };
+    let confinement = if home_field.is_some() || (harness == Harness::Claude && bypass) {
+        let directory = home_field.and_then(|(_, home)| home.map(|home| format!("{home}/.")));
+        match hosted::development_root_refusal(
+            &scripts,
+            provider,
+            &r.item,
+            directory.as_deref().unwrap_or("/"),
+        ) {
+            Ok(confinement) => confinement,
+            Err(cause) => return failed(operation, &cause),
+        }
+    } else {
+        None
+    };
+    if let (Some((field, _)), Some(cause)) = (home_field, &confinement) {
+        return failed(
+            operation,
+            &format!(
+                "host-create-field-required field={field} harness={harness} host={provider} cause={cause}"
+            ),
+        );
+    }
+    let claude_launch_consent = harness == Harness::Claude && confinement.is_some();
     let read = |path: &str| match hosted::fetch(&scripts, provider, &r.item, path) {
         hosted::Answer::Live(text) => Ok(Some(text)),
         hosted::Answer::Gone => Ok(None),
@@ -1119,8 +1147,10 @@ fn hosted_launch(
         |path: &str, text: &str| hosted::put(&scripts, provider, &r.item, path, text.as_bytes());
     let prepared = match harness {
         Harness::Pi => gate::hosted_pi(&read, created.pi_root.as_deref(), &created.path),
-        Harness::Claude if bypass => trust::hosted_claude_consent(&read, &write)
-            .map_err(|cause| format!("{cause} host={provider}")),
+        Harness::Claude if bypass && !claude_launch_consent => {
+            trust::hosted_claude_consent(&read, &write)
+                .map_err(|cause| format!("{cause} host={provider}"))
+        }
         // Copilot's own default home under the host user's home where the
         // provider names none.
         Harness::Copilot => {
@@ -1146,7 +1176,15 @@ fn hosted_launch(
         PaneKind::Local => Client::Window,
         PaneKind::Verb => Client::Detached,
     };
-    let command = match hosted_command(run.settings, r, harness, &created, &brief, client) {
+    let command = match hosted_command(
+        run.settings,
+        r,
+        harness,
+        &created,
+        &brief,
+        client,
+        claude_launch_consent,
+    ) {
         Ok(command) => command,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
@@ -1298,6 +1336,7 @@ fn hosted_command(
     created: &hosted::Created,
     brief: &str,
     client: Client,
+    claude_launch_consent: bool,
 ) -> Result<LaunchCommand> {
     let remote_cwd = PathBuf::from(&created.path);
     let permission = r.permission_words();
@@ -1324,7 +1363,11 @@ fn hosted_command(
     )?;
     intent.program = None;
     lane_words(&mut intent, &remote_cwd);
-    let mut remote = agent_runtime::launch::build(&intent)?;
+    let mut remote = if claude_launch_consent {
+        agent_runtime::launch::build_with_hosted_claude_consent(&intent)?
+    } else {
+        agent_runtime::launch::build(&intent)?
+    };
     if let Some(index) = remote.brief_arg {
         remote.args[index] = brief.to_owned();
         remote.brief_arg = None;

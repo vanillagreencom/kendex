@@ -22,7 +22,8 @@
 # file. A `put` keeps the bytes it was handed in `lane-host.put.N` beside,
 # N its line of the log; a `send --item ID --file PATH` keeps PATH's bytes
 # in `lane-host.sent.N` and is answered by its argv with PATH dropped, the
-# caller's file name being its own. Bash 3.2.
+# caller's file name being its own. An optional development-root file
+# confines cat and put to that root. Bash 3.2.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 host="$(basename -- "$0")"
@@ -30,6 +31,16 @@ line="ORCH_LANE_HOST=$host $*"
 prior=0
 [ ! -f "$here/lane-host.log" ] || prior="$(grep -cxF -- "$line" "$here/lane-host.log")" || prior=0
 printf '%s\n' "$line" >> "$here/lane-host.log"
+if [[ -f "$here/development-root" && ( "${1:-}" = cat || "${1:-}" = put ) ]]; then
+  IFS= read -r root < "$here/development-root" || exit 64
+  case "${4:-}" in
+    "$root"|"$root/"*) ;;
+    *)
+      printf 'lane-host-fixture: %s-path-outside-root item=%s path=%s root=%s\n' "$1" "$3" "$4" "$root" >&2
+      exit 1
+      ;;
+  esac
+fi
 if [ "${1:-}" = put ]; then
   cat > "$here/lane-host.put.$(grep -c '' "$here/lane-host.log")"
 fi

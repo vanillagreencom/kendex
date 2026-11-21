@@ -22,10 +22,11 @@
 //! launch in bypass-permissions mode also opens on a one-time confirmation
 //! per config dir, answered by `skipDangerousModePermissionPrompt` in that
 //! dir's settings.json, which the launch records the same way. A hosted
-//! Claude lane's consent is recorded by the same rule in the host's files,
-//! through the provider's file verbs.
+//! Claude lane uses the same rule when the provider serves the account
+//! file. On a provider with confined transfers, the full-bypass launch
+//! posture supplies consent through the launch builder's settings overlay.
 //!
-//! An answer already recorded that is not trust or consent refuses: it is a
+//! An explicit refusal in an account file the launch reads stands: it is a
 //! decision somebody gave in the harness's own spelling, and overwriting it
 //! would run the launch at full trust against that answer.
 
@@ -608,10 +609,7 @@ fn claude_bypass_consent(lane: &Path) -> Result<()> {
     .map_err(|(key, cause)| refused(key, h, &target, cause.as_deref()))
 }
 
-/// The settings.json a hosted Claude lane's consent is read and written in:
-/// Claude's default config dir under the host user's home, since the
-/// provider sets no `CLAUDE_CONFIG_DIR`; the host resolves the relative path
-/// there.
+/// The default config path when a provider supports home-relative transfers.
 const HOSTED_CLAUDE_SETTINGS: &str = ".claude/settings.json";
 
 /// A hosted Claude lane's bypass consent, by the rule a local launch keeps
@@ -648,7 +646,6 @@ fn bypass_consent(
     read: ReadFile,
     write: WriteFile,
 ) -> std::result::Result<(), Refusal> {
-    const CONSENT: &str = "skipDangerousModePermissionPrompt";
     let mut doc = match read(settings)? {
         None => Value::Object(Map::new()),
         Some(text) => serde_json::from_str::<Value>(&text)
@@ -660,7 +657,8 @@ fn bypass_consent(
             Some("the document is not an object".to_owned()),
         ));
     };
-    match object.get(CONSENT) {
+    let consent = crate::harness::CLAUDE_BYPASS_CONSENT;
+    match object.get(consent) {
         Some(Value::Bool(true)) => return Ok(()),
         Some(Value::Bool(false)) => return Err(("bypass-refused", None)),
         None | Some(Value::Null) => {}
@@ -671,14 +669,14 @@ fn bypass_consent(
             ));
         }
     }
-    object.insert(CONSENT.to_owned(), Value::Bool(true));
+    object.insert(consent.to_owned(), Value::Bool(true));
     let text =
         serde_json::to_string_pretty(&doc).map_err(|e| ("config-write", Some(e.to_string())))?;
     write(settings, &format!("{text}\n"))?;
     let written = read(settings)?.ok_or(("entry-unreadable", None))?;
     let written: Value =
         serde_json::from_str(&written).map_err(|e| ("entry-unreadable", Some(e.to_string())))?;
-    if written[CONSENT] != Value::Bool(true) {
+    if written[consent] != Value::Bool(true) {
         return Err(("entry-unreadable", None));
     }
     Ok(())

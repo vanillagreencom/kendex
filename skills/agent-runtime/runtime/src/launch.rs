@@ -228,6 +228,16 @@ pub const COPILOT_SKILLS_DIRS: &str = "$HOME/.agents/skills";
 /// honour: compaction off where it has no word, a model-free lane launch is
 /// the caller's to refuse.
 pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
+    build_command(intent, false)
+}
+
+/// The caller established that the hosted provider confines file access.
+/// A full Claude bypass supplies consent for this launch alone.
+pub fn build_with_hosted_claude_consent(intent: &LaunchIntent) -> Result<LaunchCommand> {
+    build_command(intent, true)
+}
+
+fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<LaunchCommand> {
     let h = intent.harness;
     let mut args: Vec<String> = Vec::new();
     let mut env = intent.env.clone();
@@ -355,10 +365,20 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         QuestionTool::Off => args.extend(h.question_off_words().into_iter().map(str::to_owned)),
         QuestionTool::Keep => {}
     }
-    match intent.compaction {
-        Compaction::Native => {}
-        Compaction::Off => match h.compaction_off_words() {
-            Some(words) => args.extend(words.into_iter().map(str::to_owned)),
+    match (
+        intent.compaction,
+        hosted_claude_consent && h == Harness::Claude && full_bypass,
+    ) {
+        (Compaction::Native | Compaction::Off, true) => {
+            // Claude takes one --settings value. Keep the lane's
+            // compaction setting in the same per-launch overlay.
+            let overlay =
+                crate::harness::claude_settings(intent.compaction == Compaction::Off, true);
+            args.extend(["--settings".to_owned(), overlay]);
+        }
+        (Compaction::Native, false) => {}
+        (Compaction::Off, false) => match h.compaction_off_words() {
+            Some(words) => args.extend(words),
             None => {
                 return Err(Error::Unsupported {
                     operation: "compaction-off",
