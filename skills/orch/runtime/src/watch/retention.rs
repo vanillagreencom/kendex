@@ -375,7 +375,7 @@ fn laneless_records(
 }
 
 /// The files of an intent's effect that leave with it: the pane's receipt,
-/// a job's request and its job-unit record, and a close's final mailbox receipt. The owner notice is not among
+/// a job's request and its job-unit record. The owner notice is not among
 /// them: a reconcile writes it again for a closed intent that still owes
 /// it.
 const INTENT_FILES: &[fn(&Path, &str) -> PathBuf] = &[
@@ -389,8 +389,7 @@ const INTENT_FILES: &[fn(&Path, &str) -> PathBuf] = &[
 /// after a close by hand is as young as its write. An intent in a shape
 /// this runtime cannot read keeps its files, and a file no intent in the
 /// record names is no unit.
-fn intent_files(paths: &Paths, intents: &[Value], cutoff: u64) -> Result<Vec<Unit>> {
-    let baseline = super::Baseline::load(&paths.baseline)?;
+fn intent_files(dir: &Path, intents: &[Value], cutoff: u64) -> Result<Vec<Unit>> {
     let mut out = Vec::new();
     for row in intents {
         let Ok(intent) = serde_json::from_value::<agent_runtime::intent::Intent>(row.clone())
@@ -401,14 +400,7 @@ fn intent_files(paths: &Paths, intents: &[Value], cutoff: u64) -> Result<Vec<Uni
             continue;
         }
         let end = intent.completed_at.as_deref().and_then(clock::epoch_secs);
-        let mail = baseline
-            .get(super::mail::CLOSE_MAIL, &intent.id)
-            .map(|_| super::mail::close_mail_path(&paths.dir, &intent.id));
-        for file in INTENT_FILES
-            .iter()
-            .map(|path| path(&paths.dir, &intent.id))
-            .chain(mail)
-        {
+        for file in INTENT_FILES.iter().map(|path| path(dir, &intent.id)) {
             if written(&file)?.is_some_and(|at| end.map_or(at, |end| end.max(at)) < cutoff) {
                 out.push(Unit::IntentFile(file));
             }
@@ -603,7 +595,7 @@ fn plan(
         }
     }
     units.extend(laneless_records(paths, project, &judged, cutoff)?);
-    units.extend(intent_files(paths, intents, cutoff)?);
+    units.extend(intent_files(&paths.dir, intents, cutoff)?);
     units.extend(progress_reports(&places.progress, cutoff)?);
     units.extend(
         dead_session_rows(&places.overseer, places.server.as_deref(), record)?
@@ -1038,7 +1030,6 @@ mod tests {
         let fleet = root.join(record::FLEET_FILE_NAME);
         let old = clock::iso_utc(NOW - 10 * SECS_PER_DAY);
         let id = "request-transfer:overseer:3:1-1";
-        let close = "close-resources:KEN-1:2-1";
         std::fs::write(
             &fleet,
             serde_json::to_vec(&json!({
@@ -1047,15 +1038,11 @@ mod tests {
                     "id": id, "op": "request-transfer", "target": "overseer:3",
                     "created_at": old, "completed_at": old, "outcome": "failed",
                     "notice": {"key": "job-launch-failed", "text": "the owner reads this", "owner": "owed"}
-                }, {"id": close, "op": "close-resources", "target": "KEN-1",
-                    "created_at": old, "completed_at": old, "outcome": "confirmed"}]
+                }]
             }))
             .unwrap(),
         )
         .unwrap();
-        let paths = Paths::of(&fleet).unwrap();
-        let receipt = super::super::mail::close_mail_path(&root, close);
-        plant(&receipt, "{}\n");
         plant(
             &root.join("intents").join(format!("{id}.notice")),
             "an earlier, interrupted delivery\n",
@@ -1112,24 +1099,6 @@ mod tests {
             std::fs::read_to_string(&received).unwrap(),
             "the owner reads this\n"
         );
-        assert!(receipt.exists());
-        let mut baseline = super::super::Baseline::default();
-        baseline.apply(super::super::Change::Set {
-            kind: super::super::mail::CLOSE_MAIL.into(),
-            identity: close.into(),
-            value: "delivered".into(),
-        });
-        baseline.store(&paths.baseline).unwrap();
-        judged_pass(
-            &fleet,
-            &paths,
-            &settings,
-            Locking::FLOCK,
-            NOW,
-            |rows, cutoff| prune_records(&fleet, rows, cutoff),
-        )
-        .unwrap();
-        assert!(!receipt.exists());
     }
 
     #[test]

@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use super::{Run, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
-use crate::mailbox::{Drain, Mailbox, Refusal};
+use crate::mailbox::{Mailbox, Refusal};
 use crate::ops::{
     self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, RecordLaneProgress, Report,
     Request,
@@ -452,47 +452,6 @@ impl<'a> LaneOperation<'a> {
         lane: &Lane,
     ) -> std::result::Result<Option<String>, String> {
         pending_ask(&self.run.engine.reach.mail_program, lane)
-    }
-
-    /// Preserve the last outbound mail before the provider removes its box.
-    /// A repeat reads the host again, retaining the prior snapshot if the
-    /// sandbox has since disappeared.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the close drops its own disposable provider snapshot after the mailbox read"
-    )]
-    pub(super) fn finish_host_mail(
-        &self,
-        lane: &Lane,
-        retry: bool,
-    ) -> std::result::Result<(), String> {
-        let Some(host) = lane.mail_host() else {
-            return Ok(());
-        };
-        let root = lane.mail_root.as_deref().ok_or("mail-root-unrecorded")?;
-        let mailbox = Mailbox::new(self.run.engine.reach.mail_program.clone());
-        let dir = &self.run.engine.state_dir;
-        let id = self.engine.intent_id();
-        let drain = Drain {
-            item: lane.item.clone(),
-            root: root.into(),
-            after: 0,
-        };
-        let scratch = agent_runtime::record::receipt_path(dir, id).with_extension("close-read");
-        let files: Vec<_> = crate::watch::mail::snapshot_files(&drain).collect();
-        crate::provider::snapshot(host, &files, &scratch, "mail").map_err(|e| e.to_string())?;
-        let capture = mailbox.drain_with_lines(&drain, host, &scratch);
-        let _ = std::fs::remove_dir_all(&scratch);
-        let snapshot = match capture {
-            Ok(snapshot) => snapshot,
-            Err(_) if retry || matches!(self.host_listed(lane), Ok(None)) => return Ok(()),
-            Err(cause) => return Err(format!("mail-read-failed: {cause}")),
-        };
-        if !snapshot.envelopes.is_empty() {
-            crate::watch::mail::keep_close_mail(dir, id, &drain, snapshot)
-                .map_err(|e| format!("close-mail-unwritten: {e}"))?;
-        }
-        Ok(())
     }
 
     /// End every validation run in a local lane's worktree before the

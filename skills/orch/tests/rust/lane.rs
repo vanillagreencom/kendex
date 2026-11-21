@@ -2813,10 +2813,6 @@ impl Fleet {
         let (mut mail, mut rest) = (Vec::new(), Vec::new());
         let (mut after_read, mut after_probe) = (false, false);
         for line in lines {
-            if line == "read-many" || line.starts_with("requested ") {
-                mail.push(line);
-                continue;
-            }
             let read = line.contains("/tmp/lane-mail/");
             let probe = after_read && line.starts_with("touch --item ");
             let state = after_probe && line == "list";
@@ -3009,106 +3005,45 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
             assert_eq!(retry["result"]["word"], "closed", "{retry}");
         }
     }
-
-    let mut fleet = Fleet::hosted(4);
-    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
-    fleet.plant_tracker("KEN-1", "completed");
-    fleet.answer("HARNESS_STATE", "exited");
-    fleet.answer("CAT_STATUS", "1");
-    fleet.answer("LIST", "o/r/KEN-1\texited\t-\tlane.example");
-    let held = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
-    assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
-    assert!(
-        !fleet
-            .provider_calls()
-            .iter()
-            .any(|call| call.starts_with("close "))
-    );
 }
 
+/// The provider is already unreachable for mailbox reads while the fleet
+/// still calls the lane running. Closing its merged item ends those reads.
 #[test]
-fn a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on_retry() {
+fn a_merged_hosted_close_ends_repeated_mail_failures_for_a_gone_sandbox() {
     use orch_runtime::mailbox::Mailbox;
     use orch_runtime::schedule::Duty;
     use orch_runtime::watch::mail::{Config, MailDuty};
-    use orch_runtime::watch::{Baseline, Change, Event, Paths, Tick};
+    use orch_runtime::watch::{Baseline, Tick};
 
-    if !isolated_row(
-        "a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on_retry",
-    ) {
+    if !isolated_row("a_merged_hosted_close_ends_repeated_mail_failures_for_a_gone_sandbox") {
         return;
     }
     let mut fleet = Fleet::hosted(4);
     let dir = fleet.state_dir().to_path_buf();
-    let source = dir
-        .join("provider-disk")
-        .join(MAILBOX.trim_start_matches('/'));
-    let closed_box = dir.join("closed-box");
-    let capture_log = dir.join("capture-log");
-    let mut lane = hosted_lane("KEN-1");
-    let provider_wrapper = dir.join("close-provider");
+    git_checkout(&dir);
+    let reads = dir.join("mail-reads");
+    let gone_provider = dir.join("gone-provider");
     write_executable(
-        &provider_wrapper,
+        &gone_provider,
         format!(
-            "#!/bin/sh\ncase \"$1\" in\n  read-many) echo snapshot >> '{log}' ;;\n  cat) if [ -s '{log}' ]; then echo live-read-refused >> '{log}'; exit 1; fi ;;\n  close) mv '{source}' '{closed}' || exit 1 ;;\nesac\nexec '{provider}' \"$@\"\n",
-            log = capture_log.display(),
-            source = source.display(),
-            closed = closed_box.display(),
+            "#!/bin/sh\nif [ \"$1\" = read-many ]; then printf '%s\\n' \"$1\" >> '{reads}'; exit 1; fi\nexec '{provider}' \"$@\"\n",
+            reads = reads.display(),
             provider = provider(),
         ),
     );
-    lane["host"] = json!(provider_wrapper);
+    let mut lane = hosted_lane("KEN-1");
+    lane["host"] = json!(gone_provider);
     fleet.write_lanes(vec![lane]);
     fleet.plant_tracker("KEN-1", "completed");
-    let paths = Paths::of(&fleet.fleet_path()).unwrap();
-    let mut baseline = Baseline::default();
-    baseline.apply(Change::Set {
-        kind: "lane-mail".to_owned(),
-        identity: "KEN-1".to_owned(),
-        value: "1 old".to_owned(),
-    });
-    baseline.store(&paths.baseline).unwrap();
-    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-    let old = json!({"id": "old", "kind": "notice", "text": "Already delivered."});
-    let last = json!({"id": "last", "kind": "notice", "text": "Merged successfully."});
-    let late = json!({"id": "late", "kind": "notice", "text": "Verification finished."});
-    std::fs::write(
-        source.with_file_name("to-lane.jsonl"),
-        "{\"id\":\"answer\",\"kind\":\"answer\",\"re\":\"a1\"}\n",
-    )
-    .unwrap();
-    std::fs::write(&source, format!("{old}\n{last}\n{ASK_A1}\n")).unwrap();
+    fleet.answer("HARNESS_STATE", "exited");
+    fleet.answer("CLOSE_LINE", "closed=absent item=KEN-1");
     fleet.answer("LIST", "o/r/KEN-1\thosted\t-\tlane.example");
-    let request = json!({"op": "close-lane", "item": "KEN-1"});
-    let held = fleet.close(request.clone());
-    assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
-    assert_eq!(
-        held["result"]["observation"]["host_close"], "standing",
-        "{held}"
-    );
-    assert!(!source.exists());
-    std::fs::write(&source, format!("{old}\n{last}\n{ASK_A1}\n{late}\n")).unwrap();
-    fleet.answer("LIST", "");
-    let closed = fleet.close(request);
-    assert_eq!(closed["result"]["word"], "closed", "{closed}");
-    assert_eq!(
-        std::fs::read_to_string(capture_log).unwrap(),
-        "snapshot\nsnapshot\n"
-    );
-    assert!(!source.exists());
-    let mut next_phase = fleet.fleet();
-    next_phase["lanes"][0]["status"] = json!("preparing");
-    std::fs::write(&paths.state, serde_json::to_vec(&next_phase).unwrap()).unwrap();
 
-    let mail = dir.join("watch-mail");
-    write_executable(
-        &mail,
-        "#!/bin/sh\ncase \"$*\" in 'events --item overseer '*) echo 'count=0 first=';; 'pending --item overseer '*) ;; *) exit 2;; esac\n",
-    );
     let mut duty = MailDuty::new(
-        Mailbox::new(mail),
+        Mailbox::new(lane_mail().into()),
         Config {
-            fleet: paths.state,
+            fleet: fleet.fleet_path(),
             common_root: dir.clone(),
             request: dir.join("mail-request"),
             snapshots: dir.join("mail-snapshots"),
@@ -3118,38 +3053,23 @@ fn a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on
             tracker_asks: false,
         },
     );
+    let baseline = Baseline::default();
     let clock = clock::SystemClock;
-    for expected in [
-        vec![
-            "EVENT lane-notice KEN-1 last",
-            "  Merged successfully.",
-            "EVENT lane-notice KEN-1 late",
-            "  Verification finished.",
-        ],
-        vec![],
-    ] {
-        let produced = duty
-            .run(&Tick {
-                duty: Duty::Mail,
-                now: std::time::Instant::now(),
-                wall: 1,
-                baseline: &baseline,
-                clock: &clock,
-            })
-            .unwrap();
-        assert_eq!(produced.failed, None);
-        assert_eq!(
-            produced
-                .events
-                .iter()
-                .map(Event::render)
-                .collect::<Vec<_>>(),
-            expected
-        );
-        for change in produced.changes {
-            baseline.apply(change);
-        }
+    let tick = Tick {
+        duty: Duty::Mail,
+        now: std::time::Instant::now(),
+        wall: 1,
+        baseline: &baseline,
+        clock: &clock,
+    };
+    let failed = duty.run(&tick).unwrap().failed.unwrap();
+    assert!(failed.contains("mail-read-failed=KEN-1"), "{failed}");
+    let closed = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(closed["result"]["word"], "closed", "{closed}");
+    for _ in 0..2 {
+        assert_eq!(duty.run(&tick).unwrap().failed, None);
     }
+    assert_eq!(std::fs::read_to_string(reads).unwrap(), "read-many\n");
 }
 
 /// A keep asked over a full close whose provider close refused, its dirt
@@ -4369,11 +4289,6 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             "exited holding an ask" => {
                 case.answers.push(("HARNESS_STATE", "exited"));
                 case.mail = ASK_A1;
-            }
-            "parked" => {
-                case.answers.extend(MAIL_UNREACHABLE);
-                case.answers
-                    .push(("LIST", "o/r/KEN-1\texited\t-\tlane.example"));
             }
             _ => {}
         }

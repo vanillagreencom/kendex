@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::host::{self, Place};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::ops::mail::DirectiveSend;
 use crate::state::Lane;
@@ -197,7 +197,7 @@ impl From<Refusal> for crate::Error {
 
 /// One envelope as the mailbox prints it, the fields the watch reads; the
 /// rest of the object is not carried.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct Envelope {
     #[serde(default)]
     pub id: Option<String>,
@@ -304,14 +304,9 @@ pub struct Drain {
     pub root: PathBuf,
 }
 
-enum DrainLines {
-    Omitted,
-    Included,
-}
-
 /// What `events --box to-lane --after N` answered for the overseer's box:
 /// the header and every envelope past line N, each with its line.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoxEvents {
     pub count: u64,
     pub first: String,
@@ -740,34 +735,6 @@ impl Mailbox {
         host: Option<&str>,
         snapshot: Option<&Path>,
     ) -> Result<Drained, Refusal> {
-        self.read_drain(lane, host, snapshot, DrainLines::Omitted)
-    }
-
-    /// Classified outbound mail and its logical positions from one cached read.
-    pub(crate) fn drain_with_lines(
-        &self,
-        lane: &Drain,
-        host: &str,
-        snapshot: &Path,
-    ) -> Result<BoxEvents, Refusal> {
-        let drained = self.read_drain(lane, Some(host), Some(snapshot), DrainLines::Included)?;
-        if let Some(envelope) = drained.envelopes.iter().find(|e| e.line.is_none()) {
-            return Err(reply("drain", "line", envelope.id()));
-        }
-        Ok(BoxEvents {
-            count: drained.count,
-            first: drained.first,
-            envelopes: drained.envelopes,
-        })
-    }
-
-    fn read_drain(
-        &self,
-        lane: &Drain,
-        host: Option<&str>,
-        snapshot: Option<&Path>,
-        lines: DrainLines,
-    ) -> Result<Drained, Refusal> {
         const VERB: &str = "drain";
         let after = lane.after.to_string();
         let root = lane.root.display().to_string();
@@ -781,9 +748,6 @@ impl Mailbox {
             "--receipts",
         ];
         let mut env: Vec<(&str, &std::ffi::OsStr)> = Vec::new();
-        if matches!(lines, DrainLines::Included) {
-            args.push("--with-lines");
-        }
         if let Some(host) = host {
             args.push("--host");
             env.push(("ORCH_LANE_HOST", std::ffi::OsStr::new(host)));

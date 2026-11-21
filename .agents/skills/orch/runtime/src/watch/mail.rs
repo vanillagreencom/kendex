@@ -53,7 +53,6 @@ use crate::watch::{Baseline, Change, Event, Paths, Produced, Runner, Tick};
 
 /// The baseline row kinds of the `.mail` rows.
 const LANE_MAIL: &str = "lane-mail";
-pub(super) const CLOSE_MAIL: &str = "close-mail";
 const DIRECTIVE: &str = "directive";
 /// The overseer box's identity among the `lane-mail` rows, and its item
 /// for `lane-mail`.
@@ -341,50 +340,6 @@ fn replaced(prior: u64, seen: &str, count: u64, first: &str) -> bool {
     }
 }
 
-fn render_lane_mail(item: &str, envelope: &Envelope, events: &mut Vec<Event>) {
-    if let Ok(Some(event)) = classify(item, envelope) {
-        events.push(event);
-        payload(envelope, events);
-    }
-}
-
-pub(super) fn close_mail_path(dir: &Path, intent: &str) -> PathBuf {
-    agent_runtime::record::receipt_path(dir, intent).with_extension("close-mail")
-}
-
-/// The close writes a local receipt for the watch before making its final
-/// provider call. The mail duty alone publishes the corresponding events.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the close's own final mailbox receipt, written before provider teardown"
-)]
-pub(crate) fn keep_close_mail(
-    dir: &Path,
-    intent: &str,
-    lane: &Drain,
-    mut mail: BoxEvents,
-) -> Result<()> {
-    let path = close_mail_path(dir, intent);
-    let baseline = Baseline::load(&dir.join(super::claim::BASELINE_FILE))?;
-    let prior = MailCursor::parse(baseline.get(LANE_MAIL, &lane.item));
-    if !replaced(prior.announced, &prior.first, mail.count, &mail.first) {
-        mail.envelopes.retain(|e| e.line > Some(prior.announced));
-    }
-    if !mail.envelopes.is_empty() {
-        agent_runtime::record::replace_atomically(&path, &serde_json::to_value(mail)?)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn snapshot_files(lane: &Drain) -> impl Iterator<Item = (String, String)> + '_ {
-    SNAPSHOT_FILES.into_iter().map(|name| {
-        (
-            lane.item.clone(),
-            format!("{}/tmp/lane-mail/{}/{name}", lane.root.display(), lane.item),
-        )
-    })
-}
-
 /// The wake slot's value for a box of `count` lines whose newest line past
 /// the target's cursor the read carries as `newest` (its line and id): the
 /// id where that is the box's last line and carries one, else the last
@@ -600,7 +555,6 @@ impl MailDuty {
     /// named and left for the next turn.
     fn lanes_turn(&self, tick: &Tick, turn: &mut Turn) -> Result<()> {
         let fleet = fleet(&self.config.fleet)?;
-        self.closed_lanes(tick.baseline, &fleet, turn);
         let mut local = Vec::new();
         let mut hosted = Vec::new();
         for lane in &fleet.lanes {
@@ -697,48 +651,6 @@ impl MailDuty {
         Ok(())
     }
 
-    /// A finished hosted close has no provider mailbox to revisit. Deliver
-    /// its receipt through the same event and cursor path as live mail.
-    fn closed_lanes(&self, baseline: &Baseline, fleet: &FleetState, turn: &mut Turn) {
-        use agent_runtime::{intent::EffectOp, protocol::Outcome};
-        let dir = self.config.fleet.parent().unwrap_or(Path::new("."));
-        for intent in fleet
-            .intents
-            .iter()
-            .filter(|i| i.op == EffectOp::CloseResources && i.outcome == Outcome::Confirmed)
-        {
-            if baseline.get(CLOSE_MAIL, &intent.id).is_some() {
-                continue;
-            }
-            let item = &intent.target;
-            let path = close_mail_path(dir, &intent.id);
-            let snapshot = std::fs::read(&path).and_then(|bytes| {
-                serde_json::from_slice::<BoxEvents>(&bytes).map_err(std::io::Error::other)
-            });
-            let snapshot = match snapshot {
-                Ok(snapshot) => snapshot,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => {
-                    turn.refuse(
-                        item,
-                        format!("close-mail-unreadable path={} cause={e}", path.display()),
-                    );
-                    continue;
-                }
-            };
-            let prior = MailCursor::parse(baseline.get(LANE_MAIL, item));
-            let after = if prior.first == snapshot.first {
-                prior.announced
-            } else {
-                0
-            };
-            for envelope in snapshot.envelopes.iter().filter(|e| e.line > Some(after)) {
-                render_lane_mail(item, envelope, &mut turn.events);
-            }
-            turn.set(baseline, CLOSE_MAIL, &intent.id, "delivered".to_owned());
-        }
-    }
-
     /// One provider snapshot per host the hosted lanes name, the files each
     /// lane's drain reads, made once per pass: the directory of each host
     /// whose snapshot was written, a failed batch among them, which the
@@ -747,7 +659,11 @@ impl MailDuty {
     fn snapshots(&self, hosted: &[(Drain, String)], turn: &mut Turn) -> BTreeMap<String, PathBuf> {
         let mut files: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
         for (lane, host) in hosted {
-            files.entry(host).or_default().extend(snapshot_files(lane));
+            let rows = files.entry(host.as_str()).or_default();
+            for name in SNAPSHOT_FILES {
+                let path = format!("{}/tmp/lane-mail/{}/{name}", lane.root.display(), lane.item);
+                rows.push((lane.item.clone(), path));
+            }
         }
         let mut dirs = BTreeMap::new();
         for (n, (host, rows)) in files.into_iter().enumerate() {
@@ -829,7 +745,10 @@ impl MailDuty {
         for envelope in &drained.envelopes {
             // A lane writes asks and notices; any other kind is a line to
             // show rather than a line to drop silently.
-            render_lane_mail(item, envelope, &mut turn.events);
+            if let Ok(Some(event)) = classify(item, envelope) {
+                turn.events.push(event);
+                payload(envelope, &mut turn.events);
+            }
         }
         // A read shorter than what was drained moves no position: lowering
         // it would report the lines between again once the file reads whole.

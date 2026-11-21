@@ -52,14 +52,13 @@ READ_JQ = OBJECTS_JQ + r'''
        clamped: (if $in.ack != null and $in.ack > $in.lane.count then $ack else null end)}
   else
     {output: ((if $in.verb == "drain" then ["count=\($in.over.count) first=\($in.over.first)"] else [] end)
-      + [$over[] | .line as $line | select($line > $after or $in.after == "") | .envelope | . as $envelope
+      + [$over[] | select($in.after == "" or .line > $after) | .envelope | . as $envelope
         | select($in.verb == "drain" or .kind == "ask")
         | select(.kind != "ask" or
           ((if .to == "owner" then $closed else $closed + $answered end) | index($envelope.id) | not))
         | select($in.to == "" or .to == $in.to)
         | select($in.due == false or (.reserved != true and
-          ((.deadline // "" | at_epoch) as $d | $d != null and $d <= now)))
-        | (if $in.with_lines then . + {line: $line} else . end) | tojson]
+          ((.deadline // "" | at_epoch) as $d | $d != null and $d <= now))) | tojson]
       + (if $in.receipts then
           ["receipts cursor=\($in.receipt) count=\($in.lane.count) first=\($in.lane.first)"]
           + [$lane[] | .envelope as $e | select($e | mailbox_directive_receipt)
@@ -278,7 +277,7 @@ def cursor_put(path, count):
             scratch.unlink(missing_ok=True)
 
 
-def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, deliver, with_lines="0", snapshot=None):
+def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, deliver, snapshot=None):
     """Read both inherited locked mailboxes and classify them with one jq."""
     cursor = box / "to-lane.cursor"
     files = None
@@ -312,7 +311,7 @@ def read_mail(box, item, verb, after, receipts, to, due, peek, ack, jq_defs, del
         print(f"error\x1fmail-read-failed\x1f{item}\x1fcursor=missed")
         return
     data = {"lane": lane, "over": over, "item": item, "verb": verb, "after": after,
-            "receipts": receipts == "1", "with_lines": with_lines == "1", "to": to, "due": due == "1", "peek": peek == "1",
+            "receipts": receipts == "1", "to": to, "due": due == "1", "peek": peek == "1",
             "ack": int(ack) if ack else None, "seen": seen, "receipt": receipt, "directives": directives}
     result = subprocess.run(["jq", "-c", jq_defs + READ_JQ], input=json.dumps(data).encode(),
                             capture_output=True, check=True,

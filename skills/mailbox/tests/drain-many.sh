@@ -56,17 +56,6 @@ assert_eq "rc=$RC" "rc=0" 'the batch answers' "$ERR"
 assert_eq "$OUT" "$EXPECTED" "three lanes, one process, the single verb's sections in order"
 assert_contains "$OUT" 'receipts cursor=1 count=1 first=d-1' "the read lane's receipt carries its cursor"
 assert_eq "$(grep -c '^item=' <<<"$OUT")" 3 'one item line per lane'
-
-lm drain --item KEN-1 --root "$REPO" --after 1
-assert_eq "$RC" 0 'ordinary drain answers' "$ERR"
-plain="${OUT#*$'\n'}"
-assert_eq "$(jq 'has("line")' <<<"$plain")" false 'ordinary drain preserves the envelope shape'
-lm drain --item KEN-1 --root "$REPO" --after 1 --with-lines
-assert_eq "$RC" 0 'numbered drain answers' "$ERR"
-numbered="${OUT#*$'\n'}"
-assert_eq "$(jq '.line' <<<"$numbered")" 2 'the notice keeps its logical position after the skipped ask'
-assert_eq "$(jq -c 'del(.line)' <<<"$numbered")" "$plain" 'both modes return the same classified notice'
-
 # An empty request answers nothing.
 : > "$TMP_ROOT/empty"
 lm drain-many --file "$TMP_ROOT/empty"

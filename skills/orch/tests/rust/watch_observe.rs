@@ -5997,13 +5997,10 @@ fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() 
     assert_eq!(event_lines(&second), Vec::<String>::new());
 
     world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
-    let absent_files: Vec<Value> = ["to-overseer.jsonl", "to-overseer.jsonl.numbering", "to-lane.jsonl", "to-lane.jsonl.numbering", "to-lane.cursor", "to-lane.cursor.lock"]
-        .map(|name| json!({"item":"KEN-1", "path":format!("/remote/KEN-1/tmp/lane-mail/KEN-1/{name}"), "status":2, "data":""})).into();
     let list = ("list", ok("o/r/KEN-1\thosted\t-\tlane.example\n"));
     world.plant_host(&[
         status.clone(),
         list.clone(),
-        ("read-many", ok(&json!(absent_files).to_string())),
         ("close --item KEN-1 --merged", ok("kept=none\n")),
         ("close --item KEN-1", ok("kept=none\n")),
     ]);
@@ -6018,7 +6015,6 @@ fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() 
         status,
         list,
         ("cat --item KEN-1 /remote/KEN-1/.git", answer(1, "")),
-        ("read-many", answer(1, "")),
         (
             "close --item KEN-1 --merged",
             ok("closed=absent item=KEN-1\n"),

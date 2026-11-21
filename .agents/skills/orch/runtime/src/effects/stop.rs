@@ -547,13 +547,6 @@ impl Close<'_> {
         }
         if provider_closes(self.ground, self.lane) {
             let merged = self.merged(&operation, &mut observation);
-            if self.lane.status == crate::state::LaneStatus::Running
-                && (merged || record_merged(self.lane) || self.cycle.is_some_and(cycle_merged))
-                && let Err(cause) = operation.finish_host_mail(self.lane, retry)
-            {
-                observation["cause"] = json!(cause);
-                return Ok(self.hold(operation, observation));
-            }
             match operation.host_close(self.lane, merged)? {
                 Ok(HostClosed::Closed { line }) if line.starts_with("closed=absent ") => {
                     observation["host_close"] = json!(line);
