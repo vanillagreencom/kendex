@@ -2730,7 +2730,7 @@ fn a_supplied_batch_is_judged_line_by_line_by_the_one_judge() {
         ("not-a-date", "", "plan-end-invalid"),
         ("", future.as_str(), "room"),
         ("", today.as_str(), "retired"),
-        (future.as_str(), today.as_str(), "retired"),
+        (future.as_str(), today.as_str(), "room"),
         (today.as_str(), future.as_str(), "retired"),
     ] {
         let retirement = if setting_end.is_empty() {

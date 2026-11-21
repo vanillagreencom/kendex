@@ -92,11 +92,12 @@ pub const ENGINE_KEYS: &[&str] = &[
 ];
 
 // The account readers' keys.
-/// A providerless machine's own statement of a plan's end, `<name>=<YYYY-
-/// MM-DD>` pairs: the account is picked until that UTC day and measured
-/// after it, so a stated end a live reading contradicts is seen. The judge
-/// reads it; the account reader is run with it emptied, so it measures the
-/// account instead of listing it `retired` unread.
+/// A machine's own statement of a plan's end, `<name>=<YYYY-MM-DD>` pairs,
+/// for an account no provider states an end for: the account is picked
+/// until that UTC day and measured after it, so a stated end a live reading
+/// contradicts is seen. The judge reads it; the account reader is run with
+/// it emptied, so it measures the account instead of listing it `retired`
+/// unread.
 pub const ACCOUNT_RETIRE_KEY: &str = "AGENT_RUNTIME_ACCOUNT_RETIRE";
 /// The bound a pick admits an account under, in percent used.
 pub const ACCOUNT_MAX_PCT_KEY: &str = "AGENT_RUNTIME_ACCOUNT_MAX_PCT";
@@ -454,19 +455,7 @@ impl AccountSettings {
         let get = |key: &str| values.get(key);
         Judged {
             read: (|| {
-                let mut retire = Vec::new();
-                for item in list(get(ACCOUNT_RETIRE_KEY)) {
-                    let valid = item.split_once('=').filter(|(name, date)| {
-                        account_name_valid(name.trim()) && calendar_date_valid(date.trim())
-                    });
-                    let Some((name, date)) = valid else {
-                        return Err((ACCOUNT_RETIRE_KEY, item.to_owned()));
-                    };
-                    retire.push(Retirement {
-                        name: name.trim().to_owned(),
-                        date: date.trim().to_owned(),
-                    });
-                }
+                let retire = retirements(values)?;
                 // An absolute Pi root, the credits used and granted as whole
                 // numbers of at most twelve digits, the grant above zero, one
                 // entry per root; an entry nobody can read is refused, never
@@ -563,6 +552,30 @@ impl AccountSettings {
             })(),
         }
     }
+}
+
+/// The retirement statement ([`ACCOUNT_RETIRE_KEY`]), each entry naming an
+/// account (no `/`, no `~`) and a real calendar day; the first entry
+/// outside that form refused with its text. A long-running caller reads it
+/// again at each pick through this, so a corrected statement is judged
+/// without a restart.
+pub fn retirements(
+    values: &Layered,
+) -> std::result::Result<Vec<Retirement>, (&'static str, String)> {
+    let mut retire = Vec::new();
+    for item in list(values.get(ACCOUNT_RETIRE_KEY)) {
+        let valid = item.split_once('=').filter(|(name, date)| {
+            account_name_valid(name.trim()) && calendar_date_valid(date.trim())
+        });
+        let Some((name, date)) = valid else {
+            return Err((ACCOUNT_RETIRE_KEY, item.to_owned()));
+        };
+        retire.push(Retirement {
+            name: name.trim().to_owned(),
+            date: date.trim().to_owned(),
+        });
+    }
+    Ok(retire)
 }
 
 /// The account records' root ([`ACCOUNT_STATE_DIR_KEY`]): the setting,

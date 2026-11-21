@@ -625,6 +625,10 @@ pub struct Settings {
     /// alone judges them (`report::Policy::of`).
     pub report: Vec<(String, String)>,
     pub accounts: Judged<AccountSettings>,
+    /// The caller's own values of the keys [`Settings::accounts_now`]
+    /// reads the stated plan ends again under: the statement itself and
+    /// the private env file's name and home, which outrank the files.
+    restated: Vec<(OsString, OsString)>,
     pub provider: Judged<ProviderSettings>,
     /// The account records' root, the usage cache's and the wall records'.
     pub account_state: Judged<PathBuf>,
@@ -676,6 +680,24 @@ impl Settings {
             pi_root: self.pi_root.as_deref(),
             setups: LAUNCH_SETUPS,
         }
+    }
+
+    /// The account settings an account reading judges by, with this
+    /// machine's stated plan ends (`AGENT_RUNTIME_ACCOUNT_RETIRE`) read
+    /// again from the settings ladder now: a long-running process, the
+    /// watch, judges each pick on the statement as the files hold it at
+    /// that pick, never as they held it at its start. The caller's own
+    /// environment still outranks the files, as at the load.
+    pub fn accounts_now(&self) -> agent_runtime::Result<AccountSettings> {
+        let accounts = self.accounts.get()?;
+        let keys = Keys {
+            read: &[&[shared::ACCOUNT_RETIRE_KEY]],
+            load: &[],
+        };
+        let values = shared::layered(&self.roots.project, &self.restated, self.private_env, &keys)?;
+        let retire = shared::retirements(&values)
+            .map_err(|(key, value)| shared::value_refusal(key, &value))?;
+        Ok(AccountSettings { retire, ..accounts })
     }
 
     /// Says the load's notices on stderr, for a caller whose answer comes
@@ -1170,6 +1192,19 @@ pub fn load(
         archive_root,
         report,
         accounts,
+        restated: environment
+            .iter()
+            .filter(|(key, _)| {
+                [
+                    shared::ACCOUNT_RETIRE_KEY,
+                    shared::ENV_FILE_KEY,
+                    shared::HOME_KEY,
+                ]
+                .iter()
+                .any(|k| key.as_os_str() == OsStr::new(k))
+            })
+            .cloned()
+            .collect(),
         provider,
         account_state: shared::account_state_dir(&values),
         home: get(shared::HOME_KEY).map(str::to_owned),

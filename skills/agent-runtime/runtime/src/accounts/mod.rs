@@ -18,10 +18,12 @@
 //!
 //! The status words, one per account: `pick`; `reserve`, never picked and
 //! still measured, the provider's `reserved=1`; `retired <date>`, picked
-//! until that UTC day and measured after it, from the machine's own
-//! `AGENT_RUNTIME_ACCOUNT_RETIRE` or the provider's `plan-ends`: a stated end that a
-//! live reading contradicts (a credential that answers after its end) is a
-//! reported line, never a silent absence. An account `AGENT_RUNTIME_ACCOUNT_EXCLUDE`
+//! until that UTC day and measured after it, from the provider's
+//! `plan-ends` wherever its row states one, else from the machine's own
+//! `AGENT_RUNTIME_ACCOUNT_RETIRE`: a stated end that a live reading
+//! contradicts (a credential that answers after its end), and a machine's
+//! end the provider's overrides, are reported lines, never a silent
+//! absence. An account `AGENT_RUNTIME_ACCOUNT_EXCLUDE`
 //! names is measured like any other and refused by that word for every
 //! pick, a lane's or an overseer's, from this machine's listing, a
 //! provider's rows or the owner's statement; a controller's question about
@@ -352,35 +354,37 @@ impl AccountRow {
     }
 
     /// The account's stated word, what a pick is refused by: the
-    /// provider's reservation first, then a provider's end nobody can read,
-    /// then the earlier of the machine's and the provider's stated ends.
+    /// provider's reservation first, then the provider's stated end, a day
+    /// or a value nobody can read, then the machine's own. The provider's
+    /// record is the one source of an end wherever it states one: a
+    /// machine's copy goes stale when the record is corrected, so the
+    /// setting stands only for an account the provider states no end for.
     fn stated(&self, ignore_reservation: bool) -> Word {
         if self.reserved && !ignore_reservation {
             return Word::Reserve;
         }
-        let provider = match &self.plan_ends {
-            PlanEnd::None => None,
-            PlanEnd::Day(day) => Some(day),
-            PlanEnd::Invalid(value) => {
-                return Word::PlanEndInvalid {
-                    value: value.clone(),
-                };
-            }
-        };
-        match (&self.retire, provider) {
-            (Some(setting), Some(provider)) if provider < setting => Word::Retired {
-                date: provider.clone(),
+        match (&self.plan_ends, &self.retire) {
+            (PlanEnd::Invalid(value), _) => Word::PlanEndInvalid {
+                value: value.clone(),
+            },
+            (PlanEnd::Day(day), _) => Word::Retired {
+                date: day.clone(),
                 source: EndSource::Provider,
             },
-            (Some(setting), _) => Word::Retired {
+            (PlanEnd::None, Some(setting)) => Word::Retired {
                 date: setting.clone(),
                 source: EndSource::Setting,
             },
-            (None, Some(provider)) => Word::Retired {
-                date: provider.clone(),
-                source: EndSource::Provider,
-            },
-            (None, None) => Word::Pick,
+            (PlanEnd::None, None) => Word::Pick,
+        }
+    }
+
+    /// The machine's stated end the provider's stated day overrides, where
+    /// the two name different days.
+    fn ignored_setting(&self) -> Option<&str> {
+        match (&self.plan_ends, &self.retire) {
+            (PlanEnd::Day(day), Some(setting)) if setting != day => Some(setting),
+            (PlanEnd::Day(_) | PlanEnd::None | PlanEnd::Invalid(_), _) => None,
         }
     }
 
@@ -504,9 +508,11 @@ impl Roster {
     }
 
     /// The `account <fields>` line of each record, with the word a reader
-    /// is shown after the fields where it is not `pick`, and under the roster one
-    /// `account-end-contradicted` line per account whose stated end has
-    /// come while its credential still answers and one
+    /// is shown after the fields where it is not `pick`, and under the
+    /// roster one `account-end-contradicted` line per account whose stated
+    /// end has come while its credential still answers, or whose
+    /// provider's stated day overrides another this machine states (named
+    /// by `ignored=` and `ignored_ends=`), and one
     /// `account-plan-end-invalid` line per account whose provider end
     /// names no calendar day, and the listing's own keyed lines.
     pub fn lines(&self, today: &str) -> Vec<String> {
@@ -519,15 +525,25 @@ impl Roster {
             })
             .collect();
         for row in &self.rows {
+            let ignored = row.ignored_setting();
             match row.stated(false) {
-                Word::Retired { date, source } if row.ended(today) && row.answers() => {
-                    lines.push(format!(
+                Word::Retired { date, source }
+                    if ignored.is_some() || (row.ended(today) && row.answers()) =>
+                {
+                    let mut line = format!(
                         "account-end-contradicted {} config_dir={} ends={date} source={} status={}",
                         row.alias,
                         row.config_dir,
                         source.stated_by(),
                         row.status
-                    ));
+                    );
+                    if let Some(setting) = ignored {
+                        line.push_str(&format!(
+                            " ignored={} ignored_ends={setting}",
+                            EndSource::Setting.stated_by()
+                        ));
+                    }
+                    lines.push(line);
                 }
                 Word::PlanEndInvalid { value } => lines.push(format!(
                     "account-plan-end-invalid alias={} value={value}",
@@ -2083,6 +2099,86 @@ mod tests {
         assert!(names("x", "/h/.oldclaude", ".oldclaude"));
         assert!(names("oldclaude", "/h/.y", "oldclaude"));
         assert!(!names("x", "/h/.y", "oldclaude"));
+    }
+
+    /// The provider's stated end is the account's wherever its row states
+    /// one, later or earlier than this machine's, and the machine's
+    /// `AGENT_RUNTIME_ACCOUNT_RETIRE` (here 2026-10-20, come by the day
+    /// judged) stands only where the row states none. A machine's day the
+    /// provider's overrides is named on the contradiction line.
+    #[test]
+    fn the_providers_stated_end_overrides_the_machines_and_the_override_is_said() {
+        let today = "2026-10-25";
+        let retired = |date: &str, source| Word::Retired {
+            date: date.to_owned(),
+            source,
+        };
+        let ended = |date: &str, source| Standing::Retired {
+            date: date.to_owned(),
+            source,
+        };
+        let said = |ends: &str, source: &str, ignored: bool| {
+            let ignored = if ignored {
+                " ignored=AGENT_RUNTIME_ACCOUNT_RETIRE ignored_ends=2026-10-20"
+            } else {
+                ""
+            };
+            format!(
+                "account-end-contradicted oldclaude config_dir=/h/.oldclaude ends={ends} source={source} status=ok{ignored}"
+            )
+        };
+        // provider's plan-ends, word, standing today, lines under the roster
+        let table: [(Option<&str>, Word, Standing, Vec<String>); 5] = [
+            (
+                Some("2026-12-01"),
+                retired("2026-12-01", EndSource::Provider),
+                Standing::Open,
+                vec![said("2026-12-01", "provider", true)],
+            ),
+            (
+                Some("2026-10-15"),
+                retired("2026-10-15", EndSource::Provider),
+                ended("2026-10-15", EndSource::Provider),
+                vec![said("2026-10-15", "provider", true)],
+            ),
+            (
+                Some("2026-10-20"),
+                retired("2026-10-20", EndSource::Provider),
+                ended("2026-10-20", EndSource::Provider),
+                vec![said("2026-10-20", "provider", false)],
+            ),
+            (
+                None,
+                retired("2026-10-20", EndSource::Setting),
+                ended("2026-10-20", EndSource::Setting),
+                vec![said("2026-10-20", "AGENT_RUNTIME_ACCOUNT_RETIRE", false)],
+            ),
+            (
+                Some("someday"),
+                Word::PlanEndInvalid {
+                    value: "someday".to_owned(),
+                },
+                Standing::EndUnread {
+                    value: "someday".to_owned(),
+                },
+                vec!["account-plan-end-invalid alias=oldclaude value=someday".to_owned()],
+            ),
+        ];
+        for (provider, word, standing, said) in table {
+            let mut raw = json!({"alias":"oldclaude","harness":"claude","config_dir":"/h/.oldclaude","measured_through":"host","status":"ok","verdict":"room","headroom_pct":40,"binding_bucket":"weekly","binding_resets_at":null});
+            if let Some(day) = provider {
+                raw["plan-ends"] = json!(day);
+            }
+            let roster = Roster {
+                rows: vec![row(raw)],
+                provider_failure: None,
+                notes: Vec::new(),
+            };
+            let account = &roster.rows[0];
+            assert_eq!(account.word(), word, "provider={provider:?}");
+            assert_eq!(account.standing(today), standing, "provider={provider:?}");
+            assert_eq!(roster.lines(today)[1..], said, "provider={provider:?}");
+        }
     }
 
     /// `model_binding`'s cases: the scoped window
