@@ -1901,7 +1901,7 @@ source "$SCRIPT_DIR/lib/base-reading.sh"
 # it has none.
 open_pr_for_branch() {
   local branch="$1"
-  local output=""
+  local output="" err_file="" rc=0
   GITHUB_ANSWER=""
   [[ -n "$branch" ]] || return 0
   if ! command -v gh >/dev/null 2>&1; then
@@ -1909,12 +1909,22 @@ open_pr_for_branch() {
     return 1
   fi
   github_read_auth || return 1
-
-  if ! output="$(github_read gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>&1)"; then
-    worktree_message pr-query-failed "$branch" "Error: Could not query open pull requests for branch '$branch'; refusing to assume it is unowned." >&2
-    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-open-pr.XXXXXX")"; then
+    worktree_message pr-query-failed "$branch" "Error: Could not create a scratch file for gh's diagnostic; refusing to assume branch '$branch' is unowned." >&2
     return 1
   fi
+
+  # The answer is stdout alone: gh can write a hint to stderr on success, as
+  # 2.105.0 does, and folded in, it reads as an open pull request.
+  output="$(github_read gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>"$err_file")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    worktree_message pr-query-failed "$branch" "Error: Could not query open pull requests for branch '$branch'; refusing to assume it is unowned." >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    sed 's/^/  /' "$err_file" >&2
+    rm -f -- "${err_file:?}"
+    return 1
+  fi
+  rm -f -- "${err_file:?}"
   GITHUB_ANSWER="$output"
 }
 
@@ -2122,18 +2132,28 @@ merged_branch_commit() { # BRANCH
 # main checkout's branch) and with origin's heads (a push from the inspection
 # worktree would land on an unrelated origin branch of that name).
 resolve_pr_head() {
-  local pr="$1" output="" name="" oid="" cross=""
+  local pr="$1" output="" name="" oid="" cross="" err_file="" rc=0
   if ! command -v gh >/dev/null 2>&1; then
     worktree_message gh-required "$pr" "Error: gh is required to resolve PR #$pr" >&2
     return 1
   fi
   github_read_auth || return 1
-  if ! output="$(github_read gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
-                  -q '[.headRefName, .headRefOid, (.isCrossRepository | tostring)] | @tsv' 2>&1)"; then
-    worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2
-    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-pr-head.XXXXXX")"; then
+    worktree_message pr-branch-missing "$pr" "Error: Could not create a scratch file for gh's diagnostic while resolving PR #$pr" >&2
     return 1
   fi
+  # The answer is stdout alone: gh can write a hint to stderr on success, as
+  # 2.105.0's `gh pr view` does, and folded in, it reads as the branch name.
+  output="$(github_read gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
+              -q '[.headRefName, .headRefOid, (.isCrossRepository | tostring)] | @tsv' 2>"$err_file")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    sed 's/^/  /' "$err_file" >&2
+    rm -f -- "${err_file:?}"
+    return 1
+  fi
+  rm -f -- "${err_file:?}"
   IFS=$'\t' read -r name oid cross <<<"$output"
   if [[ -z "$name" ]] || ! [[ "$oid" =~ ^[0-9a-f]{40,64}$ ]]; then
     worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2

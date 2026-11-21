@@ -246,6 +246,17 @@ gh_stub_answer run-rerun ''
 run_verb 42
 assert_eq "$RC $OUT" "0 no-rerun cause=checks-unread" "an unread rollup is checks-unread"
 assert_eq "$(rerun_calls)" "0" "nothing is rerun"
+assert_eq "$(grep -cx 'HTTP 502' <<<"$ERR")" "1" "stderr carries gh's line"
+
+# gh 2.105.0 writes a hint to stderr on a read that succeeds; the rollup is
+# stdout alone.
+echo "=== a hint on the rollup read's stderr leaves the rollup readable ==="
+gh_stub_reset
+gh_stub_fail pr-checks 0 'hint: if you need to wait for this pull request to be reviewed, merged, or closed' "$red_build"
+gh_stub_answer run-view "$(cat "$transient_log")"
+gh_stub_answer run-rerun ''
+run_verb 42
+assert_eq "$RC $OUT" "0 rerun run=123 pattern=rate limit" "the rollup's red run is rerun"
 
 echo "=== an unreadable required set reruns nothing under --required-only ==="
 gh_stub_reset

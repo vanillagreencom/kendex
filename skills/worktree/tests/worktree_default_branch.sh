@@ -43,7 +43,8 @@ assert_eq() {
 # --- the forge ----------------------------------------------------------------
 # GH_SLUG is what `gh repo view` names, `-` for a checkout gh finds no GitHub
 # repository for; GH_DEFAULT is the repository's default_branch, FAIL for a
-# read GitHub refuses; any other repository's default_branch is foreign. No
+# read GitHub refuses; any other repository's default_branch is foreign.
+# GH_HINT set writes gh 2.105.0's success hint to stderr beside an answer. No
 # merged pull request carries any branch.
 mkdir -p "$TMP_ROOT/bin"
 cat >"$TMP_ROOT/bin/gh" <<'STUB'
@@ -65,6 +66,7 @@ case "${1:-}:${2:-}" in
       echo "gh: Not Found (HTTP 404)" >&2
       exit 1
     else
+      [[ -z "${GH_HINT:-}" ]] || echo "hint: if you need to wait for this pull request to be reviewed, merged, or closed" >&2
       printf '%s\n' "$GH_DEFAULT"
     fi
     ;;
@@ -175,6 +177,7 @@ while IFS='|' read -r label script env_words rc err reads base; do
   assert_eq "$got base=${asked:--}" "rc=$rc err=$err reads=$reads base=$base" "$label"
 done <<'ROWS'
 GitHub's default branch is the one the forge is asked about|real|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|1|develop
+a hint gh writes to stderr beside the answer leaves GitHub's default branch the answer|real|GH_SLUG=acme/widgets GH_DEFAULT=develop GH_HINT=1|1|worktree-unmerged: lonely|1|develop
 must-fail: with the read replaced by main, develop's repository is asked about main|read|GH_SLUG=acme/widgets GH_DEFAULT=develop|1|worktree-unmerged: lonely|0|main
 a GH_REPO naming another repository still reads this checkout's default branch|real|GH_SLUG=acme/widgets GH_DEFAULT=develop GH_REPO=other/elsewhere|1|worktree-unmerged: lonely|1|develop
 WORKTREE_DEFAULT_BRANCH overrides, and GitHub is not asked|real|GH_SLUG=acme/widgets GH_DEFAULT=develop WORKTREE_DEFAULT_BRANCH=trunk|1|worktree-unmerged: lonely|0|trunk
@@ -184,6 +187,11 @@ a failed GitHub read with no record refuses|real|GH_SLUG=acme/widgets GH_DEFAULT
 a checkout with no GitHub repository and no record refuses|real|GH_SLUG=- GH_DEFAULT=develop|2|worktree-default-branch-unknown: <root>|0|-
 ROWS
 git -C "$MAIN" remote set-head origin main
+
+echo "=== a failed default-branch read names gh's words ==="
+got="$(run_verb real "GH_SLUG=acme/widgets GH_DEFAULT=FAIL" merged lonely)"
+assert_eq "${got%% *} $(grep -c 'gh: Not Found (HTTP 404)$' "$TMP_ROOT/err" || true)" "rc=1 1" \
+  "the unreadable warning carries gh's stderr"
 
 echo "=== create starts from GitHub's default branch ==="
 rc=0
