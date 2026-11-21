@@ -717,27 +717,6 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         unread: Vec::new(),
         deprecated: Vec::new(),
     };
-    // An overseer's Claude successor signs in by the token file its
-    // account declares, which its launch exports; a lane's launch exports
-    // none.
-    let declared = |harness: Harness| match (req.scope, harness) {
-        (Scope::Overseer, Harness::Claude) => settings.account_tokens.get(),
-        (Scope::Overseer, Harness::Codex | Harness::Copilot | Harness::Pi) | (Scope::Lane, _) => {
-            Ok(Vec::new())
-        }
-    };
-    // Whether an overseer's successor, which opens here, would sign in to
-    // `home`, as every pick of it reads ([`accounts::usage::sign_in_here`]):
-    // a home it reads missing is kept by no route.
-    let signs_in = |harness: Harness, home: &str| -> Result<bool> {
-        let login = accounts::usage::sign_in_here(harness, home, &declared(harness)?, now)?;
-        Ok(match login {
-            accounts::usage::StoredLogin::Missing { .. } => false,
-            accounts::usage::StoredLogin::Held | accounts::usage::StoredLogin::Unjudged { .. } => {
-                true
-            }
-        })
-    };
     let mut room: Option<String> = None;
     let mut judged = false;
     let mut unread_hosts: Vec<(String, String)> = Vec::new();
@@ -781,14 +760,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                             )],
                         ));
                     }
-                    // A kept lane the successor cannot sign in to is walked
-                    // as the caller's entry instead, its harness swept.
-                    let keep = c.keep
-                        && match (req.scope, c.lane.as_deref()) {
-                            (Scope::Overseer, Some(lane)) => signs_in(c.harness, lane)?,
-                            (Scope::Overseer, None) | (Scope::Lane, _) => true,
-                        };
-                    if keep {
+                    if c.keep {
                         walked.answer = WalkAnswer::Lane(Box::new(Chosen {
                             entry: "caller".to_owned(),
                             harness: c.harness,
@@ -919,7 +891,6 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 continue;
             }
         };
-        let token_files = declared(harness)?;
         let request = |max_pct: Option<u32>, lane: Option<String>, exclude: Vec<String>| {
             let overseer = req.scope == Scope::Overseer;
             PickRequest {
@@ -946,7 +917,6 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 // An overseer runs here; a lane does where its host opens
                 // it in a window of this machine.
                 opens_here: overseer || launch == Some("window"),
-                token_files: token_files.clone(),
             }
         };
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
@@ -986,12 +956,10 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                         c.harness == harness
                             && c.harness.billed(c.pick_model.as_deref().unwrap_or("")) == billed
                     });
-                let lane = keep.then(|| caller.and_then(|c| c.lane.clone())).flatten();
-                let lane = match lane {
-                    Some(lane) if signs_in(harness, &lane)? => Some(lane),
-                    Some(_) | None => None,
-                };
-                let kept = lane.map(|lane| pick(&request(None, Some(lane), Vec::new())));
+                let kept = keep
+                    .then(|| caller.and_then(|c| c.lane.clone()))
+                    .flatten()
+                    .map(|lane| pick(&request(None, Some(lane), Vec::new())));
                 match kept {
                     Some(PickAnswer::Unmeasured(j)) => {
                         Some((j.row.config_dir.clone(), j.record(), true))

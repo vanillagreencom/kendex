@@ -84,9 +84,6 @@ pub struct Env<'a> {
     pub home: Option<&'a str>,
     pub copilot_home: Option<&'a str>,
     pub controller_preference: &'a str,
-    /// The declared `(Claude home, token file)` pairs an overseer's
-    /// successor signs in with.
-    pub account_tokens: &'a settings::Judged<Vec<(String, PathBuf)>>,
 }
 
 /// The host word of a read with no provider named.
@@ -612,47 +609,35 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// never resolved: it reports both readings.
 ///
 /// A session that opens on this machine (`opens_here`) signs in with this
-/// machine's sign-in of the home ([`usage::sign_in_here`]), read for every
-/// row of this machine, never with the token a provider measured it
-/// through: a home that sign-in reads missing is judged on its row with no
-/// reading ([`signed_out`]), a provider's reading stands for it only where
-/// that sign-in reads held, else the account is judged on this machine's
-/// own row, and a provider's row with no home listed here is no candidate
-/// for it.
+/// machine's stored login of the home, never with the token a provider
+/// measured it through: the provider's reading stands for it only where
+/// that login reads held ([`usage::stored_login`]), else the account is
+/// judged on this machine's own row, and a provider's row with no home
+/// listed here is no candidate for it.
 fn resolve(
     rows: &[AccountRow],
     billed: Harness,
     model: &str,
     req: &PickRequest,
     now: u64,
-) -> crate::error::Result<Vec<AccountRow>> {
-    // Each row beside the sign-in of its home that a session opened here
-    // starts with, read once for each row of this machine; none for a
-    // provider's row or a session that opens elsewhere.
-    let mut out: Vec<(AccountRow, Option<usage::StoredLogin>)> = Vec::new();
+) -> Vec<AccountRow> {
+    let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
-        let login = (req.opens_here && !provider_reading(row))
-            .then(|| usage::sign_in_here(row.harness, &row.config_dir, &req.token_files, now))
-            .transpose()?;
-        let row = match login {
-            Some(usage::StoredLogin::Missing { cause }) => signed_out(row, cause),
-            Some(usage::StoredLogin::Held | usage::StoredLogin::Unjudged { .. }) | None => {
-                row.clone()
-            }
-        };
-        let other = out.iter().position(|(r, _)| {
+        let other = out.iter().position(|r| {
             r.harness == row.harness
                 && r.canon == row.canon
-                && provider_reading(r) != provider_reading(&row)
+                && provider_reading(r) != provider_reading(row)
         });
         match other {
             Some(i) => {
-                let ((own, login), provider) = if provider_reading(&row) {
-                    (out[i].clone(), row)
+                let (own, provider) = if provider_reading(row) {
+                    (out[i].clone(), row.clone())
                 } else {
-                    ((row, login), out[i].0.clone())
+                    (row.clone(), out[i].clone())
                 };
-                let signed_in = !req.opens_here || login == Some(usage::StoredLogin::Held);
+                let signed_in = !req.opens_here
+                    || usage::stored_login(own.harness, &own.config_dir, now)
+                        == usage::StoredLogin::Held;
                 let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
@@ -663,12 +648,11 @@ fn resolve(
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
                 }
-                out[i] = (stands, login);
+                out[i] = stands;
             }
-            None => out.push((row, login)),
+            None => out.push(row.clone()),
         }
     }
-    let mut out: Vec<AccountRow> = out.into_iter().map(|(row, _)| row).collect();
     if req.opens_here {
         out.retain(|r| {
             !provider_reading(r)
@@ -676,21 +660,6 @@ fn resolve(
                     !provider_reading(own) && own.harness == r.harness && own.canon == r.canon
                 })
         });
-    }
-    Ok(out)
-}
-
-/// This machine's `row` of a home a session opened here cannot sign in to:
-/// no reading, so no pick takes it, the sign-in's `cause` its detail.
-fn signed_out(row: &AccountRow, cause: &str) -> AccountRow {
-    let mut out = row.clone();
-    out.status = "no_credentials".to_owned();
-    out.headroom_pct = None;
-    out.detail = Some(cause.to_owned());
-    if let Value::Object(raw) = &mut out.raw {
-        raw.insert("status".to_owned(), Value::from(out.status.as_str()));
-        raw.insert("headroom_pct".to_owned(), Value::Null);
-        raw.insert("detail".to_owned(), Value::from(cause));
     }
     out
 }
@@ -873,15 +842,10 @@ pub struct PickRequest {
     /// unread window. Otherwise that account is unmeasured for the model.
     pub admit_unread_scope: bool,
     /// The session the pick places opens on this machine (an overseer, a
-    /// lane in a local window), so it signs in with this machine's sign-in
-    /// of the account, its stored login or the file `token_files` declares,
-    /// and never with the token a provider measured the account through.
+    /// lane in a local window), so it signs in with this machine's stored
+    /// login of the account and never with the token a provider measured
+    /// the account through.
     pub opens_here: bool,
-    /// The `(Claude home, token file)` pairs a session opened here signs in
-    /// with, its launch exporting the file: the overseer walk's, whose
-    /// successor's launch does. A home they declare is signed in by its file
-    /// alone.
-    pub token_files: Vec<(String, PathBuf)>,
 }
 
 impl PickRequest {
@@ -900,7 +864,6 @@ impl PickRequest {
             binding_floor: false,
             admit_unread_scope: false,
             opens_here: false,
-            token_files: Vec::new(),
         }
     }
 
@@ -1902,14 +1865,7 @@ pub fn pick(
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    let rows = &match resolve(rows, billed, model, req, now) {
-        Ok(rows) => rows,
-        Err(e) => {
-            return PickAnswer::Unjudged {
-                cause: e.to_string(),
-            };
-        }
-    };
+    let rows = &resolve(rows, billed, model, req, now);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {

@@ -596,9 +596,10 @@ pub fn expired(expires_ms: u64, now: u64) -> bool {
 }
 
 /// Whether a home holds a sign-in on this machine, as a session opened here
-/// under it signs in: the account walk and a controller's transfer read
-/// this one answer, the walk through [`sign_in_here`], so they cannot
-/// disagree on a home.
+/// under it signs in. The account walk reads a home's stored login
+/// ([`stored_login`]); a controller's transfer reads the same answer except
+/// on a Claude home a declared token file signs in, which it judges by that
+/// file alone ([`declared_token`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoredLogin {
     /// The home holds a credential whose login has not expired, or its
@@ -666,28 +667,6 @@ pub fn declared_token_file(
                 .join(","),
         )),
     }
-}
-
-/// The sign-in a session opened here on `harness`'s home `dir` starts
-/// with: a Claude home `pairs` declares a token file for by that file alone
-/// ([`declared_token`]), with no fallback to its stored login; any other by
-/// its stored login ([`stored_login`]). The account walk reads this one
-/// answer for every home it would place a session opened here on, picked or
-/// kept, so a home it refuses is no candidate on any path.
-pub fn sign_in_here(
-    harness: Harness,
-    dir: &str,
-    pairs: &[(String, PathBuf)],
-    now: u64,
-) -> crate::error::Result<StoredLogin> {
-    let declared = match harness {
-        Harness::Claude => declared_token_file(pairs, dir)?,
-        Harness::Codex | Harness::Copilot | Harness::Pi => None,
-    };
-    Ok(match declared {
-        Some(file) => declared_token(&file),
-        None => stored_login(harness, dir, now),
-    })
 }
 
 /// The sign-in a declared token file gives a session opened here, judged

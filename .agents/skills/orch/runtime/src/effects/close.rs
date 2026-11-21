@@ -427,7 +427,6 @@ pub(crate) fn account_room(
         binding_floor: false,
         admit_unread_scope: false,
         opens_here: false,
-        token_files: Vec::new(),
     };
     match super::lane_operation::pick_account(settings, fleet, host, &request, now).exit() {
         0 => "room",

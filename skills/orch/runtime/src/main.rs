@@ -2825,7 +2825,6 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
                 binding_floor,
                 admit_unread_scope: false,
                 opens_here: false,
-                token_files: Vec::new(),
             };
             Ok(ops::accounts::pick_fleet(
                 &settings,
