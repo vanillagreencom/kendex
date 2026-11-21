@@ -154,6 +154,18 @@ class OwnerAsksContract(unittest.TestCase):
         data["mailboxes"][0]["links"]["another-real-ask"] = {"url": first["url"]}
         self.assertEqual(len(owner_asks.source_rows(data)), 4)
 
+    def test_unlinked_open_mailbox_ask_names_itself_in_the_refusal(self):
+        # The cause is the console's copy: it must name the ask and the
+        # mailbox the owner fixes, as one printable sentence.
+        self.source.data = mailbox_projection(str(self.home))
+        self.source.data["mailboxes"][0]["links"] = {}
+        with self.assertRaises(owner_asks.Unavailable) as raised:
+            self.page()
+        cause = str(raised.exception)
+        for named in ("mail-ask", "/canonical/repo", "local"):
+            self.assertIn(named, cause)
+        self.assertTrue(cause.isprintable())
+
     def test_complete_row_and_byte_paging_and_stale_cursors(self):
         self.source.data = projection(str(self.home), 70)
         first = self.page()
