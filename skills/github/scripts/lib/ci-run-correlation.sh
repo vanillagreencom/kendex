@@ -210,20 +210,32 @@ scope_current_run() {
 
 # Fetch the `gh pr checks` rollup for a PR (arg 1), startedAt included —
 # scope_current_run orders runs by it. gh exits 8 while checks are pending
-# but still prints usable JSON, so any valid array is authoritative
-# regardless of the exit status; a non-array answer returns 1 and prints
-# nothing. Arg 2, when given, is the owner/name the PR lives in, as
+# but still prints usable JSON, so any valid array on stdout is
+# authoritative regardless of the exit status. The answer is stdout alone:
+# gh can write a hint to stderr on success, as 2.105.0 does. A non-array
+# answer returns 1, prints nothing on stdout and puts gh's stderr on stderr.
+# Arg 2, when given, is the owner/name the PR lives in, as
 # required_contexts takes it; without it gh resolves the repository from
-# the working directory.
-fetch_checks_rollup() {
+# the working directory. A subshell, so the scratch file's trap leaves the
+# caller's traps alone. errors is not local: bash 3.2 drops a function's
+# locals before an exit inside a command substitution runs the EXIT trap.
+fetch_checks_rollup() (
   local out repo="${2:-}" repo_arg=()
   if [ -n "$repo" ]; then
     repo_arg=(--repo "$repo")
   fi
-  out=$(gh pr checks "$1" ${repo_arg[@]+"${repo_arg[@]}"} --json name,state,bucket,link,startedAt,workflow 2>&1) || true
-  jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out" || return 1
+  if ! errors=$(mktemp); then
+    printf 'fetch_checks_rollup: scratch=mktemp-failed pr=%s\n' "$1" >&2
+    exit 1
+  fi
+  trap 'rm -f -- "$errors"' EXIT
+  out=$(gh pr checks "$1" ${repo_arg[@]+"${repo_arg[@]}"} --json name,state,bucket,link,startedAt,workflow 2>"$errors") || true
+  if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$out"; then
+    cat <"$errors" >&2
+    exit 1
+  fi
   printf '%s\n' "$out"
-}
+)
 
 # Classify a raw (already-validated) `gh pr checks` rollup in one pass:
 # compact the snapshot, scope it, name the run scope, and join the pending/

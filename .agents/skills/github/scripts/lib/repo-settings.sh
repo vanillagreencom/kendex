@@ -20,32 +20,43 @@
 # `default-branch: unreadable repo=<slug>` and gh's words after it; 3 the
 # project root names no GitHub repository, with nothing printed, so a caller
 # holding a forge-neutral answer can use it.
-kendex_github_default_branch() {
+#
+# A subshell, so the scratch file's trap leaves the caller's traps alone.
+# errors is not local: bash 3.2 drops a function's locals before an exit
+# inside a command substitution runs the EXIT trap.
+kendex_github_default_branch() (
   local root="${1:?kendex_github_default_branch: project root required}" slug="" out="" rc=0
 
   if [ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]; then
     printf '%s\n' "$WORKTREE_DEFAULT_BRANCH"
-    return 0
+    exit 0
   fi
   slug=$(kendex_github_resolve_gh_repo "$root") || rc=$?
   case "$rc" in
     0) ;;
-    1) return 3 ;;
+    1) exit 3 ;;
     *)
       printf 'default-branch: repo-invalid value=%s\n' "$slug" >&2
-      return 1
+      exit 1
       ;;
   esac
-  # A branch name holds no whitespace, so an answer that does is gh's words,
-  # not a branch: stderr is captured beside stdout to name the cause.
-  if ! out=$(gh api "repos/$slug" --jq '.default_branch // ""' 2>&1) \
+  if ! errors=$(mktemp); then
+    printf 'default-branch: unreadable repo=%s\n  scratch=mktemp-failed\n' "$slug" >&2
+    exit 1
+  fi
+  trap 'rm -f -- "$errors"' EXIT
+  # The answer is stdout alone: gh can write a hint to stderr on success, as
+  # 2.105.0 does. A branch name holds no whitespace, so an answer that does
+  # is not a branch. Stderr is the diagnostic of either failure.
+  if ! out=$(gh api "repos/$slug" --jq '.default_branch // ""' 2>"$errors") \
     || ! [[ "$out" =~ ^[^[:space:]]+$ ]]; then
     printf 'default-branch: unreadable repo=%s\n' "$slug" >&2
     [ -z "$out" ] || printf '%s\n' "$out" | sed 's/^/  /' >&2
-    return 1
+    sed 's/^/  /' <"$errors" >&2
+    exit 1
   fi
   printf '%s\n' "$out"
-}
+)
 
 # Whether the repository permits arming auto-merge. GraphQL exposes this
 # setting to installation tokens whose REST repository response omits it.

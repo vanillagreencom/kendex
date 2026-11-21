@@ -37,7 +37,9 @@ assert_eq() {
 # A checkout with a bare origin, the sibling trees/ base, and a `gh` stub that
 # answers `pr list` from GH_STATE (an open PR #42 when open-pr exists, a
 # failure when fail-gh does, a pause when slow-gh does) and `pr view` from the
-# stored document pr-42.json.
+# stored document pr-42.json, or a failure when fail-gh exists. With gh-hint
+# present every answer comes with the hint gh 2.105.0 writes to stderr on
+# success.
 make_repo() {
   local root="$1"
   mkdir -p "$root/main" "$root/bin" "$root/gh-state"
@@ -71,6 +73,9 @@ for arg in "$@"; do
   [[ "$prev" != "--state" ]] || want_state="$arg"
   prev="$arg"
 done
+if [[ -f "${GH_STATE:?}/gh-hint" ]]; then
+  printf 'hint: if you need to wait for this pull request to be reviewed, merged, or closed\n' >&2
+fi
 case "${1:-}:${2:-}" in
   pr:list)
     if [[ -f "${GH_STATE:?}/fail-gh" ]]; then
@@ -87,6 +92,10 @@ case "${1:-}:${2:-}" in
   pr:view)
     # `pr view <n> --json <fields> -q <query>`: the stored document is the
     # field set gh returns, and the query runs over it.
+    if [[ -f "${GH_STATE:?}/fail-gh" ]]; then
+      printf 'simulated gh failure\n' >&2
+      exit 42
+    fi
     shift 3
     query=""
     while [[ $# -gt 0 ]]; do
@@ -222,6 +231,7 @@ step() {
       WT="$TREES_DIR/topic"
       ;;
     fail-gh) touch "$ROOT/gh-state/fail-gh" ;;
+    gh-hint) touch "$ROOT/gh-state/gh-hint" ;;
     # A git whose every `fetch` fails, ahead of the real one on the row's PATH.
     fail-fetch)
       cat >"$ROOT/bin/git" <<'STUB'
@@ -389,6 +399,7 @@ err_text() {
     transfer-mismatch) printf 'worktree-transfer-branch-mismatch: expected=other actual=topic' ;;
     incomplete) printf 'worktree-path-incomplete: <topic>' ;;
     gh-fail) printf 'worktree-pr-query-failed: topic' ;;
+    pr-missing) printf 'worktree-pr-branch-missing: 42' ;;
     fetch-fail) printf 'worktree-ownership-fetch-failed: origin' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
     skipped-remote:*) printf 'worktree-remote-unreachable: %s' "${1#skipped-remote:}" ;;
@@ -424,6 +435,10 @@ an unregistered target directory is preserved, not replaced|orphan|create topic|
 BOT_NAME/<id> as a local branch is a candidate|local:robot/topic bot|create topic|75|-|dup:robot/topic:local|main=main@end/clean cfg=- trees= branches=robot/topic dirty=-
 BOT_NAME/<id> on the remote is a candidate|remote:robot/topic bot|create topic|75|-|dup:robot/topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
 a failed PR query is uncertainty: nothing is created|fail-gh|create topic|1|-|gh-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
+a hint on stderr beside an empty PR query is no open PR: the claim proceeds|gh-hint|create topic|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+an open PR read beside a hint on stderr still owns the branch|wt push open-pr dropped gh-hint|create topic|75|-|dup:topic:pr|main=main@end/clean cfg=true trees= branches=- dirty=-
+--pr reads the PR head beside a hint on stderr|wt push open-pr dropped pr-json gh-hint|create topic --pr 42|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
+a failed PR head read creates nothing|wt push open-pr dropped fail-gh|create topic --pr 42|1|-|pr-missing|main=main@end/clean cfg=true trees= branches=- dirty=-
 a failed final fetch stops before any mutation|fail-fetch|create topic|1|-|fetch-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
 an unreachable origin stops before the claim lock|bad-origin|create topic|1|-|remote-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
 --help prints usage and creates nothing|-|create --help|0|usage|-|main=main@end/clean cfg=- trees= branches=- dirty=-
@@ -465,6 +480,22 @@ while IFS= read -r row; do
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+
+# --- a failed gh read's diagnostic -----------------------------------------------
+# The err column above pins the keyed record alone; gh's stderr is the
+# explanation under it, so these rows pin the lines after the record.
+echo "=== a failed gh read's diagnostic carries gh's stderr ==="
+while IFS='|' read -r label fixture command; do
+  [[ -n "$label" ]] || continue
+  n=$((n + 1))
+  # shellcheck disable=SC2086
+  build "row-$n" $fixture
+  run "$command" >/dev/null
+  assert_eq "$(grep -cx '  simulated gh failure' "$ROOT/err" || true)" 1 "$label"
+done <<'DIAG_ROWS'
+the open-PR query|fail-gh|create topic
+the PR head read|wt push open-pr dropped fail-gh|create topic --pr 42
+DIAG_ROWS
 
 # --- the surviving-branch advice ------------------------------------------------
 # The err column above pins the keyed record alone; the advice under it is
