@@ -8,6 +8,8 @@ Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 
 
 ## Session command
 
+Use [Owner asks](../references/owner-asks.md) for the shared list and its Later operation. These operations need no running controller session.
+
 - Start, resume and succession read published policy from the systemd user manager on Linux, and from launchd's caller context on macOS. Shell-only exports do not reach a managed session. `environment()` in `scripts/lib/session.py` owns the list of supported names; extend it through a package change. A failed source read refuses launch before handover. Status and Stop stay available. The selected account's launch owner supplies credentials and harness identity. Only Pi can keep the caller's explicit `CLAUDE_CONFIG_DIR`, for its Claude provider.
 - Before the first Start with Copilot CLI, follow [Copilot folder trust](../references/home-layout.md#copilot-folder-trust) unless the home's `JARVIS_UNATTENDED_HARNESSES` names `copilot`.
 - Before the first Start with Claude Code in a home whose `JARVIS_UNATTENDED_HARNESSES` names `claude`, follow [Claude Code bypass consent](../references/home-layout.md#claude-code-bypass-consent).
@@ -75,7 +77,7 @@ Load each named section with `jarvis-section` before the step that acts on it. R
 | Lane launch | [Authority](../references/decisions.md#authority), orch's [Delegation](../../orch/references/skill-rules.md#delegation) and [Agent Lifecycle](../../orch/references/skill-rules.md#agent-lifecycle). For an independent work-item session, follow orch's [handoff workflow](../../orch/workflows/handoff.md). |
 | Succession | [Succession](#succession), [Handoff replacement](#handoff-replacement), the [Handoff contract](../references/long-session.md#handoff) and [Retention](../references/accounts-and-secrets.md#retention). |
 
-A consumer's own rule files keep their content. Its start instructions load only its safety-core sections above through `jarvis-section`. Give its remaining rule sections action routes for the same classes in this table. Each route names the owning file and its existing section heading. Load that section with `jarvis-section` before the action it governs. Keep consumer-specific rules in their owning files rather than copying them into this workflow or the handoff.
+To add a consumer's own rule or its action route, start at [Personal additions](../references/home-contract.md#personal-additions).
 
 ## Event loop
 

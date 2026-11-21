@@ -75,6 +75,48 @@ def destination_roots(destination):
     return listed_roots(checked(["kendex", "project", "list"], operation="project-list"))
 
 
+# lane-mail with every file it sources or runs for the overseer mailbox,
+# which a host pass and the owner-ask reads carry to a host.
+MAILBOX_FILES = ("mailbox/scripts/lane-mail", "mailbox/scripts/lib/file-lock.sh",
+                 "mailbox/scripts/lib/mailbox-append.sh", "mailbox/scripts/lib/common-root.sh",
+                 "mailbox/scripts/lib/kendex-env.sh", "mailbox/scripts/lib/lane-mail-store.py")
+
+
+def package_files(names):
+    """The caller's own package bytes, keyed by path under its packages root."""
+    packages = LIB.parents[2]
+    return {name: base64.b64encode((packages / name).read_bytes()).decode() for name in names}
+
+
+def remote_command(files, entry, args, stdin=False, shell_args=()):
+    """Shell text running ENTRY of FILES, the caller's package bytes, from a fresh folder on a host.
+
+    The host supplies its shell, python3 and the data the command reads, never
+    code. The closure exceeds a host's single-argument limit, so it travels on
+    stdin, returned as the payload, or on fd 3 where stdin carries the
+    command's own dialogue."""
+    bootstrap = """import base64,json,os,pathlib,subprocess,sys,tempfile
+if sys.argv[1] == 'stdin':
+ payload=json.load(sys.stdin)
+else:
+ with os.fdopen(3) as source: payload=json.load(source)
+with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
+ root=pathlib.Path(folder)
+ for name,value in payload['files'].items():
+  path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value))
+ argv=[sys.argv[2],*json.loads(sys.argv[3]),str(root/sys.argv[4]),*sys.argv[5:]]
+ result=subprocess.run(argv)
+ sys.exit(result.returncode)
+"""
+    # -I: a -c program imports from its working directory otherwise.
+    command = ("python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
+               " \"$BASH\" " + shlex.join([json.dumps(list(shell_args)), entry, *map(str, args)]))
+    payload = json.dumps({"files": files})
+    if stdin:
+        return command, payload
+    return command + " 3<<'jarvis-files'\n" + payload + "\njarvis-files\n", None
+
+
 def note_routes(settings, repo, host=None, local=False):
     """Select without sending; only the legacy route discovers its fallback lazily."""
     declared = destinations(settings)
@@ -292,7 +334,8 @@ except Refusal as error:
  print(json.dumps({"failure":{"key":["presence-settings","refusal",error.key],"detail":str(error)}}))
 """
     try:
-        record = json.loads(checked([sys.executable, "-B", "-c", code, owner,
+        # -I: a -c program imports from its working directory otherwise.
+        record = json.loads(checked([sys.executable, "-I", "-B", "-c", code, owner,
                                      packages / "orch", root], operation="presence-settings"))
         if "failure" in record:
             error = record["failure"]
@@ -947,29 +990,11 @@ class Watch:
 
     def remote_command(self, args):
         # Carry exact dependency bytes, never target-local code or settings.
-        files = {"jarvis/scripts/" + name: base64.b64encode((LIB.parent / name).read_bytes()).decode()
-                 for name in ("vm-watch.sh", "lib/watch.py", "lib/jarvis-env.sh")}
-        packages = LIB.parents[2]
-        for name in ("slack/scripts/lib/settings.py", "slack/scripts/lib/refusals.py",
-                     "orch/scripts/lib/kendex-env.sh", "mailbox/scripts/lane-mail",
-                     "mailbox/scripts/lib/file-lock.sh", "mailbox/scripts/lib/mailbox-append.sh",
-                     "mailbox/scripts/lib/common-root.sh", "mailbox/scripts/lib/kendex-env.sh",
-                     "mailbox/scripts/lib/lane-mail-store.py"):
-            files[name] = base64.b64encode((packages / name).read_bytes()).decode()
-        # The mailbox closure exceeds a host's single-argument limit. Keep
-        # stdin for presence permission replies and close the map before launch.
-        bootstrap = """import base64,json,os,pathlib,subprocess,sys,tempfile
-with os.fdopen(3) as source:
- files=json.load(source)
-with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
- root=pathlib.Path(folder)
- for name,value in files.items():
-  path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value))
- result=subprocess.run([sys.argv[1],str(root/'jarvis/scripts/vm-watch.sh'),*sys.argv[2:]])
- sys.exit(result.returncode)
-"""
-        return ("python3 -c " + shlex.quote(bootstrap) + " \"$BASH\" " + shlex.join(args) +
-                " 3<<'jarvis-files'\n" + json.dumps(files) + "\njarvis-files\n")
+        files = package_files(("jarvis/scripts/vm-watch.sh", "jarvis/scripts/lib/watch.py",
+                               "jarvis/scripts/lib/jarvis-env.sh", "slack/scripts/lib/settings.py",
+                               "slack/scripts/lib/refusals.py", "orch/scripts/lib/kendex-env.sh", *MAILBOX_FILES))
+        command, _ = remote_command(files, "jarvis/scripts/vm-watch.sh", args)
+        return command
 
     def remote(self, destination):
         args = ["--side", destination.key, "--cursor", json.dumps(self.cursors.get(destination.key, {}))]
