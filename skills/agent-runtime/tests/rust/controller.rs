@@ -674,6 +674,7 @@ struct CopiedServer {
     pid: u32,
     start: u64,
     pane: String,
+    pane_pid: u32,
 }
 
 #[cfg(target_os = "linux")]
@@ -736,6 +737,7 @@ impl CopiedServer {
             pid: pid.parse().unwrap(),
             start: start.parse().unwrap(),
             pane: pane.to_owned(),
+            pane_pid: pane_pid.parse().unwrap(),
         }
     }
 }
@@ -754,14 +756,16 @@ impl Drop for CopiedServer {
 /// A controller whose server a tmux update left behind is read through that
 /// server's own program, whatever `tmux` stands first on `PATH`: here a
 /// stale client, answering as a tmux 3.4 client does a live tmux 3.8
-/// server. The program reads so after the update removed it from disk. A
-/// server whose program is no tmux is asked through `PATH`, and the stale
-/// client's answer is the version mismatch, never an unreachable server.
+/// server, and a reconcile heals the record's missing harness identity
+/// through the same program. The program reads so after the update removed
+/// it from disk. A server whose program is no tmux is asked through `PATH`,
+/// and the stale client's answer is the version mismatch, never an
+/// unreachable server, with the record left as it stood.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_live_controller_reads_through_its_servers_own_program_past_a_stale_client_on_path() {
     // (row, the program the server starts from, removed once it runs, the
-    // controller-unreadable cause where the status refuses)
+    // cause the status and the heal refuse with)
     let rows: [(&str, &str, bool, Option<&str>); 3] = [
         ("own program", "tmux", false, None),
         ("own program removed", "tmux", true, None),
@@ -812,6 +816,35 @@ fn a_live_controller_reads_through_its_servers_own_program_past_a_stale_client_o
                 assert_eq!(key, "controller-unreadable", "{row}");
                 assert_eq!(field(&fields, "cause"), Some(cause), "{row}: {fields}");
                 assert_ne!(asked, "", "{row}: the client on PATH was asked");
+            }
+        }
+        // The reconcile heals the identity the record lacks on the same
+        // server, through the same program.
+        let before = std::fs::read_to_string(&record).unwrap();
+        let mut words = args(&["reconcile"], &record, None);
+        words.extend(world.reach());
+        let out = world.controller(world.root(), &words, &[]);
+        assert!(out.status.success(), "{row}: {}", stderr(&out));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let healed = &reply["result"]["controller"];
+        let after = std::fs::read_to_string(&record).unwrap();
+        match refused {
+            None => {
+                assert_eq!(healed["healed"], true, "{row}: {reply}");
+                let doc: Value = serde_json::from_str(&after).unwrap();
+                assert_eq!(
+                    doc["controller"]["harness_pid"], server.pane_pid,
+                    "{row}: {after}"
+                );
+                assert_eq!(
+                    world.log("tmux.log"),
+                    "",
+                    "{row}: the stale client was asked"
+                );
+            }
+            Some(cause) => {
+                assert_eq!(healed["refusal"], cause, "{row}: {reply}");
+                assert_eq!(after, before, "{row}: the record moved");
             }
         }
     }

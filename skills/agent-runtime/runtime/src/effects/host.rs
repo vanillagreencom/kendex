@@ -1537,6 +1537,20 @@ pub fn adopt_controller(
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
+    adopt_on(path, r, None, settings, locking)
+}
+
+/// [`adopt_controller`] on `confirmed`, the server a caller already read at
+/// the request's socket through the program of the pid its record names, so
+/// the adoption reaches the server that read did; `None` reads the server at
+/// the socket afresh.
+fn adopt_on(
+    path: &Path,
+    r: &AdoptController,
+    confirmed: Option<tmux::Server>,
+    settings: &EngineSettings,
+    locking: Locking,
+) -> Result<ControllerAdopted> {
     let overseer = fleet_view(path)?.overseer;
     let harness = Harness::named(&r.harness)?;
     if !is_pane_id(&r.pane) {
@@ -1546,7 +1560,10 @@ pub fn adopt_controller(
         Some(socket) => socket.clone(),
         None => caller_socket()?,
     };
-    let server = tmux::server(&socket)?;
+    let server = match confirmed {
+        Some(server) => server,
+        None => tmux::server(&socket)?,
+    };
     let fields = pane_read(&server, &r.pane)?;
     let target = Target::new(&settings.harness_binaries, harness)?;
     let identity = match observe::foreground(fields.pid, &|name| target.owns(name), None) {
@@ -1701,7 +1718,7 @@ pub fn heal_controller(
         permission: None,
         extra_args: None,
     };
-    adopt_controller(path, &request, settings, locking).map(Some)
+    adopt_on(path, &request, Some(server), settings, locking).map(Some)
 }
 
 /// The fields of `pane` on `server`: gone refuses `pane-gone`, a failed
