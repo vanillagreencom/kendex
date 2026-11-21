@@ -22,8 +22,10 @@
 # holding a forge-neutral answer can use it.
 #
 # A subshell, so the scratch file's trap leaves the caller's traps alone.
+# errors is not local: bash 3.2 drops a function's locals before an exit
+# inside a command substitution runs the EXIT trap.
 kendex_github_default_branch() (
-  local root="${1:?kendex_github_default_branch: project root required}" slug="" out="" errors="" rc=0
+  local root="${1:?kendex_github_default_branch: project root required}" slug="" out="" rc=0
 
   if [ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]; then
     printf '%s\n' "$WORKTREE_DEFAULT_BRANCH"

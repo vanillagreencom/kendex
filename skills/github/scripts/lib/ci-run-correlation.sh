@@ -217,9 +217,10 @@ scope_current_run() {
 # Arg 2, when given, is the owner/name the PR lives in, as
 # required_contexts takes it; without it gh resolves the repository from
 # the working directory. A subshell, so the scratch file's trap leaves the
-# caller's traps alone.
+# caller's traps alone. errors is not local: bash 3.2 drops a function's
+# locals before an exit inside a command substitution runs the EXIT trap.
 fetch_checks_rollup() (
-  local out errors repo="${2:-}" repo_arg=()
+  local out repo="${2:-}" repo_arg=()
   if [ -n "$repo" ]; then
     repo_arg=(--repo "$repo")
   fi
