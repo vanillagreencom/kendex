@@ -180,7 +180,12 @@ fn cloud_prompt(brief: &str, branch: &str, stages: &Stages, mode: LaneOutput) ->
 /// pane agent `tmux split-window` starts reads its environment from. The
 /// server was started outside the login profile and holds neither, so
 /// without the step every pane agent stops on "No API key found for
-/// github-copilot" or reaches GitHub unproxied.
+/// github-copilot" or reaches GitHub unproxied. The values are secrets (a
+/// key, an authenticated proxy URL), so none is ever a word of a command
+/// the step runs, where any reader of the host's process list would see
+/// it: `printenv` writes each to `sed`, which quotes it for tmux's parser,
+/// and tmux reads the lines on `source-file -`'s standard input (tmux 3.1
+/// and later).
 const PI_SESSION_ENV_STEP: &str = include_str!("pi-session-env.txt");
 /// The bound on the Claude CLI creating a cloud session.
 const CLOUD_BOUND: Duration = Duration::from_secs(600);

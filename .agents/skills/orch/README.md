@@ -73,7 +73,7 @@ kendex installs the skills orch requires, agent-runtime among them. Build the ru
 .agents/skills/orch/scripts/setup
 ```
 
-The build needs Rust 1.96 or later. orch also needs `tmux`, `git`, `setsid`, `gh`, `jq` and Bash 3.2 or later. The included SSH host provider needs Python 3 and `flock`. On Linux the lane sandbox needs `bwrap` with unprivileged user namespaces. `.agents/skills/orch/scripts/orch-runtime ready` names anything missing.
+The build needs Rust 1.96 or later. orch also needs `tmux` 3.1 or later, `git`, `setsid`, `gh`, `jq` and Bash 3.2 or later. The included SSH host provider needs Python 3 and `flock`. On Linux the lane sandbox needs `bwrap` with unprivileged user namespaces. `.agents/skills/orch/scripts/orch-runtime ready` names anything missing.
 
 For Linear issues, add project-management and linear, and add the started states `In Review` and `Verifying` in the team settings. Second-opinion and review-gate are optional.
 
