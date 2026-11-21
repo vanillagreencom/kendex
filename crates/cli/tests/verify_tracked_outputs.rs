@@ -6,8 +6,9 @@
 //! row; a declared path git cannot judge fails the run with the scope
 //! named as not checked; and an agent no harness in the project takes,
 //! Antigravity keeping agents global only, writes nowhere and is held to
-//! nothing. The rolling consumer refresh runs its own verify line under
-//! `set -e` and passes on a project with the warning.
+//! nothing. The rolling consumer refresh runs its own verify line inside
+//! an `||` list that captures its status; that line, run alone under
+//! `set -e`, passes on a project with the warning.
 //!
 //! The must-fail controls are `tracked_output_rows` skipping every
 //! standing, which leaves the ignored rows without a row; answering
@@ -212,10 +213,10 @@ fn an_ignored_tracked_output_warns_and_fails_only_under_strict() {
     }
 }
 
-/// The review-gate consumer refresh runs `kendex verify` under `set -e`
-/// between its refresh and its commit. Its own verify line, read from the
-/// script and run under the same shell options, passes on a project that
-/// ignores a declared tracked output.
+/// The review-gate consumer refresh runs `kendex verify` between its
+/// refresh and its commit, inside an `||` list that captures its status.
+/// Its own verify line, read from the script and run alone under
+/// `set -e`, passes on a project that ignores a declared tracked output.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_consumer_refresh_passes_on_an_ignored_tracked_output() {

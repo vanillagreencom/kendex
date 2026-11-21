@@ -116,6 +116,86 @@ else: raise AssertionError('source coverage control missed an unread answer read
 SOURCE_CASES
 then ok 'source coverage uses engine subscriptions and rejects revisions or unknown evidence; controls'
 else bad 'source coverage'; fi
+# The verify classifier, run over one verify document per case: held where
+# every failure is a withheld declaration, with each finding and its manifest
+# line on stdout, and every other failure refused with its cause, which the
+# runner turns into today's exit. The base document is the shape kendex
+# verify --json printed for a hook whose companion a harnesses pin narrows.
+if python3 - "$REFRESH_DIR/refresh-consumer.sh" "$TMP" <<'VERIFY_CASES'
+import copy, json, pathlib, re, subprocess, sys
+source = pathlib.Path(sys.argv[1]).read_text()
+body = re.search(r"<<'VERIFY_FINDINGS'\n(.*?)\nVERIFY_FINDINGS", source, re.S).group(1)
+root = pathlib.Path(sys.argv[2]) / 'verify-findings'
+root.mkdir()
+manifest = ('schema = 8\n[sources.cat]\nrepo = "owner/catalog"\n[hooks.needer]\nsource = "cat"\n'
+            '[hooks.helper]\nsource = "cat"\nharnesses = ["codex"]\n')
+def row(kind, name, state, detail=None, harness=None):
+    found = dict(scope='project', root='/project', kind=kind, name=name, state=state, positions=[])
+    if detail is not None: found['detail'] = detail
+    if harness is not None: found['harness'] = harness
+    return found
+base = dict(version=1, clean=False, checked=1, failed=0, rows=[
+    row('hook', 'needer', 'unrecorded', 'withheld: a hook it requires will not run here'),
+    row('hook', 'helper', 'notice', 'its harnesses pin in kendex.toml leaves out claude', 'claude'),
+    row('hook', 'helper', 'ok', harness='codex'),
+    row('record', '.kendex-lock.json', 'ok'),
+    row('inventory', '.kendex-generated.json', 'ok')])
+closing = '1 checked, 1 OK, 0 failed\n'
+def changed(edit):
+    doc = copy.deepcopy(base)
+    edit(doc)
+    return doc
+# Each case: name, document, verify's stderr, manifest bytes, the cause or
+# None for held.
+cases = [
+    ('held', base, closing, manifest.encode(), None),
+    ('held-warning', base, '1 checked, 1 OK, 0 failed; 1 warning\n', manifest.encode(), None),
+    ('failed-row', changed(lambda d: d['rows'].append(row('shim', 'AGENTS.md', 'failed', 'out of sync'))), closing, manifest.encode(), 'row'),
+    ('unknown-state', changed(lambda d: d['rows'].append(row('hook', 'other', 'drifted'))), closing, manifest.encode(), 'row'),
+    ('plain-gap', changed(lambda d: d['rows'].append(row('skill', 'probe', 'unrecorded'))), closing, manifest.encode(), 'unrecorded'),
+    ('no-withheld', changed(lambda d: d['rows'].pop(0)), closing, manifest.encode(), 'unrecorded'),
+    ('no-record', changed(lambda d: d['rows'].pop(3)), closing, manifest.encode(), 'record'),
+    ('other-row-failed', base, '1 checked, 1 OK, 0 failed; 1 other row failed\n', manifest.encode(), 'closing'),
+    ('no-closing', base, '', manifest.encode(), 'closing'),
+    ('failed-count', changed(lambda d: d.update(failed=1)), closing, manifest.encode(), 'document'),
+    ('clean', changed(lambda d: d.update(clean=True)), closing, manifest.encode(), 'document'),
+    ('version-2', changed(lambda d: d.update(version=2)), closing, manifest.encode(), 'document'),
+    ('malformed', '{', closing, manifest.encode(), 'unread'),
+    ('manifest-unread', base, closing, b'\xff[hooks.needer]\n', 'manifest')]
+def check(script, name, doc, said, text, cause):
+    folder = root / name
+    folder.mkdir(exist_ok=True)
+    (folder / 'kendex.toml').write_bytes(text)
+    (folder / 'verify.json').write_text(doc if isinstance(doc, str) else json.dumps(doc))
+    (folder / 'verify.said').write_text(said)
+    result = subprocess.run([sys.executable, '-c', script, 'verify.json', 'verify.said'], cwd=folder,
+                            capture_output=True, text=True, timeout=10)
+    if cause is None:
+        assert result.returncode == 0, ('verify-findings', name, result.stderr)
+        lines = result.stdout.splitlines()
+        # One item per withheld and notice row, each naming its manifest line.
+        assert len(lines) == 2, ('verify-findings', name, result.stdout)
+        assert lines[0].startswith('- hook `needer`:') and '(`kendex.toml` line 4: `[hooks.needer]`)' in lines[0], ('verify-findings', name, lines)
+        assert lines[1].startswith('- hook `helper` on claude:') and '(`kendex.toml` line 8: `harnesses = ["codex"]`)' in lines[1], ('verify-findings', name, lines)
+    else:
+        assert result.returncode == 1 and result.stdout == '', ('verify-findings', name, result.stdout, result.stderr)
+        assert result.stderr == 'refresh-verify=other cause=' + cause + '\n', ('verify-findings', name, result.stderr)
+for case in cases:
+    check(body, *case)
+    print('verify-findings: case=' + case[0] + ' pass')
+# Controls: a reader that skips the closing line or the record row holds a
+# run whose failure the document does not carry.
+for cause, case_name in (('closing', 'other-row-failed'), ('record', 'no-record')):
+    original = "    other('%s')\n" % cause
+    assert body.count(original) == 1, original
+    broken = body.replace(original, '    pass\n')
+    case = next(row for row in cases if row[0] == case_name)
+    try: check(broken, 'control-' + case_name, *case[1:])
+    except AssertionError as error: assert error.args[0][0] == 'verify-findings', error
+    else: raise AssertionError('verify findings control missed ' + case_name)
+VERIFY_CASES
+then ok 'verify classifier holds only withheld declarations and refuses every other failure; controls'
+else bad 'verify classifier'; fi
 mkdir -p "$TMP/missing-bin"
 RC=0
 OUT="$(env -i PATH="$TMP/missing-bin" REVIEW_GATE_REQUIRE_KENDEX=1 \
@@ -165,7 +245,9 @@ case "$*" in
   api\ --paginate\ *pulls*) cat "$TEST_STATE/pr" ;;
   api\ users/*) printf '123\n' ;;
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
-  'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
+  # The PATCH answer's draft field, where a row drafted the pull request.
+  'api --method PATCH repos/acme/test/pulls/1 '*) [ ! -f "$TEST_STATE/pr-draft" ] || printf 'true\n' ;;
+  'pr ready '*) : ;;
   'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
   'api graphql '*'mergeQueue(branch: $branch)'*)
     # The landing check's queue read, answered as GitHub's body with the
@@ -559,7 +641,7 @@ while IFS='|' read -r lock_name lock_project lock_add; do
         lock_relative="${lock_scope#"$repo"}"
         lock_relative="${lock_relative#/}"
         lock_prefix="${lock_relative:+$lock_relative/}"
-        grep -qxF "$lock_scope|verify --scope project|v1.7.0" "$TMP/state/project-calls" || lock_published=false
+        grep -qxF "$lock_scope|verify --scope project --json|v1.7.0" "$TMP/state/project-calls" || lock_published=false
         [ "$(git --git-dir="$LEASE_REMOTE" show "$lock_head:${lock_prefix}.kendex-lock.json")" = 'added by the refresh' ] || lock_published=false
         [ "$(git --git-dir="$LEASE_REMOTE" show "$lock_head:${lock_prefix}rendered.txt")" = content-update ] || lock_published=false
       done
@@ -1200,7 +1282,7 @@ edits = {
     'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
     'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
     'queue-ignored': (runner, '  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi\n', ''),
-    'skip-unchanged': (runner, 'if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
+    'skip-unchanged': (runner, 'if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then', 'if false; then # [ "$state" = unchanged ]'),
     'moved-unread': (library, '*":refs/heads/$4:[rejected]"*) KENDEX_LAND_RESULT=base-moved ;;', '*":refs/heads/$4:[rejected-never]"*) KENDEX_LAND_RESULT=base-moved ;;'),
     'remote-moved': (library, '*":refs/heads/$4:[rejected]"*)', '*":refs/heads/$4:["*"rejected]"*)'),
 }
@@ -1772,6 +1854,23 @@ reset_default
 run_refresh bad-verify fail render
 after="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
 if [ "$RC" -ne 0 ] && [ "$after" = "$first" ]; then ok 'bad-verify refuses before push'; else bad 'bad-verify refuses before push' "$OUT"; fi
+# A pull request a held run drafted is marked ready by the next run whose
+# verify passes, before that run arms it.
+cp "$TMP/state/pr" "$TMP/saved-pr"
+reset_default
+printf '1\n' >"$TMP/state/pr"
+: >"$TMP/state/pr-draft"
+: >"$TMP/state/calls"
+run_refresh draft-ready pass render
+ready_line="$(grep -nxF 'pr ready 1 --repo acme/test' "$TMP/state/calls" | cut -d: -f1 || true)"
+arm_line="$(grep -n '^pr merge 1 --repo acme/test --auto ' "$TMP/state/calls" | cut -d: -f1 || true)"
+if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
+    [ -n "$ready_line" ] && [ -n "$arm_line" ] && [ "$ready_line" -lt "$arm_line" ] &&
+    ! grep -qF -- '--undo' "$TMP/state/calls"; then
+  ok 'a passing run marks a drafted rolling pull request ready before it arms it'
+else bad 'drafted pull request ready' "$OUT"; fi
+rm -f -- "${TMP:?}/state/pr-draft"
+cp "$TMP/saved-pr" "$TMP/state/pr"
 # A declaration deleted from kendex.toml by hand leaves a file refresh keeps
 # and verify fails on. The runner's apply after refresh removes it, so the
 # deletion lands in the rolling pull request before the verify that gates
@@ -3147,6 +3246,112 @@ RECORD_CONTROL
         ok "$row stops before any discard or publication"
       else bad "$row preserved edit" "$OUT"; fi
     else bad "$row refusal" "$OUT"; fi
+  done
+  # A harnesses pin in the consumer's own manifest narrows the hook another
+  # hook requires, so verify withholds the requirer and fails. The run
+  # publishes the refresh as a draft that names each finding and its
+  # manifest line, and arms and lands nothing. The retained row reruns on the
+  # new row's draft, armed meanwhile: the identical tree publishes no head,
+  # and the run disarms the draft before it renames the finding. The current
+  # row commits the render on the default branch, so nothing carries the
+  # finding and verify's exit stands. The runner this change replaced stops
+  # at verify with no pull request.
+  git -C "$SKILL_DIR" show a9a3f081d78d51c7e247bdf8eaddc6318a02d334:refresh/refresh-consumer.sh >"$TMP/unheld-runner"
+  cp "$TMP/state/start-state.json" "$TMP/held-start-state.json"
+  for row in new retained existing current before-control; do
+    if [ "$row" = retained ]; then
+      retained_head="$(git --git-dir="$real_root/remote" rev-parse refs/heads/kendex/refresh)"
+      printf '1\n' >"$TMP/state/pr"
+      : >"$TMP/state/pr-draft"
+      : >"$TMP/state/creates"
+      : >"$TMP/state/calls"
+      rm -f -- "${TMP:?}/state/body"
+      jq '.data.repository.pullRequest.autoMergeRequest = {enabledAt: "2026-11-21T03:00:00Z"}' \
+        "$TMP/held-start-state.json" >"$TMP/state/start-state.json"
+    else
+      real_refresh_fixture "held-$row"
+      file_edit "$repo" .agents/skills/probe/SKILL.md 1 '^Hand edit\.$' '/^Hand edit\.$/d'
+      hooks="$real_root/git/owner/catalog/hooks"
+      mkdir -p "$hooks"
+      printf '%s\n' '#!/usr/bin/env bash' '# ---' '# name: needer' '# event: PreToolUse' '# matcher: Bash' \
+        '# description: needs its helper' '# requires: [helper]' '# ---' 'exit 0' >"$hooks/needer.sh"
+      printf '%s\n' '#!/usr/bin/env bash' '# ---' '# name: helper' '# event: PreToolUse' '# matcher: Bash' \
+        '# description: helps' '# ---' 'exit 0' >"$hooks/helper.sh"
+      chmod +x "$hooks/needer.sh" "$hooks/helper.sh"
+      # A catalog offers hooks only where its manifest names it a catalog.
+      printf 'is_source_catalog = true\n' >"$real_root/git/owner/catalog/kendex.toml"
+      commit "$real_root/git/owner/catalog"
+      printf '[hooks.needer]\nsource = "cat"\n[hooks.helper]\nsource = "cat"\nharnesses = ["codex"]\n' >>"$repo/kendex.toml"
+      pin_line="$(grep -nxF 'harnesses = ["codex"]' "$repo/kendex.toml" | cut -d: -f1)"
+      if [ "$row" = current ]; then
+        for verb in refresh apply; do
+          (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
+            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+            KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" "$verb" --scope project --yes --leave)
+        done
+      fi
+      # The historical runner is committed, so it starts from a clean tree.
+      [ "$row" != before-control ] || cp "$TMP/unheld-runner" "$repo/refresh/refresh-consumer.sh"
+      publish_real_fixture
+      [ "$row" != existing ] || printf '1\n' >"$TMP/state/pr"
+    fi
+    for marker in refreshed push-refused arm-attempted armed queued merged arm-state.json disarm-attempted; do
+      rm -f -- "${TMP:?}/state/$marker"
+    done
+    main_before="$(git -C "$repo" rev-parse main)"
+    REAL_LAND_TOKEN=land-token
+    run_real_refresh
+    unset REAL_LAND_TOKEN
+    case "$row" in
+      before-control)
+        if [ "$RC" -ne 0 ] && [ "$(tail -n 1 "$TMP/state/kendex")" = 'verify --scope project' ] &&
+            [ ! -s "$TMP/state/creates" ] &&
+            ! git --git-dir="$real_root/remote" show-ref --verify --quiet refs/heads/kendex/refresh; then
+          ok 'control: the runner before the held route stops at verify with no pull request'
+        else bad 'held control' "$OUT"; fi ;;
+      current)
+        # kendex verify exits 1 on any failure.
+        if [ "$RC" -eq 1 ] && grep -qxF 'refresh-verify=held project=.' <<<"$OUT" &&
+            grep -qxF 'refresh-error=verify value=1' <<<"$OUT" &&
+            ! grep -qE '^api --method (POST|PATCH) repos/acme/test/pulls' "$TMP/state/calls" &&
+            ! git --git-dir="$real_root/remote" show-ref --verify --quiet refs/heads/kendex/refresh; then
+          ok 'held current: a withheld declaration with nothing to publish keeps the verify failure'
+        else bad 'held current' "$OUT"; fi ;;
+      *)
+        held=no
+        if [ "$RC" -eq 0 ] &&
+            head="$(git --git-dir="$real_root/remote" rev-parse refs/heads/kendex/refresh)" &&
+            grep -qxF "refresh-state=held pr=1 class=render head=$head" <<<"$OUT" &&
+            grep -qxF 'refresh-verify=held project=.' <<<"$OUT" &&
+            grep -qxF 'refresh-land=skipped value=verify' <<<"$OUT" &&
+            [ "$(git --git-dir="$real_root/remote" rev-parse refs/heads/main)" = "$main_before" ] &&
+            git --git-dir="$real_root/remote" cat-file -e "$head:kendex.toml" &&
+            grep -qF -- '- hook `needer`: withheld: ' "$TMP/state/body" &&
+            grep -qF "(\`kendex.toml\` line $pin_line: \`harnesses = [\"codex\"]\`)" "$TMP/state/body" &&
+            ! grep -qE '^pr merge 1 --repo acme/test --(auto|squash)|^git push main |^pr ready 1 --repo acme/test$' "$TMP/state/calls"; then
+          case "$row" in
+            new)
+              if grep -qxF created "$TMP/state/creates" && grep -qF -- '-F draft=true --jq .number' "$TMP/state/calls" &&
+                  ! grep -q '^pr merge ' "$TMP/state/calls"; then held=yes; fi ;;
+            retained)
+              # The pull request is already a draft, so the held run changes
+              # no draft state.
+              if [ "$head" = "$retained_head" ] && ! grep -qxF 'git push' "$TMP/state/calls" &&
+                  [ ! -s "$TMP/state/creates" ] && grep -qF 'api --method PATCH repos/acme/test/pulls/1 ' "$TMP/state/calls" &&
+                  grep -qxF 'pr merge 1 --repo acme/test --disable-auto' "$TMP/state/calls" &&
+                  ! grep -q '^pr ready ' "$TMP/state/calls"; then held=yes; fi ;;
+            existing)
+              if [ ! -s "$TMP/state/creates" ] && grep -qF 'api --method PATCH repos/acme/test/pulls/1 ' "$TMP/state/calls" &&
+                  grep -qxF 'pr ready 1 --repo acme/test --undo' "$TMP/state/calls" &&
+                  ! grep -q '^pr merge ' "$TMP/state/calls"; then held=yes; fi ;;
+          esac
+        fi
+        if [ "$held" = yes ]; then ok "held $row: a withheld declaration publishes a draft that names the finding and its manifest line"
+        else bad "held $row" "$OUT"; fi ;;
+    esac
+    : >"$TMP/state/pr"
+    rm -f -- "${TMP:?}/state/pr-draft"
+    cp "$TMP/held-start-state.json" "$TMP/state/start-state.json"
   done
 fi
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"

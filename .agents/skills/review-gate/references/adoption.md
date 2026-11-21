@@ -65,11 +65,12 @@ GitHub's rulesets judge the landing push, and the run reads no ruleset first. A 
 
 The landing token holds no Workflows permission, which GitHub requires of an app that edits a file under `.github/workflows` ([GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)). GitHub therefore refuses a landing push whose commit changes the adopted caller `.github/workflows/kendex-refresh.yml`. That update keeps the rolling pull request and its review.
 
-A run that committed a new head and kept the pull request route prints one landing line ahead of that route's record. The shared workflow passes the script the boolean `KENDEX_LAND_CONFIGURED`: true where the run received either name of the pair, and never a secret value. A run that received neither name prints no landing line. The run checks the token, the class, the sources and the merge queue in that order, and the line names the first check the run does not meet.
+A run that committed a new head and kept the pull request route prints one landing line ahead of that route's record. The shared workflow passes the script the boolean `KENDEX_LAND_CONFIGURED`: true where the run received either name of the pair, and never a secret value. A run that received neither name prints no landing line. The run checks the token, the verify, the class, the sources and the merge queue in that order, and the line names the first check the run does not meet.
 
 | Line | Cause |
 | --- | --- |
 | `refresh-land=unavailable value=token` | The run received one name of the pair alone, or the `Mint the landing token` step failed. That step's log holds the mint error. |
+| `refresh-land=skipped value=verify` | The run is held: its verify failed only on declarations a project's own manifest withholds, so the head goes to a draft pull request that names each finding. |
 | `refresh-land=skipped value=class` | The classifier answered a class other than `render`. |
 | `refresh-land=skipped value=sources-uncovered` | A selected project does not have the source coverage above. |
 | `refresh-land=unavailable value=sources-read` | The run could not read a project's source evidence: the engine's subscription list or a project manifest. Stderr holds what kendex printed, then `refresh-sources=unread value=PROJECT`, then the cause. |
