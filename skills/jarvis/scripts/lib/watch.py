@@ -1105,7 +1105,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
     def forward(self):
         try:
             command = [self.bash, LIB.parent / "jarvis-session"]
-            output = checked([*command, "forward-drain", "--home", self.home],
+            output = checked([*command, "forward-drain", "--collection", "--home", self.home],
                              self.home, operation="forward-drain")
             # Status shares the forwarding owners state location and lifecycle.
             # This local read starts no remote call or independent polling task.

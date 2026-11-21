@@ -220,7 +220,7 @@ class Outbox:
         try:
             value = json.loads(self.path.read_text())
         except FileNotFoundError:
-            return {"v": 1, "home": self.home, "first": None, "probe": None, "last_answer": None, "entries": []}
+            return {"v": 1, "home": self.home, "first": None, "collection": None, "last_answer": None, "entries": []}
         except (OSError, ValueError) as error:
             raise Refusal("outbox-unreadable", str(error)) from error
         if not (isinstance(value, dict) and value.get("v") == 1 and value.get("home") == self.home
@@ -322,7 +322,7 @@ class Forwarder:
         return cause, error.record["detail"].split("\n", 1)[0][:200]
 
     def probe(self, cause, detail):
-        """Hold this call's reach as the run's; only a drain, the watch-loop's collection, records it."""
+        """Hold this call's reach as the run's; only the watch-loop's `forward-drain --collection` records it."""
         reachable = cause != UNREACHABLE
         self.reach = {"reachable": reachable, "cause": None if reachable else UNREACHABLE,
                       "detail": None if reachable else detail}
@@ -482,7 +482,7 @@ class Forwarder:
 
     def events(self):
         """One forward-failed block per kept entry whose cause no retry clears, a closed answer-unseen one included,
-        and one forward-unreachable block while the last collection could not reach the main.
+        and one forward-unreachable block while the loop's last collection could not reach the main.
 
         The watch's pass cursor appends a printed block once, so a closed
         block prints on every drain until its keep ends, and a failed pass
@@ -492,12 +492,14 @@ class Forwarder:
         state = self.outbox.read()
         now = watch.epoch()
         blocks = []
-        probe = state.get("probe") or {}
-        if self.role.kind == "satellite" and probe.get("reachable") is False:
-            fields = {"cause": probe["cause"]}
-            if probe.get("detail"):
-                fields["detail"] = probe["detail"][:200]
-            blocks.append(watch.event("forward-unreachable", **fields))
+        collection = state.get("collection") or {}
+        if self.role.kind == "satellite" and collection.get("reachable") is False:
+            # The loop appends a header once while drains repeat it, so the
+            # header names the outage and the diagnostic, which can change
+            # within one outage, rides below it.
+            detail = collection.get("detail")
+            blocks.append(watch.event("forward-unreachable", cause=collection["cause"])
+                          + (watch.line_value(detail, limit=200) + "\n" if detail else ""))
         for entry in state["entries"]:
             if kept(entry, now) and entry.get("answer"):
                 blocks.append(watch.event("forward-answer", request=entry["request"], key=entry["key"],
@@ -516,18 +518,21 @@ class Forwarder:
                 if entry_state(entry) != "closed":
                     entry.update(cause="setting-invalid", detail=None)
 
-    def drain(self):
+    def drain(self, collection=False):
+        """COLLECTION marks the watch-loop's own drain, the only one whose reach status reports."""
         self.satellite()
         if self.role.kind == "invalid":
             self.invalid()
         else:
             self.send()
             self.read_main()
-            if self.reach is not None:
-                # Status reports the loop's own reach: a forward's call can
-                # reach the main from an environment the loop lacks.
+            if collection and self.reach is not None:
+                # A forward call or a session's own drain can reach the main
+                # from an environment the loop lacks. The old `probe` key
+                # held such reach, so it is dropped, never read.
                 with self.outbox.locked() as state:
-                    state["probe"] = dict(self.reach, at=watch.epoch())
+                    state.pop("probe", None)
+                    state["collection"] = dict(self.reach, at=watch.epoch())
         return self.events()
 
     def forward(self, path):
@@ -587,7 +592,7 @@ class Forwarder:
         if self.role.kind == "main":
             return {"v": 1, "role": "main"}
         state = self.outbox.read()
-        probe = state.get("probe") or {}
+        reach = state.get("collection") or {}
         requests = [{"request": entry["request"], "key": entry["key"], "state": entry_state(entry),
                      "cause": entry.get("cause"), "forwarded": entry.get("forwarded"),
                      "queued_at": iso(entry.get("queued_at")), "attempts": entry.get("attempts", 0)}
@@ -596,8 +601,8 @@ class Forwarder:
                           if entry.get("answer") and kept(entry, watch.epoch())),
                          key=lambda answer: (answer["closed_at"], answer["key"]))
         return {"v": 1, "role": "satellite", "main": self.role.dest,
-                "reachable": probe.get("reachable"), "checked_at": iso(probe.get("at")),
-                "cause": "setting-invalid" if self.role.kind == "invalid" else probe.get("cause"),
+                "reachable": reach.get("reachable"), "checked_at": iso(reach.get("at")),
+                "cause": "setting-invalid" if self.role.kind == "invalid" else reach.get("cause"),
                 "last_answer": state.get("last_answer"), "requests": requests, "answers": answers}
 
 
@@ -614,7 +619,7 @@ def main(args, home_state):
             print(json.dumps(answer, separators=(",", ":")), flush=True)
             return 0 if answer["state"] == "delivered" else 75
         if args.verb == "forward-drain":
-            sys.stdout.write(forwarder.drain())
+            sys.stdout.write(forwarder.drain(args.collection))
             return 0
         print(json.dumps(forwarder.status(), separators=(",", ":")), flush=True)
         return 0
