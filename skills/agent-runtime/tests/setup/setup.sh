@@ -31,6 +31,8 @@ ln -s "$SRC/tests/setup/cargo" "$TMP_ROOT/bin/cargo"
 ln -s "$SRC/tests/setup/rustup" "$TMP_ROOT/bin/rustup"
 ln -s "$SRC/tests/setup/rustup" "$TMP_ROOT/bin/rustc"
 export FAKE_TOOLCHAINS=1.96.1
+# A caller under `rustup run` would otherwise choose the planted toolchain.
+unset RUSTUP_TOOLCHAIN
 
 # chmod as BSD reads its arguments, first on PATH for every row, so a Linux
 # run fails the placement a macOS one fails: getopt(3) stops at the first
