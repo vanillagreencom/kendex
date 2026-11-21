@@ -10,18 +10,176 @@
 //! with a [`Reading`]: live with its fields, gone when the server has no
 //! such pane, unreadable when tmux did not answer. A failed tmux call is
 //! never an absence.
+//!
+//! A server keeps the program it started from, and a client of another
+//! build can get no answer from it: a tmux updated while its servers run can
+//! leave the `tmux` on `PATH` unable to reach them. A call to a server known
+//! by its pid runs that server's own program ([`Client`]).
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::process::Output;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::{run_with, stderr_text, stdout_text};
+use super::{Caller, Place, run_with, start, stderr_text, stdout_text};
 use crate::error::{Error, Result};
 use crate::reading::Reading;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The refusal key of a call whose client on `PATH` is of another tmux
+/// build than the server it asked.
+pub const VERSION_MISMATCH: &str = "tmux-version-mismatch";
+
+/// The tmux program a call runs: the server's own; `tmux` on `PATH` for a
+/// call that names no server yet; or `tmux` on `PATH` in place of a named
+/// server's program that could not be read, with why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Client {
+    Own(PathBuf),
+    Unnamed,
+    Fallback { unread: &'static str },
+}
+
+impl Client {
+    fn of(pid: u32) -> Client {
+        match own_program(pid) {
+            Ok(program) => Client::Own(program),
+            Err(unread) => Client::Fallback { unread },
+        }
+    }
+
+    fn executable(&self) -> &OsStr {
+        match self {
+            Client::Own(program) => program.as_os_str(),
+            Client::Unnamed | Client::Fallback { .. } => OsStr::new("tmux"),
+        }
+    }
+}
+
+/// Whether a process's program is a tmux: a pid the record names can since
+/// have been handed to another process, whose program is never run.
+/// `proc(5)` appends ` (deleted)` to an `exe` link whose file was unlinked,
+/// as a package update leaves a running server's.
+fn names_tmux(program: &Path) -> bool {
+    matches!(
+        program.file_name().and_then(OsStr::to_str),
+        Some("tmux" | "tmux (deleted)")
+    )
+}
+
+/// The program `pid` runs, through `/proc/<pid>/exe`, which runs the file
+/// the process started from even once a newer one replaced it on disk.
+#[cfg(target_os = "linux")]
+fn own_program(pid: u32) -> std::result::Result<PathBuf, &'static str> {
+    let exe = PathBuf::from(format!("/proc/{pid}/exe"));
+    let target = std::fs::read_link(&exe).map_err(|_| "exe-unreadable")?;
+    if names_tmux(&target) {
+        Ok(exe)
+    } else {
+        Err("exe-not-tmux")
+    }
+}
+
+/// The program `pid` runs, at the path `proc_pidpath(3)` reports for it,
+/// where that file still stands. Apple's libproc (`libproc.c`) answers the
+/// path's length with the path NUL-terminated in the buffer, or 0 on
+/// failure; the buffer holds `PROC_PIDPATHINFO_MAXSIZE` bytes, its upper
+/// bound.
+#[cfg(target_os = "macos")]
+#[allow(
+    unsafe_code,
+    reason = "proc_pidpath, the libproc call that names a process's program on macOS"
+)]
+fn own_program(pid: u32) -> std::result::Result<PathBuf, &'static str> {
+    use std::os::unix::ffi::OsStrExt;
+    let pid = libc::c_int::try_from(pid).map_err(|_| "pid-invalid")?;
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let size = u32::try_from(buffer.len()).map_err(|_| "pidpath-unreadable")?;
+    // SAFETY: `buffer` is an initialized, exclusively borrowed allocation of
+    // `size` bytes that outlives the call; libproc writes at most `size`
+    // bytes into it and keeps no pointer past its return. u8 has alignment
+    // 1, so the cast pointer is aligned for any byte write, and the call
+    // touches no state shared between threads beyond the thread's errno.
+    let written = unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), size) };
+    let length = usize::try_from(written)
+        .ok()
+        .filter(|length| (1..buffer.len()).contains(length))
+        .ok_or("pidpath-unreadable")?;
+    let program = PathBuf::from(OsStr::from_bytes(&buffer[..length]));
+    if !names_tmux(&program) {
+        return Err("pidpath-not-tmux");
+    }
+    if !program.is_file() {
+        return Err("pidpath-missing");
+    }
+    Ok(program)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn own_program(_pid: u32) -> std::result::Result<PathBuf, &'static str> {
+    Err("own-program-unsupported")
+}
+
+/// One run of `client`: the runner's bound and count, every failure named
+/// `tmux`.
+fn run(
+    client: &Client,
+    operation: &'static str,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+) -> Result<Output> {
+    let caller = Caller {
+        program: "tmux",
+        operation,
+        tag: None,
+    };
+    start(
+        caller,
+        client.executable(),
+        args,
+        Place::default(),
+        stdin,
+        false,
+        TIMEOUT,
+    )
+    .map_err(|failed| failed.into_error(caller))
+}
+
+/// tmux's refusal of `operation`, `cause` its stderr. A client on `PATH`
+/// in place of the server's own program names that, and where its answer is
+/// one a client gives a server of another build, the refusal is
+/// [`VERSION_MISMATCH`]: tmux's `client.c` prints `protocol version
+/// mismatch` when the protocol numbers differ and `server exited
+/// unexpectedly` when the server drops the connection, which is a tmux 3.4
+/// client's answer from a live tmux 3.8 server, both protocol 8.
+fn refused(client: &Client, operation: &'static str, cause: &str) -> Error {
+    match client {
+        Client::Own(_) | Client::Unnamed => Error::refused(
+            "tmux-refused",
+            &[("operation", operation), ("cause", cause)],
+        ),
+        Client::Fallback { unread } => {
+            let foreign = cause.starts_with("protocol version mismatch")
+                || cause == "server exited unexpectedly";
+            Error::refused(
+                if foreign {
+                    VERSION_MISMATCH
+                } else {
+                    "tmux-refused"
+                },
+                &[
+                    ("operation", operation),
+                    ("client", "path"),
+                    ("unread", unread),
+                    ("cause", cause),
+                ],
+            )
+        }
+    }
+}
 
 /// The fields of one pane read by its exact id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -95,18 +253,11 @@ pub struct Pane {
 /// `Error::NotStarted`; one that started and gave no answer within the bound
 /// is `Error::External`, and a command that changes the server may then
 /// have acted.
-fn tmux(socket: Option<&Path>, operation: &'static str, args: &[&str]) -> Result<String> {
-    let socket_arg = socket.map(|s| s.display().to_string());
-    let mut full: Vec<&str> = Vec::new();
-    if let Some(s) = socket_arg.as_deref() {
-        full.push("-S");
-        full.push(s);
-    }
+fn tmux(client: &Client, socket: &Path, operation: &'static str, args: &[&str]) -> Result<String> {
+    let socket = socket.display().to_string();
+    let mut full: Vec<&str> = vec!["-S", &socket];
     full.extend_from_slice(args);
-    // A caller inside tmux carries $TMUX; with -S named explicitly tmux
-    // still honours it for the client's own session lookup, so clear it.
-    let env: Vec<(&str, &OsStr)> = Vec::new();
-    let output = run_with("tmux", operation, &full, &env, None, TIMEOUT)?;
+    let output = run(client, operation, &full, None)?;
     if output.status.code().is_none() {
         return Err(Error::External {
             program: "tmux",
@@ -115,10 +266,7 @@ fn tmux(socket: Option<&Path>, operation: &'static str, args: &[&str]) -> Result
         });
     }
     if !output.status.success() {
-        return Err(Error::refused(
-            "tmux-refused",
-            &[("operation", operation), ("cause", &stderr_text(&output))],
-        ));
+        return Err(refused(client, operation, &stderr_text(&output)));
     }
     Ok(stdout_text(&output))
 }
@@ -161,8 +309,25 @@ pub fn ambient_socket() -> Result<PathBuf> {
 
 /// Read the server at a socket: its pid and start.
 pub fn server(socket: &Path) -> Result<Server> {
+    identity(&Client::Unnamed, socket)
+}
+
+/// [`server`], asked through the program of the server a record names by
+/// `pid`, so a server a tmux update left behind still answers.
+pub fn recorded_server(socket: &Path, pid: u64) -> Result<Server> {
+    let client = u32::try_from(pid).map_or(
+        Client::Fallback {
+            unread: "pid-invalid",
+        },
+        Client::of,
+    );
+    identity(&client, socket)
+}
+
+fn identity(client: &Client, socket: &Path) -> Result<Server> {
     let out = tmux(
-        Some(socket),
+        client,
+        socket,
         "server-identity",
         &["display-message", "-p", "#{pid} #{start_time}"],
     )?;
@@ -190,10 +355,15 @@ pub fn server(socket: &Path) -> Result<Server> {
     })
 }
 
-/// Confirm the server at the identity's socket is the one it names.
-fn confirm(server: &Server) -> Result<()> {
-    let live = match self::server(&server.socket) {
+/// Confirm the server at the identity's socket is the one it names, and
+/// answer the client that reached it, the one every later call to it runs.
+/// A client of another build stays [`VERSION_MISMATCH`], never a server
+/// gone.
+fn confirm(server: &Server) -> Result<Client> {
+    let client = Client::of(server.pid);
+    let live = match identity(&client, &server.socket) {
         Ok(live) => live,
+        Err(e) if e.key() == VERSION_MISMATCH => return Err(e),
         Err(e) => {
             return Err(Error::refused(
                 "server-gone",
@@ -214,15 +384,15 @@ fn confirm(server: &Server) -> Result<()> {
             ],
         ));
     }
-    Ok(())
+    Ok(client)
 }
 
 /// Whether the session named exists on the server.
 pub fn session_present(server: &Server, session: &str) -> Result<bool> {
-    confirm(server)?;
+    let client = confirm(server)?;
     let target = format!("={session}");
-    let output = run_with(
-        "tmux",
+    let output = run(
+        &client,
         "has-session",
         &[
             "-S",
@@ -231,9 +401,7 @@ pub fn session_present(server: &Server, session: &str) -> Result<bool> {
             "-t",
             &target,
         ],
-        &[],
         None,
-        TIMEOUT,
     )?;
     if output.status.success() {
         return Ok(true);
@@ -254,14 +422,14 @@ pub fn session_present(server: &Server, session: &str) -> Result<bool> {
 /// environment the server was started with. A scope that marks the name for
 /// removal gives the pane nothing, whatever the global scope holds.
 pub fn inherited(server: &Server, session: &str, name: &str) -> Result<Option<String>> {
-    confirm(server)?;
+    let client = confirm(server)?;
     let socket = server.socket.display().to_string();
     let target = format!("={session}");
     for scope in [vec!["-t", target.as_str()], vec!["-g"]] {
         let mut args = vec!["-S", socket.as_str(), "show-environment"];
         args.extend(scope);
         args.push(name);
-        let output = run_with("tmux", "show-environment", &args, &[], None, TIMEOUT)?;
+        let output = run(&client, "show-environment", &args, None)?;
         if !output.status.success() {
             let err = stderr_text(&output);
             if err.starts_with("unknown variable") {
@@ -325,13 +493,13 @@ pub fn new_window(
         error,
         opened: None,
     };
-    confirm(server).map_err(unopened)?;
+    let client = confirm(server).map_err(unopened)?;
     let socket = server.socket.display().to_string();
     let target = format!("={session}:");
     let name = literal(name);
     let cwd_display = cwd.display().to_string();
-    let output = run_with(
-        "tmux",
+    let output = run(
+        &client,
         "new-window",
         &[
             "-S",
@@ -348,9 +516,7 @@ pub fn new_window(
             "-c",
             &cwd_display,
         ],
-        &[],
         None,
-        TIMEOUT,
     )
     .map_err(unopened)?;
     if output.status.code().is_none() {
@@ -395,13 +561,14 @@ pub fn new_window(
 /// `Gone`; a server, a listing or a process that does not answer is
 /// `Unreadable`.
 pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> {
-    if let Err(e) = confirm(server) {
-        return Reading::Unreadable { cause: e.key() };
-    }
+    let client = match confirm(server) {
+        Ok(client) => client,
+        Err(e) => return Reading::Unreadable { cause: e.key() },
+    };
     let socket = server.socket.display().to_string();
     let target = format!("={session}");
-    let output = match run_with(
-        "tmux",
+    let output = match run(
+        &client,
         "list-panes",
         &[
             "-S",
@@ -413,9 +580,7 @@ pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> 
             "-F",
             "#{pane_id}\t#{window_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{session_name}",
         ],
-        &[],
         None,
-        TIMEOUT,
     ) {
         Ok(output) => output,
         Err(_) => {
@@ -526,12 +691,13 @@ pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
 /// and which the server keeps prints `pane_dead` 1 and no pid: it is
 /// `Dead`, with the window it stands in.
 pub fn pane_state(server: &Server, id: &str) -> Reading<PaneState> {
-    if let Err(e) = confirm(server) {
-        return Reading::Unreadable { cause: e.key() };
-    }
+    let client = match confirm(server) {
+        Ok(client) => client,
+        Err(e) => return Reading::Unreadable { cause: e.key() },
+    };
     let socket = server.socket.display().to_string();
-    let output = match run_with(
-        "tmux",
+    let output = match run(
+        &client,
         "pane-fields",
         &[
             "-S",
@@ -542,9 +708,7 @@ pub fn pane_state(server: &Server, id: &str) -> Reading<PaneState> {
             id,
             "#{pane_id}\t#{pane_pid}\t#{window_id}\t#{pane_current_command}\t#{pane_dead}\t#{session_name}",
         ],
-        &[],
         None,
-        TIMEOUT,
     ) {
         Ok(output) => output,
         Err(_) => {
@@ -615,13 +779,14 @@ pub fn pane_state(server: &Server, id: &str) -> Reading<PaneState> {
 /// does not answer, a session the server has not, or a listing that cannot
 /// be read is `Unreadable` or `Gone`, never an empty session.
 pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, String, String)>> {
-    if let Err(e) = confirm(server) {
-        return Reading::Unreadable { cause: e.key() };
-    }
+    let client = match confirm(server) {
+        Ok(client) => client,
+        Err(e) => return Reading::Unreadable { cause: e.key() },
+    };
     let socket = server.socket.display().to_string();
     let target = format!("={session}");
-    let output = match run_with(
-        "tmux",
+    let output = match run(
+        &client,
         "list-windows",
         &[
             "-S",
@@ -632,9 +797,7 @@ pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, Stri
             "-F",
             "#{window_id}\t#{pane_id}\t#{window_name}",
         ],
-        &[],
         None,
-        TIMEOUT,
     ) {
         Ok(output) => output,
         Err(_) => {
@@ -672,22 +835,23 @@ pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, Stri
 /// given back as the session's shell instead ([`give_back`]); every other
 /// target is closed.
 fn close(server: &Server, operation: &'static str, target: &str) -> Close {
-    if let Err(e) = confirm(server) {
-        return Close::Unreadable {
-            cause: e.key().to_owned(),
-        };
-    }
-    if let Some(pane) = sole_pane(server, target) {
-        return give_back(server, &pane);
+    let client = match confirm(server) {
+        Ok(client) => client,
+        Err(e) => {
+            return Close::Unreadable {
+                cause: e.key().to_owned(),
+            };
+        }
+    };
+    if let Some(pane) = sole_pane(&client, server, target) {
+        return give_back(&client, server, &pane);
     }
     let socket = server.socket.display().to_string();
-    match run_with(
-        "tmux",
+    match run(
+        &client,
         operation,
         &["-S", &socket, operation, "-t", target],
-        &[],
         None,
-        TIMEOUT,
     ) {
         Ok(output) if output.status.success() => Close::Closed,
         Ok(output) if names_missing_target(&stderr_text(&output)) => Close::AlreadyGone,
@@ -705,10 +869,10 @@ fn close(server: &Server, operation: &'static str, target: &str) -> Close {
 /// exact target in one `display-message`. `None` for any other answer, a
 /// target gone or a read that fails included: that close runs as every
 /// other close does and reads its own answer.
-fn sole_pane(server: &Server, target: &str) -> Option<String> {
+fn sole_pane(client: &Client, server: &Server, target: &str) -> Option<String> {
     let socket = server.socket.display().to_string();
-    let output = run_with(
-        "tmux",
+    let output = run(
+        client,
         "session-panes",
         &[
             "-S",
@@ -719,9 +883,7 @@ fn sole_pane(server: &Server, target: &str) -> Option<String> {
             target,
             "#{pane_id}\t#{window_panes}\t#{session_windows}",
         ],
-        &[],
         None,
-        TIMEOUT,
     )
     .ok()
     .filter(|output| output.status.success())?;
@@ -737,10 +899,10 @@ fn sole_pane(server: &Server, target: &str) -> Option<String> {
 /// (`respawn-pane -k`, no command), its `remain-on-exit` returned to the
 /// session's, so the session stands as its maker left it. Read `Closed`:
 /// what kendex ran there is gone.
-fn give_back(server: &Server, pane: &str) -> Close {
+fn give_back(client: &Client, server: &Server, pane: &str) -> Close {
     let socket = server.socket.display().to_string();
-    match run_with(
-        "tmux",
+    match run(
+        client,
         "respawn-pane",
         &[
             "-S",
@@ -757,9 +919,7 @@ fn give_back(server: &Server, pane: &str) -> Close {
             pane,
             "remain-on-exit",
         ],
-        &[],
         None,
-        TIMEOUT,
     ) {
         Ok(output) if output.status.success() => Close::Closed,
         Ok(output) if names_missing_target(&stderr_text(&output)) => Close::AlreadyGone,
@@ -790,23 +950,26 @@ pub fn kill_pane(pane: &Pane) -> Close {
 /// and nothing after, and a bare `-p` trims it to `›`, which its rule does
 /// not take.
 pub fn capture(pane: &Pane) -> Result<String> {
-    confirm(&pane.server)?;
+    let client = confirm(&pane.server)?;
     tmux(
-        Some(&pane.server.socket),
+        &client,
+        &pane.server.socket,
         "capture-pane",
         &["capture-pane", "-p", "-N", "-t", &pane.id],
     )
 }
 
-fn mode_clear(pane: &Pane) -> Result<()> {
+fn mode_clear(client: &Client, pane: &Pane) -> Result<()> {
     let mode = tmux(
-        Some(&pane.server.socket),
+        client,
+        &pane.server.socket,
         "mode-read",
         &["display-message", "-p", "-t", &pane.id, "#{pane_in_mode}"],
     )?;
     if mode == "1" {
         tmux(
-            Some(&pane.server.socket),
+            client,
+            &pane.server.socket,
             "copy-mode-cancel",
             &["send-keys", "-t", &pane.id, "-X", "cancel"],
         )?;
@@ -826,6 +989,7 @@ pub fn send_line(pane: &Pane, text: &str) -> Result<()> {
 /// line dropped unpasted takes its buffer with it.
 pub struct Loaded<'a> {
     pane: &'a Pane,
+    client: Client,
     buffer: String,
     pasted: bool,
 }
@@ -833,21 +997,19 @@ pub struct Loaded<'a> {
 /// Load `text` for [`send_line`]'s paste into `pane`, its server confirmed
 /// and its copy mode left first.
 pub fn load_line<'a>(pane: &'a Pane, text: &str) -> Result<Loaded<'a>> {
-    confirm(&pane.server)?;
-    mode_clear(pane)?;
+    let client = confirm(&pane.server)?;
+    mode_clear(&client, pane)?;
     let buffer = format!(
         "agent-runtime-{}-{}",
         std::process::id(),
         pane.id.trim_start_matches('%')
     );
     let socket = pane.server.socket.display().to_string();
-    let loaded = run_with(
-        "tmux",
+    let loaded = run(
+        &client,
         "load-buffer",
         &["-S", &socket, "load-buffer", "-b", &buffer, "-"],
-        &[],
         Some(text.as_bytes()),
-        TIMEOUT,
     )?;
     if !loaded.status.success() {
         return Err(Error::External {
@@ -858,6 +1020,7 @@ pub fn load_line<'a>(pane: &'a Pane, text: &str) -> Result<Loaded<'a>> {
     }
     Ok(Loaded {
         pane,
+        client,
         buffer,
         pasted: false,
     })
@@ -869,7 +1032,8 @@ impl Loaded<'_> {
         self.pasted = true;
         let pane = self.pane;
         if let Err(e) = tmux(
-            Some(&pane.server.socket),
+            &self.client,
+            &pane.server.socket,
             "paste-buffer",
             &[
                 "paste-buffer",
@@ -885,7 +1049,8 @@ impl Loaded<'_> {
             return Err(e);
         }
         tmux(
-            Some(&pane.server.socket),
+            &self.client,
+            &pane.server.socket,
             "send-enter",
             &["send-keys", "-t", &pane.id, "Enter"],
         )?;
@@ -894,7 +1059,8 @@ impl Loaded<'_> {
 
     fn delete(&self) {
         let _ = tmux(
-            Some(&self.pane.server.socket),
+            &self.client,
+            &self.pane.server.socket,
             "delete-buffer",
             &["delete-buffer", "-b", &self.buffer],
         );
@@ -921,10 +1087,11 @@ pub fn send_key(pane: &Pane, key: &str) -> Result<()> {
     if !KEYS.contains(&key) {
         return Err(Error::refused("key-invalid", &[("key", key)]));
     }
-    confirm(&pane.server)?;
-    mode_clear(pane)?;
+    let client = confirm(&pane.server)?;
+    mode_clear(&client, pane)?;
     tmux(
-        Some(&pane.server.socket),
+        &client,
+        &pane.server.socket,
         "send-keys",
         &["send-keys", "-t", &pane.id, key],
     )?;
@@ -935,9 +1102,10 @@ pub fn send_key(pane: &Pane, key: &str) -> Result<()> {
 /// (`window_active`), read by that exact id on the confirmed server. A pane
 /// gone, a server that does not answer or an answer not read is `false`.
 pub fn window_in_front(server: &Server, id: &str) -> bool {
-    confirm(server).is_ok()
-        && tmux(
-            Some(&server.socket),
+    confirm(server).is_ok_and(|client| {
+        tmux(
+            &client,
+            &server.socket,
             "display-message",
             &[
                 "display-message",
@@ -948,13 +1116,15 @@ pub fn window_in_front(server: &Server, id: &str) -> bool {
             ],
         )
         .is_ok_and(|answer| answer.trim() == format!("{id} 1"))
+    })
 }
 
 /// Make the pane's window its session's current one.
 pub fn select_window(pane: &Pane) -> Result<()> {
-    confirm(&pane.server)?;
+    let client = confirm(&pane.server)?;
     tmux(
-        Some(&pane.server.socket),
+        &client,
+        &pane.server.socket,
         "select-window",
         &["select-window", "-t", &pane.window],
     )?;
@@ -966,9 +1136,10 @@ pub fn select_window(pane: &Pane) -> Result<()> {
 /// reads [`PaneState::Dead`] and its window and session stand until a caller
 /// closes the window.
 pub fn keep_on_exit(pane: &Pane) -> Result<()> {
-    confirm(&pane.server)?;
+    let client = confirm(&pane.server)?;
     tmux(
-        Some(&pane.server.socket),
+        &client,
+        &pane.server.socket,
         "set-option",
         &["set-option", "-p", "-t", &pane.id, "remain-on-exit", "on"],
     )?;
@@ -979,9 +1150,10 @@ pub fn keep_on_exit(pane: &Pane) -> Result<()> {
 /// (`set-option -w`), the value one argument after `--`, so no leading dash
 /// reads as a flag.
 pub fn set_window_option(pane: &Pane, name: &str, value: &str) -> Result<()> {
-    confirm(&pane.server)?;
+    let client = confirm(&pane.server)?;
     tmux(
-        Some(&pane.server.socket),
+        &client,
+        &pane.server.socket,
         "set-option",
         &["set-option", "-w", "-t", &pane.id, "--", name, value],
     )?;
@@ -1049,8 +1221,8 @@ pub fn start_private_server(socket: &Path, session: &str, cwd: &Path) -> Result<
 
 /// End a private server started by `start_private_server`.
 pub fn kill_server(server: &Server) -> Result<()> {
-    confirm(server)?;
-    tmux(Some(&server.socket), "kill-server", &["kill-server"])?;
+    let client = confirm(server)?;
+    tmux(&client, &server.socket, "kill-server", &["kill-server"])?;
     Ok(())
 }
 
@@ -1077,6 +1249,44 @@ impl Drop for Private {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refusal is the version mismatch only where the client on `PATH`
+    /// stood in for the server's own program and answered as tmux's
+    /// `client.c` answers a server of another build; the server's own
+    /// program, or a call that named no server, refuses as tmux did.
+    #[test]
+    fn a_refusal_is_a_version_mismatch_only_from_the_path_client_standing_in() {
+        let fallback = Client::Fallback {
+            unread: "exe-unreadable",
+        };
+        let own = Client::Own(PathBuf::from("/proc/1/exe"));
+        let rows = [
+            (&fallback, "server exited unexpectedly", VERSION_MISMATCH),
+            (
+                &fallback,
+                "protocol version mismatch (client 8, server 7)",
+                VERSION_MISMATCH,
+            ),
+            (
+                &fallback,
+                "no server running on /tmp/tmux-1000/default",
+                "tmux-refused",
+            ),
+            (&own, "server exited unexpectedly", "tmux-refused"),
+            (
+                &Client::Unnamed,
+                "protocol version mismatch (client 8, server 7)",
+                "tmux-refused",
+            ),
+        ];
+        for (client, stderr, key) in rows {
+            assert_eq!(
+                refused(client, "server-identity", stderr).key(),
+                key,
+                "{client:?} {stderr:?}"
+            );
+        }
+    }
 
     #[test]
     fn new_windows_keep_literal_names() {
@@ -1114,7 +1324,8 @@ mod tests {
         assert!(first.pid > 0);
         assert_eq!(pane_fields(&server, "%999"), Reading::Gone);
         let opened = tmux(
-            Some(&server.socket),
+            &Client::Unnamed,
+            &server.socket,
             "new-window",
             &[
                 "new-window",
@@ -1128,20 +1339,23 @@ mod tests {
         .expect("a window");
         let (dead, window) = opened.split_once(' ').expect("the pane and its window");
         tmux(
-            Some(&server.socket),
+            &Client::Unnamed,
+            &server.socket,
             "remain-on-exit",
             &["set-option", "-w", "-t", dead, "remain-on-exit", "on"],
         )
         .expect("the window keeps its pane");
         tmux(
-            Some(&server.socket),
+            &Client::Unnamed,
+            &server.socket,
             "send-keys",
             &["send-keys", "-t", dead, "Enter"],
         )
         .expect("the line ends the pane's process");
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while tmux(
-            Some(&server.socket),
+            &Client::Unnamed,
+            &server.socket,
             "pane-dead",
             &["display-message", "-p", "-t", dead, "#{pane_dead}"],
         )
@@ -1183,7 +1397,8 @@ mod tests {
         let private = Private::start(dir.path());
         let server = &private.0;
         tmux(
-            Some(&server.socket),
+            &Client::Unnamed,
+            &server.socket,
             "set-hook",
             &[
                 "set-hook",
@@ -1209,7 +1424,8 @@ mod tests {
         let private = Private::start(dir.path());
         let server = &private.0;
         let split = tmux(
-            Some(&server.socket),
+            &Client::Unnamed,
+            &server.socket,
             "split-window",
             &["split-window", "-d", "-t", "%0", "-P", "-F", "#{pane_id}"],
         )
@@ -1262,7 +1478,8 @@ mod tests {
             pid = again.pid;
         }
         let kept = tmux(
-            Some(&server.socket),
+            &Client::Unnamed,
+            &server.socket,
             "remain-on-exit",
             &["display-message", "-p", "-t", "%0", "#{remain-on-exit}"],
         )
