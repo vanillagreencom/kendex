@@ -9335,12 +9335,13 @@ fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environm
     let proxy_needle = "proxy-pass-91c";
     let proxy = format!("http://lane:{proxy_needle}@proxy.test:3128");
     // The host user's login shell sets the pool's key and proxy, then
-    // traces itself.
+    // traces itself. Bash 3.2 has no BASH_XTRACEFD; the same descriptor
+    // captures its stderr trace.
     let trace = dir.path().join("login-trace.log");
     std::fs::write(
         world.home().join(".bash_profile"),
         format!(
-            "export POOL_KEY='{}' HTTPS_PROXY='{proxy}'\nexec 7>>'{}'\nBASH_XTRACEFD=7\nset -x\n",
+            "export POOL_KEY='{}' HTTPS_PROXY='{proxy}'\nexec 7>>'{}'\nBASH_XTRACEFD=7\nexec 2>&7\nset -x\n",
             key.replace('\'', "'\\''"),
             trace.display()
         ),
