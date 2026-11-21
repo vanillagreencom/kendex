@@ -65,7 +65,6 @@ relative="$final_relative"$'\n'"- [ ] $check; Deadline: +1h"
 merge_relative="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: +72h"
 merge_materialized="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: 2026-10-04T23:30:00Z"
 merge_ticked="${merge_relative/\[ \]/[x]}"$'\n  Evidence: observed result'
-merge_ticked_materialized="${merge_materialized/\[ \]/[x]}"$'\n  Evidence: observed result'
 materialized="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: 2026-10-02T01:30:00Z"$'\n'"- [ ] $check; Deadline: 2026-10-02T00:30:00Z"
 earliest="- [ ] $check; Deadline: 2026-10-02T02:00:00Z"
 checked_earlier="- [x] $check; Deadline: 2026-10-02T00:30:00Z"$'\n  Evidence: already read'
@@ -84,8 +83,12 @@ log="$TMP_ROOT/requests"
 while IFS='|' read -r name verb stored body after state date other_date; do
   : >"$log"
   args=(issues "$verb")
-  synced=no
-  [[ "$name" != synced-* ]] || synced=yes
+  # The stub reports a GitHub sync for every synced- row; a synced-ok- row writes no description, so the guard lets it through.
+  synced=no refuses=no
+  case "$name" in
+    synced-ok-*) synced=yes ;;
+    synced-*) synced=yes refuses=yes ;;
+  esac
   case "$verb" in
     create) args+=(--title item --no-agent-label) ;;
     bulk-update) args+=(CC-1 CC-2) ;;
@@ -112,7 +115,7 @@ while IFS='|' read -r name verb stored body after state date other_date; do
   (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC LINEAR_REQUIRE_REACH= \
     LOG="$log" STORED_BODY="${!stored}" SYNCED="$synced" \
     "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" "${args[@]}") >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
-  if [[ "$synced" == yes ]]; then
+  if [[ "$refuses" == yes ]]; then
     assert_ne "$name refuses" "$rc" 0
     assert_file_contains "$name names the description guard" "$TMP_ROOT/err" 'linear: refused=synced-description'
     assert_not "$name writes neither summary nor update" test -s "$log"
@@ -148,7 +151,6 @@ update-fields|update|mixed|omitted|omitted||omitted
 update-relative-merged|update|ordinary|merge_relative|merge_materialized||2026-10-04
 update-stored-relative-merged|update|merge_relative|omitted|merge_materialized||2026-10-04
 update-ticked-relative-merged|update|merge_relative|merge_ticked|merge_ticked||null
-update-ticked-materialized|update|merge_materialized|merge_ticked_materialized|merge_ticked_materialized||null
 synced-update-merged|update|merge_relative|omitted|omitted||omitted
 bulk-date|bulk-update|mixed|anchored|anchored||2026-10-03|2026-10-03
 bulk-relative-merged|bulk-update|ordinary|merge_relative|merge_materialized||2026-10-04|2026-10-04
@@ -156,6 +158,7 @@ synced-bulk-merged|bulk-update|merge_relative|omitted|omitted||omitted|omitted
 bulk-removal|bulk-update|absolute|ordinary|ordinary||null|omitted
 bulk-historical|bulk-update|ticked|ordinary|ordinary||omitted|omitted
 complete-unchanged|complete|absolute|omitted|omitted|Verifying|2026-10-03
+synced-ok-complete-unchanged|complete|absolute|omitted|omitted|Verifying|2026-10-03
 complete-unchanged-release|complete|release|omitted|omitted|Verifying|omitted
 complete-materializes|complete|relative|omitted|materialized|Verifying|2026-10-02
 complete-materializes-window-end|complete|merge_relative|omitted|merge_materialized|Verifying|2026-10-04
