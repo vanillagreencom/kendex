@@ -2452,15 +2452,15 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     quiet_github(&mut world);
     let token = plant_token(&world, "ghs_fixture_overseer");
     world.gh(
-        "repos/owner/repo/dependabot/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/dependabot/alerts?state=open&per_page=100",
         json!({"body": [dependabot]}),
     );
     world.gh(
-        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100",
         json!({"body": [code]}),
     );
     world.gh(
-        "repos/owner/repo/secret-scanning/alerts?state=open&hide_secret=true&per_page=100&page=1",
+        "repos/owner/repo/secret-scanning/alerts?state=open&hide_secret=true&per_page=100",
         json!({"body": [secret]}),
     );
     world.gh(
@@ -2533,7 +2533,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     // A failed Dependabot read: the other lists still reported, its rows
     // standing, its unread line on the second pass it fails and no other.
     world.gh(
-        "repos/owner/repo/dependabot/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/dependabot/alerts?state=open&per_page=100",
         json!({"exit": 1, "stderr": "gh: Resource not accessible by integration (HTTP 403)"}),
     );
     let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
@@ -2582,7 +2582,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     // The read returns: the alert is a repeat, not a first report; the
     // unread row clears.
     world.gh(
-        "repos/owner/repo/dependabot/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/dependabot/alerts?state=open&per_page=100",
         json!({"body": [dependabot]}),
     );
     let fifth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1960).unwrap();
@@ -2599,7 +2599,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": [],
         "alerts_triaged": [{"repo": "Owner/Repo", "kind": "secret-scanning", "number": 3, "verdict": "filed"}]}));
     world.gh(
-        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100",
         json!({"body": []}),
     );
     let sixth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2200).unwrap();
@@ -2612,7 +2612,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
         None
     );
     world.gh(
-        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100",
         json!({"body": [code]}),
     );
     let seventh = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2440).unwrap();
@@ -2648,6 +2648,28 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
         shared.lock().unwrap().github.as_ref().unwrap().bot_fix,
         BTreeMap::from([("owner/repo#12".to_owned(), "7".to_owned())])
     );
+    // The Dependabot list pages by the Link header's cursor, never a page
+    // number GitHub refuses: an alert on its second page is reported as one
+    // on the first is.
+    let later = json!({"number": 8, "html_url": format!("{url}/dependabot/8"),
+        "dependency": {"package": {"ecosystem": "npm", "name": "undici"}, "manifest_path": "ui/package-lock.json", "scope": "runtime"},
+        "security_advisory": {"ghsa_id": "GHSA-dddd-eeee-ffff", "severity": "low"}});
+    world.gh(
+        "repos/owner/repo/dependabot/alerts?state=open&per_page=100",
+        json!({"pages": [[dependabot], [later]]}),
+    );
+    let cursor_paged = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2620).unwrap();
+    assert_eq!(
+        rendered(&cursor_paged),
+        vec![
+            format!("{line_dependabot} report=repeat"),
+            format!("{line_code} report=repeat"),
+            format!(
+                "EVENT security-alert owner/repo kind=dependabot number=8 severity=low package=undici manifest=ui/package-lock.json scope=runtime advisory=GHSA-dddd-eeee-ffff url={url}/dependabot/8"
+            ),
+        ],
+        "the alert on the list's second page is a first report"
+    );
     // A token the reader refuses: the credential source is unread, its line
     // on the second pass, no alert read runs, and the rows and mapping
     // stand.
@@ -2679,9 +2701,9 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
 #[test]
 fn a_security_read_failure_reaches_the_overseer_on_its_second_consecutive_pass_alone() {
     let lists = [
-        "repos/owner/repo/dependabot/alerts?state=open&per_page=100&page=1",
-        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100&page=1",
-        "repos/owner/repo/secret-scanning/alerts?state=open&hide_secret=true&per_page=100&page=1",
+        "repos/owner/repo/dependabot/alerts?state=open&per_page=100",
+        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100",
+        "repos/owner/repo/secret-scanning/alerts?state=open&hide_secret=true&per_page=100",
     ];
     let code_list = lists[1];
     let link = "graphql owner=owner name=repo";
