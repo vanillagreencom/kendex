@@ -3250,27 +3250,50 @@ RECORD_CONTROL
   # A harnesses pin in the consumer's own manifest narrows the hook another
   # hook requires, so verify withholds the requirer and fails. The run
   # publishes the refresh as a draft that names each finding and its
-  # manifest line, and arms and lands nothing. The runner this change
-  # replaced stops at verify with no pull request.
+  # manifest line, and arms and lands nothing. The retained row reruns on the
+  # new row's draft, armed meanwhile: the identical tree publishes no head,
+  # and the run disarms the draft before it renames the finding. The current
+  # row commits the render on the default branch, so nothing carries the
+  # finding and verify's exit stands. The runner this change replaced stops
+  # at verify with no pull request.
   git -C "$SKILL_DIR" show a9a3f081d78d51c7e247bdf8eaddc6318a02d334:refresh/refresh-consumer.sh >"$TMP/unheld-runner"
-  for row in new existing before-control; do
-    real_refresh_fixture "held-$row"
-    file_edit "$repo" .agents/skills/probe/SKILL.md 1 '^Hand edit\.$' '/^Hand edit\.$/d'
-    hooks="$real_root/git/owner/catalog/hooks"
-    mkdir -p "$hooks"
-    printf '%s\n' '#!/usr/bin/env bash' '# ---' '# name: needer' '# event: PreToolUse' '# matcher: Bash' \
-      '# description: needs its helper' '# requires: [helper]' '# ---' 'exit 0' >"$hooks/needer.sh"
-    printf '%s\n' '#!/usr/bin/env bash' '# ---' '# name: helper' '# event: PreToolUse' '# matcher: Bash' \
-      '# description: helps' '# ---' 'exit 0' >"$hooks/helper.sh"
-    chmod +x "$hooks/needer.sh" "$hooks/helper.sh"
-    # A catalog offers hooks only where its manifest names it a catalog.
-    printf 'is_source_catalog = true\n' >"$real_root/git/owner/catalog/kendex.toml"
-    commit "$real_root/git/owner/catalog"
-    printf '[hooks.needer]\nsource = "cat"\n[hooks.helper]\nsource = "cat"\nharnesses = ["codex"]\n' >>"$repo/kendex.toml"
-    pin_line="$(grep -nxF 'harnesses = ["codex"]' "$repo/kendex.toml" | cut -d: -f1)"
-    publish_real_fixture
-    [ "$row" != before-control ] || cp "$TMP/unheld-runner" "$runner"
-    [ "$row" != existing ] || printf '1\n' >"$TMP/state/pr"
+  cp "$TMP/state/start-state.json" "$TMP/held-start-state.json"
+  for row in new retained existing current before-control; do
+    if [ "$row" = retained ]; then
+      retained_head="$(git --git-dir="$real_root/remote" rev-parse refs/heads/kendex/refresh)"
+      printf '1\n' >"$TMP/state/pr"
+      : >"$TMP/state/pr-draft"
+      : >"$TMP/state/creates"
+      : >"$TMP/state/calls"
+      rm -f -- "${TMP:?}/state/body"
+      jq '.data.repository.pullRequest.autoMergeRequest = {enabledAt: "2026-11-21T03:00:00Z"}' \
+        "$TMP/held-start-state.json" >"$TMP/state/start-state.json"
+    else
+      real_refresh_fixture "held-$row"
+      file_edit "$repo" .agents/skills/probe/SKILL.md 1 '^Hand edit\.$' '/^Hand edit\.$/d'
+      hooks="$real_root/git/owner/catalog/hooks"
+      mkdir -p "$hooks"
+      printf '%s\n' '#!/usr/bin/env bash' '# ---' '# name: needer' '# event: PreToolUse' '# matcher: Bash' \
+        '# description: needs its helper' '# requires: [helper]' '# ---' 'exit 0' >"$hooks/needer.sh"
+      printf '%s\n' '#!/usr/bin/env bash' '# ---' '# name: helper' '# event: PreToolUse' '# matcher: Bash' \
+        '# description: helps' '# ---' 'exit 0' >"$hooks/helper.sh"
+      chmod +x "$hooks/needer.sh" "$hooks/helper.sh"
+      # A catalog offers hooks only where its manifest names it a catalog.
+      printf 'is_source_catalog = true\n' >"$real_root/git/owner/catalog/kendex.toml"
+      commit "$real_root/git/owner/catalog"
+      printf '[hooks.needer]\nsource = "cat"\n[hooks.helper]\nsource = "cat"\nharnesses = ["codex"]\n' >>"$repo/kendex.toml"
+      pin_line="$(grep -nxF 'harnesses = ["codex"]' "$repo/kendex.toml" | cut -d: -f1)"
+      if [ "$row" = current ]; then
+        for verb in refresh apply; do
+          (cd -- "$repo" && env -i PATH="$PATH" HOME="$real_root/home" KENDEX_REAL_HOME=1 \
+            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+            KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$REAL_KENDEX" "$verb" --scope project --yes --leave)
+        done
+      fi
+      publish_real_fixture
+      [ "$row" != before-control ] || cp "$TMP/unheld-runner" "$runner"
+      [ "$row" != existing ] || printf '1\n' >"$TMP/state/pr"
+    fi
     for marker in refreshed push-refused arm-attempted armed queued merged arm-state.json disarm-attempted; do
       rm -f -- "${TMP:?}/state/$marker"
     done
@@ -3284,6 +3307,14 @@ RECORD_CONTROL
             ! git --git-dir="$real_root/remote" show-ref --verify --quiet refs/heads/kendex/refresh; then
           ok 'control: the runner before the held route stops at verify with no pull request'
         else bad 'held control' "$OUT"; fi ;;
+      current)
+        # kendex verify exits 1 on any failure.
+        if [ "$RC" -eq 1 ] && grep -qxF 'refresh-verify=held project=.' <<<"$OUT" &&
+            grep -qxF 'refresh-error=verify value=1' <<<"$OUT" &&
+            ! grep -qE '^api --method (POST|PATCH) repos/acme/test/pulls' "$TMP/state/calls" &&
+            ! git --git-dir="$real_root/remote" show-ref --verify --quiet refs/heads/kendex/refresh; then
+          ok 'held current: a withheld declaration with nothing to publish keeps the verify failure'
+        else bad 'held current' "$OUT"; fi ;;
       *)
         held=no
         if [ "$RC" -eq 0 ] &&
@@ -3295,19 +3326,29 @@ RECORD_CONTROL
             git --git-dir="$real_root/remote" cat-file -e "$head:kendex.toml" &&
             grep -qF -- '- hook `needer`: withheld: ' "$TMP/state/body" &&
             grep -qF "(\`kendex.toml\` line $pin_line: \`harnesses = [\"codex\"]\`)" "$TMP/state/body" &&
-            ! grep -qE '^pr merge |^git push main ' "$TMP/state/calls"; then
+            ! grep -qE '^pr merge 1 --repo acme/test --(auto|squash)|^git push main ' "$TMP/state/calls"; then
           case "$row" in
             new)
-              if grep -qxF created "$TMP/state/creates" && grep -qF -- '-F draft=true --jq .number' "$TMP/state/calls"; then held=yes; fi ;;
+              if grep -qxF created "$TMP/state/creates" && grep -qF -- '-F draft=true --jq .number' "$TMP/state/calls" &&
+                  ! grep -q '^pr merge ' "$TMP/state/calls"; then held=yes; fi ;;
+            retained)
+              disarm_line="$(grep -nxF 'pr merge 1 --repo acme/test --disable-auto' "$TMP/state/calls" | cut -d: -f1 || true)"
+              ready_line="$(grep -n '^pr ready ' "$TMP/state/calls" | head -1 | cut -d: -f1 || true)"
+              if [ "$head" = "$retained_head" ] && ! grep -qxF 'git push' "$TMP/state/calls" &&
+                  [ ! -s "$TMP/state/creates" ] && grep -qF 'api --method PATCH repos/acme/test/pulls/1 ' "$TMP/state/calls" &&
+                  [ -n "$disarm_line" ] && { [ -z "$ready_line" ] || [ "$disarm_line" -lt "$ready_line" ]; }; then held=yes; fi ;;
             existing)
               if [ ! -s "$TMP/state/creates" ] && grep -qF 'api --method PATCH repos/acme/test/pulls/1 ' "$TMP/state/calls" &&
-                  grep -qxF 'pr ready 1 --repo acme/test --undo' "$TMP/state/calls"; then held=yes; fi ;;
+                  grep -qxF 'pr ready 1 --repo acme/test --undo' "$TMP/state/calls" &&
+                  ! grep -q '^pr merge ' "$TMP/state/calls"; then held=yes; fi ;;
           esac
         fi
         if [ "$held" = yes ]; then ok "held $row: a withheld declaration publishes a draft that names the finding and its manifest line"
         else bad "held $row" "$OUT"; fi ;;
     esac
     : >"$TMP/state/pr"
+    rm -f -- "${TMP:?}/state/pr-draft"
+    cp "$TMP/held-start-state.json" "$TMP/state/start-state.json"
   done
 fi
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
