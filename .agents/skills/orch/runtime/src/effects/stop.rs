@@ -27,7 +27,6 @@ use super::grants;
 use super::lane_operation::{LaneOperation, Unread, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::ops::{OwedPark, ParkMail};
 use crate::state::{CloseGround, Lane, LaneMembers, LaneStatus, TerminalVerdict};
 use crate::watch::hosted::{self, Asked, HostClosed};
 use crate::watch::lanes::{self, LaneState};
@@ -504,21 +503,14 @@ impl Close<'_> {
     }
 
     /// The lane's last mail, read before the provider's close takes its
-    /// box. A stopped sandbox answers no read: a parked lane's mail was said
-    /// at its park, and one whose sandbox stop failed and owes the park
-    /// carries the mail the park read on its mark. A mark that holds the box
-    /// unread owes a park whose sandbox stop was never asked, so the box is
-    /// read.
+    /// box. A parked record's sandbox is stopped and answers no read, and a
+    /// park-owed record's may be, so neither is read.
     fn last_mail(
         &self,
         operation: &LaneOperation,
     ) -> std::result::Result<Option<ClosingMail>, Unread> {
-        if let Some(mark) = self.lane.extra.get(crate::state::PARK_OWED) {
-            match serde_json::from_value::<OwedPark>(mark.clone()).map(|mark| mark.mail) {
-                Ok(Some(ParkMail::Read(mail))) => return Ok(Some(*mail)),
-                Ok(Some(ParkMail::Unread(_))) => {}
-                Ok(None) | Err(_) => return Ok(None),
-            }
+        if self.lane.extra.contains_key(crate::state::PARK_OWED) {
+            return Ok(None);
         }
         match self.lane.status {
             LaneStatus::Parked => Ok(None),

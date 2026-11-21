@@ -978,12 +978,12 @@ pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option
 }
 
 /// A hosted lane's box past the watch's cursor (`watch::mail::last_mail`),
-/// read from its host once before its sandbox goes, a provider's close or a
-/// park, since nothing reads it after: the provider keeps no archive an
-/// overseer can read. `None` is a lane with no hosted box, a box with
-/// nothing past the cursor, or a sandbox the provider no longer lists,
-/// whose box is gone with it.
-pub(super) fn last_mail(
+/// read from its host once before a provider's close takes its sandbox,
+/// since nothing reads it after: the provider keeps no archive an overseer
+/// can read. `None` is a lane with no hosted box, a box with nothing past
+/// the cursor, or a sandbox the provider no longer lists, whose box is gone
+/// with it.
+fn last_mail(
     cli: &Path,
     scripts: &Path,
     fleet: &Path,
