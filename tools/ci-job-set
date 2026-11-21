@@ -62,8 +62,10 @@
 # kept and whose every owning shard job completed successfully. Each group
 # must select a Rust target and every orch-rest Linux job must succeed to
 # prove that target. A failed, pending, absent or unread proof subtracts
-# nothing. Lists of suites outside the reach and suites proved by the group
-# become skipped_suites and skipped_suites_macos. main_suites selects the
+# nothing. A MAIN_ONLY_SUITES suite, which no group leg runs, is never
+# proved and owes no shard leg; a proved native replacement stays owed on
+# macOS wherever its original does. Lists of suites outside the reach and
+# suites proved by the group become skipped_suites and skipped_suites_macos. main_suites selects the
 # workflow-owned dedicated declarations; cache_compile selects build inputs.
 # main-proof=read|none|unread reports proof availability on stderr.
 #
@@ -384,7 +386,7 @@ runtime_targets() {
 # A failed proof read subtracts nothing from the selected work.
 main_proof() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
-  local runs ids="" id page jobs="" sels="" listing artifact sel work owed
+  local runs ids="" id page jobs="" sels="" listing artifact sel work owed replacements
   local linux macos skipped skipped_macos rust linux_n macos_n targets_n
   if ! runs="$(gh api --paginate "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100")"; then
     state=unread cause=runs-read-failed
@@ -434,15 +436,23 @@ main_proof() {
       suite_map | jq -Rcs 'split("\n") | map(select(length > 0) | split("\t"))' >"$work/map.json" &&
       runtime_targets | jq -Rcs 'split("\n") | map(select(length > 0))' >"$work/targets.json" ||
       die main-proof-unevaluated "the proof's inputs could not be gathered"
+    replacements="$(native_replacements)" || exit 2
     # Per runner the proved suites and the shards that still run one, the
     # targets left unproved and the counts, as whitespace-separated JSON.
     owed="$(jq -rn --slurpfile jobs "$work/jobs.json" \
       --slurpfile sels "$work/selections.json" --slurpfile map "$work/map.json" --slurpfile targets "$work/targets.json" \
       --argjson selected_linux "$main_linux" --argjson selected_macos "$main_macos" \
       --argjson selected_skip "$main_skipped" --argjson selected_targets "$main_targets" \
+      --argjson main_only "$MAIN_ONLY_SUITES" --argjson replacements "$replacements" \
       --arg listless "$LISTLESS_SHARDS" '
       $jobs[0] as $jobs | $sels[0] as $sels
-      | [$map[0][] | select(.[2] as $s | $selected_skip | index($s) | not)] as $map
+      # No group leg runs a declared main-only suite, so no group proves
+      # it, and the push runs it in its dedicated job, never on a shard leg
+      # it would owe. A shell one matches by base name, as MAIN_ONLY_FILTERS
+      # drops it.
+      | [$main_only[].suite + ".sh"] as $main_only
+      | [$map[0][] | select(.[2] as $s | ($selected_skip | index($s) | not)
+          and ($main_only | index($s | split("/") | last) | not))] as $map
       | $targets[0] as $universe_targets
       | [$universe_targets[] | select(. as $t | any($selected_targets[]; . as $e | $e == $t or
           (($e | endswith("/*")) and ($t | startswith($e | rtrimstr("*"))))))] as $targets
@@ -476,6 +486,10 @@ main_proof() {
             elif ($mine | length) == ($all | length) then "\($package)/*"
             else $mine[] end] as $rust
       | proved("ubuntu-latest") as $pl | proved("macos-latest") as $pm
+      # macOS refuses an original whose replacement is skipped, so a proved
+      # replacement is owed again wherever its original still runs.
+      | ($pm | map({(.): true}) | add // {}) as $done_macos
+      | ($pm - [$map[] | select(.[0] == "macos-latest" and ($done_macos[.[2]] | not)) | $replacements[.[2]] // empty]) as $pm
       | ($selected_linux | join(" ")) as $linux | ($selected_macos | join(" ")) as $macos
       | owed("ubuntu-latest"; $linux; $pl) as $ol
       | [$linux | split(" ")[] | select(. as $shard | any($ol[]; . == $shard) or ($shard == "orch-rest" and ($rust | length) > 0))] as $ol
@@ -758,13 +772,20 @@ project() {
   done
 }
 
-# Each native replacement tools/macos-test-contracts.json declares for a suite
-# KEPT names, one per line: macOS runs the replacement in the original's place
-# and refuses an original whose replacement is skipped.
+# tools/macos-test-contracts.json's native_replacements, each original suite
+# to the suite macOS runs in its place, as one JSON object.
+native_replacements() {
+  jq -ce '.native_replacements | select(type == "object")' "$TOOLS_DIR/macos-test-contracts.json" ||
+    die "replacements-unread" "tools/macos-test-contracts.json's native_replacements could not be read"
+}
+
+# Each native replacement for a suite KEPT names, one per line: macOS runs
+# the replacement in the original's place and refuses an original whose
+# replacement is skipped.
 kept_replacements() { # KEPT
   local pairs original replacement
-  pairs="$(jq -r '.native_replacements | to_entries[] | "\(.key) \(.value)"' "$TOOLS_DIR/macos-test-contracts.json")" ||
-    die "replacements-unread" "tools/macos-test-contracts.json's native_replacements could not be read"
+  pairs="$(native_replacements)" || exit 2
+  pairs="$(jq -r 'to_entries[] | "\(.key) \(.value)"' <<<"$pairs")" || exit 2
   while IFS=' ' read -r original replacement; do
     [ -n "$original" ] || continue
     case $'\n'"$1"$'\n' in *$'\n'"$original"$'\n'*) printf '%s\n' "$replacement" ;; esac
