@@ -62,6 +62,9 @@ release_image="$release"$'\n\n![shot.png](https://uploads.linear.app/shot.png)'
 release_owner=$'**Owner, what you do:** Review the change.\n\n'"$release"
 final_relative="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: +2h"
 relative="$final_relative"$'\n'"- [ ] $check; Deadline: +1h"
+merge_relative="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: +72h"
+merge_materialized="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: 2026-10-04T23:30:00Z"
+merge_ticked="${merge_relative/\[ \]/[x]}"$'\n  Evidence: observed result'
 materialized="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: 2026-10-02T01:30:00Z"$'\n'"- [ ] $check; Deadline: 2026-10-02T00:30:00Z"
 earliest="- [ ] $check; Deadline: 2026-10-02T02:00:00Z"
 checked_earlier="- [x] $check; Deadline: 2026-10-02T00:30:00Z"$'\n  Evidence: already read'
@@ -86,6 +89,8 @@ while IFS='|' read -r name verb stored body after state date other_date; do
     bulk-update) args+=(CC-1 CC-2) ;;
     *) args+=(CC-1) ;;
   esac
+  # A -merged row writes with the merge time complete is given below.
+  [[ "$name" != *-merged ]] || args+=(--post-merge-at 2026-10-01T23:30:00Z)
   if [[ "$verb" == complete ]]; then
     args+=(--post-merge-at 2026-10-01T23:30:00Z)
     case "$name" in
@@ -138,12 +143,17 @@ update-independent|update|ordinary|ordinary|ordinary||omitted
 update-release-attachment|update|release|image|release_image||omitted
 update-release-owner|update|release|release_owner|release_owner||omitted
 update-fields|update|mixed|omitted|omitted||omitted
+update-relative-merged|update|ordinary|merge_relative|merge_relative||2026-10-04
+update-stored-relative-merged|update|merge_relative|omitted|omitted||2026-10-04
+update-ticked-relative-merged|update|merge_relative|merge_ticked|merge_ticked||null
 bulk-date|bulk-update|mixed|anchored|anchored||2026-10-03|2026-10-03
+bulk-relative-merged|bulk-update|ordinary|merge_relative|merge_relative||2026-10-04|2026-10-04
 bulk-removal|bulk-update|absolute|ordinary|ordinary||null|omitted
 bulk-historical|bulk-update|ticked|ordinary|ordinary||omitted|omitted
 complete-unchanged|complete|absolute|omitted|omitted|Verifying|2026-10-03
 complete-unchanged-release|complete|release|omitted|omitted|Verifying|omitted
 complete-materializes|complete|relative|omitted|materialized|Verifying|2026-10-02
+complete-materializes-window-end|complete|merge_relative|omitted|merge_materialized|Verifying|2026-10-04
 tick-earliest|complete|mixed|omitted|ticked_mixed|Verifying|2026-10-03
 tick-final-relative|complete|final_relative|omitted|ticked_relative|Done|null
 waive-final|complete|absolute|omitted|waived|Done|null
