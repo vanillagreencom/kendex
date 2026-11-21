@@ -65,6 +65,7 @@ relative="$final_relative"$'\n'"- [ ] $check; Deadline: +1h"
 merge_relative="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: +72h"
 merge_materialized="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: 2026-10-04T23:30:00Z"
 merge_ticked="${merge_relative/\[ \]/[x]}"$'\n  Evidence: observed result'
+merge_ticked_materialized="${merge_materialized/\[ \]/[x]}"$'\n  Evidence: observed result'
 materialized="$prefix"$'\n'"- [ ] $check; Trigger: merge; Deadline: 2026-10-02T01:30:00Z"$'\n'"- [ ] $check; Deadline: 2026-10-02T00:30:00Z"
 earliest="- [ ] $check; Deadline: 2026-10-02T02:00:00Z"
 checked_earlier="- [x] $check; Deadline: 2026-10-02T00:30:00Z"$'\n  Evidence: already read'
@@ -84,6 +85,7 @@ while IFS='|' read -r name verb stored body after state date other_date; do
   : >"$log"
   args=(issues "$verb")
   synced=no
+  [[ "$name" != synced-* ]] || synced=yes
   case "$verb" in
     create) args+=(--title item --no-agent-label) ;;
     bulk-update) args+=(CC-1 CC-2) ;;
@@ -97,7 +99,7 @@ while IFS='|' read -r name verb stored body after state date other_date; do
       tick-earliest) args+=(--done-when-met 2 --evidence-file "$TMP_ROOT/evidence") ;;
       tick-final-relative) args+=(--done-when-met 1 --evidence-file "$TMP_ROOT/evidence") ;;
       waive-final) args+=(--done-when-waived 1 --evidence-file "$TMP_ROOT/evidence") ;;
-      synced-materialization) synced=yes; args+=(--summary proof) ;;
+      synced-materialization) args+=(--summary proof) ;;
     esac
   elif [[ "$body" == image ]]; then
     args+=(--attach "$TMP_ROOT/shot.png")
@@ -143,11 +145,14 @@ update-independent|update|ordinary|ordinary|ordinary||omitted
 update-release-attachment|update|release|image|release_image||omitted
 update-release-owner|update|release|release_owner|release_owner||omitted
 update-fields|update|mixed|omitted|omitted||omitted
-update-relative-merged|update|ordinary|merge_relative|merge_relative||2026-10-04
-update-stored-relative-merged|update|merge_relative|omitted|omitted||2026-10-04
+update-relative-merged|update|ordinary|merge_relative|merge_materialized||2026-10-04
+update-stored-relative-merged|update|merge_relative|omitted|merge_materialized||2026-10-04
 update-ticked-relative-merged|update|merge_relative|merge_ticked|merge_ticked||null
+update-ticked-materialized|update|merge_materialized|merge_ticked_materialized|merge_ticked_materialized||null
+synced-update-merged|update|merge_relative|omitted|omitted||omitted
 bulk-date|bulk-update|mixed|anchored|anchored||2026-10-03|2026-10-03
-bulk-relative-merged|bulk-update|ordinary|merge_relative|merge_relative||2026-10-04|2026-10-04
+bulk-relative-merged|bulk-update|ordinary|merge_relative|merge_materialized||2026-10-04|2026-10-04
+synced-bulk-merged|bulk-update|merge_relative|omitted|omitted||omitted|omitted
 bulk-removal|bulk-update|absolute|ordinary|ordinary||null|omitted
 bulk-historical|bulk-update|ticked|ordinary|ordinary||omitted|omitted
 complete-unchanged|complete|absolute|omitted|omitted|Verifying|2026-10-03

@@ -247,9 +247,11 @@ Update Options:
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
   --post-merge-at <UTC> The merged PR's mergedAt (YYYY-MM-DDTHH:MM:SSZ), as on
                         complete; bulk-update applies it to every named issue.
-                        The native due date then counts a merge-triggered
-                        Deadline: +Nh from it, read from the new description,
-                        or from the stored one when this update writes none.
+                        Each open merge-triggered Deadline: +Nh in the new
+                        description, or in the stored one when this update
+                        writes none, is written as its end time, as complete
+                        writes it, and the native due date counts from that
+                        end. Writing the stored body is a description write.
   --format <fmt>        Output format for the updated issue: safe | compact | ids |
                         raw. When omitted, emits the mutation summary
                         ({success, identifier, url, data}) as before. An
@@ -837,6 +839,7 @@ bulk_update_issues() {
     local description="" description_set="false" state="" project=""
     local description_write="false"
     local synced_description="false"
+    local merge_at=""
 
     # Separate issue IDs from update options
     while [[ $# -gt 0 ]]; do
@@ -850,7 +853,10 @@ bulk_update_issues() {
             # (--attach re-uploads per issue: Linear assets are issue-agnostic
             # but each issue gets its own embed/attachment)
             [[ "$1" != --project ]] || project="$2"
-            [[ "$1" != --post-merge-at ]] || require_post_merge_stamp "${2-}" || return 1
+            if [[ "$1" == --post-merge-at ]]; then
+                require_post_merge_stamp "${2-}" || return 1
+                merge_at="$2"
+            fi
             update_args+=("$1" "$2")
             [[ "$1" != --state && "$1" != --status ]] || state="$2"
             [[ "$1" != --attach ]] || attach_paths+=("$2")
@@ -864,7 +870,10 @@ bulk_update_issues() {
             # Support --key=value syntax (AI agents often use this)
             local _key="${1%%=*}" _val="${1#*=}"
             [[ "$_key" != --project ]] || project="$_val"
-            [[ "$_key" != --post-merge-at ]] || require_post_merge_stamp "$_val" || return 1
+            if [[ "$_key" == --post-merge-at ]]; then
+                require_post_merge_stamp "$_val" || return 1
+                merge_at="$_val"
+            fi
             update_args+=("$_key" "$_val")
             [[ "$_key" != --state && "$_key" != --status ]] || state="$_val"
             [[ "$_key" != --attach ]] || attach_paths+=("$_val")
@@ -949,15 +958,23 @@ bulk_update_issues() {
         linear_own_team || return 1
         own_team_id=$(jq -r '.id' <<<"$LINEAR_OWN_TEAM") || return 1
     fi
-    if [[ -n "$state" || -n "$project_map" || ( "$description_write" == true && "$synced_description" == false ) ]]; then
-        local preflight_failed=0 issue_result effective_description team_id
+    # A merge time writes a stored body whose deadline it resolves, so it
+    # takes the synced-description check below for each issue it changes.
+    if [[ -n "$state" || -n "$project_map" || ( ( "$description_write" == true || -n "$merge_at" ) && "$synced_description" == false ) ]]; then
+        local preflight_failed=0 issue_result effective_description team_id issue_write stored_body materialized
         for id in "${identifiers[@]}"; do
             issue_result=""
-            if [[ -n "$state" || -z "$own_team_id" || "$description_write" == true ]] && ! issue_result=$(get_issue "$id" --format=raw); then
+            if [[ -n "$state" || -z "$own_team_id" || "$description_write" == true || -n "$merge_at" ]] && ! issue_result=$(get_issue "$id" --format=raw); then
                 preflight_failed=1
                 continue
             fi
-            require_unsynced_description "$id" "$issue_result" "$description_write" "$synced_description" || preflight_failed=1
+            issue_write="$description_write"
+            if [[ "$issue_write" == false && -n "$merge_at" ]]; then
+                stored_body=$(jq -r '.issue.description // ""' <<<"$issue_result") || return 1
+                materialized=$(done_when_materialize "$stored_body" "$merge_at") || return 1
+                [ -z "$materialized" ] || issue_write=true
+            fi
+            require_unsynced_description "$id" "$issue_result" "$issue_write" "$synced_description" || preflight_failed=1
             if [ -n "$state" ]; then
                 effective_description="$description"
                 if [ "$description_set" != true ]; then
@@ -2321,7 +2338,6 @@ write_issue_update() {
     issue_result=$(get_issue "$issue_id" --format=raw) || return 1
     local description_write
     description_write=$(issue_description_write "$description_set" ${attach_paths[@]+"${attach_paths[@]}"}) || return 1
-    require_unsynced_description "$issue_id" "$issue_result" "$description_write" "$synced_description" || return 1
     local stored_description=""
     if [[ "$description_write" == true || "$completing" == true || -n "$state" || -n "$merge_at" ]]; then
         stored_description=$(jq -r '(.issue.description // "") + "."' <<<"$issue_result") || return 1
@@ -2331,6 +2347,19 @@ write_issue_update() {
     if [[ "$description_set" == true ]]; then
         require_issue_header_shape "$description" "$stored_description" || return 1
     fi
+    # A date counted from the merge is written with its end in the body, so a
+    # later write without the merge time still sees the check that set it.
+    if [ -n "$merge_at" ]; then
+        local materialize_from="$stored_description" materialized
+        [ "$description_set" != true ] || materialize_from="$description"
+        materialized=$(done_when_materialize "$materialize_from" "$merge_at") || return 1
+        if [ -n "$materialized" ]; then
+            description="${materialized%.}"
+            description_set=true
+            description_write=true
+        fi
+    fi
+    require_unsynced_description "$issue_id" "$issue_result" "$description_write" "$synced_description" || return 1
     local team_name team_id
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
     # The issue names its own team by id: a state resolves under that id, never
