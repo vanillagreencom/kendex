@@ -157,6 +157,8 @@ assert_eq "$RC" 0 'setup under a lower pin builds on a toolchain at the rust-ver
 before="$(calls)"
 FAKE_TOOLCHAINS=1.94.0 run "$TMP_ROOT/cache-old" "$SETUP"
 assert_eq "$RC|$ERR|$(calls)" "1|agent-runtime-setup: toolchain-missing rust-version=1.96 key=$KEY fix=rustup toolchain install 1.96|$before" 'setup without such a toolchain refuses, names the install and builds nothing'
+FAKE_TOOLCHAINS='' run "$TMP_ROOT/cache-unlisted" "$SETUP"
+assert_eq "$RC" 0 'a rustup that lists no toolchain, as under an isolated HOME, leaves the build to cargo' "$TMP_ROOT/err"
 cd "$ROOT"
 
 # --- a dependent crate is keyed on its inputs and its dependency's ----------
