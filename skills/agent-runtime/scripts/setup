@@ -32,7 +32,9 @@ dependency the manifest declares), builds with `cargo build --release
 <cache>/bin/<name>-<key>. <cache> is $AGENT_RUNTIME_CACHE, else
 $XDG_CACHE_HOME/kendex/agent-runtime, else ~/.cache/kendex/agent-runtime.
 A binary already at that path is kept and nothing is built. The build's
-own stderr passes through.
+own stderr passes through. Where rustup answers for an installed toolchain
+and the manifest states a rust-version, the build runs on the first installed toolchain whose rustc
+is at or above it, never the caller's rust-toolchain.toml.
 
 Prints one line on success:
   <name>-setup: key=<key> binary=<path>
@@ -40,7 +42,8 @@ A failure prints one keyed line on stderr and exits 1:
   <name>-setup: <key> field=value ...
 Keys: usage, runtime-missing, cargo-missing, digest-tool-missing,
 inputs-missing, inputs-unreadable, manifest-unreadable, digest-failed,
-cache-unwritable, build-failed, binary-missing, place-failed. bin/ never
+cache-unwritable, toolchain-missing (its fix= names the rustup install, to
+the line's end), build-failed, binary-missing, place-failed. bin/ never
 holds a partial binary: the copy lands in an exclusively created temporary
 file beside the target and is renamed over it only once whole.
 
@@ -225,6 +228,27 @@ if [ -x "$binary" ]; then
 fi
 
 command -v cargo >/dev/null 2>&1 || refuse cargo-missing "key=$key"
+# rustup applies the rust-toolchain.toml of the directory cargo runs in, a
+# consumer's among them, so the build names its own toolchain from the
+# crate's rust-version. A rustup that answers for no toolchain, such as under
+# an isolated HOME, leaves the build as cargo resolves it.
+if need="$(awk -F'"' '/^rust-version[[:space:]]*=/ { print $2; exit }' "$runtime/Cargo.toml")" &&
+  [ -n "$need" ] && command -v rustup >/dev/null 2>&1; then
+  toolchain=""
+  answered=0
+  for candidate in $(rustup toolchain list 2>/dev/null | awk '{ print $1 }'); do
+    have="$(rustup run "$candidate" rustc --version 2>/dev/null)" || continue
+    answered=1
+    have="${have#rustc }"
+    if awk -v h="${have%% *}" -v n="$need" 'BEGIN { split(h, a, "."); split(n, b, ".")
+      for (i = 1; i <= 3; i++) if (a[i] + 0 != b[i] + 0) exit a[i] + 0 < b[i] + 0; exit 0 }'; then
+      toolchain="$candidate"
+      break
+    fi
+  done
+  [ -n "$toolchain" ] || [ "$answered" -eq 0 ] || refuse toolchain-missing "rust-version=$need key=$key fix=rustup toolchain install $need"
+  [ -z "$toolchain" ] || export RUSTUP_TOOLCHAIN="$toolchain"
+fi
 mkdir -p -- "$builds/$key" "$cache/bin" || refuse cache-unwritable "path=$cache"
 
 status=0
