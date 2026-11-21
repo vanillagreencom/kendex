@@ -987,23 +987,6 @@ fn local_launch(
     Ok(outcome)
 }
 
-/// A hosted lane: the provider's `create` (and `wait`), the launch record
-/// verified on the host, then the fleet window running the ssh client
-/// whose one typed line starts the harness under the provider's prefix, or,
-/// where the provider owns the harness's session (`pane=verb`), that
-/// prefix run here with no window.
-/// Whether the lane's last pause is a park: its sandbox was stopped with its
-/// disk kept, and no launch has brought it back for certain since.
-fn parked_last(lane: &Lane) -> bool {
-    lane.extra
-        .get("pauses")
-        .and_then(Value::as_array)
-        .and_then(|pauses| pauses.last())
-        .and_then(|pause| pause.get("cause"))
-        .and_then(Value::as_str)
-        == Some("parked")
-}
-
 /// What a hosted launch's provider answered of the lane's sandbox, whatever
 /// the launch's word.
 #[derive(Default)]
@@ -1016,6 +999,11 @@ struct HostSandbox {
     absent: bool,
 }
 
+/// A hosted lane: the provider's `create` (and `wait`), the launch record
+/// verified on the host, then the fleet window running the ssh client
+/// whose one typed line starts the harness under the provider's prefix, or,
+/// where the provider owns the harness's session (`pane=verb`), that
+/// prefix run here with no window.
 fn hosted_launch(
     run: &Run,
     mut operation: Operation,
@@ -1025,7 +1013,7 @@ fn hosted_launch(
     relaunch: bool,
     sandbox: &mut HostSandbox,
 ) -> Result<EffectOutcome> {
-    let parked = relaunch && parked_last(lane);
+    let parked = relaunch && lane.parked_last();
     let failed = |operation: Operation, cause: &str| {
         Ok(operation.settle(Word::Failed, json!({"cause": cause})))
     };

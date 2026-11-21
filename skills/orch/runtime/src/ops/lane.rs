@@ -982,9 +982,9 @@ pub(super) fn hold_for_capacity(
 
 /// The admitted relaunch closes a standing `capacity_wait` into `pauses` as
 /// `{from: capacity_wait.at, to: $at, cause: "capacity"}`. The pause goes in
-/// before a trailing park, never after it: the hosted relaunch reads the
-/// last pause as the sandbox's standing (`parked_last` in
-/// `effects/launch.rs`), and a wait for a slot brings no sandbox back.
+/// before a trailing park, never after it: the hosted relaunch and close
+/// read the last pause as the sandbox's standing ([`Lane::parked_last`]),
+/// and a wait for a slot brings no sandbox back.
 fn close_capacity_wait(path: &Path, lane: &mut Document, at: &str) -> Result<()> {
     let Some(from) = lane
         .get("capacity_wait")

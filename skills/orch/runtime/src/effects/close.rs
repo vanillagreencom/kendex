@@ -575,7 +575,9 @@ impl Close<'_> {
     /// and a sandbox its provider no longer lists has none to read. A park
     /// the record already owes reads its sandbox for nothing: its mailbox
     /// was read when the mark was written, and no session has run since to
-    /// add an ask.
+    /// add an ask. Nor does a failed relaunch from a park
+    /// ([`Lane::park_unresumed`]): its sandbox is still stopped, as the
+    /// park that read its mailbox left it.
     fn stopped(self) -> Result<Closed> {
         if let Some(wait) = self.park() {
             let owed = self.owed(wait);
@@ -594,7 +596,7 @@ impl Close<'_> {
         } else {
             self.by_verdict(Ground::Exited, &mut notes)?
         };
-        if !matches!(ground, Ground::Terminal(_)) {
+        if !matches!(ground, Ground::Terminal(_)) && !self.lane.park_unresumed() {
             self.refuse_ask_unless_gone(&mut notes)?;
         }
         if self.keep() {

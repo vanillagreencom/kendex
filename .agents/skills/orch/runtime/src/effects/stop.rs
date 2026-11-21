@@ -27,7 +27,7 @@ use super::grants;
 use super::lane_operation::{LaneOperation, Unread, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::state::{CloseGround, Lane, LaneMembers, LaneStatus, TerminalVerdict};
+use crate::state::{CloseGround, Lane, LaneMembers, TerminalVerdict};
 use crate::watch::hosted::{self, Asked, HostClosed};
 use crate::watch::lanes::{self, LaneState};
 use crate::watch::mail::ClosingMail;
@@ -503,22 +503,16 @@ impl Close<'_> {
     }
 
     /// The lane's last mail, read before the provider's close takes its
-    /// box. A parked record's sandbox is stopped and answers no read, and a
-    /// park-owed record's may be, so neither is read.
+    /// box. A box a park stopped answers no read and holds nothing the park
+    /// did not read ([`Lane::mail_parked`]), so none is read.
     fn last_mail(
         &self,
         operation: &LaneOperation,
     ) -> std::result::Result<Option<ClosingMail>, Unread> {
-        if self.lane.extra.contains_key(crate::state::PARK_OWED) {
+        if self.lane.mail_parked() {
             return Ok(None);
         }
-        match self.lane.status {
-            LaneStatus::Parked => Ok(None),
-            LaneStatus::Preparing
-            | LaneStatus::Running
-            | LaneStatus::Stopped
-            | LaneStatus::Done => operation.last_mail(self.lane),
-        }
+        operation.last_mail(self.lane)
     }
 
     /// The close of what remains once every process the close names has
@@ -569,6 +563,13 @@ impl Close<'_> {
             match self.last_mail(&operation) {
                 Ok(None) => {}
                 Ok(Some(mail)) => observation["mail"] = json!(mail),
+                // A relaunch from a park that has not confirmed may have left
+                // its sandbox stopped, which answers no read; no session has
+                // confirmed there since the park read the box.
+                Err(Unread::Failed { cause }) if self.lane.park_unresumed() => {
+                    observation["mail"] = json!("unread-parked");
+                    observation["mail_cause"] = json!(cause);
+                }
                 Err(unread) => {
                     observation["mail"] = json!("unread");
                     observation["cause"] = json!(unread.to_string());
