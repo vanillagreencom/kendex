@@ -84,7 +84,7 @@ if a == ['api', 'repos/o/r/pulls/42', '--jq', '.head.sha']:
 if a == ['api', '--method', 'POST', 'repos/o/r/pulls/42/reviews', '--input', '-']:
     with (root / 'posts').open('a') as posts:
         posts.write('post\n')
-    record = json.loads((root / 'item.json').read_text())
+    record = json.loads((root / cfg.get('record', 'item.json')).read_text())
     entry = record['head_approvals']['o/r#42'][head]
     assert entry['attempt']['state'] == 'attempted', 'POST without the once record'
     payload = json.loads(sys.stdin.read())
@@ -147,7 +147,7 @@ landed_comments = json.loads(comments.read_text()) if comments.exists() else []
 if a == ['api', '--method', 'POST', 'repos/o/r/issues/42/comments', '--input', '-']:
     with (root / 'comment_posts').open('a') as posts:
         posts.write('post\n')
-    entry = json.loads((root / 'item.json').read_text())['head_approvals']['o/r#42'][head]
+    entry = json.loads((root / cfg.get('record', 'item.json')).read_text())['head_approvals']['o/r#42'][head]
     assert entry['comment']['state'] == 'attempted', 'comment POST without its claim'
     assert entry.get('attempt') is None, 'comment POST after the approval claim'
     sent = json.loads(sys.stdin.read())

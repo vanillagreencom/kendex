@@ -296,6 +296,49 @@ fn a_prefix_approval_persists_before_post_and_replays_once() {
     assert!(log.lines().any(|l| l.contains(TOKEN) && l.contains("POST")));
 }
 
+/// A hosted lane's record lives on its host, so the overseer's checkout
+/// holds none: the approval creates the item record its ledger lives in,
+/// and the ledger still answers the second request without a second post.
+#[test]
+fn an_approval_with_no_local_record_opens_the_ledger_and_posts_once() {
+    let dir = world();
+    let root = dir.path();
+    let record = root.join("items/KEN-1/workflow-state-KEN-1.json");
+    answer(
+        root,
+        json!({"record": "items/KEN-1/workflow-state-KEN-1.json"}),
+    );
+    fs::write(root.join("request.json"), serde_json::to_vec(&json!({"op":"approve-head","repo":"o/r","pr":42,"head":&HEAD[..8],"body_file":root.join("body")})).unwrap()).unwrap();
+    for _ in 0..2 {
+        let output = support::isolated()
+            .current_dir(root)
+            .env("PATH", support::tool_path(&[&root.join("bin")]))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .env("GH_TOKEN", LANE_TOKEN)
+            .args(["op", "--file"])
+            .arg(&record)
+            .arg("--request")
+            .arg(root.join("request.json"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["result"]["status"], "confirmed", "{reply}");
+    }
+    assert_eq!(posts(root), 1);
+    let ledger: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    assert_eq!(ledger["issue_id"], "KEN-1");
+    assert_eq!(
+        ledger["head_approvals"]["o/r#42"][HEAD]["attempt"]["state"],
+        "confirmed"
+    );
+}
+
 /// A refusal names what it judged beside its key, in the reply the op
 /// prints: head-moved the given and the live head, credential the token
 /// file and the reader's cause.
