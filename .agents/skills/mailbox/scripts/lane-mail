@@ -326,6 +326,19 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               collapsed), and envelope only for a relay-posted parent.
               inbox prints both fields as part of the envelope. A top-level
               directive and an ask's answer carry neither
+  send --item overseer --data SOURCE --file PATH [--delivery-id KEY]
+              a data notice: text a program wrote into the overseer's own
+              mailbox, such as a mail watch's summary of an email. Its kind
+              is `data`, never `directive`, and SOURCE, the program or
+              origin the text came from, lands as the envelope's `source`
+              field: one word of printable ASCII, a space or a control
+              character refused `source-invalid`, an empty one
+              `missing-value`. The session that reads it takes it as data
+              from that source and takes no instruction from it. events
+              gives it mail_class `data`, and inbox, its cursor and --ack
+              hand it over as any other envelope. It needs the overseer
+              record a directive needs; --re, --directive and --halt beside
+              it are refused `option-conflict`
   send --item overseer --re MSGID --file PATH [--delivery-id KEY]
               every answer to an open owner ask lands separately with by=text.
               An answer leaves the ask pending until resolve closes it.
@@ -421,6 +434,7 @@ Options:
   --ack N       inbox only: the count a --peek printed, acknowledged once its
                 envelopes were handed over
   --halt        send only: a directive that halts the lane, as above
+  --data SOURCE send --item overseer only: a data notice from SOURCE, as above
   --session ID  send --directive to a lane only: the Claude cloud session
                 the route names
   --account DIR with --session only: the Claude account the send runs under
@@ -459,6 +473,7 @@ file opening with another id is a replacement mailbox, not the one counted.
 Counts include compacted rows. The first id stays original.
 
 Envelope, one JSON object per line: id, kind, at, from, re (answers and closes),
+source (a data notice only: the program or origin its text came from),
 halt (true on a directive sent with --halt), text and options (asks with
 choices), and the owner-channel fields each verb above writes: to, ref, progress
 (true only with --progress), open, purpose,
@@ -477,7 +492,8 @@ when settings change or cannot be read), tracker_comment (the posted
 question comment's tracker id, which owner replies follow), tracker_cause (the
 failed operation of an unposted tracker question),
 and by (`text` or `default` on an owner answer; `explicit`, `text` or
-`default` on a close). kind is ask, notice, answer, resolution or directive;
+`default` on a close). kind is ask, notice, answer, resolution, directive or
+data;
 at is UTC; id is <epoch>-<pid>-<random>. from
 is the sender, read from its own checkout and never from an option: a lane
 verb writes the item, a send into the overseer's own mailbox and a `resolve
@@ -577,7 +593,7 @@ seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress
 recommend-invalid, recommend-missing, recommend-required, effect-required, ask-reserved-effect, draft-field,
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
-open-invalid, purpose-invalid, memory-too-long,
+open-invalid, source-invalid, purpose-invalid, memory-too-long,
 overseer-only, not-owner-ask,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
@@ -684,6 +700,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     purpose-invalid) text='--purpose takes memory only, on an owner ask.' ;;
     memory-too-long) text='A memory proposal takes at most 256 UTF-8 bytes of text.' ;;
     open-invalid) text='--open takes exactly one https URL.' ;;
+    source-invalid) text='--data names the source of a data notice as one word of printable ASCII, with no space or control character, so the watch reports it as one field.' ;;
     progress-needs-ref) text='A progress notice requires --ref to bind the step report to its request.' ;;
     ref-unknown) text='No message this reply may answer carries exactly that id, so nothing here can be answered by it. A --ref names an owner note in to-lane.jsonl or an owner ask in to-overseer.jsonl; a line a peer overseer sent and a resolution there are neither. A peer send --re names a line a peer overseer sent to this overseer'"'"'s own to-lane.jsonl. Read the message again and pass the whole id it carries.' ;;
     recommend-invalid) text='--recommend names one of the choices --options lists, and an ask with no choices has nothing to recommend.' ;;
@@ -760,6 +777,7 @@ MSGID=""
 TIMEOUT=0
 INTERVAL=5
 DIRECTIVE=0
+DATA_SOURCE=""
 REQUIRE_READER=0
 HALT=0
 PEEK=0
@@ -820,6 +838,7 @@ while [ "$#" -gt 0 ]; do
     --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
     --host) HOST=1; shift ;;
     --directive) DIRECTIVE=1; shift ;;
+    --data) need_val "$@"; DATA_SOURCE="$2"; shift 2 ;;
     --require-reader) REQUIRE_READER=1; shift ;;
     --halt) DIRECTIVE=1; HALT=1; shift ;;
     --peek) PEEK=1; shift ;;
@@ -954,6 +973,13 @@ for given in $OPTS_GIVEN; do
       esac ;;
     --require-reader)
       [ "$VERB:$ITEM:$DIRECTIVE:$HOST" = send:overseer:1:0 ] || refuse option-unknown "$given" ;;
+    # The watch reports the source as one field of a whitespace-separated
+    # event line, so a space or a control character would split that line.
+    --data)
+      [ "$VERB:$ITEM" = send:overseer ] || refuse option-unknown --data
+      # \A and \z anchor the whole value: jq's `$` also matches before a
+      # final newline, which would split the watch's one-line event.
+      jq -en --arg source "$DATA_SOURCE" '$source | test("\\A[!-~]+\\z")' >/dev/null || refuse source-invalid "$DATA_SOURCE" ;;
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
@@ -1478,7 +1504,8 @@ lm_repository() {
 
 # Who sent it, never typed: a lane writes its own item, a note into the
 # overseer's own mailbox is the owner's, and every other overseer write
-# carries the repository it was sent from.
+# carries the repository it was sent from. A data notice keeps `owner` here:
+# its kind, not its sender, makes it data, and its source names the program.
 FROM=""
 case "$VERB:$ITEM:$DEFAULT" in
   ask:* | notice:*) FROM="$ITEM" ;;
@@ -1964,11 +1991,12 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg purpose "$PURPOSE" --arg open "$OPEN" --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
-    --arg thread "$THREAD_TS" --slurpfile parent "$WORK_DIR/parent.json" \
+    --arg thread "$THREAD_TS" --arg source "$DATA_SOURCE" --slurpfile parent "$WORK_DIR/parent.json" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
       $parent[0] as $parent |
       {id: $id, kind: $kind, at: ($now | todate), from: $from}
       + (if $re == "" then {} else {re: $re} end)
+      + (if $source == "" then {} else {source: $source} end)
       + (if $halt == "1" then {halt: true} else {} end)
       + (if $to == "" then {} else {to: $to} end)
       + (if $issue == "" then {} else {issue: $issue} end)
@@ -2641,7 +2669,12 @@ case "$VERB" in
       [ "$HALT" -eq 0 ] || refuse option-conflict '--re,--halt'
       refuse option-conflict '--re,--directive'
     fi
-    if [ "$DIRECTIVE" -eq 0 ] && [ -z "$MSGID" ]; then
+    if [ -n "$DATA_SOURCE" ]; then
+      [ "$HALT" -eq 0 ] || refuse option-conflict '--halt,--data'
+      [ "$DIRECTIVE" -eq 0 ] || refuse option-conflict '--directive,--data'
+      [ -z "$MSGID" ] || refuse option-conflict '--re,--data'
+    fi
+    if [ "$DIRECTIVE" -eq 0 ] && [ -z "$MSGID" ] && [ -z "$DATA_SOURCE" ]; then
       refuse option-required --re
     fi
     [ "$HALT" -eq 0 ] || [ "$ITEM" != overseer ] || refuse option-conflict '--item=overseer,--halt'
@@ -2666,6 +2699,8 @@ case "$VERB" in
     # nothing in any mailbox.
     if [ "$DIRECTIVE" -eq 1 ]; then
       LINE="$(lm_envelope directive)"
+    elif [ -n "$DATA_SOURCE" ]; then
+      LINE="$(lm_envelope data)"
     else
       LINE="$(lm_envelope answer "$MSGID")"
     fi

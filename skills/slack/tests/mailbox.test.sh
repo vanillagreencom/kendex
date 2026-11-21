@@ -367,6 +367,16 @@ draft-no-text|draft|.draft = {recipient: "a@example.com", medium: "email"}|0
 draft-empty-text|draft|.draft = {recipient: "a@example.com", medium: "email", text: ""}|0
 ROWS
 
+# A data notice is a kind lane-mail writes: the relay reads it without a
+# diagnostic and leaves it for the session, posting nothing.
+DATA_ROOT="$(sk_new_root field-data-kind)"
+sk_bind "$DATA_ROOT"
+sk_poll "$DATA_ROOT"
+sk_lm "$DATA_ROOT" send --item overseer --data mail-watch --file "$(sk_text data-kind 'Data from the mail watch.')" >/dev/null
+sk_poll "$DATA_ROOT"
+assert_eq "$RC=$(asks "$(sk_channel "$DATA_ROOT")" 'Data from the mail watch.')=$ERR" "0=0=" \
+  "a data notice raises no envelope-field diagnostic and posts nothing"
+
 LEGACY="$(sk_new_root legacy-events)"
 HEALTHY="$(sk_new_root healthy-events)"
 for R in "$LEGACY" "$HEALTHY"; do
@@ -499,6 +509,11 @@ sk_bin_reset
 sk_mutant field-choice mailbox.py 'FIELD_CHOICES = .*' 'FIELD_CHOICES = {}'
 sk_poll "$SK_TMP/field-unknown-kind"
 assert_eq "$ERR" "" "control: unknown field choices no longer get a keyed diagnostic"
+sk_bin_reset
+
+sk_mutant data-kind mailbox.py '"resolution", "data"\)' '"resolution")'
+sk_poll "$DATA_ROOT"
+assert_has "$ERR" "slack: envelope-field=$DATA_ROOT id=" "control: without the data kind the relay reports a data notice as a bad field"
 sk_bin_reset
 
 sk_mutant root-isolation relay.py '(    def poll_once\(self\) -> bool:[\s\S]*?\n            )except Exception as err:\n                self.root_failed\(root, err\)\n                clean = False' '\1except Exception as err:\n                raise err'

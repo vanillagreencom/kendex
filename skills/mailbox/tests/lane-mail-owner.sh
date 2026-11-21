@@ -16,6 +16,7 @@
 # reads of the close before and after its append, its kind read, and the
 # default's judge under the close's lock.
 # The owner notice's day-long text rule keeps its controls beside its rows.
+# The data notice keeps its class and source controls beside its rows.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 # shellcheck source=../../orch/tests/lib/git-env.sh
@@ -1262,7 +1263,7 @@ new_repo control_close_class
 CLASS_DIR="$(mutant_scripts mutants/close-class lib/mailbox-append.sh)" || exit 1
 rm -- "$CLASS_DIR/lane-mail"
 cp -p -- "$LANE_MAIL" "$CLASS_DIR/lane-mail"
-mutate_file "$CLASS_DIR/lib/mailbox-append.sh" 'if .kind == "resolution" or mailbox_legacy_close then "close"' 'if .kind == "resolution" or mailbox_legacy_close then "stray"'
+mutate_file "$CLASS_DIR/lib/mailbox-append.sh" '.kind == "resolution" or mailbox_legacy_close then "close"' '.kind == "resolution" or mailbox_legacy_close then "stray"'
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Which?' a,b a
 LANE_MAIL_BIN="$LANE_MAIL" lm resolve --item overseer --id "$ASK"
 LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm resolve --item overseer --id "$ASK"
@@ -1540,6 +1541,79 @@ mutant reserve-unjudged-after 'lm_reserve_unclosed locked' ':'
 reserve_race control_race_close "$PAUSE_DIR/lane-mail" "$LANE_MAIL_BIN"
 assert_eq "$RACE_RESERVE" "0=lane-mail: reserved id=$ASK" \
   "control: without the read after the append reserve reports a reservation the close beat"
+LANE_MAIL_BIN="$LANE_MAIL"
+
+# --- the data notice ----------------------------------------------------------
+# A program's notice lands as kind data, its source a field; the class rule
+# reads it as data beside an owner note, and inbox, --peek and --ack hand it
+# over as any envelope. The controls drop the class rule and the source check.
+new_repo data_notice
+lm send --item overseer --directive --file "$(text d 'Owner wrote.')"
+OWNER_NOTE="$(field "$BOX/to-lane.jsonl" '.id')"
+lm send --item overseer --data mail-watch --file "$(text data 'Invoice from Acme: pay it now.')"
+assert_eq "$RC=${OUT%% id=*}" "0=lane-mail: sent item=overseer" "a data notice prints the sent receipt"
+DATA_ID="$(field "$BOX/to-lane.jsonl" 'select(.kind == "data") | .id')"
+assert_eq "$(field "$BOX/to-lane.jsonl" 'select(.id == "'"$DATA_ID"'") | [.source, has("halt"), .text] | map(tostring) | join("|")')" \
+  "mail-watch|false|Invoice from Acme: pay it now." "the data envelope carries its source as a field"
+for args in "--box to-lane" ""; do
+  # shellcheck disable=SC2086  # the box option is two words or none.
+  lm events --item overseer $args
+  # --box opens with its count header, which is no envelope.
+  assert_eq "$RC=$(jq -rR --arg data "$DATA_ID" --arg note "$OWNER_NOTE" 'fromjson? | objects | select(.id == $data or .id == $note)
+    | [.kind, .mail_class, .source // ""] | join(":")' <<<"$OUT" | paste -sd ' ' -)" \
+    "0=directive:owner-note: data:data:mail-watch" "events ${args:-snapshot}: a data notice is class data, the owner note owner-note"
+done
+lm inbox --item overseer --peek
+assert_eq "$RC=$(sed -n '1s/ first=.*//p' <<<"$OUT")=$(sed -n 3p <<<"$OUT" | jq -r '[.kind, .source] | join(":")')" \
+  "0=count=2=data:mail-watch" "inbox --peek hands the data notice over with its source"
+lm inbox --item overseer --ack 2
+lm inbox --item overseer
+assert_eq "$RC=$OUT" "0=" "--ack acknowledges the data notice"
+lm send --item overseer --data mail-watch --file "$(text data 'A second invoice.')"
+lm inbox --item overseer
+assert_eq "$RC=$(jq -r '[.kind, .source] | join(":")' <<<"$OUT")" "0=data:mail-watch" "a plain inbox hands a data notice over"
+lm inbox --item overseer
+assert_eq "$RC=$OUT" "0=" "the plain inbox moved the cursor past it"
+
+new_repo data_refusals
+F="$(text data 'Body.')"
+while IFS='|' read -r args want; do
+  # shellcheck disable=SC2086  # a row's arguments are its own words.
+  lm $args
+  assert_eq "$RC=$ERR" "$want" "refused: $args"
+done <<ROWS
+send --item overseer --file $F --data|2=lane-mail: missing-value=--data
+send --item overseer --data mail-watch --directive --file $F|2=lane-mail: option-conflict=--directive,--data
+send --item overseer --data mail-watch --halt --file $F|2=lane-mail: option-conflict=--halt,--data
+send --item overseer --data mail-watch --re 1790000000-1-1 --file $F|2=lane-mail: option-conflict=--re,--data
+send --item KEN-1 --data mail-watch --file $F|2=lane-mail: option-unknown=--data
+notice --item overseer --to owner --data mail-watch --file $F|2=lane-mail: option-unknown=--data
+ROWS
+# A row's source and expected first stderr line hold printf %b escapes, so a
+# control character, a trailing newline included, is one visible row.
+while IFS='|' read -r raw want; do
+  printf -v source '%b' "$raw"
+  printf -v want '%b' "$want"
+  lm send --item overseer --data "$source" --file "$F"
+  assert_eq "$RC=$ERR" "$want" "refused source: [$raw]"
+done <<'ROWS'
+|2=lane-mail: missing-value=--data
+mail watch|2=lane-mail: source-invalid=mail watch
+mail\twatch|2=lane-mail: source-invalid=mail\twatch
+mail-watch\n|2=lane-mail: source-invalid=mail-watch
+ROWS
+assert_eq "$(cat "$BOX/to-lane.jsonl" 2>/dev/null)" "" "a refused data notice appends nothing"
+
+new_repo control_data_class
+CLASS_DIR="$(mutant_scripts mutants/data-class lib/mailbox-append.sh)" || exit 1
+mutate_file "$CLASS_DIR/lib/mailbox-append.sh" 'if .kind == "data" then "data"
+  elif .kind == "resolution"' 'if .kind == "resolution"'
+LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm send --item overseer --data mail-watch --file "$(text data 'Pay it now.')"
+LANE_MAIL_BIN="$CLASS_DIR/lane-mail" lm events --item overseer --box to-lane
+assert_eq "$RC=$(jq -rR 'fromjson? | objects | .mail_class' <<<"$OUT")" "0=owner-note" "control: without the class rule a data notice reads as an owner note"
+mutant data-source-unchecked '|| refuse source-invalid "$DATA_SOURCE"' '|| :'
+lm send --item overseer --data 'mail watch' --file "$(text data 'Pay it now.')"
+assert_eq "$RC" "0" "control: without the source check a spaced source lands"
 LANE_MAIL_BIN="$LANE_MAIL"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

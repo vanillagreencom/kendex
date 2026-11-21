@@ -95,6 +95,7 @@ use super::lanes::LaneState;
 use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
 use crate::error::{Error, Result, WatchError};
+use crate::mailbox::DATA_RULE;
 pub use crate::ops::wake::OVERSEER_TARGET;
 use crate::ops::wake::{OUTCOME_LOST, ROWS_CURSOR_UNREAD, WakeMark, WakeOutcome, WakeRecord};
 use crate::schedule::Duty;
@@ -130,8 +131,15 @@ pub fn record_path(fleet: &Path) -> PathBuf {
     fleet.parent().unwrap_or(Path::new(".")).join(WAKE_FILE)
 }
 
-/// The one line typed, which runs the target's inbox read.
+/// The one line typed, which runs the target's inbox read. Only the
+/// overseer's own box takes a data notice, so only its line says the data
+/// rule.
 fn line_for(target: &str) -> String {
+    if target == OVERSEER_TARGET {
+        return format!(
+            "Run .agents/skills/mailbox/scripts/lane-mail inbox --item {target}. {DATA_RULE} Act on every other envelope it prints, answers and directives alike, as its text directs."
+        );
+    }
     format!(
         "Run .agents/skills/mailbox/scripts/lane-mail inbox --item {target} and act on every envelope it prints, answers and directives alike, as its text directs."
     )
@@ -270,8 +278,9 @@ fn delivered(target: &str, resume: Option<String>) -> Option<Event> {
 fn alert_text(pane: &str, unread: &str, said: &Event) -> String {
     let why = said.render();
     let why = why.strip_prefix("EVENT ").unwrap_or(&why);
+    let line = line_for(OVERSEER_TARGET);
     format!(
-        "{why}: the overseer in pane {pane} is idle with mail it has not read, newest unread={unread}, and the watch could not wake it, so nothing acts on that mail until a turn runs in that pane. Type one line into pane {pane}, such as: Run .agents/skills/mailbox/scripts/lane-mail inbox --item overseer and act on every envelope it prints. The remedy for this line is under idle-unread in the orch skill's references/oversee-events.md.\n"
+        "{why}: the overseer in pane {pane} is idle with mail it has not read, newest unread={unread}, and the watch could not wake it, so nothing acts on that mail until a turn runs in that pane. Type one line into pane {pane}, such as: {line} The remedy for this line is under idle-unread in the orch skill's references/oversee-events.md.\n"
     )
 }
 
