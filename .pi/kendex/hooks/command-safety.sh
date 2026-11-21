@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a plain pipeline pipes to a shell or interpreter that runs its input; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository. A stage that holds curl, wget, scp, rsync or git push and is not plain literal argv in a plain pipeline refuses unresolved. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command with a word that names it refuses, except as an argument of grep, rg, cat or sed -n.
+# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a plain pipeline pipes to a shell or interpreter that runs its input; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository. A stage that holds curl, wget, scp, rsync or git push and is not plain literal argv in a plain pipeline is reported with a would= line and not refused. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command with a word that names it refuses, except as an argument of grep, rg, cat or sed -n.
 # summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support leaves both project checks unavailable. An optional selected Git history policy requires its native fetch fence. Refuses a download piped or fed into a shell, an upload to a host the project has not listed, and a push to a remote the repository does not have; the owner allows one exact command by starting the session with it in COMMAND_SAFETY_OWNER_COMMAND.
-# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets. A stage holding a literal curl, wget, scp or rsync word, or git with a later push, is read literally only when plain: literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages; any other refuses with reason=unresolved-receiver, unresolved-host or unresolved-remote. In a plain stage each such word is judged as its program's head, an interpreter's script operand counts only after no option, and a push whose command sets Git configuration, a GIT_ variable or an alias is unresolved. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg, cat or sed -n argument. Not reached: a receiver behind an unresolved launcher, ssh config aliases, Git configuration, variables or aliases an earlier command or file sets, other upload programs, and runtime-built names.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets. A stage holding a literal curl, wget, scp or rsync word, or git with a later push, is read literally only when plain: literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages; this plain-stage rule reports and does not refuse: any other such stage gets a report=plain-stage notice with a would= line naming its check, program and cause, after any refusal, and keeps only the judgement its words allow. In a plain stage each such word is judged as its program's head, an interpreter's script operand counts only after no option, and a push whose command sets Git configuration, a GIT_ variable or an alias is unresolved. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg, cat or sed -n argument. Not reached: a receiver behind an unresolved launcher, ssh config aliases, Git configuration, variables or aliases an earlier command or file sets, other upload programs, and runtime-built names.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -1238,39 +1238,43 @@ stage_last_part() { # STAGE -> part
 # word and redirect target literal, with no glob, brace or line
 # continuation, in no substitution, subshell, brace group or compound
 # command, and not split by one. An env -S text with a word this hook does
-# not decode is not plain. Words a stage's walks record from here on are
-# that stage's, so the resolver can find them.
+# not decode is not plain. A stage that is not plain keeps the first cause
+# found, which the report names. Words a stage's walks record from here on
+# are that stage's, so the resolver can find them.
 transfer_stage_plain() {
-  local j
+  local j cause=""
   stage_uploads_from[stage]=${#upload_programs[@]}; stage_pushes_from[stage]=${#push_remotes[@]}
-  stage_unplain[stage]=""
-  if [ "$end" -eq "$start" ] || [ -n "$syntax_head$split_undecoded" ] || [ "$compound_depth" -ne 0 ] || [ "$nesting_depth" -ne 0 ]; then
-    stage_unplain[stage]=1
-  fi
-  [ "$start" -eq 0 ] || [ "${nesting[$((start - 1))]:-}" != close ] || stage_unplain[stage]=1
+  [ "$end" -gt "$start" ] || cause=empty-stage
+  [ -z "$split_undecoded" ] || cause=${cause:-undecoded-split}
+  [ -z "$syntax_head" ] && [ "$compound_depth" -eq 0 ] || cause=${cause:-compound}
+  [ "$nesting_depth" -eq 0 ] || cause=${cause:-nesting}
+  [ "$start" -eq 0 ] || [ "${nesting[$((start - 1))]:-}" != close ] || cause=${cause:-nesting}
   case "${nesting[$end]:-}" in
-    open*) stage_unplain[stage]=1; nesting_depth=$((nesting_depth + 1)) ;;
+    open*) cause=${cause:-nesting}; nesting_depth=$((nesting_depth + 1)) ;;
     close) nesting_depth=$((nesting_depth - 1)) ;;
   esac
   for ((j=start; j<=end; j++)); do
-    [ -z "${continued[$j]:-}" ] || stage_unplain[stage]=1
+    [ -z "${continued[$j]:-}" ] || cause=${cause:-continuation}
     [ "$j" -lt "$end" ] || break
     case "${kinds[$j]}" in
-      literal | dollar-literal) [[ ${unquoted_words[$j]} != *:fields ]] || stage_unplain[stage]=1 ;;
+      literal | dollar-literal) [[ ${unquoted_words[$j]} != *:fields ]] || cause=${cause:-glob} ;;
       operator | operator-stderr | operator-explicit-other) ;;
-      *) stage_unplain[stage]=1 ;;
+      *) cause=${cause:-expansion} ;;
     esac
   done
+  stage_unplain[stage]=$cause
 }
 
 # A stage holds a transfer when a literal word in it names curl, wget, scp or
 # rsync, or names git with a later literal push in the same command. A
 # stage that holds one is unresolved when it, or any stage of its pipeline,
 # is not plain, and an empty stage, which a newline after a pipe leaves, is
-# not. An unresolved stage's upload records lose their host and its push
-# records their remote; where its walks made none, scp and rsync get an
-# upload record and a push a push record. Its download refuses unless an
-# upload record of the stage refuses it first, under that record's reason.
+# not. Under plain_rule=enforce an unresolved stage's upload records lose
+# their host and its push records their remote; where its walks made none,
+# scp and rsync get an upload record and a push a push record. Its download
+# refuses unless an upload record of the stage refuses it first, under that
+# record's reason. Under plain_rule=report the stage keeps its literal
+# judgement and the resolver adds one report line per check it would fail.
 transfer_resolve() {
   local stage j k git_at held unresolved part record uploads_end pushes_end
   for ((stage=0; stage<${#starts[@]}; stage++)); do
@@ -1296,11 +1300,20 @@ transfer_resolve() {
     [ -n "$held" ] || [ "$git_at" = push ] || continue
     unresolved=${stage_unplain[$stage]}
     k=$stage
-    while [ -z "$unresolved" ] && [ "$k" -gt 0 ] && [ "${separators[$((k - 1))]}" = '|' ]; do k=$((k - 1)); unresolved=${stage_unplain[$k]}; done
+    while [ -z "$unresolved" ] && [ "$k" -gt 0 ] && [ "${separators[$((k - 1))]}" = '|' ]; do k=$((k - 1)); unresolved=${stage_unplain[$k]:+pipeline-${stage_unplain[$k]}}; done
     k=$stage
-    while [ -z "$unresolved" ] && [ "${separators[$k]}" = '|' ]; do k=$((k + 1)); unresolved=${stage_unplain[$k]-1}; done
-    stage_unresolved[stage]=$unresolved
+    while [ -z "$unresolved" ] && [ "${separators[$k]}" = '|' ]; do k=$((k + 1)); unresolved=${stage_unplain[$k]-unread}; unresolved=${unresolved:+pipeline-$unresolved}; done
     [ -n "$unresolved" ] || continue
+    if [ "$plain_rule" = report ]; then
+      if [ "${stage_upload_records[$stage]}" -gt 0 ] || [ "$held" = scp ] || [ "$held" = rsync ]; then
+        transfer_reports[${#transfer_reports[@]}]="would=upload-host program=${stage_downloads[$stage]:-$held} cause=$unresolved"
+      elif [ -n "$held" ]; then
+        transfer_reports[${#transfer_reports[@]}]="would=download-into-shell program=${stage_downloads[$stage]} cause=$unresolved"
+      fi
+      [ "$git_at" != push ] || transfer_reports[${#transfer_reports[@]}]="would=push-remote program=git cause=$unresolved"
+      continue
+    fi
+    stage_unresolved[stage]=$unresolved
     for ((record=stage_uploads_from[stage]; record<uploads_end; record++)); do upload_hosts[record]=""; done
     for ((record=stage_pushes_from[stage]; record<pushes_end; record++)); do push_reasons[record]=${push_reasons[$record]:-remote}; done
     case "$held:${stage_upload_records[$stage]}" in
@@ -2280,6 +2293,9 @@ refuse() { # KEY VALUE [CAUSE]
         esac
         echo "push to a remote the repository already has, by its name, in a plain pipeline from a directory named literally, for example: git push origin HEAD"
         echo "a new destination is the owner's choice: the owner adds the remote, or starts the session with COMMAND_SAFETY_OWNER_COMMAND set to this exact command" ;;
+      report=plain-stage)
+        for line in ${transfer_reports[@]+"${transfer_reports[@]}"}; do printf 'command-safety: %s\n' "$line"; done
+        echo "the plain-stage rule reports and does not refuse: each stage above holds curl, wget, scp, rsync or git push in a form the transfer checks do not read literally, an expansion, a substitution, a glob, a line continuation, a group or a compound command, in the stage or its pipeline" ;;
       refused=owner-command)
         echo "a word of the command names COMMAND_SAFETY_OWNER_COMMAND, the owner's exception for one exact command, and a command that names it can give it to a session it starts"
         echo "run the command without that name; to search for it or print a file that holds it, use grep, rg, cat or sed -n; only the owner sets it, in the environment a session starts with" ;;
@@ -2293,7 +2309,7 @@ refuse() { # KEY VALUE [CAUSE]
     # replayed here: under the keyed line, never ahead of it.
     [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2 || :
-  [ "$1=$2" != settings=invalid-history-policy ] || return 0
+  case "$1=$2" in settings=invalid-history-policy | report=plain-stage) return 0 ;; esac
   case "$1" in
     refused | path) exit 2 ;;
     *)
@@ -2309,6 +2325,12 @@ refuse() { # KEY VALUE [CAUSE]
 # Support can explicitly exit with a guard's verdict status. While sourcing,
 # that status is a support failure, not an executable-command refusal.
 loading=""
+# The plain-stage rule reports and does not refuse until a replay of the
+# fleet's agent command logs shows which forms real work uses that it would
+# refuse; then this reads enforce. transfer_reports holds its lines, which
+# the EXIT trap writes after any refusal.
+plain_rule=report
+transfer_reports=()
 trap '
   rc=$?
   if [ -n "$loading" ]; then
@@ -2319,7 +2341,10 @@ trap '
     done
     refuse support unreadable "$cause" 2>&3
   fi
-  case $rc in 0 | 2) ;; *) refuse exit "$rc" ;; esac
+  case $rc in
+    0 | 2) [ "${#transfer_reports[@]}" -eq 0 ] || refuse report plain-stage ;;
+    *) refuse exit "$rc" ;;
+  esac
 ' EXIT
 MISSING=""
 for dependency in jq git grep cat dirname mktemp rm; do
