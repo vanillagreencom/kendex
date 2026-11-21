@@ -23,6 +23,12 @@ cargo test record::               # one module's unit tests
 
 `runtime/Cargo.toml` sets `autotests = false`, so the package's top-level `tests/` stays out of renders. Each integration target is a `[[test]]` row in `runtime/Cargo.toml` whose path is under `../tests/rust/`. Give a new integration file its own row.
 
+## Record versions
+
+A change that raises a record's `record_version` reads the previous version in the same change. The reader keeps that version in its `supported` list and reads its form, or converts the record to the new form at its first read. `record::split_meta` refuses a version outside `supported`, so a reader that drops the previous version refuses every record a running session wrote. A window in which every worker lands and every overseer switches at once is not a route for a record change.
+
+Add no conversion code before a version changes. The change that raises a version carries a test that reads a record written at the previous version. That test is the change's acceptance.
+
 ## Lint
 
 ```sh
