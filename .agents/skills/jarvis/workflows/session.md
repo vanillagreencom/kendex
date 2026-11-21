@@ -77,7 +77,7 @@ Load each named section with `jarvis-section` before the step that acts on it. R
 | Lane launch | [Authority](../references/decisions.md#authority), orch's [Delegation](../../orch/references/skill-rules.md#delegation) and [Agent Lifecycle](../../orch/references/skill-rules.md#agent-lifecycle). For an independent work-item session, follow orch's [handoff workflow](../../orch/workflows/handoff.md). |
 | Succession | [Succession](#succession), [Handoff replacement](#handoff-replacement), the [Handoff contract](../references/long-session.md#handoff) and [Retention](../references/accounts-and-secrets.md#retention). |
 
-A consumer's own rule files keep their content. Its start instructions load only its safety-core sections above through `jarvis-section`. Give its remaining rule sections action routes for the same classes in this table. Each route names the owning file and its existing section heading. Load that section with `jarvis-section` before the action it governs. Keep consumer-specific rules in their owning files rather than copying them into this workflow or the handoff.
+To add a consumer's own rule or its action route, start at [Personal additions](../references/home-contract.md#personal-additions).
 
 ## Event loop
 

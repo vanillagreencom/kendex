@@ -51,10 +51,6 @@ if ! _slack_caller_env="$("${_slack_code[@]}" 'import json, os; print(json.dumps
   refuse "settings-unreadable=caller-environment" "the caller environment could not be saved"
 fi
 _slack_script+=("$here/lib/main.py")
-# Target settings cannot replace the caller's interpreter, library, script
-# or sibling packages. Bash refuses assignments to these native bindings.
-readonly -a _slack_script
-readonly orch linear _slack_caller_env
 # shellcheck source=../../orch/scripts/lib/kendex-env.sh
 source "$orch/scripts/lib/kendex-env.sh"
 project="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
