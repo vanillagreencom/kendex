@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-from mail_world import SCRIPTS, MailWorld, make_project
+from mail_world import BASH, SCRIPTS, MailWorld, make_project
 
 sys.path.insert(0, str(SCRIPTS / "lib"))
 from progress import change_state, index_ends, records, state_entries  # noqa: E402
@@ -51,6 +51,98 @@ print(json.dumps([{"id": row[0], "title": "", "state": row[1], "state_type": row
 DONE, CANCELED, OPEN = ("Done", "completed"), ("Canceled", "canceled"), ("In Progress", "started")
 DUPLICATE = ("Duplicate", "duplicate")
 BULK_GET = ["issues", "bulk-get", "--stdin", "--format=compact"]
+PROJECT = "fbb9620e-91bb-4e78-9cb3-907fa7dd72a7"
+REQUEST = "C0123ABC:1793515695.587049"
+OUTCOME = "Check the vendor receipt"
+ACTION = "Jarvis reads the vendor's [receipt](https://example.org/receipt)."
+COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04248"
+OTHER_REQUEST = "C0123ABC:1793515695.587050"
+OTHER_COMMENT = "96b25b81-a5f7-419c-bc42-c5a35cb04249"
+NAMED_READ = [("issues", "get"), ("comments", "list")]
+NAMED_CREATE = NAMED_READ + [("comments", "create")]
+NAMED_READBACK = NAMED_CREATE + [("comments", "list")]
+# Safe reads use lib/formatters.sh. Mutation fields and the trailing body
+# newline come from commands/comments.sh and lib/common.sh's normalizer.
+LINEAR_ACTION = '''#!/usr/bin/env python3
+import json, os, subprocess, sys
+from pathlib import Path
+
+home = Path(os.environ["HOME"])
+store = home / "action-world.json"
+world = json.loads(store.read_text())
+args = sys.argv[1:]
+verb = tuple(args[:2])
+refs = sys.stdin.read().splitlines() if verb == ("comments", "bulk-list") else []
+with (home / "action-calls").open("a") as calls:
+    calls.write(json.dumps(args + refs) + "\\n")
+mode = world["mode"]
+issues, comments = world["issues"], world["comments"]
+if verb == ("issues", "list"):
+    assert args[2:] == ["--project-id", world["project"], "--include-archived", "--max", "--format=safe"]
+    print(json.dumps(list(issues.values())))
+elif verb == ("auth-check", "--strict"):
+    assert len(args) == 2
+    if mode == "no-team":
+        print(json.dumps({"ok": True, "team": None, "team_source": "unset", "writes_enabled": False,
+                          "warnings": ["No LINEAR_TEAM configured"]}))
+        sys.exit(1)
+elif verb == ("issues", "create"):
+    assert args[2:4] == ["--project", world["project"]] and args[-1] == "--format=ids"
+    assert world["created"] not in issues
+    title, description = args[args.index("--title") + 1], args[args.index("--description") + 1]
+    # Run the shipped guards without the workspace and network bootstrap.
+    subprocess.run([world["bash"], "-c",
+                    'source "$1"; source "$2"; LINEAR_REQUIRE_REACH=1; LINEAR_AGENT_LABELS=agent:runtime; '
+                    'require_agent_routing_label "" "$3" && require_issue_reach "$4" 0 && require_issue_header_shape "$4"',
+                    "validate-description", world["validator"], world["routing_guard"],
+                    str(int("--no-agent-label" in args)), description], check=True)
+    issue = {"id": world["created"], "title": title, "description": description, "project_id": world["project"]}
+    issues[issue["id"]] = issue
+    store.write_text(json.dumps(world))
+    print(issue["id"])
+elif verb == ("issues", "get"):
+    print(json.dumps(issues[args[2]]))
+elif verb == ("comments", "bulk-list"):
+    assert args[2:] == ["--stdin", "--format=safe"] and refs
+    assert all(ref in issues for ref in refs)
+    if mode == "legacy-unavailable":
+        sys.exit(5)
+    rows = {ref: comments.get(ref, []) for ref in refs}
+    if mode == "legacy-incomplete":
+        rows.pop(refs[-1])
+    if mode == "legacy-malformed":
+        rows[refs[-1]] = None
+    print(json.dumps(rows))
+elif verb == ("comments", "list"):
+    assert args[2] in issues
+    if mode == "unavailable" or (mode == "readback-unavailable" and world.get("written")):
+        sys.exit(5)
+    print(json.dumps(comments.get(args[2], [])))
+elif verb in (("comments", "create"), ("comments", "update")):
+    assert args[3] == "--body"
+    if mode == "reject":
+        print(json.dumps({"success": False, "data": {"success": False, "comment": None}}))
+        sys.exit(0)
+    if verb == ("comments", "create"):
+        assert args[2] in issues
+        row = {"id": world["comment"]}
+        comments.setdefault(args[2], []).append(row)
+    else:
+        row, = [row for rows in comments.values() for row in rows if row["id"] == args[2]]
+    row["body"] = args[4] + "\\n"
+    if mode == "wrong-body":
+        row["body"] = "Jarvis next action: earlier\\n"
+    if mode == "extra-newline":
+        row["body"] += "\\n"
+    receipt = {"id": "0bcc794a-4f64-4e43-b62c-d5ad21591aab" if mode == "wrong-id" else row["id"]}
+    world["written"] = True
+    store.write_text(json.dumps(world))
+    if mode == "lost-receipt":
+        sys.exit(5)
+    print(json.dumps({"success": True, "data": {"success": True, "comment": receipt}}))
+else:
+    sys.exit(9)
+'''
 
 
 def state_handoff(state):
@@ -76,6 +168,247 @@ class ProgressLog(MailWorld):
         if handoff is not None:
             args += ["--handoff", str(handoff)]
         return self.command([sys.executable, "-B", self.scripts / "progress-log", *args], cwd or self.home)
+
+    def action_world(self, issues=None, comments=None, mode=""):
+        packages = self.root / "action-packages"
+        scripts = packages / "jarvis/scripts"
+        linear = SCRIPTS.parents[1] / "linear/scripts"
+        guard = packages / "routing-guard.sh"
+        if not scripts.exists():
+            shutil.copytree(self.scripts, scripts)
+            sibling = packages / "linear/scripts/linear.sh"
+            sibling.parent.mkdir(parents=True)
+            sibling.write_text(LINEAR_ACTION)
+            sibling.chmod(0o755)
+            # The function is shell-only. Keep the checkout's routing check
+            # without loading auth or needing Linear's Bash for this stub.
+            start = "\nrequire_agent_routing_label() {\n"
+            source = (linear / "commands/issues.sh").read_text()
+            self.assertEqual(source.count(start), 1)
+            body, close, _ = source.split(start, 1)[1].partition("\n}\n")
+            self.assertTrue(close)
+            guard.write_text(start.lstrip() + body + close)
+        self.scripts = scripts
+        self.action_store = self.root / "action-world.json"
+        self.action_trace = self.root / "action-calls"
+        self.action_trace.write_text("")
+        self.action_store.write_text(json.dumps({"project": PROJECT, "created": "KEN-2", "comment": COMMENT,
+                                                 "bash": BASH,
+                                                 "validator": str(linear / "lib/issue-validation.sh"), "routing_guard": str(guard),
+                                                 "issues": issues if issues is not None else {"KEN-1": self.issue()},
+                                                 "comments": comments or {}, "mode": mode}))
+
+    def issue(self, item="KEN-1", title=OUTCOME, description=""):
+        return {"id": item, "title": title, "description": description, "project_id": PROJECT}
+
+    def next_action(self, *, discover=False, action=ACTION, state_key=None):
+        fields = {key: value for key, value in FIELDS.items() if key != "--state-change"}
+        fields["--next-action"] = action
+        if discover:
+            fields.update({"--task-project": PROJECT, "--source": REQUEST, "--outcome": OUTCOME})
+        else:
+            fields["--item"] = "KEN-1"
+        if state_key is not None:
+            fields["--state-key"] = state_key
+        return self.log(fields)
+
+    def action_calls(self, full=False):
+        return [tuple(call if full else call[:2]) for call in map(json.loads, self.action_trace.read_text().splitlines())]
+
+    def assert_action(self, item, action, state_change):
+        row, = json.loads(self.action_store.read_text())["comments"][item]
+        self.assertEqual(row, {"id": COMMENT, "body": "Jarvis next action: " + action + "\n"})
+        saved = records(self.handoff.read_text())[-1]
+        self.assertEqual(saved["State change"], state_change)
+        self.assertIn(item + " comment=" + COMMENT, saved["Observed result and source"])
+
+    def test_next_action_named(self):
+        for key in ("KEN-1", "KEN-1:", "`KEN-1`", "`" + REQUEST + ":`"):
+            with self.subTest(key=key):
+                target = REQUEST if REQUEST in key else "KEN-1"
+                kept = "- session=control: retained\n"
+                self.handoff.write_text(state_handoff("- `" + target + "`: retry\n  earlier context\n" + kept))
+                self.action_world()
+                result = self.next_action(state_key=key)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_action("KEN-1", ACTION, "remove State " + target)
+                self.assertEqual(state_entries(self.handoff.read_text().splitlines(keepends=True))[0][1], kept)
+                self.assertEqual(self.action_calls(), NAMED_READBACK)
+        result = self.next_action(action="Check with the vendor after approval.")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_action("KEN-1", "Check with the vendor after approval.", "none")
+        self.assertEqual(len(records(self.handoff.read_text())), 2)
+        self.assertEqual(self.action_calls(), NAMED_READBACK + NAMED_READ + [("comments", "update"), ("comments", "list")])
+
+    def test_next_action_discovery(self):
+        kept = "- session=control: retained\n"
+        self.handoff.write_text(state_handoff("- " + REQUEST + ": retry\n" + kept))
+        self.action_world(issues={
+            "KEN-1": self.issue(description="Jarvis request source: " + REQUEST + "\n\n"
+                                            "Jarvis requested outcome: Send the invoice"),
+            "KEN-3": self.issue("KEN-3", description="Jarvis request source: " + OTHER_REQUEST + "\n\n"
+                                                     "Jarvis requested outcome: " + OUTCOME),
+        })
+        first = self.next_action(discover=True, state_key=REQUEST)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assert_action("KEN-2", ACTION, "remove State " + REQUEST)
+        self.assertEqual(state_entries(self.handoff.read_text().splitlines(keepends=True))[0][1], kept)
+        second = self.next_action(discover=True, action="Ask the vendor to verify the receipt.")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assert_action("KEN-2", "Ask the vendor to verify the receipt.", "none")
+        self.assertEqual(self.action_calls(), [
+            ("issues", "list"), ("comments", "bulk-list"), ("auth-check", "--strict"), ("issues", "create"), ("issues", "get"),
+            ("comments", "list"), ("comments", "create"), ("comments", "list"),
+            ("issues", "list"), ("comments", "bulk-list"), ("comments", "list"), ("comments", "update"), ("comments", "list")])
+
+    def binding_cases(self):
+        source = "Original request: [thread](" + REQUEST + ")"
+        paired = [{"id": "binding", "body": source + "\nOutcome: " + OUTCOME}]
+        return (
+            ("description-source-and-title", self.issue(description=source), [], "KEN-1"),
+            ("one-source-across-records", self.issue(title="Vendor follow-up", description=source),
+             [{"id": "outcome", "body": "Outcome: " + OUTCOME}], "KEN-1"),
+            ("comment-source-and-title", self.issue(), [{"id": "source", "body": source}], "KEN-1"),
+            ("legacy-comment-only", self.issue(title="Vendor follow-up"), paired, "KEN-1"),
+            ("legacy-description-and-later-binding",
+             self.issue(title="Vendor follow-up", description="Original request: `" + OTHER_REQUEST +
+                                                              "`\nOutcome: Send the invoice"), paired, "KEN-1"),
+            ("unrelated-action-cites-request",
+             self.issue(description="Original request: " + OTHER_REQUEST + "\nOutcome: " + OUTCOME),
+             [{"id": OTHER_COMMENT, "body": "Jarvis next action: Read the reply to " + REQUEST +
+                                            " before following up on the vendor receipt.\n"}], "KEN-2"),
+            ("canonical-description-and-later-binding",
+             self.issue(title="Vendor follow-up", description="Jarvis request source: " + OTHER_REQUEST +
+                                                              "\n\nJarvis requested outcome: Send the invoice"),
+             paired, "KEN-1"),
+            ("canonical-description-and-different-outcome",
+             self.issue(title="Vendor follow-up", description="Jarvis request source: " + REQUEST +
+                                                              "\n\nJarvis requested outcome: Send the invoice"),
+             paired, "KEN-1"),
+        )
+
+    def assert_binding_case(self, issue, comments, expected_item):
+        self.handoff.write_text(state_handoff("- " + REQUEST + ": retry\n"))
+        self.action_world(issues={"KEN-1": issue, "KEN-3": self.issue("KEN-3", title="Different work")},
+                          comments={"KEN-1": comments})
+        result = self.next_action(discover=True, state_key=REQUEST)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        saved = records(self.handoff.read_text())[-1]
+        item = saved["Observed result and source"].splitlines()[-1].split()[3]
+        self.assertEqual(item, expected_item, "discovery chose the wrong binding")
+        self.assertEqual(saved["State change"], "remove State " + REQUEST)
+        bulk, = [call for call in self.action_calls(full=True) if call[:2] == ("comments", "bulk-list")]
+        self.assertEqual(bulk[2:], ("--stdin", "--format=safe", "KEN-1", "KEN-3"))
+        action = {"id": COMMENT, "body": "Jarvis next action: " + ACTION + "\n"}
+        actual = json.loads(self.action_store.read_text())["comments"]
+        if expected_item == "KEN-1":
+            self.assertEqual(actual, {"KEN-1": comments + [action]})
+            self.assertNotIn(("issues", "create"), self.action_calls())
+        else:
+            self.assertEqual(actual, {"KEN-1": comments, expected_item: [action]})
+            self.assertEqual(self.action_calls().count(("issues", "create")), 1)
+
+    def test_next_action_binding_evidence(self):
+        for name, *case in self.binding_cases():
+            with self.subTest(case=name):
+                self.assert_binding_case(*case)
+
+    def test_next_action_discovery_refusals(self):
+        before = state_handoff("- " + REQUEST + ": retry\n").encode()
+        cases = (
+            ("legacy-incomplete", "tracker-unread=comments bulk-list", "bulk-list"),
+            ("legacy-malformed", "tracker-unread=comments bulk-list", "bulk-list"),
+            ("legacy-unavailable", "tracker-unavailable=comments bulk-list", "bulk-list"),
+            ("no-team", "tracker-team-missing=LINEAR_TEAM", "--strict"),
+        )
+        for mode, diagnostic, last in cases:
+            with self.subTest(mode=mode):
+                self.handoff.write_bytes(before)
+                issues = None
+                if mode == "no-team":
+                    issues = {}
+                elif mode == "legacy-incomplete":
+                    issues = {"KEN-1": self.issue(description="Jarvis request source: " + REQUEST +
+                                                              "\n\nJarvis requested outcome: " + OUTCOME)}
+                self.action_world(issues=issues, mode=mode)
+                result = self.next_action(discover=True, state_key=REQUEST)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertTrue(result.stderr.startswith("progress-log: " + diagnostic + " "), result.stderr)
+                self.assertEqual(self.handoff.read_bytes(), before)
+                command = ("auth-check", last) if mode == "no-team" else ("comments", last)
+                self.assertEqual(self.action_calls(), [("issues", "list"), command])
+                if mode == "no-team":
+                    self.assertRegex(result.stderr, r"fix=\S+/workflows/setup-linear\.md#steps\n$")
+
+    def test_next_action_refusals(self):
+        for mode, diagnostic, calls in (
+            ("wrong-body", "tracker-comment-unconfirmed=KEN-1", NAMED_READBACK),
+            ("extra-newline", "tracker-comment-unconfirmed=KEN-1", NAMED_READBACK),
+            ("wrong-id", "tracker-comment-unconfirmed=KEN-1", NAMED_READBACK),
+            ("reject", "tracker-comment-rejected=KEN-1", NAMED_CREATE),
+            ("unavailable", "tracker-unavailable=comments list", NAMED_READ),
+            ("readback-unavailable", "tracker-unavailable=comments list", NAMED_READBACK),
+            ("lost-receipt", "tracker-unavailable=comments create", NAMED_CREATE),
+        ):
+            with self.subTest(mode=mode):
+                self.assert_next_action_refusal(mode, diagnostic, calls)
+        world = json.loads(self.action_store.read_text())
+        world["mode"] = ""
+        self.action_store.write_text(json.dumps(world))
+        result = self.next_action()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_action("KEN-1", ACTION, "remove State KEN-1")
+        self.assertEqual(self.action_calls(), NAMED_CREATE + NAMED_READ + [("comments", "update"), ("comments", "list")])
+
+    def assert_next_action_refusal(self, mode, diagnostic, calls):
+        before = state_handoff("- KEN-1: retry\n").encode()
+        self.handoff.write_bytes(before)
+        self.action_world(mode=mode)
+        result = self.next_action()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(result.stderr.startswith("progress-log: " + diagnostic + " "), result.stderr)
+        self.assertEqual(self.handoff.read_bytes(), before)
+        self.assertEqual(self.action_calls(), calls)
+
+    def test_next_action_writes_nothing_when_ambiguous(self):
+        marker = "Jarvis request source: " + REQUEST + "\n\nJarvis requested outcome: " + OUTCOME
+        before = state_handoff("- KEN-1: retry\n").encode()
+        for issues, comments, discover, local, reason in (
+            ({"KEN-1": self.issue(description=marker), "KEN-2": self.issue("KEN-2", description=marker)}, {}, True,
+             before, "tracker-item-ambiguous=KEN-1,KEN-2"),
+            ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request: " + REQUEST)}, {}, True,
+             before, "tracker-item-ambiguous=KEN-1"),
+            ({"KEN-1": self.issue(description="Original request: " + REQUEST + "\nOutcome: " + OUTCOME)},
+             {"KEN-1": [{"id": "outcome", "body": "Outcome: Send the invoice"}]}, True,
+             before, "tracker-item-ambiguous=KEN-1"),
+            ({"KEN-1": self.issue(title="Vendor follow-up", description="Original request: " + OTHER_REQUEST)},
+             {"KEN-1": [{"id": "source", "body": "Original request: " + REQUEST},
+                        {"id": "result", "body": "Outcome: " + OUTCOME}]}, True,
+             before, "tracker-item-ambiguous=KEN-1"),
+            (None, {"KEN-1": [{"id": key, "body": "Jarvis next action: existing\n"} for key in ("first", "second")]},
+             False, before, "tracker-comment-ambiguous=KEN-1"),
+            (None, {}, False, state_handoff("- KEN-1: retry\n- `KEN-1`: retry\n").encode(), "state-entry-ambiguous=KEN-1"),
+        ):
+            with self.subTest(reason=reason):
+                self.handoff.write_bytes(local)
+                self.action_world(issues, comments)
+                result = self.next_action(discover=discover)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stderr.split(" (", 1)[0].split(" fix=", 1)[0], "progress-log: " + reason)
+                self.assertEqual(self.handoff.read_bytes(), local)
+                self.assertTrue(all(verb in ("get", "list", "bulk-list") for _, verb in self.action_calls()))
+
+    def test_next_action_readback_control(self):
+        scripts = self.root / "action-control/scripts"
+        shutil.copytree(self.scripts, scripts)
+        entry = scripts / "progress-log"
+        source = entry.read_text()
+        check = 'if [(row["id"], row["body"]) for row in retained] != [(comment, body + "\\n")]:'
+        self.assertEqual(source.count(check), 1)
+        entry.write_text(source.replace(check, "if not retained:"))
+        self.scripts = scripts
+        with self.assertRaises(AssertionError):
+            self.assert_next_action_refusal("wrong-body", "tracker-comment-unconfirmed=KEN-1", NAMED_READBACK)
 
     def assert_home_check(self, expected, handoff=None):
         args = [] if handoff is None else ["--handoff", str(handoff)]
@@ -457,9 +790,9 @@ class ProgressLog(MailWorld):
             shutil.copytree(SCRIPTS.parent / 'scripts', copy / 'scripts')
             script = copy / 'scripts/progress-log'
             source = script.read_text()
-            target = 'lines = change_state(lines, values["State change"], identity)'
+            target = 'return change_state(lines, change, identity), change'
             self.assertEqual(source.count(target), 1)
-            script.write_text(source.replace(target, 'lines = list(lines)'))
+            script.write_text(source.replace(target, 'return list(lines), change'))
             original, self.scripts = self.scripts, copy / 'scripts'
             try:
                 self.handoff.write_text(old)
