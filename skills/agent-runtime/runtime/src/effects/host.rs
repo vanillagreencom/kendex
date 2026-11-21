@@ -458,10 +458,30 @@ pub enum SignIn {
     Held,
     /// The launch environment carries this token variable.
     Token(&'static str),
+    /// The account's declared token file holds a token, which the launch
+    /// exports for the harness alone.
+    File,
     /// The account holds nothing the harness signs in with.
     Missing { cause: &'static str },
     /// Nothing here reads this sign-in: the first turn alone judges it.
     Unjudged { cause: &'static str },
+}
+
+/// The sign-in a declared token file gives: its text less trailing
+/// newlines, as the launch's `$(cat FILE)` takes it, must be non-empty.
+fn declared_token(file: &Path) -> SignIn {
+    match std::fs::read(file) {
+        Ok(text) if text.iter().any(|b| *b != b'\n') => SignIn::File,
+        Ok(_) => SignIn::Missing {
+            cause: "declared-token-absent",
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SignIn::Missing {
+            cause: "declared-token-absent",
+        },
+        Err(_) => SignIn::Missing {
+            cause: "declared-token-unreadable",
+        },
+    }
 }
 
 /// The file the harness records the session `id` for `cwd` in under `home`,
@@ -646,7 +666,10 @@ impl Operation<'_> {
     }
 
     /// The sign-in a successor's launch on `account` starts with, read
-    /// before anything is written for it: a token variable the window on
+    /// before anything is written for it. An account that declares a token
+    /// file is judged by that file alone, since the launch exports its text
+    /// over anything the window inherits: no other source stands in for a
+    /// file that is wrong. Otherwise a token variable the window on
     /// `server` inherits in `session`, which signs the harness in whatever
     /// the account holds; else the account's stored login on this machine
     /// ([`stored_login`]).
@@ -656,7 +679,11 @@ impl Operation<'_> {
         session: &str,
         harness: Harness,
         account: &Path,
+        declared: Option<&Path>,
     ) -> SignIn {
+        if let Some(file) = declared {
+            return declared_token(file);
+        }
         let tokens: &[&'static str] = match harness {
             Harness::Claude => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
             Harness::Codex => &["OPENAI_API_KEY"],

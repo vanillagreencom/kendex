@@ -1022,6 +1022,7 @@ mod tests {
             ],
             env: Default::default(),
             env_remove: vec![],
+            env_files: Default::default(),
             cwd: dir.path().to_path_buf(),
             brief_arg: None,
             brief_path: None,

@@ -412,6 +412,7 @@ mod tests {
             succession: Setting::of("succession", Ok(Succession::On)),
             preference: String::new(),
             preference_set: true,
+            account_tokens: Setting::of("account-tokens", Ok(Vec::new())),
         };
         let wall_minutes = Setting::of("wall-minutes", Ok(0));
         let choosing = Choosing {

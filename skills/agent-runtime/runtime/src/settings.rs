@@ -69,6 +69,11 @@ pub const SUCCESSION_KEY: &str = "AGENT_RUNTIME_CONTROLLER_SUCCESSION";
 pub const CONTROLLER_PREFERENCE_KEY: &str = "AGENT_RUNTIME_CONTROLLER_PREFERENCE";
 /// The standard class on each harness.
 pub const DEFAULT_CONTROLLER_PREFERENCE: &str = "claude:standard:high,codex:standard:high";
+/// `<account dir>=<token file>` pairs separated by commas, both absolute:
+/// the file whose text a successor's launch on that Claude account signs in
+/// with. The value names paths, never a token, so it may sit in a committed
+/// settings file; a consumer sets its own, since the files are its own.
+pub const ACCOUNT_TOKEN_FILES_KEY: &str = "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES";
 const DEFAULT_VERIFY_SECS: u64 = 15;
 const DEFAULT_CLAIM_SECS: u64 = 15;
 
@@ -82,6 +87,7 @@ pub const ENGINE_KEYS: &[&str] = &[
     HARNESS_BINARIES_KEY,
     SUCCESSION_KEY,
     CONTROLLER_PREFERENCE_KEY,
+    ACCOUNT_TOKEN_FILES_KEY,
     ACCOUNT_STATE_DIR_KEY,
 ];
 
@@ -301,8 +307,8 @@ impl LaunchSettings {
 }
 
 /// The hand-over's settings: a controller launch's question dialog, the
-/// switch a succession is asked under, and the preference the successor
-/// walk takes.
+/// switch a succession is asked under, the preference the successor walk
+/// takes and the token file each declared Claude account signs in with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControllerSettings {
     pub question_tool: Judged<QuestionToolSetting>,
@@ -315,6 +321,8 @@ pub struct ControllerSettings {
     /// controller's own entry alone, since a context handoff replaces the
     /// session and not its harness or model.
     pub preference_set: bool,
+    /// The declared `(account dir, token file)` pairs, as spelled.
+    pub account_tokens: Judged<Vec<(String, PathBuf)>>,
 }
 
 impl ControllerSettings {
@@ -340,8 +348,31 @@ impl ControllerSettings {
                 .unwrap_or(DEFAULT_CONTROLLER_PREFERENCE)
                 .to_owned(),
             preference_set: values.raw(CONTROLLER_PREFERENCE_KEY).is_some(),
+            account_tokens: Judged::of(
+                ACCOUNT_TOKEN_FILES_KEY,
+                account_token_files(values.get(ACCOUNT_TOKEN_FILES_KEY)),
+            ),
         }
     }
+}
+
+/// The token-file pairs, or the first pair refused: one with no `=`, a side
+/// that is not absolute, or an account directory spelled twice, since
+/// either file could then be the account's.
+fn account_token_files(text: Option<&str>) -> std::result::Result<Vec<(String, PathBuf)>, &str> {
+    let mut pairs: Vec<(String, PathBuf)> = Vec::new();
+    for pair in list(text) {
+        let (dir, file) = pair.split_once('=').ok_or(pair)?;
+        let (dir, file) = (dir.trim(), Path::new(file.trim()));
+        if !Path::new(dir).is_absolute()
+            || !file.is_absolute()
+            || pairs.iter().any(|(seen, _)| seen == dir)
+        {
+            return Err(pair);
+        }
+        pairs.push((dir.to_owned(), file.to_path_buf()));
+    }
+    Ok(pairs)
 }
 
 /// `harness=/absolute/path` pairs separated by commas, one per harness;
