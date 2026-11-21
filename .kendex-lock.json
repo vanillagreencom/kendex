@@ -442,12 +442,12 @@
     "02e27c5fb9d5d6e8": {"installation":"638a9309ffe5f1ca","sourceRepo":".","reasons":["92a6ea4530746687","193843aa51bac613"]},
     "051fa2161264103b": {"installation":"40564b9676148d8f","sourceRepo":".","reasons":["92a6ea4530746687","72b85cac8935cfd3"]},
     "0687aa31a1809a28": {"installation":"84a30dd80a293588","sourceRepo":".","reasons":["92a6ea4530746687","811c3d7e00a17a7f"]},
+    "084cf55cfa286c93": {"installation":"574f1cf9b32dcc2f","sourceRepo":".","reasons":["92a6ea4530746687","dca3749bd272d115"]},
     "0a4f9aff491a3f28": {"installation":"ffefd0dc0817d92d","sourceRepo":".","reasons":["92a6ea4530746687","0cbc375ebe09eaa6","ac81c43bf82fb160","95244fafe7f4ba5e","a5e72ae76db94f8a","07fbec7ccc450aa5","c079936fc9cdeedc"]},
     "0b1ac8749b8f153a": {"installation":"48fb0cb8d4e03c48","sourceRepo":".","reasons":["92a6ea4530746687","1da2ae07871ccfc1","72b85cac8935cfd3"]},
-    "0e7ab50072039de5": {"installation":"9c5924e220d79b55","sourceRepo":".","reasons":["92a6ea4530746687"]},
+    "0f253bd8ceb9a9ab": {"installation":"30ffe6855e94684e","sourceRepo":".","reasons":["92a6ea4530746687","2aaa3328e7e9799e"]},
     "0f695e3eb4c095d0": {"installation":"06cd8d02284ae668","sourceRepo":".","reasons":["92a6ea4530746687","72b85cac8935cfd3"]},
     "106b6222997f4ee7": {"installation":"d812251fc54cdefb","sourceRepo":".","reasons":["92a6ea4530746687","b865feb4044bc88d"]},
-    "14006f5fbf8e1e2c": {"installation":"f33af079d7e2aaa2","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "148004cc04164dc2": {"installation":"29dde05e1cf75c94","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "16eb87f0c97a0016": {"installation":"2cec51f3439d7c1c","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "1717d668f158780f": {"installation":"fe04ed25d850cafd","sourceRepo":".","reasons":["92a6ea4530746687","193843aa51bac613"]},
@@ -495,6 +495,7 @@
     "674a6afaa354ac92": {"installation":"b96a6f9a28f36369","sourceRepo":".","reasons":["3f0491b45bbe786c"]},
     "68badec18adfcb22": {"installation":"f3c7c519a4b0e0f1","sourceRepo":".","reasons":["92a6ea4530746687","9fdaa5ee7d5df365","b45c95102bc19e1e"]},
     "6d8af9c2e00e9141": {"installation":"89bf7656c8250245","sourceRepo":".","reasons":["92a6ea4530746687","193843aa51bac613"]},
+    "6f4a037bd590d25b": {"installation":"9c5924e220d79b55","sourceRepo":".","reasons":["92a6ea4530746687","d9c074f4f82651e9"]},
     "70d1ad1508e4a329": {"installation":"69a7e560e5e1b7bf","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "7180ee734a82e021": {"installation":"d3d048032974de0c","sourceRepo":".","reasons":["890644e69c0d31c6","7a626689a34bde31"]},
     "758afb52d774a4b4": {"installation":"aebdb8fbd160e2f2","sourceRepo":".","reasons":["92a6ea4530746687","4fcd72e6dff61d03","72b85cac8935cfd3"]},
@@ -533,6 +534,7 @@
     "bf882484ec8be53a": {"installation":"5b019b96a7aff7e4","sourceRepo":".","reasons":["92a6ea4530746687","548bab6504023efb"]},
     "c10da23e19f2dd4c": {"installation":"48e0810cc2d4de75","sourceRepo":".","reasons":["92a6ea4530746687","5b3665eca34edf6c","20b1ecc667a53e1a","c31f2b0f336da64e","0412eb4ea5218de1","027e264c82d4ee1f","ed462ef002ebb019","433fc2c02eaae3ec","70722bb2533c47f2"]},
     "c4d573c1a051517c": {"installation":"0e34daa816075af4","sourceRepo":".","reasons":["92a6ea4530746687"]},
+    "ca38f6d839ec80c1": {"installation":"f33af079d7e2aaa2","sourceRepo":".","reasons":["92a6ea4530746687","3f0491b45bbe786c"]},
     "cdb6b27c289627f8": {"installation":"109c53b8b8f7a2cc","sourceRepo":".","reasons":["92a6ea4530746687","27f515ab0c61d825","27f051b160a4acf9","d69e2aca43056c46","5ef4d8a5def19048","571fe614b1aae8b7"]},
     "d215f8824251b1f3": {"installation":"31fc7c0ba08c9139","sourceRepo":".","reasons":["efc827f8a0cbee2f","7a626689a34bde31"]},
     "d415b0704f4eaf96": {"installation":"358d6a6ac8dd672d","sourceRepo":".","reasons":["92a6ea4530746687","c079936fc9cdeedc"]},
@@ -542,10 +544,8 @@
     "d5fd949791a056d1": {"installation":"7ce585f117a10acb","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "d695f8d668c4b3c6": {"installation":"a898dae4fec4dc00","sourceRepo":".","reasons":["92a6ea4530746687","72b85cac8935cfd3"]},
     "d8e16cdd19792bcf": {"installation":"4c057a2116f95bb5","sourceRepo":".","reasons":["92a6ea4530746687","2d12859685f70689"]},
-    "d99ed1540c027291": {"installation":"574f1cf9b32dcc2f","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "de33c010b0566236": {"installation":"6b824720a126b538","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "e057b6372501d92d": {"installation":"d323fa4a2668051d","sourceRepo":".","reasons":["92a6ea4530746687"]},
-    "e20f76046a325d8a": {"installation":"30ffe6855e94684e","sourceRepo":".","reasons":["92a6ea4530746687"]},
     "e227e970d2879b70": {"installation":"066f2e30ec0b75b4","sourceRepo":".","reasons":["92a6ea4530746687","2d4645d5f430eda7"]},
     "e337f6e1a7c525ad": {"installation":"b147d5605f49835d","sourceRepo":".","reasons":["92a6ea4530746687","db5b481f5e48aaeb"]},
     "e5e1ba84818a1e43": {"installation":"d29ad1d70bd4ea5a","sourceRepo":".","reasons":["92a6ea4530746687","5db6ae11d854a502"]},
@@ -3492,7 +3492,7 @@
         "matcher": "Bash"
       },
       "reasons": ["92a6ea4530746687","1da2ae07871ccfc1","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
     },
     "hook:docs-writing-note:claude": {
       "installation": "3dd99aa8e70d405f",
@@ -3517,7 +3517,7 @@
         "matcher": "Edit|MultiEdit|Write"
       },
       "reasons": ["92a6ea4530746687","641ab48e065f0230","bc3d87d12b9203a2","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
     },
     "hook:docs-writing-note:codex": {
       "installation": "e36f632b6f7358f6",
@@ -3542,7 +3542,7 @@
         "matcher": "Edit|MultiEdit|Write"
       },
       "reasons": ["92a6ea4530746687","6f7d33d677d1ab1b","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","a0186256a03bdf93","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","d523191b827696a8","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","a0186256a03bdf93","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","d523191b827696a8","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
     },
     "hook:docs-writing-note:pi": {
       "installation": "aebdb8fbd160e2f2",
@@ -3567,7 +3567,7 @@
         "matcher": "Edit|MultiEdit|Write"
       },
       "reasons": ["92a6ea4530746687","4fcd72e6dff61d03","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","a7862289acde24a2","1fd8a95efb8b7e05","e227e970d2879b70","5c1a501bf700ebb3","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","758afb52d774a4b4","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","a7862289acde24a2","1fd8a95efb8b7e05","e227e970d2879b70","5c1a501bf700ebb3","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","758afb52d774a4b4","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "hook:jarvis-memory-note:claude": {
       "installation": "6b824720a126b538",
@@ -4651,7 +4651,7 @@
         "matcher": "Edit|MultiEdit|Write|Bash"
       },
       "reasons": ["92a6ea4530746687","06b051dc132acce7"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
     },
     "hook:ui-copy-note:codex": {
       "installation": "e13a440ac533dc96",
@@ -4676,7 +4676,7 @@
         "matcher": "Edit|MultiEdit|Write|Bash"
       },
       "reasons": ["92a6ea4530746687","1b104c7a89bd216e"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
     },
     "hook:worktree-prompt-claim:claude": {
       "installation": "8901959b4209b6b1",
@@ -4819,7 +4819,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","5c0c000309104214","548bab6504023efb"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:agent-runtime:codex": {
       "installation": "8638dfd3821188af",
@@ -4839,7 +4839,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","f23308d52180bc1f","5db6ae11d854a502"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:agent-runtime:copilot": {
       "installation": "f173c1fca61aa6f8",
@@ -4859,7 +4859,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1d0e834ed78448de","193843aa51bac613"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:agent-runtime:pi": {
       "installation": "158035e6f7446cad",
@@ -4879,7 +4879,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","2d4645d5f430eda7","c079936fc9cdeedc"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:app-deploy:claude": {
       "installation": "cdbf0c38938a0220",
@@ -4966,7 +4966,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","6e7bcbe34312482e","fadd61e4405e1211"],
-      "requirerProvenance": {"rows":["e20f76046a325d8a","f294b7bea2fdb200","2a1bd0e6c2cd410f"]}
+      "requirerProvenance": {"rows":["0f253bd8ceb9a9ab","f294b7bea2fdb200","2a1bd0e6c2cd410f"]}
     },
     "skill:bot-instructions:codex": {
       "installation": "61a73b8ab7719b40",
@@ -4986,7 +4986,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","7190cd7eeace5cd9","88b53efa29f985e0"],
-      "requirerProvenance": {"rows":["0e7ab50072039de5","7c80396b9a4d1dbe","a23ba52bf0904c08"]}
+      "requirerProvenance": {"rows":["6f4a037bd590d25b","7c80396b9a4d1dbe","a23ba52bf0904c08"]}
     },
     "skill:bot-instructions:copilot": {
       "installation": "796aff50ad1a1e3f",
@@ -5006,7 +5006,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fad2cb7e722a0b7c","11433f90f72fedb5"],
-      "requirerProvenance": {"rows":["14006f5fbf8e1e2c","674a6afaa354ac92","58995d8e23fa9d65"]}
+      "requirerProvenance": {"rows":["ca38f6d839ec80c1","674a6afaa354ac92","58995d8e23fa9d65"]}
     },
     "skill:bot-instructions:pi": {
       "installation": "b356e4d988657ec8",
@@ -5026,17 +5026,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","9fdaa5ee7d5df365","b45c95102bc19e1e"],
-      "requirerProvenance": {"rows":["d99ed1540c027291","8001312e0ef8286a","68badec18adfcb22"]}
+      "requirerProvenance": {"rows":["084cf55cfa286c93","8001312e0ef8286a","68badec18adfcb22"]}
     },
     "skill:change-scope:claude": {
       "installation": "5953794a2185c5ed",
       "sourceRepo": ".",
-      "sourceHash": "d9b0c06846fbb7746e009294c56bc795738750c9707f28e6e867fc2b827dba23",
+      "sourceHash": "54fc5685ab9c54191deb29783c0b4598b853035666be7369b7cfd23e70d634b3",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "58a6bfecc372ecc48ba0b1daf7b1114bcc34fc66e6c411ebb6f6d0b7a65f6c8a",
+      "renderedHash": "67ce98e052fd7f6500ff3cb30cefc5bc9926c892032853975b1c1185d7998ecd",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5047,17 +5047,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fadd61e4405e1211","5c0c000309104214","b865feb4044bc88d"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:change-scope:codex": {
       "installation": "aef7e1f8fb7bc204",
       "sourceRepo": ".",
-      "sourceHash": "d9b0c06846fbb7746e009294c56bc795738750c9707f28e6e867fc2b827dba23",
+      "sourceHash": "54fc5685ab9c54191deb29783c0b4598b853035666be7369b7cfd23e70d634b3",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "58a6bfecc372ecc48ba0b1daf7b1114bcc34fc66e6c411ebb6f6d0b7a65f6c8a",
+      "renderedHash": "67ce98e052fd7f6500ff3cb30cefc5bc9926c892032853975b1c1185d7998ecd",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5067,17 +5067,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","88b53efa29f985e0","f23308d52180bc1f","cde51957e110284c"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:change-scope:copilot": {
       "installation": "c59c0076ead0bd9b",
       "sourceRepo": ".",
-      "sourceHash": "d9b0c06846fbb7746e009294c56bc795738750c9707f28e6e867fc2b827dba23",
+      "sourceHash": "54fc5685ab9c54191deb29783c0b4598b853035666be7369b7cfd23e70d634b3",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "58a6bfecc372ecc48ba0b1daf7b1114bcc34fc66e6c411ebb6f6d0b7a65f6c8a",
+      "renderedHash": "67ce98e052fd7f6500ff3cb30cefc5bc9926c892032853975b1c1185d7998ecd",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5087,17 +5087,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","11433f90f72fedb5","1d0e834ed78448de","2d12859685f70689"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:change-scope:pi": {
       "installation": "33af17957aa82f8c",
       "sourceRepo": ".",
-      "sourceHash": "d9b0c06846fbb7746e009294c56bc795738750c9707f28e6e867fc2b827dba23",
+      "sourceHash": "54fc5685ab9c54191deb29783c0b4598b853035666be7369b7cfd23e70d634b3",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "58a6bfecc372ecc48ba0b1daf7b1114bcc34fc66e6c411ebb6f6d0b7a65f6c8a",
+      "renderedHash": "67ce98e052fd7f6500ff3cb30cefc5bc9926c892032853975b1c1185d7998ecd",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5107,7 +5107,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","b45c95102bc19e1e","2d4645d5f430eda7","a5e72ae76db94f8a"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:code-quality:claude": {
       "installation": "82a034d8dae3ef41",
@@ -5128,7 +5128,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1d99ad54bdd6c9c2","093f5483cc894db9","b865feb4044bc88d","e667c7788854061b"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
     },
     "skill:code-quality:codex": {
       "installation": "de1aa3ca845d77f8",
@@ -5148,7 +5148,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","df139924f4c9ed6d","80324e1b79a286e8","cde51957e110284c","410505c6144edf22"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
     },
     "skill:code-quality:copilot": {
       "installation": "76d69d3d854b81b7",
@@ -5168,7 +5168,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","28df317a74611f28","fec402cf84519d7d","2d12859685f70689"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","2043e0db1f0a4e88","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","2043e0db1f0a4e88","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:code-quality:pi": {
       "installation": "3d494a7d150719a0",
@@ -5188,7 +5188,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","7de3b09c0b55fdf9","0cbc375ebe09eaa6","a5e72ae76db94f8a"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","1fd8a95efb8b7e05","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","1fd8a95efb8b7e05","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:commit-guards:claude": {
       "installation": "bf40eeab45016b32",
@@ -5209,7 +5209,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","9ed31257f5011f0b","fadd61e4405e1211","811c3d7e00a17a7f","467b7bb65f29cb91","9b237b229f6e826a","7a626689a34bde31","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["a77adbd8992925c7","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","2a1bd0e6c2cd410f","0f695e3eb4c095d0","6509b682f14a1c7d","e786f64861f8c4d3","de33c010b0566236"]}
+      "requirerProvenance": {"rows":["a77adbd8992925c7","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","2a1bd0e6c2cd410f","0f695e3eb4c095d0","6509b682f14a1c7d","e786f64861f8c4d3","de33c010b0566236"]}
     },
     "skill:commit-guards:codex": {
       "installation": "6db08e3285597a09",
@@ -5229,7 +5229,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","a4ed8344bfe97f32","88b53efa29f985e0","0249809811f5c2a6","b60c34d57b0a9515","7a626689a34bde31","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["d695f8d668c4b3c6","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","a23ba52bf0904c08","051fa2161264103b","185e7bea9bdd52c7"]}
+      "requirerProvenance": {"rows":["d695f8d668c4b3c6","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","a23ba52bf0904c08","051fa2161264103b","185e7bea9bdd52c7"]}
     },
     "skill:commit-guards:copilot": {
       "installation": "116694ffda2e8b5e",
@@ -5249,7 +5249,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","08dd7a251b2beb23","11433f90f72fedb5","fea9de1afec27baf","3668661703049930","7a626689a34bde31","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["761780f3e430d93f","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","58995d8e23fa9d65","59580c851ea48be2","7180ee734a82e021"]}
+      "requirerProvenance": {"rows":["761780f3e430d93f","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","58995d8e23fa9d65","59580c851ea48be2","7180ee734a82e021"]}
     },
     "skill:commit-guards:pi": {
       "installation": "b06e435e0703cda3",
@@ -5269,7 +5269,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","f4d1f1d612ecae2c","b45c95102bc19e1e","ac81c43bf82fb160","65d5e2d3aa1179a1","7a626689a34bde31","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["9f4d1b1110076740","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","68badec18adfcb22","224c6100b5c0efe3","d215f8824251b1f3","e057b6372501d92d"]}
+      "requirerProvenance": {"rows":["9f4d1b1110076740","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","68badec18adfcb22","224c6100b5c0efe3","d215f8824251b1f3","e057b6372501d92d"]}
     },
     "skill:communication:claude": {
       "installation": "e4ff9f005ac47cac",
@@ -5290,7 +5290,7 @@
         ]
       },
       "reasons": ["811c3d7e00a17a7f","5c0c000309104214","ca2eacc2f311026e"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:communication:codex": {
       "installation": "fac987b356276273",
@@ -5310,7 +5310,7 @@
         ]
       },
       "reasons": ["0249809811f5c2a6","f23308d52180bc1f","97af40daa4b08219"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:communication:copilot": {
       "installation": "24c5359e816e91c4",
@@ -5330,7 +5330,7 @@
         ]
       },
       "reasons": ["fea9de1afec27baf","1d0e834ed78448de","c2d95f4c4ab058bc"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:communication:pi": {
       "installation": "3e9abfa87b32a311",
@@ -5350,7 +5350,7 @@
         ]
       },
       "reasons": ["ac81c43bf82fb160","2d4645d5f430eda7","07fbec7ccc450aa5"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:decider:claude": {
       "installation": "3eb09ae5b9d632a2",
@@ -5371,7 +5371,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","093f5483cc894db9","641ab48e065f0230","5c0c000309104214","e667c7788854061b"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
     },
     "skill:decider:codex": {
       "installation": "b42919d5076d82d9",
@@ -5391,7 +5391,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","80324e1b79a286e8","6f7d33d677d1ab1b","f23308d52180bc1f","410505c6144edf22"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","a0186256a03bdf93","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","d523191b827696a8","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","a0186256a03bdf93","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","d523191b827696a8","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
     },
     "skill:decider:copilot": {
       "installation": "2549c4337b65258e",
@@ -5411,7 +5411,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fec402cf84519d7d","2e4ee1c14c681152","1d0e834ed78448de"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","87a3cf795e0d4768","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","87a3cf795e0d4768","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:decider:pi": {
       "installation": "99e2559353e0bb13",
@@ -5431,7 +5431,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","0cbc375ebe09eaa6","4fcd72e6dff61d03","2d4645d5f430eda7"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","a7862289acde24a2","1fd8a95efb8b7e05","e227e970d2879b70","5c1a501bf700ebb3","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","758afb52d774a4b4","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","a7862289acde24a2","1fd8a95efb8b7e05","e227e970d2879b70","5c1a501bf700ebb3","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","758afb52d774a4b4","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:deep-research:claude": {
       "installation": "bbf7f6f368d5bbcc",
@@ -5606,7 +5606,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","5c0c000309104214"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:dev:codex": {
       "installation": "1a0a773acd67e12c",
@@ -5626,7 +5626,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","f23308d52180bc1f"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:dev:copilot": {
       "installation": "3380d74653acffa3",
@@ -5646,7 +5646,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1d0e834ed78448de"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:dev:pi": {
       "installation": "066f2e30ec0b75b4",
@@ -5666,7 +5666,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","2d4645d5f430eda7"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:doc-limits:claude": {
       "installation": "e9ada3576952b429",
@@ -5764,7 +5764,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","06b051dc132acce7","811c3d7e00a17a7f","b865feb4044bc88d","1da2ae07871ccfc1","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","8aaf381ec0582f40","d4964a0a94e43fae","00c3705a2a91d4da","e9e4fd8fcc6b3928","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","0b1ac8749b8f153a","1b9aa98a9921f427","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","5c2eb4b991519967"]}
     },
     "skill:docs-writing:codex": {
       "installation": "8087ed89a23c09ff",
@@ -5784,7 +5784,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1b104c7a89bd216e","0249809811f5c2a6","cde51957e110284c","a93671aa907259f0","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","a0186256a03bdf93","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","d523191b827696a8","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","5988e76f3fa7a40b","5b02020b3e171cb9","84339b20c950972c","a0186256a03bdf93","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","d523191b827696a8","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4d7c6a5fd1d10647"]}
     },
     "skill:docs-writing:copilot": {
       "installation": "00d82e0bb7d938a8",
@@ -5804,7 +5804,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","f1b0ba201226ba37","fea9de1afec27baf","2d12859685f70689","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","a54a5fd2911efe0e","2043e0db1f0a4e88","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:docs-writing:pi": {
       "installation": "430bff699be2ec9d",
@@ -5824,17 +5824,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","5d95b65d431d9ca8","ac81c43bf82fb160","a5e72ae76db94f8a","d49fcc78117c118e","72b85cac8935cfd3"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","a7862289acde24a2","1fd8a95efb8b7e05","e227e970d2879b70","5c1a501bf700ebb3","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","758afb52d774a4b4","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","a7862289acde24a2","1fd8a95efb8b7e05","e227e970d2879b70","5c1a501bf700ebb3","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","758afb52d774a4b4","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:github-repository-settings:claude": {
       "installation": "30ffe6855e94684e",
       "sourceRepo": ".",
-      "sourceHash": "a8610c090e5f7298e29b19d896db4ca6f11e21acd94b0f199b203831a0d6a290",
+      "sourceHash": "a62b22632a5ed2847033fcf631993fad8c03afc68ee32bbe73770cf2a06aecd9",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a72db53019a00cf76c4a629031aa22025bdc51c7546d9856a7a649941821f852",
+      "renderedHash": "cfb668c5a9e9e6d22ac49dd8d69a75d857e35fe7fbb093d285faff2daec684ed",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5844,17 +5844,18 @@
           ".claude/skills/github-repository-settings"
         ]
       },
-      "reasons": ["92a6ea4530746687"]
+      "reasons": ["92a6ea4530746687","2aaa3328e7e9799e"],
+      "requirerProvenance": {"rows":["0f253bd8ceb9a9ab","f294b7bea2fdb200","2a1bd0e6c2cd410f"]}
     },
     "skill:github-repository-settings:codex": {
       "installation": "9c5924e220d79b55",
       "sourceRepo": ".",
-      "sourceHash": "a8610c090e5f7298e29b19d896db4ca6f11e21acd94b0f199b203831a0d6a290",
+      "sourceHash": "a62b22632a5ed2847033fcf631993fad8c03afc68ee32bbe73770cf2a06aecd9",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a72db53019a00cf76c4a629031aa22025bdc51c7546d9856a7a649941821f852",
+      "renderedHash": "cfb668c5a9e9e6d22ac49dd8d69a75d857e35fe7fbb093d285faff2daec684ed",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5863,17 +5864,18 @@
           ".agents/skills/github-repository-settings"
         ]
       },
-      "reasons": ["92a6ea4530746687"]
+      "reasons": ["92a6ea4530746687","d9c074f4f82651e9"],
+      "requirerProvenance": {"rows":["6f4a037bd590d25b","7c80396b9a4d1dbe","a23ba52bf0904c08"]}
     },
     "skill:github-repository-settings:copilot": {
       "installation": "f33af079d7e2aaa2",
       "sourceRepo": ".",
-      "sourceHash": "a8610c090e5f7298e29b19d896db4ca6f11e21acd94b0f199b203831a0d6a290",
+      "sourceHash": "a62b22632a5ed2847033fcf631993fad8c03afc68ee32bbe73770cf2a06aecd9",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a72db53019a00cf76c4a629031aa22025bdc51c7546d9856a7a649941821f852",
+      "renderedHash": "cfb668c5a9e9e6d22ac49dd8d69a75d857e35fe7fbb093d285faff2daec684ed",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5882,17 +5884,18 @@
           ".agents/skills/github-repository-settings"
         ]
       },
-      "reasons": ["92a6ea4530746687"]
+      "reasons": ["92a6ea4530746687","3f0491b45bbe786c"],
+      "requirerProvenance": {"rows":["ca38f6d839ec80c1","674a6afaa354ac92","58995d8e23fa9d65"]}
     },
     "skill:github-repository-settings:pi": {
       "installation": "574f1cf9b32dcc2f",
       "sourceRepo": ".",
-      "sourceHash": "a8610c090e5f7298e29b19d896db4ca6f11e21acd94b0f199b203831a0d6a290",
+      "sourceHash": "a62b22632a5ed2847033fcf631993fad8c03afc68ee32bbe73770cf2a06aecd9",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a72db53019a00cf76c4a629031aa22025bdc51c7546d9856a7a649941821f852",
+      "renderedHash": "cfb668c5a9e9e6d22ac49dd8d69a75d857e35fe7fbb093d285faff2daec684ed",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5901,17 +5904,18 @@
           ".agents/skills/github-repository-settings"
         ]
       },
-      "reasons": ["92a6ea4530746687"]
+      "reasons": ["92a6ea4530746687","dca3749bd272d115"],
+      "requirerProvenance": {"rows":["084cf55cfa286c93","8001312e0ef8286a","68badec18adfcb22"]}
     },
     "skill:github:claude": {
       "installation": "5092b32efbc9b753",
       "sourceRepo": ".",
-      "sourceHash": "332a1e54ff872a177549c718d3712c61f093b4fd14b7c7c72d8184ad741fa46a",
+      "sourceHash": "228b1a4643b11daa65bc4a995629c2a3b006ecbb4459ce903c795efe44bd5439",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "adc57f3e506908cf93c29cabe3ebf04f8624b4cba65a4fe5641140494e420ecb",
+      "renderedHash": "2e9a56599b4933f3a72df925b68f932b11f3f9bdf1580db203bc6d4b3037f580",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5922,17 +5926,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","00e1474fb7625232","093f5483cc894db9","5c0c000309104214","95bfec63c3516851","b865feb4044bc88d","7212c0602282df81"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","49315a5d17f4583e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","79553673b458d46d","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","49315a5d17f4583e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","79553673b458d46d","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:github:codex": {
       "installation": "91470bdd8bf81d2a",
       "sourceRepo": ".",
-      "sourceHash": "332a1e54ff872a177549c718d3712c61f093b4fd14b7c7c72d8184ad741fa46a",
+      "sourceHash": "228b1a4643b11daa65bc4a995629c2a3b006ecbb4459ce903c795efe44bd5439",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "adc57f3e506908cf93c29cabe3ebf04f8624b4cba65a4fe5641140494e420ecb",
+      "renderedHash": "2e9a56599b4933f3a72df925b68f932b11f3f9bdf1580db203bc6d4b3037f580",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5942,17 +5946,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","df13212d3fb17d7d","80324e1b79a286e8","f23308d52180bc1f","f57a075902c66420","cde51957e110284c","d84394db87cfa8b0"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","70d1ad1508e4a329","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","7d206898d6ce4f70","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","70d1ad1508e4a329","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","7d206898d6ce4f70","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:github:copilot": {
       "installation": "adb9ada6fb8d312d",
       "sourceRepo": ".",
-      "sourceHash": "332a1e54ff872a177549c718d3712c61f093b4fd14b7c7c72d8184ad741fa46a",
+      "sourceHash": "228b1a4643b11daa65bc4a995629c2a3b006ecbb4459ce903c795efe44bd5439",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "adc57f3e506908cf93c29cabe3ebf04f8624b4cba65a4fe5641140494e420ecb",
+      "renderedHash": "2e9a56599b4933f3a72df925b68f932b11f3f9bdf1580db203bc6d4b3037f580",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5962,17 +5966,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","cf7aa00b261c2a58","fec402cf84519d7d","1d0e834ed78448de","1df00501c2aebff5","2d12859685f70689","eea16ccf41a42125"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","fbb99b634e4d8658","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","4cab937dd98acb11","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","fbb99b634e4d8658","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","4cab937dd98acb11","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:github:pi": {
       "installation": "31a4ca1a067c63e6",
       "sourceRepo": ".",
-      "sourceHash": "332a1e54ff872a177549c718d3712c61f093b4fd14b7c7c72d8184ad741fa46a",
+      "sourceHash": "228b1a4643b11daa65bc4a995629c2a3b006ecbb4459ce903c795efe44bd5439",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "adc57f3e506908cf93c29cabe3ebf04f8624b4cba65a4fe5641140494e420ecb",
+      "renderedHash": "2e9a56599b4933f3a72df925b68f932b11f3f9bdf1580db203bc6d4b3037f580",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -5982,17 +5986,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","ac7ebb8542e46129","0cbc375ebe09eaa6","2d4645d5f430eda7","95244fafe7f4ba5e","a5e72ae76db94f8a","a36fc5b41f12fe4e"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","4ecb524552d71095","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","a99e7b22b5a0382a","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","4ecb524552d71095","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","a99e7b22b5a0382a","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:harness-ci:claude": {
       "installation": "fbc7ba106ab1b7e7",
       "sourceRepo": ".",
-      "sourceHash": "353006b048765499dd2379a8edc2b404aa57dfb2db4155427f495a95be612696",
+      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "48dae814a113c159553b1fa759bb96ba21d0db5693c0b52d34353d58436f5fbb",
+      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6003,17 +6007,17 @@
         ]
       },
       "reasons": ["2aaa3328e7e9799e"],
-      "requirerProvenance": {"rows":["e20f76046a325d8a","f294b7bea2fdb200","2a1bd0e6c2cd410f"]}
+      "requirerProvenance": {"rows":["0f253bd8ceb9a9ab","f294b7bea2fdb200","2a1bd0e6c2cd410f"]}
     },
     "skill:harness-ci:codex": {
       "installation": "81caae023aa6d7be",
       "sourceRepo": ".",
-      "sourceHash": "353006b048765499dd2379a8edc2b404aa57dfb2db4155427f495a95be612696",
+      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "48dae814a113c159553b1fa759bb96ba21d0db5693c0b52d34353d58436f5fbb",
+      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6023,17 +6027,17 @@
         ]
       },
       "reasons": ["d9c074f4f82651e9"],
-      "requirerProvenance": {"rows":["0e7ab50072039de5","7c80396b9a4d1dbe","a23ba52bf0904c08"]}
+      "requirerProvenance": {"rows":["6f4a037bd590d25b","7c80396b9a4d1dbe","a23ba52bf0904c08"]}
     },
     "skill:harness-ci:copilot": {
       "installation": "b96a6f9a28f36369",
       "sourceRepo": ".",
-      "sourceHash": "353006b048765499dd2379a8edc2b404aa57dfb2db4155427f495a95be612696",
+      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "48dae814a113c159553b1fa759bb96ba21d0db5693c0b52d34353d58436f5fbb",
+      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6043,17 +6047,17 @@
         ]
       },
       "reasons": ["3f0491b45bbe786c"],
-      "requirerProvenance": {"rows":["14006f5fbf8e1e2c","674a6afaa354ac92","58995d8e23fa9d65"]}
+      "requirerProvenance": {"rows":["ca38f6d839ec80c1","674a6afaa354ac92","58995d8e23fa9d65"]}
     },
     "skill:harness-ci:pi": {
       "installation": "e63a9b3dc5d9867a",
       "sourceRepo": ".",
-      "sourceHash": "353006b048765499dd2379a8edc2b404aa57dfb2db4155427f495a95be612696",
+      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "48dae814a113c159553b1fa759bb96ba21d0db5693c0b52d34353d58436f5fbb",
+      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6063,7 +6067,7 @@
         ]
       },
       "reasons": ["dca3749bd272d115"],
-      "requirerProvenance": {"rows":["d99ed1540c027291","8001312e0ef8286a","68badec18adfcb22"]}
+      "requirerProvenance": {"rows":["084cf55cfa286c93","8001312e0ef8286a","68badec18adfcb22"]}
     },
     "skill:iced-rs:claude": {
       "installation": "6d240e3079626071",
@@ -6240,7 +6244,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","95bfec63c3516851","91a37d9a24588ced"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","bd517e83c215fc39","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","bd517e83c215fc39","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:linear:codex": {
       "installation": "cb755609edd64588",
@@ -6260,7 +6264,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","f57a075902c66420","d2486845548e70ac"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","c4d573c1a051517c","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","c4d573c1a051517c","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:linear:copilot": {
       "installation": "b8ccba1719e35b67",
@@ -6280,7 +6284,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1df00501c2aebff5","c889e026572f0fe9"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","88ffa0b274e16fd5","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","88ffa0b274e16fd5","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:linear:pi": {
       "installation": "a0f55a5f06363f90",
@@ -6300,7 +6304,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","95244fafe7f4ba5e","2ad87b91f8bad7ea"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","16eb87f0c97a0016","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","16eb87f0c97a0016","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:mailbox:claude": {
       "installation": "9cda6092ce93c574",
@@ -6321,7 +6325,7 @@
         ]
       },
       "reasons": ["811c3d7e00a17a7f","5c0c000309104214","ca2eacc2f311026e","548bab6504023efb"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:mailbox:codex": {
       "installation": "7ae9bd467dd4fcbb",
@@ -6341,7 +6345,7 @@
         ]
       },
       "reasons": ["0249809811f5c2a6","f23308d52180bc1f","97af40daa4b08219","5db6ae11d854a502"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:mailbox:copilot": {
       "installation": "36800687f5e6ddec",
@@ -6361,7 +6365,7 @@
         ]
       },
       "reasons": ["fea9de1afec27baf","1d0e834ed78448de","c2d95f4c4ab058bc","193843aa51bac613"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:mailbox:pi": {
       "installation": "b054dfcd568bef99",
@@ -6381,7 +6385,7 @@
         ]
       },
       "reasons": ["ac81c43bf82fb160","2d4645d5f430eda7","07fbec7ccc450aa5","c079936fc9cdeedc"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:orch:claude": {
       "installation": "9ef4741d55185008",
@@ -6402,7 +6406,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","093f5483cc894db9","811c3d7e00a17a7f","95bfec63c3516851","b865feb4044bc88d","ca2eacc2f311026e","4fb97c6674679f0b","548bab6504023efb"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:orch:codex": {
       "installation": "b78b84b06c72022f",
@@ -6422,7 +6426,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","80324e1b79a286e8","0249809811f5c2a6","f57a075902c66420","cde51957e110284c","97af40daa4b08219","e637e6619ea8ff32","5db6ae11d854a502"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:orch:copilot": {
       "installation": "4682e1f2ae4a9c78",
@@ -6442,7 +6446,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fec402cf84519d7d","fea9de1afec27baf","1df00501c2aebff5","2d12859685f70689","c2d95f4c4ab058bc","193843aa51bac613"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:orch:pi": {
       "installation": "ffefd0dc0817d92d",
@@ -6462,7 +6466,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","0cbc375ebe09eaa6","ac81c43bf82fb160","95244fafe7f4ba5e","a5e72ae76db94f8a","07fbec7ccc450aa5","c079936fc9cdeedc"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:pi-update:claude": {
       "installation": "2419183283e13152",
@@ -6703,7 +6707,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","b865feb4044bc88d"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:project-management:codex": {
       "installation": "86298fa231bd6bf2",
@@ -6723,7 +6727,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","cde51957e110284c"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:project-management:copilot": {
       "installation": "4c057a2116f95bb5",
@@ -6743,7 +6747,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","2d12859685f70689"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:project-management:pi": {
       "installation": "8eb76f12de12aa4e",
@@ -6763,17 +6767,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","a5e72ae76db94f8a"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:review-gate:claude": {
       "installation": "8c04bf94683e0e8c",
       "sourceRepo": ".",
-      "sourceHash": "0c7279c3e7f5e33f895fcb8bd0b1e844df88262c76d7cdae4a497db3e90862ca",
+      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "75b854c051db01b3f74cefded52537bcf14bbff12bb6adedd14163684e4cc763",
+      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6784,17 +6788,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","6e7bcbe34312482e","fadd61e4405e1211"],
-      "requirerProvenance": {"rows":["e20f76046a325d8a","f294b7bea2fdb200","2a1bd0e6c2cd410f"]}
+      "requirerProvenance": {"rows":["0f253bd8ceb9a9ab","f294b7bea2fdb200","2a1bd0e6c2cd410f"]}
     },
     "skill:review-gate:codex": {
       "installation": "55f4d0da8f4d75d3",
       "sourceRepo": ".",
-      "sourceHash": "0c7279c3e7f5e33f895fcb8bd0b1e844df88262c76d7cdae4a497db3e90862ca",
+      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "75b854c051db01b3f74cefded52537bcf14bbff12bb6adedd14163684e4cc763",
+      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6804,17 +6808,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","7190cd7eeace5cd9","88b53efa29f985e0"],
-      "requirerProvenance": {"rows":["0e7ab50072039de5","7c80396b9a4d1dbe","a23ba52bf0904c08"]}
+      "requirerProvenance": {"rows":["6f4a037bd590d25b","7c80396b9a4d1dbe","a23ba52bf0904c08"]}
     },
     "skill:review-gate:copilot": {
       "installation": "1d331e895c00dda4",
       "sourceRepo": ".",
-      "sourceHash": "0c7279c3e7f5e33f895fcb8bd0b1e844df88262c76d7cdae4a497db3e90862ca",
+      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "75b854c051db01b3f74cefded52537bcf14bbff12bb6adedd14163684e4cc763",
+      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6824,17 +6828,17 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fad2cb7e722a0b7c","11433f90f72fedb5"],
-      "requirerProvenance": {"rows":["14006f5fbf8e1e2c","674a6afaa354ac92","58995d8e23fa9d65"]}
+      "requirerProvenance": {"rows":["ca38f6d839ec80c1","674a6afaa354ac92","58995d8e23fa9d65"]}
     },
     "skill:review-gate:pi": {
       "installation": "f3c7c519a4b0e0f1",
       "sourceRepo": ".",
-      "sourceHash": "0c7279c3e7f5e33f895fcb8bd0b1e844df88262c76d7cdae4a497db3e90862ca",
+      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "75b854c051db01b3f74cefded52537bcf14bbff12bb6adedd14163684e4cc763",
+      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6844,7 +6848,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","9fdaa5ee7d5df365","b45c95102bc19e1e"],
-      "requirerProvenance": {"rows":["d99ed1540c027291","8001312e0ef8286a","68badec18adfcb22"]}
+      "requirerProvenance": {"rows":["084cf55cfa286c93","8001312e0ef8286a","68badec18adfcb22"]}
     },
     "skill:reviewer:claude": {
       "installation": "944ae8bc6e93693b",
@@ -6865,7 +6869,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","987101a1265fb323","093f5483cc894db9","5c0c000309104214","95bfec63c3516851"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0"]}
     },
     "skill:reviewer:codex": {
       "installation": "d06842f57c910d32",
@@ -6885,7 +6889,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","382bb4ce3e0791ca","80324e1b79a286e8","f23308d52180bc1f","f57a075902c66420"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916"]}
     },
     "skill:reviewer:copilot": {
       "installation": "630ea7a418375df5",
@@ -6905,7 +6909,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","fc47fa1665b7b15b","fec402cf84519d7d","1d0e834ed78448de","1df00501c2aebff5"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a"]}
     },
     "skill:reviewer:pi": {
       "installation": "1c6f2cbe70dc7d8e",
@@ -6925,7 +6929,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","14b5ad9ed1cf8c84","0cbc375ebe09eaa6","2d4645d5f430eda7","95244fafe7f4ba5e"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2"]}
     },
     "skill:second-opinion:claude": {
       "installation": "83437a235165b2db",
@@ -7181,7 +7185,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","5c0c000309104214","d9f17d84d1b7dfa1"],
-      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","e20f76046a325d8a","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","fc0462adec8cb4d5","e337f6e1a7c525ad"]}
+      "requirerProvenance": {"rows":["404952dcd1550c5e","00c3705a2a91d4da","0f253bd8ceb9a9ab","f294b7bea2fdb200","f004936b61b11a72","43f95f174059e989","106b6222997f4ee7","2a1bd0e6c2cd410f","a1709aa8d33fa390","0687aa31a1809a28","a9c5e53db5db995a","99479d9ada34b903","de33c010b0566236","c10da23e19f2dd4c","1d4910a8cee0b628","64ca2d52d0b595b4","20ec2b42559beb3d","667df2367324f39b","96f38862a3345d05","bf882484ec8be53a","b2433a036e7f88d0","fc0462adec8cb4d5","e337f6e1a7c525ad"]}
     },
     "skill:worktree:codex": {
       "installation": "956e34f0ee559e70",
@@ -7201,7 +7205,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","f23308d52180bc1f","b9f5fac7bc778bd0"],
-      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","0e7ab50072039de5","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4b59987e22c9df30"]}
+      "requirerProvenance": {"rows":["4c3fef898b5fba2b","84339b20c950972c","6f4a037bd590d25b","7c80396b9a4d1dbe","148004cc04164dc2","f8bc80fad792e757","a3a8128bd5734e27","a23ba52bf0904c08","24cd0d3ff62f9d69","a3e65cf4459d81ac","52a46c8dbc26939e","cdb6b27c289627f8","342074cda7f04e5c","303cb00042dc30d8","e5e1ba84818a1e43","2fe7679aa67264fd","9a2296991d39f916","4b59987e22c9df30"]}
     },
     "skill:worktree:copilot": {
       "installation": "f5da1fe64cae740f",
@@ -7221,7 +7225,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","1d0e834ed78448de","da2243a2fe583745"],
-      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","14006f5fbf8e1e2c","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a","d5fd949791a056d1"]}
+      "requirerProvenance": {"rows":["45672b9e43db0f72","3437dadedfe0d490","ca38f6d839ec80c1","674a6afaa354ac92","8af2c248fbfaac07","02454c0cfff579ab","d8e16cdd19792bcf","58995d8e23fa9d65","01de491c35cd187c","5e492cf941f6b294","5e0906d2ad1497d5","b8ac243ed14c90b8","02e27c5fb9d5d6e8","1d65029d60985e14","1717d668f158780f","63166293c607e44c","6d8af9c2e00e9141","5ee45bd64b59a15a","d5fd949791a056d1"]}
     },
     "skill:worktree:pi": {
       "installation": "68dcaa15812bfc58",
@@ -7241,7 +7245,7 @@
         ]
       },
       "reasons": ["92a6ea4530746687","2d4645d5f430eda7","99ec77a60908086e"],
-      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","d99ed1540c027291","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2","29ec14fe1cc21cea"]}
+      "requirerProvenance": {"rows":["3ca336b578b2afef","e227e970d2879b70","084cf55cfa286c93","8001312e0ef8286a","8a2b090679ee52ce","0a4f9aff491a3f28","a6a969e52ed08119","68badec18adfcb22","65a75759df28a7a3","d4b17abd4a449102","e057b6372501d92d","ab6e5f68b56ea42f","01ec2acd335fac5a","d415b0704f4eaf96","aca4ed6813b5058f","b41a52dc1851702c","52e31112a9cd29e2","29ec14fe1cc21cea"]}
     },
     "skill:xcode-run:claude": {
       "installation": "72412be983585757",
@@ -7401,7 +7405,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "24e65fe793c4b18d2fe520070274ed27cc6350e7"
+      "commit": "b0766b53e72872ce9972d24fa1ea888019b01bba"
     }
   },
   "claudeProjectDefault": "released"
