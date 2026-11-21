@@ -9,7 +9,10 @@
 //! controller session's handler moves `to-lane.cursor`. So a note landing
 //! between a handoff and its successor's start is in the log past the line
 //! the handoff names and still unread in the box, and nothing here gates on
-//! the controller's state: the log is the durable channel.
+//! the controller's state: the log is the durable channel. A watch with no
+//! row of that box yet starts from the lead's `to-lane.cursor`, so mail the
+//! lead has read is not announced again; with no cursor the box is
+//! announced whole.
 //!
 //! A directive's receipt is the lane's own cursor (`drain --receipts`):
 //! `directive-read` only once the lane's read moved it, `directive-unread`
@@ -833,7 +836,8 @@ impl MailDuty {
         }
     }
 
-    /// The overseer's box past the line announced, a replaced box from its
+    /// The overseer's box past the line announced, or past the lead's own
+    /// cursor where no row stands, a replaced box from its
     /// start, each envelope by the class table; the row moves to the count
     /// read (announced, never acknowledged), and the wake's slot
     /// follows the lead's own cursor. One read serves both: it starts at
@@ -844,15 +848,19 @@ impl MailDuty {
             Ok(n) => n,
             Err(cause) => return turn.refuse(OVERSEER_TARGET, cause),
         };
-        let cursor = MailCursor::parse(baseline.get(LANE_MAIL, OVERSEER));
-        let mut announced = cursor.announced;
+        let row = baseline.get(LANE_MAIL, OVERSEER);
+        let cursor = MailCursor::parse(row);
+        // No row is a first start: the lines through the lead's own cursor
+        // were handled, so only those past it are news.
+        let first_start = row.is_none();
+        let mut announced = if first_start { read } else { cursor.announced };
         let after = announced.min(read);
         let mut events: BoxEvents = match self.mailbox.box_events(root, after) {
             Ok(events) => events,
             Err(refusal) => return turn.refuse(OVERSEER_TARGET, refusal),
         };
         let mut was_replaced = false;
-        if replaced(announced, &cursor.first, events.count, &events.first) {
+        if replaced(cursor.announced, &cursor.first, events.count, &events.first) {
             was_replaced = true;
             announced = 0;
             if after != 0 {
@@ -875,7 +883,9 @@ impl MailDuty {
             }
         }
         turn.events.extend(lines);
-        if was_replaced || events.count >= announced {
+        // A first start's cursor past the box's lines still records the
+        // count, or a line landing below that cursor would never be news.
+        if was_replaced || first_start || events.count >= announced {
             turn.set(
                 baseline,
                 LANE_MAIL,

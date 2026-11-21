@@ -868,6 +868,78 @@ fn an_unchanged_box_emits_no_line_and_asks_no_change() {
     assert_eq!(more.changes, vec![set("lane-mail", ITEM, "2 n-1")]);
 }
 
+/// A watch with no `lane-mail` row of the lead's box continues from the
+/// lead's own `to-lane.cursor`: three notes the handler read through line 2
+/// announce the third alone; with no cursor the box is announced whole once;
+/// a cursor past the box's lines announces nothing. Each row's next turn
+/// announces nothing again and a fourth note alone.
+#[test]
+fn a_first_start_continues_from_the_lead_s_read_cursor_instead_of_replaying_its_box() {
+    let rows: [(&str, Option<&str>, &[&str]); 3] = [
+        ("a cursor through line 2", Some("2\n"), &["n-3"]),
+        ("no cursor", None, &["n-1", "n-2", "n-3"]),
+        ("a cursor past the box", Some("5\n"), &[]),
+    ];
+    let start = Instant::now();
+    let clock = FakeClock::new();
+    for (name, cursor, announced) in rows {
+        let w = world_of(&hold(), 20, &[]);
+        for id in ["n-1", "n-2", "n-3"] {
+            w.plant("overseer", "to-lane.jsonl", &note(id, "Handled."));
+        }
+        if let Some(cursor) = cursor {
+            std::fs::write(w.box_file("overseer", "to-lane.cursor"), cursor).unwrap();
+        }
+        let mut duty = w.duty();
+        let mut baseline = Baseline::default();
+        let mut turn = |baseline: &mut Baseline, at: u64| -> Vec<String> {
+            let tick = Tick {
+                duty: Duty::Mail,
+                now: start + secs(at),
+                wall: WALL + at,
+                baseline,
+                clock: &clock,
+            };
+            let produced = duty.run(&tick).unwrap();
+            for change in produced.changes {
+                baseline.apply(change);
+            }
+            produced
+                .events
+                .iter()
+                .map(Event::render)
+                .filter(|line| line.starts_with("EVENT "))
+                .collect()
+        };
+        let expected: Vec<String> = announced
+            .iter()
+            .map(|id| format!("EVENT owner-note {id}"))
+            .collect();
+        assert_eq!(turn(&mut baseline, 0), expected, "{name}: first start");
+        assert_eq!(
+            baseline.get("lane-mail", "overseer"),
+            Some("3 n-1"),
+            "{name}: the row stands at the box's lines"
+        );
+        assert_eq!(
+            turn(&mut baseline, 20),
+            Vec::<String>::new(),
+            "{name}: announced once"
+        );
+        w.plant("overseer", "to-lane.jsonl", &note("n-4", "New."));
+        assert_eq!(
+            turn(&mut baseline, 40),
+            ["EVENT owner-note n-4"],
+            "{name}: a later note"
+        );
+        assert_eq!(
+            std::fs::read_to_string(w.box_file("overseer", "to-lane.cursor")).ok(),
+            cursor.map(str::to_owned),
+            "{name}: the cursor is the handler's"
+        );
+    }
+}
+
 /// The owner channel on the real program: a due owner ask is closed with
 /// its recommendation before the box is read, and the close is announced
 /// from the box as the handler will read it; a reserved ask is left open.
