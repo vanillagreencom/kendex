@@ -124,6 +124,8 @@ The owner's selected format, which overrides communication's shared summary sect
 
 ## Owner-only verification
 
+No item waits for the owner's own use. A check only a person can take is sent only when no test can cover it and the item needs it. It is written as exact steps: what to press, what to say and what to see.
+
 Route each due or overdue post-merge box by who can read its evidence:
 
 | Reader | Action |
