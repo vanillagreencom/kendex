@@ -825,7 +825,8 @@ jobs:
       # and lane-mail-session.sh of `mailbox`, room-check.test.sh of `rest`'s
       # second-opinion battery, and Jarvis's presence (the hook's world),
       # forward, owner-unanswered and watch-loop (`lane-mail compact`) suites:
-      # in `jarvis` on Linux and in `rest` on macOS. Slack's mailbox-read and
+      # in `jarvis` on Linux and in `rest` on macOS, save watch-loop, which
+      # the macOS `orch-state` leg runs. Slack's mailbox-read and
       # notice suites run `lane-mail compact` too. `guards-tools` runs
       # tools/tests/guard-selection.test.sh and validation-routing.test.sh
       # (`orch-runtime validate entry`) on both runners and, on macOS,
@@ -982,12 +983,13 @@ jobs:
       # changes job published none. Per package with a target, fmt
       # and clippy over all its targets prepare the run; cargo test runs the
       # listed targets, its whole manifest for `<package>/*`, and the
-      # package's privacy harness runs beside them. It runs after the
+      # package's privacy harness runs after them. It runs after the
       # orch-rest suites whatever they answered, so neither red hides the
       # other. The fixture gh's projector is held to the jq the catalog's
-      # scripts are held to, so the step names the runner's jq first. Its
-      # minutes are unmeasured; the first merge group that runs it records
-      # them here.
+      # scripts are held to, so the step names the runner's jq first.
+      # In the runs that tested every target, 44611935189, 44789074453,
+      # 44843919810 and 44860396393, the step took 843-1055s of a 1284-1541s
+      # leg.
       - name: the package runtimes' Rust targets
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
         env:
@@ -1381,7 +1383,7 @@ jobs:
       # Jarvis's tmux fixtures and session controls run apart from `rest`'s
       # Linux pool, on a leg that builds the checkout kendex its picker rows
       # need. macOS runs no `jarvis` leg: the rest step below keeps the family
-      # there, as the worktree step keeps restack, less the two suites the
+      # there, as the worktree step keeps restack, less the four suites the
       # macOS steps after this one take and the native contracts' linux-only.
       - name: Jarvis suites
         if: matrix.shard == 'jarvis'
@@ -1419,6 +1421,27 @@ jobs:
           [ -n "$kept" ] || exit 0
           [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests =succession.test
+
+      # macOS rest still ran 1515s and 1608s of its 2400s ceiling in merge
+      # groups 44611935189 and 44801559872, where controls (580s and 578s) and
+      # watch-loop (482s and 485s) were its two longest suites. In merge group
+      # 44843919810 its pool started watch-loop about 550s in, and the macOS
+      # orch-state leg ran no suite step over 8s: its 341s were set-up and the
+      # runtime build. One
+      # pooled call runs the two side by side. As for the two steps above, the
+      # rest step skips both paths, and Linux runs both in `jarvis`.
+      - name: Jarvis controls and watch-loop suites on macOS
+        if: matrix.shard == 'orch-state' && runner.os == 'macOS'
+        run: |
+          set --
+          kept="$(tools/ci-job-set --suite-list skills/jarvis/tests/controls.test.sh skills/jarvis/tests/watch-loop.test.sh)"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          [ "$#" -gt 0 ] || exit 0
+          [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
+          bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests "$@"
 
       # ---- shard: rest — every shell suite no other shard runs. The skip
       # list below names the packages the shards above claim, and a skip is
