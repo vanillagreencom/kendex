@@ -5438,8 +5438,17 @@ fn a_merge_before_the_launch_leaves_a_working_hosted_lane_open() {
     assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Running);
     assert_eq!(closes(&fleet, "issue-1"), 0);
 
-    // The same merge can finish a lane launched at the merge timestamp.
-    lane["launched_at"] = json!("2026-09-20T11:20:00Z");
+    // A reused fleet row keeps the first launch and dates the new attempt.
+    lane["launched_at"] = json!("2026-09-20T11:00:00Z");
+    lane["session_since"] = json!("2026-09-20T11:30:00Z");
+    fleet.set_lanes(vec![lane.clone()]);
+    let observed = driver.pass(&fleet.read());
+    assert_eq!(observed.failed, None);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Running);
+    assert_eq!(closes(&fleet, "issue-1"), 0);
+
+    // A merge at the current attempt's timestamp can still finish it.
+    lane["session_since"] = json!("2026-09-20T11:20:00Z");
     fleet.set_lanes(vec![lane]);
     let observed = driver.pass(&fleet.read());
     assert_eq!(observed.failed, None);
@@ -5838,11 +5847,10 @@ fn pull_seven_timeline() -> Value {
     }}}}})
 }
 
-/// A finished close the tracker's standing quota hold deferred has its
-/// `lane-exited` line already reported, so it keeps `close-pending` as
-/// `lane-exited|<pane key>` and asks nothing; the next pass, the hold gone
-/// and its line still reported under that key, asks the real close verb
-/// and closes.
+/// While the GitHub duty has yet to date its old baseline row, the watch
+/// retains the close instead of ending the attempt with its sandbox kept.
+/// Once dated, a tracker hold still defers the finished close until the
+/// watch can retry on the already reported exit.
 #[test]
 fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_stands() {
     let dir = tempfile::tempdir().unwrap();
@@ -5854,10 +5862,12 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     host.leave("KEN-1");
     let (mut one, pane) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
     one["mail_root"] = json!(host.lane_root("KEN-1").display().to_string());
+    one["launched_at"] = json!("2026-09-20T11:00:00Z");
     fleet.set_lanes(vec![one]);
     let state = fleet.read();
     world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
     lane_driver!(server, fleet, readers, driver);
+    driver.now = clock::epoch_secs("2026-09-20T11:30:00Z").unwrap();
     driver.scripts = world.scripts.clone();
     driver.baseline.apply(Change::Set {
         kind: "merged".into(),
@@ -5866,13 +5876,8 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     });
     let first = driver.pass(&state);
     assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
-    let now = driver.now;
-    driver.baseline.apply(Change::Set {
-        kind: "tracker-quota".into(),
-        identity: "fleet".into(),
-        value: json!({"limit": "requests", "status": "future", "reset": clock::iso_utc(now + 7200), "reset_epoch": now + 7200}).to_string(),
-    });
     let second = driver.pass(&state);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Running);
     assert_eq!(event_lines(&second), vec!["EVENT lane-exited gh-1"]);
     assert_eq!(second.failed, None);
     let pane_key = format!("{} {pane}", server.pid);
@@ -5880,6 +5885,23 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
         driver.baseline.get("close-pending", "gh-1"),
         Some(format!("lane-exited|{pane_key}").as_str())
     );
+    assert_eq!(closes(&fleet, "KEN-1"), 0);
+
+    let at = clock::epoch_secs("2026-09-20T11:20:00Z").unwrap();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-1".into(),
+        value: format!("o/r#7@{at}"),
+    });
+    let now = driver.now;
+    driver.baseline.apply(Change::Set {
+        kind: "tracker-quota".into(),
+        identity: "fleet".into(),
+        value: json!({"limit": "requests", "status": "future", "reset": clock::iso_utc(now + 7200), "reset_epoch": now + 7200}).to_string(),
+    });
+    let held = driver.pass(&state);
+    assert!(event_lines(&held).is_empty(), "{:?}", lines(&held));
+    assert_eq!(held.failed, None);
     assert_eq!(closes(&fleet, "KEN-1"), 0, "a standing hold asks nothing");
     driver.baseline.apply(Change::Clear {
         kind: "tracker-quota".into(),

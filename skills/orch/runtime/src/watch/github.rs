@@ -70,32 +70,6 @@ const REFRESH_WORKFLOW: &str = "kendex-refresh.yml";
 
 /// Baseline row kinds this module owns.
 pub const MERGED_ROW: &str = "merged";
-
-fn merge_row(value: &str) -> impl DoubleEndedIterator<Item = (&str, Option<u64>)> {
-    value.split_whitespace().map(|entry| {
-        entry
-            .split_once('@')
-            .map_or((entry, None), |(key, at)| (key, at.parse().ok()))
-    })
-}
-
-/// The last merge the observation duty can use as a lane's delivery. A
-/// hosted lane can see a baseline written before it launched, so compare
-/// the recorded merge time to this launch even between GitHub passes.
-pub(super) fn finished_merge<'a>(baseline: &'a Baseline, lane: &Lane) -> Option<(&'a str, u64)> {
-    let row = baseline.get(MERGED_ROW, &lane.item)?;
-    let floor = if super::hosted::host_of(lane) != "local"
-        && let Some(stamp) = &lane.launched_at
-    {
-        Some(clock::epoch_secs(stamp)?)
-    } else {
-        None
-    };
-    merge_row(row)
-        .rfind(|(_, at)| floor.is_none_or(|floor| at.is_some_and(|at| at >= floor)))
-        .and_then(|(key, _)| key.rsplit_once('#'))
-        .and_then(|(repo, pr)| Some((repo, pr.parse().ok()?)))
-}
 pub const PARKED_UNTIL_ROW: &str = "parked-until";
 pub const REFRESH_ROW: &str = "refresh-failing";
 /// The push read's mark of its last pass (`PushMark`), red or clear.
@@ -1092,6 +1066,58 @@ pub(super) fn terminal_of(gh: &Gh, lane: &Lane) -> Result<TerminalState> {
             &[("read", "terminal"), ("field", "state"), ("value", other)],
         )),
     }
+}
+
+fn merge_row(value: &str) -> impl DoubleEndedIterator<Item = (&str, Option<u64>)> {
+    value.split_whitespace().map(|entry| {
+        entry
+            .split_once('@')
+            .map_or((entry, None), |(key, at)| (key, at.parse().ok()))
+    })
+}
+
+pub(super) enum FinishedMerge<'a> {
+    Eligible { repo: &'a str, pr: u64 },
+    Undated,
+    None,
+}
+
+/// A hosted lane can see a baseline written before this attempt, while its
+/// first launch time persists across attempts. An undated row can still
+/// qualify once the GitHub duty refreshes it.
+pub(super) fn finished_merge<'a>(baseline: &'a Baseline, lane: &Lane) -> FinishedMerge<'a> {
+    let Some(row) = baseline.get(MERGED_ROW, &lane.item) else {
+        return FinishedMerge::None;
+    };
+    let floor = if super::hosted::host_of(lane) != "local"
+        && let Some(stamp) = lane
+            .session_since
+            .as_deref()
+            .or(lane.launched_at.as_deref())
+    {
+        let Some(at) = clock::epoch_secs(stamp) else {
+            return FinishedMerge::None;
+        };
+        Some(at)
+    } else {
+        None
+    };
+    let mut result = FinishedMerge::None;
+    for (key, at) in merge_row(row).rev() {
+        let Some((repo, pr)) = key
+            .rsplit_once('#')
+            .and_then(|(repo, pr)| Some((repo, pr.parse().ok()?)))
+        else {
+            continue;
+        };
+        match (floor, at) {
+            (None, _) => return FinishedMerge::Eligible { repo, pr },
+            (Some(floor), Some(at)) if at >= floor => return FinishedMerge::Eligible { repo, pr },
+            (Some(_), None) => result = FinishedMerge::Undated,
+            (Some(_), Some(_)) => {}
+        }
+    }
+    result
 }
 
 /// One lane item's own merged pull requests at or after the floor, per

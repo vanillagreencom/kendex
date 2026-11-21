@@ -47,7 +47,7 @@ use crate::verify::wire::{Branch, Nullable, Pull};
 use super::Produced;
 use super::baseline::Change;
 use super::events::Event;
-use super::github::finished_merge;
+use super::github::{FinishedMerge, finished_merge};
 use super::lanes::{
     Counters, HandoffReading, Pass, STATE_UNREAD, clear, counters_of, doc_of, fail, handoff_places,
     lane_name, set, standing_record, step_of, validation_runs_of, watch_state_dir,
@@ -1061,7 +1061,7 @@ fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
         request["mode"] = serde_json::json!({ "park": wait });
     }
     if reason == "finished"
-        && let Some((repo, pr)) = finished_merge(pass.baseline, lane)
+        && let FinishedMerge::Eligible { repo, pr } = finished_merge(pass.baseline, lane)
     {
         request["delivery"] = serde_json::json!({"pr": {"pr": pr, "repo": repo}});
     }
@@ -2354,8 +2354,9 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// sandbox kept: the attempt ends and its record stops charging a slot,
 /// the sandbox standing for a relaunch; a host whose status read fails
 /// reads no exit and keeps the slot. Failed and deferred closes and
-/// unreadable prerequisites keep `close-pending` while the notification
-/// remains reported. An unanswered close keeps its marker because it
+/// unreadable prerequisites, including an undated merge for a dated
+/// attempt, keep `close-pending` while the notification remains reported.
+/// An unanswered close keeps its marker because it
 /// may have acted. `row` and `key` identify the notification.
 pub fn close_finished(
     lane: &Lane,
@@ -2366,10 +2367,16 @@ pub fn close_finished(
     out: &mut Produced,
 ) {
     let name = lane_name(lane);
+    let merge = finished_merge(pass.baseline, lane);
+    if matches!(merge, FinishedMerge::Undated) {
+        out.changes
+            .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+        return;
+    }
     let Ok(caps) = hosts.of(lane) else {
         return;
     };
-    let reason = if finished_merge(pass.baseline, lane).is_some() {
+    let reason = if matches!(merge, FinishedMerge::Eligible { .. }) {
         let left = if host_of(lane) == "local" {
             left_locally(pass.state_dir, lane)
         } else if caps.files == Files::Verb {
@@ -2394,6 +2401,9 @@ pub fn close_finished(
     } else if row == "lane-exited" && caps.status == Status::Verb {
         KEEP_REASON
     } else {
+        if pass.baseline.get(CLOSE_PENDING_ROW, &name).is_some() {
+            out.changes.push(clear(CLOSE_PENDING_ROW, &name));
+        }
         return;
     };
     let pending = format!("{row}|{key}");
@@ -2420,7 +2430,10 @@ pub fn close_finished(
 /// work left nothing behind, and closed through [`close_finished`] where it
 /// did, since the screen of a lane whose work is over proves nothing.
 pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut Produced) {
-    if finished_merge(pass.baseline, lane).is_none() {
+    if !matches!(
+        finished_merge(pass.baseline, lane),
+        FinishedMerge::Eligible { .. }
+    ) {
         return;
     }
     let name = lane_name(lane);
