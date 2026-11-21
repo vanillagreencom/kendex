@@ -411,12 +411,12 @@ Keep the classifier and required aggregate unconditional on both `pull_request` 
 
 A render that the refresh run lands on the default branch, under the review-gate skill's references/adoption.md § Landing a proved render, opens no pull request and enters no merge group, so no consumer `pull_request` or `merge_group` run judges it. Under the queue-only default a `push` run stands its lanes down, and [the CI template](#the-ci-template) has no `push` trigger, so the nightly full run is the first run that executes a lane against a landed render. A repository that sets `HARNESS_CI_PER_PUSH_REASON`, in a workflow that runs on `push`, runs the claimed lanes on that push.
 
-Every repository under the organization standard reports one aggregate context named `CI` on both `pull_request` and `merge_group`, green only when every job the repository runs is green. review-gate's `validate-standard.sh` checks both legs as its `standard-ci-context` row. Which contexts the repository's required-checks ruleset requires is the review-gate skill's references/adoption.md § Repo-side wiring. One of two routes gives the repository the `CI` context:
+Every repository under the organization standard reports one aggregate context named `CI` on both `pull_request` and `merge_group`, green only when every job the repository runs is green. The github-repository-settings skill's `scripts/validate-standard.sh` checks both legs as its `standard-ci-context` row. Configure the required contexts under `GITHUB_STANDARD_CONTEXTS` in that skill's references/platform-checks.md. One of two routes gives the repository the `CI` context:
 
 - **The template.** Copy [the CI template](#the-ci-template) and move the repository's lanes into it.
 - **The repository's own workflow.** Keep the workflow and its job names, and put `merge_group:` beside `pull_request:` under `on:`. Add Shape 1's `changes` job and give every lane its condition, then add Shape 3's aggregate with `name: CI`, its `needs:` naming every job in the workflow and each gated lane in a `--skippable`. A lane in another workflow moves into this one, because a job waits only on jobs in its own workflow. An aggregate the repository already runs under another name takes the name `CI` rather than running beside a second one.
 
-The order of this change and the ruleset change, and the check that confirms both, are the review-gate skill's references/adoption.md § Repo-side wiring.
+Run the platform report after the new CI workflow and required-checks ruleset are active.
 
 ## The CI template
 

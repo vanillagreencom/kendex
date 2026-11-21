@@ -561,9 +561,10 @@ cp "$TMP/caller-workflow" "$DIR/$REFRESH"
 historical_adopt="$DIR/.agents/skills/review-gate/scripts/adopt-refresh.sh"
 git -C "$SKILL_DIR" show 5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/adopt-refresh.sh >"$historical_adopt"
 # The v1.5.1 adopter calls the validator's retired environment-only mode, so
-# the validator pair it shipped beside sits under it for this control alone.
-for path in validate-standard.sh lib/standard.sh; do
-  git -C "$SKILL_DIR" show "5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/$path" >"$DIR/.agents/skills/review-gate/scripts/$path"
+# the validator pair it shipped beside, and the standard that pair reads,
+# sit under it for this control alone.
+for path in scripts/validate-standard.sh scripts/lib/standard.sh standard.json; do
+  git -C "$SKILL_DIR" show "5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/$path" >"$DIR/.agents/skills/review-gate/$path"
 done
 chmod +x "$historical_adopt" "$DIR/.agents/skills/review-gate/scripts/validate-standard.sh"
 trust_refresh_transport "$DIR" "$historical_adopt"

@@ -4,7 +4,7 @@
 
 **Date**: 2026-10-20
 
-**Status**: Active
+**Status**: Active (the organization-standard report's owner → D036)
 
 **Research**: [KEN-3499](https://linear.app/vanillagreen/issue/KEN-3499); the owner's approval is that issue's comment of 2026-10-20; fleet's matching move is [FLT-992](https://linear.app/vanillagreen/issue/FLT-992)
 

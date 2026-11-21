@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bash-runtime: 3.2
 # Inputs: SKILL.md, scripts/, ../../tools/ci-job-set, ../bot-instructions/, ../review-gate/scripts/lib/settings.sh,
-# ../review-gate/scripts/lib/diagnostics.sh. Exercises the package's library calls.
+# ../review-gate/scripts/lib/diagnostics.sh, ../review-gate/SKILL.md,
+# ../review-gate/scripts/validate-standard.sh. Exercises the package's library calls and install dependencies.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 export MSYS=winsymlinks:nativestrict
@@ -521,9 +522,7 @@ def lifecycle_engine():
     return None
 
 
-def core_recovery(binary, name, break_cleanup=False):
-    home = scratch / name
-    root = home / "project"
+def lifecycle_catalog(root):
     catalog = root / "catalog/skills"
     root.mkdir(parents=True)
     for package in ("github-repository-settings", "bot-instructions", "review-gate"):
@@ -534,6 +533,68 @@ def core_recovery(binary, name, break_cleanup=False):
         dependency.mkdir()
         (dependency / "SKILL.md").write_text(
             f"---\nname: {package}\ndescription: Inert fixture dependency\n---\nFixture.\n")
+    return catalog
+
+
+def lifecycle_environment(home):
+    return dict(environment, HOME=str(home), KENDEX_REAL_HOME=str(home),
+                XDG_CONFIG_HOME=str(home / ".config"), XDG_STATE_HOME=str(home / ".local/state"),
+                XDG_DATA_HOME=str(home / ".local/share"), XDG_CACHE_HOME=str(home / ".cache"),
+                KENDEX_UI="plain", KENDEX_BACKGROUND_REFRESH="off", GIT_CONFIG_NOSYSTEM="1",
+                GIT_CEILING_DIRECTORIES=str(home))
+
+
+def report_dependency(binary, name, copied=None, mutation=None):
+    """Install review-gate and run its forwarder. With `copied`, Claude
+    receives that one package as a copy in .claude/skills and the other as a
+    link into .agents/skills, so each sibling lookup crosses a link."""
+    home = scratch / name
+    root = home / "project"
+    catalog = lifecycle_catalog(root)
+    if mutation:
+        relative, original, replacement = mutation
+        target = catalog / relative
+        source = target.read_text()
+        assert source.count(original) == 1, (relative, original)
+        changed = source.replace(original, replacement)
+        assert changed != source
+        target.write_text(changed, newline="")
+    if copied is None:
+        delivery, harness = "agents", 'harnesses = ["codex"]\nmethod = "copy"'
+    else:
+        delivery, harness = "claude", 'harnesses = ["claude"]'
+    (root / "kendex.toml").write_text(f'''schema = 7
+[install]
+{harness}
+[sources.cat]
+path = "catalog"
+''' + (f'[skills.{copied}]\nsource = "cat"\nmethod = "copy"\n' if copied else ""))
+    env = lifecycle_environment(home)
+    for args in (("init", "-q"), ("config", "gc.auto", "0"),
+                 ("config", "maintenance.auto", "false")):
+        subprocess.run(["git", "-C", str(root), *args], env=env, check=True, capture_output=True)
+    installed = subprocess.run([binary, "add", "cat", "--skill", "review-gate", "--yes", "--leave", "--throwaway"],
+                               cwd=root, env=env, capture_output=True, text=True)
+    assert installed.returncode == 0, installed
+    skills_dir = root / f".{delivery}/skills"
+    if copied is not None:
+        linked = ({"review-gate", "github-repository-settings"} - {copied}).pop()
+        assert (skills_dir / linked).is_symlink() and not (skills_dir / copied).is_symlink(), installed
+        assert not (root / ".agents/skills" / copied).exists(), installed
+    report = subprocess.run([bash, str(skills_dir / "review-gate/scripts/validate-standard.sh")], cwd=root,
+                            env=dict(env, GITHUB_STANDARD_PLATFORM_CHECKS="false"),
+                            capture_output=True, text=True)
+    if mutation:
+        return report
+    assert report.returncode == 0, report
+    assert report.stderr.count("review-gate-warning=deprecated-path ") == 1, report
+    assert "note check=standard-platform-checks value=disabled" in report.stdout, report
+
+
+def core_recovery(binary, name, break_cleanup=False):
+    home = scratch / name
+    root = home / "project"
+    catalog = lifecycle_catalog(root)
     if break_cleanup:
         target = catalog / "github-repository-settings/scripts/github-repository-settings"
         source = target.read_text()
@@ -576,11 +637,7 @@ macroscope = false
 ''')
     (root / "AGENTS.md").write_bytes(agents_bytes)
     (root / "personal.bin").write_bytes(bytes(range(256)))
-    env = dict(environment, HOME=str(home), KENDEX_REAL_HOME=str(home),
-               XDG_CONFIG_HOME=str(home / ".config"),
-               XDG_DATA_HOME=str(home / ".local/share"), XDG_CACHE_HOME=str(home / ".cache"),
-               KENDEX_UI="plain", KENDEX_BACKGROUND_REFRESH="off", GIT_CONFIG_NOSYSTEM="1",
-               GIT_CEILING_DIRECTORIES=str(home))
+    env = lifecycle_environment(home)
     for args in (("init", "-q"), ("config", "gc.auto", "0"),
                  ("config", "maintenance.auto", "false")):
         subprocess.run(["git", "-C", str(root), *args], env=env, check=True, capture_output=True)
@@ -726,6 +783,29 @@ finally:
 
 binary = lifecycle_engine()
 if binary is not None:
+    # Each control's red result is the refusal's stable diagnostic key. A
+    # physical `cd -P` restores lookup through the link's target directory.
+    for name, copied, mutation, key in (
+        ("report-dependency", None,
+         ("review-gate/SKILL.md", "required: [harness-ci, github-repository-settings]",
+          "required: [harness-ci]"), "standard-report-load"),
+        ("linked-forwarder", "github-repository-settings",
+         ("review-gate/scripts/validate-standard.sh",
+          'cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."',
+          'cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."'), "standard-report-load"),
+        ("linked-report", "review-gate",
+         ("github-repository-settings/scripts/validate-standard.sh",
+          'cd -- "$SCRIPT_DIR/../.."', 'cd -P -- "$SCRIPT_DIR/../.."'), "diagnostics-load"),
+    ):
+        report_dependency(binary, name, copied)
+        completed += 1
+        print(f"pass: review-gate reaches the report: {name}")
+        unresolved = report_dependency(binary, "control-" + name, copied, mutation)
+        if unresolved.returncode == 2 and f"review-gate-error={key}" in unresolved.stderr:
+            completed += 1
+            print(f"control rejected: {name}")
+        else:
+            raise AssertionError(f"control survived: {name} {unresolved}")
     core_recovery(binary, "core-recovery")
     completed += 1
     print("pass: core recovery preserves the armed predecessor")

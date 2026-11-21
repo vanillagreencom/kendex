@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-30
 
-**Status**: Active (lanes-app kendex/refresh heads with passing render proof → D023, overseer emergency merge → D029, environment provisioning and the report's app and environment rows → D031)
+**Status**: Active (lanes-app kendex/refresh heads with passing render proof → D023, overseer emergency merge → D029, environment provisioning and the report's app and environment rows → D031, the organization-standard report's owner → D036)
 
 **Research**: [KEN-2067](https://linear.app/vanillagreen/issue/KEN-2067/review-gate-map-every-gate-behaviour-to-a-github-ruleset-or-repository); the design note is attached to that issue
 

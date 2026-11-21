@@ -6,8 +6,9 @@
 # family, plus shared keys like AGENT_RUNTIME_CONTROLLER_PREFERENCE):
 #   1. explicit environment — a SET variable wins even when set to the empty
 #      string, so a caller (or the selftest) can force "explicitly empty";
-#   2. .env.local, or rg_setting's PRIVATE_FILE argument (KEY=value, quotes
-#      optional, parsed, never sourced); an empty argument skips this layer;
+#   2. the private env file (KEY=value, quotes optional, parsed, never
+#      sourced): rg_setting's PRIVATE_FILE argument, else rg_private_file's
+#      selection; an empty argument skips this layer;
 #   3. .kendex/settings.toml, then the repo's committed kendex.settings.toml
 #      (the [env] table's sole `KEY = "value"` assignment; an explicit
 #      REVIEW_GATE_SETTINGS_FILE consults only itself);
@@ -279,10 +280,19 @@ rg_dotenv_layer() { # FILE NAME
   printf '%s' "$val"
 }
 
-rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonzero
-               # on a present-but-unparseable assignment. Empty PRIVATE_FILE
-               # skips dotenv when resolving the setting that selects its path.
-  local name="$1" default="$2" private_file="${3-.env.local}" line val file table status matches
+# The project's private env file: the path KENDEX_ENV_FILE names, read from
+# every layer but a private one, or .env.local where it names none.
+rg_private_file() { # — path on stdout; 1 + the refusal when unreadable
+  local file
+  file="$(rg_setting KENDEX_ENV_FILE '' '')" || return 1
+  printf '%s' "${file:-.env.local}"
+}
+
+rg_setting() { # NAME DEFAULT [PRIVATE_FILE [ABSENT_STATUS]] — resolved value on stdout.
+               # Use ABSENT_STATUS=3 to distinguish absence from an empty value.
+               # An unreadable or malformed value returns 1. An omitted
+               # PRIVATE_FILE reads rg_private_file's; an empty one skips dotenv.
+  local name="$1" default="$2" private_file="${3-}" absent_status="${4-0}" line val file table status matches
   # The name is interpolated into ERE patterns below; constrain it to the
   # identifier shape every real key has, so a metacharacter can neither
   # misgrep nor inject pattern syntax.
@@ -292,6 +302,9 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
       return 1
       ;;
   esac
+  if [ "$#" -lt 3 ]; then
+    private_file="$(rg_private_file)" || return 1
+  fi
   # Validate every present source before a process value can answer.
   if [ "${REVIEW_GATE_SETTINGS_FILE:-}" != "/dev/null" ]; then
     if [ -n "${REVIEW_GATE_SETTINGS_FILE:-}" ]; then
@@ -326,7 +339,7 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
   # it (doc-limits, commit-guards) answering the sentinel identically.
   if [ "${REVIEW_GATE_SETTINGS_FILE:-}" = "/dev/null" ]; then
     printf '%s' "$default"
-    return 0
+    return "$absent_status"
   fi
   if [ -n "$private_file" ]; then
     status=0
@@ -385,6 +398,7 @@ rg_setting() { # NAME DEFAULT [PRIVATE_FILE] — resolved value on stdout; nonze
   fi
   done
   printf '%s' "$default"
+  return "$absent_status"
 }
 
 # A packed list setting as one trimmed, non-empty entry per line. pipefail

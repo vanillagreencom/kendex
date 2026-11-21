@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Inputs: scripts/, standard.json, ../review-gate/scripts/lib/settings.sh,
+# ../review-gate/scripts/lib/diagnostics.sh, ../review-gate/scripts/validate-standard.sh,
+# ../review-gate/tests/lib/. Exercises repository settings against GitHub fixtures.
 # validate-standard.sh against a fake GitHub: a repository matching the
 # standard reports every row ok, and each drifted element reports its own
 # row and no other. The whole verdict listing is compared, so a row that
@@ -6,7 +9,9 @@
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d)" || { printf '%s\n' 'standard-report-test: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d "$TMP" && ! -L "$TMP" ]] || exit 1
+TMP="$(cd -- "$TMP" && pwd -P)" || exit 1
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
@@ -20,12 +25,17 @@ bad() {
 
 # A skill copy with a test-owned standard, so the expected values below are
 # literals and not a second reading of the shipped manifest.
-SKILL="$TMP/skill"
+SKILL="$TMP/github-repository-settings"
+REVIEW_GATE="$SKILL_DIR/../review-gate"
+REPORT="$SKILL/scripts/validate-standard.sh"
+LEGACY_REPORT="$TMP/review-gate/scripts/validate-standard.sh"
 BIN="$TMP/bin"
 BASE="$TMP/base"
-mkdir -p "$SKILL" "$BIN" "$BASE"
+mkdir -p "$SKILL" "$TMP/review-gate/scripts/lib" "$BIN" "$BASE"
 cp -R "$SKILL_DIR/scripts" "$SKILL/scripts"
-. "$TEST_DIR/lib/workflow-edit.sh"
+cp "$REVIEW_GATE/scripts/lib/diagnostics.sh" "$REVIEW_GATE/scripts/lib/settings.sh" "$TMP/review-gate/scripts/lib/"
+cp "$REVIEW_GATE/scripts/validate-standard.sh" "$LEGACY_REPORT"
+. "$REVIEW_GATE/tests/lib/workflow-edit.sh"
 
 cat >"$SKILL/standard.json" <<'JSON'
 {
@@ -33,7 +43,7 @@ cat >"$SKILL/standard.json" <<'JSON'
   "gate_context": "Review gate"
 }
 JSON
-cp "$TEST_DIR/lib/gh-shim.sh" "$BIN/gh"
+cp "$REVIEW_GATE/tests/lib/gh-shim.sh" "$BIN/gh"
 chmod +x "$BIN/gh"
 
 # This suite's wrapper injects real gh diagnostics at the branch read only.
@@ -77,21 +87,68 @@ settings_consumer() { # NAME [ASSIGNMENT...]
 # `full` also admits bypass actors on a ruleset holding one rule type alone:
 # two apps on the queue ruleset, one of them in pull-request mode on the
 # checks ruleset. `no-bypass` declares the rest and admits none.
-QUEUE_BYPASS='REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always; Integration:5115517:pull_request"'
-CHECKS_BYPASS='REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"'
-CONTEXTS='REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
+QUEUE_BYPASS='GITHUB_STANDARD_QUEUE_BYPASS = "Integration:4925608:always; Integration:5115517:pull_request"'
+CHECKS_BYPASS='GITHUB_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_request"'
+CONTEXTS='GITHUB_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
+ENABLED='GITHUB_STANDARD_PLATFORM_CHECKS = "true"'
+WORKFLOW='GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "1190866154"'
 settings_consumer full "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS"
 settings_consumer no-bypass "$CONTEXTS"
 # `land` also names the landing app.
-settings_consumer land "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS" 'REVIEW_GATE_STANDARD_LAND_BYPASS = "Integration:5726115:always"'
-settings_consumer bad-bypass "$CONTEXTS" 'REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
+settings_consumer land "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS" 'GITHUB_STANDARD_LAND_BYPASS = "Integration:5726115:always"'
+settings_consumer bad-bypass "$CONTEXTS" 'GITHUB_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
 settings_consumer no-contexts
-settings_consumer empty-contexts 'REVIEW_GATE_STANDARD_CONTEXTS = ""'
-settings_consumer gated 'REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests);CI;Review gate"'
+settings_consumer empty-contexts 'GITHUB_STANDARD_CONTEXTS = ""'
+settings_consumer gated 'GITHUB_STANDARD_CONTEXTS = "Cargo (workspace tests);CI;Review gate"'
 # The organization keys this report read before the organization's own
 # tooling took the environment and app rows: the report reads none of them,
 # so a consumer still holding them, set or empty, reads like `full`.
 settings_consumer retired "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS" 'REVIEW_GATE_STANDARD_APP = ""' 'REVIEW_GATE_STANDARD_ENVIRONMENT = "kendex"' 'REVIEW_GATE_STANDARD_SECRETS = "app-id; 9KEY"'
+for dir in "$TMP"/consumer-*; do
+  printf '%s\n' "$ENABLED" "$WORKFLOW" >>"$dir/kendex.settings.toml"
+done
+settings_consumer alternate "$ENABLED" 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "7"' "$CONTEXTS"
+# `full`'s workflow, contexts and bypass actors, read from the private file
+# KENDEX_ENV_FILE selects; the default private file holds conflicting ones.
+settings_consumer selected-private "$ENABLED" 'KENDEX_ENV_FILE = "private.env"'
+printf '%s\n' 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID=1190866154' \
+  'GITHUB_STANDARD_CONTEXTS="Cargo (workspace tests); CI"' \
+  'GITHUB_STANDARD_QUEUE_BYPASS="Integration:4925608:always; Integration:5115517:pull_request"' \
+  'GITHUB_STANDARD_CHECKS_BYPASS="Integration:5115517:pull_request"' \
+  >"$TMP/consumer-selected-private/private.env"
+printf '%s\n' 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID=7' 'GITHUB_STANDARD_CONTEXTS=wrong' \
+  'GITHUB_STANDARD_QUEUE_BYPASS=invalid' 'GITHUB_STANDARD_CHECKS_BYPASS=invalid' \
+  >"$TMP/consumer-selected-private/.env.local"
+settings_consumer disabled
+settings_consumer explicitly-off 'GITHUB_STANDARD_PLATFORM_CHECKS = "false"'
+settings_consumer explicitly-empty 'GITHUB_STANDARD_PLATFORM_CHECKS = ""'
+settings_consumer missing-workflow "$ENABLED"
+settings_consumer invalid-workflow "$ENABLED" 'GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID = "false"'
+settings_consumer invalid-enabled 'GITHUB_STANDARD_PLATFORM_CHECKS = "maybe"'
+# The committed opt-in, overridden by the private file KENDEX_ENV_FILE
+# selects; the default private file would leave the report enabled.
+settings_consumer selected-private-off "$ENABLED" "$WORKFLOW" 'KENDEX_ENV_FILE = "private.env"'
+printf '%s\n' 'GITHUB_STANDARD_PLATFORM_CHECKS=false' >"$TMP/consumer-selected-private-off/private.env"
+printf '%s\n' 'GITHUB_STANDARD_PLATFORM_CHECKS=true' >"$TMP/consumer-selected-private-off/.env.local"
+settings_consumer legacy-path "$CONTEXTS"
+settings_consumer legacy-values "$ENABLED" "$WORKFLOW" \
+  "${CONTEXTS/GITHUB_STANDARD_/REVIEW_GATE_STANDARD_}" \
+  "${QUEUE_BYPASS/GITHUB_STANDARD_/REVIEW_GATE_STANDARD_}" \
+  "${CHECKS_BYPASS/GITHUB_STANDARD_/REVIEW_GATE_STANDARD_}" \
+  'REVIEW_GATE_STANDARD_LAND_BYPASS = "Integration:5726115:always"'
+settings_consumer precedence "$ENABLED" "$WORKFLOW" "$CONTEXTS" \
+  'GITHUB_STANDARD_QUEUE_BYPASS = ""' 'GITHUB_STANDARD_CHECKS_BYPASS = ""' \
+  'GITHUB_STANDARD_LAND_BYPASS = ""'
+printf '%s\n' 'REVIEW_GATE_STANDARD_CONTEXTS=wrong' 'REVIEW_GATE_STANDARD_QUEUE_BYPASS=invalid' \
+  'REVIEW_GATE_STANDARD_CHECKS_BYPASS=invalid' 'REVIEW_GATE_STANDARD_LAND_BYPASS=invalid' \
+  >"$TMP/consumer-precedence/.env.local"
+settings_consumer empty-replacement "$ENABLED" "$WORKFLOW" 'GITHUB_STANDARD_CONTEXTS = ""' \
+  "${CONTEXTS/GITHUB_STANDARD_/REVIEW_GATE_STANDARD_}"
+settings_consumer unread-replacement "$ENABLED" "$WORKFLOW" 'GITHUB_STANDARD_CONTEXTS = ["CI"]' \
+  "${CONTEXTS/GITHUB_STANDARD_/REVIEW_GATE_STANDARD_}"
+settings_consumer unread-source "$ENABLED" "$WORKFLOW"
+mkdir "$TMP/consumer-unread-source/.kendex"
+ln -s absent "$TMP/consumer-unread-source/.kendex/settings.toml"
 CONSUMER="$TMP/consumer-full"
 
 # The matching world: it reads ok on every row of the BASELINE below and is
@@ -206,7 +263,7 @@ run() { # FIXTURES SHIM_FAIL [ARGS...] — sets OUT (verdict lines), RC, and
   shift 2
   RC=0
   RAW="$(cd "$CONSUMER" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" GH_SHIM_FIXTURES="$fixtures" GH_SHIM_FAIL="$shim_fail" \
-    "$SKILL/scripts/validate-standard.sh" "$@" 2>&1)" || RC=$?
+    "$REPORT" "$@" 2>&1)" || RC=$?
   OUT="$(grep -E '^(ok|advisory|FAIL) check=' <<<"$RAW" || true)"
   ADVISORIES="$(grep -c '^review-gate-warning=standard-advisory ' <<<"$RAW" || true)"
 }
@@ -218,8 +275,8 @@ echo "=== each drifted element reports its own row ==="
 CASE_MATCH=false
 CASE_DIFF=""
 CASES=0
-drift_case() { # NAME SHIM_FAIL FILES EDIT OVERRIDES [CONSUMER]
-  local dir file want want_rc want_adv
+drift_case() { # NAME SHIM_FAIL FILES EDIT OVERRIDES [CONSUMER [LEGACY_WARNINGS]]
+  local dir file want want_rc want_adv want_warnings warnings
   CASES=$((CASES + 1))
   dir="$TMP/case-$CASES"
   cp -R "$BASE" "$dir"
@@ -237,11 +294,14 @@ drift_case() { # NAME SHIM_FAIL FILES EDIT OVERRIDES [CONSUMER]
   want="$(expected_listing "$5")"
   want_rc="$(want_rc_of "$5")"
   want_adv="$(want_advisories_of "$5")"
+  want_warnings="${7:-0}"
+  warnings="$(grep -c '^review-gate-warning=deprecated-setting ' <<<"$RAW" || true)"
   CASE_MATCH=false
-  if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ] && [ "$ADVISORIES" -eq "$want_adv" ]; then
+  if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ] && [ "$ADVISORIES" -eq "$want_adv" ] &&
+    [ "$warnings" -eq "$want_warnings" ]; then
     CASE_MATCH=true
   fi
-  CASE_DIFF="rc=$RC want $want_rc; advisory warnings=$ADVISORIES want $want_adv
+  CASE_DIFF="rc=$RC want $want_rc; advisory warnings=$ADVISORIES want $want_adv; legacy warnings=$warnings want $want_warnings
 $(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
 $RAW"
 }
@@ -346,15 +406,17 @@ done <<<"$LANDED_ROWS"
 # ref and pin.
 SOURCE_FAILURE='advisory:standard-ruleset-source=missing:workflows^standard-copilot-review=absent'
 PIN_FAILURE='standard-copilot-review=absent'
-while IFS='~' read -r name edit overrides; do
+while IFS='~' read -r name edit overrides consumer; do
   [ -n "$name" ] || continue
-  drift_case "$name" '' rules.json "$edit" "$overrides"
+  drift_case "$name" '' rules.json "$edit" "$overrides" "$consumer"
   if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
 done <<ROWS
 the live organization ruleset~.~
 the native Copilot rule without the workflow~.[3] = {"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2}~advisory:standard-ruleset-source=missing:workflows
 the native Copilot rule beside the workflow~. += [{"type": "copilot_code_review", "parameters": {"review_on_push": true}, "ruleset_source_type": "Organization", "ruleset_id": 2}]~
 a workflow in a different repository~.[3].parameters.workflows[0].repository_id = 7~$SOURCE_FAILURE
+the configured non-kendex workflow repository~.[3].parameters.workflows[0].repository_id = 7~~alternate
+the old workflow repository cannot satisfy a new setting~.~$SOURCE_FAILURE~alternate
 a repository id with the wrong type~.[3].parameters.workflows[0].repository_id = "1190866154"~$SOURCE_FAILURE
 a different workflow path~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$SOURCE_FAILURE
 a missing workflow declaration~.[3].parameters.workflows = []~$SOURCE_FAILURE
@@ -371,12 +433,15 @@ ROWS
 
 echo "=== the repository's declared settings ==="
 # name ~ consumer ~ jq edit of rules.json ~ overrides
-while IFS='~' read -r name consumer edit overrides; do
+while IFS='~' read -r name consumer edit overrides warnings; do
   [ -n "$name" ] || continue
-  drift_case "$name" "" "${edit:+rules.json}" "$edit" "$overrides" "$consumer"
+  drift_case "$name" "" "${edit:+rules.json}" "$edit" "$overrides" "$consumer" "$warnings"
   if [ "$CASE_MATCH" = true ]; then ok "$name"; else bad "$name" "$CASE_DIFF"; fi
 done <<'ROWS'
 a consumer still holding the retired organization keys~retired~~
+legacy keys are read and warn when replacements are absent~legacy-values~~~4
+new keys win across source layers including empty bypass values~precedence~~
+an explicitly empty replacement suppresses the legacy context list~empty-replacement~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
 a repository that declares no context list~no-contexts~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
 a repository that declares an empty context list~empty-contexts~~advisory:standard-required-contexts=undeclared:CI\;Cargo\ \(workspace\ tests\)
 a required gate context the repository also declares~gated~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
@@ -384,14 +449,94 @@ a required gate context a repository with no context list fails~no-contexts~.[5]
 a required gate context a repository with an empty context list fails~empty-contexts~.[5].parameters.required_status_checks += [{"context": "Review gate"}]~standard-required-contexts=gate-required:CI\;Cargo\ \(workspace\ tests\)\;Review\ gate
 ROWS
 
+# A disabled report must stop before the first GitHub read. Force that
+# read to fail so an accidentally enabled route cannot pass this table.
+for consumer in disabled explicitly-off explicitly-empty selected-private-off; do
+  CONSUMER="$TMP/consumer-$consumer"
+  run "$BASE" repository
+  if [ "$RC" -eq 0 ] && [ -z "$OUT" ] && grep -qx 'note check=standard-platform-checks value=disabled' <<<"$RAW"; then
+    ok "platform checks disabled: $consumer"
+  else
+    bad "platform checks disabled: $consumer" "$RAW"
+  fi
+done
+
+REPORT="$LEGACY_REPORT"
+CONSUMER="$TMP/consumer-legacy-path"
+run "$BASE" ""
+if [ "$RC" -eq 0 ] && [ "$OUT" = "$BASELINE" ] &&
+  [ "$(grep -c '^review-gate-warning=deprecated-path ' <<<"$RAW")" -eq 1 ]; then
+  ok "legacy invocation warns and runs the report"
+else
+  bad "legacy invocation warns and runs the report" "$RAW"
+fi
+CONSUMER="$TMP/consumer-explicitly-off"
+run "$BASE" repository
+if [ "$RC" -eq 0 ] && [ -z "$OUT" ] && grep -qx 'note check=standard-platform-checks value=disabled' <<<"$RAW"; then
+  ok "legacy invocation honors the opt-out"
+else
+  bad "legacy invocation honors the opt-out" "$RAW"
+fi
+CONSUMER="$TMP/consumer-full"
+REPORT="$SKILL/scripts/validate-standard.sh"
+
 # The control reads one retired key in a disposable copy of the loader.
 cp "$SKILL/scripts/lib/standard.sh" "$TMP/standard-lib.keep"
 file_edit "$SKILL" scripts/lib/standard.sh 1 '^  WANT_CHECKS_BYPASS=' \
-  's/^  WANT_CHECKS_BYPASS=.*$/&\n  rg_standard_actors REVIEW_GATE_STANDARD_SECRETS >\/dev\/null || return 1/'
+  's/^  WANT_CHECKS_BYPASS=.*$/&\n  rg_standard_actors GITHUB_STANDARD_LAND_BYPASS REVIEW_GATE_STANDARD_SECRETS >\/dev\/null || return 1/'
 drift_case "control: a retired key read" "" "" "" "" retired
-if [ "$CASE_MATCH" = false ]; then ok "control: a loader that reads a retired key turns the retired-key case red"
+# The planted retired value, read and refused, is the red result.
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
+  grep -q '^review-gate-error=standard-bypass-invalid value=.*app-id' <<<"$RAW"; then
+  ok "control: a loader that reads a retired key turns the retired-key case red"
 else bad "control: a loader that reads a retired key" "$CASE_DIFF"; fi
 cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  rg_setting "\$1" "" "\$private_file" 3' \
+  's/^  rg_setting "\$1" "" "\$private_file" 3.*$/  status=3/'
+drift_case "control: prefer legacy keys" "" "" "" "" precedence
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
+  grep -qx 'review-gate-error=standard-bypass-invalid value=invalid' <<<"$RAW"; then
+  ok "control: ignoring replacement settings turns precedence red"
+else bad "control: ignoring replacement settings" "$CASE_DIFF"; fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+
+# The standard settings read the selected private file, not .env.local: it
+# alone admits the actors the queue and checks rulesets carry here.
+selected_private_case() { # NAME
+  drift_case "$1" "" ruleset-3.json,ruleset-4.json \
+    '.bypass_actors = [{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]' \
+    'ok:standard-bypass-actors=2' selected-private
+}
+selected_private_case "the standard settings read the selected private file"
+if [ "$CASE_MATCH" = true ]; then ok "the standard settings read the selected private file"
+else bad "the standard settings read the selected private file" "$CASE_DIFF"; fi
+# The control drops the selected private file from the bypass reads alone.
+file_edit "$SKILL" scripts/lib/standard.sh 1 '^  raw="\$\(rg_standard_setting ' \
+  's/^  raw="\$(rg_standard_setting .*$/  raw="$(rg_setting "$1" "" "")" || return 1/'
+selected_private_case "control: the bypass reads drop the selected private file"
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 1 ] &&
+  grep -qx 'FAIL check=standard-bypass-actors value=3=Integration:5115517:pull_request\\,4=Integration:5115517:pull_request' <<<"$OUT"; then
+  ok "control: bypass reads that drop the selected private file turn the selected-private case red"
+else bad "control: bypass reads that drop the selected private file" "$CASE_DIFF"; fi
+cp "$TMP/standard-lib.keep" "$SKILL/scripts/lib/standard.sh"
+# The control's shared reader ignores KENDEX_ENV_FILE and reads .env.local.
+cp "$TMP/review-gate/scripts/lib/settings.sh" "$TMP/settings-lib.keep"
+file_edit "$TMP/review-gate" scripts/lib/settings.sh 1 '^  file=.*rg_setting KENDEX_ENV_FILE' \
+  's/^  file=.*rg_setting KENDEX_ENV_FILE.*$/  file=/'
+CONSUMER="$TMP/consumer-selected-private-off"
+run "$BASE" repository
+if [ "$RC" -ne 0 ] && ! grep -qx 'note check=standard-platform-checks value=disabled' <<<"$RAW"; then
+  ok "control: a reader that ignores KENDEX_ENV_FILE turns the selected opt-out red"
+else
+  bad "control: a reader that ignores KENDEX_ENV_FILE" "$RAW"
+fi
+CONSUMER="$TMP/consumer-full"
+selected_private_case "control: the reader ignores the selected private file"
+if [ "$CASE_MATCH" = false ] && [ "$RC" -eq 2 ] &&
+  grep -qx 'review-gate-error=standard-bypass-invalid value=invalid' <<<"$RAW"; then
+  ok "control: a reader that reads .env.local turns the selected-private case red"
+else bad "control: a reader that reads .env.local" "$CASE_DIFF"; fi
+cp "$TMP/settings-lib.keep" "$TMP/review-gate/scripts/lib/settings.sh"
 
 echo "=== a ruleset holding one rule type admits the standard's actors there ==="
 # The matching world's repository rulesets, the merge queue in ruleset 3
@@ -414,6 +559,8 @@ $RAW"; fi
 OVERSEER='[{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]'
 bypass_row "the overseer app in pull-request mode on the queue and checks rulesets is admitted" full "$OVERSEER" 0 \
   'ok check=standard-bypass-actors value=2'
+bypass_row "the queue and checks bypass settings fall back to their legacy values" legacy-values "$OVERSEER" 0 \
+  'ok check=standard-bypass-actors value=2'
 bypass_row "a consumer that admits no actor reads the same actors as departures" no-bypass "$OVERSEER" 1 \
   'FAIL check=standard-bypass-actors value=3=Integration:5115517:pull_request\,4=Integration:5115517:pull_request'
 bypass_row "the lanes app is admitted on the queue ruleset and a departure on the checks ruleset" full \
@@ -434,6 +581,7 @@ LAND='{"actor_type": "Integration", "actor_id": 5726115, "bypass_mode": "always"
 LAND_ROWS="$(cat <<ROWS
 the landing app is the one bypass of a pull-request-only ruleset~land~.[2].ruleset_id = 5~org-ruleset-5~[$LAND]~0~ok check=standard-bypass-actors value=1
 the landing app is the one bypass of a pull-request and workflows ruleset~land~.[2].ruleset_id = 5 | .[3].ruleset_id = 5~org-ruleset-5~[$LAND]~0~ok check=standard-bypass-actors value=1
+the legacy landing setting admits the same actor~legacy-values~.[2].ruleset_id = 5 | .[3].ruleset_id = 5~org-ruleset-5~[$LAND]~0~ok check=standard-bypass-actors value=1
 the landing app on a pull-request, workflows and deletion ruleset is a departure~land~.[0].ruleset_id = 5 | .[2].ruleset_id = 5 | .[3].ruleset_id = 5~org-ruleset-5~[$LAND]~1~FAIL check=standard-bypass-actors value=5=Integration:5726115:always
 the landing app is admitted on the queue and checks rulesets~land~.~ruleset-3 ruleset-4~[$LAND]~0~ok check=standard-bypass-actors value=2
 a second actor beside the landing app on a pull-request-only ruleset is a departure~land~.[2].ruleset_id = 5~org-ruleset-5~[$LAND, {"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]~1~FAIL check=standard-bypass-actors value=5=Integration:5115517:pull_request
@@ -471,6 +619,11 @@ echo "=== a failed read is unreadable, never a match ==="
 run "$BASE" rules
 want="$(expected_listing 'standard-ruleset-source=unreadable^standard-merge-queue=unreadable^standard-required-contexts=unreadable^standard-required-approvals=unreadable^standard-stale-dismissal=unreadable^standard-conversation-resolution=unreadable^standard-copilot-review=unreadable^standard-bypass-actors=unreadable')"
 if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "the effective rules unreadable"; else bad "the effective rules unreadable (rc=$RC)" "$RAW"; fi
+dir="$TMP/case-ruleset-id-missing"
+cp -R "$BASE" "$dir"
+jq 'del(.[0].ruleset_id)' "$BASE/rules.json" >"$dir/rules.json"
+run "$dir" ""
+if [ "$RC" -eq 1 ] && [ "$OUT" = "$want" ]; then ok "a rule with no ruleset ID is unreadable"; else bad "a rule with no ruleset ID (rc=$RC)" "$RAW"; fi
 
 echo "=== each failed read keeps its own cause ==="
 # A withheld field beside a failed read: each cause line names its own read.
@@ -525,6 +678,11 @@ while IFS='~' read -r name fail manifest consumer arg key value; do
   fi
 done <<'ROWS'
 the repository unreadable~repository~~full~~review-gate-error=repository-read~
+an enabled report with no workflow identity~~~missing-workflow~~review-gate-error=settings-value~GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID
+an invalid workflow identity~~~invalid-workflow~~review-gate-error=settings-value~GITHUB_STANDARD_REVIEW_WORKFLOW_REPOSITORY_ID
+an invalid opt-in~~~invalid-enabled~~review-gate-error=settings-value~GITHUB_STANDARD_PLATFORM_CHECKS
+an unreadable replacement cannot fall back~~~unread-replacement~~review-gate-error=settings-syntax~GITHUB_STANDARD_CONTEXTS
+an unreadable settings source~~~unread-source~~review-gate-error=settings-symlink~
 a manifest without a gate context~~{"ci_context": "CI"}~full~~review-gate-error=standard-malformed~
 a manifest without a CI context~~{"gate_context": "Review gate"}~full~~review-gate-error=standard-malformed~
 a manifest whose two contexts are one~~{"ci_context": "CI", "gate_context": "CI"}~full~~review-gate-error=standard-malformed~
@@ -688,13 +846,13 @@ done <<ROWS
 the old native-rule assertion~"pull_request", "deletion", "non_fast_forward"\] -~s/"pull_request", "deletion"/"pull_request", "copilot_code_review", "deletion"/~.~
 workflow rule type~^      \.type == "workflows"$~s/\.type == "workflows"/.type == "workflows" or true/~.[3].type = "required_deployments"~$SOURCE_FAILURE
 workflow source~^      and \.ruleset_source_type == "Organization"$~s/and \.ruleset_source_type == "Organization"/and (.ruleset_source_type == "Organization" or true)/~.[3].ruleset_source_type = "Repository"~advisory:standard-ruleset-source=Repository:2:workflows\,missing:workflows^standard-copilot-review=absent^standard-bypass-actors=2=RepositoryRole:9:always
-workflow repository~^        \.repository_id == 1190866154$~s/\.repository_id == 1190866154/(.repository_id == 1190866154 or true)/~.[3].parameters.workflows[0].repository_id = 7~$SOURCE_FAILURE
+workflow repository~\.repository_id \| type == "number" and tostring ==~s/(.repository_id | type == "number" and tostring == .workflow_repository)/(& or true)/~.[3].parameters.workflows[0].repository_id = 7~$SOURCE_FAILURE
 workflow path~^        and \.path ==~s/and \.path == "[^"]*"/and (.path == ".github\/workflows\/request-copilot-review.yml" or true)/~.[3].parameters.workflows[0].path = ".github/workflows/refresh-consumer.yml"~$SOURCE_FAILURE
 workflow ref~^        and \.ref ==~s/and \.ref == "[^"]*"/and (.ref == "refs\/heads\/main" or true)/~.[3].parameters.workflows[0].ref = "refs/heads/release"~$PIN_FAILURE
 workflow pin~then test\(~s/{40}/{1,40}/~.[3].parameters.workflows[0].sha = "0123456"~$PIN_FAILURE
 workflow pin type~if type == "string" then test~s/else false end/else true end/~.[3].parameters.workflows[0].sha = 7~$PIN_FAILURE
-workflow source accounting~if any\(\.\[\]; kendex_review_workflow\) then~s/if any(\.\[\]; kendex_review_workflow) then/if false then/~.~
-workflow review accounting~any\(\.\[\]; \.type == "copilot_code_review" or kendex_copilot_workflow\)~s/or kendex_copilot_workflow/or false/~.~
+workflow source accounting~if any\(\.\[\]; review_workflow\) then~s/if any(\.\[\]; review_workflow) then/if false then/~.~
+workflow review accounting~any\(\.\[\]; \.type == "copilot_code_review" or pinned_review_workflow\)~s/or pinned_review_workflow/or false/~.~
 ROWS
 
 echo "=== a departure from a 1.3.0 requirement is advisory until 2.0 ==="
