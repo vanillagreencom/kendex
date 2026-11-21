@@ -3023,7 +3023,10 @@ fn last_mail() -> Value {
 /// the provider's close or the sandbox stop and carries what the watch had
 /// not announced on its answer's observation, `mail`, which the watch says
 /// as it says a drain. A line the watch's cursor already passed is not
-/// carried again.
+/// carried again. A park whose box read meets the provider-call bound once
+/// its harness exited refuses `host-busy step=mail-read` with the record
+/// stopped and the park owed, its box unread and its sandbox standing; the
+/// park the watch asks again from that mark reads the box and carries it.
 #[test]
 fn a_hosted_lanes_last_mail_reaches_the_overseer_on_each_route_its_sandbox_goes() {
     let notice = json!([{"id": "n-last", "kind": "notice", "text": "result: done"}]);
@@ -3031,30 +3034,26 @@ fn a_hosted_lanes_last_mail_reaches_the_overseer_on_each_route_its_sandbox_goes(
         ("merged close", "closed", false),
         ("stopped close, item ended", "closed", false),
         ("park", "parked", false),
+        ("park, box read capped", "parked", false),
         ("merged close, line announced", "closed", true),
     ] {
-        let mut fleet = if case == "park" {
+        let parks = case.starts_with("park");
+        let mut fleet = if parks {
             Fleet::park_world()
         } else {
             Fleet::hosted(4)
         };
         let mut lane = hosted_lane("KEN-1");
-        let request = match case {
-            "park" => json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"pr": 7}}}),
-            _ => json!({"op": "close-lane", "item": "KEN-1"}),
+        let request = if parks {
+            json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"pr": 7}}})
+        } else {
+            json!({"op": "close-lane", "item": "KEN-1"})
         };
         if case.starts_with("stopped") {
             lane["status"] = json!("stopped");
         }
         fleet.write_lanes(vec![lane]);
-        fleet.plant_tracker(
-            "KEN-1",
-            if case == "park" {
-                "started"
-            } else {
-                "completed"
-            },
-        );
+        fleet.plant_tracker("KEN-1", if parks { "started" } else { "completed" });
         fleet.disk(MAILBOX, &format!("{LAST_NOTICE}\n"));
         if announced {
             std::fs::write(
@@ -3064,11 +3063,44 @@ fn a_hosted_lanes_last_mail_reaches_the_overseer_on_each_route_its_sandbox_goes(
             )
             .unwrap();
         }
-        if case == "park" {
+        if parks {
             fleet.answer(
                 "CAPABILITIES",
                 "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=verb\taccounts=none\tpool=plan\tland=lane\tpane=local",
             );
+        }
+        if case == "park, box read capped" {
+            // Read exited, the park reads no ask and asks no stop, so the
+            // box read is the first call past the judge's last read, which
+            // holds the slot.
+            fleet.answer("HARNESS_STATE", "exited");
+            let uncapped = fleet.env.clone();
+            fleet
+                .env
+                .extend(host_slot_bound(&fleet.state_dir().join("home")));
+            fleet.answer("HOLD_AFTER", "cat");
+            fleet.answer("HOLD_AFTER_PATH", "/w/ken-1/tmp/park-status.json");
+            let busy = fleet.close(request.clone());
+            assert_eq!(busy["refusal"]["key"], "host-busy", "{case}: {busy}");
+            assert_eq!(
+                refusal_fields(&busy).get("step").map(String::as_str),
+                Some("mail-read"),
+                "{case}: {busy}"
+            );
+            let lane = fleet.lane("KEN-1");
+            assert_eq!(lane["status"], "stopped", "{case}: {lane}");
+            assert_eq!(lane["sandbox"], "standing", "{case}: {lane}");
+            assert_eq!(
+                lane["park_owed"],
+                json!({"pr": 7, "head": "h2", "mail": "unread"}),
+                "{case}: {lane}"
+            );
+            let calls = fleet.provider_calls();
+            assert!(
+                !calls.iter().any(|c| c == "stop-sandbox --item KEN-1"),
+                "{case}: {calls:?}"
+            );
+            fleet.env = uncapped;
         }
         let answer = fleet.close(request);
         let result = &answer["result"];
@@ -4464,7 +4496,8 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
 /// one's last mail read from its host before it and a parked one's, read
 /// at its park, not again; a stopped one that owes a park, its sandbox
 /// stopped and answering no read, carries the mail its mark recorded and
-/// reads none; a park or a keep of a parked record answers `parked` and
+/// reads none, and one whose mark holds its box unread, its sandbox never
+/// stopped, reads the box; a park or a keep of a parked record answers `parked` and
 /// changes nothing; a terminal close whose mailbox read fails on a provider
 /// that lists no sandbox for the item ends the record with no provider
 /// call, `host-absent`.
@@ -4478,7 +4511,9 @@ fn a_close_answers_a_record_by_what_it_already_is() {
         json!({"repo": "o/r", "head": "h2", "at": "2026-01-29T16:00:00Z", "ask": "a1"});
     let mut owes_park = with("status", json!("stopped"));
     owes_park["sandbox"] = json!("standing");
+    let mut owes_unread = owes_park.clone();
     owes_park["park_owed"] = json!({"pr": 7, "head": "h2", "mail": last_mail()});
+    owes_unread["park_owed"] = json!({"pr": 7, "head": "h2", "mail": "unread"});
     let mut rows = vec![
         (
             CloseCase2::new("ask parked, terminal state", vec![ask_parked]),
@@ -4506,6 +4541,12 @@ fn a_close_answers_a_record_by_what_it_already_is() {
         ),
         (
             CloseCase2::new("stopped, park owed", vec![owes_park]),
+            "closed",
+            "done",
+            vec!["close --item KEN-1 --merged", "list"],
+        ),
+        (
+            CloseCase2::new("stopped, park owed, box unread", vec![owes_unread]),
             "closed",
             "done",
             vec!["close --item KEN-1 --merged", "list"],
@@ -4577,6 +4618,7 @@ fn a_close_answers_a_record_by_what_it_already_is() {
                 ]);
                 case.mail = LAST_NOTICE;
             }
+            "stopped, park owed, box unread" => case.mail = LAST_NOTICE,
             _ => {}
         }
     }
@@ -4594,6 +4636,7 @@ fn a_close_answers_a_record_by_what_it_already_is() {
                 case.name,
                 "stopped"
                     | "stopped, park owed"
+                    | "stopped, park owed, box unread"
                     | "parked"
                     | "host absent"
                     | "exited holding an ask"
@@ -4625,6 +4668,11 @@ fn a_close_answers_a_record_by_what_it_already_is() {
                     "{answer}"
                 );
             }
+            "stopped, park owed, box unread" => assert_eq!(
+                answer["result"]["observation"]["mail"],
+                last_mail(),
+                "{answer}"
+            ),
             "parked, park asked" | "parked, keep asked" => {
                 assert_eq!(fleet.lane("KEN-1")["parked"], parked, "{}", case.name);
             }

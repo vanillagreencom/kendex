@@ -532,15 +532,36 @@ pub struct ParkWait {
 /// read and the lane's last mail it read before the sandbox stop. A stopped
 /// lane runs no session, so nothing moves that head, its clean status or its
 /// mailbox until a relaunch; its completion, or a close in its place, takes
-/// the head and the mail from here and reads its sandbox for nothing. A mark
-/// with no `mail` holds none to say.
+/// the head and the mail from here and reads its sandbox for nothing, save a
+/// box the mark holds unread. A mark with no `mail` holds none to say.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwedPark {
     #[serde(flatten)]
     pub wait: ParkWait,
     pub head: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mail: Option<Box<crate::watch::mail::ClosingMail>>,
+    pub mail: Option<ParkMail>,
+}
+
+/// The lane's last mail as a park holds it before its sandbox stop: the mail
+/// read, or the word `unread` for a box whose read did not answer, which the
+/// park asked again, or a close in its place, reads while the sandbox stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ParkMail {
+    Read(Box<crate::watch::mail::ClosingMail>),
+    Unread(MailUnread),
+}
+
+impl ParkMail {
+    pub const UNREAD: ParkMail = ParkMail::Unread(MailUnread::Unread);
+}
+
+/// [`ParkMail::Unread`]'s one word on the record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MailUnread {
+    Unread,
 }
 
 impl ParkLane {
@@ -607,7 +628,7 @@ pub struct ParkLane {
     /// owed mark keeps until a park or close says it: a stopped sandbox
     /// answers no read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mail: Option<Box<crate::watch::mail::ClosingMail>>,
+    pub mail: Option<ParkMail>,
 }
 
 /// Hold a lane's cap slot deliberately until `until`, an ISO 8601 UTC stamp
