@@ -28,8 +28,11 @@ printf '%q ' "$@" >> "$LANE_HOST_STUB_LOG"
 printf '\n' >> "$LANE_HOST_STUB_LOG"
 # LANE_HOST_STUB_HOLD_AFTER names a verb whose call leaves a slot of each
 # provider-call pool under the caller's home held by the caller itself, so
-# under a cap of one the caller's next call is refused at the bound.
-if [[ -n "${LANE_HOST_STUB_HOLD_AFTER:-}" && "$1" == "$LANE_HOST_STUB_HOLD_AFTER" ]]; then
+# under a cap of one the caller's next call is refused at the bound;
+# LANE_HOST_STUB_HOLD_AFTER_PATH narrows it to the call whose last argument
+# is that path.
+if [[ -n "${LANE_HOST_STUB_HOLD_AFTER:-}" && "$1" == "$LANE_HOST_STUB_HOLD_AFTER" \
+   && "${LANE_HOST_STUB_HOLD_AFTER_PATH:-${!#}}" == "${!#}" ]]; then
   held_start="$(LC_ALL=C TZ=UTC ps -o lstart= -p "$PPID")"
   for pool in long short; do
     mkdir -p -- "$HOME/.cache/orch/host-slots/$pool"

@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use crate::error::{Error, Result};
 use crate::ops::{
     self, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, Ended, NoLanding, OwedPark,
-    ParkLane, ParkWait, Report, Request, Terminal, boxes,
+    ParkLane, ParkMail, ParkWait, Report, Request, Terminal, boxes,
 };
 use crate::settings::Settings;
 use crate::state::{self, CloseKind, FleetState, Lane, LaneStatus};
@@ -41,7 +41,6 @@ use agent_runtime::observe::WallKind;
 
 use super::Effected;
 use super::lane_operation::{self, Unread};
-use crate::watch::mail::ClosingMail;
 
 /// How the close ended, by the record it left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -577,7 +576,8 @@ impl Close<'_> {
     /// judged in full records the lane's last mail on its owed mark before
     /// the sandbox stop. A park the record already owes reads its sandbox
     /// for nothing: its mailbox was read when the mark was written, the mail
-    /// is the mark's, and no session has run since to write to it.
+    /// is the mark's, and no session has run since to write to it. A mark
+    /// that holds the box unread is read again, its sandbox standing.
     fn stopped(self) -> Result<Closed> {
         if let Some(wait) = self.park() {
             let owed = self.owed(wait);
@@ -585,11 +585,14 @@ impl Close<'_> {
                 self.refuse_ask()?;
             }
             let mut judged = self.park_judge(wait, owed.as_ref().map(|o| o.head.clone()))?;
-            match owed {
-                Some(mark) => judged.mail = mark.mail,
-                None => {
-                    judged.mail = self.last_mail()?.map(Box::new);
+            match owed.map(|mark| mark.mail) {
+                Some(mail) if mail != Some(ParkMail::UNREAD) => judged.mail = mail,
+                _ => {
+                    let unread = self.park_mail(&mut judged);
                     self.owe_park(&judged)?;
+                    if let Some(refusal) = unread {
+                        return Err(refusal);
+                    }
                 }
             }
             return self.park_sandbox(&judged, Vec::new());
@@ -685,11 +688,16 @@ impl Close<'_> {
                 self.host_stop(&mut notes)?;
             }
             // Read once the harness can write no more, and written with the
-            // owed mark, so a sandbox stop that fails keeps it for the retry.
-            park.mail = self.last_mail()?.map(Box::new);
+            // owed mark, so a sandbox stop that fails keeps it for the retry;
+            // a box that did not read refuses once the mark holds it unread,
+            // the sandbox standing for the retry to read it.
+            let unread = self.park_mail(&mut park);
             let closed = self.close_on(Ground::Keep(Some(park.owed_mark())))?;
             if closed.word != Word::Stopped {
                 return Ok(closed);
+            }
+            if let Some(refusal) = unread {
+                return Err(refusal);
             }
             return self.park_sandbox(&park, notes);
         }
@@ -1104,15 +1112,25 @@ impl Close<'_> {
     }
 
     /// The lane's last mail past the watch's cursor
-    /// ([`lane_operation::last_mail`]); a box that cannot be read refuses.
-    fn last_mail(&self) -> Result<Option<ClosingMail>> {
-        lane_operation::last_mail(
+    /// ([`lane_operation::last_mail`]) on `park`, for its owed mark: a box
+    /// that did not read is `unread` there, and its refusal is returned for
+    /// the park to answer once the mark is written.
+    fn park_mail(&self, park: &mut ParkLane) -> Option<Error> {
+        match lane_operation::last_mail(
             &self.settings.lane_mail_cli,
             self.scripts,
             self.path,
             &self.lane,
-        )
-        .map_err(|unread| self.unread(unread))
+        ) {
+            Ok(mail) => {
+                park.mail = mail.map(|mail| ParkMail::Read(Box::new(mail)));
+                None
+            }
+            Err(unread) => {
+                park.mail = Some(ParkMail::UNREAD);
+                Some(self.unread(unread))
+            }
+        }
     }
 
     /// The refusal of a box that did not read: `host-busy` with its step,
@@ -1821,7 +1839,7 @@ impl Close<'_> {
                 .get("parked")
                 .map(|p| json!({"parked": p}));
         }
-        if let Some(mail) = &park.mail {
+        if let Some(ParkMail::Read(mail)) = &park.mail {
             closed.observation.get_or_insert_with(|| json!({}))["mail"] = json!(mail);
         }
         Ok(closed)

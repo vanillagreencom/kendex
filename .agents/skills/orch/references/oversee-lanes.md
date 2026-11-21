@@ -43,7 +43,7 @@ The close judges a park before it signals anything, and refuses one that fails a
 
 The park ends the lane's harness through its provider, then stops its sandbox; the reply's `result.word` reads `parked`. A hold keeps the item's state and work.
 
-A failed sandbox stop leaves the record `stopped` with the park owed, which holds a fleet slot. The watch asks for an owed park each pass and reports `park-owed [ITEM] result=` once per distinct result ([oversee-events.md § `park-owed`](oversee-events.md#park-owed)). A confirmed park, relaunch or close clears it. The `result` reads:
+A failed sandbox stop, or a mailbox read the park could not make before it, leaves the record `stopped` with the park owed, which holds a fleet slot. The watch asks for an owed park each pass and reports `park-owed [ITEM] result=` once per distinct result ([oversee-events.md § `park-owed`](oversee-events.md#park-owed)). A confirmed park, relaunch or close clears it. The `result` reads:
 
 | `result` | Meaning |
 |---|---|
