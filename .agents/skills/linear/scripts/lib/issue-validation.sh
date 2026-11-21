@@ -613,3 +613,14 @@ done_when_due_date() {
             | .number as $number | select(($invalid | index($number)) == null) | .deadline_end | values]
         | min | select(. != null) | todateiso8601 | split("T")[0]' <<<"$parsed"
 }
+
+# The body with each open merge-triggered Deadline: +Nh written as its end,
+# as complete writes it: a stored end dates every later write, which carries
+# no merge time. Prints the body and a trailing "." sentinel, or nothing when
+# no box changes.
+# Usage: done_when_materialize DESCRIPTION MERGED_AT
+done_when_materialize() {
+    local parsed
+    parsed=$(done_when_parse "$1" '[]' "$2") || return 1
+    jq -r 'select(.changed) | .description + "."' <<<"$parsed"
+}
