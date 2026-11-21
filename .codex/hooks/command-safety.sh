@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a shell or interpreter runs as its program, piped to it or through a substitution, naming the form; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command that assigns it refuses.
+# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a shell or interpreter runs as its program, piped to it or through a substitution, naming the form; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command that sets it by an assignment, an env or sudo operand, export, declare, typeset, local, readonly, read or printf -v refuses, and a mention of it is data.
 # summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support leaves both project checks unavailable. An optional selected Git history policy requires its native fetch fence. Refuses a download piped or fed into a shell, an upload to a host the project has not listed, and a push to a remote the repository does not have; the owner allows one exact command by starting the session with it in COMMAND_SAFETY_OWNER_COMMAND.
-# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk: a download stage piped within its pipeline to a stage that runs its input, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag; a push judged in every reader directory with git remote -v and ls-remote --get-url. Not reached: an unresolved launcher before the download or the receiver, grouped or subshell downloads, output substitutions, forwarded receivers of a substitution, ssh config aliases and other upload programs.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload, push and owner-variable facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage or group that runs its input, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, past an unread Git global word, an abbreviated push option unresolved. Not reached: an unresolved launcher before the download or the receiver, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, other upload programs, and the owner variable set by a script or a runtime-built name.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -24,19 +24,26 @@ set -euo pipefail
 # A launched git word may be data rather than the program, and since Git
 # refuses any unlisted option, such an option there ends its judgment.
 # The same walk finds a push for push_argv. A repository option or a
-# configuration key that can rename where a push goes leaves it unresolved.
+# configuration key that can rename where a push goes leaves it unresolved,
+# and so does a word the hook cannot read where a global option can stand:
+# the walk still looks past it for the subcommand, so a push behind it is
+# judged. git_walk selects the history judgment, the push or both.
 history_git_argv() { # START [launched]
   local cursor=$1 launched=${2:-} value fenced="" reason="" state=relative words=() tildes=() dirs=()
-  local push_at="" push_reason="" setting
+  local push_at="" push_reason="" push_state setting unread="" unread_push=""
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
-    [ "${arg_kinds[$cursor]}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
+    [ "${arg_kinds[$cursor]}" = literal ] || { reason=unresolved-git-argv; unread=$cursor; unread_push=repository; break; }
     setting=""
     case "$value" in
       --no-lazy-fetch) fenced=1 ;;
       -C | -c | --git-dir | --work-tree | --namespace | --config-env | --shallow-file | --attr-source)
         cursor=$((cursor + 1))
-        [ "${arg_kinds[$cursor]:-}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
+        if [ "${arg_kinds[$cursor]:-}" != literal ]; then
+          reason=unresolved-git-argv; unread=$((cursor + 1))
+          case "$value" in -C | --git-dir | --work-tree) unread_push=repository ;; -c | --config-env) unread_push=remote ;; esac
+          break
+        fi
         case "$value" in -c | --config-env) setting=${args[$cursor]} ;; --git-dir | --work-tree) push_reason=repository ;; esac
         if [ "$value" = -C ]; then words[${#words[@]}]=${args[$cursor]}; tildes[${#tildes[@]}]=${arg_unquoted[$cursor]%%:*}; fi ;;
       -c?*) setting=${value#-c} ;;
@@ -58,8 +65,26 @@ history_git_argv() { # START [launched]
     case "$setting" in [Rr][Ee][Mm][Oo][Tt][Ee].* | [Uu][Rr][Ll].*) push_reason=${push_reason:-remote} ;; esac
     cursor=$((cursor + 1))
   done
+  # The subcommand after an unread word is the first literal word that is
+  # no option, whatever the unread word expands to.
+  if [ -n "$unread" ]; then
+    for ((cursor=unread; cursor<${#args[@]}; cursor++)); do
+      [ "${arg_kinds[$cursor]}" = literal ] || continue
+      case "${args[$cursor]}" in
+        -C | -c | --git-dir | --work-tree | --namespace | --config-env | --shallow-file | --attr-source) cursor=$((cursor + 1)) ;;
+        -*) ;;
+        push)
+          push_at=$((cursor + 1))
+          if [ "$unread_push" = repository ]; then push_reason=repository; else push_reason=${push_reason:-$unread_push}; fi
+          break ;;
+        *) break ;;
+      esac
+    done
+  fi
+  [ "${git_walk:-both}" != history ] || push_at=""
+  [ "${git_walk:-both}" != push ] || reason=""
   # An env -S escape, expansion or comment has no decoder here.
-  [ -n "$reason" ] || [ -z "${split_undecoded:-}" ] || reason=unresolved-git-argv
+  [ -n "$reason" ] || [ -z "${split_undecoded:-}" ] || [ "${git_walk:-both}" = push ] || reason=unresolved-git-argv
   if [ -n "$push_at" ]; then
     [ -z "${split_undecoded:-}" ] || push_reason=${push_reason:-remote}
     # An assignment before the git word applies to it.
@@ -84,7 +109,10 @@ history_git_argv() { # START [launched]
     [ "$state" != relative ] || [[ $value != /* ]] || state=absolute
     dirs[cursor]=$value
   done
-  [ -z "$push_at" ] || push_argv "$push_at" "$state" "$push_reason" ${dirs[@]+"${dirs[@]}"}
+  push_state=$state
+  [ "$push_reason" != repository ] || [ -z "$unread" ] || push_state=unknown
+  [ -z "$unread" ] || state=unknown
+  [ -z "$push_at" ] || push_argv "$push_at" "$push_state" "$push_reason" ${dirs[@]+"${dirs[@]}"}
   [ -n "$reason" ] || return 0
   history_record "$reason" "$state" ${dirs[@]+"${dirs[@]}"}
 }
@@ -92,13 +120,18 @@ history_git_argv() { # START [launched]
 # git push -h names the options that take a separate argument; Git takes the
 # first other word as the repository, and --repo only when none is given.
 # An expanding word, or one where an option could stand, can name any remote.
+# Git also takes a unique prefix of a long option, so a long option this
+# list does not name exactly can be one that takes the repository as its
+# argument, as --exe origin URL does: it leaves the remote unresolved.
 # A repository the payload directory and literal directory changes do not
 # settle, such as after cd "$DIR", pushd or a GIT_DIR assignment, is
 # unresolved, and so is one that does not exist yet when the hook runs,
 # which a clone or init earlier in the command can create with its own remote.
 push_argv() { # START STATE UNRESOLVED [DIR...]
-  local cursor=$1 state=$2 unresolved=$3 value operand="" repository="" options_ended="" directory
+  local cursor=$1 state=$2 unresolved=$3 value operand="" repository="" options_ended="" directory name
   local effective_dirs=() effective_dirs_unresolved
+  # git push -h of Git 2.56.1; each takes --no- too, except no-verify and verify.
+  local long=' all atomic branches delete dry-run exec follow-tags force force-if-includes force-with-lease ipv4 ipv6 mirror no-verify porcelain progress prune push-option quiet receive-pack recurse-submodules repo set-upstream signed tags thin verbose verify '
   shift 3
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
@@ -109,7 +142,9 @@ push_argv() { # START STATE UNRESOLVED [DIR...]
         cursor=$((cursor + 1))
         [ "$value" != --repo ] || repository=$cursor ;;
       --repo=*) repository=$cursor ;;
-      --*) ;;
+      --*)
+        name=${value%%=*}; name=${name#--}
+        case "$long" in *" $name "* | *" ${name#no-} "*) ;; *) unresolved=${unresolved:-remote} ;; esac ;;
       -*o) cursor=$((cursor + 1)) ;;
       -*) ;;
       *) operand=$cursor; break ;;
@@ -520,7 +555,7 @@ reader_environment_arguments() {
 # evidence, never proof of routing; unseen program semantics are not judged.
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
-    local env_chdir env_chdir_word xargs_launch="" builtin_head=$pos
+    local env_chdir env_chdir_word xargs_launch="" builtin_head=$pos producer_head=$pos
     local exec_option_re='^-[cl]*(a.*)?$' exec_name_needed exec_word
     split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
     shell_forwarder=""; shell_forwarded_pos=""
@@ -662,8 +697,7 @@ environment_producer() { # command kind
       esac
     done
     producer_end=$pos
-    if [ "${program:-}" = git ]; then history_git_argv "$pos"; else history_launched_git; fi
-    case "${program:-}" in curl | wget | scp | rsync) upload_arguments ;; esac
+    transfer_walks "$producer_head"
     # A directory change moves any relative -C chain the hook resolves from
     # the payload directory, wherever it stands, since a loop can run it
     # first. A launcher's own directory option, such as env -C or sudo -D, is
@@ -841,6 +875,70 @@ environment_producer() { # command kind
     fi
     # No unresolved arm can discharge the forwarded classification check.
     if [ "$mode" = other ] && [ -n "${forwarded_argument:-}" ]; then mode=unclassified-forwarded; fi
+}
+
+# The history judgment reads the stage as the tokenizer split it. The push,
+# upload and owner-variable judgments read only where a shell runs the text,
+# never a body an unknown receiver gets, and the push and upload walks read
+# the whole command, the words after a substitution that splits it included.
+transfer_walks() { # HEAD: the first word this producer call read
+  local git_walk=both count=${#args[@]}
+  if [ -n "${transfer_ignored:-}" ] || [ "${#tail_kinds[@]}" -gt 0 ] || [ -n "$tail_glued" ]; then git_walk=history; fi
+  if [ "${program:-}" = git ]; then history_git_argv "$pos"; else history_launched_git; fi
+  [ -z "${transfer_ignored:-}" ] || return 0
+  owner_assignment "$1"
+  if [ "$git_walk" = history ]; then
+    local args=(${args[@]+"${args[@]}"} ${tail_args[@]+"${tail_args[@]}"})
+    local arg_kinds=(${arg_kinds[@]+"${arg_kinds[@]}"} ${tail_kinds[@]+"${tail_kinds[@]}"})
+    local arg_unquoted=(${arg_unquoted[@]+"${arg_unquoted[@]}"} ${tail_unquoted[@]+"${tail_unquoted[@]}"})
+    [ -z "$tail_glued" ] || [ "$count" -eq 0 ] || arg_kinds[count - 1]=substituted
+    git_walk=push
+    if [ "${program:-}" = git ]; then history_git_argv "$pos"; else history_launched_git; fi
+  fi
+  case "${program:-}" in curl | wget | scp | rsync) upload_arguments ;; esac
+}
+
+# The owner's exception reaches another session only through the environment
+# a command gives it, so a word that sets the variable refuses: an assignment
+# before the head, an env or sudo operand, an export, declare, typeset, local
+# or readonly operand, a read target and printf -v. Elsewhere the name is
+# data, and a name built at runtime is not reached.
+owner_assignment() { # HEAD: the first word this producer call read
+  local cursor value setter="" exporting="" operands="" skip="" sets=""
+  local owner=COMMAND_SAFETY_OWNER_COMMAND
+  case "${program:-}" in
+    export) setter=1; exporting=1 ;;
+    declare | typeset | local | readonly) setter=1 ;;
+    read | printf) setter=$program ;;
+  esac
+  for ((cursor=0; cursor<${#args[@]}; cursor++)); do
+    value=${args[$cursor]}
+    case "${arg_kinds[$cursor]}" in literal | dollar-literal) ;; *) operands=""; continue ;; esac
+    if [ -n "$skip" ]; then skip=""; continue; fi
+    case "$value" in
+      "$owner"=* | "$owner"+=*)
+        if [ "$cursor" -lt "$1" ] || [ "$cursor" = "${program_pos:-}" ] || [ -n "$operands" ]; then sets=1; fi
+        if [ "$setter" = 1 ] && [ "$cursor" -gt "${program_pos:-0}" ]; then sets=1; fi ;;
+      "$owner")
+        if [ "$cursor" -gt "${program_pos:-0}" ]; then
+          case "$setter" in
+            1) [ -z "$exporting" ] || sets=1 ;;
+            read) sets=1 ;;
+            printf) [ "${args[$((cursor - 1))]}" != -v ] || sets=1 ;;
+          esac
+        fi ;;
+      -v"$owner") [ "$setter" != printf ] || sets=1 ;;
+      -*x*) [ "$setter" != 1 ] || exporting=1 ;;
+    esac
+    # env and sudo take NAME=value operands before the command they run.
+    case "$value" in
+      env | */env | sudo | */sudo) operands=1 ;;
+      -u | -C | -g | --unset | --chdir | --user | --group) [ -z "$operands" ] || skip=1 ;;
+      -* | *=*) ;;
+      *) operands="" ;;
+    esac
+  done
+  [ -z "$sets" ] || refuse refused owner-command
 }
 
 # Reserved-word syntax and assignment prefixes come before the executable
@@ -1036,6 +1134,12 @@ environment_queue() { # source text, word kind, optional forwarded tag or split-
   executable_reader_context[code]=$reader_context_id
 }
 
+# A script operand that names the process's own standard input runs that input.
+stdin_path() { # WORD
+  case "$1" in /dev/stdin | /dev/fd/0 | /proc/self/fd/0) return 0 ;; esac
+  return 1
+}
+
 # Shell invocation options precede the executable operand, including options
 # after -c. Known literal input stays conservative for every shell invocation;
 # script operands and redirects do not prove that the body is unused.
@@ -1058,14 +1162,16 @@ environment_program_text() {
            environment_receiver_evidence "$program" "${args[$cursor]:-}"; then mode=dump-unknown; fi
         break
       fi
+      # An attached inline program, as python3 -c'...' spells it.
+      if [[ ${args[$cursor]} =~ ${receiver_option%\$}. ]]; then input_program=""; program_word=$cursor; break; fi
       case "${args[$cursor]}" in
         -) program_word=$cursor; break ;;
-        --)
-          if [ "$((cursor + 1))" -lt "${#args[@]}" ]; then input_program=""; program_word=$((cursor + 1)); fi
-          break ;;
-        -*) ;;
-        *) input_program=""; program_word=$cursor; break ;;
+        --) cursor=$((cursor + 1)) ;;
+        -*) continue ;;
       esac
+      [ "$cursor" -lt "${#args[@]}" ] || break
+      if stdin_path "${args[$cursor]}"; then program_word=-1; else input_program=""; program_word=$cursor; fi
+      break
     done
     return
   fi
@@ -1114,7 +1220,7 @@ environment_program_text() {
       done
       if [ -n "$wants_string" ]; then program_word=$source_pos
       elif [ -n "$uncertain" ] || [ -z "$script_operand" ]; then input_program=1
-      elif [ -n "$reads_stdin" ]; then input_program=1; program_word=-1
+      elif [ -n "$reads_stdin" ] || stdin_path "${args[$script_operand]}"; then input_program=1; program_word=-1
       else program_word=$script_operand
       fi ;;
     eval)
@@ -1131,7 +1237,7 @@ environment_program_text() {
       # The script runs its operands as "$@", like a shell script's.
       [ "$pos" -ge "${#args[@]}" ] || script_operand=$pos
       program_word=$script_operand
-      case "${args[$pos]:-}" in /dev/stdin | /dev/fd/0 | /proc/self/fd/0) input_program=1 ;; esac ;;
+      if stdin_path "${args[$pos]:-}"; then input_program=1; program_word=-1; fi ;;
     orch-runtime)
       # launch-job runs the argv after its -- as the job's command, so each
       # later word is judged as a possible head, as a script's operands are.
@@ -1167,51 +1273,133 @@ environment_program_text() {
   environment_queue "$source" "$source_kind"
 }
 
+# The token where the substitution or group opening at INDEX closes, or
+# empty when the text ends first.
+nesting_close() { # INDEX -> close_at
+  local depth=0
+  for ((close_at=$1; close_at<${#tokens[@]}; close_at++)); do
+    case "${nesting[$close_at]:-}" in
+      open*) depth=$((depth + 1)) ;;
+      close) depth=$((depth - 1)); [ "$depth" -gt 0 ] || return 0 ;;
+    esac
+  done
+  close_at=""
+}
+
+# The tokenizer ends a stage where a substitution or group opens and starts
+# one where it closes, so a command a substitution splits ends in the stage
+# after the close: its separator is that last part's.
+stage_last_part() { # STAGE -> part
+  local close_at candidate
+  part=$1
+  while case "${nesting[${ends[$part]}]:-}" in open*) ;; *) false ;; esac; do
+    nesting_close "${ends[$part]}"
+    [ -n "$close_at" ] || return 0
+    for ((candidate=part+1; candidate<${#starts[@]}; candidate++)); do [ "${starts[$candidate]}" -ne "$((close_at + 1))" ] || break; done
+    [ "$candidate" -lt "${#starts[@]}" ] || return 0
+    part=$candidate
+  done
+}
+
+# The words of a command a substitution splits, after the substitution
+# closes, for the push and upload walks. The substitution's value is one
+# word they cannot read, kind substituted, and a word it is glued to is too.
+substitution_tail() {
+  local at=$end close_at mark
+  tail_args=(); tail_kinds=(); tail_unquoted=(); tail_glued=""
+  case "${nesting[$at]:-}:$((end > start))" in open*:1) ;; *) return 0 ;; esac
+  [ "${nesting[$at]}" != open-glued ] || tail_glued=1
+  while :; do
+    mark=${nesting[$at]:-}
+    case "$mark" in open*) ;; *) return 0 ;; esac
+    if [ "$at" -ne "$end" ] && [ "$mark" = open-glued ] && [ "${#tail_kinds[@]}" -gt 0 ]; then
+      tail_kinds[${#tail_kinds[@]} - 1]=substituted
+    elif [ "$mark" = open ]; then
+      tail_args[${#tail_args[@]}]=""; tail_kinds[${#tail_kinds[@]}]=substituted; tail_unquoted[${#tail_unquoted[@]}]=""
+    fi
+    nesting_close "$at"
+    [ -n "$close_at" ] || return 0
+    for ((at=close_at+1; at<${#tokens[@]}; at++)); do
+      [ -z "${nesting[$at]:-}" ] || break
+      case "${kinds[$at]}" in
+        operator | operator-stderr | operator-explicit-other)
+          case "${tokens[$at]}" in '|' | ';' | '&&' | '||' | '&') return 0 ;; esac
+          at=$((at + 1)); continue ;;
+      esac
+      tail_args[${#tail_args[@]}]=${tokens[$at]}; tail_kinds[${#tail_kinds[@]}]=${kinds[$at]}; tail_unquoted[${#tail_unquoted[@]}]=${unquoted_words[$at]}
+    done
+    [ "$at" -lt "${#tokens[@]}" ] || return 0
+  done
+}
+
 # A downloaded program runs unread where a shell or interpreter takes it as
 # its program: piped, later in the same pipeline, to one that runs its input,
-# or through a substitution that is its program word or its input. A
+# a group such a stage is in included, or through a substitution that is its
+# program word or its input. The command a substitution sits in carries the
+# download on, so its own pipe and enclosing substitution are judged too. A
 # forwarded receiver, as after exec, counts on the pipe route only.
 download_judge() {
-  local stage next cursor depth outer position word
+  local stage carrier cursor depth outer position word
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     [ -n "${stage_downloads[$stage]:-}" ] || continue
     download_program=${stage_downloads[$stage]}
-    next=$stage
-    while [ "${separators[$next]}" = '|' ]; do
-      next=$((next + 1))
-      if [ -n "${stage_input_programs[$next]:-}" ]; then
-        download_form=pipe; download_receiver=${stage_input_programs[$next]}
-        refuse refused download-into-shell
-      fi
-    done
-    depth=0
-    for ((cursor=starts[stage]-1; cursor>=0; cursor--)); do
-      case "${nesting[$cursor]:-}" in
-        close) depth=$((depth + 1)) ;;
-        open*) if [ "$depth" -eq 0 ]; then break; fi; depth=$((depth - 1)) ;;
+    carrier=$stage
+    while :; do
+      download_pipe "$carrier"
+      depth=0
+      for ((cursor=starts[carrier]-1; cursor>=0; cursor--)); do
+        case "${nesting[$cursor]:-}" in
+          close) depth=$((depth + 1)) ;;
+          open*) if [ "$depth" -eq 0 ]; then break; fi; depth=$((depth - 1)) ;;
+        esac
+      done
+      [ "$cursor" -ge 0 ] || break
+      for ((outer=0; outer<carrier; outer++)); do [ "${ends[$outer]}" -ne "$cursor" ] || break; done
+      [ "$outer" -lt "$carrier" ] || break
+      carrier=$outer
+      [ -n "${stage_receivers[$outer]}" ] || continue
+      position=${stage_substitutions[$outer]}; word=${stage_program_words[$outer]}
+      case "$position" in
+        '') continue ;;
+        input) [ -n "${stage_input_programs[$outer]}" ] || [ -z "$word" ] || continue ;;
+        *) [ -z "$word" ] || [ "$word" -ge "$position" ] || continue ;;
       esac
+      download_form=substitution; download_receiver=${stage_receivers[$outer]}
+      refuse refused download-into-shell
     done
-    [ "$cursor" -ge 0 ] || continue
-    for ((outer=0; outer<stage; outer++)); do [ "${ends[$outer]}" -ne "$cursor" ] || break; done
-    [ "$outer" -lt "$stage" ] || continue
-    [ -n "${stage_receivers[$outer]}" ] || continue
-    position=${stage_substitutions[$outer]}; word=${stage_program_words[$outer]}
-    case "$position" in
-      '') continue ;;
-      input) [ -n "${stage_input_programs[$outer]}" ] || [ -z "$word" ] || continue ;;
-      *) [ -z "$word" ] || [ "$word" -ge "$position" ] || continue ;;
-    esac
-    download_form=substitution; download_receiver=${stage_receivers[$outer]}
-    refuse refused download-into-shell
+  done
+}
+
+download_pipe() { # STAGE whose output the walk follows
+  local next group depth part
+  stage_last_part "$1"; next=$part
+  while [ "${separators[$next]}" = '|' ]; do
+    next=$((next + 1))
+    download_receiver=${stage_input_programs[$next]:-}
+    if [ -z "$download_receiver" ] && [ "${starts[$next]}" -eq "${ends[$next]}" ] && [ "${nesting[${ends[$next]}]:-}" = open ]; then
+      # Any stage in a group that reads the pipe can run what it reads.
+      depth=1
+      for ((group=next+1; group<${#starts[@]} && depth>0; group++)); do
+        download_receiver=${stage_input_programs[$group]:-}
+        [ -z "$download_receiver" ] || break
+        case "${nesting[${ends[$group]}]:-}" in open*) depth=$((depth + 1)) ;; close) depth=$((depth - 1)) ;; esac
+      done
+    fi
+    [ -z "$download_receiver" ] || { download_form=pipe; refuse refused download-into-shell; }
+    stage_last_part "$next"; next=$part
   done
 }
 
 # The host a curl or wget URL names, or the host of an scp or rsync remote
 # operand. An expansion, glob, quote or escape in the host part can choose
-# any host, so it leaves host empty: unresolved.
+# any host, so it leaves host empty: unresolved, as a substitution does.
+# A URL scheme stands only at the start, and an scp or rsync host part ends
+# at the first colon outside an IPv6 bracket, so text in a path, a query or
+# a remote file name never names the host.
 transfer_host() { # WORD KIND url|remote; returns 1 for a local scp or rsync path
   local word=$1 authority
   host=""
+  [ "$2" != substituted ] || return 0
   if [ "$3" = remote ] && [[ ! $word =~ ^(scp|sftp|ssh|rsync):// ]]; then
     authority=${word%%/*}
     if [[ $authority != *:* ]]; then
@@ -1219,8 +1407,9 @@ transfer_host() { # WORD KIND url|remote; returns 1 for a local scp or rsync pat
       [ "$2" != literal ] && [[ $authority == *[\$\`]* ]] || return 1
       return 0
     fi
+    if [[ $authority =~ ^([^[]*\[[^]]*\]) ]]; then authority=${BASH_REMATCH[1]}; else authority=${authority%%:*}; fi
   else
-    word=${word#*://}
+    [[ ! $word =~ ^[A-Za-z][A-Za-z0-9+.-]*:// ]] || word=${word#*://}
     authority=${word%%[/?#]*}
   fi
   authority=${authority##*@}
@@ -1240,15 +1429,22 @@ transfer_host() { # WORD KIND url|remote; returns 1 for a local scp or rsync pat
 # leaves its argument an operand and its host judged. curl and wget send a
 # file with the options below; scp and rsync send to a remote last operand.
 # A proxy, address mapping, config file or ssh option that sets the host
-# leaves the destination unresolved.
+# leaves the destination unresolved. curl and wget also take a unique prefix
+# of a long option, which rsync's popt and scp do not: a word that is no
+# listed option and begins a sending or routing one leaves it unresolved.
+# curl's --expand- form of an option expands variables into its value.
 upload_arguments() {
   local cursor=$pos value option argument letters takes short_takes long_takes upload="" redirected="" options_ended=""
-  local destinations=() destination_kinds=() host index
+  local destinations=() destination_kinds=() host index long_flags=' ' sensitive=' ' candidate
   case "$program" in
     curl)
+      # --head is the one curl 8.5.0 flag that begins a sending option.
+      long_flags=' --head '
+      sensitive=' --abstract-unix-socket --config --connect-to --data --data-ascii --data-binary --data-urlencode --doh-url --form --header --json --preproxy --proxy --proxy1.0 --resolve --socks4 --socks4a --socks5 --socks5-hostname --unix-socket --upload-file --url --url-query --variable '
       short_takes=AbcCdDeEFHKmoPQrtTuUwxXyYz
       long_takes=' --abstract-unix-socket --alt-svc --aws-sigv4 --cacert --capath --cert --cert-type --ciphers --config --connect-timeout --connect-to --continue-at --cookie --cookie-jar --create-file-mode --crlfile --curves --data --data-ascii --data-binary --data-raw --data-urlencode --delegation --dns-interface --dns-ipv4-addr --dns-ipv6-addr --dns-servers --doh-url --dump-header --egd-file --engine --etag-compare --etag-save --expect100-timeout --form --form-string --ftp-account --ftp-alternative-to-user --ftp-method --ftp-port --ftp-ssl-ccc-mode --happy-eyeballs-timeout-ms --header --hostpubmd5 --hostpubsha256 --hsts --interface --ipfs-gateway --json --keepalive-time --key --key-type --krb --libcurl --limit-rate --local-port --login-options --mail-auth --mail-from --mail-rcpt --max-filesize --max-redirs --max-time --netrc-file --noproxy --oauth2-bearer --output --output-dir --parallel-max --pass --pinnedpubkey --preproxy --proto --proto-default --proto-redir --proxy --proxy1.0 --proxy-cacert --proxy-capath --proxy-cert --proxy-cert-type --proxy-ciphers --proxy-crlfile --proxy-header --proxy-key --proxy-key-type --proxy-pass --proxy-pinnedpubkey --proxy-service-name --proxy-tls13-ciphers --proxy-tlsauthtype --proxy-tlspassword --proxy-tlsuser --proxy-user --pubkey --quote --random-file --range --rate --referer --request --request-target --resolve --retry --retry-delay --retry-max-time --sasl-authzid --service-name --socks4 --socks4a --socks5 --socks5-gssapi-service --socks5-hostname --speed-limit --speed-time --stderr --telnet-option --tftp-blksize --time-cond --tls-max --tls13-ciphers --tlsauthtype --tlspassword --tlsuser --trace --trace-ascii --trace-config --unix-socket --upload-file --url --url-query --user --user-agent --variable --write-out ' ;;
     wget)
+      sensitive=' --body-file --config --execute --post-file '
       short_takes=aABDeiIloOPQRtTUwX
       long_takes=' --accept --append-output --base --bind-address --body-data --body-file --ca-certificate --certificate --config --connect-timeout --directory-prefix --dns-timeout --domains --exclude-directories --exclude-domains --execute --header --http-password --http-user --include-directories --input-file --level --limit-rate --load-cookies --method --output-document --output-file --password --post-data --post-file --private-key --proxy-password --proxy-user --quota --read-timeout --referer --reject --save-cookies --timeout --tries --user --user-agent --wait --waitretry ' ;;
     scp) short_takes=cDFiJloPSX; long_takes=' ' ;;
@@ -1265,8 +1461,7 @@ upload_arguments() {
     fi
     case "$program:$value" in
       *:--) options_ended=1 ;;
-      # curl reads no --name=value form.
-      curl:--*) option=$value; takes=long ;;
+      # curl 8.5.0 refuses --name=value; a later curl takes it.
       *:--*=*) option=${value%%=*}; argument=${value#*=} ;;
       *:--*) option=$value; takes=long ;;
       *)
@@ -1281,6 +1476,16 @@ upload_arguments() {
           letters=${letters:1}
         done ;;
     esac
+    case "$program:$option" in curl:--expand-?*) option=--${option#--expand-}; redirected=1 ;; esac
+    case "$option:$long_takes$long_flags" in
+      --?*:*" $option "*) ;;
+      --?*)
+        for candidate in $sensitive; do
+          case "$candidate" in
+            "$option"?*) upload=1; redirected=1; [ "$takes" != long ] || takes=next ;;
+          esac
+        done ;;
+    esac
     case "$takes:$long_takes" in
       long:*" $option "* | next:*) cursor=$((cursor + 1)); argument=${args[$cursor]:-} ;;
     esac
@@ -1288,8 +1493,11 @@ upload_arguments() {
       curl:-T | curl:--upload-file | wget:--post-file | wget:--body-file) upload=1 ;;
       curl:-d | curl:--data | curl:--data-ascii | curl:--data-binary | curl:--json) [[ $argument != @* ]] || upload=1 ;;
       curl:--data-urlencode) [[ ! $argument =~ ^[^=]*@ ]] || upload=1 ;;
+      curl:-H | curl:--header) [[ $argument != @* ]] || upload=1 ;;
+      curl:--url-query) [[ ! $argument =~ ^\+?[^=]*@ ]] || upload=1 ;;
+      curl:--variable) [[ ! $argument =~ ^[^=]*@ ]] || upload=1 ;;
       curl:-F | curl:--form) case "$argument" in *=@* | *=\<*) upload=1 ;; esac ;;
-      curl:--url) destinations[${#destinations[@]}]=$argument; destination_kinds[${#destination_kinds[@]}]=${arg_kinds[$cursor]} ;;
+      curl:--url) destinations[${#destinations[@]}]=$argument; destination_kinds[${#destination_kinds[@]}]=${arg_kinds[$cursor]:-unknown} ;;
       curl:-x | curl:--proxy | curl:--preproxy | curl:--proxy1.0 | curl:--socks4 | curl:--socks4a | curl:--socks5 | curl:--socks5-hostname | \
       curl:--connect-to | curl:--resolve | curl:--unix-socket | curl:--abstract-unix-socket | curl:-K | curl:--config | curl:--doh-url | \
       wget:-e | wget:--execute | wget:--config | scp:-F | scp:-J | scp:-S) redirected=1 ;;
@@ -1459,6 +1667,7 @@ environment_dump() { # command kind; arguments are already decoded data
   # The download facts each stage records, related once every stage is read.
   local nesting=() stage_downloads=() stage_input_programs=() stage_receivers=() stage_program_words=() stage_substitutions=()
   local input_program program_word last_arg substitution_input
+  local tail_args=() tail_kinds=() tail_unquoted=() tail_glued=""
   [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
   local executable_tail_starts=() executable_tail_counts=() executable_tail_args=() executable_tail_kinds=() executable_tail_unquoted=()
   local executable_source_kinds=() executable_prefix_counts=() prefix_count=${command_prefix_count:-0}
@@ -1797,6 +2006,7 @@ environment_dump() { # command kind; arguments are already decoded data
           case "${tokens[$substitution_input]:-}" in '<' | '<>' | '<<<') stage_substitutions[stage]=input ;; esac
         fi ;;
     esac
+    substitution_tail
     environment_head "$1"
     [ -z "$syntax_head" ] || compound=1
     if [ "$pos" -ge "${#args[@]}" ]; then
@@ -2005,12 +2215,13 @@ environment_dump() { # command kind; arguments are already decoded data
     # no data class admitted. These identifiers come only from the proved
     # registry. Keep bodies independent: quotes in one program cannot hide
     # another program.
-    [ -n "${stage_stdin[$stage]}" ] || data_source=${stage_fallback[$stage]}
+    local fallback_only=${transfer_ignored:-}
+    [ -n "${stage_stdin[$stage]}" ] || { data_source=${stage_fallback[$stage]}; fallback_only=1; }
     for doc in $data_source; do
       [ "${literal_kinds[$doc]}" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
       local command_text=${literal_inputs[$doc]}
       load_reader_context "${stage_reader_context[$stage]}"
-      if environment_dump shell conservative; then return 0; fi
+      if transfer_ignored=$fallback_only environment_dump shell conservative; then return 0; fi
     done
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
@@ -2026,7 +2237,7 @@ environment_dump() { # command kind; arguments are already decoded data
         if [ "${separators[$j]}" != '|' ] || [ "${decisions[$((j + 1))]:-}" != filter ]; then return 0; fi ;;
     esac
   done
-  [ -n "$owner_command" ] || download_judge
+  [ -n "$owner_command${transfer_ignored:-}" ] || download_judge
   if relative_targeting judge; then refuse refused relative-target; fi
   return 1
 }
@@ -2100,7 +2311,7 @@ refuse() { # KEY VALUE [CAUSE]
           echo "$upload_program sends local data to $upload_host, which COMMAND_SAFETY_UPLOAD_HOSTS does not list"
         else
           echo 'command-safety: reason=unresolved-host'
-          echo "$upload_program sends local data, and an expansion, a proxy, an address mapping or a config file in the command can choose where it goes"
+          echo "$upload_program sends local data, and an expansion, a substitution, an abbreviated option, a proxy, an address mapping or a config file in the command can choose where it goes"
         fi
         echo "send it only to a host the project owner lists in COMMAND_SAFETY_UPLOAD_HOSTS under [env] in kendex.settings.toml, named literally in the command"
         echo "if the owner asked for this exact command, the owner starts the session with COMMAND_SAFETY_OWNER_COMMAND set to its text" ;;
@@ -2108,10 +2319,13 @@ refuse() { # KEY VALUE [CAUSE]
         case "$push_reason" in
           remote)
             echo 'command-safety: reason=unresolved-remote'
-            echo "git push takes its remote from an expansion or a Git setting in the command, so it cannot be compared with the repository's remotes" ;;
+            echo "git push takes its remote from an expansion, a substitution, an abbreviated or unknown option or a Git setting in the command, so it cannot be compared with the repository's remotes" ;;
           repository)
             echo 'command-safety: reason=unresolved-repository'
             echo "the repository this git push runs in is not known: a directory change, -C, --git-dir or GIT_DIR the check cannot follow, or a directory that is not in a Git work tree yet" ;;
+          unreadable)
+            echo 'command-safety: reason=unreadable-repository'
+            echo "git could not list the remotes of the repository at $push_repository; repair what git names below, then retry" ;;
           *)
             printf 'command-safety: remote=%s\n' "${push_remote//$'\n'/\\n}"
             echo "git push names $push_remote, which is neither a remote of the repository at $push_repository nor one of its remote URLs" ;;
@@ -2119,7 +2333,7 @@ refuse() { # KEY VALUE [CAUSE]
         echo "push to a remote the repository already has, by its name, from a directory named literally, for example: git push origin HEAD"
         echo "a new destination is the owner's choice: the owner adds the remote, or starts the session with COMMAND_SAFETY_OWNER_COMMAND set to this exact command" ;;
       refused=owner-command)
-        echo "the command sets COMMAND_SAFETY_OWNER_COMMAND, the owner's exception for one exact command, which a command must not give to a session it starts"
+        echo "the command sets COMMAND_SAFETY_OWNER_COMMAND, by an assignment, env, export, declare, read or printf -v, and that variable is the owner's exception for one exact command, which a command must not give to a session it starts"
         echo "run the command without that variable; only the owner sets it, in the environment a session starts with" ;;
       refused=default-policy)
         echo "the command text sets a systemd-run MemoryMax= or MemoryHigh= cap in kilobytes or megabytes, which the hook's default COMMAND_SAFETY_DENY_PATTERN refuses: a cgroup starved by a cap that small can fail a kernel allocation and leave the host's root volume read-only"
@@ -2218,9 +2432,9 @@ history_reason=""
 history_reasons=(); history_states=(); history_dirs=(); history_ends=(); history_dir_changed=""
 # The owner's exact-action exception is read from this hook's own process
 # environment, which the harness passes from the environment its session
-# started with and no command the session runs can change. No settings file
-# answers it, since a session can write one, and a command that sets the
-# variable is refused below, so it cannot reach a session that command starts.
+# started with. No settings file answers it, since a session can write one.
+# owner_assignment refuses the words that set the variable, so a command in
+# a form the hook reads cannot hand it to a session that command starts.
 owner_command=""
 if [ -n "${COMMAND_SAFETY_OWNER_COMMAND:-}" ] && [ "$COMMAND_SAFETY_OWNER_COMMAND" = "$command_text" ]; then owner_command=1; fi
 download_form=""; download_program=""; download_receiver=""
@@ -2231,7 +2445,6 @@ history_roots=(); history_root_reasons=(); outside=""
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
-case "$command_text" in *COMMAND_SAFETY_OWNER_COMMAND=* | *COMMAND_SAFETY_OWNER_COMMAND+=*) refuse refused owner-command ;; esac
 [ "$cwd_state" != invalid-cwd ] || refuse payload invalid-cwd
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 [ -n "$cwd" ] || cwd="$PWD"
@@ -2240,11 +2453,22 @@ case "$command_text" in *COMMAND_SAFETY_OWNER_COMMAND=* | *COMMAND_SAFETY_OWNER_
 # refusal names the path it was asked for and replays the cause under it.
 requested_cwd="$cwd"
 cwd="$(cd -- "$cwd" 2>&1 && pwd -P)" || refuse cwd "$requested_cwd" "$cwd"
+# A .git entry at or above DIR makes it a Git work tree, so a git failure
+# there is git's to name, not a missing repository.
+git_entry_above() { # DIR
+  local at=$1
+  while [ "$at" != / ]; do
+    if [ -e "$at/.git" ] || [ -L "$at/.git" ]; then return 0; fi
+    at="${at%/*}"
+    [ -n "$at" ] || at=/
+  done
+  return 1
+}
 # Git keeps no record of a push destination beyond the remotes git remote -v
 # lists: a push to a URL writes no ref and no log. A push is judged in every
 # directory the reader directories say it can run in, before any settings.
 push_judge() {
-  local record base_start=0 dir_start=0 base cursor chain listing line name url rewritten known
+  local record base_start=0 dir_start=0 base cursor chain listing line name url rewritten known common target directory
   for ((record=0; record<${#push_remotes[@]}; record++)); do
     push_remote=${push_remotes[$record]}; push_reason=${push_reasons[$record]}
     [ "${push_states[$record]}" = absolute ] || [ -z "$push_dir_unknown" ] || push_reason=${push_reason:-repository}
@@ -2252,7 +2476,14 @@ push_judge() {
     for ((base=base_start; base<${push_base_ends[$record]}; base++)); do
       chain=(-C "${push_bases[$base]}")
       for ((cursor=dir_start; cursor<${push_dir_ends[$record]}; cursor++)); do chain[${#chain[@]}]=-C; chain[${#chain[@]}]=${push_dirs[$cursor]}; done
-      listing=$(git "${chain[@]}" remote -v 2>/dev/null) || { push_reason=repository; refuse refused push-remote; }
+      # Git's words are the cause: a repository whose configuration it
+      # cannot read is not one the check failed to find.
+      if ! listing=$(git "${chain[@]}" remote -v 2>&1); then
+        push_reason=repository
+        push_repository=$(cd -- "${push_bases[$base]}" 2>/dev/null && for directory in ${push_dirs[@]+"${push_dirs[@]:dir_start:push_dir_ends[record]-dir_start}"}; do cd -- "$directory" || exit; done && pwd -P) || push_repository=""
+        if [ -n "$push_repository" ] && git_entry_above "$push_repository"; then push_reason=unreadable; fi
+        refuse refused push-remote "$listing"
+      fi
       push_repository=$(git "${chain[@]}" rev-parse --show-toplevel 2>/dev/null) || push_repository=${push_bases[$base]}
       rewritten=""
       case "$push_remote" in -*) ;; *) rewritten=$(git "${chain[@]}" ls-remote --get-url "$push_remote" 2>/dev/null) || rewritten="" ;; esac
@@ -2262,6 +2493,14 @@ push_judge() {
         name=${line%%$'\t'*}; url=${line#*$'\t'}; url=${url% (*)}
         if [ "$push_remote" = "$name" ] || [ "$push_remote" = "$url" ] || [ "$rewritten" = "$url" ]; then known=1; break; fi
       done <<<"$listing"
+      # A path to this repository itself, as in git push . HEAD:main, sends
+      # nothing away: it names the same common directory.
+      if [ -z "$known" ] && [ -n "$push_remote" ] &&
+         common=$(git "${chain[@]}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
+         target=$(git "${chain[@]}" -C "$push_remote" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) &&
+         [ "$common" = "$target" ]; then
+        known=1
+      fi
       [ -n "$known" ] || refuse refused push-remote
     done
     base_start=${push_base_ends[$record]}; dir_start=${push_dir_ends[$record]}
@@ -2289,14 +2528,7 @@ upload_judge() { # LIST
 root_status=0
 root="$(git -C "$cwd" rev-parse --show-toplevel 2>&1)" || root_status=$?
 if [ "$root_status" -ne 0 ]; then
-  at="$cwd"
-  while [ "$at" != / ]; do
-    if [ -e "$at/.git" ] || [ -L "$at/.git" ]; then
-      refuse git unreadable "$root"
-    fi
-    at="${at%/*}"
-    [ -n "$at" ] || at=/
-  done
+  if git_entry_above "$cwd"; then refuse git unreadable "$root"; fi
   # Outside a worktree only a refused read's own -C chain names a project,
   # and Git resolves that chain from the payload directory. A chain the hook
   # cannot read whole, or a relative one in a command that changes directory,
