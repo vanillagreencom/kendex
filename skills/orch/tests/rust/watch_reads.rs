@@ -1007,7 +1007,7 @@ fn the_merged_index_matches_the_released_recorded_lines() {
     );
     assert_eq!(
         baseline.get("merged", "KEN-1"),
-        Some("owner/repo#1 owner/repo#2")
+        Some("owner/repo#1@1790812800 owner/repo#2@1790899200")
     );
     let calls = world.gh_calls();
     assert_eq!(

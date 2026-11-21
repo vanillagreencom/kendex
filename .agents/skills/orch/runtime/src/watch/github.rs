@@ -70,6 +70,32 @@ const REFRESH_WORKFLOW: &str = "kendex-refresh.yml";
 
 /// Baseline row kinds this module owns.
 pub const MERGED_ROW: &str = "merged";
+
+fn merge_row(value: &str) -> impl DoubleEndedIterator<Item = (&str, Option<u64>)> {
+    value.split_whitespace().map(|entry| {
+        entry
+            .split_once('@')
+            .map_or((entry, None), |(key, at)| (key, at.parse().ok()))
+    })
+}
+
+/// The last merge the observation duty can use as a lane's delivery. A
+/// hosted lane can see a baseline written before it launched, so compare
+/// the recorded merge time to this launch even between GitHub passes.
+pub(super) fn finished_merge<'a>(baseline: &'a Baseline, lane: &Lane) -> Option<(&'a str, u64)> {
+    let row = baseline.get(MERGED_ROW, &lane.item)?;
+    let floor = if super::hosted::host_of(lane) != "local"
+        && let Some(stamp) = &lane.launched_at
+    {
+        Some(clock::epoch_secs(stamp)?)
+    } else {
+        None
+    };
+    merge_row(row)
+        .rfind(|(_, at)| floor.is_none_or(|floor| at.is_some_and(|at| at >= floor)))
+        .and_then(|(key, _)| key.rsplit_once('#'))
+        .and_then(|(repo, pr)| Some((repo, pr.parse().ok()?)))
+}
 pub const PARKED_UNTIL_ROW: &str = "parked-until";
 pub const REFRESH_ROW: &str = "refresh-failing";
 /// The push read's mark of its last pass (`PushMark`), red or clear.
@@ -1069,7 +1095,7 @@ pub(super) fn terminal_of(gh: &Gh, lane: &Lane) -> Result<TerminalState> {
 }
 
 /// One lane item's own merged pull requests at or after the floor, per
-/// repository, as `(number, repository)`: its recorded pull request by
+/// repository, as `(number, repository, merge epoch)`: its recorded pull request by
 /// number where its record carries a dependency, else its head branch and
 /// its mentions.
 fn own_merges(
@@ -1077,8 +1103,8 @@ fn own_merges(
     entry: &MergeItem,
     repos: &[String],
     inputs: &Inputs,
-) -> Result<Vec<(u64, String)>> {
-    let mut hits: Vec<(u64, String)> = Vec::new();
+) -> Result<Vec<(u64, String, u64)>> {
+    let mut hits: Vec<(u64, String, u64)> = Vec::new();
     for repo in repos {
         let owner = repo.split('/').next().unwrap_or(repo);
         let recorded_pr = entry
@@ -1108,11 +1134,11 @@ fn own_merges(
             if !lane_own(&pull, &entry.item, owner, recorded_pr) {
                 continue;
             }
-            if merged_at(&pull, inputs.since).is_none() {
+            let Some(at) = merged_at(&pull, inputs.since) else {
                 continue;
-            }
-            if !hits.iter().any(|(n, r)| *n == pull.number && r == repo) {
-                hits.push((pull.number, repo.clone()));
+            };
+            if !hits.iter().any(|(n, r, _)| *n == pull.number && r == repo) {
+                hits.push((pull.number, repo.clone(), at));
             }
         }
     }
@@ -1147,7 +1173,7 @@ pub(super) fn merged_keys(
     let repos = repositories(&inputs);
     let mut keys = Vec::new();
     for entry in merge_items(inputs.lanes) {
-        for (number, repo) in own_merges(gh, &entry, &repos, &inputs)? {
+        for (number, repo, _) in own_merges(gh, &entry, &repos, &inputs)? {
             keys.push(format!("{repo}#{number}"));
         }
     }
@@ -1157,7 +1183,7 @@ pub(super) fn merged_keys(
 /// The merged index: for every
 /// lane item and repository, the item's own merged pull requests at or
 /// after the floor, by head branch and by mention; a key not in the
-/// item's row is a `merged` line, the row then holds every key; a parked
+/// item's row is a `merged` line, the row then holds every key and merge epoch; a parked
 /// item's dependency is read by number and its state change is the
 /// parked-merged or parked-closed line, the hand deferred while the
 /// tracker's verdict is unknown.
@@ -1247,11 +1273,12 @@ fn merged(
         }
         let prior: Vec<&str> = baseline
             .get(MERGED_ROW, &entry.item)
-            .map(|v| v.split(' ').collect())
+            .map(|v| merge_row(v).map(|(key, _)| key).collect())
             .unwrap_or_default();
         let mut keys = Vec::new();
+        let mut dated = Vec::new();
         let mut fresh = Vec::new();
-        for (number, repo) in &hits {
+        for (number, repo, at) in &hits {
             let key = format!("{repo}#{number}");
             if !prior.contains(&key.as_str()) {
                 produced.events.push(Event::Merged {
@@ -1259,13 +1286,14 @@ fn merged(
                 });
                 fresh.push(key.clone());
             }
+            dated.push(format!("{key}@{at}"));
             keys.push(key);
         }
-        inventory.merged.insert(entry.item.clone(), keys.clone());
+        inventory.merged.insert(entry.item.clone(), keys);
         produced.changes.push(Change::Set {
             kind: MERGED_ROW.to_owned(),
             identity: entry.item.clone(),
-            value: keys.join(" "),
+            value: dated.join(" "),
         });
         if entry.own.is_some() {
             continue;
