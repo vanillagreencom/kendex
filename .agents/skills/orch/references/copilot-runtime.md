@@ -100,7 +100,7 @@ A hosted relaunch reads the same route first, so the two refusals apply. The hos
 
 ## Wake and lane mail
 
-A Copilot lane's own wake is its `--once` mailbox monitor, run as a background command. The launch brief's arm line arms it; [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor) says when to re-arm it. Copilot CLI starts a turn when a background command exits.
+A Copilot lane's own wake is its `--once` mailbox monitor, run as a background command. The launch brief's arm line arms it; [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor) says when to re-arm it. Copilot CLI starts a turn when an attached background command exits while Autopilot runs; after Autopilot stops, it holds the result for the next typed message ([watch-delivery.md § Repeat watch](watch-delivery.md#repeat-watch), Copilot CLI row).
 
 Beside the monitor, the lane's hooks hand it mail: at its session start and at each prompt (`lane-mail-start`, `lane-mail-prompt`), after each tool call (`lane-mail-deliver`), at its turn end (`lane-mail-check`), and at its next tool call while a halt stands (`lane-mail-halt`). A Copilot payload names no agent. So the hooks record each lead session at its session start, or at a turn end whose own transcript proves it, and hand mail only to a call from a recorded lead session (orch `turnend/payload.rs`). A custom subagent's calls carry its own session id, which nothing recorded: the hooks hand them no mail, and they mark none read.
 
