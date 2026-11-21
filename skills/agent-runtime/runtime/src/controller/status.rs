@@ -170,7 +170,8 @@ fn caller_start(overseer: &Overseer, caller: &CallerKey) -> Option<u64> {
         .socket
         .map(Path::to_path_buf)
         .or_else(|| overseer_socket(overseer))?;
-    let server = tmux::server(&socket).ok()?;
+    let pid = caller.server.parse().ok()?;
+    let server = tmux::recorded_server(&socket, pid).ok()?;
     (server.pid.to_string() == caller.server).then_some(server.start)
 }
 

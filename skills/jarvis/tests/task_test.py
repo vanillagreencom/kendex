@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
-from fixtures.tmux_scope import isolate
+from fixtures.tmux_scope import isolate, reached_through_path
 isolate()
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -92,10 +92,14 @@ class TaskContract(unittest.TestCase):
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
         self.record_path = self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
         self.label = "jarvis-" + key[:32]
-        # The controller's window carries the name Start gives it.
-        created = self.tmux("new-session", "-d", "-s", "jarvis", "-n", "jarvis", "-P", "-F",
-                            "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}",
-                            self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
+        # The controller's window carries the name Start gives it. Rows
+        # plant their tmux answers on PATH, so the server runs a program
+        # agent-runtime reaches through PATH.
+        created = subprocess.run([reached_through_path(self.root), "-L", self.label, "-f", os.devnull,
+                                  "new-session", "-d", "-s", "jarvis", "-n", "jarvis", "-P", "-F",
+                                  "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}",
+                                  self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                 env=self.env, capture_output=True, text=True, timeout=10, check=True)
         socket, server, started, window, pane = created.stdout.strip().split("\t")
         self.terminal = dict(server=socket, session="jarvis", window=window, pane=pane)
         # A task pane is wide and tall enough to hold each harness's screen whole.

@@ -663,6 +663,193 @@ impl Drop for Reaped {
     }
 }
 
+/// A tmux server on the world's socket started from `program`, a copy of
+/// the `tmux` on this process's `PATH`, its one pane running a stub the
+/// kernel names `claude`, the recorded harness; ended on drop by the `PATH`
+/// tmux, the same build.
+#[cfg(target_os = "linux")]
+struct CopiedServer {
+    tmux: PathBuf,
+    socket: PathBuf,
+    pid: u32,
+    start: u64,
+    pane: String,
+    pane_pid: u32,
+}
+
+#[cfg(target_os = "linux")]
+impl CopiedServer {
+    fn start(world: &World, program: &Path) -> CopiedServer {
+        let tmux = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join("tmux"))
+            .find(|path| path.is_file())
+            .expect("a tmux on PATH");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        // Copied by a child, so no write descriptor of this process is
+        // inherited by a sibling test's child when the copy is run.
+        let copied = std::process::Command::new("cp")
+            .arg(&tmux)
+            .arg(program)
+            .status()
+            .unwrap();
+        assert!(copied.success(), "the copy of {}", tmux.display());
+        let stub = world.root().join("harness/claude");
+        std::fs::create_dir_all(stub.parent().unwrap()).unwrap();
+        write_executable(&stub, "#!/bin/sh\nread -r _\n");
+        let socket = world.socket();
+        let ask = |args: &[&str]| {
+            let out = std::process::Command::new(program)
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("HOME", world.root())
+                .env("SHELL", "/bin/sh")
+                .arg("-S")
+                .arg(&socket)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let exec = format!("exec {}", stub.display());
+        ask(&["-f", "/dev/null", "new-session", "-d", "-s", "t", &exec]);
+        let answer = ask(&[
+            "display-message",
+            "-p",
+            "-t",
+            "t",
+            "#{pid} #{start_time} #{pane_id} #{pane_pid}",
+        ]);
+        let words: Vec<&str> = answer.split_whitespace().collect();
+        let [pid, start, pane, pane_pid] = words[..] else {
+            panic!("the server's answer: {answer:?}");
+        };
+        // The pane's process is the stub once its shell has exec'd it.
+        let comm = format!("/proc/{pane_pid}/comm");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while std::fs::read_to_string(&comm).unwrap_or_default().trim() != "claude" {
+            assert!(Instant::now() < deadline, "the pane never ran the stub");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        CopiedServer {
+            tmux,
+            socket,
+            pid: pid.parse().unwrap(),
+            start: start.parse().unwrap(),
+            pane: pane.to_owned(),
+            pane_pid: pane_pid.parse().unwrap(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for CopiedServer {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new(&self.tmux)
+            .arg("-S")
+            .arg(&self.socket)
+            .arg("kill-server")
+            .output();
+    }
+}
+
+/// A controller whose server a tmux update left behind is read through that
+/// server's own program, whatever `tmux` stands first on `PATH`: here a
+/// stale client, answering as a tmux 3.4 client does a live tmux 3.8
+/// server, and a reconcile heals the record's missing harness identity
+/// through the same program. The program reads so after the update removed
+/// it from disk. A server whose program is no tmux is asked through `PATH`,
+/// and the stale client's answer is the version mismatch, never an
+/// unreachable server, with the record left as it stood.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_live_controller_reads_through_its_servers_own_program_past_a_stale_client_on_path() {
+    // (row, the program the server starts from, removed once it runs, the
+    // cause the status and the heal refuse with)
+    let rows: [(&str, &str, bool, Option<&str>); 3] = [
+        ("own program", "tmux", false, None),
+        ("own program removed", "tmux", true, None),
+        (
+            "no tmux",
+            "multiplexer",
+            false,
+            Some("tmux-version-mismatch"),
+        ),
+    ];
+    for (row, name, removed, refused) in rows {
+        let world = World::new();
+        write_executable(
+            &world.root().join("bin/tmux"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\necho 'server exited unexpectedly' >&2\nexit 1\n",
+                world.root().join("tmux.log").display()
+            ),
+        );
+        let program = world.root().join("server-bin").join(name);
+        let server = CopiedServer::start(&world, &program);
+        if removed {
+            std::fs::remove_file(&program).unwrap();
+        }
+        let fleet = FLEET
+            .replacen("\"41020\"", &format!("\"{}\"", server.pid), 1)
+            .replacen("1769590000", &server.start.to_string(), 1)
+            .replacen("\"%7\"", &format!("\"{}\"", server.pane), 1)
+            .replacen("    \"harness_pid\": \"41388\",\n", "", 1)
+            .replacen("    \"harness_start\": \"ticks:9912345\",\n", "", 1);
+        assert!(
+            !fleet.contains("harness_pid"),
+            "{row}: no recorded identity"
+        );
+        let record = world.root().join("workflow-state-oversee.json");
+        world.record(&record, &fleet);
+        let out = world.controller(world.root(), &args(&["status"], &record, None), &[]);
+        let asked = world.log("tmux.log");
+        match refused {
+            None => {
+                assert!(out.status.success(), "{row}: {}", stderr(&out));
+                let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+                assert_eq!(reply["result"]["live"], true, "{row}: {reply}");
+                assert_eq!(asked, "", "{row}: the stale client was asked");
+            }
+            Some(cause) => {
+                let (key, fields) = refusal(&out);
+                assert_eq!(key, "controller-unreadable", "{row}");
+                assert_eq!(field(&fields, "cause"), Some(cause), "{row}: {fields}");
+                assert_ne!(asked, "", "{row}: the client on PATH was asked");
+            }
+        }
+        // The reconcile heals the identity the record lacks on the same
+        // server, through the same program.
+        let before = std::fs::read_to_string(&record).unwrap();
+        let mut words = args(&["reconcile"], &record, None);
+        words.extend(world.reach());
+        let out = world.controller(world.root(), &words, &[]);
+        assert!(out.status.success(), "{row}: {}", stderr(&out));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let healed = &reply["result"]["controller"];
+        let after = std::fs::read_to_string(&record).unwrap();
+        match refused {
+            None => {
+                assert_eq!(healed["healed"], true, "{row}: {reply}");
+                let doc: Value = serde_json::from_str(&after).unwrap();
+                assert_eq!(
+                    doc["controller"]["harness_pid"], server.pane_pid,
+                    "{row}: {after}"
+                );
+                assert_eq!(
+                    world.log("tmux.log"),
+                    "",
+                    "{row}: the stale client was asked"
+                );
+            }
+            Some(cause) => {
+                assert_eq!(healed["refusal"], cause, "{row}: {reply}");
+                assert_eq!(after, before, "{row}: the record moved");
+            }
+        }
+    }
+}
+
 /// The recorded start a fixture text carries.
 fn world_start(fleet: &str) -> Value {
     serde_json::from_str::<Value>(fleet).unwrap()["controller"]["server_start"].clone()

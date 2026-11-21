@@ -197,8 +197,13 @@ pub fn owner(intent: &Intent) -> Reading<Identity> {
 
 /// The reading of a socket that does not answer, from the recorded server
 /// process through the one identity reader: gone with its process, else
-/// unobservable. A record carrying the pid alone is read by that pid.
-pub fn unanswering(server: u64, process_start: Option<&str>) -> Observed<Pane> {
+/// unobservable, as a client of another tmux build where `refused` says so.
+/// A record carrying the pid alone is read by that pid.
+pub fn unanswering(
+    server: u64,
+    process_start: Option<&str>,
+    refused: Option<&Error>,
+) -> Observed<Pane> {
     let Ok(pid) = u32::try_from(server) else {
         return Observed::Unobservable {
             cause: "server-pid-invalid",
@@ -212,6 +217,11 @@ pub fn unanswering(server: u64, process_start: Option<&str>) -> Observed<Pane> {
         None => process::identity(pid),
     };
     match reading {
+        Reading::Live(_) if refused.is_some_and(|e| e.key() == tmux::VERSION_MISMATCH) => {
+            Observed::Unobservable {
+                cause: tmux::VERSION_MISMATCH,
+            }
+        }
         Reading::Live(_) => Observed::Unobservable {
             cause: "server-unreachable",
         },
@@ -236,9 +246,15 @@ pub(super) fn observe_fields(server: &Server, id: &str) -> Observed<Pane> {
 }
 
 fn observe_pane(opened: &OpenedPane) -> Observed<Pane> {
-    let server = match tmux::server(Path::new(&opened.socket)) {
+    let server = match tmux::recorded_server(Path::new(&opened.socket), opened.server) {
         Ok(server) => server,
-        Err(_) => return unanswering(opened.server, opened.server_process_start.as_deref()),
+        Err(e) => {
+            return unanswering(
+                opened.server,
+                opened.server_process_start.as_deref(),
+                Some(&e),
+            );
+        }
     };
     if server.pid as u64 != opened.server || server.start != opened.server_start {
         return Observed::Gone {
@@ -271,12 +287,20 @@ pub fn server_at(
     server_pid: u64,
     server_start: Option<u64>,
 ) -> Observed<Server> {
-    let answering = sockets
-        .iter()
-        .find_map(|socket| match tmux::server(socket) {
-            Ok(s) if s.pid as u64 == server_pid => Some(s),
-            Ok(_) | Err(_) => None,
-        });
+    let mut refused = None;
+    let answering =
+        sockets
+            .iter()
+            .find_map(|socket| match tmux::recorded_server(socket, server_pid) {
+                Ok(s) if s.pid as u64 == server_pid => Some(s),
+                Ok(_) => None,
+                Err(e) => {
+                    if e.key() == tmux::VERSION_MISMATCH {
+                        refused = Some(e);
+                    }
+                    None
+                }
+            });
     match answering {
         Some(server) if server_start.is_none_or(|st| st == server.start) => {
             Observed::Present(server)
@@ -284,7 +308,7 @@ pub fn server_at(
         Some(_) => Observed::Gone {
             cause: "server-unmatched",
         },
-        None => match unanswering(server_pid, None) {
+        None => match unanswering(server_pid, None, refused.as_ref()) {
             Observed::Gone { cause } => Observed::Gone { cause },
             Observed::Unobservable { cause } => Observed::Unobservable { cause },
             Observed::Present(_) => unreachable!("unanswering never returns a pane"),
@@ -383,7 +407,9 @@ pub fn proof_of(overseer: &Overseer, target: Option<&Target>, named: Option<&Pat
             cause: "server-start-unrecorded",
         };
     };
-    match controller_socket(overseer, named).and_then(|socket| tmux::server(&socket)) {
+    match controller_socket(overseer, named)
+        .and_then(|socket| tmux::recorded_server(&socket, server))
+    {
         Ok(answering) if answering.pid as u64 == server && answering.start == start => {
             match tmux::pane_state(&answering, &pane) {
                 Reading::Live(tmux::PaneState::Running(fields)) => match target {
@@ -400,7 +426,7 @@ pub fn proof_of(overseer: &Overseer, target: Option<&Target>, named: Option<&Pat
         Ok(_) => Proof::Unproven {
             cause: "server-replaced",
         },
-        Err(_) => match unanswering(server, None) {
+        Err(e) => match unanswering(server, None, Some(&e)) {
             Observed::Gone { cause } => Proof::Unproven { cause },
             Observed::Unobservable { cause } => Proof::Unreadable { cause },
             Observed::Present(_) => unreachable!("unanswering never returns a pane"),
@@ -1163,14 +1189,16 @@ impl Operation<'_> {
             });
         };
         let named = self.run.reach.socket.as_deref();
-        let observed = match controller_socket(overseer, named).and_then(|s| tmux::server(&s)) {
+        let observed = match controller_socket(overseer, named)
+            .and_then(|s| tmux::recorded_server(&s, key.server))
+        {
             Ok(server) if server.pid as u64 == key.server && server.start == server_start => {
                 observe_fields(&server, &key.pane)
             }
             Ok(_) => Observed::Gone {
                 cause: "server-replaced",
             },
-            Err(_) => unanswering(key.server, None),
+            Err(e) => unanswering(key.server, None, Some(&e)),
         };
         Ok(match observed {
             Observed::Present(pane) => match self.standing_pane(pane) {
@@ -1509,6 +1537,20 @@ pub fn adopt_controller(
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
+    adopt_on(path, r, None, settings, locking)
+}
+
+/// [`adopt_controller`] on `confirmed`, the server a caller already read at
+/// the request's socket through the program of the pid its record names, so
+/// the adoption reaches the server that read did; `None` reads the server at
+/// the socket afresh.
+fn adopt_on(
+    path: &Path,
+    r: &AdoptController,
+    confirmed: Option<tmux::Server>,
+    settings: &EngineSettings,
+    locking: Locking,
+) -> Result<ControllerAdopted> {
     let overseer = fleet_view(path)?.overseer;
     let harness = Harness::named(&r.harness)?;
     if !is_pane_id(&r.pane) {
@@ -1518,7 +1560,10 @@ pub fn adopt_controller(
         Some(socket) => socket.clone(),
         None => caller_socket()?,
     };
-    let server = tmux::server(&socket)?;
+    let server = match confirmed {
+        Some(server) => server,
+        None => tmux::server(&socket)?,
+    };
     let fields = pane_read(&server, &r.pane)?;
     let target = Target::new(&settings.harness_binaries, harness)?;
     let identity = match observe::foreground(fields.pid, &|name| target.owns(name), None) {
@@ -1649,7 +1694,10 @@ pub fn heal_controller(
         return Ok(None);
     }
     let socket = controller_socket(&overseer, named)?;
-    let server = tmux::server(&socket)?;
+    let server = match overseer.extra.get("server").and_then(pid_value) {
+        Some(pid) => tmux::recorded_server(&socket, pid)?,
+        None => tmux::server(&socket)?,
+    };
     if !names_pane(&overseer, server.pid, server.start, &pane) {
         return Ok(None);
     }
@@ -1670,7 +1718,7 @@ pub fn heal_controller(
         permission: None,
         extra_args: None,
     };
-    adopt_controller(path, &request, settings, locking).map(Some)
+    adopt_on(path, &request, Some(server), settings, locking).map(Some)
 }
 
 /// The fields of `pane` on `server`: gone refuses `pane-gone`, a failed

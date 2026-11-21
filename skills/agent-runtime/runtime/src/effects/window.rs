@@ -667,10 +667,14 @@ impl Operation<'_> {
     /// `window-opened` under the recovered identity before the caller goes
     /// on.
     pub fn recover_opening(&mut self, opening: &Opening) -> Result<Recovered> {
-        let server = match tmux::server(Path::new(&opening.socket)) {
+        let server = match tmux::recorded_server(Path::new(&opening.socket), opening.server) {
             Ok(server) => server,
-            Err(_) => {
-                return match unanswering(opening.server, opening.server_process_start.as_deref()) {
+            Err(e) => {
+                return match unanswering(
+                    opening.server,
+                    opening.server_process_start.as_deref(),
+                    Some(&e),
+                ) {
                     Observed::Gone { cause } => self.server_gone(opening, cause),
                     Observed::Unobservable { cause } => Ok(Recovered::Pending {
                         note: "pane-unobservable",

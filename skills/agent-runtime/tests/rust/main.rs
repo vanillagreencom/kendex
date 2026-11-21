@@ -372,6 +372,65 @@ impl PrivatePane {
         let socket = dir.join("tmux.sock");
         let server = agent_runtime::host::tmux::start_private_server(&socket, "probe", dir)
             .expect("a private tmux server");
+        PrivatePane::sized(socket, u64::from(server.pid), server.start)
+    }
+
+    /// [`PrivatePane::start`] on a server started from a copy of the `tmux`
+    /// on `PATH` named `multiplexer`: the runtime runs no program that is
+    /// not named `tmux`, so it reaches this server through the `tmux` on
+    /// `PATH`, where a row plants its own answer.
+    fn behind_path(dir: &std::path::Path) -> PrivatePane {
+        let real = std::env::var_os("PATH")
+            .and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|d| d.join("tmux"))
+                    .find(|p| p.is_file())
+            })
+            .expect("tmux on PATH");
+        let program = dir.join("server-bin/multiplexer");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        // Copied by a child, so no write descriptor of this process is
+        // inherited by a sibling test's child when the copy is run.
+        let copied = Command::new("cp")
+            .arg(&real)
+            .arg(&program)
+            .status()
+            .unwrap();
+        assert!(copied.success(), "the copy of {}", real.display());
+        let socket = dir.join("tmux.sock");
+        let started = Command::new(&program)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", dir)
+            .env("SHELL", "/bin/sh")
+            .arg("-S")
+            .arg(&socket)
+            .args(["-f", "/dev/null", "new-session", "-d", "-s", "probe", "-c"])
+            .arg(dir)
+            .args([
+                "/bin/sh",
+                ";",
+                "set-option",
+                "-g",
+                "default-command",
+                "/bin/sh",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            started.status.success(),
+            "the server: {}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+        let identity = tmux_at(&socket, &["display-message", "-p", "#{pid} #{start_time}"]);
+        let (pid, start) = identity
+            .trim()
+            .split_once(' ')
+            .expect("the server's identity");
+        PrivatePane::sized(socket, pid.parse().unwrap(), start.parse().unwrap())
+    }
+
+    fn sized(socket: PathBuf, server_pid: u64, server_start: u64) -> PrivatePane {
         tmux_at(
             &socket,
             &["resize-window", "-t", "probe", "-x", "80", "-y", "24"],
@@ -385,8 +444,6 @@ impl PrivatePane {
             ],
         );
         let mut parts = text.trim_end().split('\t');
-        let server_pid = u64::from(server.pid);
-        let server_start = server.start;
         let pane = parts.next().unwrap().to_owned();
         let window = parts.next().unwrap().to_owned();
         let session = parts.next().unwrap().to_owned();
@@ -1579,7 +1636,7 @@ fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_we
     ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        let pane = PrivatePane::start(&root);
+        let pane = PrivatePane::behind_path(&root);
         let shims = root.join("refusing-tmux");
         std::fs::create_dir(&shims).unwrap();
         write_executable(
@@ -1657,7 +1714,7 @@ fn a_launch_whose_record_cannot_be_written_closes_its_window_or_names_the_one_it
     ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        let pane = PrivatePane::start(&root);
+        let pane = PrivatePane::behind_path(&root);
         let intent = root.join("intent.json");
         std::fs::write(
             &intent,
@@ -1748,7 +1805,7 @@ fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswere
     ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        let pane = PrivatePane::start(&root);
+        let pane = PrivatePane::behind_path(&root);
         if let Some(hook) = hook {
             pane.tmux(&["set-hook", "-g", "after-new-window", hook]);
         }

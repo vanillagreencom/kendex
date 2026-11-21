@@ -2079,7 +2079,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                             start,
                         },
                         None => {
-                            let live = tmux::server(&socket)?;
+                            let live = tmux::recorded_server(&socket, server_pid.into())?;
                             if live.pid != server_pid {
                                 return Err(Error::refused(
                                     "server-unmatched",

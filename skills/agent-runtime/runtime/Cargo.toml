@@ -32,6 +32,11 @@ regex = "1"
 fd-lock = "4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "io-util", "sync"] }
 
+# proc_pidpath, the one call that names a running tmux server's program on
+# macOS (host::tmux).
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3"
 
@@ -56,7 +61,9 @@ name = "session"
 path = "../tests/rust/session.rs"
 
 [lints.rust]
-unsafe_code = "forbid"
+# Denied, not forbidden, so the one FFI call macOS needs carries its own
+# allowance and SAFETY comment (host::tmux, own_program).
+unsafe_code = "deny"
 
 [lints.clippy]
 print_stdout = "deny"

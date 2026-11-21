@@ -3,8 +3,10 @@
 The runtime passes its tmux calls an environment without TMUX_TMPDIR
 (session.py environment()), so the variable alone would not reach the
 servers it starts. A `tmux` shim first on PATH sets it on every call
-instead: tests and runtime alike resolve tmux through PATH, and every
-fixture that starts tmux builds its PATH from this process's. At exit, pass or fail, every server
+instead: tests and runtime alike resolve tmux through PATH, apart from
+the runtime's calls to a server it knows by pid, which run that server's own
+program on its socket path. Every fixture that starts tmux builds its PATH
+from this process's. At exit, pass or fail, every server
 in the folder is stopped and the folder is removed, and so when SIGTERM ends the run, as the
 battery runner stops an overdue suite.
 """
@@ -71,6 +73,27 @@ def isolate():
     if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
         signal.signal(signal.SIGTERM, lambda signum, frame: terminated(root, real, owner, signum))
     return guard
+
+
+def reached_through_path(directory):
+    """A tmux command whose servers agent-runtime reaches through PATH.
+
+    agent-runtime asks a server it knows by pid through that server's own
+    program where the program is named tmux, past every tmux a row plants on
+    PATH. This command runs a copy of the run's tmux named `multiplexer` in
+    DIRECTORY, in the run's socket folder as the scope's shim does, so a
+    server it starts answers each such call through PATH. Every other client
+    is of the same build.
+    """
+    root = Path(os.environ[SCOPE])
+    path = os.pathsep.join(entry for entry in os.environ["PATH"].split(os.pathsep) if Path(entry) != root / "bin")
+    program = Path(directory) / "multiplexer"
+    shutil.copy(shutil.which("tmux", path=path), program)
+    command = Path(directory) / "multiplexer-scoped"
+    command.write_text("#!/bin/sh\nTMUX_TMPDIR=%s exec %s \"$@\"\n"
+                       % (shlex.quote(str(root / "sockets")), shlex.quote(str(program))))
+    command.chmod(0o755)
+    return str(command)
 
 
 def serving(path):

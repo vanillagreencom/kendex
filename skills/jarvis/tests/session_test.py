@@ -21,7 +21,7 @@ import time
 import unittest
 import runpy
 from unittest.mock import patch
-from fixtures.tmux_scope import SCOPE, isolate
+from fixtures.tmux_scope import SCOPE, isolate, reached_through_path
 isolate()
 
 
@@ -932,7 +932,7 @@ class SessionContract(unittest.TestCase):
         self.wait("stopped", "ended", seconds=30)
 
     def test_stop_and_off_during_start_end_the_pending_controller(self):
-        scoped_tmux = shutil.which("tmux", path=self.env["PATH"])
+        scoped_tmux = reached_through_path(self.root)
         ready, release = self.root / "launch-ready", self.root / "launch-release"
         barrier = Path(self.env["PATH"].split(os.pathsep)[0]) / "tmux"
         # Only the launch waits: status and Stop still reach the private server.
@@ -991,7 +991,7 @@ class SessionContract(unittest.TestCase):
         # refuses record-unreadable once the session runs. Copilot kept its
         # brief unsent past the bound (its Enter swallowed here, then pressed
         # by hand as the live run did); a runtime can die at the paste.
-        scoped_tmux = shutil.which("tmux", path=self.env["PATH"])
+        scoped_tmux = reached_through_path(self.root)
         fault = self.root / "start-fault"
         shim = Path(self.env["PATH"].split(os.pathsep)[0]) / "tmux"
         shim.write_text("#!" + sys.executable + "\n"

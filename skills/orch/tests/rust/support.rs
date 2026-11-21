@@ -566,9 +566,31 @@ impl Server {
     /// row plants a hook on the server before any window opens.
     pub fn start_with_config(dir: &Path, session: &str, config: &Path) -> Server {
         let socket = dir.join("tmux.sock");
+        // Rows plant their tmux answers first on `PATH`, and the runtime asks
+        // a known server through that server's own program only where it is
+        // named `tmux`: this server runs a copy named otherwise, so every
+        // call reaches it through `PATH`. Copied by a child, so no write descriptor of this process
+        // is inherited by a sibling test's child when the copy is run. A
+        // second server in one directory runs the copy already there: `cp`
+        // keeps the source's mode, and a tmux installed without its owner's
+        // write bit leaves a copy `cp` cannot open again.
+        let copy = dir.join("server-bin/multiplexer");
+        if !copy.exists() {
+            std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+            let copied = Command::new("cp")
+                .arg(which_tmux())
+                .arg(&copy)
+                .output()
+                .expect("cp");
+            assert!(
+                copied.status.success(),
+                "the server's program: {}",
+                stderr(&copied)
+            );
+        }
         // The server's environment is every pane's: selected, never the
         // test process's own.
-        let mut command = Command::new("tmux");
+        let mut command = Command::new(&copy);
         isolation_env(&mut command);
         // The first window opens before `default-shell` is set below and
         // would run the passwd login shell: name the pane shell here too.
@@ -2129,7 +2151,7 @@ pub const TURN_TMUX_TABLE: &[(&str, &str)] = &[
 /// directory, and a `tmux` stand-in first on `PATH`. The stand-in answers
 /// the forms of [`TURN_TMUX_TABLE`] on the world's socket alone, named by
 /// `-S` or else by `$TMUX`: the server read with the pid of a process the
-/// world holds that the kernel names `tmux` and the start the row plants;
+/// world holds and the start the row plants;
 /// it logs every call and refuses every other, so no row reaches a real
 /// server. The fleet record's controller
 /// names a harness process the world holds, so its liveness is read off a
@@ -2192,7 +2214,7 @@ impl TurnWorld {
                 .unwrap();
             assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
         }
-        let named = named_sleep(&root, "tmux");
+        let named = named_sleep(&root, "server-holder");
         let server = Owned(Command::new(named).arg("600").spawn().expect("tmux holder"));
         let socket = root.join("tmux-socket");
         let world = TurnWorld {

@@ -26,6 +26,7 @@ disallowed-methods = [
     { path = "agent_runtime::host::tmux::pane_fields", reason = "a pane is read only through the operation handle, which discharges by its own read" },
     { path = "agent_runtime::host::tmux::capture", reason = "a pane's screen is read only through the operation handle" },
     { path = "agent_runtime::host::tmux::server", reason = "a tmux server is reached only through the operation handle or the occupancy host" },
+    { path = "agent_runtime::host::tmux::recorded_server", reason = "a tmux server is reached only through the operation handle or the occupancy host" },
     { path = "agent_runtime::host::tmux::session_present", reason = "a tmux session is read only through the operation handle" },
     { path = "agent_runtime::host::tmux::inherited", reason = "a tmux session's environment is read only through the operation handle" },
     { path = "agent_runtime::host::tmux::list_windows", reason = "the fleet session's windows are listed only by the lane observation duty's stray sweep, which reports and never adopts" },
