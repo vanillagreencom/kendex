@@ -205,6 +205,8 @@ push_world() { # NAME
     all-proved) ;;
     # A leg whose list left a suite out proves the suites it kept.
     kept-subset) plant_selection "$dir" "$PUSH_RUN" "[\"$P_TOOLS\"]" "$EVERY_TARGET" ;;
+    # A group that left an original out still proved its native replacement.
+    replacement-split) plant_selection "$dir" "$PUSH_RUN" "[\"$P_VIEW\"]" "$EVERY_TARGET" ;;
     red-leg) fail_leg 'guards-tools, ubuntu-latest' ;;
     linux-only) edit_jobs '.jobs |= map(select(.name | endswith(", macos-latest)") | not))' ;;
     no-shard-selected) edit_jobs '.jobs |= map(select(.name | test("^Skill suites shard \\([a-z]") | not))' ;;
@@ -260,8 +262,16 @@ in_list() { # NAME MEMBER — whether the last push output's NAME list holds MEM
 # The probes and the counts each row's expectation is made of.
 P_TOOLS=tools/tests/ci-skill-prose.test.sh
 P_JARVIS=skills/jarvis/tests/task.test.sh
+P_MERGE=skills/github/tests/pr-merge.test.sh
+P_VIEW=skills/github/tests/pr-view.test.sh
+P_NATIVE=skills/github/tests/native-contracts.test.sh
+P_MAIN_ONLY=tools/tests/orch-shard-partition.test.sh
 UNIVERSE="$(cd "$ROOT" && git ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
   ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh' | grep -v '/run-all\.sh$')"
+# The suites a group can prove: MAIN_ONLY_FILTERS holds every declared
+# main-only suite out of each group leg by base name.
+UNIVERSE="$(jq -r '.[].suite + ".sh"' <<<"$MAIN_ONLY_SUITES" | awk '
+  NR == FNR { main_only[$0] = 1; next } { base = $0; sub(/.*\//, "", base) } !(base in main_only)' - <(printf '%s\n' "$UNIVERSE"))"
 count() { # PREFIX — the universe suites under PREFIX
   grep -c "^$1" <<<"$UNIVERSE" || true
 }
@@ -293,6 +303,7 @@ while IFS='|' read -r world expected; do
   check "push route: $world" "$expected" "$(push_select "$world")"
 done <<ROWS
 kept-subset|shards=["guards-tools","guards-tools-tail"] queue_macos_shards=["guards-tools"] rust_targets=[] skips=$((U - 1))/$((M - 1)) main-proof=read warned=no
+replacement-split|shards=["rest"] queue_macos_shards=["rest"] rust_targets=[] skips=$((U - 1))/$((M - 2)) main-proof=read warned=no
 red-leg|shards=["guards-hooks","guards-tools","guards-tools-tail","rest","jarvis"] queue_macos_shards=[] rust_targets=[] skips=$((U - N_TOOLS - N_JARVIS))/$M main-proof=read warned=no
 linux-only|shards=[] queue_macos_shards=$QUEUE_ALL rust_targets=[] skips=$U/0 main-proof=read warned=no
 no-shard-selected|$WHOLE main-proof=read warned=no
@@ -312,7 +323,7 @@ outage|$WHOLE $UNREAD
 unparseable|$WHOLE $UNREAD
 jobs-missing|$WHOLE $UNREAD
 ROWS
-[ "$push_rows" -eq 19 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+[ "$push_rows" -eq 20 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
 # The probes: a red Linux leg owes its suites on Linux alone, and a group
 # that left a suite out proves its every other suite.
 push_select red-leg >/dev/null
@@ -322,6 +333,24 @@ check "push route: the red leg's other package owes its suites" false "$(in_list
 push_select kept-subset >/dev/null
 check "push route: the suite the group left out is owed" false "$(in_list skipped_suites "$P_TOOLS")"
 check "push route: the group's kept suites are proved" true "$(in_list skipped_suites tools/tests/ci-aggregate.test.sh)"
+# What the push's macOS leg runs of SUITE..., through the leg's own skip list
+# and native filter, or the filter's refusal.
+macos_leg() { # SUITE...
+  local kept status=0
+  kept="$(SKIPPED_SUITES="$(field skipped_suites_macos <"$TMP/push-out")" "$JOB_SET" --suite-list "$@" |
+    (cd "$ROOT" && tools/macos-test-contracts --filter) 2>"$TMP/macos-leg-err")" || status=$?
+  [ "$status" -eq 0 ] || { sed -n 's/^macos-test-contracts: //p' "$TMP/macos-leg-err"; return 0; }
+  printf '%s' "$kept" | paste -sd ' ' -
+}
+push_select replacement-split >/dev/null
+check "push route: an owed original keeps the replacement its group proved" "$P_NATIVE" \
+  "$(macos_leg "$P_MERGE" "$P_NATIVE" "$P_VIEW")"
+# A green leg proves no main-only suite it filtered out: the push's
+# dedicated job still runs it.
+push_select all-proved >/dev/null
+check "push route: a main-only suite the group filtered out stays selected" false "$(in_list skipped_suites "$P_MAIN_ONLY")"
+check "push route: and the dedicated job runs it" true \
+  "$(field main_suites <"$TMP/push-out" | jq --arg base "$(basename "$P_MAIN_ONLY" .sh)" 'any(.[]; .suite == $base)')"
 # The one-target world: the group ran orch/lib alone, so every other target
 # of both runtimes runs on the push's orch-rest leg.
 push_world one-target
