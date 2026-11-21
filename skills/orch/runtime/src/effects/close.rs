@@ -310,9 +310,10 @@ pub fn close_lane(
     // Before any provider read or stop: the close transition refuses the
     // same, but only after the running lane's provider stop.
     crate::ops::lane::refuse_other_close(path, &intents, &r.item, asked)?;
+    let retry = asked == CloseKind::Full && intents.iter().any(|i| lane.provider_close_answered(i));
     let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
     let host = hosted::host_of(&lane).to_owned();
-    let caps = if host == "local" {
+    let caps = if host == "local" || retry {
         Capabilities::local()
     } else {
         hosted::capabilities(&scripts, &host).map_err(|cause| {
@@ -336,6 +337,9 @@ pub fn close_lane(
         lane,
         socket,
     };
+    if retry {
+        return close.persist(Ground::Exited, Landing::default());
+    }
     match caps.stop {
         Some(StopKind::None) => close.cloud(),
         Some(StopKind::Window | StopKind::Verb) => match close.lane.status {

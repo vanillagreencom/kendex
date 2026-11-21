@@ -776,7 +776,7 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
 
 /// The state of the sandbox the provider's `list` names for `item`: the
 /// second field of a row whose first ends in `/ITEM`, in any case, outside
-/// an `available`, `exited` or `teardown` row; `None` where no such row stands.
+/// an `available` row; `None` where no such row stands, the sandbox gone.
 /// `list` is the protocol's one presence read. `Err` is a list that failed
 /// or was refused at the bound ([`BUSY`]).
 pub fn lists_item(
@@ -793,8 +793,7 @@ pub fn lists_item(
         let mut fields = row.split('\t');
         let name = fields.next().unwrap_or("").to_ascii_lowercase();
         let state = fields.next().unwrap_or("");
-        (!matches!(state, "available" | "exited" | "teardown") && name.ends_with(&suffix))
-            .then(|| state.to_owned())
+        (state != "available" && name.ends_with(&suffix)).then(|| state.to_owned())
     }))
 }
 
@@ -2404,7 +2403,14 @@ pub fn close_finished(
         return;
     };
     let reason = if matches!(merge, FinishedMerge::Eligible { .. }) {
-        let left = if host_of(lane) == "local" {
+        let left = if pass
+            .fleet
+            .intents
+            .iter()
+            .any(|i| lane.provider_close_answered(i))
+        {
+            Answer::Gone
+        } else if host_of(lane) == "local" {
             left_locally(pass.state_dir, lane)
         } else if caps.files == Files::Verb {
             record_left(pass.scripts, lane)

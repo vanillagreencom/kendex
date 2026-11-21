@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use super::{Run, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Refusal};
+use crate::mailbox::{Drain, Mailbox, Refusal};
 use crate::ops::{
     self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, RecordLaneProgress, Report,
     Request,
@@ -457,24 +457,48 @@ impl<'a> LaneOperation<'a> {
     /// Preserve the last outbound mail before the provider removes its box.
     /// A repeat reads the host again, retaining the prior snapshot if the
     /// sandbox has since disappeared.
-    pub(super) fn finish_host_mail(&self, lane: &Lane) -> std::result::Result<(), String> {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the close drops its own disposable provider snapshot after both mailbox reads"
+    )]
+    pub(super) fn finish_host_mail(
+        &self,
+        lane: &Lane,
+        retry: bool,
+    ) -> std::result::Result<(), String> {
         let Some(host) = lane.mail_host() else {
             return Ok(());
         };
         let root = lane.mail_root.as_deref().ok_or("mail-root-unrecorded")?;
         let mailbox = Mailbox::new(self.run.engine.reach.mail_program.clone());
-        let snapshot = match mailbox.outbox(&lane.item, root, host) {
+        let dir = &self.run.engine.state_dir;
+        let id = self.engine.intent_id();
+        let drain = Drain {
+            item: lane.item.clone(),
+            root: root.into(),
+            after: 0,
+        };
+        let scratch = agent_runtime::record::receipt_path(dir, id).with_extension("close-read");
+        let files: Vec<_> = crate::watch::mail::snapshot_files(&drain).collect();
+        crate::provider::snapshot(host, &files, &scratch, "mail").map_err(|e| e.to_string())?;
+        let capture = mailbox
+            .drain(&drain, Some(host), Some(&scratch))
+            .and_then(|classified| {
+                let mut snapshot = mailbox.outbox(&lane.item, root, host, &scratch)?;
+                snapshot
+                    .envelopes
+                    .retain(|envelope| classified.envelopes.iter().any(|e| e.id == envelope.id));
+                Ok(snapshot)
+            });
+        let _ = std::fs::remove_dir_all(&scratch);
+        let snapshot = match capture {
             Ok(snapshot) => snapshot,
-            Err(_) if matches!(self.host_listed(lane), Ok(None)) => return Ok(()),
+            Err(_) if retry || matches!(self.host_listed(lane), Ok(None)) => return Ok(()),
             Err(cause) => return Err(format!("mail-read-failed: {cause}")),
         };
         if !snapshot.envelopes.is_empty() {
-            crate::watch::mail::keep_close_mail(
-                &self.run.engine.state_dir,
-                self.engine.intent_id(),
-                &snapshot,
-            )
-            .map_err(|e| format!("close-mail-unwritten: {e}"))?;
+            crate::watch::mail::keep_close_mail(dir, id, &drain, snapshot)
+                .map_err(|e| format!("close-mail-unwritten: {e}"))?;
         }
         Ok(())
     }

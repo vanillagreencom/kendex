@@ -2813,6 +2813,10 @@ impl Fleet {
         let (mut mail, mut rest) = (Vec::new(), Vec::new());
         let (mut after_read, mut after_probe) = (false, false);
         for line in lines {
+            if line == "read-many" || line.starts_with("requested ") {
+                mail.push(line);
+                continue;
+            }
             let read = line.contains("/tmp/lane-mail/");
             let probe = after_read && line.starts_with("touch --item ");
             let state = after_probe && line == "list";
@@ -2997,7 +3001,29 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
                 .any(|line| line.contains(&format!("{REMOTE_ROOT}/tmp/lane-mail/KEN-1/"))),
             "{case}: the mailbox was read on the record's host: {mail:?}"
         );
+        if case == "listed standing" {
+            fleet.answer("CAT_STATUS", "1");
+            fleet.answer("TOUCH_STATUS", "1");
+            fleet.answer("CLOSE_LINE", "closed=absent item=KEN-1");
+            let retry = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+            assert_eq!(retry["result"]["word"], "closed", "{retry}");
+        }
     }
+
+    let mut fleet = Fleet::hosted(4);
+    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    fleet.plant_tracker("KEN-1", "completed");
+    fleet.answer("HARNESS_STATE", "exited");
+    fleet.answer("CAT_STATUS", "1");
+    fleet.answer("LIST", "o/r/KEN-1\texited\t-\tlane.example");
+    let held = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
+    assert!(
+        !fleet
+            .provider_calls()
+            .iter()
+            .any(|call| call.starts_with("close "))
+    );
 }
 
 #[test]
@@ -3044,17 +3070,25 @@ fn a_merged_hosted_close_forwards_unseen_mail_before_teardown_and_reads_again_on
     let old = json!({"id": "old", "kind": "notice", "text": "Already delivered."});
     let last = json!({"id": "last", "kind": "notice", "text": "Merged successfully."});
     let late = json!({"id": "late", "kind": "notice", "text": "Verification finished."});
-    std::fs::write(&source, format!("{old}\n{last}\n")).unwrap();
+    std::fs::write(
+        source.with_file_name("to-lane.jsonl"),
+        "{\"id\":\"answer\",\"kind\":\"answer\",\"re\":\"a1\"}\n",
+    )
+    .unwrap();
+    std::fs::write(&source, format!("{old}\n{last}\n{ASK_A1}\n")).unwrap();
     fleet.answer("LIST", "o/r/KEN-1\thosted\t-\tlane.example");
     let request = json!({"op": "close-lane", "item": "KEN-1"});
     let held = fleet.close(request.clone());
     assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
     assert!(!source.exists());
-    std::fs::write(&source, format!("{old}\n{last}\n{late}\n")).unwrap();
+    std::fs::write(&source, format!("{old}\n{last}\n{ASK_A1}\n{late}\n")).unwrap();
     fleet.answer("LIST", "");
     let closed = fleet.close(request);
     assert_eq!(closed["result"]["word"], "closed", "{closed}");
     assert!(!source.exists());
+    let mut next_phase = fleet.fleet();
+    next_phase["lanes"][0]["status"] = json!("preparing");
+    std::fs::write(&paths.state, serde_json::to_vec(&next_phase).unwrap()).unwrap();
 
     let mail = dir.join("watch-mail");
     write_executable(
@@ -4325,6 +4359,11 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             "exited holding an ask" => {
                 case.answers.push(("HARNESS_STATE", "exited"));
                 case.mail = ASK_A1;
+            }
+            "parked" => {
+                case.answers.extend(MAIL_UNREACHABLE);
+                case.answers
+                    .push(("LIST", "o/r/KEN-1\texited\t-\tlane.example"));
             }
             _ => {}
         }

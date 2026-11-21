@@ -82,6 +82,12 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     if operation.lane_moved(&lane) {
         return moved_lane(run, operation, close.overseer, close.observed(json!({})));
     }
+    if lane.provider_close_answered(&intent) {
+        return close.finish(
+            operation,
+            json!({"closed": intent.observation.unwrap_or_default()["closed"]}),
+        );
+    }
     // The worktree's validation runs and the worktree itself are owed from
     // the close's start, acquired before the first signal, except under a
     // `no-landing` disposition: it retires the attempt for the session that
@@ -505,6 +511,7 @@ impl Close<'_> {
         mut operation: LaneOperation,
         mut observation: Value,
     ) -> Result<EffectOutcome> {
+        let retry = observation["closed"].is_string();
         if !self.no_landing()
             && let Err(cause) = operation.stop_validations(self.lane)?
         {
@@ -532,15 +539,17 @@ impl Close<'_> {
                 }
             }
         }
-        if provider_stops(self.ground, self.lane)
+        if !retry
+            && provider_stops(self.ground, self.lane)
             && !self.host_stopped(&mut operation, &mut observation)?
         {
             return Ok(self.hold(operation, observation));
         }
         if provider_closes(self.ground, self.lane) {
             let merged = self.merged(&operation, &mut observation);
-            if (merged || record_merged(self.lane) || self.cycle.is_some_and(cycle_merged))
-                && let Err(cause) = operation.finish_host_mail(self.lane)
+            if self.lane.status == crate::state::LaneStatus::Running
+                && (merged || record_merged(self.lane) || self.cycle.is_some_and(cycle_merged))
+                && let Err(cause) = operation.finish_host_mail(self.lane, retry)
             {
                 observation["cause"] = json!(cause);
                 return Ok(self.hold(operation, observation));
@@ -552,14 +561,14 @@ impl Close<'_> {
                 // The provider's exit is no proof its sandbox is gone: its
                 // `list` is asked after it to check for a standing sandbox.
                 Ok(HostClosed::Closed { line }) => match operation.host_listed(self.lane) {
-                    Ok(None) => observation["host_close"] = json!(line),
-                    Ok(Some(state)) => {
+                    Ok(Some(state)) if !matches!(state.as_str(), "exited" | "teardown") => {
                         observation["host_close"] = json!("standing");
                         observation["listed"] = json!(state);
                         observation["closed"] = json!(line);
                         observation["cause"] = json!("host-still-listed");
                         return Ok(self.hold(operation, observation));
                     }
+                    Ok(Some(_) | None) => observation["host_close"] = json!(line),
                     Err(cause) => {
                         observation["host_close"] = json!("unconfirmed");
                         observation["closed"] = json!(line);
@@ -895,6 +904,11 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
     let hold = |operation: LaneOperation, observation: Value| {
         operation.hold(reconcile_observation(&item, observation))
     };
+    if lane.provider_close_answered(intent) {
+        let mut observation = intent.observation.clone().unwrap_or_default();
+        observation["close_out"] = json!("owed");
+        return Ok(hold(operation, observation));
+    }
     // The set's recorded pane as it stands, written on the observation; a
     // pane gone or none stands is what the close judges beside the recorded
     // process's end, a pane present or unobservable settles nothing here.

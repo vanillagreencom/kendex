@@ -5964,11 +5964,10 @@ fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() 
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    let (world, host) = HostedWorld::ssh(dir.path(), &server, &fleet, &["KEN-1"]);
-    drop(host.lead("KEN-1", "claude"));
-    host.leave("KEN-1");
-    let (mut lane, _) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
-    lane["mail_root"] = json!(host.lane_root("KEN-1").display().to_string());
+    let world = HostedWorld::new(dir.path(), &server, &fleet);
+    let (lane, _) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
+    let status = ("status --item KEN-1 --harness claude", ok("exited\n"));
+    world.plant_host(std::slice::from_ref(&status));
     fleet.set_lanes(vec![lane]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
@@ -5996,6 +5995,39 @@ fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() 
     }
     assert_eq!(event_lines(&first), vec!["EVENT lane-exited gh-1"]);
     assert_eq!(event_lines(&second), Vec::<String>::new());
+
+    world.plant_gh(json!({"graphql number=7 cursor=": pull_seven_timeline()}));
+    let absent_files: Vec<Value> = ["to-overseer.jsonl", "to-overseer.jsonl.numbering", "to-lane.jsonl", "to-lane.jsonl.numbering", "to-lane.cursor", "to-lane.cursor.lock"]
+        .map(|name| json!({"item":"KEN-1", "path":format!("/remote/KEN-1/tmp/lane-mail/KEN-1/{name}"), "status":2, "data":""})).into();
+    let list = ("list", ok("o/r/KEN-1\thosted\t-\tlane.example\n"));
+    world.plant_host(&[
+        status.clone(),
+        list.clone(),
+        ("read-many", ok(&json!(absent_files).to_string())),
+        ("close --item KEN-1 --merged", ok("kept=none\n")),
+        ("close --item KEN-1", ok("kept=none\n")),
+    ]);
+    let held = driver.pass(&fleet.read());
+    assert!(
+        held.failed
+            .as_deref()
+            .is_some_and(|cause| cause.contains("cause=host-still-listed")),
+        "{held:?}"
+    );
+    world.plant_host(&[
+        status,
+        list,
+        ("cat --item KEN-1 /remote/KEN-1/.git", answer(1, "")),
+        ("read-many", answer(1, "")),
+        (
+            "close --item KEN-1 --merged",
+            ok("closed=absent item=KEN-1\n"),
+        ),
+        ("close --item KEN-1", ok("closed=absent item=KEN-1\n")),
+    ]);
+    let closed = driver.pass(&fleet.read());
+    assert_eq!(event_lines(&closed), ["EVENT lane-closed KEN-1"]);
+    assert_eq!(fleet.read().lanes[0].status, state::LaneStatus::Done);
 }
 
 /// A walled hosted lane's harness must not run on beside the successor the

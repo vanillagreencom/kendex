@@ -774,20 +774,36 @@ impl Mailbox {
             &[
                 "--item", "overseer", "--root", &root, "--box", "to-lane", "--after", &after,
             ],
-            None,
+            &[],
         )
     }
 
-    /// Read the final outbound box whole so the watch can detect replacement.
-    pub(crate) fn outbox(&self, item: &str, root: &str, host: &str) -> Result<BoxEvents, Refusal> {
+    /// Read logical positions from the same snapshot the drain classifies.
+    pub(crate) fn outbox(
+        &self,
+        item: &str,
+        root: &str,
+        host: &str,
+        snapshot: &Path,
+    ) -> Result<BoxEvents, Refusal> {
         let outbox = "to-overseer";
         let args = ["--item", item, "--root", root, "--box", outbox, "--host"];
-        self.read_box_events(&args, Some(host))
+        self.read_box_events(
+            &args,
+            &[
+                ("ORCH_LANE_HOST", host.as_ref()),
+                ("LANE_HOST_READ_DIR", snapshot.as_os_str()),
+            ],
+        )
     }
 
-    fn read_box_events(&self, args: &[&str], host: Option<&str>) -> Result<BoxEvents, Refusal> {
+    fn read_box_events(
+        &self,
+        args: &[&str],
+        env: &[(&str, &std::ffi::OsStr)],
+    ) -> Result<BoxEvents, Refusal> {
         const VERB: &str = "events";
-        let stdout = self.call_on(VERB, args, host, None)?.ok(VERB)?;
+        let stdout = self.call_in(VERB, args, env, None)?.ok(VERB)?;
         let mut lines = stdout.lines();
         let (count, first) = header(VERB, lines.next().ok_or_else(|| reply(VERB, "short", ""))?)?;
         let mut envelopes = Vec::new();

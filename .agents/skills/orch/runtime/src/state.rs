@@ -682,6 +682,19 @@ pub struct Lane {
 
 // The one reading of a lane's channel the runtime makes.
 impl Lane {
+    /// An open close of this session whose provider returned a close receipt.
+    pub(crate) fn provider_close_answered(&self, intent: &Intent) -> bool {
+        intent.op == agent_runtime::intent::EffectOp::CloseResources
+            && intent.open()
+            && intent.target == self.item
+            && intent.extra.get("lane_since").and_then(Value::as_str)
+                == self.session_since.as_deref()
+            && intent
+                .observation
+                .as_ref()
+                .is_some_and(|o| o["closed"].is_string())
+    }
+
     /// Whether the lane delivers `item`: its own, or one joined to it.
     pub fn carries(&self, item: &str) -> bool {
         self.item == item || self.carried.iter().any(|c| c.item == item)
