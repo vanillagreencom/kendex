@@ -46,7 +46,7 @@ The launch fails a Pi lane before its window where the wake would not load ([lan
 
 `pi-selection-unresolved` means the selection in the settings `file=` names is no list of strings, or holds an `entry=` the gate cannot read as a plain path. Such an entry holds a glob character, a `~`, a `file:` URL or a backslash, or starts with `#`, `./` or `!` after its prefix. Rewrite that selection as plain paths, `extensions/lane-mail-wake.ts` among them.
 
-On a hosted lane the gate reads the same files on the host through the provider's `cat`: the Pi root's `settings.json` (the provider's root, else `.pi/agent`) and the worktree's `.pi/settings.json`. Repair a refusal there in those host files: `compaction-on` is a settings file that leaves Pi's compaction on, and `reason=no-window-read` is a carrier that puts no `context_window` on the hook payloads.
+On a hosted lane the gate reads the Pi root's `settings.json` and the worktree's `.pi/settings.json` through the provider's `cat`. The provider's `create` supplies `pi-root`. The default `.pi/agent` is available on a provider that supports home-relative transfers, and a confined provider needs a usable named root. See [Launch on a provider](../schemas/lane-host.md#launch-on-a-provider). Repair `compaction-on` in the host settings file that leaves compaction enabled. For `reason=no-window-read`, update the host's carrier to one that puts `context_window` on hook payloads.
 
 ## Standing watch (Pi)
 

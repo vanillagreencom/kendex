@@ -1115,25 +1115,29 @@ fn hosted_launch(
         Harness::Copilot => Some(("copilot-home", created.copilot_home.as_deref())),
         Harness::Claude | Harness::Codex => None,
     };
-    if let Some((field, home)) = home_field {
-        let directory = home.map(|home| format!("{home}/."));
-        if let Some(cause) = hosted::development_root_refusal(
+    let confinement = if home_field.is_some() || (harness == Harness::Claude && bypass) {
+        let directory = home_field.and_then(|(_, home)| home.map(|home| format!("{home}/.")));
+        match hosted::development_root_refusal(
             &scripts,
             provider,
             &r.item,
             directory.as_deref().unwrap_or("/"),
         ) {
-            return failed(
-                operation,
-                &format!(
-                    "host-create-field-required field={field} harness={harness} host={provider} cause={cause}"
-                ),
-            );
+            Ok(confinement) => confinement,
+            Err(cause) => return failed(operation, &cause),
         }
+    } else {
+        None
+    };
+    if let (Some((field, _)), Some(cause)) = (home_field, &confinement) {
+        return failed(
+            operation,
+            &format!(
+                "host-create-field-required field={field} harness={harness} host={provider} cause={cause}"
+            ),
+        );
     }
-    let claude_launch_consent = harness == Harness::Claude
-        && bypass
-        && hosted::development_root_refusal(&scripts, provider, &r.item, "/").is_some();
+    let claude_launch_consent = harness == Harness::Claude && confinement.is_some();
     let read = |path: &str| match hosted::fetch(&scripts, provider, &r.item, path) {
         hosted::Answer::Live(text) => Ok(Some(text)),
         hosted::Answer::Gone => Ok(None),

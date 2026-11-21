@@ -7058,6 +7058,13 @@ fn a_development_root_provider_keeps_hosted_launches_out_of_the_home() {
             Some("copilot-home=.copilot"),
             Some("host-create-field-required field=copilot-home"),
         ),
+        (
+            "pi",
+            "github-copilot/gpt-6",
+            Some("/cache/orch-runtime"),
+            Some("pi-root={pi-root}"),
+            Some("compaction-on harness=pi file={pi-root}/settings.json"),
+        ),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -7068,7 +7075,11 @@ fn a_development_root_provider_keeps_hosted_launches_out_of_the_home() {
         let record = format!("{git}/lane-launch/ken-h.json");
         let worktree = world.host();
         let account = world.runner.state_dir().display().to_string();
-        let create_home = home.map_or(String::new(), |field| format!("\t{field}"));
+        let pi_root = root.join("pi-agent");
+        let pi_root = pi_root.to_str().unwrap();
+        let create_home = home.map_or(String::new(), |field| {
+            format!("\t{}", field.replace("{pi-root}", pi_root))
+        });
         world.plant_detached("exec bash -c", json!({
             format!("create --item KEN-H --repo o/r --harness {harness} --account {account}"):
                 {"stdout": format!("ssh-target=lane.example\tpath={worktree}\tremote-prefix=exec bash -c{create_home}\n")},
@@ -7077,6 +7088,11 @@ fn a_development_root_provider_keeps_hosted_launches_out_of_the_home() {
             format!("cat --item KEN-H {marker}"): {"stdout": format!("{worktree}\n")},
             format!("cat --item KEN-H {record}"):
                 {"stdout": json!({"identity_file": format!("{git}/lane-host-pid"), "runtime": runtime}).to_string()},
+            format!("cat --item KEN-H {pi_root}/."):
+                {"exit": 1, "stderr": "cat: Is a directory\n"},
+            format!("cat --item KEN-H {pi_root}/settings.json"):
+                {"stdout": r#"{"compaction":{"enabled":true}}"#},
+            format!("cat --item KEN-H {worktree}/.pi/settings.json"): {"exit": 2},
         }));
         std::fs::write(
             world.scripts.join("development-root"),
@@ -7108,11 +7124,12 @@ fn a_development_root_provider_keeps_hosted_launches_out_of_the_home() {
             }
         }
         if let Some(cause) = cause {
+            let cause = cause.replace("{pi-root}", pi_root);
             assert_eq!(report["intent"]["outcome"], "failed", "{report}");
             assert!(
                 report["intent"]["observation"]["cause"]
                     .as_str()
-                    .is_some_and(|observed| observed.starts_with(cause)),
+                    .is_some_and(|observed| observed.starts_with(&cause)),
                 "{report}"
             );
             assert!(!world.tools.join("ssh.log").exists());
@@ -7146,6 +7163,37 @@ fn a_development_root_provider_keeps_hosted_launches_out_of_the_home() {
                 "{verbs:?}"
             );
         }
+    }
+}
+
+#[test]
+fn a_hosted_launch_preserves_a_failed_boundary_probe_before_account_files() {
+    for (harness, model) in [("claude", "claude-fable-5-1"), ("copilot", "gpt-6")] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let world = HostedLaunch::new(&server, dir.path(), json!({}));
+        let mut request = world.request();
+        let account = world.runner.state_dir().display().to_string();
+        request["harness"] = json!(harness);
+        request["model"] = json!(model);
+        world.plant_detached("exec true", json!({
+            format!("create --item KEN-H --repo o/r --harness {harness} --account {account}"):
+                {"stdout": format!("ssh-target=lane.example\tpath={}\tremote-prefix=exec true\n", world.host())},
+        }));
+        let report = effect_report(
+            &world
+                .runner
+                .op_fleet_env(&request, &[("ORCH_LANE_HOST_SHORT_MAX_CALLS", "0")]),
+        );
+        assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+        assert_eq!(
+            report["intent"]["observation"]["cause"],
+            format!(
+                "host-path-probe-failed path=/ host={} cause=setting-invalid name=ORCH_LANE_HOST_SHORT_MAX_CALLS value=0",
+                world.provider()
+            ),
+        );
+        assert!(!world.tools.join("ssh.log").exists());
     }
 }
 

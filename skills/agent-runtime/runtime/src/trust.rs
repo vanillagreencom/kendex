@@ -22,10 +22,11 @@
 //! launch in bypass-permissions mode also opens on a one-time confirmation
 //! per config dir, answered by `skipDangerousModePermissionPrompt` in that
 //! dir's settings.json, which the launch records the same way. A hosted
-//! Claude lane's consent is recorded by the same rule in the host's files,
-//! through the provider's file verbs.
+//! Claude lane uses the same rule when the provider serves the account
+//! file. On a provider with confined transfers, the full-bypass launch
+//! posture supplies consent through the launch builder's settings overlay.
 //!
-//! An answer already recorded that is not trust or consent refuses: it is a
+//! An explicit refusal in an account file the launch reads stands: it is a
 //! decision somebody gave in the harness's own spelling, and overwriting it
 //! would run the launch at full trust against that answer.
 
