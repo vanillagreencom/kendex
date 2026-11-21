@@ -16,7 +16,9 @@
 # when absent, `signal` a signal this call ends itself by after its output,
 # so a row reads a call with no answer, and `kill_ancestor` N the process N
 # levels above this one, ended by SIGKILL before any output (1 is the
-# program that asked it). A key the map
+# program that asked it). An answer with `after` (an argv) and `unmet` (an
+# answer) answers `unmet` until the log holds that argv, for a provider whose
+# verb answers by what an earlier one did. A key the map
 # lacks is exit 64 with `lane-host-fixture: unplanned argv=[...]` on stderr,
 # so a row that forgot an answer reads an unreadable call, never a missing
 # file. A `put` keeps the bytes it was handed in `lane-host.put.N` beside,
@@ -54,6 +56,10 @@ reply="$(jq -c --arg k "$key" --arg h "$host $key" --arg n "$nth" '.[$h + $n] //
 if [ -z "$reply" ]; then
   printf 'lane-host-fixture: unplanned argv=[%s]\n' "$key" >&2
   exit 64
+fi
+after="$(jq -r '.after // empty' <<<"$reply")"
+if [ -n "$after" ] && ! grep -qxF -- "ORCH_LANE_HOST=$host $after" "$here/lane-host.log"; then
+  reply="$(jq -c '.unmet' <<<"$reply")"
 fi
 ancestor="$(jq -r '.kill_ancestor // empty' <<<"$reply")"
 if [ -n "$ancestor" ]; then

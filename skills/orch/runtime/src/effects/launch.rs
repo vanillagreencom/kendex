@@ -1068,19 +1068,35 @@ fn hosted_launch(
         Ok(mode) => lane_brief(&opening, harness, &r.item, mode),
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
-    // A parked lane's sandbox is stopped with its disk kept: the provider's
-    // start brings it back before `create --relaunch` resumes the harness on
-    // that disk. A provider answers `sandbox-started` for a sandbox already
-    // up, so a relaunch after a start that failed asks it again. Each ask is
-    // recorded before it is made, so a launch cut after it leaves a step
-    // its reconcile holds.
-    if parked {
+    // `create --relaunch` resumes on the sandbox the item's work stands in,
+    // which the provider's start brings up first: a parked lane's, stopped
+    // with its disk kept, and on any other relaunch one the provider's list
+    // still names, as a no-landing close keeps it. A provider may refuse a
+    // create over a standing sandbox no start took up as another session's
+    // (`item-owned`). A provider answers `sandbox-started` for a sandbox
+    // already up, so a relaunch after a start that failed asks it again. A
+    // provider without `start` holds a sandbox that never stops, which its
+    // create reuses as it stands; only a parked one needs the verb. Each
+    // ask is recorded before it is made, so a launch cut after it leaves a
+    // step its reconcile holds.
+    let listed = relaunch
+        && !parked
+        && match hosted::lists_item(&scripts, provider, &r.item) {
+            Ok(state) => state.is_some(),
+            Err(cause) => return failed(operation, &format!("host-list-failed {cause}")),
+        };
+    *stands |= listed;
+    if parked || listed {
         operation.record_phase(Phase::Preparing {
             step: HOST_START.to_owned(),
             at: provider.to_owned(),
         })?;
         match hosted::start(&scripts, provider, &r.item) {
-            Ok(()) => *stands = true,
+            Ok(hosted::Start::Started) => *stands = true,
+            Ok(hosted::Start::Absent(cause)) if parked => {
+                return failed(operation, &format!("host-start-failed {cause}"));
+            }
+            Ok(hosted::Start::Absent(_)) => {}
             Err(hosted::Asked::Failed(cause)) => {
                 return failed(operation, &format!("host-start-failed {cause}"));
             }

@@ -8313,6 +8313,170 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
     }
 }
 
+/// A lane that handed off is closed on the `no_landing` ground, which keeps
+/// its sandbox, then relaunched over its record. Where the provider's list
+/// still names the sandbox, its start takes it up before `create
+/// --relaunch`, which the provider refuses as another session's
+/// (`item-owned`) over a standing sandbox no start took up. A list naming
+/// none asks no start, and a list that fails refuses with nothing asked of
+/// the sandbox.
+#[test]
+fn a_relaunch_after_a_no_landing_close_starts_the_standing_sandbox_before_its_create() {
+    struct Row {
+        name: &'static str,
+        list: Value,
+        outcome: &'static str,
+        starts: bool,
+        creates: bool,
+    }
+    let standing = json!({"stdout": "o/r/KEN-H\tstarted\t3m\tlane-o-r-ken-h\n"});
+    let rows = [
+        Row {
+            name: "standing",
+            list: standing,
+            outcome: "confirmed",
+            starts: true,
+            creates: true,
+        },
+        Row {
+            name: "gone",
+            list: json!({"stdout": ""}),
+            outcome: "confirmed",
+            starts: false,
+            creates: true,
+        },
+        Row {
+            name: "list failed",
+            list: json!({"exit": 1, "stderr": "lane-host-fixture: list-failed\n"}),
+            outcome: "failed",
+            starts: false,
+            creates: false,
+        },
+    ];
+    for row in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let mut world = HostedLaunch::new(&server, dir.path(), record);
+        world
+            .runner
+            .env
+            .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
+        let mut answers = json!({});
+        for file in [
+            "to-lane.jsonl",
+            "to-overseer.jsonl",
+            "to-lane.cursor",
+            "to-lane.cursor.lock",
+        ] {
+            answers[format!(
+                "cat --item KEN-H {}/tmp/lane-mail/KEN-H/{file}",
+                world.host()
+            )] = json!({"exit": 2});
+        }
+        world.plant_detached("exec true", answers.clone());
+        let launched = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(
+            launched["intent"]["outcome"], "confirmed",
+            "{}: {launched}",
+            row.name
+        );
+
+        // The recovery close: the harness reads exited after the provider's
+        // stop, and the sandbox is kept.
+        let status = "status --item KEN-H --harness claude";
+        let reads = |world: &HostedLaunch| world.verbs().iter().filter(|v| *v == status).count();
+        let read = reads(&world);
+        answers[format!("{status}#{}", read + 1)] = json!({"stdout": "running\n"});
+        for nth in read + 2..read + 12 {
+            answers[format!("{status}#{nth}")] = json!({"stdout": "exited\n"});
+        }
+        world.plant_detached("exec true", answers.clone());
+        let closed = effect_report(&world.runner.op_fleet(&json!({
+            "op": "close-owned-resources",
+            "item": "KEN-H",
+            "no_landing": {"reason": "handoff", "source": "overseer", "interrupt": true},
+        })));
+        assert_eq!(
+            closed["intent"]["outcome"], "confirmed",
+            "{}: {closed}",
+            row.name
+        );
+        assert_eq!(
+            world.runner.fleet()["lanes"][0]["sandbox"],
+            "standing",
+            "{}",
+            row.name
+        );
+
+        // The relaunch over the kept sandbox.
+        let from = world.verbs().len();
+        let read = reads(&world);
+        for nth in read + 1..read + 12 {
+            answers[format!("{status}#{nth}")] = json!({"stdout": "running\n"});
+        }
+        let account = world.runner.state_dir().display().to_string();
+        let created = json!({
+            "stdout": format!("ssh-target=lane.example\tpath={}\tremote-prefix=exec true\n", world.host())
+        });
+        answers[format!(
+            "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+        )] = json!({
+            "after": "start --item KEN-H",
+            "unmet": {"exit": 75},
+            "stdout": created["stdout"],
+        });
+        if !row.starts {
+            answers[format!(
+                "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+            )] = created;
+        }
+        answers["list"] = row.list;
+        answers["start --item KEN-H"] = json!({"stdout": "sandbox-started item=KEN-H\n"});
+        answers["cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"] =
+            json!({"stdout": format!("{}\n", world.host())});
+        world.plant_detached("exec true", answers);
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        let verbs = world.verbs()[from..].to_vec();
+        assert_eq!(
+            report["intent"]["outcome"], row.outcome,
+            "{}: {report}\n{verbs:?}",
+            row.name
+        );
+        let at = |verb: &str| verbs.iter().position(|v| v.starts_with(verb));
+        assert_eq!(
+            at("start ").is_some(),
+            row.starts,
+            "{}: {verbs:?}",
+            row.name
+        );
+        assert_eq!(
+            at("create ").is_some(),
+            row.creates,
+            "{}: {verbs:?}",
+            row.name
+        );
+        if row.starts {
+            assert!(at("start ") < at("create "), "{}: {verbs:?}", row.name);
+        }
+        if !row.creates {
+            assert!(
+                report["intent"]["observation"]["cause"]
+                    .as_str()
+                    .is_some_and(|c| c.starts_with("host-list-failed ")),
+                "{}: {report}",
+                row.name
+            );
+            assert_eq!(
+                world.runner.fleet()["lanes"][0]["sandbox"],
+                "standing",
+                "{}: the kept sandbox still holds its slot",
+                row.name
+            );
+        }
+    }
+}
+
 /// A failed host call's cause is the provider's refusal: the last stderr
 /// line carrying `fix=`, else its first line, never a notice printed before
 /// a `fix=` refusal nor one printed after a keyed refusal, and
