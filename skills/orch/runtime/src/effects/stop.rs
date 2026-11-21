@@ -27,7 +27,7 @@ use super::grants;
 use super::lane_operation::{LaneOperation, WorktreeRelease};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::state::{CloseGround, Lane, LaneMembers, TerminalVerdict};
+use crate::state::{CloseGround, Lane, LaneMembers, LaneStatus, TerminalVerdict};
 use crate::watch::hosted::{self, Asked, HostClosed};
 use crate::watch::lanes::{self, LaneState};
 use agent_runtime::effects::{
@@ -74,6 +74,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         ground: members.close.as_ref(),
         cycle: members.cycle.as_ref().map(|row| &row.cycle),
         overseer: overseer.as_ref(),
+        prior: intent.observation.as_ref(),
     };
     // A lane whose stamp or launch keys are not the intent's is a moved lane
     // (the one judgement the store applies too): before any signal the close
@@ -205,6 +206,9 @@ struct Close<'a> {
     /// The controller record, whose tmux socket the lane's pane is looked
     /// for on before the ambient one, as the close's own read looks.
     overseer: Option<&'a Overseer>,
+    /// What an earlier run of this intent recorded ([`RECEIPTS`]): a repeat
+    /// whose own run reads them gone keeps them.
+    prior: Option<&'a Value>,
 }
 
 impl Close<'_> {
@@ -483,6 +487,7 @@ impl Close<'_> {
             Ok(false) => {
                 observation["host_stop"] = json!("exit-timeout");
                 observation["processes"] = json!(processes);
+                observation["cause"] = json!("exit-timeout");
                 Ok(false)
             }
             Err(cause) => {
@@ -523,6 +528,8 @@ impl Close<'_> {
                     observation["item_files"] = json!("removed");
                     if let Some(archive) = archive {
                         observation["archive"] = json!(archive.display().to_string());
+                    } else if let Some(kept) = self.prior.and_then(|p| p.get("archive")) {
+                        observation["archive"] = kept.clone();
                     }
                 }
                 Err(cause) => {
@@ -538,17 +545,46 @@ impl Close<'_> {
             return Ok(self.hold(operation, observation));
         }
         if provider_closes(self.ground, self.lane) {
+            // The lane's last mail, read before the provider's close takes
+            // its box. A parked lane's was read at its park, and so was the
+            // mail of one whose sandbox stop failed and owes the park: a
+            // stopped sandbox answers no read.
+            if self.lane.status != LaneStatus::Parked
+                && self.lane.extra.get(crate::state::PARK_OWED).is_none()
+            {
+                match operation.last_mail(self.lane) {
+                    Ok(None) => {}
+                    Ok(Some(mail)) => observation["mail"] = json!(mail),
+                    Err(cause) => {
+                        observation["mail"] = json!("unread");
+                        observation["cause"] = json!(cause);
+                        return Ok(self.hold(operation, observation));
+                    }
+                }
+            }
             let merged = self.merged(&operation, &mut observation);
             match operation.host_close(self.lane, merged)? {
+                // An absent sandbox is the provider's own answer that none
+                // stands; a repeat after an earlier close keeps that close's
+                // archive line.
+                Ok(HostClosed::Closed { line }) if line.starts_with("closed=absent ") => {
+                    let kept = self
+                        .prior
+                        .and_then(|p| p.get("closed"))
+                        .and_then(Value::as_str)
+                        .filter(|kept| kept.starts_with("kept="));
+                    observation["host_close"] = json!(kept.unwrap_or(&line));
+                }
                 // The provider's exit is no proof its sandbox is gone: its
                 // `list` is asked after it, and only a list naming no row
-                // for the item lets the close go on.
+                // for the item, or one torn down, lets the close go on.
                 Ok(HostClosed::Closed { line }) => match operation.host_listed(self.lane) {
                     Ok(None) => observation["host_close"] = json!(line),
                     Ok(Some(state)) => {
                         observation["host_close"] = json!("standing");
                         observation["listed"] = json!(state);
                         observation["closed"] = json!(line);
+                        observation["cause"] = json!("host-still-listed");
                         return Ok(self.hold(operation, observation));
                     }
                     Err(cause) => {
@@ -846,11 +882,25 @@ fn moved_lane(
     Ok(outcome)
 }
 
-/// A reconciled close's observation: the reconcile's word and the item.
-fn reconcile_observation(item: &str, observation: Value) -> Value {
+/// What a close's run records that its repeat cannot read again: the
+/// local archive of the item's files, which leave in the first run, and
+/// the provider's close line (`closed`) of a close held after it answered.
+const RECEIPTS: [&str; 2] = ["archive", "closed"];
+
+/// A reconciled close's observation: the reconcile's word and the item,
+/// with the [`RECEIPTS`] the intent's earlier run recorded (`prior`), which
+/// the repeated close it hands over to reads.
+fn reconcile_observation(item: &str, observation: Value, prior: Option<&Value>) -> Value {
     let mut observation = observation;
     observation["reconcile"] = json!("close");
     observation["item"] = json!(item);
+    for key in RECEIPTS {
+        if let Some(kept) = prior.and_then(|p| p.get(key))
+            && observation.get(key).is_none()
+        {
+            observation[key] = kept.clone();
+        }
+    }
     observation
 }
 
@@ -880,11 +930,15 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             run,
             operation,
             overseer,
-            reconcile_observation(&item, json!({})),
+            reconcile_observation(&item, json!({}), intent.observation.as_ref()),
         );
     }
     let hold = |operation: LaneOperation, observation: Value| {
-        operation.hold(reconcile_observation(&item, observation))
+        operation.hold(reconcile_observation(
+            &item,
+            observation,
+            intent.observation.as_ref(),
+        ))
     };
     // The set's recorded pane as it stands, written on the observation; a
     // pane gone or none stands is what the close judges beside the recorded
@@ -931,8 +985,10 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             return Ok(hold(operation, observation));
         }
         remove_local_gh_token(&lane)?;
-        let mut outcome =
-            operation.settle(Word::Confirmed, reconcile_observation(&item, observation));
+        let mut outcome = operation.settle(
+            Word::Confirmed,
+            reconcile_observation(&item, observation, intent.observation.as_ref()),
+        );
         // A recorded handle still standing after every read is the repeated
         // close's to stop: `stop: pending`, built from the set, never from
         // the lane record.

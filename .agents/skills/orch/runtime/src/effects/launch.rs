@@ -1080,8 +1080,11 @@ fn hosted_launch(
     // provider's sandbox never stops and its create reuses it as it stands,
     // so it is asked neither list nor start. A provider answers
     // `sandbox-started` for a sandbox already up, so a relaunch after a start
-    // that failed asks it again. Each start is recorded before it is made, so
-    // a launch cut after it leaves a step its reconcile holds.
+    // that failed asks it again; one that holds no sandbox for the item has
+    // no disk to resume, and the create makes a fresh one. Each start is
+    // recorded before it is made, so a launch cut after it leaves a step its
+    // reconcile holds.
+    let mut relaunch = relaunch;
     let starts = parked
         || (relaunch
             && match caps.park {
@@ -1097,7 +1100,8 @@ fn hosted_launch(
             at: provider.to_owned(),
         })?;
         match hosted::start(&scripts, provider, &r.item) {
-            Ok(()) => *stands = true,
+            Ok(hosted::Started::Up) => *stands = true,
+            Ok(hosted::Started::Unknown) => relaunch = false,
             Err(hosted::Asked::Failed(cause)) => {
                 return failed(operation, &format!("host-start-failed {cause}"));
             }

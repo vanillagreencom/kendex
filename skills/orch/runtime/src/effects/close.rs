@@ -570,10 +570,11 @@ impl Close<'_> {
     }
 
     /// A record an earlier keep or a failed park left stopped: no pane, no
-    /// harness; the mailbox is read only for an item its tracker holds open.
-    /// A park the record already owes reads its sandbox for nothing: its
-    /// mailbox was read when the mark was written, and no session has run
-    /// since to add an ask.
+    /// harness; its asks are read only for an item its tracker holds open,
+    /// and a sandbox its provider no longer lists has none to read. A park
+    /// the record already owes reads its sandbox for nothing: its mailbox
+    /// was read when the mark was written, and no session has run since to
+    /// write to it.
     fn stopped(self) -> Result<Closed> {
         if let Some(wait) = self.park() {
             let owed = self.owed(wait);
@@ -584,7 +585,7 @@ impl Close<'_> {
             if owed.is_none() {
                 self.owe_park(&judged)?;
             }
-            return self.park_sandbox(&judged, Vec::new());
+            return self.park_sandbox(&judged, owed.is_none(), Vec::new());
         }
         let mut notes = Vec::new();
         let ground = if self.keep() {
@@ -593,7 +594,7 @@ impl Close<'_> {
             self.by_verdict(Ground::Exited, &mut notes)?
         };
         if !matches!(ground, Ground::Terminal(_)) {
-            self.refuse_ask()?;
+            self.refuse_ask_unless_gone(&mut notes)?;
         }
         if self.keep() {
             return Ok(self.word(Word::Stopped, Some(LaneStatus::Stopped)));
@@ -680,7 +681,7 @@ impl Close<'_> {
             if closed.word != Word::Stopped {
                 return Ok(closed);
             }
-            return self.park_sandbox(&park, notes);
+            return self.park_sandbox(&park, true, notes);
         }
         let ground = match &judged {
             LaneState::Exited => self.by_verdict(Ground::Exited, &mut notes)?,
@@ -729,24 +730,20 @@ impl Close<'_> {
             ground
         };
         let acts = !matches!(judged, LaneState::Exited) && self.hosted();
-        let mut host_absent = false;
-        if acts {
-            match self.refuse_ask() {
-                Ok(()) => {}
-                Err(e) if matches!(ground, Ground::Terminal(_)) && self.host_absent(&e)? => {
-                    notes.push(format!("host-absent mail-status={}", cause_word(&e)));
-                    host_absent = true;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        let host_absent = acts && self.refuse_ask_unless_gone(&mut notes)?;
         let landing = self.landing(&ground, boxes_cause(&ground, host_absent))?;
-        let ground = if host_absent {
-            Ground::Ended(state::HOST_ABSENT)
-        } else {
+        // A sandbox gone asks no provider stop. An ended item's asks the
+        // provider nothing more; an open item's keeps its ground, the
+        // provider's close answering its sandbox absent and the item's files
+        // staying.
+        let ground = if !host_absent {
             if acts {
                 self.host_stop(&mut notes)?;
             }
+            ground
+        } else if matches!(ground, Ground::Terminal(_)) {
+            Ground::Ended(state::HOST_ABSENT)
+        } else {
             ground
         };
         let mut closed = self.persist(ground, landing)?;
@@ -1058,6 +1055,21 @@ impl Close<'_> {
         }
     }
 
+    /// [`Self::refuse_ask`] on a full close, passed for a mailbox that cannot
+    /// be read in a sandbox its provider no longer lists
+    /// ([`Self::host_absent`]), which no session can answer from: `true`,
+    /// with its `host-absent mail-status=` note.
+    fn refuse_ask_unless_gone(&self, notes: &mut Vec<String>) -> Result<bool> {
+        match self.refuse_ask() {
+            Ok(()) => Ok(false),
+            Err(e) if self.host_absent(&e)? => {
+                notes.push(format!("host-absent mail-status={}", cause_word(&e)));
+                Ok(true)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// The oldest ask the lane's mailbox holds unanswered; a mailbox that
     /// cannot be read refuses.
     fn open_ask(&self) -> Result<Option<String>> {
@@ -1074,9 +1086,9 @@ impl Close<'_> {
         }
     }
 
-    /// Whether a mailbox read that failed on a terminal item's full close is
-    /// a sandbox the provider no longer holds: its list names no row for
-    /// the item. A list that fails keeps the mailbox's refusal.
+    /// Whether a mailbox read that failed on a full close is a sandbox the
+    /// provider no longer holds: its list names no row for the item, or
+    /// one torn down. A list that fails keeps the mailbox's refusal.
     fn host_absent(&self, error: &Error) -> Result<bool> {
         if error.key() != "mail-read-failed" || self.keep() {
             return Ok(false);
@@ -1747,8 +1759,26 @@ impl Close<'_> {
     /// The sandbox stop and the record it earns, from a lane whose harness
     /// is gone and whose window is closed: the record reads stopped, so a
     /// stop that fails or answers without its line refuses with the record
-    /// stopped, and only the confirmed line records parked.
-    fn park_sandbox(&self, park: &ParkLane, notes: Vec<String>) -> Result<Closed> {
+    /// stopped, and only the confirmed line records parked. A park judged
+    /// in full (`read_mail`) first reads the lane's last mail, which its
+    /// stopped sandbox answers no read for, onto the park's answer.
+    fn park_sandbox(&self, park: &ParkLane, read_mail: bool, notes: Vec<String>) -> Result<Closed> {
+        let mail = if read_mail {
+            lane_operation::last_mail(
+                &self.settings.lane_mail_cli,
+                self.scripts,
+                self.path,
+                &self.lane,
+            )
+            .map_err(|cause| {
+                refused(
+                    "mail-read-failed",
+                    &[("item", self.item()), ("cause", &cause)],
+                )
+            })?
+        } else {
+            None
+        };
         match hosted::stop_sandbox(self.scripts, self.host, self.item(), false) {
             Ok(()) => {}
             Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
@@ -1778,6 +1808,9 @@ impl Close<'_> {
                 .extra
                 .get("parked")
                 .map(|p| json!({"parked": p}));
+        }
+        if let Some(mail) = mail {
+            closed.observation.get_or_insert_with(|| json!({}))["mail"] = json!(mail);
         }
         Ok(closed)
     }

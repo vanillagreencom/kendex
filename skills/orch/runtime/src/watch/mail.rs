@@ -339,7 +339,7 @@ impl DirectiveRow {
 /// with another envelope than
 /// the one recorded, or, with no first id recorded, one holding fewer lines
 /// than were drained. A read finding no line is no replacement.
-fn replaced(prior: u64, seen: &str, count: u64, first: &str) -> bool {
+pub(crate) fn replaced(prior: u64, seen: &str, count: u64, first: &str) -> bool {
     if prior == 0 || count == 0 {
         return false;
     }
@@ -347,6 +347,102 @@ fn replaced(prior: u64, seen: &str, count: u64, first: &str) -> bool {
         count < prior
     } else {
         first != seen
+    }
+}
+
+/// The watch's cursor on `item`'s box, from its baseline beside the fleet
+/// state at `fleet`: the line through which that box reached the overseer.
+/// A baseline that does not read is nothing announced, so a close reading
+/// the box shows the overseer lines it saw again rather than none.
+pub fn announced(fleet: &Path, item: &str) -> MailCursor {
+    let baseline = Paths::of(fleet)
+        .ok()
+        .and_then(|paths| Baseline::load(&paths.baseline).ok());
+    MailCursor::parse(baseline.as_ref().and_then(|b| b.get(LANE_MAIL, item)))
+}
+
+/// A lane's box as a close read it from the host before the sandbox went,
+/// on the close's observation under `mail`: the drain's count and first id,
+/// which the lane's cursor moves to, and each envelope past the watch's
+/// cursor.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClosingMail {
+    pub count: u64,
+    pub first: String,
+    pub envelopes: Vec<ClosingEnvelope>,
+}
+
+/// The fields a lane's line renders from ([`classify`], [`payload`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClosingEnvelope {
+    pub id: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+}
+
+impl ClosingMail {
+    /// The drain's mail, `None` where it holds no envelope.
+    pub fn of(drained: &Drained) -> Option<ClosingMail> {
+        (!drained.envelopes.is_empty()).then(|| ClosingMail {
+            count: drained.count,
+            first: drained.first.clone(),
+            envelopes: drained
+                .envelopes
+                .iter()
+                .map(|e| ClosingEnvelope {
+                    id: e.id().to_owned(),
+                    kind: e.kind().to_owned(),
+                    text: e.text.clone(),
+                    options: e.options.clone(),
+                })
+                .collect(),
+        })
+    }
+}
+
+/// The mail a close's observation carries ([`ClosingMail`]) said as the
+/// duty says a lane's drain, and the lane's cursor moved past it, so no
+/// later read says it again. An observation with no `mail` says nothing.
+pub fn closing_mail(
+    item: &str,
+    observation: Option<&serde_json::Value>,
+    baseline: &Baseline,
+    events: &mut Vec<Event>,
+    changes: &mut Vec<Change>,
+) {
+    let Some(mail) = observation
+        .and_then(|o| o.get("mail"))
+        .and_then(|m| serde_json::from_value::<ClosingMail>(m.clone()).ok())
+    else {
+        return;
+    };
+    for line in &mail.envelopes {
+        let envelope = Envelope {
+            id: Some(line.id.clone()),
+            kind: Some(line.kind.clone()),
+            text: line.text.clone(),
+            options: line.options.clone(),
+            ..Envelope::default()
+        };
+        if let Ok(Some(event)) = classify(item, &envelope) {
+            events.push(event);
+            payload(&envelope, events);
+        }
+    }
+    let value = MailCursor {
+        announced: mail.count,
+        first: mail.first,
+    }
+    .render();
+    if baseline.get(LANE_MAIL, item) != Some(value.as_str()) {
+        changes.push(Change::Set {
+            kind: LANE_MAIL.to_owned(),
+            identity: item.to_owned(),
+            value,
+        });
     }
 }
 
@@ -1015,6 +1111,50 @@ mod tests {
             &mut events,
         );
         assert!(events.is_empty());
+    }
+
+    /// A close's observation says its lane's last mail as a drain says it,
+    /// each line with its payload, and moves the lane's cursor to the count
+    /// the close read; an observation with no mail says nothing and moves
+    /// nothing.
+    #[test]
+    fn a_closes_last_mail_is_said_as_a_drain_and_moves_the_lanes_cursor() {
+        let observation = serde_json::json!({"host_close": "standing", "mail": {
+            "count": 3, "first": "a-1", "envelopes": [
+                {"id": "n-2", "kind": "notice", "text": "result: done"},
+                {"id": "a-3", "kind": "ask", "text": "Cut?", "options": ["cut", "keep"]}]}});
+        let baseline = Baseline::default();
+        let (mut events, mut changes) = (Vec::new(), Vec::new());
+        closing_mail(
+            "KEN-1",
+            Some(&observation),
+            &baseline,
+            &mut events,
+            &mut changes,
+        );
+        assert_eq!(
+            events.iter().map(Event::render).collect::<Vec<_>>(),
+            [
+                "EVENT lane-notice KEN-1 n-2",
+                "  result: done",
+                "EVENT lane-question KEN-1 a-3",
+                "  Cut?",
+                "  options: cut, keep",
+            ]
+        );
+        assert_eq!(
+            changes,
+            [Change::Set {
+                kind: LANE_MAIL.to_owned(),
+                identity: "KEN-1".to_owned(),
+                value: "3 a-1".to_owned(),
+            }]
+        );
+        let (mut events, mut changes) = (Vec::new(), Vec::new());
+        let none = serde_json::json!({"host_close": "kept=none"});
+        closing_mail("KEN-1", Some(&none), &baseline, &mut events, &mut changes);
+        closing_mail("KEN-1", None, &baseline, &mut events, &mut changes);
+        assert!(events.is_empty() && changes.is_empty());
     }
 
     /// The rows' wire forms: a replacement is judged by its first id and
