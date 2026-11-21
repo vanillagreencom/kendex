@@ -237,6 +237,7 @@ fn payload(envelope: &Envelope, events: &mut Vec<Event>) {
 /// | overseer, `resolution` | `owner-ask-resolved <re> by=<by> id=<id>` |
 /// | overseer, `close` | `owner-ask-closed <re> by=<by>` |
 /// | overseer, `owner-note` | `owner-note <id>` |
+/// | overseer, `data` | `data-note <id> source=<source>` |
 /// | overseer, `peer` | `peer-note <from without overseer:> <id> kind=<kind>[ re=<re>]` |
 /// | overseer, `stray` | nothing |
 /// | lane, kind `ask` | `lane-question <item> <id>` |
@@ -250,6 +251,12 @@ pub fn classify(item: &str, envelope: &Envelope) -> Result<Option<Event>> {
             Some("resolution") => Ok(Some(Event::OwnerAskResolved { re, by, id })),
             Some("close") => Ok(Some(Event::OwnerAskClosed { re, by })),
             Some("owner-note") => Ok(Some(Event::OwnerNote { id })),
+            // `lane-mail` refuses a data notice whose source is not one
+            // printable word before it appends, so the line keeps one field.
+            Some("data") => Ok(Some(Event::DataNote {
+                id,
+                source: envelope.source.clone().unwrap_or_default(),
+            })),
             Some("peer") => {
                 let from = envelope.from.clone().unwrap_or_default();
                 Ok(Some(Event::PeerNote {
@@ -940,6 +947,11 @@ mod tests {
                 "overseer",
                 r#"{"id":"m-9","kind":"directive","from":"owner","mail_class":"owner-note"}"#,
                 Some("EVENT owner-note m-9"),
+            ),
+            (
+                "overseer",
+                r#"{"id":"m-9","kind":"data","from":"owner","source":"mail-watch","mail_class":"data"}"#,
+                Some("EVENT data-note m-9 source=mail-watch"),
             ),
             (
                 "overseer",

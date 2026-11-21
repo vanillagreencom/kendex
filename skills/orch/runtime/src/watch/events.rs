@@ -292,6 +292,12 @@ pub enum Event {
     OwnerNote {
         id: String,
     },
+    /// Text a program wrote into the overseer's box, `source` the program or
+    /// origin it names: data, never an owner's instruction.
+    DataNote {
+        id: String,
+        source: String,
+    },
     /// The repository with its `overseer:` prefix
     /// dropped, and `re=` where the note answers something.
     PeerNote {
@@ -411,7 +417,7 @@ pub enum Event {
     Tail(String),
     // The mail duty's lines.
     /// One line of a message's payload
-    /// under its `lane-question`, `lane-notice`, `owner-note`,
+    /// under its `lane-question`, `lane-notice`, `owner-note`, `data-note`,
     /// `owner-ask-resolved` or `peer-note` line (the text, line by line,
     /// then `options: a, b`), indented two spaces so only a watch record
     /// begins with `EVENT`. One variant per physical line, since the
@@ -672,6 +678,7 @@ impl Event {
                 step.word()
             ),
             Event::OwnerNote { id } => format!("EVENT owner-note {id}"),
+            Event::DataNote { id, source } => format!("EVENT data-note {id} source={source}"),
             Event::PeerNote {
                 repository,
                 id,

@@ -1209,6 +1209,13 @@ fn every_event_renders_to_its_recorded_bytes() {
         ),
         (Event::OwnerNote { id: s("m-9") }, "EVENT owner-note m-9"),
         (
+            Event::DataNote {
+                id: s("m-9"),
+                source: s("mail-watch"),
+            },
+            "EVENT data-note m-9 source=mail-watch",
+        ),
+        (
             Event::PeerNote {
                 repository: s("vanillagreencom/other"),
                 id: s("m-9"),

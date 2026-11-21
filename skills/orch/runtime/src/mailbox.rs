@@ -211,6 +211,9 @@ pub struct Envelope {
     pub re: Option<String>,
     #[serde(default)]
     pub by: Option<String>,
+    /// A data notice alone: the program or origin its text came from.
+    #[serde(default)]
+    pub source: Option<String>,
     #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
