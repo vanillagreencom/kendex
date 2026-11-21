@@ -1,8 +1,10 @@
 """Request identity, source evidence and the actual page/action operations."""
+import base64
 import copy
 from contextlib import redirect_stderr
 import io
 import importlib.util
+import itertools
 import json
 import os
 import shutil
@@ -38,6 +40,14 @@ def projection(home, count=1):
                                      for comment in comments]}}
 
 
+def mailbox_projection(home):
+    ask = {"id": "mail-ask", "from": "overseer:repo", "at": "2026-11-01T02:00:00Z", "text": "Mailbox question"}
+    return {"home": home, "config": {"configured": False}, "tracker": None,
+            "mailboxes": [{"destination": "local", "root": "/canonical/repo", "asks": [ask],
+                           "outward": {"rows": [ask]}, "inward": {"rows": []}, "posted": {},
+                           "links": {ask["id"]: {"url": "https://workspace.slack.test/archives/C1/p1", "thread": "1"}}}]}
+
+
 class CanonicalFixture:
     """The public source projection and append boundary, with positive/unknown receipts."""
     def __init__(self, home, count=1):
@@ -54,7 +64,7 @@ class CanonicalFixture:
 
     def send(self, route, text, key):
         self.deliveries.append(key)
-        if self.land:
+        if self.land and route["source"] == "linear":
             comment = dict(request_comment("reply"), body=text, user_id="posting-app", parent_id=route["thread"])
             self.data["tracker"]["issues"][0]["comments"].append(comment)
         return "reply" if self.confirm else None
@@ -62,7 +72,7 @@ class CanonicalFixture:
 
 class OwnerAsksContract(unittest.TestCase):
     def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory(dir=REPO / "tmp")
+        self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
         self.home = Path(self.scratch.name).resolve()
         self.now = 1793494800
@@ -193,16 +203,26 @@ class OwnerAsksContract(unittest.TestCase):
         self.assertEqual((restored["id"], restored["askedAt"], restored["link"]), (snoozed["id"], row["askedAt"], row["link"]))
         self.source.data["tracker"]["requests"] = []
         self.assertEqual(self.page()["rows"], [])
-        for action in (None, "reply", "done", "later"):
-            with self.subTest(action=action):
-                self.source.data = projection(str(self.home))
+        # A complete read alone owns membership, for either source: a tracker
+        # view that omits the request, a read mailbox that no longer holds the
+        # ask (closed, or compacted after closing) and a root no longer read.
+        omissions = [
+            ("tracker", projection, lambda data: data["tracker"].update(requests=[])),
+            ("mailbox-closed", mailbox_projection, lambda data: data["mailboxes"][0].update(asks=[])),
+            ("mailbox-root-unread", mailbox_projection, lambda data: data.update(mailboxes=[])),
+        ]
+        for (name, world, omit), action in itertools.product(omissions, (None, "reply", "done", "later")):
+            with self.subTest(source=name, action=action):
+                # Each row starts from an empty action record of its own.
+                self.owner.session.path.unlink(missing_ok=True)
+                self.source.data = world(str(self.home))
                 row = self.page()["rows"][0]
                 if action:
-                    receipt = self.action(action, row, "membership-" + action, text="Evidence",
+                    receipt = self.action(action, row, "membership-" + name + "-" + action, text="Evidence",
                                           until=owner_asks.iso(self.now + 60))
                     self.assertEqual((receipt["kind"], receipt["state"]),
                                      ("accepted", {"reply": "open", "done": "checking", "later": "snoozed"}[action]))
-                else:
+                if action in (None, "reply"):
                     self.assertEqual(self.owner.read()["deltas"], {})
                 before = self.owner.session.path.read_bytes()
                 # The canonical reader refuses failed/incomplete traversals;
@@ -211,7 +231,7 @@ class OwnerAsksContract(unittest.TestCase):
                     with self.assertRaises(owner_asks.Unavailable):
                         self.page()
                 self.assertEqual(self.owner.session.path.read_bytes(), before)
-                self.source.data["tracker"]["requests"] = []
+                omit(self.source.data)
                 for view in ("active", "snoozed"):
                     page = self.page(view)
                     self.assertEqual((page["activeCount"], page["snoozedCount"], page["rows"], page["complete"]),
@@ -247,19 +267,16 @@ class OwnerAsksContract(unittest.TestCase):
             (None, owner_asks.watch.Failure("lane-mail", "timeout", None, "deadline"),
              ["lane-mail", "timeout", "None"]),
             (None, OSError(13, "permission denied"), ["mailbox/lane-mail", "PermissionError", "13"]),
-            ("remote", ("main-unreachable", "ssh: host refused " + secret),
-             ["mailbox/lane-mail", "transport", "main-unreachable"]),
+            ("remote", subprocess.CompletedProcess([], 255, "", "ssh: connect to host remote refused " + secret),
+             ["mailbox/lane-mail", "exit", "255"]),
             (None, subprocess.CompletedProcess([], 7, "", "lane-mail: mailbox-unreadable=" + secret),
              ["mailbox/lane-mail", "refusal", "mailbox-unreadable"]),
         ]
         for host, failure, key in failures:
             with self.subTest(host=host, failure=type(failure).__name__):
                 target = owner_asks.watch.Destination("ssh:remote" if host else "local", host, None)
-                if host:
-                    dependency = patch.object(owner_asks.forward, "host_call", return_value=failure)
-                else:
-                    dependency = patch.object(owner_asks.watch, "run", **({"side_effect": failure} if isinstance(failure, Exception)
-                                                                       else {"return_value": failure}))
+                dependency = patch.object(owner_asks.watch, "run", **({"side_effect": failure} if isinstance(failure, Exception)
+                                                                   else {"return_value": failure}))
                 with dependency, self.assertRaises(owner_asks.Unavailable) as raised:
                     sources.call(target, str(self.home), "mailbox", "lane-mail", ["pending"])
                 with redirect_stderr(io.StringIO()) as output:
@@ -271,35 +288,53 @@ class OwnerAsksContract(unittest.TestCase):
                 self.assertEqual(record["key"], key)
                 self.assertNotIn(secret, lines[0])
 
-    def test_mailbox_delivery_preserves_destination_account(self):
+    def test_reads_and_delivery_run_caller_code_as_the_destination_account(self):
         session = self.owner.session
         session.env["JARVIS_BASH"] = BASH
         session.deadline = owner_asks.time.monotonic() + 10
-        mail = self.home / ".agents/skills/mailbox/scripts/lane-mail"
-        mail.parent.mkdir(parents=True)
-        mail.touch()
+        packages = owner_asks.watch.LIB.parents[2]
+        caller = base64.b64encode((packages / "mailbox/scripts/lane-mail").read_bytes()).decode()
+        installed = self.home / ".agents/skills/mailbox/scripts/lane-mail"
+        root = str(self.home)
+        record = {"root": root, "pending": "", "outward": "count=0 first=\n", "inward": "count=0 first=\n",
+                  "binding": None, "journal": None}
+
+        def answer(argv, cwd=None, data=None, operation=None, timeout=60):
+            sent = "--re" in " ".join(map(str, argv))
+            stdout = ("lane-mail: sent item=overseer id=reply\n" if sent else
+                      root + "\0" if operation == "mailbox/lib/common-root.sh" else json.dumps(record) + "\n")
+            return subprocess.CompletedProcess(argv, 0, stdout, "")
+
         cases = [
-            ("local", None, {}),
-            ("ssh:remote", "remote", {"JARVIS_REMOTE_HOSTS": "remote"}),
-            ("ssh:control", "control", {"JARVIS_CONTROL_HOST": "control", "JARVIS_CONTROL_USER": "overseer"}),
+            ("local", None, {}, False),
+            ("ssh:remote", "remote", {"JARVIS_REMOTE_HOSTS": "remote"}, False),
+            ("ssh:control", "control", {"JARVIS_CONTROL_HOST": "control", "JARVIS_CONTROL_USER": "overseer"}, True),
         ]
-        for destination, host, settings in cases:
+        for destination, host, settings, control in cases:
             with self.subTest(destination=destination):
                 sources = owner_asks.Sources(session, dict(settings, JARVIS_MAIN_HOST=""))
-                route = {"source": "mailbox", "destination": destination, "host": host,
-                         "root": str(self.home), "ask": "original"}
-                result = subprocess.CompletedProcess([], 0, "lane-mail: sent item=overseer id=reply\n", "")
-                with patch.object(owner_asks.watch, "run", return_value=result) as transport:
+                target = next(target for target in owner_asks.watch.destinations(sources.settings)
+                              if target.key == destination)
+                route = {"source": "mailbox", "destination": destination, "host": host, "root": root, "ask": "original"}
+                with patch.object(owner_asks.watch, "run", side_effect=answer) as transport:
+                    self.assertEqual(sources.mailboxes(target, [root])[0]["root"], root)
                     self.assertEqual(sources.send(route, "Owner reply", "delivery"), "reply")
-                argv = list(map(str, transport.call_args.args[0]))
-                if host:
-                    self.assertEqual(argv[:2], ["ssh", host])
-                    self.assertEqual("sudo -n -H -u overseer -- bash -l -c" in argv[2], host == "control")
-                else:
-                    self.assertEqual(argv[:2], [BASH, str(mail)])
-                self.assertEqual(transport.call_args.kwargs["operation"], "host-send" if host else "local-send")
+                # Reads and the send reach one account, and each runs the
+                # caller's lane-mail, never the one installed in the checkout.
+                self.assertEqual(len(transport.call_args_list), 3)
+                for call in transport.call_args_list:
+                    argv = list(map(str, call.args[0]))
+                    self.assertNotIn(str(installed), " ".join(argv))
+                    if host:
+                        self.assertEqual(argv[:2], ["ssh", host])
+                        self.assertEqual(argv[2].startswith("sudo -n -H -u overseer -- bash -l -c "), control)
+                        if call.kwargs["operation"] == "mailbox/lane-mail":
+                            self.assertEqual(json.loads(call.kwargs["data"])["files"]["mailbox/scripts/lane-mail"], caller)
+                    else:
+                        self.assertEqual(argv[0], BASH)
+                        self.assertTrue(any(arg.startswith(str(packages / "mailbox/scripts/")) for arg in argv))
 
-    def test_control_rejects_receipt_and_page_cap_regressions(self):
+    def test_controls_reject_each_guarded_regression(self):
         # Keep the mutant outside the worktree and acquire only its own
         # scratch directory. The original suite supplies all test fixtures.
         directory = REPO.parent / "tmp"
@@ -311,30 +346,46 @@ class OwnerAsksContract(unittest.TestCase):
             references = skills / "orch/references"
             references.mkdir()
             shutil.copyfile(REPO / "skills/orch/references/secret-value.ere", references / "secret-value.ere")
-            path = skills / "jarvis/scripts/lib/owner_asks.py"
-            original = path.read_text()
             mutations = [
-                ('previous = state["requests"].get(request["requestId"])', 'previous = None',
-                 "OwnerAsksContract.test_receipt_replay_precedes_revision"),
-                ('PAGE_BYTES = 16 * 1024', 'PAGE_BYTES = 32 * 1024',
-                 "OwnerAsksContract.test_complete_row_and_byte_paging_and_stale_cursors"),
-                ('if delta.get("until_sequence", 0) <= entry.get("sequence", 0):', 'if True:',
-                 "OwnerAsksContract.test_uncertain_delivery_needs_positive_evidence_and_never_resends"),
+                ("jarvis/scripts/lib/owner_asks.py", 'previous = state["requests"].get(request["requestId"])', 'previous = None',
+                 "OwnerAsksContract.test_receipt_replay_precedes_revision", None),
+                ("jarvis/scripts/lib/owner_asks.py", 'PAGE_BYTES = 16 * 1024', 'PAGE_BYTES = 32 * 1024',
+                 "OwnerAsksContract.test_complete_row_and_byte_paging_and_stale_cursors", None),
+                ("jarvis/scripts/lib/owner_asks.py", 'if delta.get("until_sequence", 0) <= entry["sequence"]:', 'if True:',
+                 "OwnerAsksContract.test_uncertain_delivery_needs_positive_evidence_and_never_resends",
+                 "(landed=True, newer_later=True)"),
+                ("jarvis/scripts/lib/owner_asks.py", 'closed_keys = [key for key in state["deltas"] if key not in rows]', "closed_keys = []",
+                 "OwnerAsksContract.test_done_and_snooze_follow_complete_current_view_membership",
+                 "source='mailbox-root-unread'"),
+                ("jarvis/scripts/lib/owner_asks.py", 'state["deltas"].get(key, {}) if action == "reply" else ', '',
+                 "OwnerAsksContract.test_done_and_snooze_follow_complete_current_view_membership", "action='reply'"),
+                # The checkout's installed lane-mail, the route a reply took
+                # before Sources carried its own.
+                ("jarvis/scripts/lib/owner_asks.py", '"$BASH" "$mail" send --item overseer',
+                 '"$BASH" .agents/skills/mailbox/scripts/lane-mail send --item overseer',
+                 "PublicOwnerAsks.test_remote_list_and_reply_run_caller_code_on_checkout_data", "(checkout_code=True)"),
+                ("slack/scripts/lib/settings.py", 'exec "$reader" -I -c', 'exec "$reader" -c',
+                 "PublicOwnerAsks.test_carried_presence_preserves_root_settings_and_permission", "(name='renew')"),
             ]
-            for old, replacement, case in mutations:
-                with self.subTest(case=case):
+            for name, old, replacement, case, row in mutations:
+                with self.subTest(case=case, mutant=replacement):
+                    path = skills / name
+                    original = path.read_text()
                     self.assertEqual(original.count(old), 1)
                     mutant = original.replace(old, replacement)
                     self.assertNotEqual(mutant, original)
                     path.write_text(mutant)
-                    env = dict(os.environ, JARVIS_TEST_SKILLS=str(skills))
-                    result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"), case],
-                                            env=env, capture_output=True, text=True, timeout=60)
+                    try:
+                        env = dict(os.environ, JARVIS_TEST_SKILLS=str(skills))
+                        result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"), case],
+                                                env=env, capture_output=True, text=True, timeout=300)
+                    finally:
+                        path.write_text(original)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("FAILED (failures=", result.stderr)
                     self.assertNotIn("ERROR:", result.stderr)
-                    if "uncertain_delivery" in case:
-                        self.assertIn("(landed=True, newer_later=True)", result.stderr)
+                    if row is not None:
+                        self.assertIn(row, result.stderr)
 
 
 class PublicOwnerAsks(MailWorld):
@@ -344,13 +395,20 @@ class PublicOwnerAsks(MailWorld):
         for package in ("jarvis", "linear", "slack"):
             directory = self.home / ".agents/skills" / package
             directory.symlink_to(REPO / "skills" / package, target_is_directory=True)
-        self.registry.write_text(str(self.home) + "\n")
+        # kendex project list --json, the registry form a program reads.
+        self.executable("kendex", '#!/bin/sh\ncase "$*" in "project list --json" | "project list") cat "$REGISTRY" ;; *) exit 97 ;; esac\n')
+        self.register(self.registry, self.home)
         self.env.update(XDG_STATE_HOME=str(self.root / "runtime"), SLACK_BOT_TOKEN="test-token")
         self.env.pop("PYTHONPATH", None)
-        self.env.pop("_KENDEX_JARVIS_PYTHON", None)
 
-    def run_cli(self, action="list", home=None, payload=None, *args, view="active"):
-        command = [BASH, LIB.parent / "jarvis-session", "owner-asks", action, "--home", home or self.home, *args]
+    @staticmethod
+    def register(registry, *folders, state="ok", main=None):
+        registry.write_text(json.dumps([{"folder": str(folder), "state": state,
+                                         "worktree": {"main": str(main)} if main else None} for folder in folders]))
+
+    def run_cli(self, action="list", home=None, payload=None, *args, view="active", skills=None):
+        script = (skills / "jarvis/scripts" if skills else LIB.parent) / "jarvis-session"
+        command = [BASH, script, "owner-asks", action, "--home", home or self.home, *args]
         if action == "list":
             command += ["--view", view]
         result = subprocess.run(list(map(str, command)), env=self.env, text=True, input=payload,
@@ -373,128 +431,89 @@ class PublicOwnerAsks(MailWorld):
         self.assertEqual(records[0]["destination"], "local")
 
     def test_complete_discovery_preserves_registration_outcomes(self):
-        for note in ("folder not found", "not a folder", "folder could not be read"):
-            with self.subTest(note=note):
-                self.registry.write_text(str(self.home) + "  (" + note + ")\n")
+        for state in ("folder-not-found", "not-a-folder", "unreadable"):
+            with self.subTest(state=state):
+                self.register(self.registry, self.home, state=state)
                 result, error = self.run_cli()
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(error["kind"], "unavailable")
                 record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
-                self.assertEqual(record["key"][:2], ["project-list", "registration-unreadable"])
+                self.assertEqual(record["key"], ["project-list", "registration-unreadable", state])
                 self.assertNotIn("activeCount", error)
 
-    def test_local_source_startup_preserves_settings_and_presence(self):
-        local = make_project(self.root / "local ' source;$")
-        self.registry.write_text(str(local) + "\n")
+    def test_checkout_supplies_data_never_code_or_settings(self):
+        # The folder ends like a plain-row worktree note; the registry's
+        # folder field names it exactly.
+        local = make_project(self.root / "local ' source;$  (worktree)")
+        self.register(self.registry, local)
         # lane-mail's jq -c leaves U+2028/U+2029 raw inside its JSON lines.
-        what = "Local original\u2028second line\u2029next paragraph"
+        what = "Local original second line next paragraph"
         ask = self.mail(local, "ask", what, "--to", "owner", "--options", "a,b", "--reserved")
-        workspace = self.slack_thread(local, ask)
+        self.slack_thread(local, ask)
+        # The caller leaves the endpoint out of its environment; its home's
+        # settings name it. No checkout setting may choose where the token goes.
+        endpoint = self.env.pop("SLACK_API_URL")
+        (self.home / "kendex.settings.toml").write_text("[env]\nSLACK_API_URL=" + json.dumps(endpoint) + "\n")
         marker = self.root / "executed-local-checkout"
         planted = 'from pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\nraise SystemExit(91)\n'
         for module in ("json", "base64"):
             (local / (module + ".py")).write_text(planted)
         pythonpath = local / "checkout-python"
         pythonpath.mkdir()
-        for module in ("argparse", "verbs"):
+        for module in ("argparse", "verbs", "http"):
             (pythonpath / (module + ".py")).write_text(planted)
-        callerpath = local / "caller-python"
-        callerpath.mkdir()
-        # Slack imports http.client; the parent session does not import it.
-        (callerpath / "http.py").write_text(planted)
         cases = [
-            ("cwd", {}, {}, True),
-            ("public-pythonpath", {"PYTHONPATH": "./checkout-python", "SLACK_POLL_SECONDS": "7"}, {}, True),
-            ("caller-pythonpath", {}, {"PYTHONPATH": str(callerpath)}, True),
-            ("caller-override", {"SLACK_POLL_SECONDS": "invalid"}, {"SLACK_POLL_SECONDS": "7"}, True),
-            ("caller-empty", {"SLACK_POLL_SECONDS": "invalid"}, {"SLACK_POLL_SECONDS": ""}, True),
-            ("invalid", {"SLACK_POLL_SECONDS": "invalid"}, {}, False),
+            ("cwd", {}),
+            ("pythonpath", {"PYTHONPATH": "./checkout-python"}),
+            ("endpoint", {"SLACK_API_URL": "http://127.0.0.1:1", "SLACK_BOT_TOKEN": "checkout-token"}),
+            ("invalid", {"SLACK_POLL_SECONDS": "invalid", "LINEAR_API_KEY": "invalid"}),
         ]
-        self.env.pop("_KENDEX_JARVIS_PYTHON", None)
-        for name, values, caller, succeeds in cases:
-            (local / "kendex.settings.toml").write_text(
-                "[env]\n" + "".join(key + "=" + json.dumps(value) + "\n" for key, value in values.items()))
-            with patch.dict(self.env, caller):
-                result, page = self.run_cli()
-            self.assertFalse(marker.exists(), "local-source-checkout-executed: " + name)
+        for name, values in cases:
             with self.subTest(setting=name):
-                if succeeds:
-                    self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                    self.assertEqual(page["activeCount"], 1)
-                    self.assertEqual(page["rows"][0]["what"], what)
-                    self.assertEqual(page["rows"][0]["link"]["url"],
-                                     "https://workspace.slack.test/archives/C1/p100000001")
-                else:
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(page["kind"], "unavailable")
-                    record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
-                    self.assertEqual(record["key"][:2], ["slack/slack", "exit"])
-                    self.assertEqual(record["destination"], "local:" + str(local))
-
-        binding = local / "tmp/slack/binding.json"
-        binding.write_text(json.dumps(dict(json.loads(binding.read_text()), owners=["owner@example.test"],
-                                              owner_ids={"owner@example.test": "U1"})))
-        hold = local / "fresh ' hold;$"
-        hold.touch()
-        code = '''import json,sys,time
-sys.path.insert(0,sys.argv[1])
-import owner_asks
-from session import Session
-session=Session(sys.argv[2])
-session.deadline=time.monotonic()+14
-result=owner_asks.Sources(session,{}).call(owner_asks.watch.Destination('local',None,None),sys.argv[3],
- 'slack','slack',['post','--root',sys.argv[3],'--text',sys.argv[4],'--mention'],check=False)
-print(json.dumps([result.returncode,result.stdout,result.stderr]))
-'''
-        for name, caller, age, expected in (
-                ("root", {}, "600", "held"),
-                ("caller-file", {"SLACK_JARVIS_SESSION_FILE": "missing"}, "600", "mentioned"),
-                ("caller-empty", {"SLACK_JARVIS_SESSION_FILE": ""}, "600", "mentioned"),
-                ("invalid-age", {}, "0", "refused")):
-            with self.subTest(presence=name):
                 (local / "kendex.settings.toml").write_text(
-                    '[env]\nPYTHONPATH="./checkout-python"\nSLACK_JARVIS_SESSION_FILE=' + json.dumps(hold.name) +
-                    '\nSLACK_JARVIS_SESSION_MAX_AGE=' + json.dumps(age) + '\n')
-                text = "Post ' " + name + "\nsecond line"
-                previous = len(workspace.messages["C1"])
-                result = subprocess.run([sys.executable, "-I", "-c", code, str(LIB), str(self.home), str(local), text],
-                                        env=dict(self.env, JARVIS_BASH=BASH, **caller), cwd=self.home,
-                                        capture_output=True, text=True, timeout=20)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                status, _, error = json.loads(result.stdout)
-                self.assertFalse(marker.exists(), "local-source-checkout-executed: presence")
-                if expected == "refused":
-                    self.assertNotEqual(status, 0)
-                    self.assertEqual(len(workspace.messages["C1"]), previous)
-                    self.assertTrue(error.startswith("slack: setting-invalid="))
-                else:
-                    self.assertEqual(status, 0, error)
-                    self.assertEqual(len(workspace.messages["C1"]), previous + 1)
-                    self.assertEqual(workspace.messages["C1"][-1]["text"],
-                                     ("<@U1> " if expected == "mentioned" else "") + text)
+                    "[env]\n" + "".join(key + "=" + json.dumps(value) + "\n" for key, value in values.items()))
+                result, page = self.run_cli()
+                self.assertFalse(marker.exists(), "local-source-checkout-executed: " + name)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual(page["activeCount"], 1)
+                self.assertEqual(page["rows"][0]["what"], what)
+                self.assertEqual(page["rows"][0]["link"]["url"], "https://workspace.slack.test/archives/C1/p100000001")
 
-    def test_remote_mailbox_only_worktree_and_untrusted_checkout_code(self):
+    def test_remote_list_and_reply_run_caller_code_on_checkout_data(self):
         remote = make_project(self.root / "remote (owner)")
         self.command(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
                       "commit", "--allow-empty", "-m", "fixture"], remote).check_returncode()
         linked = self.root / "linked"
         self.command(["git", "worktree", "add", "-q", "-b", "linked", linked], remote).check_returncode()
         remote_registry = self.root / "remote-registry"
-        remote_registry.write_text(str(linked) + "  (worktree of " + str(remote) + ")\n" + str(remote) + "\n")
-        self.env["REMOTE_REGISTRY"] = str(remote_registry)
+        log = self.root / "ssh.log"
+        self.env.update(REMOTE_REGISTRY=str(remote_registry), SSH_LOG=str(log))
         (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
-        self.executable("ssh", '#!' + BASH + '\nset -euo pipefail\n' +
-                        'if [[ $# == 2 && $2 == "kendex project list" ]]; then cat "$REMOTE_REGISTRY"; exit; fi\n' +
-                        'shift 4\nshift\nexec ' + BASH + ' -c "$1"\n')
+        # ssh HOST COMMAND, as watch.host_args spells it; each call is logged.
+        self.executable("ssh", '#!' + BASH + '\nset -euo pipefail\n[ "$#" = 2 ] && [ "$1" = fixture ] || exit 96\n' +
+                        'printf "%s\\n" "${2:0:40}" >>"$SSH_LOG"\n' +
+                        'if [ "$2" = "kendex project list --json" ]; then cat "$REMOTE_REGISTRY"; exit; fi\n' +
+                        'exec ' + BASH + ' -c "$2"\n')
         ask = self.mail(remote, "ask", "Remote original", "--to", "owner", "--options", "a,b", "--reserved")
         self.slack_thread(remote, ask)
+        # The host's transport cost is per destination: a worktree beside its
+        # main checkout adds no call.
+        calls = []
+        for folders in ((remote,), (linked, remote)):
+            self.register(remote_registry, *folders, main=remote if len(folders) > 1 else None)
+            log.write_text("")
+            result, page = self.run_cli()
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertEqual(page["activeCount"], 1)
+            calls.append(len(log.read_text().splitlines()))
+        self.assertEqual(calls[0], calls[1])
+        executed = self.root / "executed-checkout-code"
+        marker = 'from pathlib import Path\nPath(' + repr(str(executed)) + ').touch()\nraise SystemExit(91)\n'
         for checkout_code in (False, True):
             with self.subTest(checkout_code=checkout_code):
                 if checkout_code:
                     for module in ("base64", "json"):
-                        (remote / (module + ".py")).write_text('from pathlib import Path\nPath(' +
-                                                              repr(str(self.root / "executed-checkout-code")) +
-                                                              ').touch()\nraise SystemExit(91)\n')
+                        (remote / (module + ".py")).write_text(marker)
                     for package, entry in (("jarvis", "lib/jarvis-env.sh"), ("mailbox", "lane-mail"),
                                            ("linear", "linear.sh"), ("slack", "slack")):
                         scripts = remote / ".agents/skills" / package / "scripts"
@@ -502,40 +521,27 @@ print(json.dumps([result.returncode,result.stdout,result.stderr]))
                             scripts.unlink()
                         path = scripts / entry
                         path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_text('#!' + BASH + '\ntouch "' + str(self.root / "executed-checkout-code") + '"\nexit 91\n')
+                        path.write_text('#!' + BASH + '\ntouch "' + str(executed) + '"\nexit 91\n')
                         path.chmod(0o755)
+                    pythonpath = remote / "checkout-python"
+                    pythonpath.mkdir()
+                    for module in ("argparse", "verbs"):
+                        (pythonpath / (module + ".py")).write_text(marker)
+                    (remote / "kendex.settings.toml").write_text(
+                        '[env]\nSLACK_API_URL="http://127.0.0.1:1"\nPYTHONPATH="./checkout-python"\n')
                 result, page = self.run_cli()
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                self.assertEqual(page["activeCount"], 1)
-                self.assertEqual(page["rows"][0]["what"], "Remote original")
-                self.assertFalse((self.root / "executed-checkout-code").exists())
-        remote_registry.write_text(str(linked) + "  (worktree)\n")
-        result, page = self.run_cli()
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertEqual(page["activeCount"], 1)
-
-        marker = self.root / "executed-launch-setting"
-        # Registered target settings reach the real carried Slack ask-links
-        # launch, and ordinary values remain data.
-        cases = [
-            ("ordinary", {"SLACK_API_URL": "http://127.0.0.1:1", "SLACK_POLL_SECONDS": "7"}),
-            ("public-pythonpath", {"PYTHONPATH": "./checkout-python"}),
-        ]
-        pythonpath = remote / "checkout-python"
-        pythonpath.mkdir()
-        for module in ("argparse", "verbs"):
-            (pythonpath / (module + ".py")).write_text('from pathlib import Path\nPath(' + repr(str(marker)) +
-                                                      ').touch()\nraise SystemExit(91)\n')
-        for setting, values in cases:
-            with self.subTest(setting=setting):
-                (remote / "kendex.settings.toml").write_text(
-                    "[env]\n" + "".join(key + "=" + json.dumps(value) + "\n" for key, value in values.items()))
-                result, page = self.run_cli()
-                self.assertFalse(marker.exists(), "carried-launch-command-executed")
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-                self.assertEqual(page["activeCount"], 1)
-                self.assertEqual(page["rows"][0]["what"], "Remote original")
-                self.assertTrue(page["rows"][0]["link"]["url"].startswith("https://workspace.slack.test/"))
+                row, = page["rows"]
+                self.assertEqual(row["what"], "Remote original")
+                self.assertTrue(row["link"]["url"].startswith("https://workspace.slack.test/"))
+                payload = json.dumps({"requestId": "remote-reply-" + str(checkout_code), "expectedRevision": row["revision"],
+                                      "text": "Owner answer " + str(checkout_code)})
+                result, receipt = self.run_cli("reply", None, payload, "--id", row["id"])
+                self.assertEqual((result.returncode, receipt.get("kind"), receipt.get("state")), (0, "accepted", "open"),
+                                 result.stderr)
+                answers = [entry for entry in self.box(remote, "to-lane") if entry.get("re") == ask]
+                self.assertEqual(answers[-1]["text"].strip(), "Owner answer " + str(checkout_code))
+                self.assertFalse(executed.exists(), "checkout-code-executed")
 
     def test_carried_presence_preserves_root_settings_and_permission(self):
         remote = make_project(self.root / "remote ' presence;$")
@@ -582,50 +588,6 @@ print(json.dumps(owner._presence('ssh:fixture')))
                 self.assertEqual(hold.exists(), expected == "ok")
                 self.assertFalse(marker.exists())
 
-    def test_control_rejects_carried_startup_checkout_import(self):
-        directory = REPO.parent / "tmp"
-        directory.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="carried-startup-control-", dir=directory) as allocation:
-            skills = Path(allocation).resolve() / "skills"
-            for package in ("jarvis", "orch", "mailbox", "linear", "slack"):
-                shutil.copytree(REPO / "skills" / package / "scripts", skills / package / "scripts")
-            references = skills / "orch/references"
-            references.mkdir()
-            shutil.copyfile(REPO / "skills/orch/references/secret-value.ere", references / "secret-value.ere")
-            path = skills / "jarvis/scripts/lib/watch.py"
-            original = path.read_text()
-            old = "[sys.executable,'-I','-B','-c',%s]"
-            self.assertEqual(original.count(old), 1)
-            mutant = original.replace(old, "[sys.executable,'-B','-c',%s]")
-            self.assertNotEqual(mutant, original)
-            path.write_text(mutant)
-            result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"),
-                                     "PublicOwnerAsks.test_remote_mailbox_only_worktree_and_untrusted_checkout_code"],
-                                    env=dict(os.environ, JARVIS_TEST_SKILLS=str(skills)),
-                                    capture_output=True, text=True, timeout=60)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("FAILED (failures=", result.stderr)
-            self.assertIn("(checkout_code=True)", result.stderr)
-            self.assertNotIn("(checkout_code=False)", result.stderr)
-
-            path.write_text(original)
-            path = skills / "jarvis/scripts/lib/owner_asks.py"
-            original = path.read_text()
-            old = 'result = watch.run([self.session.env["JARVIS_BASH"], "-c", command], root, payload,'
-            self.assertEqual(original.count(old), 1)
-            mutant = original.replace(old, 'result = watch.run([self.session.env["JARVIS_BASH"], *shell_args, '
-                                      'packages / package / "scripts" / script, *args], root, data,')
-            self.assertNotEqual(mutant, original)
-            path.write_text(mutant)
-            result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"),
-                                     "PublicOwnerAsks.test_local_source_startup_preserves_settings_and_presence"],
-                                    env=dict(os.environ, JARVIS_TEST_SKILLS=str(skills)),
-                                    capture_output=True, text=True, timeout=60)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("FAILED (failures=", result.stderr)
-            self.assertIn("local-source-checkout-executed: cwd", result.stderr)
-            self.assertNotIn("ERROR:", result.stderr)
-
     def slack_thread(self, home, ask):
         # Exercise Slack's public mapping/permalink owner against its existing
         # API fixture; no product reader or HTTP transport is replaced.
@@ -649,47 +611,48 @@ print(json.dumps(owner._presence('ssh:fixture')))
         return fake.Handler.ws
 
     def test_real_mailbox_link_reply_checking_and_verified_close(self):
+        # The caller's own lane-mail runs the real send, then loses its stdout
+        # once. Recovery must use canonical positive evidence without
+        # resending, including a body the mailbox normalizes at its boundary.
+        skills = self.root / "caller/skills"
+        for package in ("jarvis", "mailbox", "linear", "slack", "orch"):
+            shutil.copytree(LIB.parents[2] / package / "scripts", skills / package / "scripts")
+        (skills / "orch/references").mkdir()
+        shutil.copyfile(LIB.parents[2] / "orch/references/secret-value.ere", skills / "orch/references/secret-value.ere")
+        mail = skills / "mailbox/scripts/lane-mail"
+        mail.rename(mail.with_name("lane-mail.real"))
+        mail.write_text('#!' + BASH + '\nset -euo pipefail\nreal="${BASH_SOURCE[0]%/*}/lane-mail.real"\n' +
+                        'if [ "$1" = send ] && [ ! -f "' + str(self.root / "lost") + '" ]; then\n' +
+                        '  "$BASH" "$real" "$@" >/dev/null\n  touch "' + str(self.root / "lost") + '"\n' +
+                        'else\n  exec "$BASH" "$real" "$@"\nfi\n')
         ask = self.mail(self.home, "ask", "Original owner ask", "--to", "owner", "--options", "a,b", "--reserved")
         self.slack_thread(self.home, ask)
-        result, page = self.run_cli()
+        result, page = self.run_cli(skills=skills)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         row = page["rows"][0]
         self.assertEqual(row["askedAt"], self.box(self.home, "to-overseer")[0]["at"])
         self.assertTrue(row["link"]["url"].startswith("https://workspace.slack.test/"))
-        # The original delivery owner runs the real send, then loses its
-        # stdout once. Recovery must use canonical positive evidence without
-        # resending, including a body the mailbox normalizes at its boundary.
-        scripts = self.home / ".agents/skills/mailbox/scripts"
-        scripts.unlink()
-        scripts.mkdir()
-        wrapper = scripts / "lane-mail"
-        wrapper.write_text('#!' + BASH + '\nset -euo pipefail\n' +
-                           'if [ ! -f "' + str(self.root / "lost") + '" ]; then\n' +
-                           '  "' + str(REPO / "skills/mailbox/scripts/lane-mail") + '" "$@" >/dev/null\n' +
-                           '  touch "' + str(self.root / "lost") + '"\nelse\n' +
-                           '  exec "' + str(REPO / "skills/mailbox/scripts/lane-mail") + '" "$@"\nfi\n')
-        wrapper.chmod(0o755)
         payload = json.dumps({"requestId": "actual-done", "expectedRevision": row["revision"], "text": "Done evidence\n"})
-        result, unknown = self.run_cli("done", None, payload, "--id", row["id"])
+        result, unknown = self.run_cli("done", None, payload, "--id", row["id"], skills=skills)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(unknown["kind"], "unavailable")
-        result, refreshed = self.run_cli()
+        result, refreshed = self.run_cli(skills=skills)
         self.assertEqual(result.returncode, 0, result.stderr)
         until = owner_asks.iso(owner_asks.time.time() + 3600)
         later_payload = json.dumps({"requestId": "newer-later", "expectedRevision": refreshed["revision"], "until": until})
-        result, later = self.run_cli("later", None, later_payload, "--id", row["id"])
+        result, later = self.run_cli("later", None, later_payload, "--id", row["id"], skills=skills)
         self.assertEqual((result.returncode, later["state"]), (0, "snoozed"))
-        result, receipt = self.run_cli("done", None, payload, "--id", row["id"])
+        result, receipt = self.run_cli("done", None, payload, "--id", row["id"], skills=skills)
         self.assertEqual(receipt["state"], "checking", result.stderr)
-        self.assertEqual(self.run_cli()[1]["activeCount"], 0)
-        self.assertEqual(self.run_cli(view="snoozed")[1]["rows"][0]["snoozedUntil"], until)
-        self.assertEqual(self.run_cli("done", None, payload, "--id", row["id"])[1], receipt)
+        self.assertEqual(self.run_cli(skills=skills)[1]["activeCount"], 0)
+        self.assertEqual(self.run_cli(view="snoozed", skills=skills)[1]["rows"][0]["snoozedUntil"], until)
+        self.assertEqual(self.run_cli("done", None, payload, "--id", row["id"], skills=skills)[1], receipt)
         answers = [entry for entry in self.box(self.home, "to-lane") if entry.get("re") == ask]
         self.assertEqual(len(answers), 1)
         self.assertEqual(answers[0]["kind"], "answer")
         closed = self.command([REPO / "skills/mailbox/scripts/lane-mail", "resolve", "--item", "overseer", "--id", ask], self.home)
         self.assertEqual(closed.returncode, 0, closed.stderr)
-        self.assertEqual(self.run_cli()[1]["rows"], [])
+        self.assertEqual(self.run_cli(skills=skills)[1]["rows"], [])
 
     def test_actual_tracker_writer_recovers_lost_acknowledgement(self):
         (self.home / "kendex.settings.toml").write_text(
@@ -740,8 +703,10 @@ elif 'ListIssues' in query:
     if mode == 'incomplete':
         issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
     data = {'issues': issues}
-elif 'GetIssue(' in query:
-    data = {'issue': dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1')}
+elif 'GetIssueWithBundle' in query:
+    data = {'issue': dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
+                          labels=connection([]), relations=connection([]), inverseRelations=connection([]),
+                          children=connection([]))}
 elif 'ListComments' in query:
     data = {'issue': dict(id='issue-uuid', comments=connection(list(map(comment, comments))))}
 elif 'comments' in query:
