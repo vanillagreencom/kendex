@@ -141,7 +141,8 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD [ENVELOPE_FILE]]: bytes on 
 
 # The class of an envelope in the overseer's own to-lane.jsonl, as a jq
 # definition a caller puts ahead of its filter, so the writer that checks a
-# reply's --ref and the watch that reports the line judge one rule: a
+# reply's --ref and the watch that reports the line judge one rule: `data`
+# is a data notice, whoever its `from` names, so it is never an owner note; a
 # `close` is a resolution or a legacy closing answer; `resolution` is an owner answer
 # carrying `by`; a `peer` line names another repository's overseer in `from`;
 # an `owner-note` names owner or no sender; and a `stray` is an owner answer
@@ -152,7 +153,8 @@ mailbox_append_locked() { # FILE WAIT_SECONDS [GUARD [ENVELOPE_FILE]]: bytes on 
 MAILBOX_CLASS_JQ='def mailbox_legacy_close:
   .kind == "answer" and (.by == "text" or .by == "default") and (has("closes") | not);
 def overseer_mail_class:
-  if .kind == "resolution" or mailbox_legacy_close then "close"
+  if .kind == "data" then "data"
+  elif .kind == "resolution" or mailbox_legacy_close then "close"
   elif .kind == "answer" and (.by | type) == "string" then "resolution"
   elif ((.from // "") | . != "" and . != "owner") then "peer"
   elif .kind == "answer" then "stray"
