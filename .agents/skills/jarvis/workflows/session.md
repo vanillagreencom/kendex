@@ -8,7 +8,7 @@ Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 
 
 ## Session command
 
-Use [Owner asks](../references/owner-asks.md) for the shared list and Reply, Done and Later operations. These operations need no running controller session.
+Use [Owner asks](../references/owner-asks.md) for the shared list and its Later operation. These operations need no running controller session.
 
 - Start, resume and succession read published policy from the systemd user manager on Linux, and from launchd's caller context on macOS. Shell-only exports do not reach a managed session. `environment()` in `scripts/lib/session.py` owns the list of supported names; extend it through a package change. A failed source read refuses launch before handover. Status and Stop stay available. The selected account's launch owner supplies credentials and harness identity. Only Pi can keep the caller's explicit `CLAUDE_CONFIG_DIR`, for its Claude provider.
 - Before the first Start with Copilot CLI, follow [Copilot folder trust](../references/home-layout.md#copilot-folder-trust) unless the home's `JARVIS_UNATTENDED_HARNESSES` names `copilot`.

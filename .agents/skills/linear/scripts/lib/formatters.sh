@@ -386,7 +386,6 @@ def comment_safe: {
     user: (.user.name // ""),
     user_email: (.user.email // ""),
     user_id: (.user.id // ""),
-    user_url: (.user.url // ""),
     parent_id: (.parent.id // null),
     url: (.url // ""),
     created_at: (.createdAt // ""),

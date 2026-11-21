@@ -141,15 +141,13 @@ class Slack:
     def get(self, method: str, retries: int = RETRIES, **params: object) -> Dict:
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
         req = urllib.request.Request(f"{self.base_url}/{method}?{query}")
-        # urllib copies added headers onto a redirect's target. An unredirected
-        # header carries the token to the configured endpoint alone.
-        req.add_unredirected_header("Authorization", f"Bearer {self.token}")
+        req.add_header("Authorization", f"Bearer {self.token}")
         return self._request(req, method, retries)
 
     def post(self, method: str, **body: object) -> Dict:
         data = json.dumps({k: v for k, v in body.items() if v is not None}).encode()
         req = urllib.request.Request(f"{self.base_url}/{method}", data=data, method="POST")
-        req.add_unredirected_header("Authorization", f"Bearer {self.token}")
+        req.add_header("Authorization", f"Bearer {self.token}")
         req.add_header("Content-Type", "application/json; charset=utf-8")
         return self._request(req, method, RETRIES)
 

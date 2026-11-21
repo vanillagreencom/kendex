@@ -3,14 +3,19 @@
 mailbox_common_root() ( # WORKTREE
     local worktree git_context git_common_dir git_toplevel
         worktree="${1:-.}"
-        git_context="$(git -C "$worktree" rev-parse --git-common-dir --show-toplevel)" || return
+        # Each read ends with a sentinel: a command substitution would strip a
+        # path's own trailing line feeds with the one git adds.
+        git_context="$(git -C "$worktree" rev-parse --git-common-dir --show-toplevel && printf .)" || return
+        git_context="${git_context%$'\n.'}"
         git_common_dir="${git_context%%$'\n'*}"
         git_toplevel="${git_context#*$'\n'}"
         # Git prints paths containing newlines verbatim. Keep the separate
         # reads for those paths so neither field can split the other.
         if [[ "$git_context" == *$'\n'*$'\n'* ]]; then
-            git_common_dir="$(git -C "$worktree" rev-parse --git-common-dir)" || return
-            git_toplevel="$(git -C "$worktree" rev-parse --show-toplevel)" || return
+            git_common_dir="$(git -C "$worktree" rev-parse --git-common-dir && printf .)" || return
+            git_common_dir="${git_common_dir%$'\n.'}"
+            git_toplevel="$(git -C "$worktree" rev-parse --show-toplevel && printf .)" || return
+            git_toplevel="${git_toplevel%$'\n.'}"
         fi
         case "$git_common_dir" in
             # Git answers relative to the worktree it was asked about, so the
