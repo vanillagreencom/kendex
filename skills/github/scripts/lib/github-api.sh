@@ -7,19 +7,31 @@ set -euo pipefail
 # Configuration
 DEFAULT_FORMAT="safe" # safe, raw
 
-json_or_default() {
+# The answer is the command's stdout alone: gh can write a hint to stderr on
+# success, as 2.105.0's `gh pr view` does. Stderr reaches the caller only as
+# the diagnostic of a failed command or an invalid answer. A subshell, so the
+# scratch file's trap leaves the caller's traps alone.
+json_or_default() (
     local fallback="$1"
     local expected_type="$2"
     shift 2
 
-    local output=""
-    if ! output=$("$@" 2>&1); then
+    local errors output=""
+    if ! errors=$(mktemp); then
+        printf 'json_or_default: scratch=mktemp-failed command=%s\n' "$*" >&2
+        printf '%s' "$fallback"
+        exit 1
+    fi
+    trap 'rm -f -- "$errors"' EXIT
+
+    if ! output=$("$@" 2>"$errors"); then
         printf 'Command failed: %s\n' "$*" >&2
         if [[ -n "$output" ]]; then
             printf '%s\n' "$output" >&2
         fi
+        cat -- "$errors" >&2
         printf '%s' "$fallback"
-        return 1
+        exit 1
     fi
 
     if ! jq -e --arg type "$expected_type" 'type == $type' >/dev/null 2>&1 <<<"$output"; then
@@ -27,12 +39,13 @@ json_or_default() {
         if [[ -n "$output" ]]; then
             printf '%s\n' "$output" >&2
         fi
+        cat -- "$errors" >&2
         printf '%s' "$fallback"
-        return 2
+        exit 2
     fi
 
     printf '%s' "$output"
-}
+)
 
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

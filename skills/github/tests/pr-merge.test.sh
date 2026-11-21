@@ -115,6 +115,8 @@ both snapshot reads failing cannot prove enrollment|checks:ci-required post-queu
 a closed snapshot cannot keep a queue entry|checks:ci-required post-queue post:CLOSED env:STUB_MERGEABLE=UNKNOWN|immediate|1|-|$COMPUTING_REFUSAL|calls=$CHECK,graphql:queue auth=<unset>
 "
 
+# gh 2.105.0's `gh pr view` opens this block on stderr on a successful read.
+printf 'hint: if you need to wait for this pull request to be reviewed, merged, or closed\n' >"$TMPDIR/review-hint.err"
 run_table "the readiness check" "\
 pending checks block, transiently, one issue naming each|checks:pending2 checks-exit:8|check|0|merge=false transient=true $OPEN runs=- issues=[ci_pending: Cross-Platform (PENDING), Linux Integration (IN_PROGRESS)] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 a failed check blocks permanently|checks:failed|check|0|merge=false transient=false $OPEN runs=- issues=[ci_failed: Lint (FAILURE)] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
@@ -144,6 +146,7 @@ a changes-requested reviewDecision blocks permanently|checks:ci-required review:
 a changes-requested latest review blocks when the decision does not say so|checks:ci-required review:REVIEW_REQUIRED review-latest:CHANGES_REQUESTED|check|0|merge=false transient=false $OPEN runs=- issues=[changes_requested: Reviewer requested changes] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 a PR with no approval is named not_approved, a warning that blocks nothing here|checks:ci-required review:REVIEW_REQUIRED|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[not_approved: Review status is 'REVIEW_REQUIRED'] $KEYS|mergeable;head-run: none|calls=$CHECK auth=<unset>
 an approving latest review clears not_approved where the decision is empty|checks:ci-required review:none review-latest:APPROVED|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[] $KEYS|mergeable;head-run: none|calls=$CHECK auth=<unset>
+a review read whose gh writes a hint to stderr on success still reads the review|checks:ci-required env:STUB_REVIEW_STDERR_FILE=$TMPDIR/review-hint.err|check|0|merge=true transient=false $OPEN runs=- issues=[] warnings=[] $KEYS|mergeable;head-run: none|calls=$CHECK auth=<unset>
 a native-approved PR whose decline names no mechanism is blocked by the live reply check|checks:ci-required replies:unreasoned|check|0|merge=false transient=false $OPEN runs=- issues=[review_replies: unreasoned-decline count=1] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 two failing reply rules join into one issue, each rule line kept|checks:ci-required replies:two|check|0|merge=false transient=false $OPEN runs=- issues=[review_replies: untracked-claim count=1; unreasoned-decline count=1] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>
 a reply check that cannot read the threads blocks, naming its refusal|checks:ci-required replies:fail|check|0|merge=false transient=false $OPEN runs=- issues=[review_replies_unread: check-review-replies: read-failed pr=123] warnings=[] $KEYS|blocked;head-run: none|calls=$CHECK auth=<unset>

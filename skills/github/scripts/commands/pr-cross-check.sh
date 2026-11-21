@@ -45,18 +45,20 @@ Examples:
 EOF
 }
 
-# Fetch PR data with files
+# Fetch PR data with files. The answer goes straight to stdout through fd 3;
+# the capture holds json_or_default's diagnostic, which a failed read carries
+# as its reason. The empty fallback keeps a failed read's stdout empty.
 fetch_pr_data() {
     local pr_num="$1"
-    local output
-    if ! output=$(gh pr view "$pr_num" --json number,headRefName,files,mergeable,baseRefName 2>&1); then
+    local diagnostic
+    if ! { diagnostic=$(json_or_default '' object gh pr view "$pr_num" --json number,headRefName,files,mergeable,baseRefName 2>&1 >&3); } 3>&1; then
         local reason
-        reason=$(printf '%s' "$output" | tr '\n' ' ' | head -c 200)
+        reason=${diagnostic//$'\n'/ }
+        reason=${reason:0:200}
         jq -n --arg pr "$pr_num" --arg reason "${reason:-GitHub API request failed}" \
             '{error: "fetch_failed", number: ($pr | tonumber? // $pr), reason: $reason}'
         return 1
     fi
-    printf '%s\n' "$output"
 }
 
 # Build file overlap map
