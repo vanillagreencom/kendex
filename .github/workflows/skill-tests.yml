@@ -981,24 +981,15 @@ jobs:
       # names, on the orch-rest Linux leg (on a push, those its same-head
       # group left unproved), and every target of both runtimes where the
       # changes job published none. Per package with a target, fmt
-      # and clippy over all its targets prepare the run. It runs after the
+      # and clippy over all its targets prepare the run; cargo test runs the
+      # listed targets, its whole manifest for `<package>/*`, and the
+      # package's privacy harness runs after them. It runs after the
       # orch-rest suites whatever they answered, so neither red hides the
       # other. The fixture gh's projector is held to the jq the catalog's
       # scripts are held to, so the step names the runner's jq first.
       # In the runs that tested every target, 44611935189, 44789074453,
       # 44843919810 and 44860396393, the step took 843-1055s of a 1284-1541s
-      # leg: orch's test binaries ran 613-677s one after another, and a local
-      # run of its effects and controller binaries spent about one CPU in
-      # four, waiting on the processes and real time they hold. So the step
-      # compiles the test binaries once and runs each listed test target, and
-      # the doctests where the lib is listed, as its own `cargo test`, `nproc`
-      # at a time, each target's binary keeping its own threads and
-      # once-per-binary builds.
-      # The package's privacy harness runs beside them; its copy of the
-      # runtime leaves out the target/ folder those runs write. Each target
-      # prints a start line, then its exit and whole log when it ends, so a
-      # hung target is the one with no end; the targets that failed are named
-      # last.
+      # leg.
       - name: the package runtimes' Rust targets
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
         env:
@@ -1018,47 +1009,13 @@ jobs:
             echo "=== $manifest ${args[*]}"
             cargo fmt --check --manifest-path "$manifest"
             cargo clippy --all-targets --locked --manifest-path "$manifest" -- -D warnings
-            out="$RUNNER_TEMP/rust-targets/$package"
-            mkdir -p "$out"
-            # The test-profile executables `cargo test` would run, read from
-            # cargo's JSON artifact messages: lib, bin and test targets.
-            cargo test --no-run --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"} \
-              --message-format=json-render-diagnostics >"$out/plan.json"
-            jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null)
-              | .target.kind[0] as $kind
-              | if $kind == "lib" then "--lib" else "--\($kind) \(.target.name)" end' "$out/plan.json" |
-              sort -u >"$out/units"
-            [ -s "$out/units" ] || { echo "rust-targets: no test executable for $manifest ${args[*]-}" >&2; exit 1; }
-            # --lib leaves the doctests out, and cargo takes --doc alone; the
-            # whole manifest runs them too.
-            case " ${args[*]-} " in "  " | *" --lib "*) echo --doc >>"$out/units" ;; esac
+            cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"}
+            # --lib leaves the doctests out, and cargo takes --doc alone.
+            case " ${args[*]-} " in *" --lib "*) cargo test --doc --locked --manifest-path "$manifest" ;; esac
             # The effect engine's privacy, held by the compiler's own error
             # code for each planted case: a doctest cannot hold which rule
             # refused.
-            echo "rust-targets: start $manifest privacy-cases"
-            bash "skills/$package/tests/privacy/privacy-cases.sh" >"$out/privacy.log" 2>&1 &
-            privacy=$!
-            # The lock keeps one target's lines whole among the others'.
-            pool=0
-            MANIFEST="$manifest" OUT="$out" xargs -P "$(nproc)" -L1 bash -c '
-              unit="$*"
-              log="$OUT/${unit// /-}.log"
-              { flock 9; echo "rust-targets: start $MANIFEST $unit"; } 9>>"$OUT/print.lock"
-              status=0
-              cargo test --no-fail-fast --locked --manifest-path "$MANIFEST" "$@" >"$log" 2>&1 || status=$?
-              [ "$status" -eq 0 ] || printf "%s\n" "$unit" >>"$OUT/failed"
-              { flock 9; echo "--- $MANIFEST $unit exit=$status"; cat "$log"; } 9>>"$OUT/print.lock"' unit <"$out/units" || pool=$?
-            [ "$pool" -eq 0 ] || echo "xargs exit=$pool" >>"$out/failed"
-            privacy_status=0
-            wait "$privacy" || privacy_status=$?
-            [ "$privacy_status" -eq 0 ] || echo privacy-cases >>"$out/failed"
-            echo "--- $manifest privacy-cases exit=$privacy_status"
-            cat "$out/privacy.log"
-            if [ -s "$out/failed" ]; then
-              echo "rust-targets: failed in $manifest:" >&2
-              sed 's/^/  /' "$out/failed" >&2
-              exit 1
-            fi
+            bash "skills/$package/tests/privacy/privacy-cases.sh"
           done
 
       # A failure is announced twice: inline where it happened, and in a

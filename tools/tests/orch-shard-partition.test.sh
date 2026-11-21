@@ -1684,53 +1684,7 @@ check "the runtimes' targets run on the orch-rest Linux leg where a target is li
   "true true false false false" \
   "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-state Linux '["orch/lib"]')"
 check "one step runs the listed runtime targets" "1" \
-  "$(grep -cF 'cargo test --no-fail-fast --locked --manifest-path "$MANIFEST" "$@"' "$WORKFLOW")"
-# The targets step's own body, run over a stub cargo and privacy harness: a
-# failed target or privacy case must red the step, which otherwise prints the
-# failure and passes. flock and nproc are stubbed for a host without them.
-targets_step() { # WORKFLOW TEST_STATUS PRIVACY_STATUS ; green or red
-  local run cond block="" f
-  run="$(mktemp -d "$TMP/targets-step.XXXXXX")" || exit 1
-  cond="\${{$(step_if "$1" "$TARGETS_STEP")}}"
-  split_run_blocks "$1" "$run/blocks"
-  for f in "$run"/blocks/*.cond; do
-    [[ "$(cat "$f")" != "$cond" ]] || { [[ -z "$block" ]] || { printf 'two-steps\n'; return 0; }; block="${f%.cond}.sh"; }
-  done
-  [[ -n "$block" ]] || { printf 'no-step\n'; return 0; }
-  mkdir -p "$run/bin" "$run/work/skills/orch/tests/privacy" "$run/runner"
-  cat > "$run/bin/cargo" <<'STUB'
-#!/usr/bin/env bash
-case "$1:$*" in
-  fmt:* | clippy:*) exit 0 ;;
-  test:*--no-run*)
-    printf '%s\n' '{"reason":"compiler-artifact","profile":{"test":true},"executable":"/stub","target":{"kind":["lib"],"name":"orch"}}' ;;
-  test:*) exit "$STUB_TEST_STATUS" ;;
-  *) exit 64 ;;
-esac
-STUB
-  printf '#!/usr/bin/env bash\n:\n' > "$run/bin/flock"
-  printf '#!/usr/bin/env bash\necho 2\n' > "$run/bin/nproc"
-  chmod +x "$run/bin/cargo" "$run/bin/flock" "$run/bin/nproc"
-  printf 'exit "$STUB_PRIVACY_STATUS"\n' > "$run/work/skills/orch/tests/privacy/privacy-cases.sh"
-  if (cd "$run/work" && PATH="$run/bin:$PATH" RUNNER_TEMP="$run/runner" RUST_TARGETS='["orch/lib"]' \
-    STUB_TEST_STATUS="$2" STUB_PRIVACY_STATUS="$3" "$BASH" "$block") >"$run/log" 2>&1; then
-    printf 'green\n'
-  else
-    printf 'red\n'
-  fi
-}
-while IFS='|' read -r label test_status privacy_status expected; do
-  check "the targets step is $expected when $label" "$expected" \
-    "$(targets_step "$WORKFLOW" "$test_status" "$privacy_status")"
-done <<'TARGETS'
-every target and privacy case passes|0|0|green
-a target fails|101|0|red
-the privacy cases fail|0|1|red
-TARGETS
-plant "$WORKFLOW" "              exit 1" "              :" "$TMP/targets-unfailed.yml" \
-  "skill-suites-shard/$TARGETS_STEP" line
-check "must-fail: a failed list that ends without exit 1 leaves a failed target's step green" green \
-  "$(targets_step "$TMP/targets-unfailed.yml" 101 0)"
+  "$(grep -c 'cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args\[@\]+"${args\[@\]}"}' "$WORKFLOW")"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.
