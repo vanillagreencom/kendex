@@ -15,18 +15,24 @@
 # refresh-state=pushed|merged pr=NUMBER class=CLASS, or
 # refresh-state=unchanged pr=NUMBER|none class=CLASS head=REVISION published=false, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
-# refresh-state=deferred reason=queued|merged|closed|branch-gone|base-moved. A
+# refresh-state=held pr=NUMBER class=CLASS head=REVISION, or
+# refresh-state=deferred reason=queued|merged|closed|branch-gone|base-moved.
+# A held run's verify failed only on declarations its projects' manifests
+# withhold, each project's printing refresh-verify=held project=ENTRY: it
+# publishes the head as a draft pull request whose body names each finding
+# and its manifest line, arms nothing and lands nothing. A
 # render this run committed that it did not push, or whose push GitHub
-# refused, where the caller set either landing name, also prints one landing
-# line ahead of the pull request route's record:
+# refused, and a held run's retained head, where the caller set either
+# landing name, also print one landing line ahead of the pull request
+# route's record:
 # refresh-land=refused value=STATUS (GitHub refused the push),
 # refresh-land=unavailable value=token|sources-read|queue-read (no landing
 # token reached the run, or the project sources or the merge queue could not
-# be read), or refresh-land=skipped value=class|sources-uncovered|queued (the
-# class is not render, a project takes packages from another catalog or
-# revision, or the merge queue holds an entry). An unread source answer also
-# writes refresh-sources=unread value=PROJECT to stderr. A consumer whose
-# render did not run also gets
+# be read), or refresh-land=skipped value=verify|class|sources-uncovered|queued
+# (the run is held, the class is not render, a project takes packages from
+# another catalog or revision, or the merge queue holds an entry). An unread
+# source answer also writes refresh-sources=unread value=PROJECT to stderr.
+# A consumer whose render did not run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -221,6 +227,10 @@ while IFS= read -r -d '' directory && IFS= read -r -d '' entry; do
   project_entries+=("$entry")
 done <"$TMP/projects"
 catalog_report=""
+# The findings of a verify that failed only on the projects' own
+# declarations, and that verify's exit status.
+verify_report=""
+held_status=""
 retired_items=""
 setting_notes=()
 refresh_project() {
@@ -397,7 +407,81 @@ fi
 if [ "$1" = "$ROOT" ]; then
   "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
 fi
-kendex verify --scope project
+verify_status=0
+{
+  kendex verify --scope project --json
+} >"$TMP/verify.json" 2>"$TMP/verify.said" || verify_status=$?
+cat -- "$TMP/verify.said" >&2
+[ "$verify_status" -ne 0 ] || return 0
+# A verify whose every failure is a declaration this project's manifest
+# withholds still publishes, as a draft that names each finding and the
+# manifest line it comes from: the edit that clears it belongs in that file
+# on the default branch. Prints the findings as list items, or exits 1 with
+# refresh-verify=other cause=CAUSE on stderr for any other failure, an
+# unread document included, which keeps the run's exit. A row the reader
+# does not know is another failure. Repository setup and a tracked-output
+# check git could not answer fail verify with no row, so the closing line
+# must also count no other failure.
+if ! findings="$(python3 - "$TMP/verify.json" "$TMP/verify.said" <<'VERIFY_FINDINGS'
+import json, pathlib, re, sys
+def other(cause):
+    print('refresh-verify=other cause=' + cause, file=sys.stderr)
+    sys.exit(1)
+try:
+    doc = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    said = [line for line in pathlib.Path(sys.argv[2]).read_text().splitlines() if line.strip()]
+except (OSError, ValueError):
+    other('unread')
+if not isinstance(doc, dict) or doc.get('version') != 1 or doc.get('clean') is not False or \
+        doc.get('failed') != 0 or not isinstance(doc.get('rows'), list):
+    other('document')
+rows = doc['rows']
+if not all(isinstance(row, dict) and isinstance(row.get('kind'), str) and isinstance(row.get('name'), str) and
+           isinstance(row.get('detail', ''), str) for row in rows):
+    other('document')
+if any(row.get('state') not in ('ok', 'notice', 'warning', 'unrecorded') for row in rows):
+    other('row')
+held = [row for row in rows if row['state'] == 'unrecorded']
+if not held or not all(row.get('detail', '').startswith('withheld: ') for row in held):
+    other('unrecorded')
+# verify prints the record row only where it read the record.
+if not any(row['kind'] == 'record' and row['state'] == 'ok' for row in rows):
+    other('record')
+if not said or not re.fullmatch(r'(nothing checked|[0-9]+ checked, [0-9]+ OK, 0 failed)(; [0-9]+ warnings?)?', said[-1]):
+    other('closing')
+def declaration(kind, name):
+    header = re.compile(r'\s*\[\s*' + re.escape(kind) + r's\s*\.\s*("?)' + re.escape(name) + r'\1\s*\]\s*(#.*)?')
+    for manifest in ('kendex.toml', 'kendex-local.toml'):
+        path = pathlib.Path(manifest)
+        lines = path.read_text().splitlines() if path.is_file() else []
+        for start, line in enumerate(lines):
+            if not header.fullmatch(line):
+                continue
+            found = start
+            for index in range(start + 1, len(lines)):
+                if lines[index].lstrip().startswith('['):
+                    break
+                if re.match(r'\s*harnesses\s*=', lines[index]):
+                    found = index
+                    break
+            return ' (`%s` line %d: `%s`)' % (manifest, found + 1, lines[found].strip())
+    return ''
+try:
+    for row in rows:
+        if row['state'] in ('unrecorded', 'notice'):
+            on = ' on ' + row['harness'] if isinstance(row.get('harness'), str) else ''
+            print('- %s `%s`%s: %s%s' % (row['kind'], row['name'], on, row.get('detail', ''), declaration(row['kind'], row['name'])))
+except (OSError, ValueError):
+    other('manifest')
+VERIFY_FINDINGS
+)"; then
+  printf 'refresh-error=verify value=%s\n' "$verify_status" >&2
+  exit "$verify_status"
+fi
+printf 'refresh-verify=held project=%s\n' "$2"
+if [ "${#projects[@]}" -gt 1 ]; then findings="Project \`$2\`:"$'\n'"$findings"; fi
+verify_report="${verify_report}${verify_report:+$'\n'}$findings"
+held_status="$verify_status"
 }
 for ((project_index=0; project_index<${#projects[@]}; project_index++)); do
   refresh_project "${projects[$project_index]}" "${project_entries[$project_index]}"
@@ -518,6 +602,12 @@ except (Unread, ImportError, OSError, ValueError, subprocess.SubprocessError) as
 print('sources=' + verdict)
 SOURCE_COVERAGE
 }
+if [ "$publication_status" -eq 0 ] && [ -n "$verify_report" ]; then
+  # No change to carry the findings, so the verify failure stands.
+  printf 'Verify failed on these declarations, and no content changed to publish:\n\n%s\n' "$verify_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+  printf 'refresh-error=verify value=%s\n' "$held_status" >&2
+  exit "$held_status"
+fi
 if [ "$publication_status" -eq 0 ]; then
   report_settings
   refresh_close_superseded
@@ -577,7 +667,9 @@ fi
 report_settings
 # An identical tree publishes no new head. Only a new publication belongs to
 # this automatic admission route; absence of an open PR proves no first arm.
-if [ "$state" = unchanged ]; then
+# A held run still names its findings on the retained head and keeps it a
+# draft.
+if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then
   printf 'refresh-state=unchanged pr=%s class=%s head=%s published=false\n' "${pr:-none}" "$class" "$head"
   printf 'Refresh retained head `%s`; no new head was published. Automatic admission was deferred.\n\n%s\n\n%s\n' "$head" "$version_report" "$class_line" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
@@ -608,6 +700,7 @@ refresh_land_check() {
     if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi
     return 0
   fi
+  if [ -n "$verify_report" ]; then land_check=skipped:verify; return 0; fi
   if [ "$class" != render ]; then land_check=skipped:class; return 0; fi
   case "$(refresh_source_coverage)" in
     sources=covered) ;;
@@ -661,9 +754,14 @@ fi
 if [ -n "$retired_items" ]; then
   printf -v body '%s\nRetired items:\n```text\n%s```\n' "$body" "$retired_items"
 fi
-if [ "$state" = pushed ]; then
-  # An old arm survives a push and could merge the replacement before review.
-  # Read lifecycle again after rendering; disarm only for this new publication.
+if [ -n "$verify_report" ]; then
+  printf -v verify_note 'kendex verify failed on declarations this repository holds, so this pull request stays a draft and unarmed until verify passes. Make the edit each finding names on the default branch; the next refresh renders on it and marks this pull request ready.\n\n%s' "$verify_report"
+  printf -v body '%s\n%s\n' "$body" "$verify_note"
+fi
+if [ "$state" = pushed ] || [ -n "$verify_report" ]; then
+  # An old arm survives a push and could merge the replacement before review,
+  # and a held head must not merge at all. Read lifecycle again after
+  # rendering; disarm only for this new publication or a held head.
   if [ -n "$pr" ] || [ -n "$old" ]; then
     refresh_lifecycle
     if [ "$reason" = armed ] && ! gh pr merge "$pr" --repo "$GH_REPO" --disable-auto; then
@@ -681,6 +779,8 @@ if [ "$state" = pushed ]; then
         exit 0 ;;
     esac
   fi
+fi
+if [ "$state" = pushed ]; then
   push_status=0
   git push "--force-with-lease=refs/heads/kendex/refresh:$old" origin HEAD:refs/heads/kendex/refresh 2>"$TMP/push-stderr" || push_status=$?
   cat -- "$TMP/push-stderr" >&2
@@ -714,10 +814,28 @@ if [ "$state" = pushed ]; then
     exit 1
   fi
 fi
+# The refresh owns its rolling pull request's draft state: a draft is one
+# GitHub merges by no route, and a held run leaves it one.
 if [ -z "$pr" ]; then
-  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body="$body" --jq .number)"
+  draft=()
+  if [ -n "$verify_report" ]; then draft=(-F draft=true); fi
+  pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body="$body" ${draft[@]+"${draft[@]}"} --jq .number)"
 else
-  gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" >/dev/null
+  if ! drafted="$(gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" --jq .draft)"; then
+    printf 'refresh-error=pull-update pr=%s\n' "$pr" >&2
+    exit 1
+  fi
+  if [ -n "$verify_report" ] && [ "$drafted" != true ]; then
+    gh pr ready "$pr" --repo "$GH_REPO" --undo || { printf 'refresh-error=draft pr=%s\n' "$pr" >&2; exit 1; }
+  elif [ -z "$verify_report" ] && [ "$drafted" = true ]; then
+    gh pr ready "$pr" --repo "$GH_REPO" || { printf 'refresh-error=ready pr=%s\n' "$pr" >&2; exit 1; }
+  fi
+fi
+if [ -n "$verify_report" ]; then
+  printf 'refresh-state=held pr=%s class=%s head=%s\n' "$pr" "$class" "$head"
+  printf '::warning title=refresh held::pull request %s stays a draft until kendex verify passes; its body names each finding\n' "$pr"
+  printf 'Held pull request %s at `%s` as a draft.\n\n%s\n' "$pr" "$head" "$verify_note" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+  exit 0
 fi
 merge_route=auto
 # The completed render proof permits a direct merge only when GitHub confirms

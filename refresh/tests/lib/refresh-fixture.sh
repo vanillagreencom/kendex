@@ -151,9 +151,9 @@ adopt = '''if [ "$1" = "$ROOT" ]; then
   "$SCRIPT_DIR/adopt-refresh.sh" --templates-dir "$templates"
 fi
 '''
-old = adopt + 'kendex verify --scope project'
+old = adopt + 'verify_status=0\n'
 assert source.count(old) == 1
-changed = source.replace(old, 'kendex verify --scope project\n' + adopt)
+changed = source.replace(old, 'kendex verify --scope project\n' + old)
 assert changed != source
 path.write_text(changed)
 PROJECT_ORDER_CONTROL
@@ -257,7 +257,7 @@ PROJECT_BOT
             for entry in "$repo" "$repo/packaging/jarvis home"; do
               [ "$(grep -cxF "$entry|refresh --scope project --yes --leave|main" "$TMP/state/project-calls")" -eq 1 ] || matched=no
               grep -qxF "$entry|apply --scope project --yes --leave|main" "$TMP/state/project-calls" || matched=no
-              grep -qxF "$entry|verify --scope project|main" "$TMP/state/project-calls" || matched=no
+              grep -qxF "$entry|verify --scope project --json|main" "$TMP/state/project-calls" || matched=no
             done
           fi ;;
         fallback)
@@ -414,7 +414,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1]).resolve()
 source = path.read_text()
-old = 'if [ "$state" = unchanged ]; then'
+old = 'if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then'
 assert source.count(old) == 1
 changed = source.replace(old, 'if false; then # ' + old)
 assert changed != source
@@ -426,7 +426,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1]).resolve()
 source = path.read_text()
-start = 'if [ "$state" = unchanged ]; then\n'
+start = 'if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then\n'
 assert source.count(start) == 1
 offset = source.index(start)
 end = source.index('\nfi\n', offset)
@@ -770,8 +770,9 @@ run_real_refresh() {
   OUT="$(cd -- "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$real_root/home" \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     GH_TOKEN=test-token GH_REPO=acme/test REFRESH_APP_SLUG=lanes KENDEX_CATALOG_REV=v1.7.0 TEST_STATE="$TMP/state" \
+    GITHUB_STEP_SUMMARY="$TMP/state/summary" \
     TEST_REAL_GIT="$REAL_GIT" TEST_REAL_KENDEX="$REAL_KENDEX" TEST_KENDEX_OUTPUT="${KENDEX_OUTPUT:-normal}" \
-    TEST_LEASE_REMOTE="$real_root/remote" \
+    TEST_LEASE_REMOTE="$real_root/remote" ${REAL_LAND_TOKEN:+"KENDEX_LAND_TOKEN=$REAL_LAND_TOKEN"} \
     TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" \
     TEST_CLASS=render TEST_MEASURED=true TEST_CLASS_EXIT=0 TEST_REASON=cause=renders-match-their-sources \
     KENDEX_REAL_HOME=1 KENDEX_GIT_BASE="file://$real_root/git" KENDEX_UI=plain "$BASH" "$runner" 2>&1)" || RC=$?
