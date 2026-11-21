@@ -1650,8 +1650,8 @@ runtime_suites "$TMP/runtime-owners-macos" "$TMP/runtime-suites-macos"
 check "the Linux legs owning a suite that runs orch-runtime are the two orch legs, both hook legs, guards-tools, jarvis, mailbox, rest, slack and both worktree legs" \
   "$(printf '%s\n' guards-hooks guards-hooks-tail guards-tools jarvis mailbox orch-rest orch-state rest slack worktree worktree-restack)" \
   "$(cut -f1 "$TMP/runtime-suites" | sort -u)"
-check "the macOS legs owning a suite that runs orch-runtime are orch-rest, both hook legs, guards-tools, rest, slack and worktree" \
-  "$(printf '%s\n' guards-hooks guards-hooks-tail guards-tools orch-rest rest slack worktree)" \
+check "the macOS legs owning a suite that runs orch-runtime are both orch legs, both hook legs, guards-tools, rest, slack and worktree" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail guards-tools orch-rest orch-state rest slack worktree)" \
   "$(cut -f1 "$TMP/runtime-suites-macos" | sort -u)"
 check "every leg owning a suite that runs orch-runtime builds the package runtimes first" "" \
   "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-suites"; unbuilt_runtime_legs "$WORKFLOW" macOS "$TMP/runtime-suites-macos")"
@@ -1684,7 +1684,7 @@ check "the runtimes' targets run on the orch-rest Linux leg where a target is li
   "true true false false false" \
   "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-state Linux '["orch/lib"]')"
 check "one step runs the listed runtime targets" "1" \
-  "$(grep -c 'cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args\[@\]+"${args\[@\]}"}' "$WORKFLOW")"
+  "$(grep -cF 'cargo test --no-run --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"}' "$WORKFLOW")"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.
@@ -1753,14 +1753,16 @@ check "must-fail: a linear roster without its retention loses its unresolved sui
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
 
 # Linux rest releases Jarvis to its shard; macOS rest keeps the family, mixed
-# and unresolved suites alike, because macOS runs no jarvis leg, less the two
-# suites the macOS guards-hooks and guards-tools legs run by path. Releasing
-# on both loses the rest of the family on macOS; releasing on neither runs
-# each suite twice on Linux; a macOS rest blind to those paths runs the two
-# twice there. A deleted path step returns its suite to macOS rest.
+# and unresolved suites alike, because macOS runs no jarvis leg, less the four
+# suites the macOS guards-hooks, guards-tools and orch-state legs run by path.
+# Releasing on both loses the rest of the family on macOS; releasing on
+# neither runs each suite twice on Linux; a macOS rest blind to those paths
+# runs the four twice there. A deleted path step returns its suites to macOS
+# rest.
 jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;'
 jarvis_skip='                grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")'
-jarvis_moved="$(printf '%s\n' skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession.test.sh | sort)"
+jarvis_moved="$(printf '%s\n' skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession.test.sh \
+  skills/jarvis/tests/controls.test.sh skills/jarvis/tests/watch-loop.test.sh | sort)"
 (cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.test.sh) > "$TMP/jarvis-suites"
 grep -qxF skills/jarvis/tests/controls.test.sh "$TMP/jarvis-suites" ||
   bad "no mixed Jarvis suite was discovered, so the Jarvis retention controls prove nothing"
@@ -1797,7 +1799,8 @@ ubuntu-latest|4|duplicated|arm|family|              jarvis) needle="" ;;
 macos-latest|3|duplicated|skip|moved|                unclaimed+=("$t")
 ROWS
 jarvis_universe macos-latest
-for step in 'Jarvis session suite on macOS' 'Jarvis succession suite on macOS'; do
+for step in 'Jarvis session suite on macOS' 'Jarvis succession suite on macOS' \
+  'Jarvis controls and watch-loop suites on macOS'; do
   mutant="$TMP/jarvis-step-removed.yml"
   awk -v owner="      - name: $step" '
     $0 == owner { drop = 1; hits++; next }
@@ -1807,7 +1810,7 @@ for step in 'Jarvis session suite on macOS' 'Jarvis succession suite on macOS'; 
     END { exit hits != 1 }
   ' "$WORKFLOW" > "$mutant" || { bad "the step '$step' is no longer one step in the workflow"; continue; }
   os_claims "$mutant" macos-latest 3 > "$TMP/jarvis-claims"
-  check "a deleted '$step' step returns its suite to macOS rest, once" \
+  check "a deleted '$step' step returns its suites to macOS rest, once" \
     "$(cat "$TMP/os-universe")" "$(cat "$TMP/jarvis-claims")"
 done
 cp "$TMP/unknown-paths" "$TMP/os-universe"

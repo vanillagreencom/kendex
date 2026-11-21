@@ -825,7 +825,8 @@ jobs:
       # and lane-mail-session.sh of `mailbox`, room-check.test.sh of `rest`'s
       # second-opinion battery, and Jarvis's presence (the hook's world),
       # forward, owner-unanswered and watch-loop (`lane-mail compact`) suites:
-      # in `jarvis` on Linux and in `rest` on macOS. Slack's mailbox-read and
+      # in `jarvis` on Linux and in `rest` on macOS, save watch-loop, which
+      # the macOS `orch-state` leg runs. Slack's mailbox-read and
       # notice suites run `lane-mail compact` too. `guards-tools` runs
       # tools/tests/guard-selection.test.sh and validation-routing.test.sh
       # (`orch-runtime validate entry`) on both runners and, on macOS,
@@ -985,9 +986,16 @@ jobs:
       # package's privacy harness runs beside them. It runs after the
       # orch-rest suites whatever they answered, so neither red hides the
       # other. The fixture gh's projector is held to the jq the catalog's
-      # scripts are held to, so the step names the runner's jq first. Its
-      # minutes are unmeasured; the first merge group that runs it records
-      # them here.
+      # scripts are held to, so the step names the runner's jq first.
+      # In runs 44611935189-44860396393 the step took 843-1055s of a
+      # 1284-1541s leg: orch's test binaries ran 677s one after another, and
+      # a local run of its effects and controller binaries spent about one
+      # CPU in four, waiting on the processes and real time they hold. So the
+      # step compiles the test binaries once, runs each test target as its
+      # own `cargo test`, `nproc` at a time, each target's binary keeping its
+      # own threads and once-per-binary builds, and runs the privacy harness
+      # beside them. Each target's output prints whole after all of them end,
+      # and the targets that failed are named last.
       - name: the package runtimes' Rust targets
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
         env:
@@ -1007,13 +1015,42 @@ jobs:
             echo "=== $manifest ${args[*]}"
             cargo fmt --check --manifest-path "$manifest"
             cargo clippy --all-targets --locked --manifest-path "$manifest" -- -D warnings
-            cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"}
-            # --lib leaves the doctests out, and cargo takes --doc alone.
-            case " ${args[*]-} " in *" --lib "*) cargo test --doc --locked --manifest-path "$manifest" ;; esac
+            out="$RUNNER_TEMP/rust-targets/$package"
+            mkdir -p "$out"
+            # The test-profile executables `cargo test` would run, read from
+            # cargo's JSON artifact messages: lib, bin and test targets.
+            cargo test --no-run --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"} \
+              --message-format=json-render-diagnostics >"$out/plan.json"
+            jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null)
+              | .target.kind[0] as $kind
+              | if $kind == "lib" then "--lib" else "--\($kind) \(.target.name)" end' "$out/plan.json" |
+              sort -u >"$out/units"
+            [ -s "$out/units" ] || { echo "rust-targets: no test executable for $manifest ${args[*]-}" >&2; exit 1; }
+            # --lib leaves the doctests out, and cargo takes --doc alone; the
+            # whole manifest runs them too.
+            case " ${args[*]-} " in "  " | *" --lib "*) echo --doc >>"$out/units" ;; esac
             # The effect engine's privacy, held by the compiler's own error
             # code for each planted case: a doctest cannot hold which rule
             # refused.
-            bash "skills/$package/tests/privacy/privacy-cases.sh"
+            bash "skills/$package/tests/privacy/privacy-cases.sh" >"$out/privacy.log" 2>&1 &
+            privacy=$!
+            MANIFEST="$manifest" OUT="$out" xargs -P "$(nproc)" -L1 bash -c '
+              unit="$*"
+              log="$OUT/${unit// /-}.log"
+              cargo test --no-fail-fast --locked --manifest-path "$MANIFEST" "$@" >"$log" 2>&1 ||
+                printf "%s\n" "$*" >>"$OUT/failed"' unit <"$out/units"
+            wait "$privacy" || echo privacy-cases >>"$out/failed"
+            while read -r unit; do
+              echo "--- $manifest $unit"
+              cat "$out/${unit// /-}.log"
+            done <"$out/units"
+            echo "--- $manifest privacy-cases"
+            cat "$out/privacy.log"
+            if [ -s "$out/failed" ]; then
+              echo "rust-targets: failed in $manifest:" >&2
+              sed 's/^/  /' "$out/failed" >&2
+              exit 1
+            fi
           done
 
       # A failure is announced twice: inline where it happened, and in a
@@ -1381,7 +1418,7 @@ jobs:
       # Jarvis's tmux fixtures and session controls run apart from `rest`'s
       # Linux pool, on a leg that builds the checkout kendex its picker rows
       # need. macOS runs no `jarvis` leg: the rest step below keeps the family
-      # there, as the worktree step keeps restack, less the two suites the
+      # there, as the worktree step keeps restack, less the four suites the
       # macOS steps after this one take and the native contracts' linux-only.
       - name: Jarvis suites
         if: matrix.shard == 'jarvis'
@@ -1419,6 +1456,26 @@ jobs:
           [ -n "$kept" ] || exit 0
           [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests =succession.test
+
+      # macOS rest still ran 1504-1608s of its 2400s ceiling in merge groups
+      # 44611935189 and 44801559872. controls (557s) and watch-loop (473s)
+      # were its two longest suites, and in merge group 44843919810 its pool
+      # started watch-loop about 520s in. The macOS orch-state leg ran no suite
+      # step over 8s there: its 341s were set-up and the runtime build. One
+      # pooled call runs the two side by side. As for the two steps above, the
+      # rest step skips both paths, and Linux runs both in `jarvis`.
+      - name: Jarvis controls and watch-loop suites on macOS
+        if: matrix.shard == 'orch-state' && runner.os == 'macOS'
+        run: |
+          set --
+          kept="$(tools/ci-job-set --suite-list skills/jarvis/tests/controls.test.sh skills/jarvis/tests/watch-loop.test.sh)"
+          for t in $kept; do
+            base="${t##*/}"
+            set -- "$@" "=${base%.sh}"
+          done
+          [ "$#" -gt 0 ] || exit 0
+          [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
+          bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests "$@"
 
       # ---- shard: rest — every shell suite no other shard runs. The skip
       # list below names the packages the shards above claim, and a skip is
