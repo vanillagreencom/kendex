@@ -761,7 +761,7 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
         Surface::Local(fleet) => fleet.served.as_deref(),
         Surface::Cloud | Surface::Hosted(_) => None,
     };
-    let route = relaunch_route(run, &lane, r, served)?;
+    let mut route = relaunch_route(run, &lane, r, served)?;
     // A destination session store that could not be read, or a bound
     // session another directory owns, refuses before any window opens,
     // nothing recorded.
@@ -776,11 +776,19 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     let mut outcome = match surface {
         Surface::Local(fleet) => local_launch(run, operation, r, &lane, fleet, &route)?,
         Surface::Hosted(provider) => {
-            let mut stands = false;
+            let mut sandbox = HostSandbox::default();
             let mut outcome =
-                hosted_launch(run, operation, r, &lane, provider, relaunch, &mut stands)?;
-            if stands {
+                hosted_launch(run, operation, r, &lane, provider, relaunch, &mut sandbox)?;
+            if sandbox.stands {
                 outcome.annotate(SANDBOX, json!(STANDING));
+            }
+            // A parked lane whose provider holds no sandbox for it resumed
+            // nothing: its disk, session and mailbox went with the sandbox.
+            if sandbox.absent {
+                outcome.annotate("host_start", json!(hosted::ITEM_UNKNOWN));
+                route = Route::Fresh {
+                    cause: Some("sandbox-absent"),
+                };
             }
             outcome
         }
@@ -984,25 +992,23 @@ fn local_launch(
     Ok(outcome)
 }
 
+/// What a hosted launch's provider answered of the lane's sandbox, whatever
+/// the launch's word.
+#[derive(Default)]
+struct HostSandbox {
+    /// The provider answered a start or a create: the sandbox stands from
+    /// then, whatever later step fails.
+    stands: bool,
+    /// A parked lane's start answered the item unknown: no kept disk was
+    /// there to resume, and the create made a fresh sandbox.
+    absent: bool,
+}
+
 /// A hosted lane: the provider's `create` (and `wait`), the launch record
 /// verified on the host, then the fleet window running the ssh client
 /// whose one typed line starts the harness under the provider's prefix, or,
 /// where the provider owns the harness's session (`pane=verb`), that
 /// prefix run here with no window.
-/// Whether the lane's last pause is a park: its sandbox was stopped with its
-/// disk kept, and no launch has brought it back for certain since.
-fn parked_last(lane: &Lane) -> bool {
-    lane.extra
-        .get("pauses")
-        .and_then(Value::as_array)
-        .and_then(|pauses| pauses.last())
-        .and_then(|pause| pause.get("cause"))
-        .and_then(Value::as_str)
-        == Some("parked")
-}
-
-/// `stands` is set once the provider answered a start or a create: the
-/// sandbox stands from then, whatever later step fails.
 fn hosted_launch(
     run: &Run,
     mut operation: Operation,
@@ -1010,9 +1016,9 @@ fn hosted_launch(
     lane: &Lane,
     provider: &str,
     relaunch: bool,
-    stands: &mut bool,
+    sandbox: &mut HostSandbox,
 ) -> Result<EffectOutcome> {
-    let parked = relaunch && parked_last(lane);
+    let parked = relaunch && lane.parked_last();
     let failed = |operation: Operation, cause: &str| {
         Ok(operation.settle(Word::Failed, json!({"cause": cause})))
     };
@@ -1071,16 +1077,22 @@ fn hosted_launch(
     // A parked lane's sandbox is stopped with its disk kept: the provider's
     // start brings it back before `create --relaunch` resumes the harness on
     // that disk. A provider answers `sandbox-started` for a sandbox already
-    // up, so a relaunch after a start that failed asks it again. Each ask is
-    // recorded before it is made, so a launch cut after it leaves a step
-    // its reconcile holds.
+    // up, so a relaunch after a start that failed asks it again; one that
+    // holds no sandbox for the item has no disk to resume, and the create
+    // makes a fresh one. Each ask is recorded before it is made, so a
+    // launch cut after it leaves a step its reconcile holds.
+    let mut relaunch = relaunch;
     if parked {
         operation.record_phase(Phase::Preparing {
             step: HOST_START.to_owned(),
             at: provider.to_owned(),
         })?;
         match hosted::start(&scripts, provider, &r.item) {
-            Ok(()) => *stands = true,
+            Ok(hosted::Started::Up) => sandbox.stands = true,
+            Ok(hosted::Started::Unknown) => {
+                sandbox.absent = true;
+                relaunch = false;
+            }
             Err(hosted::Asked::Failed(cause)) => {
                 return failed(operation, &format!("host-start-failed {cause}"));
             }
@@ -1096,7 +1108,7 @@ fn hosted_launch(
     let mut created = hosted::create(
         &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
     );
-    *stands |= created.is_ok();
+    sandbox.stands |= created.is_ok();
     if let Ok(made) = &mut created
         && made.preparing
     {

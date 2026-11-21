@@ -5162,8 +5162,10 @@ fn hosted_pane_lane(server: &Server, item: &str, window: &str, dir: &Path) -> (V
 /// is not; one with no merged row is closed
 /// with its sandbox kept (`keep-sandbox`, `kept=sandbox`, the record
 /// stopped); one whose provider refuses its close is `lane-close-refused`
-/// with the checkout it kept, its record open. The next pass, on the records
-/// the close wrote, says nothing and asks nothing.
+/// with the checkout it kept, its record open. A closed lane's last notice,
+/// which no pass read, is said as its `lane-notice` line before its
+/// `lane-closed`. The next pass, on the records the close wrote, says
+/// nothing and asks nothing.
 #[test]
 fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_exited_and_one_whose_record_stands_is_not()
  {
@@ -5190,6 +5192,14 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
     // so the provider refuses the close and keeps the clone.
     std::fs::write(host.clone_of("KEN-5").join("notes.txt"), "kept\n").unwrap();
     write_executable(&host.tools.join("kendex"), "#!/bin/sh\necho '[]'\n");
+    // The last notice KEN-4 wrote, which no pass read before its close.
+    let mailbox = host.lane_root("KEN-4").join("tmp/lane-mail/KEN-4");
+    std::fs::create_dir_all(&mailbox).unwrap();
+    std::fs::write(
+        mailbox.join("to-overseer.jsonl"),
+        "{\"kind\":\"notice\",\"id\":\"n-last\",\"text\":\"result: done\"}\n",
+    )
+    .unwrap();
     let lanes: Vec<Value> = items
         .iter()
         .zip(["gh-1", "gh-2", "gh-3", "gh-4", "gh-5"])
@@ -5239,6 +5249,8 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
             "EVENT lane-closed KEN-3",
             "kept=sandbox",
             "EVENT lane-exited gh-4",
+            "EVENT lane-notice KEN-4 n-last",
+            "  result: done",
             "EVENT lane-closed KEN-4",
             "kept=none",
             "EVENT lane-exited gh-5",
