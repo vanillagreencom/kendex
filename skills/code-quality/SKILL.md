@@ -53,6 +53,11 @@ A new gate, check or guard names the failure it prevents, a run that failed or a
 
 Integrate through the system's documented interface: read its current documentation before building on it, and among its documented extension points, an SDK or plugin API, events or RPC, hooks or settings, use the one that holds the need with the least code to carry. Documented text output is an interface. Name the interface used and why. An indirect read of screen text, internal files or undocumented output names the interface it replaces and why that interface cannot serve.
 
+## Performance
+
+- Fix a performance fault as its class where one exists. The item names every place the class covers, and one measurement covers them all. An item for one instance of a class another item closes is folded into that item or cancelled.
+- The speed target is "as fast as reasonably possible". A change meets it on a measured before and after, with the reason the remaining cost cannot be removed at reasonable cost. A fixed number stands only where its source is named, and it never holds back a clear gain.
+
 ## Prove Your Guards
 
 A must-fail control ([§ Tests](#tests)) proves that an instrument detects the defect it claims to. Run only the rows under proof, by name, through the suite's case filter or a disposable wrapper. Mutate a disposable copy of the source outside the worktree, never the tracked source; keep a compiled control's build output under that copy, set per command and never in the session's environment, and remove the copy when the control is done. Keep the matched text when removing behavior: deleting the code under test only proves the assertion runs. Reject an assertion that also matches a skip note, a fixture that never reaches the guarded bound or claimed workload, and harness code that keeps alive what the implementation should.

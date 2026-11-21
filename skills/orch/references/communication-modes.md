@@ -32,6 +32,7 @@ These questions reach the user in both modes, and nothing else does. Word them w
 | Revisiting a recorded decision | A change that contradicts a decision record |
 | A destructive action | Deleting or discarding work that is not recoverable from the tracker or git |
 | A change to user experience, workflow, outcome, cost or risk | A product question a finding or a lane raises |
+| The way forward after a stopped review of a plan or design document | [oversee-events.md § End spirals](oversee-events.md#end-spirals) |
 | An action spending the owner's standing outside this repository | A lane's question about filing or commenting in another repository's tracker, or about retiring a reviewer |
 
 A gate outside the set keeps its own option list in both modes and asks only where its autonomy key is `ask`: `ORCH_MERGE_AUTONOMY` for merge consent, `PM_CREATE_AUTONOMY` for the audit's creations and every row of its Cancel section, `ORCH_DECISION_MODE` for the post-PR choices. Under a composed `auto`, those creations and cancellations are recorded per § Recording instead of asked. An overseer's heartbeat audit uses [heartbeat-audit.md](heartbeat-audit.md)'s authorization limits in both modes. Other audits ask under their own key alone, so a composed `auto` covers their filings wherever their tracker resolves. The last row above is a lane's question.
@@ -123,6 +124,8 @@ The owner's selected format, which overrides communication's shared summary sect
 - Escapes counts a merged pull request once, in the week of its first finding within 14 days of the merge. A finding is a revert subject, or a bug issue's plain or bold `Regressed-by: #N` line. A source citation alone is no finding. An unread source leaves Escapes unread.
 
 ## Owner-only verification
+
+No item waits for the owner's own use. A check only a person can take is sent only when no test can cover it and the item needs it. It is written as exact steps: what to press, what to say and what to see.
 
 Route each due or overdue post-merge box by who can read its evidence:
 

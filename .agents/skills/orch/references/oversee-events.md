@@ -61,6 +61,8 @@ Cut machinery no issue ordered, such as a new subsystem, scanner or lexer. Never
 
 When a bot drip-feeds one finding class, exhaust the class in one audit pass, then disposition without pushes.
 
+When a review of a plan or design document stops the same part a second time, or each round finds new cases beside the last, the overseer starts no further round. It names the common-sense way to the outcome: more research, a test of the real thing, a smaller design or the reference product's way. It brings that choice, with its recommendation, to whoever answers its asks, then tells the owner what was decided and does not wait for the owner's reply.
+
 After five bot rounds on one pull request, the lane answers the standing threads once and starts no further fix round. The review gate and the owner's merge authorization still apply.
 
 The overseer never orders a blanket `Declined` across a pull request's open findings. Disposition each finding on its own mechanism. A label-only decline breaks [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow).
