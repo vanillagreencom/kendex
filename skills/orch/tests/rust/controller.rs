@@ -9152,7 +9152,9 @@ fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no
     );
     // A mark, the succession switch or an account setting outside its form
     // refuses `marks --fleet` by key and value, and an account setting the
-    // accounts judge's `lane pick` too; a lane's `marks --item`, which
+    // accounts judge's `lane pick` too; the retirement statement, which
+    // each account reading judges as it reads it, refuses `lane pick` and
+    // leaves `marks --fleet` answering; a lane's `marks --item`, which
     // reads the context mark alone, answers under each but that mark, and
     // `state path --fleet` under that one.
     world.write_fleet(&world.dir("eclaude"));
@@ -9182,7 +9184,16 @@ fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no
         let env = [(key, value)];
         let want = json!({"key": "setting-invalid", "fields": [["key", key], ["value", value]]});
         let fleet = world.run(&["marks", "--fleet", "--context", "100000:1000000"], &env);
-        assert_eq!(refusal(&fleet), want, "{key}: {}", stderr(&fleet));
+        if key == "AGENT_RUNTIME_ACCOUNT_RETIRE" {
+            assert_eq!(
+                reply(&fleet)["ok"],
+                json!(true),
+                "{key}: {}",
+                stderr(&fleet)
+            );
+        } else {
+            assert_eq!(refusal(&fleet), want, "{key}: {}", stderr(&fleet));
+        }
         if judge {
             let pick = world.run(
                 &[

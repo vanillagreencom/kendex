@@ -2779,7 +2779,7 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
             }))
         }
         LaneOp::Roster => {
-            settings.accounts.get()?;
+            settings.accounts_now()?;
             let today = agent_runtime::accounts::today(now);
             Ok(match ops::accounts::roster(&settings, None, now) {
                 Ok(roster) => serde_json::json!({
@@ -2812,7 +2812,7 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
             min_headroom_pct,
             binding_floor,
         } => {
-            settings.accounts.get()?;
+            settings.accounts_now()?;
             let request = agent_runtime::accounts::PickRequest {
                 harness: agent_runtime::harness::Harness::named(&harness)?,
                 model: native_model,
@@ -2854,7 +2854,7 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
             caller_keep,
             keep_unmeasured,
         } => {
-            settings.accounts.get()?;
+            settings.accounts_now()?;
             let request = agent_runtime::accounts::walk::WalkRequest {
                 scope: agent_runtime::accounts::walk::Scope::Lane,
                 preference: None,

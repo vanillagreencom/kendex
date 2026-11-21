@@ -467,7 +467,10 @@ The watch asks for a close once per lane, by a marker `lane-close.[ITEM]` under 
 
 `EVENT account [FIELDS] change=[KINDS] was=[STATUS]/[VERDICT]`: an account the fleet launches on changed since the last compared reading. `change=reset` is context, never a route of its own.
 
-An `account-end-contradicted [ALIAS] ...` line under the roster is a retired account whose credential still answers. Correct the retire statement its `source=` names, or take the account out of the fleet. Launch nothing on it meanwhile.
+An `account-end-contradicted [ALIAS] ...` line under the roster names a stated end that something contradicts. Take each arm whose fields the line carries:
+
+- `ignored=AGENT_RUNTIME_ACCOUNT_RETIRE`: the provider's `ends=` is the account's end, and this machine's setting states another day, `ignored_ends=`. Remove the account's entry from that setting. While the `ends=` day is ahead, the judge picks the account as any other.
+- An `ends=` day that has come, with `status=ok` or `status=rate_limited`: the account is retired while its credential still answers. Correct the retire statement its `source=` names, or take the account out of the fleet. Launch nothing on it meanwhile.
 
 Take the first arm that matches the new reading:
 

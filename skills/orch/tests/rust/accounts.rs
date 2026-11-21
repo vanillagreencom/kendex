@@ -801,12 +801,14 @@ fn a_providers_line_whose_measurement_nobody_can_read_keeps_its_reservation() {
 }
 
 /// Two stated ends of one account, the provider's `plan-ends` on its row
-/// and this machine's `AGENT_RUNTIME_ACCOUNT_RETIRE`: the earlier is the
-/// account's end, named by its source. The provider's end before the
-/// setting's retires the account on the provider's day; the setting's
-/// before the provider's keeps the setting's.
+/// and this machine's `AGENT_RUNTIME_ACCOUNT_RETIRE`: the provider's is the
+/// account's end wherever its row states one, later than the setting's
+/// (`late`, picked) or earlier (`early`), and the setting's stands only for
+/// an account whose row states none (`absent`). Each end is named by its
+/// source, and a setting the provider's end overrides is named on the
+/// contradiction line.
 #[test]
-fn the_earlier_of_the_providers_and_the_settings_stated_ends_is_the_accounts_end() {
+fn the_providers_stated_end_is_the_accounts_end_wherever_its_row_states_one() {
     let (yesterday, today, tomorrow) = (
         accounts::today(now() - 86_400),
         accounts::today(now()),
@@ -816,16 +818,31 @@ fn the_earlier_of_the_providers_and_the_settings_stated_ends_is_the_accounts_end
         ("ORCH_LANE_HOST", "fleet-vm"),
         (
             "AGENT_RUNTIME_ACCOUNT_RETIRE",
-            &format!("early={today},late={yesterday}"),
+            &format!("early={today},late={yesterday},absent={yesterday}"),
         ),
     ]);
     world.write_fleet(Vec::new(), None);
     world.plant_capabilities("fleet-vm", SSH_LINE);
     let mut early = through_host(measured("early", 10, 5));
     early["plan_ends"] = json!(yesterday);
-    let mut late = through_host(measured("late", 10, 5));
+    let mut late = through_host(measured("late", 30, 5));
     late["plan_ends"] = json!(tomorrow);
-    world.plant_host_listing("fleet-vm", &[early, late]);
+    let absent = through_host(measured("absent", 20, 5));
+    world.plant_host_listing("fleet-vm", &[early, late, absent]);
+    let answer = world.pick(&claude(None));
+    assert_eq!(
+        chosen(&answer).as_deref(),
+        Some("/home/me/.late"),
+        "the account the provider keeps until tomorrow is picked over the setting's past day: {answer}"
+    );
+    assert_eq!(
+        (
+            &answer["record"]["retire_date"],
+            &answer["record"]["retired"]
+        ),
+        (&json!(tomorrow), &json!(false)),
+        "the picked record states the provider's end: {answer}"
+    );
     let roster = world.roster();
     let word = |alias: &str| {
         roster["rows"]
@@ -836,20 +853,199 @@ fn the_earlier_of_the_providers_and_the_settings_stated_ends_is_the_accounts_end
             .map(|r| r["word"].clone())
             .unwrap_or_else(|| panic!("no row {alias}: {roster}"))
     };
+    for (alias, ends, retired) in [
+        ("early", &yesterday, true),
+        ("late", &tomorrow, false),
+        ("absent", &yesterday, true),
+    ] {
+        assert_eq!(
+            word(alias),
+            json!(format!("retired:{ends}")),
+            "{alias}: {roster}"
+        );
+        let record = roster["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["alias"] == json!(alias))
+            .map(|r| r["record"].clone())
+            .unwrap();
+        assert_eq!(
+            (&record["retire_date"], &record["retired"]),
+            (&json!(ends), &json!(retired)),
+            "{alias}: {roster}"
+        );
+    }
+    let said: Vec<&str> = roster["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|l| l.starts_with("account-end-contradicted "))
+        .collect();
     assert_eq!(
-        word("early"),
-        json!(format!("retired:{yesterday}")),
-        "the provider's end, a day before the setting's: {roster}"
+        said,
+        [
+            format!(
+                "account-end-contradicted early config_dir=/home/me/.early ends={yesterday} source=provider status=ok ignored=AGENT_RUNTIME_ACCOUNT_RETIRE ignored_ends={today}"
+            ),
+            format!(
+                "account-end-contradicted late config_dir=/home/me/.late ends={tomorrow} source=provider status=ok ignored=AGENT_RUNTIME_ACCOUNT_RETIRE ignored_ends={yesterday}"
+            ),
+            format!(
+                "account-end-contradicted absent config_dir=/home/me/.absent ends={yesterday} source=AGENT_RUNTIME_ACCOUNT_RETIRE status=ok"
+            ),
+        ],
+        "{roster}"
     );
-    assert_eq!(
-        word("late"),
-        json!(format!("retired:{yesterday}")),
-        "the setting's end, before the provider's: {roster}"
+}
+
+/// A long-running process judges each pick on the stated ends as they are
+/// at that pick: one process, one load of the settings, and between its
+/// picks the provider's `plan-ends` changes for `fleet` and the settings
+/// file's `AGENT_RUNTIME_ACCOUNT_RETIRE` for `stated`, an account whose
+/// provider row states no end. Each later pick honours the change. The
+/// usage window is 0, so the provider's answer is read at each pick past
+/// the copy the last read cached, as a watch reads it once its cache window
+/// passes. A statement refused at the load is judged again at the next
+/// pick, and a private env file line in a form only a shell reads is passed
+/// over and named under the roster, as the load names it. The picks run in
+/// this process, since one executable per pick would load the settings
+/// afresh.
+#[test]
+fn each_pick_reads_the_stated_ends_as_they_stand_at_that_pick() {
+    if !isolated_row("each_pick_reads_the_stated_ends_as_they_stand_at_that_pick") {
+        return;
+    }
+    let (yesterday, tomorrow) = (
+        accounts::today(now() - 86_400),
+        accounts::today(now() + 86_400),
     );
-    let lines = roster["lines"].to_string();
+    let mut world = World::new(&[
+        ("ORCH_LANE_HOST", "fleet-vm"),
+        ("AGENT_RUNTIME_USAGE_TTL", "0"),
+    ]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_capabilities("fleet-vm", SSH_LINE);
+    let settings_file = world.path().join("kendex.settings.toml");
+    let rows = |fleet_ends: &str| {
+        let mut fleet = through_host(measured("fleet", 10, 5));
+        fleet["plan_ends"] = json!(fleet_ends);
+        [fleet, through_host(measured("stated", 30, 5))]
+    };
+    world.plant_host_listing("fleet-vm", &rows(&yesterday));
+    // The provider's answer rewritten in place, the copy its last read
+    // cached kept, and the settings file rewritten.
+    let restate = |fleet_ends: &str, stated_ends: &str| {
+        let path = world.path().join("lane-host.json");
+        let mut map: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let answer: String = rows(fleet_ends)
+            .iter()
+            .map(|r| provider_line(r, r["config_dir"].as_str().unwrap()))
+            .collect();
+        map["fleet-vm accounts"] = json!({ "stdout": answer });
+        std::fs::write(&path, map.to_string()).unwrap();
+        std::fs::write(
+            &settings_file,
+            format!("[env]\nAGENT_RUNTIME_ACCOUNT_RETIRE = \"stated={stated_ends}\"\n"),
+        )
+        .unwrap();
+    };
+    restate(&yesterday, "2026-13-01");
+    let environment: Vec<(OsString, OsString)> = world
+        .env
+        .iter()
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+        .collect();
+    let roots = Roots {
+        project: world.path().to_path_buf(),
+        common: world.path().to_path_buf(),
+    };
+    let loaded = settings::load(
+        &roots,
+        &environment,
+        &SettingsFlags {
+            state_dir: Some(world.path().to_path_buf()),
+            private_env: true,
+        },
+    )
+    .unwrap();
+    let kernel = orch_runtime::ops::Host::kernel();
+    let fleet_path = world.fleet_path();
+    let pick = || match orch_runtime::ops::accounts::pick_fleet(
+        &loaded,
+        &fleet_path,
+        &kernel,
+        None,
+        None,
+        &claude(None),
+        now(),
+    ) {
+        accounts::PickAnswer::Lane(judged) => Ok(Some(judged.row.alias)),
+        accounts::PickAnswer::None { exclusions, .. } => {
+            assert_eq!(exclusions.len(), 2, "both ended: {exclusions:?}");
+            Ok(None)
+        }
+        accounts::PickAnswer::Unjudged { cause } => Err(cause),
+        other => panic!("an answer of the chooser: {other:?}"),
+    };
+    // The statement the files hold, refused at the reading by key and
+    // value, and the pick unjudged on it.
+    match loaded.accounts_now() {
+        Err(agent_runtime::Error::Refused { key, fields }) => assert_eq!(
+            (key, fields),
+            (
+                "setting-invalid",
+                vec![
+                    ("key".to_owned(), "AGENT_RUNTIME_ACCOUNT_RETIRE".to_owned()),
+                    ("value".to_owned(), "stated=2026-13-01".to_owned()),
+                ]
+            )
+        ),
+        other => panic!("the refused statement: {other:?}"),
+    }
     assert!(
-        lines.contains("source=provider") && lines.contains("source=AGENT_RUNTIME_ACCOUNT_RETIRE"),
-        "each end named by its source: {roster}"
+        pick().is_err(),
+        "a pick on a statement nobody can read is unjudged"
+    );
+    restate(&yesterday, &yesterday);
+    assert_eq!(
+        pick(),
+        Ok(None),
+        "the corrected statement: both ends have come"
+    );
+    restate(&tomorrow, &yesterday);
+    assert_eq!(
+        pick(),
+        Ok(Some("fleet".to_owned())),
+        "the provider's later end, stated after the load"
+    );
+    restate(&yesterday, &tomorrow);
+    assert_eq!(
+        pick(),
+        Ok(Some("stated".to_owned())),
+        "the settings file's later end, written after the load"
+    );
+    let private = world.path().join(".env.local");
+    std::fs::write(
+        &private,
+        "AGENT_RUNTIME_ACCOUNT_RETIRE=\"stated=`date +%F`\"\n",
+    )
+    .unwrap();
+    let roster = orch_runtime::ops::accounts::roster(&loaded, None, now()).unwrap();
+    assert!(
+        roster.notes.contains(&format!(
+            "settings-skipped path={} key=AGENT_RUNTIME_ACCOUNT_RETIRE reason=shell-form",
+            private.display()
+        )),
+        "the passed-over line named: {:?}",
+        roster.notes
+    );
+    assert_eq!(
+        pick(),
+        Ok(Some("stated".to_owned())),
+        "the passed-over line assigns nothing, as at the load: the settings file's end stands"
     );
 }
 
@@ -1918,7 +2114,7 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
             },
         )
         .unwrap_or_else(|e| panic!("{key}={value} refused the load: {e}"));
-        let Err(error) = loaded.accounts.get() else {
+        let Err(error) = loaded.accounts_now() else {
             panic!("{key}={value} admitted");
         };
         assert_eq!(error.key(), "setting-invalid", "{key}={value}: {error}");
@@ -1954,9 +2150,9 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
     assert_eq!(
         world
             .settings
-            .accounts
-            .get()
+            .accounts_now()
             .unwrap()
+            .accounts
             .retire
             .iter()
             .map(|r| (r.name.as_str(), r.date.as_str()))

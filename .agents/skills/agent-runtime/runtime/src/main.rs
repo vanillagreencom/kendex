@@ -783,18 +783,7 @@ impl AccountSettings {
             load: &[],
         };
         let values = settings::layered(&roots.project, &environment, true, &keys)?;
-        let skipped = match &values.passed_over {
-            Some((path, keys)) => keys
-                .iter()
-                .map(|key| {
-                    format!(
-                        "settings-skipped path={} key={key} reason=shell-form",
-                        path.display()
-                    )
-                })
-                .collect(),
-            None => Vec::new(),
-        };
+        let skipped = values.skipped();
         let loaded = AccountSettings {
             skipped,
             accounts: settings::AccountSettings::read(&values),

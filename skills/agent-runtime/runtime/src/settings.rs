@@ -92,11 +92,12 @@ pub const ENGINE_KEYS: &[&str] = &[
 ];
 
 // The account readers' keys.
-/// A providerless machine's own statement of a plan's end, `<name>=<YYYY-
-/// MM-DD>` pairs: the account is picked until that UTC day and measured
-/// after it, so a stated end a live reading contradicts is seen. The judge
-/// reads it; the account reader is run with it emptied, so it measures the
-/// account instead of listing it `retired` unread.
+/// A machine's own statement of a plan's end, `<name>=<YYYY-MM-DD>` pairs,
+/// for an account no provider states an end for: the account is picked
+/// until that UTC day and measured after it, so a stated end a live reading
+/// contradicts is seen. The judge reads it; the account reader is run with
+/// it emptied, so it measures the account instead of listing it `retired`
+/// unread.
 pub const ACCOUNT_RETIRE_KEY: &str = "AGENT_RUNTIME_ACCOUNT_RETIRE";
 /// The bound a pick admits an account under, in percent used.
 pub const ACCOUNT_MAX_PCT_KEY: &str = "AGENT_RUNTIME_ACCOUNT_MAX_PCT";
@@ -448,25 +449,27 @@ pub struct Alias {
 impl AccountSettings {
     /// The account keys, judged together since every entry of the judge
     /// reads them: a retirement names an account (no `/`, no `~`) and a
-    /// real calendar day; a percentage is a whole number 0 to 100; a value
-    /// nobody can read is refused, never defaulted.
+    /// real calendar day ([`retirements`]); a percentage is a whole number
+    /// 0 to 100; a value nobody can read is refused, never defaulted.
     pub fn read(values: &Layered) -> Judged<AccountSettings> {
+        Judged {
+            read: retirements(values).and_then(|retire| {
+                AccountSettings::read_except_retirements(values)
+                    .read
+                    .map(|rest| AccountSettings { retire, ..rest })
+            }),
+        }
+    }
+
+    /// Every account key but the retirement statement, `retire` left
+    /// empty: a long-running caller judges that statement at each pick
+    /// through [`retirements`], so a correction to it needs no restart and
+    /// a value refused at the start refuses nothing later.
+    pub fn read_except_retirements(values: &Layered) -> Judged<AccountSettings> {
         let get = |key: &str| values.get(key);
         Judged {
             read: (|| {
-                let mut retire = Vec::new();
-                for item in list(get(ACCOUNT_RETIRE_KEY)) {
-                    let valid = item.split_once('=').filter(|(name, date)| {
-                        account_name_valid(name.trim()) && calendar_date_valid(date.trim())
-                    });
-                    let Some((name, date)) = valid else {
-                        return Err((ACCOUNT_RETIRE_KEY, item.to_owned()));
-                    };
-                    retire.push(Retirement {
-                        name: name.trim().to_owned(),
-                        date: date.trim().to_owned(),
-                    });
-                }
+                let retire = Vec::new();
                 // An absolute Pi root, the credits used and granted as whole
                 // numbers of at most twelve digits, the grant above zero, one
                 // entry per root; an entry nobody can read is refused, never
@@ -563,6 +566,28 @@ impl AccountSettings {
             })(),
         }
     }
+}
+
+/// The retirement statement ([`ACCOUNT_RETIRE_KEY`]), each entry naming an
+/// account (no `/`, no `~`) and a real calendar day; the first entry
+/// outside that form refused with its text.
+pub fn retirements(
+    values: &Layered,
+) -> std::result::Result<Vec<Retirement>, (&'static str, String)> {
+    let mut retire = Vec::new();
+    for item in list(values.get(ACCOUNT_RETIRE_KEY)) {
+        let valid = item.split_once('=').filter(|(name, date)| {
+            account_name_valid(name.trim()) && calendar_date_valid(date.trim())
+        });
+        let Some((name, date)) = valid else {
+            return Err((ACCOUNT_RETIRE_KEY, item.to_owned()));
+        };
+        retire.push(Retirement {
+            name: name.trim().to_owned(),
+            date: date.trim().to_owned(),
+        });
+    }
+    Ok(retire)
 }
 
 /// The account records' root ([`ACCOUNT_STATE_DIR_KEY`]): the setting,
@@ -701,6 +726,24 @@ pub struct Layered {
 }
 
 impl Layered {
+    /// The notice of each private env file line the ladder passed over,
+    /// `settings-skipped path=… key=… reason=shell-form`, for the caller
+    /// to say where its own answer puts it.
+    pub fn skipped(&self) -> Vec<String> {
+        match &self.passed_over {
+            Some((path, keys)) => keys
+                .iter()
+                .map(|key| {
+                    format!(
+                        "settings-skipped path={} key={key} reason=shell-form",
+                        path.display()
+                    )
+                })
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// A key's value; an empty value is an unset one.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values

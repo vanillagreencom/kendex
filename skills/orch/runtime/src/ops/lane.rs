@@ -1068,7 +1068,7 @@ fn room(
     let (true, Some(settings), Some(account)) = (r.judge_account, host.accounts, &r.account) else {
         return Ok(());
     };
-    settings.accounts.get()?;
+    settings.accounts_now()?;
     let model = r.model.clone().unwrap_or_default();
     let refused = |cause: &str| Error::AccountUnjudged {
         item: r.item.clone(),
