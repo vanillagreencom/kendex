@@ -7,6 +7,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shlex
 import sys
 import tempfile
 import time
@@ -21,6 +22,51 @@ import watch
 CALL_SECONDS = 14
 PAGE_ROWS = 32
 PAGE_BYTES = 16 * 1024
+# Drivers over the caller's mailbox code. Roots are data: each driver names
+# the roots it reads and runs lane-mail in each one.
+COMMON_ROOTS = r"""set -euo pipefail
+. "$1"
+shift
+for root in "$@"; do
+  common="$(mailbox_common_root "$root")"
+  printf '%s\0' "$common"
+done
+"""
+# ask-links reads the root's Slack binding and journal, the files slack's
+# store.py names, on the main, so a host returns their bytes beside the mail.
+# jq -c leaves U+2028/U+2029 raw in strings: each record ends at LF only.
+MAILBOX_READS = r"""set -euo pipefail
+mail=$1
+shift
+work="$(mktemp -d)"
+trap 'rm -rf -- "${work:?}"' EXIT
+for root in "$@"; do
+  cd -- "$root"
+  "$BASH" "$mail" pending --item overseer --to owner >"$work/pending"
+  "$BASH" "$mail" events --item overseer --box to-overseer >"$work/outward"
+  "$BASH" "$mail" events --item overseer --box to-lane >"$work/inward"
+  slack=()
+  for file in binding:tmp/slack/binding.json journal:tmp/slack/journal.jsonl; do
+    if [ -f "${file#*:}" ]; then
+      slack+=(--rawfile "${file%%:*}" "${file#*:}")
+    else
+      slack+=(--argjson "${file%%:*}" null)
+    fi
+  done
+  jq -cn --arg root "$root" --rawfile pending "$work/pending" --rawfile outward "$work/outward" \
+    --rawfile inward "$work/inward" "${slack[@]}" \
+    '{root: $root, pending: $pending, outward: $outward, inward: $inward, binding: $binding, journal: $journal}'
+done
+"""
+MAILBOX_SEND = r"""set -euo pipefail
+mail=$1
+cd -- "$2"
+shift 2
+note="$(mktemp)"
+trap 'rm -f -- "${note:?}"' EXIT
+cat >"$note"
+"$BASH" "$mail" send --item overseer --file "$note" "$@"
+"""
 MAIN = '''set -euo pipefail
 cd -- "$1"
 home=$1
@@ -106,46 +152,41 @@ def http(value):
 
 
 class Sources:
-    """Compose only public mailbox, Linear, Slack and project-discovery owners."""
+    """The one owner of every owner-ask source read and send.
+
+    Each command is the caller's own package code with the caller's settings,
+    run as the destination's account. A destination supplies data alone: its
+    project registry, each root's mailbox files and the root's Slack journal.
+    Linear and Slack run on the main, beside the caller's credentials."""
 
     def __init__(self, session, settings):
         self.session, self.settings = session, settings
+        # Encoded once; a host read sends it once per destination and collect.
+        self.closures = {}
 
-    def call(self, target, root, package, script, args=(), data=None, check=True):
+    def call(self, target, root, package, script, args=(), data=None, shell_args=(), check=True,
+             place=None, delivery=False):
         operation = package + "/" + script
-        destination = target.key + ":" + str(root)
-        packages = watch.LIB.parents[2]
-        shell_args = (["-c", 'source "$1"; mailbox_common_root "$2"', "owner-asks"]
-                      if operation == "mailbox/lib/common-root.sh" else [])
+        place = place or target.key + (":" + str(root) if root is not None else "")
+        name = package + "/scripts/" + script
         try:
-            files = {}
             if target.host:
-                # All dependencies come from the caller's declared packages,
-                # including sibling reads made by Linear and Slack themselves.
-                for name in ("mailbox", "linear", "slack"):
-                    directory = packages / name / "scripts"
-                    for path in directory.rglob("*"):
-                        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
-                            files[str(path.relative_to(packages))] = base64.b64encode(path.read_bytes()).decode()
-                for name in ("orch/scripts/lib/kendex-env.sh", "orch/references/secret-value.ere"):
-                    files[name] = base64.b64encode((packages / name).read_bytes()).decode()
-            command, payload = watch.remote_command(files, package + "/scripts/" + script, args,
-                                                    data=data, stdin=True, shell_args=shell_args,
-                                                    local_root=None if target.host else packages)
-            if target.host:
-                role = watch.Role("satellite", target.host, str(root))
-                cause, result = forward.host_call(role, self.session.deadline,
-                                                  'set -euo pipefail\ncd -- "$1"\n' + command, [], payload)
-                if cause != "ok":
-                    raise watch.Failure(operation, "transport", cause, result)
-            else:
-                result = watch.run([self.session.env["JARVIS_BASH"], "-c", command], root, payload,
+                # Only mailbox code runs on a host: lane-mail and its library.
+                names = watch.MAILBOX_FILES if name == watch.MAILBOX_FILES[0] else (name,)
+                if names not in self.closures:
+                    self.closures[names] = watch.package_files(names)
+                command, payload = watch.remote_command(self.closures[names], name, args, data=data,
+                                                        stdin=True, shell_args=shell_args)
+                result = watch.run(watch.host_args(target, "bash -c " + shlex.quote(command)), data=payload,
                                    operation=operation, timeout=self.remaining())
+            else:
+                result = watch.run([self.session.env["JARVIS_BASH"], *shell_args, watch.LIB.parents[2] / name, *args],
+                                   root or self.session.home, data, operation=operation, timeout=self.remaining())
             if check and result.returncode:
                 raise watch.child_failure(operation, result)
             return result
         except (OSError, watch.Failure) as error:
-            raise source_failure(operation, destination, error) from error
+            raise source_failure(operation, place, error, delivery) from error
 
     def remaining(self):
         remaining = self.session.deadline - time.monotonic()
@@ -153,47 +194,84 @@ class Sources:
             raise Unavailable("The request read reached its deadline.")
         return remaining
 
-    def value(self, target, root, package, script, args=(), data=None):
-        result = self.call(target, root, package, script, args, data)
+    def value(self, target, root, package, script, args=(), data=None, place=None):
+        result = self.call(target, root, package, script, args, data, place=place)
         try:
             return json.loads(result.stdout)
         except ValueError as error:
-            raise source_failure(package + "/" + script, target.key + ":" + str(root), error) from error
+            raise source_failure(package + "/" + script, place or target.key + ":" + str(root), error) from error
 
-    def events(self, target, root, box):
-        result = self.call(target, root, "mailbox", "lane-mail", ["events", "--item", "overseer", "--box", box])
-        # Records end at LF only: jq -c leaves U+2028/U+2029 raw in strings.
-        lines = result.stdout.split("\n")
+    def caller(self, package, script, args=(), data=None, place=None):
+        """A read on the main with the caller home's settings: Linear, Slack and tracker settings."""
+        return self.value(watch.Destination("local", None, None), self.session.home, package, script, args, data, place)
+
+    def registered(self, target):
+        """Every folder the destination's registry names; one it cannot read hides its asks."""
+        argv = watch.host_args(target, "kendex project list --json") if target.host else ["kendex", "project", "list", "--json"]
+        try:
+            roots = []
+            for entry in json.loads(watch.checked(argv, operation="project-list", timeout=self.remaining())):
+                if entry["state"] != "ok":
+                    raise watch.Failure("project-list", "registration-unreadable", entry["state"], entry["folder"])
+                roots.append(entry["folder"])
+        except (ValueError, TypeError, KeyError, watch.Failure) as error:
+            raise source_failure("project-list", target.key, error) from error
+        return roots
+
+    def mailboxes(self, target, roots):
+        """Each distinct mailbox root of ROOTS with its raw reads, in two calls per destination."""
+        if not roots:
+            return []
+        common = self.call(target, None, "mailbox", "lib/common-root.sh", roots,
+                           shell_args=["-c", COMMON_ROOTS, "owner-asks"]).stdout.split("\0")
+        if len(common) != len(roots) + 1 or common.pop():
+            raise Unavailable("The original mailbox read is incomplete.")
+        canonical = list(dict.fromkeys(common))
+        result = self.call(target, None, "mailbox", "lane-mail", canonical,
+                           shell_args=["-c", MAILBOX_READS, "owner-asks"])
+        try:
+            records = [json.loads(line) for line in result.stdout.split("\n") if line]
+            if [record["root"] for record in records] != canonical:
+                raise ValueError("mailbox-roots")
+        except (ValueError, TypeError, KeyError) as error:
+            raise source_failure("mailbox/lane-mail", target.key, error) from error
+        return records
+
+    @staticmethod
+    def events(text):
+        lines = text.split("\n")
         if watch.mailbox_header(lines[0]) is None:
             raise Unavailable("The original mailbox read is incomplete.")
         return {"header": lines[0], "rows": [json.loads(line) for line in lines[1:] if line]}
 
+    def ask_links(self, target, record, ids):
+        # The permalink read carries the caller's Slack token, so it runs here
+        # with the caller's settings, over a copy of the root's two files.
+        with tempfile.TemporaryDirectory(dir=self.session.path.parent) as copy:
+            slack = Path(copy) / "tmp/slack"
+            slack.mkdir(parents=True)
+            for name, field in (("binding.json", "binding"), ("journal.jsonl", "journal")):
+                if record[field] is not None:
+                    (slack / name).write_text(record[field])
+            return self.caller("slack", "slack", ["ask-links", "--root", copy], encoded(ids),
+                               place=target.key + ":" + record["root"])
+
     def collect(self):
-        local = watch.Destination("local", None, None)
-        config = self.value(local, self.session.home, "mailbox", "owner-tracker-settings")
+        config = self.caller("mailbox", "owner-tracker-settings")
         tracker = None
         if config["configured"]:
-            tracker = self.value(local, self.session.home, "linear", "linear.sh",
-                                 ["comments", "owner-requests", "--email", config["email"], "--label", config["label"]])
+            tracker = self.caller("linear", "linear.sh",
+                                  ["comments", "owner-requests", "--email", config["email"], "--label", config["label"]])
         elif config["cause"] != "settings-unset":
             raise Unavailable("The owner tracker settings could not be read.")
-        mailboxes = []
+        workspace, mailboxes = None, []
         for target in watch.destinations(self.settings):
-            try:
-                roots = watch.destination_roots(target, timeout=self.remaining(), complete=True)
-            except watch.Failure as error:
-                raise source_failure("project-list", target.key, error) from error
+            roots = self.registered(target)
             if not target.host and self.session.home not in roots:
                 roots.append(self.session.home)
-            canonical = set()
-            for root in roots:
-                root = self.call(target, root, "mailbox", "lib/common-root.sh", [root]).stdout.strip()
-                if root in canonical:
-                    continue
-                canonical.add(root)
-                pending = self.call(target, root, "mailbox", "lane-mail", ["pending", "--item", "overseer", "--to", "owner"])
-                asks = [json.loads(line) for line in pending.stdout.split("\n") if line]
-                outward, inward = self.events(target, root, "to-overseer"), self.events(target, root, "to-lane")
+            for record in self.mailboxes(target, roots):
+                asks = [json.loads(line) for line in record["pending"].split("\n") if line]
+                outward, inward = self.events(record["outward"]), self.events(record["inward"])
                 posted, links = {}, {}
                 # Retained closed asks still own their exact tracker mirror;
                 # a delayed label update must not resurrect that mirror.
@@ -202,17 +280,18 @@ class Sources:
                         continue
                     issue = ask["issue"]
                     if issue not in posted:
-                        workspace = self.value(target, root, "linear", "linear.sh", ["teams", "keys"])["urlKey"]
-                        item = self.value(target, root, "linear", "linear.sh", ["issues", "get", issue, "--format=safe"])
-                        comments = self.value(target, root, "linear", "linear.sh", ["comments", "list", issue, "--format=safe"])
+                        if workspace is None:
+                            workspace = self.caller("linear", "linear.sh", ["teams", "keys"])["urlKey"]
+                        item = self.caller("linear", "linear.sh", ["issues", "get", issue, "--format=safe"])
+                        comments = self.caller("linear", "linear.sh", ["comments", "list", issue, "--format=safe"])
                         posted[issue] = {"workspace": workspace, "uuid": item["uuid"], "comments": comments}
                     comment = next((row for row in posted[issue]["comments"] if row["id"] == ask["tracker_comment"]), None)
                     if comment is not None:
                         links[ask["id"]] = {"url": comment["url"], "thread": comment["parent_id"] or comment["id"]}
                 need_links = [ask["id"] for ask in asks if ask["id"] not in links]
                 if need_links:
-                    links.update(self.value(target, root, "slack", "slack", ["ask-links", "--root", root], encoded(need_links)))
-                mailboxes.append({"destination": target.key, "root": root, "asks": asks,
+                    links.update(self.ask_links(target, record, need_links))
+                mailboxes.append({"destination": target.key, "root": record["root"], "asks": asks,
                                   "outward": outward, "inward": inward, "posted": posted, "links": links})
         return {"config": config, "tracker": tracker, "mailboxes": mailboxes}
 
@@ -235,10 +314,9 @@ class Sources:
         if target is None:
             raise watch.DestinationRefusal("destination-unknown", route["destination"])
         if route["source"] == "mailbox":
-            result = forward.owner_note.send(self.session.env["JARVIS_BASH"], "host" if target.host else "local",
-                                             target, route["root"], text,
-                                             options=["--re", route["ask"], "--delivery-id", key],
-                                             timeout=self.remaining(), check=False)
+            result = self.call(target, route["root"], "mailbox", "lane-mail",
+                               [route["root"], "--re", route["ask"], "--delivery-id", key], text,
+                               shell_args=["-c", MAILBOX_SEND, "owner-asks"], check=False, delivery=True)
             if result.returncode:
                 raise source_failure("mailbox-delivery", target.key + ":" + route["root"],
                                      watch.child_failure("mailbox-delivery", result), delivery=True)
@@ -249,7 +327,7 @@ class Sources:
             body.flush()
             result = self.call(target, route["root"], "linear", "linear.sh",
                                ["comments", "create", route["issueUuid"], "--parent", route["thread"], "--body-file", body.name],
-                               check=False)
+                               check=False, delivery=True)
         if result.returncode:
             raise source_failure("linear-delivery", target.key + ":" + route["root"],
                                  watch.child_failure("linear-delivery", result), delivery=True)
@@ -321,18 +399,10 @@ class OwnerAsks:
         source["home"] = self.session.home
         rows, routes = source_rows(source)
         now = self.clock()
-        closed_keys = []
-        for key, delta in state["deltas"].items():
-            route = delta["route"]
-            if key not in rows:
-                if route["source"] == "mailbox":
-                    closed = any(row.get("mail_class") == "close" and row.get("re") == route["ask"]
-                                 for box in source["mailboxes"] if box["destination"] == route["destination"] and box["root"] == route["root"]
-                                 for row in box["inward"]["rows"])
-                    if not closed:
-                        raise Unavailable("The original mailbox no longer proves this acted-on ask; ask the delegate to verify it.")
-                # A complete configured tracker view alone owns membership.
-                closed_keys.append(key)
+        # A complete read alone owns membership: an ask it no longer returns
+        # was closed, compacted after closing, or sits in a root or on a host
+        # no longer read.
+        closed_keys = [key for key in state["deltas"] if key not in rows]
         if closed_keys:
             for key in closed_keys:
                 del state["deltas"][key]
@@ -447,12 +517,12 @@ class OwnerAsks:
     def accept(self, state, entry):
         payload = entry["payload"]
         key, action, request = payload["id"], payload["action"], payload["request"]
-        delta = state["deltas"].setdefault(key, {"route": entry["route"]})
+        # A reply changes no visibility, so it leaves no delta.
+        delta = state["deltas"].get(key, {}) if action == "reply" else state["deltas"].setdefault(key, {})
         if action == "done":
             delta["checking"] = True
-            # Confirming an older delivery cannot undo a newer visibility
-            # choice. Legacy intents precede sequenced actions in this home.
-            if delta.get("until_sequence", 0) <= entry.get("sequence", 0):
+            # Confirming an older delivery cannot undo a newer visibility choice.
+            if delta.get("until_sequence", 0) <= entry["sequence"]:
                 delta.pop("until", None)
                 delta.pop("until_sequence", None)
         elif action == "later":

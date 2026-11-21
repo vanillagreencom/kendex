@@ -284,7 +284,7 @@ def replaced(state, first):
 
 
 def host_call(role, deadline, script, args, data=None):
-    """Synchronous SSH call shared by forwards and the main-owned ask operations."""
+    """Synchronous SSH call to the main, shared by forwards and a satellite's owner-ask operations."""
     remaining = deadline - time.monotonic()
     if remaining < 1:
         return UNREACHABLE, "budget-spent"
@@ -379,7 +379,7 @@ class Forwarder:
                 continue
             if unreachable:
                 continue
-            outcome, result = self.host(owner_note.HOST_SEND, ["--directive", "--delivery-id", entry["key"]], entry["text"])
+            outcome, result = self.host(owner_note.HOST_SEND, ["--delivery-id", entry["key"]], entry["text"])
             self.probe(outcome)
             if outcome != "ok":
                 self.record([entry], outcome, result)

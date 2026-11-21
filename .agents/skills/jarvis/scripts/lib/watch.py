@@ -69,48 +69,49 @@ def host_args(destination, command):
     return ["ssh", destination.host, command]
 
 
-def destination_roots(destination, timeout=60, complete=False):
+def destination_roots(destination):
     if destination.host:
-        return listed_roots(checked(host_args(destination, "kendex project list"), operation="project-list", timeout=timeout), complete=complete)
-    return listed_roots(checked(["kendex", "project", "list"], operation="project-list", timeout=timeout), complete=complete)
+        return listed_roots(checked(host_args(destination, "kendex project list"), operation="project-list"))
+    return listed_roots(checked(["kendex", "project", "list"], operation="project-list"))
 
 
-def remote_command(files, entry, args, data=None, stdin=False, shell_args=(), *, local_root=None):
-    """Isolate caller-owned code, local or transported; checkouts supply data/settings."""
-    startup = """import runpy,sys
-operation,library,source,*args=sys.argv[1:]
-if library: sys.path.insert(0,library)
-if operation == 'caller-code':
- sys.argv=['-c',*args]
- exec(compile(source,'<string>','exec'),{'__name__':'__main__'})
-elif operation == 'caller-script':
- sys.argv=[source,*args]
- runpy.run_path(source,run_name='__main__')
-else:
- raise ValueError('caller-startup-operation='+operation)
-"""
-    bootstrap = """import base64,json,os,pathlib,shlex,subprocess,sys,tempfile
+# lane-mail with every file it sources or runs for the overseer mailbox,
+# which a host pass and the owner-ask reads and sends carry to a host.
+MAILBOX_FILES = ("mailbox/scripts/lane-mail", "mailbox/scripts/lib/file-lock.sh",
+                 "mailbox/scripts/lib/mailbox-append.sh", "mailbox/scripts/lib/common-root.sh",
+                 "mailbox/scripts/lib/kendex-env.sh", "mailbox/scripts/lib/lane-mail-store.py")
+
+
+def package_files(names):
+    """The caller's own package bytes, keyed by path under its packages root."""
+    packages = LIB.parents[2]
+    return {name: base64.b64encode((packages / name).read_bytes()).decode() for name in names}
+
+
+def remote_command(files, entry, args, data=None, stdin=False, shell_args=()):
+    """Shell text running ENTRY of FILES, the caller's package bytes, from a fresh folder on a host.
+
+    The host supplies its shell, python3 and the data the command reads, never
+    code. The closure exceeds a host's single-argument limit, so it travels on
+    stdin, returned as the payload, or on fd 3 where stdin carries the
+    command's own dialogue."""
+    bootstrap = """import base64,json,os,pathlib,subprocess,sys,tempfile
 if sys.argv[1] == 'stdin':
  payload=json.load(sys.stdin)
 else:
  with os.fdopen(3) as source: payload=json.load(source)
 with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
- allocation=pathlib.Path(folder)
- root=pathlib.Path(payload['local_root']) if payload['local_root'] is not None else allocation
+ root=pathlib.Path(folder)
  for name,value in payload['files'].items():
-  path=allocation/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value)); path.chmod(0o700)
- # The temporary startup never owns or changes the caller's local package tree.
- startup=allocation/'caller-python'
- startup.write_text('#!'+sys.argv[2]+'\\nexec '+shlex.join([sys.executable,'-I','-B','-c',%s])+' "$@"\\n')
- startup.chmod(0o700)
- env=dict(os.environ,_KENDEX_JARVIS_PYTHON=str(startup))
+  path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value))
  argv=[sys.argv[2],*json.loads(sys.argv[3]),str(root/sys.argv[4]),*sys.argv[5:]]
- result=subprocess.run(argv, env=env, input=payload.get('data'), text=True) if sys.argv[1] == 'stdin' else subprocess.run(argv, env=env)
+ result=subprocess.run(argv,input=payload['data'],text=True) if sys.argv[1] == 'stdin' else subprocess.run(argv)
  sys.exit(result.returncode)
-""" % repr(startup)
+"""
+    # -I: a -c program imports from its working directory otherwise.
     command = ("python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
                " \"$BASH\" " + shlex.join([json.dumps(list(shell_args)), entry, *map(str, args)]))
-    payload = json.dumps({"files": files, "data": data, "local_root": str(local_root) if local_root is not None else None})
+    payload = json.dumps({"files": files, "data": data})
     if stdin:
         return command, payload
     return command + " 3<<'jarvis-files'\n" + payload + "\njarvis-files\n", None
@@ -333,9 +334,8 @@ except Refusal as error:
  print(json.dumps({"failure":{"key":["presence-settings","refusal",error.key],"detail":str(error)}}))
 """
     try:
-        startup = os.environ.get("_KENDEX_JARVIS_PYTHON")
-        reader = [startup, "caller-code", str(owner)] if startup else [sys.executable, "-B", "-c"]
-        record = json.loads(checked([*reader, code, owner,
+        # -I: a -c program imports from its working directory otherwise.
+        record = json.loads(checked([sys.executable, "-I", "-B", "-c", code, owner,
                                      packages / "orch", root], operation="presence-settings"))
         if "failure" in record:
             error = record["failure"]
@@ -356,24 +356,9 @@ except Refusal as error:
     return "ok"
 
 
-def listed_roots(text, complete=False):
-    """Watch/note selection skips notes; canonical counts preserve registrations."""
-    if not complete:
-        return [line.strip() for line in text.split("\n") if line.strip() and "(" not in line]
-    roots = []
-    # project.rs::list/worktree_note owns these suffixes. Worktree roots
-    # still go through mailbox_common_root; the note is not root authority.
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        root, separator, note = line.rpartition("  (")
-        if separator:
-            if note != "worktree)" and not (note.startswith("worktree of ") and note.endswith(")")):
-                raise Failure("project-list", "registration-unreadable", root, note)
-            roots.append(root)
-        else:
-            roots.append(line)
-    return roots
+def listed_roots(text):
+    """The folders `kendex project list` prints, skipping rows that carry a note."""
+    return [line.strip() for line in text.split("\n") if line.strip() and "(" not in line]
 
 
 def project_roots():
@@ -1004,15 +989,9 @@ class Watch:
 
     def remote_command(self, args):
         # Carry exact dependency bytes, never target-local code or settings.
-        files = {"jarvis/scripts/" + name: base64.b64encode((LIB.parent / name).read_bytes()).decode()
-                 for name in ("vm-watch.sh", "lib/watch.py", "lib/jarvis-env.sh")}
-        packages = LIB.parents[2]
-        for name in ("slack/scripts/lib/settings.py", "slack/scripts/lib/refusals.py",
-                     "orch/scripts/lib/kendex-env.sh", "mailbox/scripts/lane-mail",
-                     "mailbox/scripts/lib/file-lock.sh", "mailbox/scripts/lib/mailbox-append.sh",
-                     "mailbox/scripts/lib/common-root.sh", "mailbox/scripts/lib/kendex-env.sh",
-                     "mailbox/scripts/lib/lane-mail-store.py"):
-            files[name] = base64.b64encode((packages / name).read_bytes()).decode()
+        files = package_files(("jarvis/scripts/vm-watch.sh", "jarvis/scripts/lib/watch.py",
+                               "jarvis/scripts/lib/jarvis-env.sh", "slack/scripts/lib/settings.py",
+                               "slack/scripts/lib/refusals.py", "orch/scripts/lib/kendex-env.sh", *MAILBOX_FILES))
         command, _ = remote_command(files, "jarvis/scripts/vm-watch.sh", args)
         return command
 
