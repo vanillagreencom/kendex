@@ -981,21 +981,24 @@ jobs:
       # names, on the orch-rest Linux leg (on a push, those its same-head
       # group left unproved), and every target of both runtimes where the
       # changes job published none. Per package with a target, fmt
-      # and clippy over all its targets prepare the run; cargo test runs the
-      # listed targets, its whole manifest for `<package>/*`, and the
-      # package's privacy harness runs beside them. It runs after the
+      # and clippy over all its targets prepare the run. It runs after the
       # orch-rest suites whatever they answered, so neither red hides the
       # other. The fixture gh's projector is held to the jq the catalog's
       # scripts are held to, so the step names the runner's jq first.
-      # In runs 44611935189-44860396393 the step took 843-1055s of a
-      # 1284-1541s leg: orch's test binaries ran 677s one after another, and
-      # a local run of its effects and controller binaries spent about one
-      # CPU in four, waiting on the processes and real time they hold. So the
-      # step compiles the test binaries once, runs each test target as its
-      # own `cargo test`, `nproc` at a time, each target's binary keeping its
-      # own threads and once-per-binary builds, and runs the privacy harness
-      # beside them. Each target's output prints whole after all of them end,
-      # and the targets that failed are named last.
+      # In the runs that tested every target, 44611935189, 44789074453,
+      # 44843919810 and 44860396393, the step took 843-1055s of a 1284-1541s
+      # leg: orch's test binaries ran 613-677s one after another, and a local
+      # run of its effects and controller binaries spent about one CPU in
+      # four, waiting on the processes and real time they hold. So the step
+      # compiles the test binaries once and runs each listed test target, and
+      # the doctests where the lib is listed, as its own `cargo test`, `nproc`
+      # at a time, each target's binary keeping its own threads and
+      # once-per-binary builds.
+      # The package's privacy harness runs beside them; its copy of the
+      # runtime leaves out the target/ folder those runs write. Each target
+      # prints a start line, then its exit and whole log when it ends, so a
+      # hung target is the one with no end; the targets that failed are named
+      # last.
       - name: the package runtimes' Rust targets
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
         env:
@@ -1032,19 +1035,24 @@ jobs:
             # The effect engine's privacy, held by the compiler's own error
             # code for each planted case: a doctest cannot hold which rule
             # refused.
+            echo "rust-targets: start $manifest privacy-cases"
             bash "skills/$package/tests/privacy/privacy-cases.sh" >"$out/privacy.log" 2>&1 &
             privacy=$!
+            # The lock keeps one target's lines whole among the others'.
+            pool=0
             MANIFEST="$manifest" OUT="$out" xargs -P "$(nproc)" -L1 bash -c '
               unit="$*"
               log="$OUT/${unit// /-}.log"
-              cargo test --no-fail-fast --locked --manifest-path "$MANIFEST" "$@" >"$log" 2>&1 ||
-                printf "%s\n" "$*" >>"$OUT/failed"' unit <"$out/units"
-            wait "$privacy" || echo privacy-cases >>"$out/failed"
-            while read -r unit; do
-              echo "--- $manifest $unit"
-              cat "$out/${unit// /-}.log"
-            done <"$out/units"
-            echo "--- $manifest privacy-cases"
+              { flock 9; echo "rust-targets: start $MANIFEST $unit"; } 9>>"$OUT/print.lock"
+              status=0
+              cargo test --no-fail-fast --locked --manifest-path "$MANIFEST" "$@" >"$log" 2>&1 || status=$?
+              [ "$status" -eq 0 ] || printf "%s\n" "$unit" >>"$OUT/failed"
+              { flock 9; echo "--- $MANIFEST $unit exit=$status"; cat "$log"; } 9>>"$OUT/print.lock"' unit <"$out/units" || pool=$?
+            [ "$pool" -eq 0 ] || echo "xargs exit=$pool" >>"$out/failed"
+            privacy_status=0
+            wait "$privacy" || privacy_status=$?
+            [ "$privacy_status" -eq 0 ] || echo privacy-cases >>"$out/failed"
+            echo "--- $manifest privacy-cases exit=$privacy_status"
             cat "$out/privacy.log"
             if [ -s "$out/failed" ]; then
               echo "rust-targets: failed in $manifest:" >&2
@@ -1457,11 +1465,12 @@ jobs:
           [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests =succession.test
 
-      # macOS rest still ran 1504-1608s of its 2400s ceiling in merge groups
-      # 44611935189 and 44801559872. controls (557s) and watch-loop (473s)
-      # were its two longest suites, and in merge group 44843919810 its pool
-      # started watch-loop about 520s in. The macOS orch-state leg ran no suite
-      # step over 8s there: its 341s were set-up and the runtime build. One
+      # macOS rest still ran 1515s and 1608s of its 2400s ceiling in merge
+      # groups 44611935189 and 44801559872, where controls (580s and 578s) and
+      # watch-loop (482s and 485s) were its two longest suites. In merge group
+      # 44843919810 its pool started watch-loop about 550s in, and the macOS
+      # orch-state leg ran no suite step over 8s: its 341s were set-up and the
+      # runtime build. One
       # pooled call runs the two side by side. As for the two steps above, the
       # rest step skips both paths, and Linux runs both in `jarvis`.
       - name: Jarvis controls and watch-loop suites on macOS
