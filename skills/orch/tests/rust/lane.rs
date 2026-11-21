@@ -3082,6 +3082,11 @@ fn a_hosted_close_over_a_gone_clone_ends_done_with_the_items_files_archived_and_
                 fleet.host().worktree().display()
             ),
             "touch --item KEN-1".to_owned(),
+            format!(
+                "cat --item KEN-1 {}/tmp/items/KEN-1/workflow-state-KEN-1.json",
+                fleet.host().worktree().display()
+            ),
+            "touch --item KEN-1".to_owned(),
             "stop --item KEN-1 --harness claude".to_owned(),
             "close --item KEN-1 --merged".to_owned(),
             "list".to_owned(),
