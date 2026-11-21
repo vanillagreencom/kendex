@@ -62,7 +62,9 @@ A full close that answered `unconfirmed` leaves its intent open, and a keep refu
 
 `result.word` says how far the close got. On `unconfirmed`, end what `result.observation` names, then close again. On `failed`, nothing moved; fix the cause in `result.observation`. A refusal exits 1 with its key in `refusal.key`; nothing past the read it names has changed.
 
-A hosted lane's box is read from its host once before its sandbox goes: before the provider's close, and at a park before the sandbox stop. `result.observation.mail` holds what the watch had not yet announced: `envelopes`, each with its `id`, `kind`, `text` and `options`. Handle each one as its `lane-notice` or `lane-question` line ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)). The watch says the mail of the closes it makes as those lines. A sandbox the provider no longer lists has no box left to read.
+A hosted lane's box is read from its host before its sandbox goes: before the provider's close, and at a park before the sandbox stop. The park writes what it read on the record's owed park, so a failed sandbox stop keeps it: the park that confirms, or a close of the stopped record, answers it without a read. `result.observation.mail` holds what the watch had not yet announced: `envelopes`, each with its `id`, `kind`, `text` and `options`, and the box's `count` and `first` id, which the watch's cursor moves to. Handle each envelope as its `lane-notice` or `lane-question` line ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)). The watch says the mail of the closes it makes as those lines and moves its cursor past them. A close you ask moves no cursor, so asking it again can show the same envelopes. A sandbox the provider no longer lists has no box left to read.
+
+A close held before the provider's close because the box did not read answers `unconfirmed` with `mail: "unread"` and the cause in `result.observation.cause`: `host-busy step=[STEP]`, which a retry clears, or `mail-read-failed` with the read's cause. A park or a close whose box read fails refuses with the same keys.
 
 ### How a running lane is judged
 

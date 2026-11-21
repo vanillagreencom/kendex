@@ -39,7 +39,9 @@ use agent_runtime::intent::Intent;
 use agent_runtime::journal::Env;
 use agent_runtime::observe::WallKind;
 
-use super::{Effected, lane_operation};
+use super::Effected;
+use super::lane_operation::{self, Unread};
+use crate::watch::mail::ClosingMail;
 
 /// How the close ended, by the record it left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -572,20 +574,25 @@ impl Close<'_> {
     /// A record an earlier keep or a failed park left stopped: no pane, no
     /// harness; its asks are read only for an item its tracker holds open,
     /// and a sandbox its provider no longer lists has none to read. A park
-    /// the record already owes reads its sandbox for nothing: its mailbox
-    /// was read when the mark was written, and no session has run since to
-    /// write to it.
+    /// judged in full records the lane's last mail on its owed mark before
+    /// the sandbox stop. A park the record already owes reads its sandbox
+    /// for nothing: its mailbox was read when the mark was written, the mail
+    /// is the mark's, and no session has run since to write to it.
     fn stopped(self) -> Result<Closed> {
         if let Some(wait) = self.park() {
             let owed = self.owed(wait);
             if owed.is_none() {
                 self.refuse_ask()?;
             }
-            let judged = self.park_judge(wait, owed.clone())?;
-            if owed.is_none() {
-                self.owe_park(&judged)?;
+            let mut judged = self.park_judge(wait, owed.as_ref().map(|o| o.head.clone()))?;
+            match owed {
+                Some(mark) => judged.mail = mark.mail,
+                None => {
+                    judged.mail = self.last_mail()?.map(Box::new);
+                    self.owe_park(&judged)?;
+                }
             }
-            return self.park_sandbox(&judged, owed.is_none(), Vec::new());
+            return self.park_sandbox(&judged, Vec::new());
         }
         let mut notes = Vec::new();
         let ground = if self.keep() {
@@ -670,18 +677,21 @@ impl Close<'_> {
         }
         let mut notes = Vec::new();
         if let Some(wait) = self.park() {
-            let park = self.park_judge(wait, None)?;
+            let mut park = self.park_judge(wait, None)?;
             if !matches!(judged, LaneState::Exited) || wait.hold {
                 self.refuse_ask()?;
             }
             if !matches!(judged, LaneState::Exited) {
                 self.host_stop(&mut notes)?;
             }
+            // Read once the harness can write no more, and written with the
+            // owed mark, so a sandbox stop that fails keeps it for the retry.
+            park.mail = self.last_mail()?.map(Box::new);
             let closed = self.close_on(Ground::Keep(Some(park.owed_mark())))?;
             if closed.word != Word::Stopped {
                 return Ok(closed);
             }
-            return self.park_sandbox(&park, true, notes);
+            return self.park_sandbox(&park, notes);
         }
         let ground = match &judged {
             LaneState::Exited => self.by_verdict(Ground::Exited, &mut notes)?,
@@ -1040,66 +1050,84 @@ impl Close<'_> {
 
     /// An ask the lane holds unanswered refuses the close: the answer would
     /// reach the session the close ends. A mailbox that cannot be read
-    /// refuses too. A park on the lane's own ask passes: its judge reads
-    /// that ask, and the answer reaches the relaunched session.
+    /// refuses too ([`Self::unread`]).
     fn refuse_ask(&self) -> Result<()> {
+        self.ask_read()?.map_err(|unread| self.unread(unread))
+    }
+
+    /// [`Self::refuse_ask`]'s read: an unanswered ask refuses, a box that
+    /// did not read is the inner `Err`. A park on the lane's own ask passes:
+    /// its judge reads that ask, and the answer reaches the relaunched
+    /// session.
+    fn ask_read(&self) -> Result<std::result::Result<(), Unread>> {
         if self.park().is_some_and(|wait| wait.ask.is_some()) {
-            return Ok(());
+            return Ok(Ok(()));
         }
-        match self.open_ask()? {
-            None => Ok(()),
-            Some(ask) => Err(refused(
+        match lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
+            Ok(None) => Ok(Ok(())),
+            Ok(Some(ask)) => Err(refused(
                 "ask-unanswered",
                 &[("item", self.item()), ("ask", &ask)],
             )),
+            Err(unread) => Ok(Err(unread)),
         }
     }
 
-    /// [`Self::refuse_ask`] on a full close, passed for a mailbox that cannot
-    /// be read in a sandbox its provider no longer lists
-    /// ([`Self::host_absent`]), which no session can answer from: `true`,
-    /// with its `host-absent mail-status=` note.
+    /// [`Self::refuse_ask`] on a full close, passed for a mailbox in a
+    /// sandbox its provider no longer lists ([`Unread::listed`]), which no
+    /// session can answer from: `true`, with its `host-absent mail-status=`
+    /// note.
     fn refuse_ask_unless_gone(&self, notes: &mut Vec<String>) -> Result<bool> {
-        match self.refuse_ask() {
-            Ok(()) => Ok(false),
-            Err(e) if self.host_absent(&e)? => {
-                notes.push(format!("host-absent mail-status={}", cause_word(&e)));
+        let Err(unread) = self.ask_read()? else {
+            return Ok(false);
+        };
+        let unread = if self.keep() {
+            unread
+        } else {
+            unread.listed(|| hosted::lists_item(self.scripts, self.host, self.item()))
+        };
+        match unread {
+            Unread::Gone { cause } => {
+                let status = cause.split_whitespace().next().unwrap_or_default();
+                notes.push(format!("host-absent mail-status={status}"));
                 Ok(true)
             }
-            Err(e) => Err(e),
+            unread @ (Unread::Busy { .. } | Unread::Failed { .. }) => Err(self.unread(unread)),
         }
     }
 
     /// The oldest ask the lane's mailbox holds unanswered; a mailbox that
     /// cannot be read refuses.
     fn open_ask(&self) -> Result<Option<String>> {
-        match lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
-            Ok(ask) => Ok(ask),
-            Err(cause) if cause.starts_with(hosted::BUSY) => Err(refused(
-                hosted::BUSY,
-                &[("item", self.item()), ("step", "mail-read")],
-            )),
-            Err(cause) => Err(refused(
-                "mail-read-failed",
-                &[("item", self.item()), ("cause", &cause)],
-            )),
-        }
+        lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane)
+            .map_err(|unread| self.unread(unread))
     }
 
-    /// Whether a mailbox read that failed on a full close is a sandbox the
-    /// provider no longer holds: its list names no row for the item, or
-    /// one torn down. A list that fails keeps the mailbox's refusal.
-    fn host_absent(&self, error: &Error) -> Result<bool> {
-        if error.key() != "mail-read-failed" || self.keep() {
-            return Ok(false);
-        }
-        match hosted::lists_item(self.scripts, self.host, self.item()) {
-            Ok(listed) => Ok(listed.is_none()),
-            Err(cause) if cause.starts_with(hosted::BUSY) => Err(refused(
-                hosted::BUSY,
-                &[("item", self.item()), ("step", "list")],
-            )),
-            Err(_) => Ok(false),
+    /// The lane's last mail past the watch's cursor
+    /// ([`lane_operation::last_mail`]); a box that cannot be read refuses.
+    fn last_mail(&self) -> Result<Option<ClosingMail>> {
+        lane_operation::last_mail(
+            &self.settings.lane_mail_cli,
+            self.scripts,
+            self.path,
+            &self.lane,
+        )
+        .map_err(|unread| self.unread(unread))
+    }
+
+    /// The refusal of a box that did not read: `host-busy` with its step,
+    /// which the caller asks again, else `mail-read-failed` with the cause.
+    /// A sandbox gone is the caller's to pass where it can; one that cannot
+    /// refuses it as a failed read.
+    fn unread(&self, unread: Unread) -> Error {
+        match unread {
+            Unread::Busy { step } => {
+                refused(hosted::BUSY, &[("item", self.item()), ("step", step)])
+            }
+            Unread::Gone { cause } | Unread::Failed { cause } => refused(
+                "mail-read-failed",
+                &[("item", self.item()), ("cause", &cause)],
+            ),
         }
     }
 
@@ -1496,6 +1524,7 @@ impl Close<'_> {
             ask: wait.ask.clone(),
             reservation: None,
             owed: false,
+            mail: None,
         })
     }
 
@@ -1565,18 +1594,18 @@ impl Close<'_> {
         Ok(())
     }
 
-    /// The judged head of the park this record owes for `wait`, the one
-    /// reading that says a park is owed: the record's mark asks the same
-    /// wait, its dependency repository in the lower case the judge records.
-    /// A mark carrying no head owes nothing, and its park is judged in full.
-    fn owed(&self, wait: &ParkWait) -> Option<String> {
+    /// The mark of the park this record owes for `wait`, the one reading
+    /// that says a park is owed: the record's mark asks the same wait, its
+    /// dependency repository in the lower case the judge records. A mark
+    /// carrying no head owes nothing, and its park is judged in full.
+    fn owed(&self, wait: &ParkWait) -> Option<OwedPark> {
         let mark = self.lane.extra.get(state::PARK_OWED)?;
         let mark: OwedPark = serde_json::from_value(mark.clone()).ok()?;
         let asked = ParkWait {
             until_repo: wait.until_repo.as_ref().map(|r| r.to_ascii_lowercase()),
             ..wait.clone()
         };
-        (mark.wait == asked).then_some(mark.head)
+        (mark.wait == asked).then_some(mark)
     }
 
     /// A stopped record's park, judged in full, recorded owed with its judged
@@ -1759,26 +1788,9 @@ impl Close<'_> {
     /// The sandbox stop and the record it earns, from a lane whose harness
     /// is gone and whose window is closed: the record reads stopped, so a
     /// stop that fails or answers without its line refuses with the record
-    /// stopped, and only the confirmed line records parked. A park judged
-    /// in full (`read_mail`) first reads the lane's last mail, which its
-    /// stopped sandbox answers no read for, onto the park's answer.
-    fn park_sandbox(&self, park: &ParkLane, read_mail: bool, notes: Vec<String>) -> Result<Closed> {
-        let mail = if read_mail {
-            lane_operation::last_mail(
-                &self.settings.lane_mail_cli,
-                self.scripts,
-                self.path,
-                &self.lane,
-            )
-            .map_err(|cause| {
-                refused(
-                    "mail-read-failed",
-                    &[("item", self.item()), ("cause", &cause)],
-                )
-            })?
-        } else {
-            None
-        };
+    /// stopped, and only the confirmed line records parked, with the lane's
+    /// last mail the park read on its answer.
+    fn park_sandbox(&self, park: &ParkLane, notes: Vec<String>) -> Result<Closed> {
         match hosted::stop_sandbox(self.scripts, self.host, self.item(), false) {
             Ok(()) => {}
             Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
@@ -1809,7 +1821,7 @@ impl Close<'_> {
                 .get("parked")
                 .map(|p| json!({"parked": p}));
         }
-        if let Some(mail) = mail {
+        if let Some(mail) = &park.mail {
             closed.observation.get_or_insert_with(|| json!({}))["mail"] = json!(mail);
         }
         Ok(closed)

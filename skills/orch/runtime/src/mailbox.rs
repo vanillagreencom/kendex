@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::host::{self, Place};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ops::mail::DirectiveSend;
 use crate::state::Lane;
@@ -204,60 +204,60 @@ impl From<Refusal> for crate::Error {
 
 /// One envelope as the mailbox prints it, the fields the watch reads; the
 /// rest of the object is not carried.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Envelope {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub re: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
     /// A data notice alone: the program or origin its text came from.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserved: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommend: Option<String>,
     /// `events --box` alone: the envelope's logical line.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u64>,
     /// `events --box to-lane` alone: the shared mailbox rule's class.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mail_class: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_posted: Option<bool>,
     /// An owner ask alone (`pending --to owner`): the tracker item it was
     /// posted to, the action it asks for, the comment and label it was
     /// posted under.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<String>,
-    #[serde(default, rename = "do")]
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "do")]
     pub action: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_comment: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_label: Option<String>,
     /// A directive that halts the lane until it is read.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub halt: Option<bool>,
     /// `events` alone: the box the envelope came from, `to-lane` or
     /// `to-overseer`.
-    #[serde(default, rename = "box")]
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "box")]
     pub mailbox: Option<String>,
 }
 

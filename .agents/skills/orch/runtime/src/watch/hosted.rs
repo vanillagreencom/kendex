@@ -793,6 +793,9 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<Started, Asked> {
     }
 }
 
+/// The key a provider answers an item it holds no sandbox for with.
+pub const ITEM_UNKNOWN: &str = "item-unknown";
+
 /// Whether a provider's diagnostic names `item` unknown: the
 /// `item-unknown item=ITEM` words, behind the provider's own prefix where
 /// it prints one.
@@ -801,7 +804,7 @@ fn item_unknown(stderr: &str, item: &str) -> bool {
     stderr.lines().any(|line| {
         let mut words = line
             .split_whitespace()
-            .skip_while(|w| !w.ends_with("item-unknown"));
+            .skip_while(|w| !w.ends_with(ITEM_UNKNOWN));
         words.next().is_some() && words.next() == Some(named.as_str())
     })
 }
@@ -1103,8 +1106,8 @@ pub enum Closed {
 /// The close verb's request for `lane` at `reason`: a lane read exited on
 /// two passes keeps its sandbox; a stopped record's owed park is that park
 /// again, its wait alone, as an operator asks it: the verb takes the judged
-/// head from the record; a finished lane's delivery is the merge the GitHub
-/// duty read for this launch.
+/// head and the mail the park read from the record; a finished lane's
+/// delivery is the merge the GitHub duty read for this launch.
 fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
     let mut request = serde_json::json!({"op": "close-lane", "item": lane.item});
     if reason == KEEP_REASON {
@@ -1116,6 +1119,7 @@ fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
         let mut wait = owed.clone();
         if let Some(mark) = wait.as_object_mut() {
             mark.remove("head");
+            mark.remove("mail");
         }
         request["mode"] = serde_json::json!({ "park": wait });
     }

@@ -3012,6 +3012,11 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
 /// sandbox goes.
 const LAST_NOTICE: &str = r#"{"kind":"notice","id":"n-last","text":"result: done"}"#;
 
+/// [`LAST_NOTICE`] as a close's `mail` carries it, the box's one line.
+fn last_mail() -> Value {
+    json!({"count": 1, "first": "n-last", "envelopes": [{"id": "n-last", "kind": "notice", "text": "result: done"}]})
+}
+
 /// A hosted lane's last mail reaches the overseer on each route its sandbox
 /// goes by: a merged lane's close, a stopped record's close on an item its
 /// tracker ended, and a park, each reads the lane's box on its host before
@@ -3086,12 +3091,19 @@ fn a_hosted_lanes_last_mail_reaches_the_overseer_on_each_route_its_sandbox_goes(
 /// its mailbox unreadable and no row listed for the item, closes on an item
 /// its tracker holds open too: nothing on the host is left to read or ask,
 /// the provider's close answers the sandbox absent, and the open item's
-/// files stay.
+/// files stay. A running record whose merge stands and whose worktree is
+/// gone, the host answering the probe that reads it gone, closes the same
+/// way, asking its provider no stop.
 #[test]
 fn a_stopped_or_parked_record_whose_sandbox_is_gone_closes_on_an_open_item() {
-    for status in ["stopped", "parked"] {
+    for status in ["stopped", "parked", "running"] {
         let mut fleet = Fleet::hosted(4);
-        for (name, value) in MAIL_UNREACHABLE {
+        let unreachable = if status == "running" {
+            &MAIL_UNREACHABLE[..2]
+        } else {
+            &MAIL_UNREACHABLE[..]
+        };
+        for (name, value) in unreachable {
             fleet.answer(name, value);
         }
         fleet.answer("LIST", "");
@@ -3112,6 +3124,11 @@ fn a_stopped_or_parked_record_whose_sandbox_is_gone_closes_on_an_open_item() {
         assert!(
             std::fs::symlink_metadata(&item_state).is_ok(),
             "{status}: the open item's files stay"
+        );
+        let calls = fleet.provider_calls();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("stop ")),
+            "{status}: {calls:?}"
         );
     }
 }
@@ -3166,7 +3183,8 @@ fn a_terminal_close_keeps_a_callers_folders_named_after_the_item() {
 /// first answer's local archive of the item's files and the provider's
 /// `kept=` line, which the repeat's own `closed=absent` answer and its
 /// removal of files already gone cannot give, and reads no box the sandbox
-/// took with it.
+/// took with it. A repeat between them that the provider's close fails
+/// holds with both receipts still on its answer.
 #[test]
 fn a_held_hosted_close_asked_again_keeps_its_receipts_and_records_its_delivery() {
     let archive_root = tempfile::tempdir().unwrap();
@@ -3206,6 +3224,20 @@ fn a_held_hosted_close_asked_again_keeps_its_receipts_and_records_its_delivery()
     assert_eq!(observation["closed"], "kept=/srv/archive/KEN-1", "{held}");
     let archive = observation["archive"].clone();
     assert!(archive.is_string(), "the first close archived: {held}");
+
+    fleet.answer("CLOSE_STATUS", "1");
+    let failed = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    let observation = &failed["result"]["observation"];
+    assert_eq!(failed["result"]["word"], "unconfirmed", "{failed}");
+    assert_eq!(observation["host_close"], "failed", "{failed}");
+    assert_eq!(
+        (&observation["closed"], &observation["archive"]),
+        (&json!("kept=/srv/archive/KEN-1"), &archive),
+        "{failed}"
+    );
+    fleet
+        .env
+        .retain(|(name, _)| name != "LANE_HOST_STUB_CLOSE_STATUS");
 
     fleet.answer("CLOSE_LINE", "closed=absent item=KEN-1");
     fleet.answer("LIST", "");
@@ -4430,7 +4462,9 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
 /// waits on no pull request; a stopped or parked record's full close on a
 /// terminal item is the provider's close alone, with no stop, a stopped
 /// one's last mail read from its host before it and a parked one's, read
-/// at its park, not again; a park or a keep of a parked record answers `parked` and
+/// at its park, not again; a stopped one that owes a park, its sandbox
+/// stopped and answering no read, carries the mail its mark recorded and
+/// reads none; a park or a keep of a parked record answers `parked` and
 /// changes nothing; a terminal close whose mailbox read fails on a provider
 /// that lists no sandbox for the item ends the record with no provider
 /// call, `host-absent`.
@@ -4442,6 +4476,9 @@ fn a_close_answers_a_record_by_what_it_already_is() {
     let mut ask_parked = with("status", json!("parked"));
     ask_parked["parked"] =
         json!({"repo": "o/r", "head": "h2", "at": "2026-01-29T16:00:00Z", "ask": "a1"});
+    let mut owes_park = with("status", json!("stopped"));
+    owes_park["sandbox"] = json!("standing");
+    owes_park["park_owed"] = json!({"pr": 7, "head": "h2", "mail": last_mail()});
     let mut rows = vec![
         (
             CloseCase2::new("ask parked, terminal state", vec![ask_parked]),
@@ -4463,6 +4500,12 @@ fn a_close_answers_a_record_by_what_it_already_is() {
         ),
         (
             CloseCase2::new("stopped", vec![with("status", json!("stopped"))]),
+            "closed",
+            "done",
+            vec!["close --item KEN-1 --merged", "list"],
+        ),
+        (
+            CloseCase2::new("stopped, park owed", vec![owes_park]),
             "closed",
             "done",
             vec!["close --item KEN-1 --merged", "list"],
@@ -4525,6 +4568,15 @@ fn a_close_answers_a_record_by_what_it_already_is() {
                 case.answers.push(("HARNESS_STATE", "exited"));
                 case.mail = ASK_A1;
             }
+            // A stopped sandbox's provider refuses every read.
+            "stopped, park owed" => {
+                case.answers.extend([
+                    ("CAT_STATUS", "4"),
+                    ("CAT_STATE", "stopped"),
+                    ("TOUCH_STATUS", "4"),
+                ]);
+                case.mail = LAST_NOTICE;
+            }
             _ => {}
         }
     }
@@ -4540,7 +4592,11 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             std::fs::symlink_metadata(&item_state).is_ok(),
             !matches!(
                 case.name,
-                "stopped" | "parked" | "host absent" | "exited holding an ask"
+                "stopped"
+                    | "stopped, park owed"
+                    | "parked"
+                    | "host absent"
+                    | "exited holding an ask"
             ),
             "{}: the item's files",
             case.name
@@ -4561,6 +4617,14 @@ fn a_close_answers_a_record_by_what_it_already_is() {
                 "parked: no mailbox read past its park: {:?}",
                 fleet.mail_log()
             ),
+            "stopped, park owed" => {
+                assert!(fleet.mail_log().is_empty(), "{:?}", fleet.mail_log());
+                assert_eq!(
+                    answer["result"]["observation"]["mail"],
+                    last_mail(),
+                    "{answer}"
+                );
+            }
             "parked, park asked" | "parked, keep asked" => {
                 assert_eq!(fleet.lane("KEN-1")["parked"], parked, "{}", case.name);
             }
@@ -5026,10 +5090,11 @@ fn a_park_is_judged_before_anything_is_signalled() {
 }
 
 /// A park asked of a stopped record writes the park owed before its sandbox
-/// stop: a kept sandbox whose stop the provider refuses as still stopping
-/// (no `sandbox-stopped` line) stays stopped and standing with the park
-/// owed; the same park asked again over a sandbox already down, answered
-/// by its `sandbox-stopped` line, parks and clears both marks.
+/// stop, with the lane's last mail it read: a kept sandbox whose stop the
+/// provider refuses as still stopping (no `sandbox-stopped` line) stays
+/// stopped and standing with the park owed; the same park asked again over
+/// a sandbox already down, answered by its `sandbox-stopped` line, parks,
+/// clears both marks and answers the mail the first ask read.
 #[test]
 fn a_park_of_a_kept_sandbox_whose_stop_fails_stays_owed_until_a_park_confirms() {
     let mut fleet = Fleet::park_world();
@@ -5038,6 +5103,7 @@ fn a_park_of_a_kept_sandbox_whose_stop_fails_stays_owed_until_a_park_confirms() 
     kept["sandbox"] = json!("standing");
     fleet.write_lanes(vec![kept]);
     fleet.plant_tracker("KEN-1", "started");
+    fleet.disk(MAILBOX, &format!("{LAST_NOTICE}\n"));
     let park = json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"pr": 7}}});
     fleet.answer("SANDBOX_STOP_STATUS", "3");
     let refused = fleet.close(park.clone());
@@ -5045,12 +5111,22 @@ fn a_park_of_a_kept_sandbox_whose_stop_fails_stays_owed_until_a_park_confirms() 
     let lane = fleet.lane("KEN-1");
     assert_eq!(lane["status"], "stopped", "{lane}");
     assert_eq!(lane["sandbox"], "standing", "{lane}");
-    assert_eq!(lane["park_owed"], json!({"pr": 7, "head": "h2"}), "{lane}");
+    assert_eq!(
+        lane["park_owed"],
+        json!({"pr": 7, "head": "h2", "mail": last_mail()}),
+        "{lane}"
+    );
     fleet
         .env
         .retain(|(name, _)| name != "LANE_HOST_STUB_SANDBOX_STOP_STATUS");
+    fleet.undisk(MAILBOX);
     let parked = fleet.close(park);
     assert_eq!(parked["result"]["word"], "parked", "{parked}");
+    assert_eq!(
+        parked["result"]["observation"]["mail"],
+        last_mail(),
+        "{parked}"
+    );
     let lane = fleet.lane("KEN-1");
     assert_eq!(lane["status"], "parked", "{lane}");
     assert!(lane.get("park_owed").is_none(), "{lane}");
@@ -5063,16 +5139,18 @@ fn a_park_of_a_kept_sandbox_whose_stop_fails_stays_owed_until_a_park_confirms() 
 /// check. It reads GitHub again, so a pull request merged, or moved to
 /// another head, while the park is owed refuses with nothing stopped; once
 /// the stop confirms, the record parks on the head judged when the park was
-/// first asked; a park owed on the lane's own ask parks the same way. A park
-/// naming another wait is not owed and is judged in full, so it is refused
-/// at its mailbox read.
+/// first asked and answers the lane's last mail that first ask read before
+/// its failed stop; a park owed on the lane's own ask parks the same way. A
+/// park naming another wait is not owed and is judged in full, so it is
+/// refused at its mailbox read.
 #[test]
 fn an_owed_park_over_a_sandbox_already_down_is_confirmed_by_the_providers_stop_alone() {
     let mut fleet = Fleet::park_world();
     fleet.write_lanes(vec![with("repo", json!("o/r"))]);
     fleet.plant_tracker("KEN-1", "started");
+    fleet.disk(MAILBOX, &format!("{LAST_NOTICE}\n"));
     let park = json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"pr": 7}}});
-    let owed = json!({"pr": 7, "head": "h2"});
+    let owed = json!({"pr": 7, "head": "h2", "mail": last_mail()});
     let sandbox_stops = |fleet: &Fleet| {
         fleet
             .provider_calls()
@@ -5134,6 +5212,11 @@ fn an_owed_park_over_a_sandbox_already_down_is_confirmed_by_the_providers_stop_a
         .retain(|(name, _)| name != "LANE_HOST_STUB_SANDBOX_STOP_STATUS");
     let parked = fleet.close(park);
     assert_eq!(parked["result"]["word"], "parked", "{parked}");
+    assert_eq!(
+        parked["result"]["observation"]["mail"],
+        last_mail(),
+        "{parked}"
+    );
     let lane = fleet.lane("KEN-1");
     assert_eq!(lane["status"], "parked", "{lane}");
     assert_eq!(lane["parked"]["head"], "h2", "{lane}");
