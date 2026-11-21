@@ -186,12 +186,14 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     let out = runner.state_dir().join("op.out");
     let err = runner.state_dir().join("op.err");
     let fifo = runner.state_dir().join("hold.fifo");
+    let mark = runner.state_dir().join("hold.mark");
     mkfifo(&fifo);
     let holddir = fixtures().join("tmux-hold");
     let mut words = runner.env_words();
     words.push(format!("PATH={}", support::tool_path(&[holddir.as_path()])));
     words.push(format!("TMUX_REAL={}", which_tmux()));
     words.push(format!("TMUX_HOLD_FIFO={}", fifo.display()));
+    words.push(format!("TMUX_HOLD_MARK={}", mark.display()));
     words.push("TMUX_HOLD_VERB=send-keys".to_owned());
     // The command goes through a script: a line typed into a pane is cut at
     // the terminal's canonical line length, which the inherited PATH alone
@@ -222,10 +224,23 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
             runner.fleet()
         )
     };
+    // Each release waits for the shim's mark of the hold it is for, taken
+    // away again before the write: a line written while only the previous
+    // hold has the FIFO open is lost when that hold closes it, and the
+    // brief's hold then waits for a release that never comes.
+    let reached = |what: &str| {
+        let deadline = Instant::now() + secs(30);
+        while !mark.exists() {
+            assert!(Instant::now() < deadline, "never: {what}\n{}", evidence());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::fs::remove_file(&mark).unwrap();
+    };
     // The first hold, the launch line into the runner's window: released
     // as soon as whatever runs the effect reaches it, within the bound every
     // other wait here has, so a route that never opens the window fails the
     // row with the phase it reached.
+    reached("the job reached the launch line");
     release_hold(&fifo, secs(30), evidence);
     // The op answers at once, the effect handed to the job that now owns
     // the intent.
@@ -265,6 +280,7 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     // exit closes the pane the op asked from, and publishes from beyond it.
     // Its three waits before the stop are each bounded by the verify bound,
     // so the row waits the settle bound, not a shorter one.
+    reached("the job reached the brief");
     release_hold(&fifo, secs(30), evidence);
     wait_until("the predecessor stopped", SETTLE, || !live(pid));
     wait_until("the predecessor's pane closed", secs(10), || {
