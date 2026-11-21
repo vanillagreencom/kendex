@@ -8,6 +8,7 @@ use std::path::Path;
 use agent_runtime::controller::successor::{self as choice, Choosing, Ground};
 use agent_runtime::controller::views::MarkKind;
 use agent_runtime::harness::Harness;
+use agent_runtime::settings::{AccountSettings, Judged};
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
@@ -105,12 +106,12 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
 }
 
-/// The hand-over's choice read with orch's settings: the account judge's,
-/// the launch's posture, the hand-over's preference and the overseer's wall
-/// mark.
-fn choosing(settings: &Settings) -> Choosing<'_> {
+/// The hand-over's choice read with orch's settings: the account judge's
+/// over `accounts` ([`Settings::accounts_now`]), the launch's posture, the
+/// hand-over's preference and the overseer's wall mark.
+fn choosing<'a>(settings: &'a Settings, accounts: &'a Judged<AccountSettings>) -> Choosing<'a> {
     Choosing {
-        accounts: accounts::env(settings),
+        accounts: accounts::env(settings, accounts),
         launch: &settings.launch,
         controller: &settings.controller,
         wall_minutes: &settings.marks.wall_minutes,
@@ -177,8 +178,11 @@ pub fn successor(
     let mut pick = |request: &PickRequest, judge_host: Option<&str>| {
         accounts::pick_fleet(settings, path, &host, judge_host, None, request, now)
     };
+    let accounts = Judged {
+        read: Ok(settings.accounts_now()?.accounts),
+    };
     let reply = choice::successor(
-        &choosing(settings),
+        &choosing(settings, &accounts),
         path,
         predecessor,
         mark,

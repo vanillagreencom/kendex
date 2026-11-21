@@ -835,6 +835,14 @@ fn the_providers_stated_end_is_the_accounts_end_wherever_its_row_states_one() {
         Some("/home/me/.late"),
         "the account the provider keeps until tomorrow is picked over the setting's past day: {answer}"
     );
+    assert_eq!(
+        (
+            &answer["record"]["retire_date"],
+            &answer["record"]["retired"]
+        ),
+        (&json!(tomorrow), &json!(false)),
+        "the picked record states the provider's end: {answer}"
+    );
     let roster = world.roster();
     let word = |alias: &str| {
         roster["rows"]
@@ -845,14 +853,26 @@ fn the_providers_stated_end_is_the_accounts_end_wherever_its_row_states_one() {
             .map(|r| r["word"].clone())
             .unwrap_or_else(|| panic!("no row {alias}: {roster}"))
     };
-    for (alias, ends) in [
-        ("early", &yesterday),
-        ("late", &tomorrow),
-        ("absent", &yesterday),
+    for (alias, ends, retired) in [
+        ("early", &yesterday, true),
+        ("late", &tomorrow, false),
+        ("absent", &yesterday, true),
     ] {
         assert_eq!(
             word(alias),
             json!(format!("retired:{ends}")),
+            "{alias}: {roster}"
+        );
+        let record = roster["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["alias"] == json!(alias))
+            .map(|r| r["record"].clone())
+            .unwrap();
+        assert_eq!(
+            (&record["retire_date"], &record["retired"]),
+            (&json!(ends), &json!(retired)),
             "{alias}: {roster}"
         );
     }
@@ -887,11 +907,16 @@ fn the_providers_stated_end_is_the_accounts_end_wherever_its_row_states_one() {
 /// provider row states no end. Each later pick honours the change. The
 /// usage window is 0, so the provider's answer is read at each pick past
 /// the copy the last read cached, as a watch reads it once its cache window
-/// passes. The picks run in this process, since one executable per pick
-/// would load the settings afresh; the provider fixture they start reads
-/// nothing from the environment.
+/// passes. A statement refused at the load is judged again at the next
+/// pick, and a private env file line in a form only a shell reads is passed
+/// over and named under the roster, as the load names it. The picks run in
+/// this process, since one executable per pick would load the settings
+/// afresh.
 #[test]
 fn each_pick_reads_the_stated_ends_as_they_stand_at_that_pick() {
+    if !isolated_row("each_pick_reads_the_stated_ends_as_they_stand_at_that_pick") {
+        return;
+    }
     let (yesterday, tomorrow) = (
         accounts::today(now() - 86_400),
         accounts::today(now() + 86_400),
@@ -927,7 +952,7 @@ fn each_pick_reads_the_stated_ends_as_they_stand_at_that_pick() {
         )
         .unwrap();
     };
-    restate(&yesterday, &yesterday);
+    restate(&yesterday, "2026-13-01");
     let environment: Vec<(OsString, OsString)> = world
         .env
         .iter()
@@ -957,25 +982,70 @@ fn each_pick_reads_the_stated_ends_as_they_stand_at_that_pick() {
         &claude(None),
         now(),
     ) {
-        accounts::PickAnswer::Lane(judged) => Some(judged.row.alias),
+        accounts::PickAnswer::Lane(judged) => Ok(Some(judged.row.alias)),
         accounts::PickAnswer::None { exclusions, .. } => {
             assert_eq!(exclusions.len(), 2, "both ended: {exclusions:?}");
-            None
+            Ok(None)
         }
+        accounts::PickAnswer::Unjudged { cause } => Err(cause),
         other => panic!("an answer of the chooser: {other:?}"),
     };
-    assert_eq!(pick(), None, "both stated ends have come");
+    // The statement the files hold, refused at the reading by key and
+    // value, and the pick unjudged on it.
+    match loaded.accounts_now() {
+        Err(agent_runtime::Error::Refused { key, fields }) => assert_eq!(
+            (key, fields),
+            (
+                "setting-invalid",
+                vec![
+                    ("key".to_owned(), "AGENT_RUNTIME_ACCOUNT_RETIRE".to_owned()),
+                    ("value".to_owned(), "stated=2026-13-01".to_owned()),
+                ]
+            )
+        ),
+        other => panic!("the refused statement: {other:?}"),
+    }
+    assert!(
+        pick().is_err(),
+        "a pick on a statement nobody can read is unjudged"
+    );
+    restate(&yesterday, &yesterday);
+    assert_eq!(
+        pick(),
+        Ok(None),
+        "the corrected statement: both ends have come"
+    );
     restate(&tomorrow, &yesterday);
     assert_eq!(
-        pick().as_deref(),
-        Some("fleet"),
+        pick(),
+        Ok(Some("fleet".to_owned())),
         "the provider's later end, stated after the load"
     );
     restate(&yesterday, &tomorrow);
     assert_eq!(
-        pick().as_deref(),
-        Some("stated"),
+        pick(),
+        Ok(Some("stated".to_owned())),
         "the settings file's later end, written after the load"
+    );
+    let private = world.path().join(".env.local");
+    std::fs::write(
+        &private,
+        "AGENT_RUNTIME_ACCOUNT_RETIRE=\"stated=`date +%F`\"\n",
+    )
+    .unwrap();
+    let roster = orch_runtime::ops::accounts::roster(&loaded, None, now()).unwrap();
+    assert!(
+        roster.notes.contains(&format!(
+            "settings-skipped path={} key=AGENT_RUNTIME_ACCOUNT_RETIRE reason=shell-form",
+            private.display()
+        )),
+        "the passed-over line named: {:?}",
+        roster.notes
+    );
+    assert_eq!(
+        pick(),
+        Ok(Some("stated".to_owned())),
+        "the passed-over line assigns nothing, as at the load: the settings file's end stands"
     );
 }
 
@@ -2044,7 +2114,7 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
             },
         )
         .unwrap_or_else(|e| panic!("{key}={value} refused the load: {e}"));
-        let Err(error) = loaded.accounts.get() else {
+        let Err(error) = loaded.accounts_now() else {
             panic!("{key}={value} admitted");
         };
         assert_eq!(error.key(), "setting-invalid", "{key}={value}: {error}");
@@ -2080,9 +2150,9 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
     assert_eq!(
         world
             .settings
-            .accounts
-            .get()
+            .accounts_now()
             .unwrap()
+            .accounts
             .retire
             .iter()
             .map(|r| (r.name.as_str(), r.date.as_str()))

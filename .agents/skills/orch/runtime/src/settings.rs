@@ -578,6 +578,15 @@ pub struct CloudRepo {
     pub repo: String,
 }
 
+/// The account settings one account reading judges by
+/// ([`Settings::accounts_now`]), and the notice of each private env file
+/// line that reading passed over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restated {
+    pub accounts: AccountSettings,
+    pub skipped: Vec<String>,
+}
+
 /// The settings the runtime acts on, resolved once per process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -624,6 +633,9 @@ pub struct Settings {
     /// empty value turns the timed report or quiet hours off and the report
     /// alone judges them (`report::Policy::of`).
     pub report: Vec<(String, String)>,
+    /// Every account key the load judged, the retirement statement left
+    /// out (`retire` empty): an account reading takes the statement from
+    /// [`Settings::accounts_now`] at each use.
     pub accounts: Judged<AccountSettings>,
     /// The caller's own values of the keys [`Settings::accounts_now`]
     /// reads the stated plan ends again under: the statement itself and
@@ -682,13 +694,16 @@ impl Settings {
         }
     }
 
-    /// The account settings an account reading judges by, with this
-    /// machine's stated plan ends (`AGENT_RUNTIME_ACCOUNT_RETIRE`) read
-    /// again from the settings ladder now: a long-running process, the
-    /// watch, judges each pick on the statement as the files hold it at
-    /// that pick, never as they held it at its start. The caller's own
-    /// environment still outranks the files, as at the load.
-    pub fn accounts_now(&self) -> agent_runtime::Result<AccountSettings> {
+    /// The account settings an account reading judges by: the keys the
+    /// load judged, and this machine's stated plan ends
+    /// (`AGENT_RUNTIME_ACCOUNT_RETIRE`) read and judged from the settings
+    /// ladder now. A long-running process, the watch, judges each pick on
+    /// the statement as the files hold it at that pick, never as they held
+    /// it at its start: a value refused now names the files' text, and a
+    /// correction clears at the next reading. The caller's own environment
+    /// still outranks the files, and a private env file line in a form only
+    /// a shell reads is passed over and named, as at the load.
+    pub fn accounts_now(&self) -> agent_runtime::Result<Restated> {
         let accounts = self.accounts.get()?;
         let keys = Keys {
             read: &[&[shared::ACCOUNT_RETIRE_KEY]],
@@ -697,7 +712,10 @@ impl Settings {
         let values = shared::layered(&self.roots.project, &self.restated, self.private_env, &keys)?;
         let retire = shared::retirements(&values)
             .map_err(|(key, value)| shared::value_refusal(key, &value))?;
-        Ok(AccountSettings { retire, ..accounts })
+        Ok(Restated {
+            accounts: AccountSettings { retire, ..accounts },
+            skipped: values.skipped(),
+        })
     }
 
     /// Says the load's notices on stderr, for a caller whose answer comes
@@ -809,20 +827,12 @@ pub fn load(
     flags: &Flags,
 ) -> Result<Settings> {
     let values = shared::layered(&roots.project, environment, flags.private_env, &KEYS)?;
-    let (passed_over, skipped) = match &values.passed_over {
-        Some((path, keys)) => (
-            keys.clone(),
-            keys.iter()
-                .map(|key| {
-                    format!(
-                        "settings-skipped path={} key={key} reason=shell-form",
-                        path.display()
-                    )
-                })
-                .collect(),
-        ),
-        None => (Vec::new(), Vec::new()),
-    };
+    let passed_over = values
+        .passed_over
+        .as_ref()
+        .map(|(_, keys)| keys.clone())
+        .unwrap_or_default();
+    let skipped = values.skipped();
     let get = |key: &str| values.get(key);
 
     let state_dir = match &flags.state_dir {
@@ -1066,7 +1076,7 @@ pub fn load(
     // provider key outside its form refuses each of them as an account key
     // does.
     let accounts = Judged {
-        read: AccountSettings::read(&values)
+        read: AccountSettings::read_except_retirements(&values)
             .read
             .and_then(|accounts| provider.read.clone().map(|_| accounts)),
     };
@@ -1669,7 +1679,7 @@ mod tests {
             s.store.review_max_cycles.get().map(drop),
             s.store.review_max_external_rounds.get().map(drop),
             s.store.ci_fix_max_cycles.get().map(drop),
-            s.accounts.get().map(drop),
+            s.accounts_now().map(drop),
             s.lane_output.get().map(drop),
         ];
         judged

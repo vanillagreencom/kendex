@@ -22,8 +22,8 @@
 //! `plan-ends` wherever its row states one, else from the machine's own
 //! `AGENT_RUNTIME_ACCOUNT_RETIRE`: a stated end that a live reading
 //! contradicts (a credential that answers after its end), and a machine's
-//! end the provider's overrides, are reported lines, never a silent
-//! absence. An account `AGENT_RUNTIME_ACCOUNT_EXCLUDE`
+//! end the provider's stated day overrides, are reported lines, never a
+//! silent absence. An account `AGENT_RUNTIME_ACCOUNT_EXCLUDE`
 //! names is measured like any other and refused by that word for every
 //! pick, a lane's or an overseer's, from this machine's listing, a
 //! provider's rows or the owner's statement; a controller's question about
@@ -216,7 +216,8 @@ pub struct AccountRow {
     /// and a named pick judges any.
     pub configured: bool,
     /// The row as the listing built it, for the lines and records that
-    /// carry it whole.
+    /// carry it whole; a roster's and a judgement's rows carry the stated
+    /// end in its retirement fields ([`AccountRow::end`]).
     pub raw: Value,
 }
 
@@ -354,28 +355,55 @@ impl AccountRow {
     }
 
     /// The account's stated word, what a pick is refused by: the
-    /// provider's reservation first, then the provider's stated end, a day
-    /// or a value nobody can read, then the machine's own. The provider's
-    /// record is the one source of an end wherever it states one: a
-    /// machine's copy goes stale when the record is corrected, so the
-    /// setting stands only for an account the provider states no end for.
+    /// provider's reservation first, then a provider's end nobody can read,
+    /// then the account's stated end ([`AccountRow::end`]).
     fn stated(&self, ignore_reservation: bool) -> Word {
         if self.reserved && !ignore_reservation {
             return Word::Reserve;
         }
-        match (&self.plan_ends, &self.retire) {
-            (PlanEnd::Invalid(value), _) => Word::PlanEndInvalid {
+        if let PlanEnd::Invalid(value) = &self.plan_ends {
+            return Word::PlanEndInvalid {
                 value: value.clone(),
+            };
+        }
+        match self.end() {
+            Some((date, source)) => Word::Retired {
+                date: date.to_owned(),
+                source,
             },
-            (PlanEnd::Day(day), _) => Word::Retired {
-                date: day.clone(),
-                source: EndSource::Provider,
-            },
-            (PlanEnd::None, Some(setting)) => Word::Retired {
-                date: setting.clone(),
-                source: EndSource::Setting,
-            },
-            (PlanEnd::None, None) => Word::Pick,
+            None => Word::Pick,
+        }
+    }
+
+    /// The account's stated end and who stated it, the one rule every
+    /// reader of an end takes: the provider's day wherever its row states
+    /// one, else the machine's own. The provider's record is the one source
+    /// wherever it states an end, since a machine's copy goes stale when the
+    /// record is corrected; a provider's value that names no day states no
+    /// day, and the machine's is not read in its place.
+    pub fn end(&self) -> Option<(&str, EndSource)> {
+        match (&self.plan_ends, &self.retire) {
+            (PlanEnd::Day(day), _) => Some((day, EndSource::Provider)),
+            (PlanEnd::Invalid(_), _) | (PlanEnd::None, None) => None,
+            (PlanEnd::None, Some(setting)) => Some((setting, EndSource::Setting)),
+        }
+    }
+
+    /// The raw record's retirement fields, `retire_date` and `retired`,
+    /// set to the account's stated end ([`AccountRow::end`]) and whether it
+    /// has come by `today`: the listing writes the machine's statement
+    /// there, and a provider's day replaces it.
+    fn state_end(&mut self, today: &str) {
+        let end = self.end().map(|(date, _)| date.to_owned());
+        if let Value::Object(raw) = &mut self.raw {
+            raw.insert(
+                "retired".to_owned(),
+                Value::from(end.as_deref().is_some_and(|date| date <= today)),
+            );
+            raw.insert(
+                "retire_date".to_owned(),
+                end.map_or(Value::Null, Value::from),
+            );
         }
     }
 
@@ -494,12 +522,15 @@ pub struct Roster {
 }
 
 impl Roster {
-    fn from_listing(listing: Listing, settings: &AccountSettings) -> Option<Roster> {
-        let rows = listing
+    fn from_listing(listing: Listing, settings: &AccountSettings, today: &str) -> Option<Roster> {
+        let mut rows = listing
             .rows
             .iter()
             .map(|raw| AccountRow::parse(raw, settings))
             .collect::<Option<Vec<AccountRow>>>()?;
+        for row in &mut rows {
+            row.state_end(today);
+        }
         Some(Roster {
             rows,
             provider_failure: listing.provider_failure,
@@ -594,7 +625,8 @@ pub fn roster_naming(
         .to_owned();
     let listing = listing::list(settings, &accounts, provider, named, now)
         .map_err(|cause| format!("host={host_word} {cause}"))?;
-    Roster::from_listing(listing, &accounts).ok_or_else(|| format!("host={host_word} parse=failed"))
+    Roster::from_listing(listing, &accounts, &today(now))
+        .ok_or_else(|| format!("host={host_word} parse=failed"))
 }
 
 /// Whether a row is a provider's reading (`measured_through` `host`, or a
@@ -1286,7 +1318,7 @@ fn reset_bonus(hours: Option<f64>) -> f64 {
 /// credit, an allowance that expires and does not refill. Read where the
 /// row's `credits` carry a dollar limit and remainder and an end `E` (the
 /// credit's own reset, for cloud credit the earlier of that and the
-/// account's stated retirement); `room` while the remainder is above the
+/// account's stated end, [`AccountRow::end`]); `room` while the remainder is above the
 /// floor, the grant unlocked and `E` ahead; `walled` where the grant is
 /// read and spent, locked or expired (an API grant whose row reads
 /// `expired` too); `unmeasured` otherwise. Its share left is the
@@ -1310,9 +1342,9 @@ fn grant(row: &AccountRow, floor: f64, now: u64) -> Option<Grant> {
     let remaining = number(&credits, "remaining_dollars");
     let limit = number(&credits, "limit_dollars");
     let retire = (!api)
-        .then_some(row.retire.as_deref())
+        .then(|| row.end())
         .flatten()
-        .and_then(|day| clock::epoch_secs(&format!("{day}T00:00:00Z")));
+        .and_then(|(day, _)| clock::epoch_secs(&format!("{day}T00:00:00Z")));
     let expires = [
         reset_epoch(string(&credits, "resets_at").as_deref()),
         retire,
@@ -1407,9 +1439,6 @@ impl Judged {
         };
         let number = figure;
         record.insert("word".to_owned(), Value::from(self.row.word().text()));
-        if let Some(retire) = &self.row.retire {
-            record.insert("retire_date".to_owned(), Value::from(retire.as_str()));
-        }
         record.insert("claims".to_owned(), Value::from(self.claims));
         record.insert("wall".to_owned(), self.wall.map_or(Value::Null, number));
         if let Some(binding) = &self.binding {
@@ -1790,8 +1819,10 @@ fn judge(
             p.headroom * reset_bonus(hours)
         })
     };
+    let mut row = row.clone();
+    row.state_end(today);
     Judged {
-        row: row.clone(),
+        row,
         verdict: verdict.to_owned(),
         wall,
         binding,
@@ -2178,6 +2209,33 @@ mod tests {
             assert_eq!(account.word(), word, "provider={provider:?}");
             assert_eq!(account.standing(today), standing, "provider={provider:?}");
             assert_eq!(roster.lines(today)[1..], said, "provider={provider:?}");
+        }
+    }
+
+    /// A cloud credit's end is the earlier of its own reset and the
+    /// account's stated end, the provider's wherever its row states one: a
+    /// provider's later day keeps a credit live past the machine's past
+    /// setting (2026-10-20), and a provider's day before the credit's
+    /// reset ends the grant on that day.
+    #[test]
+    fn a_cloud_credit_ends_on_the_accounts_stated_end_the_providers_first() {
+        let at = |day: &str| clock::epoch_secs(&format!("{day}T00:00:00Z")).unwrap();
+        let now = at("2026-10-25");
+        // provider's plan-ends, verdict, the grant's end
+        let table = [
+            (Some("2026-12-01"), "room", at("2026-11-30")),
+            (Some("2026-11-10"), "room", at("2026-11-10")),
+            (None, "walled", at("2026-10-20")),
+        ];
+        for (provider, verdict, expires) in table {
+            let mut raw = json!({"alias":"oldclaude","harness":"claude","config_dir":"/h/.oldclaude","measured_through":"host","status":"ok","verdict":"room","headroom_pct":90,"binding_bucket":"credits","binding_resets_at":null,"pool":"cloud-credit",
+                "credits":{"unit":"usd","limit_dollars":100,"used_dollars":10,"remaining_dollars":90,"resets_at":"2026-11-30T00:00:00Z","locked_reason":null}});
+            if let Some(day) = provider {
+                raw["plan-ends"] = json!(day);
+            }
+            let judged = grant(&row(raw), 10.0, now).expect("a cloud-credit row is a grant");
+            assert_eq!(judged.verdict, verdict, "provider={provider:?}");
+            assert_eq!(judged.expires, Some(expires), "provider={provider:?}");
         }
     }
 

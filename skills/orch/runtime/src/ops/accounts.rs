@@ -36,10 +36,12 @@ use crate::watch::hosted::{Capabilities, Launch};
 /// A request's own bound; the runner's covers the start.
 const REQUEST_BOUND: Duration = Duration::from_secs(15);
 
-/// The reading's view of the loaded settings.
-pub fn env(settings: &Settings) -> Env<'_> {
+/// The reading's view of the loaded settings, with `accounts` the account
+/// settings this reading judges by ([`Settings::accounts_now`]): no view
+/// reads the load's copy, which carries no retirement statement.
+pub fn env<'a>(settings: &'a Settings, accounts: &'a Judged<AccountSettings>) -> Env<'a> {
     Env {
-        accounts: &settings.accounts,
+        accounts,
         account_state: &settings.account_state,
         home: settings.home.as_deref(),
         copilot_home: settings.copilot_home.as_deref(),
@@ -57,16 +59,20 @@ pub fn roster(
     host: Option<&str>,
     now: u64,
 ) -> std::result::Result<Roster, String> {
-    let accounts = settings.accounts_now().map_err(|e| e.to_string())?;
-    roster_naming(
+    let restated = settings.accounts_now().map_err(|e| e.to_string())?;
+    let mut roster = roster_naming(
         settings,
-        &accounts,
+        &Judged {
+            read: Ok(restated.accounts),
+        },
         host,
         None,
         false,
         now,
         &mut Reads::default(),
-    )
+    )?;
+    roster.notes.extend(restated.skipped);
+    Ok(roster)
 }
 
 /// What one reading asked of each provider, its capability line and its
@@ -114,20 +120,14 @@ type Parse = fn(&mut Ctx, &str, &str) -> Vec<Value>;
 /// settings as [`Settings::accounts_now`] read them for this reading.
 fn roster_naming(
     settings: &Settings,
-    accounts: &AccountSettings,
+    accounts: &Judged<AccountSettings>,
     host: Option<&str>,
     named: Option<(Harness, &str)>,
     overseer: bool,
     now: u64,
     reads: &mut Reads,
 ) -> std::result::Result<Roster, String> {
-    let accounts = Judged {
-        read: Ok(accounts.clone()),
-    };
-    let env = Env {
-        accounts: &accounts,
-        ..env(settings)
-    };
+    let env = env(settings, accounts);
     let provider = settings.provider.get().map_err(|e| e.to_string())?;
     let remote = |h: &&str| *h != LOCAL && !h.is_empty();
     let read: Option<(&str, Parse)> = match host.or(provider.host.as_deref()).filter(remote) {
@@ -308,7 +308,10 @@ impl Hosts<'_> {
         if let Err(cause) = self.capabilities(host) {
             return Ok(Some(cause));
         }
-        let env = env(self.settings);
+        let accounts = Judged {
+            read: Ok(self.settings.accounts_now()?.accounts),
+        };
+        let env = env(self.settings, &accounts);
         let read = env.accounts.get()?;
         let mut ctx = Ctx::new(&env, &read, self.now).map_err(|cause| {
             agent_runtime::Error::refused(
@@ -456,7 +459,10 @@ pub fn walk(
         host: &mut host,
         pick: &mut pick,
     };
-    Ok(walk::walk(&env(settings), ground, &req, now)?)
+    let accounts = Judged {
+        read: Ok(settings.accounts_now()?.accounts),
+    };
+    Ok(walk::walk(&env(settings, &accounts), ground, &req, now)?)
 }
 
 /// The seats per account, this machine's seat records with the controller
@@ -651,7 +657,7 @@ fn pick_read(
         return answer;
     }
     let (accounts, provider) = match (settings.accounts_now(), settings.provider.get()) {
-        (Ok(accounts), Ok(provider)) => (accounts, provider),
+        (Ok(restated), Ok(provider)) => (restated.accounts, provider),
         (Err(e), _) | (_, Err(e)) => {
             return PickAnswer::Unjudged {
                 cause: e.to_string(),
@@ -664,7 +670,9 @@ fn pick_read(
     let named = req.harness.billed(model).zip(req.lane.as_deref());
     let roster = match roster_naming(
         settings,
-        &accounts,
+        &Judged {
+            read: Ok(accounts.clone()),
+        },
         asked,
         named,
         req.for_overseer,
