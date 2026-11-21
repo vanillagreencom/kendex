@@ -977,7 +977,9 @@ for given in $OPTS_GIVEN; do
     # event line, so a space or a control character would split that line.
     --data)
       [ "$VERB:$ITEM" = send:overseer ] || refuse option-unknown --data
-      jq -en --arg source "$DATA_SOURCE" '$source | test("^[!-~]+$")' >/dev/null || refuse source-invalid "$DATA_SOURCE" ;;
+      # \A and \z anchor the whole value: jq's `$` also matches before a
+      # final newline, which would split the watch's one-line event.
+      jq -en --arg source "$DATA_SOURCE" '$source | test("\\A[!-~]+\\z")' >/dev/null || refuse source-invalid "$DATA_SOURCE" ;;
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;

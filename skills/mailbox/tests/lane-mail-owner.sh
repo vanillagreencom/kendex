@@ -1589,13 +1589,18 @@ send --item overseer --data mail-watch --re 1790000000-1-1 --file $F|2=lane-mail
 send --item KEN-1 --data mail-watch --file $F|2=lane-mail: option-unknown=--data
 notice --item overseer --to owner --data mail-watch --file $F|2=lane-mail: option-unknown=--data
 ROWS
-while IFS='|' read -r source want; do
+# A row's source and expected first stderr line hold printf %b escapes, so a
+# control character, a trailing newline included, is one visible row.
+while IFS='|' read -r raw want; do
+  printf -v source '%b' "$raw"
+  printf -v want '%b' "$want"
   lm send --item overseer --data "$source" --file "$F"
-  assert_eq "$RC=$ERR" "$want" "refused source: [$source]"
-done <<ROWS
+  assert_eq "$RC=$ERR" "$want" "refused source: [$raw]"
+done <<'ROWS'
 |2=lane-mail: missing-value=--data
 mail watch|2=lane-mail: source-invalid=mail watch
-$(printf 'mail\twatch')|2=lane-mail: source-invalid=$(printf 'mail\twatch')
+mail\twatch|2=lane-mail: source-invalid=mail\twatch
+mail-watch\n|2=lane-mail: source-invalid=mail-watch
 ROWS
 assert_eq "$(cat "$BOX/to-lane.jsonl" 2>/dev/null)" "" "a refused data notice appends nothing"
 
