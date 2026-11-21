@@ -1032,6 +1032,9 @@ def main():
         if verb == "status":
             # The default answer's key set is the VGS-1439 contract; --main is a separate shape.
             command.add_argument("--main", action="store_true")
+        elif verb == "forward-drain":
+            # The watch-loop's own drain, whose reach status --main reports.
+            command.add_argument("--collection", action="store_true")
         elif verb == "forward":
             # Text crosses this file, never argv.
             command.add_argument("--record", required=True)

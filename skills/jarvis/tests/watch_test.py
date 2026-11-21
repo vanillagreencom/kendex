@@ -2075,7 +2075,7 @@ with open(sys.argv[1], "ab") as out:
                 status = json.dumps({"requests": [{"state": state} for state in states]})
                 with patch.object(self.module, "checked", side_effect=["", status]):
                     result = watch.forward()
-                self.assertEqual(result, ("", interval))
+                self.assertEqual(result, ("", interval, (None, None, None)))
                 watch.next_relay = 1000
                 # Completion can be delayed beyond submission; queued retries
                 # get their full minute rather than a stale submission deadline.
@@ -2104,7 +2104,7 @@ with open(sys.argv[1], "ab") as out:
             self.module.forward_ready(self.settings, "forward-k", 2)
             self.module.forward_ready(self.settings, "forward-later", 3)
             watch._poll(Submitted(), Future(), 3)
-            work.set_result(("", 60))
+            work.set_result(("", 60, (None, None, None)))
             watch._poll(Submitted(), Future(), 4)
             self.assertEqual(watch.next_forward, 7)
 

@@ -702,6 +702,7 @@ class Watch:
         self.satellite = role(settings).kind != "main"
         self.forward_pending = None
         self.next_forward = 0
+        self.collection = None
         self.mail_pending = {}
 
     def initial_cursors(self, paths):
@@ -1104,7 +1105,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
     def forward(self):
         try:
             command = [self.bash, LIB.parent / "jarvis-session"]
-            output = checked([*command, "forward-drain", "--home", self.home],
+            output = checked([*command, "forward-drain", "--collection", "--home", self.home],
                              self.home, operation="forward-drain")
             # Status shares the forwarding owners state location and lifecycle.
             # This local read starts no remote call or independent polling task.
@@ -1114,7 +1115,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             if not isinstance(requests, list) or not all(isinstance(row, dict) for row in requests):
                 raise Failure("forward-status", "protocol", "status-unread", "requests")
             interval = 5 if any(row.get("state") in ("delivered", "read") for row in requests) else FORWARD_EVERY_SECS
-            return output, interval
+            return output, interval, (status.get("reachable"), status.get("cause"), status.get("checked_at"))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("forward-drain", error)
 
@@ -1134,6 +1135,20 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         self.append(pass_output("forward", {"emitted": headers},
                                 [(None, block) for block, header in zip(blocks, headers) if header not in emitted]))
         self.save()
+
+    def collected(self, result):
+        """One stderr line per change of the forward collection's outcome, so the unit's journal shows each."""
+        if isinstance(result, Failure):
+            outcome = ("failed", *result.record["key"])
+            line = "forward=failed cause=" + line_value(result.record["detail"], True, 200)
+        else:
+            reachable, cause, at = result
+            outcome = (reachable, cause)
+            line = "forward=" + ("unchecked" if reachable is None else "reachable" if reachable else "unreachable")
+            line += "".join(" %s=%s" % pair for pair in (("cause", cause), ("checked_at", at)) if pair[1])
+        if outcome != self.collection:
+            self.collection = outcome
+            print("watch-loop: " + line, file=sys.stderr, flush=True)
 
     def accept(self, outputs):
         for side, output, failure, delivered in outputs:
@@ -1238,9 +1253,11 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                 interval = FORWARD_EVERY_SECS
                 if isinstance(result, Failure):
                     self.accept_forward(result)
+                    self.collected(result)
                 else:
-                    output, interval = result
+                    output, interval, reach = result
                     self.accept_forward(output)
+                    self.collected(reach)
                 self.next_forward = now + interval
                 self.forward_pending = None
             if self.forward_pending is None:
