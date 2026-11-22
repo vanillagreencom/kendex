@@ -14,14 +14,19 @@ A local connection to a running Pi session. The pi-bridge CLI lets another termi
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-session-bridge`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-session-bridge"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. kendex links the CLI at `.pi/bin/pi-bridge` for a project or `~/.pi/agent/bin/pi-bridge` for user scope. Add that directory to `PATH` or run the CLI by path.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
+- kendex links the CLI at `.pi/bin/pi-bridge` for a project or `~/.pi/agent/bin/pi-bridge` for user scope.
+- Add that directory to `PATH` or run the CLI by path.
 
 ## How it works
 

@@ -30,7 +30,8 @@ What it does for a consumer is [README.md](README.md). Mechanics live as doc com
 
 ## Tests
 
-Install the Pi peers in this directory with the command the `pi-qol regression suite` step of `.github/workflows/skill-tests.yml` runs, with `PI_QOL_PEER_VERSION` exported as the Pi version to test, then run the suite:
+1. Install the Pi peers in this directory with the command the `pi-qol regression suite` step of `.github/workflows/skill-tests.yml` runs, with `PI_QOL_PEER_VERSION` exported as the Pi version to test.
+2. Run the suite:
 
 ```bash
 bun test ./tests

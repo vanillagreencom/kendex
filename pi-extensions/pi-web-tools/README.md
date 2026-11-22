@@ -15,14 +15,17 @@ Web search, page retrieval and research tools for Pi. The agent can search provi
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-web-tools`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-web-tools"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 
@@ -55,6 +58,8 @@ Set these as environment variables, in the project's `.env` or `.env.local`, or 
 - `GEMINI_API_KEY`
 - `OPENAI_API_KEY`
 - `JINA_API_KEY`, optional; Jina Reader works anonymously without it.
+
+Without `EXA_API_KEY`, Pi does not offer `web_research`, `web_answer`, `web_find_similar` or `code_search`, and `web_fetch` has no Exa fallback. `web_answer`, `web_find_similar` and `code_search` join the active tools on their own only when `exaAdvancedEnabled` is on and an Exa key is set.
 
 A value may be a 1Password reference such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in. A reference that does not resolve within the startup timeout is treated as unset so Pi starts anyway; `PI_WEB_TOOLS_OP_READ_TIMEOUT_MS` changes that timeout.
 

@@ -9,20 +9,24 @@ A Pi extension for shell commands that run while the conversation continues. It 
 - Start, inspect and stop background commands.
 - Move configured blocking commands into background tasks.
 - Notify the agent when a task exits or produces selected output.
-- Read recent output and task history in the dashboard. Open the task's Log file for full output.
+- Read recent output and task history in the dashboard.
+- Open the task's Log file for full output.
 - Run tasks at lower priority: CPU and disk on Linux, CPU only on macOS. On Windows tasks run unchanged and a session warns once.
 
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-background-tasks`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-background-tasks"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 

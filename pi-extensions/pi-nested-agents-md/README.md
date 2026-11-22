@@ -12,14 +12,17 @@ A Pi extension that loads instructions for project subdirectories. It adds local
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-nested-agents-md`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-nested-agents-md"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 

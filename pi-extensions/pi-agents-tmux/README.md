@@ -14,20 +14,29 @@ A Pi extension for assigning work to other agents. You can follow each agent in 
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-agents-tmux`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-agents-tmux"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Persistent agent panes require tmux; where no tmux server answers, a pane agent runs in the background instead.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
+- Persistent agent panes require tmux; where no tmux server answers, a pane agent runs in the background instead.
 
 ## How it works
 
 The parent Pi session selects an agent file and sends it a task. The extension starts a separate Pi process with that agent's instructions. Agents configured for panes appear in tmux; other agents run in the background. The child returns its result to the parent. The dashboard shows the task state and saved transcript.
 
-Streamed tool rows keep only the static call preview in the transcript. Follow live progress in the existing Agents panel, which shows each working child's operation and last recorded progress time in UTC. The time changes only when a child writes another transcript record, not when the panel refreshes. After completion, press Ctrl+O to expand the row and read its final result. A restored session shows saved final results.
+Streamed tool rows keep only the static call preview in the transcript.
+
+- Follow live progress in the existing Agents panel, which shows each working child's operation and last recorded progress time in UTC.
+- The time changes only when a child writes another transcript record, not when the panel refreshes.
+- After completion, press Ctrl+O to expand the row and read its final result.
+- A restored session shows saved final results.
 
 ## Memory and disk use
 
@@ -63,17 +72,18 @@ Streamed tool rows keep only the static call preview in the transcript. Follow l
 The `model` field accepts a class, `inherit`, a provider-qualified family such as `anthropic/sonnet`, or an exact Pi model id.
 
 - An exact id can contain `/` after the provider, as in `openrouter/anthropic/claude-sonnet-4`.
-- Unknown model access or capacity keeps the native parent or child default and prints one warning per extension session. kendex must be on Pi's PATH for class and family resolution.
-- With kendex absent, only inherit and one uniquely authenticated exact registry match can start.
-- Other requests refuse before child startup.
+- Unknown model access or capacity keeps the native parent or child default and prints one warning per extension session.
+- kendex must be on Pi's PATH for class and family resolution.
+- With kendex absent, only inherit and one uniquely authenticated exact registry match can start; other requests refuse before child startup.
 
 The `subagent` tool accepts an optional `model` on a single call.
 
 - It replaces the agent file's model for that call and uses the same grammar, including `light:medium`.
 - An unresolvable call model falls back to the agent file's model and prints one warning per extension session.
 - `subagentModelSource` set to `parent` keeps parent precedence.
-- A reused live pane keeps its current model.
-- Stop the pane, then use `forceSpawn` to start fresh with the call model.
+- A reused live pane keeps its current model. To start fresh with the call model:
+  1. Stop the pane.
+  2. Use `forceSpawn`.
 - Omitting `model` keeps the agent file and settings behavior.
 
 An absent agent model or `subagentModelSource` set to `parent` requests inheritance. The parent model remains in runtime context. `/agents:start` and `/agents:send` use the same authenticated registry as tool dispatch.
@@ -91,7 +101,8 @@ kendex resolves delegation targets from the catalog's role policy.
 - Other roles get no default delegation targets.
 - Set per-agent overrides under `[agent-frontmatter.pi.<agent>]` in `kendex.toml`.
 - An explicit `allowed-subagents = []` turns delegation off.
-- `role-deny-tools` replaces role tool restrictions, including with an empty list; `deny-tools` adds restrictions.
+- `role-deny-tools` replaces role tool restrictions, including with an empty list.
+- `deny-tools` adds restrictions.
 - Forks and source detachment carry declared policy into these manifest settings.
 - Pi reads the resulting `deny-tools` and `allowed-subagents` in the installed agent file.
 - The kendex repository's `docs/authoring/README.md` § Agent permissions documents these overrides and transfers.

@@ -140,4 +140,7 @@ npm test               # unit, then the integration suites
 npm run test:usage     # A/B subscription-usage comparison against Claude Code direct
 ```
 
-The integration suites (`tests/int-*.sh`, `tests/int-*.mjs`) need the `pi` CLI, a logged-in Claude Code, and `CLAUDE_BRIDGE_TESTING_ALT_MODEL` and `CLAUDE_BRIDGE_TESTING_ALT_PROVIDER` from `.env.test`, which `npm test` sources when present. `test:usage` spends real subscription usage. A test that spawns a child pins `HOME`, `PI_CODING_AGENT_DIR` and `CLAUDE_CONFIG_DIR` explicitly, because a spawned child inherits the process's start environment rather than a harness override.
+- The integration suites (`tests/int-*.sh`, `tests/int-*.mjs`) need the `pi` CLI, a logged-in Claude Code, and `CLAUDE_BRIDGE_TESTING_ALT_MODEL` and `CLAUDE_BRIDGE_TESTING_ALT_PROVIDER` from `.env.test`.
+- `npm test` sources `.env.test` when present.
+- `test:usage` spends real subscription usage.
+- A test that spawns a child pins `HOME`, `PI_CODING_AGENT_DIR` and `CLAUDE_CONFIG_DIR` explicitly, because a spawned child inherits the process's start environment rather than a harness override.

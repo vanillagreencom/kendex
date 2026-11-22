@@ -16,7 +16,9 @@ What it does for a consumer is [README.md](README.md). Each module's doc comment
   - Built-in searches remain discoverable, but compact drawing does not activate them.
   - Explicit caller allowlists remain authoritative on reload; extension-owned batch retains Pi's defaultActive reload behavior.
   - `extensions/__tests__/tool-registration.test.ts` exercises the real SDK contract.
-- Every patch on a host component is guarded by a `Symbol.for("kendex.pi-tool-renderer.*")` marker so a reload does not stack a second copy. A new patch gets its own marker; a change to a patch's shape gets a new marker name, the way `installToolExecutionRendererPatch` carries `.v2`.
+- Every patch on a host component is guarded by a `Symbol.for("kendex.pi-tool-renderer.*")` marker so a reload does not stack a second copy.
+  - A new patch gets its own marker.
+  - A change to a patch's shape gets a new marker name, the way `installToolExecutionRendererPatch` carries `.v2`.
 - Bash success or failure comes from Pi's error flag, not command output. For a failed standalone call, `commandExit` reads Pi's trailing exit-code footer; cancellation and timeout remain failures without inventing an exit code. Grouped calls use the recorded error state.
 - Text reaches a line count, a preview or a clip only through `extensions/tool-renderer/text.ts::normalizeTerminalText`, which defers to `@earendil-works/pi-tui`'s `normalizeTerminalOutput` when the host exports it. A count taken from raw text disagrees with what Pi draws.
 - Glyph resolution is one function, `extensions/tool-renderer/glyphs.ts::glyphStyle`: the global override wins, then the local `glyphStyle`, then the legacy `treeStyle`. The other kendex extensions read the override from this package's config id, so its key name is a cross-package contract.

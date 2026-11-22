@@ -13,27 +13,32 @@ Pi Codex bridge adds `pi-codex` models to Pi. Each model runs through the Codex 
 
 ## Install
 
-```sh
-pi install npm:@vanillagreen/pi-codex-bridge
-```
-
-The kendex catalog declaration is:
+- npm: `pi install npm:@vanillagreen/pi-codex-bridge`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-codex-bridge"]
 source = "kendex"
 ```
 
-Requirements:
+Restart Pi after installation.
+
+## Requirements
 
 - Pi 0.86 or later.
 - Node 22.19 or later.
-- Codex CLI 0.163.0 or 0.166.0 on `PATH`. The bridge refuses any other release and offers no model. `package.json` lists the supported releases as its optional `@openai/codex` peer range.
+- Codex CLI 0.163.0 or 0.166.0 on `PATH`.
+  - The bridge refuses any other release and offers no model.
+  - `package.json` lists the supported releases as its optional `@openai/codex` peer range.
 - A Codex login in the bridge home, stored in `<bridge home>/auth.json`.
   - The bridge home is `PI_CODEX_BRIDGE_HOME` when set, else `CODEX_HOME`, else `~/.codex`; a blank value counts as unset.
   - `PI_CODEX_BRIDGE_HOME` gives the bridge a home apart from the one a `codex` run in Pi's tool shell reads.
-  - Without it, sign in with `codex login`.
-  - For a home `PI_CODEX_BRIDGE_HOME` names, create that folder first, then run `codex login` with `CODEX_HOME` set to it.
+  - Without `PI_CODEX_BRIDGE_HOME`, sign in with `codex login`.
+  - For a home `PI_CODEX_BRIDGE_HOME` names:
+    1. Create that folder.
+    2. Run `codex login` with `CODEX_HOME` set to it.
 
 A login kept in the system keyring (`cli_auth_credentials_store = "keyring"`) has no `auth.json`, so the bridge treats it as absent. Sign in with file storage to use the bridge.
 
@@ -58,6 +63,10 @@ A usage reader counts each bridged turn once by this rule:
 The bridge releases its thread records, queued events and pending tool calls on `session_shutdown`. [src/bridge.ts](src/bridge.ts) declares and enforces their limits.
 
 ## Settings
+
+The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-codex-bridge"]`.
+
+Open `/extensions:settings`; settings appear under the **Pi Codex** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
 - `enabled`: registers the `pi-codex` provider. On (`true`) by default. Takes effect after `/reload`.
 

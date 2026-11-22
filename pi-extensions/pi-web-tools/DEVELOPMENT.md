@@ -57,4 +57,7 @@ npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @e
 npm run check
 ```
 
-`npm run check` is `typecheck` then `test`; `.github/workflows/skill-tests.yml` runs the same install. Provider suites stub `fetch` and assert request and response shapes; a new provider ships with its shape test and a case in `tests/provider-selection.test.ts` for where it sits in `auto`.
+- `npm run check` is `typecheck` then `test`.
+- `.github/workflows/skill-tests.yml` runs the same install.
+- Provider suites stub `fetch` and assert request and response shapes.
+- A new provider ships with its shape test and a case in `tests/provider-selection.test.ts` for where it sits in `auto`.

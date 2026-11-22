@@ -17,14 +17,18 @@ A Pi extension that runs hooks installed by kendex. It checks tool calls, hands 
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-hooks`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-hooks"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Install the hooks separately with kendex, for example `kendex add --hook block-bare-cd --hook block-repo-copy --hook pre-commit-check`.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
+- Install the hooks separately with kendex, for example `kendex add --hook block-bare-cd --hook block-repo-copy --hook pre-commit-check`.
 
 ## How it works
 
@@ -39,11 +43,13 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 | Hook event | Pi listener | What happens with the hook's output |
 | --- | --- | --- |
 | `PostToolUse` | `tool_result` | Appended to the tool result the agent reads. |
-| `Stop`, `TaskCompleted` | `agent_before_settle` | Added to the session, and Pi runs one more model request so the agent answers it. |
+| `Stop` | `agent_before_settle` | Added to the session. |
+| `TaskCompleted` | `agent_before_settle` | Added to the session. |
 | `SessionStart` | `session_start` | Added to the session's opening context. |
 | `StopFailure` | `agent_before_settle` | Shown to you. |
 | `SessionEnd` | `session_shutdown` | Shown to you. |
 
+- After `Stop` and `TaskCompleted` output is added, Pi runs one more model request so the agent answers it.
 - `Stop` and `TaskCompleted` hooks are read from the registry's `turn_end` entry, once per response.
 - Pi runs that one more model request inside the same run. At the end of that request the hooks run again with `stop_hook_active: true`, and what they say then is recorded without another request, so a response runs them at most twice.
 - `StopFailure` hooks are read only when Pi says the run ended on an error, after the `Stop` and `TaskCompleted` hooks, which still run.

@@ -64,11 +64,16 @@ On Pi, the settings editor owns `kendex.extensionManager.config[<packageName>]` 
 type ExternalConfigResolver = (key: string, cwd: string) => { explicit: boolean; value: unknown; source?: string } | undefined;
 ```
 
-- `key` comes from the package's `kendex.extensionManager.settings` schema. Return `undefined` or `explicit: false` for an unset or unowned key.
-- Report only external channels. Manager config takes precedence in `extensions/manager/settings.ts::getConfigValue`.
-- Return the value the package's loader resolves, with its own normalization and file precedence. `source` names the concrete file, optionally home-relative.
-- Register before an early return that disables the package. The registry lives for the process and has no unregister operation.
-- A throwing resolver behaves like an unset value. The editor memoizes results per inventory so keystrokes do not reread external files.
+- `key` comes from the package's `kendex.extensionManager.settings` schema.
+- Return `undefined` or `explicit: false` for an unset or unowned key.
+- Report only external channels.
+- Manager config takes precedence in `extensions/manager/settings.ts::getConfigValue`.
+- Return the value the package's loader resolves, with its own normalization and file precedence.
+- `source` names the concrete file, optionally home-relative.
+- Register before an early return that disables the package.
+- The registry lives for the process and has no unregister operation.
+- A throwing resolver behaves like an unset value.
+- The editor memoizes results per inventory so keystrokes do not reread external files.
 
 `getConfigValue` returns scope `external` for a resolved external value.
 
@@ -98,8 +103,12 @@ type ExternalConfigResolver = (key: string, cwd: string) => { explicit: boolean;
   - The runner stops the tree with System32's `taskkill.exe /T /F` by absolute path, which reaches npm under cmd.exe, and kills the direct child itself when taskkill fails or runs past 2 seconds.
   - PATH entries lose one pair of surrounding quotes, as libuv and cmd.exe strip them, and an entry with no drive or UNC root is skipped.
   - No CI runner exercises the Windows path.
-- The child inherits the live `process.env`, passed explicitly because Bun's child_process otherwise hands a child the environment the process started with. Tests pin `PATH`, `HOME` and `PI_CODING_AGENT_DIR` on `process.env` and use fake commands from `test/fixtures/commands.ts`.
-- Package updates and removals run under a 10-minute deadline and a signal that the progress overlay's Escape and session shutdown both abort. Settings change only after a confirmed exit 0 (`test/actions.test.ts`). `openManager` awaits each action under a progress overlay whose Escape cancels it, as session shutdown does (`test/manager-ui.test.ts`).
+- The child inherits the live `process.env`, passed explicitly because Bun's child_process otherwise hands a child the environment the process started with.
+  - Tests pin `PATH`, `HOME` and `PI_CODING_AGENT_DIR` on `process.env`.
+  - Tests use fake commands from `test/fixtures/commands.ts`.
+- Package updates and removals run under a 10-minute deadline and a signal that the progress overlay's Escape and session shutdown both abort.
+  - Settings change only after a confirmed exit 0 (`test/actions.test.ts`).
+  - `openManager` awaits each action under a progress overlay whose Escape cancels it, as session shutdown does (`test/manager-ui.test.ts`).
 - The inventory session owns the work started under its signal: `inventory.ts::sessionWork` runs each package action (`test/manager-ui.test.ts`), toggle and inventory build, npm-root lookups included.
   - `closeInventorySession` aborts the signal and returns a promise that settles once that work has, at most 18 seconds later (`SHUTDOWN_WAIT_MS`): the stop of the command the abort reached, then a failed uninstall's restore, which the abort does not stop, for its 10-second deadline (`append-system.ts::APPEND_SYSTEM_DEADLINE_MS`) and its own stop.
   - Each stop is bounded by `process.ts::STOP_SETTLE_MS`, 4 seconds: the POSIX grace or the Windows taskkill bound, whichever is longer, then the settle wait (`test/process.test.ts`, `test/actions.test.ts`).
@@ -142,5 +151,6 @@ Must-fail controls for the runner, package actions, npm-root discovery and the p
 OMP's compiled 18.1.11 host supports the imported utils/discovery exports and the existing custom-overlay UI.
 
 - An isolated-home PTY smoke can open the manager, toggle a disabled native plugin and open settings without sending an agent prompt.
-- Keep credentials out of that environment and disable startup setup/update checks.
+- Keep credentials out of that environment.
+- Disable startup setup/update checks in that environment.
 - Recheck these runtime exports and plugin persistence contracts when raising the tested OMP baseline.

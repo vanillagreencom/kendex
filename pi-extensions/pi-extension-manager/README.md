@@ -15,7 +15,9 @@ A package browser for Pi and oh-my-pi (OMP). It includes a settings editor for k
 
 - Pi: `pi install npm:@vanillagreen/pi-extension-manager`.
 - OMP 18.1.11 or later: `omp plugin install @vanillagreen/pi-extension-manager`.
-- kendex, for Pi only: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex, for Pi only:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-extension-manager"]

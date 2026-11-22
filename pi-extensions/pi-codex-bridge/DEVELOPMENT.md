@@ -10,13 +10,21 @@ The bridge calls these methods, which every listed release serves:
 
 | Method | Use |
 |---|---|
-| `initialize`, `initialized` | Handshake with `experimentalApi: true` (dynamic tools need it) and `requestAttestation: false`. |
+| `initialize` | The handshake. |
+| `initialized` | The handshake. |
 | `model/list` | The model menu. |
-| `config/read` | The configured MCP server names, before each thread start and cold resume. |
-| `thread/start` | A new thread with Pi's tools as `dynamicTools`, in one `pi` namespace. |
-| `thread/resume` | A cold resume in a new app-server, with a one-turn `initialTurnsPage` to read the latest turn. |
+| `config/read` | The configured MCP server names. |
+| `thread/start` | A new thread. |
+| `thread/resume` | A cold resume in a new app-server. |
 | `experimentalFeature/list` | The feature audit for one thread. |
-| `turn/start`, `turn/steer`, `turn/interrupt` | Turns, user input during a tool batch, and aborts. |
+| `turn/start` | A turn. |
+| `turn/steer` | User input during a tool batch. |
+| `turn/interrupt` | An abort. |
+
+- The handshake sends `experimentalApi: true`, which dynamic tools need, and `requestAttestation: false`.
+- `config/read` runs before each thread start and cold resume.
+- `thread/start` declares Pi's tools as `dynamicTools`, in one `pi` namespace.
+- `thread/resume` asks for a one-turn `initialTurnsPage` to read the latest turn.
 
 `src/protocol.ts` narrows every value read from Codex. Other modules consume its typed results.
 
@@ -33,17 +41,25 @@ Before each launch, `codex-policy.ts::supportedCodexVersions` reads the range fr
 | Key | Cause |
 |---|---|
 | `codex-version-unsupported found=<v> supported=<list>` | The installed Codex is not a listed release. |
-| `codex-version-unreadable executable=<path> code=<code>` | `codex --version` failed: it could not run, did not exit 0, or printed more than 4 KiB. |
-| `codex-support-unreadable path=<path> code=<code>` | The manifest cannot be read or is not JSON. |
-| `codex-support-malformed range=<range>` | The range is absent or not a string, both reported as `range=absent`, or it holds anything but exact stable versions in the form above. |
+| `codex-version-unreadable executable=<path> code=<code>` | `codex --version` failed. |
+| `codex-support-unreadable path=<path> code=<code>` | The manifest is unreadable. |
+| `codex-support-malformed range=<range>` | The range is malformed. |
+
+- `codex --version` fails when it cannot run, does not exit 0, or prints more than 4 KiB.
+- The manifest is unreadable when it cannot be read or is not JSON.
+- The range is malformed when it is absent or not a string, both reported as `range=absent`, or when it holds anything but exact stable versions in the form above.
 
 Model discovery runs the same check, so the provider offers no model and the session-start notice carries the key. A stream or cold resume on a saved model selection refuses with the same key.
 
 To list a release:
 
-1. Add the dev dependency `"codex-<version>": "npm:@openai/codex@<version>"`. Each listed release keeps its own; never bump one in place.
+1. Add the dev dependency `"codex-<version>": "npm:@openai/codex@<version>"`.
+   - Each listed release keeps its own dev dependency.
+   - Never bump one in place.
 2. Add the version to the peer range.
-3. Review the release's default-on features (`codex features list`) in `src/codex-policy.ts`. A name in `DISABLED_FEATURES` must exist in every listed release, because 0.163.0 refuses to start on `--disable` of an unknown feature. A default-on feature that an older listed release lacks is turned off by a `features.<name>=false` setting in `LAUNCH_CONFIG` instead.
+3. Review the release's default-on features (`codex features list`) in `src/codex-policy.ts`.
+   - A name in `DISABLED_FEATURES` must exist in every listed release, because 0.163.0 refuses to start on `--disable` of an unknown feature.
+   - Turn off a default-on feature that an older listed release lacks with a `features.<name>=false` setting in `LAUNCH_CONFIG` instead.
 4. Run `npm run test:fixture`. It must pass on every listed release.
 
 Removing a listed release is a breaking change under the [release-version rule](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/CHECKS.md#release-versions).

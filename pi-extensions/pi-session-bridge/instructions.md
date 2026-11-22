@@ -1,8 +1,14 @@
 ## pi-session-bridge — `pi-bridge` CLI
 
-To control other interactive Pi sessions (different tmux windows, terminals, hosts), use the `pi-bridge` CLI. Do not use `tmux send-keys` or `tmux capture-pane` — the bridge is JSON in/JSON out and avoids ANSI noise, alt-screen issues, and stream collisions. Bridge addresses peer Pi sessions you did not spawn; child panes from `subagent` are addressed with `subagent`/`steer_subagent`/`stop_subagent` instead.
+- To control other interactive Pi sessions (different tmux windows, terminals, hosts), use the `pi-bridge` CLI.
+- Do not use `tmux send-keys` or `tmux capture-pane` — the bridge is JSON in/JSON out and avoids ANSI noise, alt-screen issues, and stream collisions.
+- Bridge addresses peer Pi sessions you did not spawn.
+- Address child panes from `subagent` with `subagent`/`steer_subagent`/`stop_subagent` instead.
 
-Discovery: `pi-bridge list` returns `(PID, IDLE, SESSION, NAME, CWD, SOCKET)`. Filters: `--pid`, `--cwd`, `--session`, `--name`, `--socket`. If exactly one bridge is active, target flags are optional.
+Discovery: `pi-bridge list` returns `(PID, IDLE, SESSION, NAME, CWD, SOCKET)`.
+
+- Target flags, for every command but `list`: `--pid`, `--cwd`, `--session`, `--name`, `--socket`.
+- If exactly one bridge is active, target flags are optional.
 
 Commands:
 
@@ -10,11 +16,15 @@ Commands:
 - `send "msg"` — deliver a prompt; auto-queues if the target is busy.
   - Slash dispatch is hybrid: `/skill:<name>` and prompt templates expand client-side, including `${N:-default}`, `${@:-default}`, and `${ARGUMENTS:-default}` defaults; extension/TUI commands paste into the target Pi pane; plain text uses normal `sendUserMessage`.
   - Repeated `/skill:<name>` sends in one Pi session use a short previously-loaded reminder unless the `SKILL.md` content hash changes.
-- `steer "msg"` / `follow-up "msg"` / `abort` — interrupt-and-redirect / queue-after-turn / cancel.
+- `steer "msg"` / `follow-up "msg"` — interrupt-and-redirect / queue-after-turn.
+- `request '{"type":"abort"}'` — cancel.
 - `history N` / `stream` — structured events, among them input, message_start, message_update, message_end, tool_execution_start, tool_execution_update, tool_execution_end, agent_end, bridge_pong, question and `kendex_activity`. More arrive than that list names.
   - Activity rows are non-chat bridge events emitted by the local activity broker.
   - History returns compact envelopes by default.
-  - Pass `--raw` (alias `--verbose`) to rehydrate from the per-session JSONL sidecar. Raw data exists only for events that fire while an event subscriber is attached and raw spill is enabled. The request waits for queued writes; `rawError` explains missing raw data.
+  - Pass `--raw` (alias `--verbose`) to rehydrate from the per-session JSONL sidecar.
+  - Raw data exists only for events that fire while an event subscriber is attached and raw spill is enabled.
+  - The `--raw` request waits for queued writes.
+  - `rawError` explains missing raw data.
   - The sidecar holds whole payloads for terminal events such as `message_end` and `tool_execution_end` but nothing for the streaming ones.
   - `--event NAME`, `--since TS`, and `--max-bytes N` narrow the response.
 - `questions` + `answer --request-id … --answers '[[...]]'` / `reject --request-id …` — drive `pi-questions` popups.

@@ -16,14 +16,18 @@ A Pi extension for session controls, prompt editing and notifications. Users can
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-qol`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  2. Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-qol"]
 source = "kendex"
 ```
 
-Requires Pi 0.86.0 or newer. Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Requires Pi 0.86.0 or newer.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 
