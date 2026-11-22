@@ -28,7 +28,7 @@ Set `DEV_VALIDATE_CMD` in `kendex.settings.toml` under `[env]` to the project's 
 - `DEV_VALIDATE_DOCS_ONLY`: `true` or `false`.
 - `DEV_VALIDATE_PATHS`: the path to a file listing the changed paths.
 - `DEV_VALIDATE_BASE`: the base commit a range or ci run compares from; empty where the run has none, as for a full or docs run.
-- `DEV_VALIDATE_MODE`: `full`, `range`, `docs` or `ci`: the mode the run resolved, or for the selector's preview the mode the start asked for.
+- `DEV_VALIDATE_MODE`: `full`, `range`, `docs` or `ci`: the mode the run resolved, or for the selector's preview the mode the start asked for, except `docs` for a docs-only change.
 - `DEV_VALIDATE_SCOPED`: `true` where the runtime runs the selector as the command, scoped to the change; `false` otherwise.
 - `DEV_VALIDATE_CI_EVENT`: the event required CI proves the head on, empty where CI does not take the run.
 - `DEV_VALIDATE_CI_ADMISSION`: `admitted` or the `ci-fallback=` cause, empty where no admission was read.
