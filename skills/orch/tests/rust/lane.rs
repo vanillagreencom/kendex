@@ -2399,11 +2399,13 @@ fn age(path: &Path, secs: u64) {
 }
 
 /// A confined lane's `state remove` is the overseer's close-out: under the
-/// wrapper's marker the command says so and removes, archives and locks
-/// nothing; the same remove unmarked, the close-out the overseer's terminal
-/// close runs, takes the item's files after their archive.
+/// wrapper's marker the command says so, stamps its record's
+/// `closed_out_at` with the time it ran, the one write its grants hold, and
+/// removes and archives nothing; the same remove unmarked, the close-out
+/// the overseer's terminal close runs, takes the item's files after their
+/// archive.
 #[test]
-fn a_confined_lanes_state_remove_steps_aside_and_an_unconfined_remove_takes_the_items_files() {
+fn a_confined_state_remove_stamps_its_record_and_an_unconfined_one_takes_its_files() {
     let archive_root = tempfile::tempdir().unwrap();
     let mut fleet = Fleet {
         env: vec![
@@ -2418,8 +2420,13 @@ fn a_confined_lanes_state_remove_steps_aside_and_an_unconfined_remove_takes_the_
     let dir = fleet.state_dir().to_path_buf();
     git_checkout(&dir);
     let record = plant(&dir, "items/KEN-A/workflow-state-KEN-A.json");
+    std::fs::write(&record, "{}\n").unwrap();
     let status = plant(&dir, "lane-status-KEN-A.md");
     let remove = ["state", "remove", "--item", "KEN-A"];
+    let before = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let out = fleet.run(&remove);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
@@ -2429,9 +2436,12 @@ fn a_confined_lanes_state_remove_steps_aside_and_an_unconfined_remove_takes_the_
     for path in [&record, &status] {
         assert!(path.exists(), "{} left", path.display());
     }
-    let mut lock = record.clone().into_os_string();
-    lock.push(".lock");
-    assert!(!Path::new(&lock).exists(), "a lock taken");
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    let stamped = doc["closed_out_at"].as_str().and_then(clock::epoch_secs);
+    assert!(
+        stamped.is_some_and(|at| at >= before),
+        "the record is stamped with the remove's time: {doc}"
+    );
     assert_eq!(
         std::fs::read_dir(archive_root.path()).unwrap().count(),
         0,
@@ -2759,12 +2769,6 @@ impl Fleet {
     /// open Done-when box past the lane's own completion, so a close owes
     /// its boxes nothing.
     fn plant_tracker(&self, item: &str, state: &str) {
-        self.plant_item(item, state, "");
-    }
-
-    /// The tracker's answer for `item`: its state type, Done where it is
-    /// completed and Verifying otherwise, and its description.
-    fn plant_item(&self, item: &str, state: &str, description: &str) {
         let name = if state == "completed" {
             "Done"
         } else {
@@ -2772,9 +2776,9 @@ impl Fleet {
         };
         let reply = json!({
             "issues bulk-get": {"body": {"issues": {"nodes": [
-                {"identifier": item, "state": {"type": state}, "description": description, "children": {"nodes": []}}
+                {"identifier": item, "state": {"type": state}, "description": "", "children": {"nodes": []}}
             ]}}},
-            "graphql BoxItem": {"body": {"issue": {"description": description, "state": {"name": name, "type": state}}}},
+            "graphql BoxItem": {"body": {"issue": {"description": "", "state": {"name": name, "type": state}}}},
         });
         std::fs::write(self.state_dir().join("linear.json"), reply.to_string()).unwrap();
     }
@@ -3339,52 +3343,6 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
             }
         }
     }
-}
-
-/// A merged item's Done-when with its branch-provable box ticked with its
-/// evidence and its post-merge box open: merge-pr's completion has run.
-const POST_MERGE_ONLY: &str = "## Done when\n- [x] branch proof\n  Evidence: branch tests\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: 2026-10-02T00:00:00Z";
-
-/// A merged hosted lane at its idle composer, its item Verifying with only
-/// its post-merge box open and its live record still standing in the clone
-/// after its own close-out, refused or unfinished: a hosted lane runs
-/// unconfined and removes that record itself once its verification and
-/// close-out passed, so the close refuses `lane-live state=idle` and stops
-/// nothing, whatever its tracker reads.
-#[test]
-fn a_merged_hosted_lane_whose_items_record_stands_refuses_at_its_idle_screen() {
-    const RECORD: &str = "/w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json";
-    let idle = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n";
-    let fleet = Fleet::verb_pane(idle);
-    let disk = fleet.state_dir().join("provider-disk");
-    let worktree = disk.join(REMOTE_ROOT.trim_start_matches('/'));
-    std::fs::create_dir_all(&worktree).unwrap();
-    std::fs::write(
-        worktree.join(".git"),
-        "gitdir: /w/clone/.git/worktrees/ken-1\n",
-    )
-    .unwrap();
-    let record = disk.join(RECORD.trim_start_matches('/'));
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    std::fs::write(&record, "{}").unwrap();
-    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
-    fleet.plant_item("KEN-1", "started", POST_MERGE_ONLY);
-    let answer = fleet.close(json!({
-        "op": "close-lane", "item": "KEN-1",
-        "delivery": {"pr": {"pr": 7, "repo": "o/r"}},
-    }));
-    assert_eq!(answer["refusal"]["key"], "lane-live", "{answer}");
-    assert_eq!(refusal_fields(&answer)["state"], "idle", "{answer}");
-    let calls = fleet.provider_calls();
-    assert!(
-        calls.contains(&format!("cat --item KEN-1 {RECORD}")),
-        "the record is read in the clone: {calls:?}"
-    );
-    assert!(
-        !calls.iter().any(|l| l.starts_with("stop ")),
-        "a refused close stops nothing: {calls:?}"
-    );
-    assert_eq!(fleet.lane("KEN-1")["status"], "running");
 }
 
 /// The close reads a lane where the watch does: on the tmux server the

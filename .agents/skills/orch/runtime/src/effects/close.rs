@@ -176,19 +176,18 @@ impl Identity {
 
 /// The verdict the tracker answered, or its refusal naming the read.
 fn verdict(settings: &Settings, lane: &Lane, who: &Identity, waits: bool) -> Result<TerminalState> {
-    tracker::lane_verdict(settings, lane, &who.tracker, who.repo.as_deref(), waits)
-        .map_err(|cause| tracker_refused(lane, who, &cause))
-}
-
-fn tracker_refused(lane: &Lane, who: &Identity, cause: &str) -> Error {
-    refused(
-        "tracker-read-failed",
-        &[
-            ("item", &lane.item),
-            ("tracker", &who.tracker),
-            ("source", who.source()),
-            ("cause", cause),
-        ],
+    tracker::lane_verdict(settings, lane, &who.tracker, who.repo.as_deref(), waits).map_err(
+        |cause| {
+            refused(
+                "tracker-read-failed",
+                &[
+                    ("item", &lane.item),
+                    ("tracker", &who.tracker),
+                    ("source", who.source()),
+                    ("cause", &cause),
+                ],
+            )
+        },
     )
 }
 
@@ -471,9 +470,8 @@ struct LaneHead {
 /// Why the close completes a merged item's boxes on `ground`, and whether
 /// its tracker read the item Done, or `None` where it completes none: its
 /// worktree or sandbox gone (`gone`, or the merged ground, which the close
-/// takes on a gone worktree or item record, or on an item whose completion
-/// already stands, where it finds nothing to complete), or its item Done
-/// with the lane ended.
+/// takes once the lane's work is over, [`Close::merged_and_done`]), or its
+/// item Done with the lane ended.
 fn boxes_cause(ground: &Ground, gone: bool) -> Option<(boxes::Cause, bool)> {
     match ground {
         Ground::Ended("merged") => Some((boxes::Cause::SandboxGone, false)),
@@ -692,8 +690,7 @@ impl Close<'_> {
                 self.windowless(&mut notes)?
             }
             LaneState::Idle { .. } | LaneState::RateLimitSwitch => {
-                let at_rest = matches!(judged, LaneState::Idle { .. });
-                match self.finished(&mut notes, at_rest)? {
+                match self.finished(&mut notes)? {
                     Some(ground) => ground,
                     None => return Err(self.live("idle")),
                 }
@@ -892,16 +889,11 @@ impl Close<'_> {
 
     /// The ground a lane whose work may be over closes on: its item ended
     /// by its tracker, else its merge landed with its work over
-    /// ([`Self::merged_and_done`], or the tracker's reading of the open
-    /// item, [`Self::completed_on_tracker`]); `None` is a lane still at
-    /// work on an open item. A tracker that does not answer refuses, unless
-    /// the landing and the work's end prove the lane over, as they do
-    /// whatever its screen reads: the item's files then stay with the
-    /// tracker's cause. The tracker's reading is taken only where `at_rest`,
-    /// an idle screen or none: a lane resumed on the merged item works under
-    /// that same reading, and a rate-limit-switch prompt can stand in the
-    /// middle of the close-out.
-    fn finished(&self, notes: &mut Vec<String>, at_rest: bool) -> Result<Option<Ground>> {
+    /// ([`Self::merged_and_done`]); `None` is a lane still at work on an
+    /// open item. A tracker that does not answer refuses, unless the landing
+    /// and the work's end prove the lane over, as they do whatever its
+    /// screen reads: the item's files then stay with the tracker's cause.
+    fn finished(&self, notes: &mut Vec<String>) -> Result<Option<Ground>> {
         let open = match verdict(self.settings, &self.lane, &self.who, false) {
             Ok(state) => match terminal(state) {
                 Some(t) => return Ok(Some(Ground::Terminal(t))),
@@ -909,13 +901,7 @@ impl Close<'_> {
             },
             Err(e) => Err(e),
         };
-        let over = match self.merged_and_done() {
-            Ok(false) if at_rest && open.is_ok() && self.merged_this_attempt() => {
-                self.completed_on_tracker()
-            }
-            read => read,
-        };
-        match over {
+        match self.merged_and_done() {
             Ok(true) => {
                 let cause = open
                     .as_ref()
@@ -932,7 +918,7 @@ impl Close<'_> {
     /// its harness is ended by the provider or its launch identity alone,
     /// on its item's end or its landed merge; otherwise `pane-missing`.
     fn windowless(&self, notes: &mut Vec<String>) -> Result<Ground> {
-        self.finished(notes, true)?.ok_or_else(|| {
+        self.finished(notes)?.ok_or_else(|| {
             refused(
                 "pane-missing",
                 &[("item", self.item()), ("window", &self.window())],
@@ -1012,12 +998,13 @@ impl Close<'_> {
     /// stands and the lane's last work is over: its item closed out or its
     /// worktree gone, read here ([`hosted::left_locally`], the watch's own
     /// reading) or on its host through the provider where it is hosted
-    /// ([`hosted::record_left`]). The close-out removes the live state
-    /// record only once the project's verification passed, and the close
-    /// stops the session before it releases the worktree, so a lane need not
-    /// remove the directory it runs in. A recorded merge alone is no proof:
-    /// a lane resumed on a merged item works on with its record standing. A
-    /// read that fails refuses.
+    /// ([`hosted::record_left`]). The close-out runs only once the project's
+    /// verification passed: it removes the live state record, or, in a
+    /// confined lane, stamps it with this attempt's end and leaves it for
+    /// the open item. The close stops the session before it releases the
+    /// worktree, so a lane need not remove the directory it runs in. A
+    /// recorded merge alone is no proof: a lane resumed on a merged item
+    /// works on with its record standing. A read that fails refuses.
     fn merged_and_done(&self) -> Result<bool> {
         if !(super::stop::record_merged(&self.lane) || self.r.delivery.is_some()) {
             return Ok(false);
@@ -1054,74 +1041,6 @@ impl Close<'_> {
                 &[("item", self.item()), ("root", root), ("cause", &cause)],
             )),
         }
-    }
-
-    /// Whether this attempt's merge stands: the request's delivery, or the
-    /// record's cycle merged at or after the attempt began (`session_since`,
-    /// else `launched_at`), the floor the watch's finished-merge reading
-    /// holds a hosted merge to. A relaunch keeps an earlier attempt's cycle,
-    /// which says nothing of this attempt's close-out, and an undated cycle
-    /// cannot show it is this attempt's.
-    fn merged_this_attempt(&self) -> bool {
-        if self.r.delivery.is_some() {
-            return true;
-        }
-        if !super::stop::record_merged(&self.lane) {
-            return false;
-        }
-        let Some(began) = self
-            .lane
-            .session_since
-            .as_deref()
-            .or(self.lane.launched_at.as_deref())
-        else {
-            return true;
-        };
-        let merged = self
-            .lane
-            .extra
-            .get("cycle")
-            .and_then(|cycle| cycle.pointer("/stamps/merged"))
-            .and_then(Value::as_str)
-            .and_then(agent_runtime::clock::epoch_secs);
-        agent_runtime::clock::epoch_secs(began)
-            .zip(merged)
-            .is_some_and(|(began, merged)| merged >= began)
-    }
-
-    /// Whether the merged item's lane completion stands on its tracker
-    /// ([`boxes::lane_completed`]) for a lane its launch confined: Verifying
-    /// with no branch-provable box open, merge-pr's completion having run,
-    /// so only post-merge boxes, which the verification duty reads from the
-    /// tracker and the merge, stay open. A confined lane leaves its item's
-    /// close-out to this close (merge-pr § 5 step 6), so its standing record
-    /// says nothing of that step's end. An unconfined lane, every hosted
-    /// lane among them, removes the record itself once its verification and
-    /// close-out passed, so its standing record is that step unfinished,
-    /// failed or refused, and only [`Self::merged_and_done`] ends it. The
-    /// item's files are kept with the open item, as on any merged ground.
-    /// Only a Linear item carries that state; a read that fails refuses
-    /// `tracker-read-failed`.
-    fn completed_on_tracker(&self) -> Result<bool> {
-        if self.who.tracker != "linear" || !self.ran_confined()? {
-            return Ok(false);
-        }
-        boxes::lane_completed(self.settings, self.item())
-            .map_err(|cause| tracker_refused(&self.lane, &self.who, &cause))
-    }
-
-    /// Whether the lane's launch ran its harness inside the wrapper, as that
-    /// launch's intent recorded its `confinement`. A hosted launch runs none
-    /// and records none, and a launch with no such record reads unconfined.
-    fn ran_confined(&self) -> Result<bool> {
-        let launch = super::launch_intent_of(self.path, self.item())?;
-        Ok(launch
-            .and_then(|intent| intent.observation)
-            .and_then(|observation| observation.get("confinement").cloned())
-            .and_then(|recorded| {
-                serde_json::from_value::<agent_runtime::confine::Answer>(recorded).ok()
-            })
-            == Some(agent_runtime::confine::Answer::Confined))
     }
 
     /// An ask the lane holds unanswered refuses the close: the answer would

@@ -249,7 +249,7 @@ A lane whose mail, clone or state read fails draws no other line; this one names
 - A Done item with no open box: its cycle row is its report. No relaunch is owed.
 - `[ITEM]` `kendex/refresh`: a refresh pull request the watch reported `refresh-ready` merged. No lane owns it. Check whether the open lane pull requests touch the files the refresh changed, and follow the repository's declared refresh owner.
 
-A confined lane's own `container-close` and `state remove` leave the close to the overseer (`main.rs::step_aside`), which runs the container close of § Verification.
+A confined lane's own `container-close` and `state remove` leave the close to the overseer (`main.rs::step_aside`, and `state remove` after its stamp, [workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)), which runs the container close of § Verification.
 
 A hosted lane stays in the watch until its `lane-closed` or `lane-close-refused` line. Send it nothing while that close runs.
 

@@ -2271,9 +2271,12 @@ pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
 
 /// [`record_left`] for a lane on this machine, read by the close verb and
 /// the watch alike: its worktree (the record's `mail_root`) gone, else the
-/// item's live state record under `state_dir`, the fleet's, which the
-/// close-out removes. `Unreadable` carries the worktree's or the state
-/// record's read error: only an absent worktree is gone.
+/// item's live state record under `state_dir`, the fleet's, which an
+/// unconfined lane's close-out removes, or which a confined lane's stamps
+/// [`state::CLOSED_OUT_AT`] at the lane's current attempt. `Unreadable`
+/// carries the worktree's or the state record's read error: only an absent
+/// worktree is gone. No hosted lane runs confined, so [`record_left`] reads
+/// no stamp.
 pub fn left_locally(state_dir: &Path, lane: &Lane) -> Answer<()> {
     let root = lane.mail_root.as_deref().unwrap_or("");
     match std::fs::symlink_metadata(root) {
@@ -2285,13 +2288,45 @@ pub fn left_locally(state_dir: &Path, lane: &Lane) -> Answer<()> {
             };
         }
     }
-    match std::fs::metadata(state::item_path(state_dir, &lane.item)) {
-        Ok(_) => Answer::Live(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Answer::Gone,
-        Err(e) => Answer::Unreadable {
-            cause: e.to_string(),
-        },
+    let path = state::item_path(state_dir, &lane.item);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Answer::Gone,
+        Err(e) => {
+            return Answer::Unreadable {
+                cause: e.to_string(),
+            };
+        }
+    };
+    let Some(doc) = doc_of(&text) else {
+        return Answer::Unreadable {
+            cause: format!("{}: no JSON object", path.display()),
+        };
+    };
+    if closed_out_this_attempt(&doc, lane) {
+        Answer::Gone
+    } else {
+        Answer::Live(())
     }
+}
+
+/// Whether `doc`'s close-out stamp is at or after the lane's current
+/// attempt began: `session_since`, else `launched_at`. A relaunch keeps the
+/// record, and with it an earlier attempt's stamp, which says nothing of
+/// this one; an attempt with no time read cannot show its stamp is its own.
+fn closed_out_this_attempt(doc: &Document, lane: &Lane) -> bool {
+    let stamped = doc
+        .get(state::CLOSED_OUT_AT)
+        .and_then(Value::as_str)
+        .and_then(clock::epoch_secs);
+    let began = lane
+        .session_since
+        .as_deref()
+        .or(lane.launched_at.as_deref())
+        .and_then(clock::epoch_secs);
+    stamped
+        .zip(began)
+        .is_some_and(|(stamped, began)| stamped >= began)
 }
 
 /// The clone [`CLONE_ROW`] keeps for `item` in the watch's baseline beside
@@ -2373,8 +2408,9 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// `lane-exited`, `lane-idle` or `lane-left` line: a lane whose item the GitHub duty read
 /// merged and whose work left nothing behind ([`left_locally`] on this
 /// machine, [`record_left`] on its host) is
-/// closed through the one close; one whose item's record stands is inside
-/// its merge close-out or resumed and is left. A lane its provider's status
+/// closed through the one close; one whose item's record stands with no
+/// close-out stamp of its attempt is inside its merge close-out or resumed
+/// and is left. A lane its provider's status
 /// verb read exited on two passes (`lane-exited`) whose item has no merge
 /// is closed with its
 /// sandbox kept: the attempt ends and its record stops charging a slot,

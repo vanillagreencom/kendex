@@ -504,7 +504,13 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
 6. **Verify the project and close the item out.** Run the build, install and verification work the project's own instructions require after a merge. This workflow defines no generic command and infers none. The route the project's own instructions name records its install record (`.kendex-lock.json`). The lane never records it after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree.
 
-   **The close-out in a confined lane.** Skip the copy and the close-out below. The overseer's close of the lane removes the item's files. § 6's `tmp/ close-out` line reads `left to the overseer's close`.
+   **The close-out in a confined lane.** Skip the copy and the archived close-out below. Where the verification passed, run the close-out with no `--archive` pair:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY]
+   ```
+
+   It stamps the item's record and answers `state-remove: left cause=confined owner=overseer`. The overseer's close reads the stamp as this step's end and ends the lane on its merge, keeping the item's files with the open item ([schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)). § 6's `tmp/ close-out` line reads `left to the overseer's close`. A refusal keeps the worktree, and its key goes on that line.
 
    **The close-out elsewhere.** In an unconfined lane, save the item's record for the overseer's cycle row before the close-out. Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`. Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed. Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is. Where an earlier close-out already removed the record, keep the saved copy. Where neither reads as a JSON object, report the failure and keep the worktree.
 
