@@ -18,7 +18,7 @@ Run once in a consumer that holds the retired gate package. The retirement prere
    - An edited, symlinked or unrecorded workflow stops adoption and needs an owner decision.
 4. With those checks met, a repository administrator, someone who can edit the repository's rulesets, removes `Review gate` from the required-checks ruleset.
 5. The administrator binds the ruleset's other contexts to GitHub Actions (`integration_id` 15368).
-6. Read the ruleset back. It must hold no `Review gate` context, and every remaining context must be bound to GitHub Actions.
+6. The administrator reads the ruleset back. It must hold no `Review gate` context, and every remaining context must be bound to GitHub Actions.
 7. Once the ruleset reads back in that state, arm the removal PR. The required-check transition precedes writer removal, or later PRs wait for a status no workflow posts.
 
 Once the removal PR merges, automatic refresh starts from the fully migrated default branch.

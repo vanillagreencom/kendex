@@ -91,7 +91,7 @@ For consumers that commit `kendex refresh` output and merge refresh PRs. No pin 
 
 **File against the catalog repo only when this skill's injected `## Project Instructions` supplies a reporting route.**
 
-- Follow that route and the same ownership rule as § The consumer session's half.
+- Follow that route and the same filing steps as § The consumer session's half.
 - With no injected route, return the defect to the orchestrating agent and user without filing.
 - An item rendered from a third-party catalog reports locally instead, so open that catalog's issue by hand.
 

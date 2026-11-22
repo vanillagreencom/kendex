@@ -35,7 +35,7 @@ The workflow decides its request this way:
 - A failed request emits a warning and passes. GitHub's approval, stale-approval dismissal and thread-resolution rules still enforce review.
 - The workflow still triggers on merge groups, but its job skips there without allocating a runner.
 
-Pull requests the workflow does not request on:
+Draft, ready and fork pull requests:
 
 - A draft pull request gets no automatic review request.
 - A ready cloud head with no review gets its request through the overseer's existing `awaiting-stale` route, per orch's references/copilot-head-notices.md § Fallback approval.
@@ -128,8 +128,6 @@ Before publication:
 - The script runs the classifier from the same release checkout.
 - It refuses held render edits before workflow adoption or publication.
 - It preserves workflow edits under the [caller adoption contract](#caller-adoption-contract).
-- A failed classifier or missing class line stops publication.
-- Render publication requires measurement.
 
 An identical rolling tree retains its exact head and existing arm or hold, reports no new publication, and defers automatic admission even with no open pull request. Only a newly published head follows the merge and arm route:
 
@@ -141,7 +139,7 @@ An identical rolling tree retains its exact head and existing arm or hold, repor
 - If GitHub refuses the arm and calls the pull request clean, it merges the pull request directly on the pushed head.
 - It confirms that the arm enabled auto-merge, queued or merged the pull request.
 
-The merge queue merges the pull request once the required approval, thread resolution and checks pass. The pull request body names the class, classifier cause and path. An unmeasured standard class uses full review and CI.
+The merge queue merges the pull request once the required approval, thread resolution and checks pass. The pull request body names the class, classifier cause and path. An unmeasured standard class uses full review and CI. A failed classifier or missing class line stops publication. Render publication requires measurement.
 
 A run that committed a new head of measured class `render` first tries to land it under [§ Landing a proved render](#landing-a-proved-render):
 
@@ -160,7 +158,7 @@ The verify outcomes:
 
 ### Landing a proved render
 
-[§ Publication](#publication) states when a run tries the landing push and what each outcome reports.
+[§ Publication](#publication) states when a run tries the landing push and its `refresh-state=landed` and `refresh-state=deferred` outcomes. The table below states each `refresh-land=` line.
 
 The landing app is one GitHub App that serves this push alone.
 
@@ -427,7 +425,7 @@ Only the default-branch workflow can use the private key.
 
 The review scripts prove that each rolling pull request has class `render` before they file, reply to or resolve an automatic review thread. Findings on other classes remain unchanged.
 
-The last two steps request an Issues-write token scoped only to `vanillagreencom/kendex`, then use it to file findings and resolve their threads.
+The shared workflow's last two steps request an Issues-write token scoped only to `vanillagreencom/kendex`, then use it to file findings and resolve their threads.
 
 - Each run reads the open rolling pull request and those merged in the last 24 hours.
 - After that window no run reads a merged pull request again. A thread that arrives later gets no answer, and an unanswered thread on it gets no filing, no retry and no run failure. A person answers those threads by hand.
@@ -442,7 +440,7 @@ Each automatic review thread on a render-proven pull request has one of these ou
 A filing for a routed thread:
 
 - The report carries the review evidence, rendered path, consumer run and that package label.
-- Its title fingerprint hashes the package, the path inside its directory, and the head lines the comment names. The head lines are joined by the comment's wording where that text occurs more than once in the file at head. A file-level or base-side comment hashes its wording alone.
+- Its title fingerprint hashes the package, the path inside its directory, and the head lines the comment names. The head lines are joined by the comment's wording where that text occurs more than once in the file at head. For a file-level or base-side comment, its wording alone takes the place of the head lines.
 - The fingerprint holds no path for a package the lock records under any kind but skill. Such a package is one file whose rendered name and layout differ by harness, a command rendering as a Codex skill tree among them.
 - The lookup counts only issues a GitHub App wrote, in every state: GitHub issue search, then, on the run's first miss just before filing, one read of the issues updated in the last hour, plus the run's own filings. The extra read exists because search indexes another consumer's filing from the same schedule late.
 - Two consumers that both read before either files can still file twice.

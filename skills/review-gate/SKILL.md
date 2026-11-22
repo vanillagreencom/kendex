@@ -70,9 +70,12 @@ No lane runs a raw `--admin` merge. The repair gives no app token a merge path.
 
 - Before adopting the refresh workflow in a consumer, or provisioning its environment and app credentials: [references/adoption.md § Caller adoption contract](references/adoption.md#caller-adoption-contract) and § Adoption and file ownership.
 - Before enabling automatic refresh, and when a refresh run's schedule, cancel or input check does not do what you expect: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
-- When a refresh run prints a `refresh-state=`, `refresh-verify=` or `refresh-error=` line about its publication: [references/adoption.md § Publication](references/adoption.md#publication).
+- When a refresh run prints a `refresh-state=` or `refresh-verify=` line, `refresh-error=merge` or `refresh-error=verify`: [references/adoption.md § Publication](references/adoption.md#publication).
+- When adoption stops with `refresh-error=caller-secrets`, `refresh-error=environment` or `refresh-error=workflow-edited`: [references/adoption.md § Caller adoption contract](references/adoption.md#caller-adoption-contract).
+- When a refresh run prints `refresh-error=` with `workflow-symlink`, `workflow-changed`, `template-edited`, `template-changed`, `read`, `render-edited`, `bot-instructions-render` or `refresh`: [references/adoption.md § Adoption and file ownership](references/adoption.md#adoption-and-file-ownership).
 - When a refresh run prints a `refresh-land=` line or `refresh-error=land-check`, before storing the landing pair, and before changing a ruleset for the landing app: [references/adoption.md § Landing a proved render](references/adoption.md#landing-a-proved-render).
 - When an automatic review thread on a rolling refresh pull request is unanswered, or its run fails on one: [references/adoption.md § Automatic review threads](references/adoption.md#automatic-review-threads).
 - When a fix cannot wait for the schedule: [references/adoption.md § Immediate refresh](references/adoption.md#immediate-refresh).
+- When a pull request got no automatic Copilot request: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
 - Before changing an organization's rulesets or its central Copilot request workflow: [references/adoption.md § Repo-side wiring](references/adoption.md#repo-side-wiring) and § Central Copilot request workflow.
 - Before wiring reviewer instructions for a vendored tree or a committed `kendex refresh` render: [references/vendored-paths.md](references/vendored-paths.md).
