@@ -53,4 +53,7 @@ cargo clippy --all-targets -- -D warnings
 - Review reads those attributes as the inventory.
 - The list names no `std::process` call, so clippy passes a raw `std::process::Command` outside `effects`.
 - Review catches that call, not clippy.
-- Every external program starts through `host::run_with` in `runtime/src/host/mod.rs`.
+- Every external program starts through `runtime/src/host/mod.rs`:
+  - A bounded call starts through `host::run_with` or another runner there, each of which counts the start and bounds the call.
+  - A detached job starts through `host::start_detached`.
+  - `process lead` becomes its program through `host::exec`.

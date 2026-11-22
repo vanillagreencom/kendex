@@ -46,7 +46,9 @@ This package owns launch, account selection under the caller's policy, session i
 - An effect:
   - An effect reports one outcome: `not-started`, `confirmed`, `failed` or `unconfirmed`.
   - Reconcile an `unconfirmed` effect before you ask for the same effect again.
-  - For `deliver`, run `deliver --no-paste` with the same text and the reply's `turns_before` as `--turns-before`.
+  - For `deliver` without `--transport`, run `deliver --no-paste` with the same text and the reply's `turns_before` as `--turns-before`.
+  - A `deliver --transport` paste answers `pasted`, and nothing on this machine confirms it.
+  - Confirm a `--transport` paste's turn on the remote side before you paste again.
 - `deliver --force` is for a probe that knows better, never for a workflow.
 - Stop a session with `stop`, by its recorded identity.
 - Never stop a session by process name or by a pid alone.

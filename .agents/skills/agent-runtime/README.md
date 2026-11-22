@@ -53,11 +53,13 @@ Each version was tested on Linux on 2026-10-26. The runtime refuses a harness na
 
 | Platform | Support |
 |---|---|
-| Linux | Sessions run in the sandbox. |
+| Linux | Supported. |
 | macOS | Sessions run outside the sandbox. |
 | Windows | Sessions are unsupported. |
 
-On Windows, only the library's logic builds and is tested.
+- On Linux, a launch whose grants ask for the sandbox runs in it.
+- [SKILL.md § Confinement](SKILL.md#confinement) names the launches that run outside it.
+- On Windows, only the library's logic builds and is tested.
 
 ## Setup
 
