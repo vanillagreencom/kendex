@@ -125,7 +125,7 @@ Outcomes and routes:
 - On a base that requires a merge queue, `--auto` enrolls the PR and exits `75`, except on an admin route without `--queue`, where it arms nothing and exits `1` with `merge-route: admin cause=queue-bypass-safe` as its first stderr line.
 - `--queue` explicitly requests a queue arm.
 - On a base whose rules hold a merge queue, the immediate merge first reads its route under the merge's own token, and names it on a `merge-route:` line.
-- Where both hold, it merges with `--admin`, bound to the verified head, and exits `0`:
+- On that base, it merges with `--admin`, bound to the verified head, and exits `0` only where both of these hold, among the conditions `pr-merge --help` § Merge route lists:
   - The merge queue is all `--admin` would skip.
   - The harness-ci skill's `change-class` reads the PR not queue-only at the base branch's tip, the PR's recorded base being that tip.
 - On any other answer it passes `--auto`, which enrolls the PR, and exits `75`.
@@ -149,7 +149,7 @@ Outcomes and routes:
   - `unreasoned-decline`: a decline that names no mechanism.
   - `thread-replies`: a thread holding more comments than one read returns.
   - `suppressed-findings`: findings a review lists only in its body at the current head, with no head-bound answer.
-- A review body counts only from a bot, or from an `OWNER`, `MEMBER` or `COLLABORATOR` who is not the PR author.
+- A review body counts only from a bot or an `OWNER`, `MEMBER` or `COLLABORATOR`, and never from the PR author.
 - A reply counts only from the PR author (an app author included), the identity the check runs as, an `OWNER`, `MEMBER` or `COLLABORATOR`, or a declared automation account (below).
 - A thread's first comment is the finding it opens, never a reply.
 - Exit `0` passes.
@@ -211,6 +211,9 @@ On a **stale-token `HTTP 401`**, clear both environment tokens:
 env -u GH_TOKEN -u GITHUB_TOKEN gh pr list
 ```
 
-- When `GH_TOKEN` or `GITHUB_TOKEN` fails `gh` auth, `github.sh` unsets both and uses `gh` keyring auth, where keyring auth succeeds.
+- When `GH_TOKEN` or `GITHUB_TOKEN` fails `gh` auth, `github.sh` unsets both and uses `gh` keyring auth, where keyring auth succeeds. It keeps the token in these cases:
+  - The selected token source is `GH_BOT_TOKEN`.
+  - The auth check times out.
+  - `KENDEX_GITHUB_AUTH_TIMEOUT` is not a number of seconds, so the token goes unchecked, with a warning.
 - A long-running reader selects its credential once, before it starts, through `.agents/skills/github/scripts/gh-auth-ladder --project ROOT`.
 - That script runs the same ladder and prints the `GH_TOKEN` and `GITHUB_TOKEN` it leaves (`gh-auth-ladder --help`).
