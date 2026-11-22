@@ -77,18 +77,15 @@
 # THE INVARIANT, stated once, with no list of what any lane reads:
 #
 #   - On every measured class (`micro`, `small`, `standard`) two Linux lanes
-#     always run: cargo_linux and bot_instructions. The one exception is
-#     the skill Markdown row below.
-#   - Skill Markdown, a measured diff whose every path is SKILL_MARKDOWN and
-#     which no tools/rust-reads include row names, takes the skill-markdown
-#     row: bot_instructions, catalog where a catalog input changed, and the
-#     reach's suites and targets on Linux, with every cargo, ui and macOS
-#     lane off, whatever its class. That text is what agents load, so the
-#     checks that read it are the suites that run its commands or hold its
-#     wiring, the catalog check and the Markdown job; no platform reads it
-#     differently and no compiled input holds it. kendex-core's tests that
-#     score or sweep the real skills/ tree, a run-time manifest read, run in
-#     every cargo_linux selection and every night instead.
+#     always run: cargo_linux and bot_instructions.
+#   - Skill Markdown, a diff with at least one Markdown path whose every
+#     path is SKILL_MARKDOWN, selects no smoke at any class, and on a
+#     measured or `trivial` read row no platform lane and no macOS leg; its
+#     other lanes are that row's. That text is what agents load, and no
+#     platform reads it differently. cargo_linux stays: workspace tests read those files at
+#     run time, kendex-core's render, inventory and hooks README byte proofs
+#     and the kendex-core, kendex-cli and kendex-app tests over the real
+#     skills/ tree, and the merge group is their only proof.
 #   - The suites and Rust targets a measured diff runs are its reach, the one
 #     reach local validation selects by: `tools/guard --suite-reach` over the
 #     changed paths, whose mapped_suites header states which suites and
@@ -116,9 +113,10 @@
 #     and no target selects no shard.
 #   - The platform selections (the macOS shell bit, cargo_macos,
 #     cargo_windows) are false on a diff whose every path is prose,
-#     whose content no platform reads differently, and true on any other
-#     diff; a `standard` diff that is not documentation alone selects them
-#     whatever its paths. The macOS shell bit is also false where every
+#     whose content no platform reads differently, and on skill Markdown,
+#     and true on any other diff; a `standard` diff that is not
+#     documentation alone or skill Markdown selects them whatever its
+#     paths. The macOS shell bit is also false where every
 #     selected shard belongs to LINUX_ONLY_SHARDS. These are selected
 #     values; .github/workflows/skill-tests.yml owns job execution policy.
 #   - The event selects nothing: a pull request and a merge group receive
@@ -146,8 +144,9 @@
 #     size.
 #   - catalog and smoke take the union of the explicit catalog inputs and
 #     the CLI smoke compiled inputs rust-reads derives. A compiled include counts even
-#     when it is prose; a run-time manifest read alone does not. The skill
-#     Markdown row runs no smoke: cli_smoke builds its own sample catalog.
+#     when it is prose; a run-time manifest read alone does not. Skill
+#     Markdown selects smoke only through a compiled include: cli_smoke
+#     builds its own sample catalog and reads no catalog file.
 #   - The exception: a `trivial` diff changing a path a tools/rust-reads
 #     include or manifest row names, or a path under a directory it names,
 #     takes the measured row its paths select, so the cargo lane runs on a
@@ -555,10 +554,12 @@ any_outside() { # REGEX — is some changed path NOT inside it?
   [ "$hits" -gt 0 ]
 }
 
-# Prose, the one input the platform and compile lanes stand down on.
+# Prose, the input the compile lanes stand down on, and with SKILL_MARKDOWN
+# the platform lanes.
 PROSE='\.(md|markdown)$'
-# A catalog package's Markdown, its tracked render, and the generated-file
-# inventory a render's arrival or removal moves.
+# Markdown under skills/, agents/, hooks/, .agents/ and .claude/, the text
+# agents load, and .kendex-generated.json, the inventory a render's arrival
+# or removal moves.
 SKILL_MARKDOWN='^((skills|agents|hooks|\.agents|\.claude)/.+\.md|\.kendex-generated\.json)$'
 # What defines the lanes: the workflows and actions that run them, and the
 # scripts that select them, tools/guard's reach among them.
@@ -568,7 +569,7 @@ RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # kendex.toml uses the explicit default layout in source/config.rs and
 # source/layout.rs. The release check also reads Git ignore rules. Smoke
 # builds its own catalog in cli_smoke.rs; its compiled inputs come from
-# rust-reads below. Both jobs use this union, including catalog prose.
+# rust-reads below. Both jobs use this union, save smoke on skill Markdown.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
@@ -577,8 +578,7 @@ SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
 
 # Which changed paths tools/rust-reads rows name: named=1 where
-# an include or manifest row other than `.` names one, included=1 where an
-# include or cli-include row does, build=1 where a path
+# an include or manifest row other than `.` names one, build=1 where a path
 # other than prose sits under a workspace build or include row, compiled=1
 # where a CLI-smoke scoped row names a compiled input. Each match is printed
 # on stderr.
@@ -595,13 +595,12 @@ reads() {
         for (r = 1; r <= NR; r++) {
           if (path == "" || read[r] == "." || (path != read[r] && index(path, read[r] "/") != 1)) continue
           if (kind[r] == "include" || kind[r] == "manifest") named = 1
-          if (kind[r] == "include" || kind[r] == "cli-include") included = 1
           if ((kind[r] == "include" || kind[r] == "build") && path !~ ENVIRON["PROSE"]) build = 1
           if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1
           printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
         }
       }
-      printf "named=%d\nincluded=%d\nbuild=%d\ncompiled=%d\n", named, included, build, compiled
+      printf "named=%d\nbuild=%d\ncompiled=%d\n", named, build, compiled
     }
   ' <<<"$rows"
 }
@@ -915,7 +914,7 @@ macos_shard() { # SHARDS
 # from `paths`, which it sets, and the shard projection starts empty each
 # time. The reach it projects is read once, before any selection.
 select_row() { # CLASS DOCS PATHS EVENT
-  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards skipped macos catalog=false known=false each rust
+  local class="$1" docs="$2" event="$4" row read_lines="" platform uitree build shards skipped macos catalog=false smoke skill_md=false known=false each rust
   paths="$3"
   want=" "
   case "$docs" in
@@ -941,33 +940,27 @@ select_row() { # CLASS DOCS PATHS EVENT
       [ -n "$paths" ] || die "class-without-paths class=$class" \
         "a measured class arrived with no changed path"
       read_lines="$(reads)" || exit 2
-      if any "$PROSE" && ! any_outside "$SKILL_MARKDOWN"; then
-        case "$read_lines" in *included=1*) ;; *) row=skill-markdown ;; esac
-      fi
       ;;
     *)
       die "unknown-class class=$class" \
         "no lane selection is declared for this class"
       ;;
   esac
+  any "$PROSE" && ! any_outside "$SKILL_MARKDOWN" && skill_md=true
   any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true
-  case "$read_lines" in *compiled=1*) catalog=true ;; esac
+  smoke=$catalog
+  [ "$skill_md" = false ] || smoke=false
+  case "$read_lines" in *compiled=1*) catalog=true smoke=true ;; esac
   case "$row" in
     render | trivial)
-      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$catalog shards=[] skipped_suites=[] rust_targets=[]"
-      ;;
-    skill-markdown)
-      shards="$(select_shards false)" || exit 2
-      skipped="${shards#* }"
-      shards="${shards%% *}"
-      rust=$REACH_TARGETS
-      [ "$REACH_READ" = true ] || rust="$(all_targets)"
-      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=false shards=$shards skipped_suites=$skipped rust_targets=$rust"
+      printf '%s' "macos=false ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=$catalog smoke=$smoke shards=[] skipped_suites=[] rust_targets=[]"
       ;;
     micro | small | standard | trivial-read)
       platform=false
-      any_outside "$PROSE" && platform=true
-      [ "$class:$docs" != standard:false ] || platform=true
+      if [ "$skill_md" = false ]; then
+        any_outside "$PROSE" && platform=true
+        [ "$class:$docs" != standard:false ] || platform=true
+      fi
       uitree=false
       any '^ui/' && uitree=true
       build=false
@@ -989,7 +982,7 @@ select_row() { # CLASS DOCS PATHS EVENT
       if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then
         rust="$(all_targets)"
       fi
-      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$catalog shards=$shards skipped_suites=$skipped rust_targets=$rust"
+      printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=true cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$smoke shards=$shards skipped_suites=$skipped rust_targets=$rust"
       ;;
   esac
 }

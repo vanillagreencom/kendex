@@ -24,9 +24,9 @@ trivial|true|AGENTS.md|$VERIFY_LANES|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_SKILL_MD|+orch-rest +guards-scans +guards-tools
-small|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_SKILL_MD|+orch-rest
-standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md .claude/agents/reviewer.md agents/reviewer.md hooks/AGENTS.md .kendex-generated.json|$SHARD_SKILL_MD|+orch-rest
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
+small|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest
+standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md .claude/agents/reviewer.md agents/reviewer.md hooks/AGENTS.md .kendex-generated.json|$SHARD_PROSE|+orch-rest
 standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|+orch-rest
 standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md $LOCAL_TOML|$SHARD_CODE|+orch-rest
 standard|false|.kendex-generated.json|$SHARD_CODE|*
@@ -52,9 +52,9 @@ micro|false|.bun-version|$SHARD_CODE|+node
 micro|false|pi-extensions/pi-qol/src/x.ts|$SHARD_CODE|+node -pi-claude-bridge
 micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude-bridge
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
-micro|false|skills/deep-research/SKILL.md|$SHARD_SKILL_MD|+node
+micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
-micro|false|$SKILLS_AGENTS|$SHARD_SKILL_MD|+guards-scans +guards-tools-tail
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans +guards-tools-tail
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]
@@ -195,7 +195,7 @@ mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\] rust_targets=\[\]"$/'
+RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$smoke shards=\[\] skipped_suites=\[\] rust_targets=\[\]"$/'
 [ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 # LANE|WORD dropped from the render row
@@ -237,15 +237,6 @@ while IFS='|' read -r class paths expected; do
     "$(SELECT_IN="$READ_WORLD" selection "$class" true "$(printf '%s\n' $paths)")"
 done <<<"$READ_ROWS"
 [ "$read_rows" -ge 6 ] || { echo "the read table read $read_rows rows" >&2; exit 1; }
-# Skill Markdown an include compiles into a crate keeps the cargo lane; the
-# fixture crate includes skills/compiled/SKILL.md and no other skill's.
-while IFS='|' read -r path cargo; do
-  check "skill Markdown $path: cargo_linux=$cargo" "$cargo" \
-    "$(SELECT_IN="$READ_WORLD" selection standard false "$path" | field cargo_linux)"
-done <<'ROWS'
-skills/compiled/SKILL.md|true
-skills/other/SKILL.md|false
-ROWS
 # Each declared build name is a build input. Read in the fixture checkout,
 # where no file names one, so the search adds no further shard.
 while IFS= read -r p; do

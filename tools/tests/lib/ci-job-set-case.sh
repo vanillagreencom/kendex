@@ -16,9 +16,6 @@ TOOL_ROW="$(measured linux false true false '["guards-scans"]' '[]')"
 SHARD_CODE="$(lanes both false true false)"
 SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
-# Skill Markdown runs its reach's shards on Linux and no cargo, ui or macOS
-# lane, whatever its class; the catalog table holds its catalog and smoke.
-SHARD_SKILL_MD="shell_shards=true shell_os=$LINUX ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=true smoke=false"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
 NO_SKILL="-review-gate -refresh -orch-state -orch-rest -guards-commit -guards-commit-tail -linear -linear-controls -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
@@ -89,7 +86,6 @@ printf 'fn fixture() {}\n' >"$READ_WORLD/crates/test_util.rs"
 cat >"$READ_WORLD/crates/demo/src/lib.rs" <<'RS'
 const A: &str = include_str!("../../../docs/a.md");
 const X: &str = include_str!("../../../assets/x.json");
-const S: &str = include_str!("../../../skills/compiled/SKILL.md");
 fn tool() { read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/x")); }
 fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal").join(name) }
 fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
