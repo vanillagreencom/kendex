@@ -1,6 +1,6 @@
 # Oversee events
 
-Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles a line of the watch's log. Apply § Judgement rules to every line, then take the line's entry under § Event kinds. An entry that runs a procedure of § Shared procedures names it.
+Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles a line of the watch's log. Apply § Judgement rules to every line, then take the line's entry under § Event kinds. An entry that runs a procedure of § Shared procedures names it; [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) names § Direct-push cycle records.
 
 ## Judgement rules
 
@@ -644,7 +644,7 @@ Take the first arm that matches the new reading:
 3. `verdict=unmeasured`: nothing measured the account. Launch nothing new on it, and handle its status per [lane-directive.md § No lane has room](lane-directive.md#no-lane-has-room).
 4. `verdict=walled`: launch nothing on it before `binding_resets_at`. With `binding_bucket=credits`:
    - The account is a grant at or below its credit floor, which no reset reopens.
-   - Launch nothing on it, and direct each live lane on it to write its handoff record.
+   - Launch nothing on it, and direct each live lane on it to write its handoff record by § Hand off a lane before it runs out step 5.
 5. `verdict=room`: resume any launch the judge refused for want of an account. Wake a lane parked on this account only where its `usage-limit` carried no `resets=`.
 
 [agent-runtime's accounts judge](../../agent-runtime/runtime/src/accounts/mod.rs) owns the verdict rules, the buckets and the credit floors.
