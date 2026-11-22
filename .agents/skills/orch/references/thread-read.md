@@ -25,7 +25,7 @@ A nonzero count takes `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 �
 `[READ_HEAD]` is the head this read bound before the triage; nothing here binds it again. Read the head again with the first command above and compare:
 
 - Still `[READ_HEAD]`: the triage pushed nothing. Run this read again from its top, for the same caller.
-- A new head: the triage pushed a fix. Return to merge-pr.md § 3 at its `pr-merge --check`, so § 3.1's CI wait and § 3.2's gates run on that head before any arm. A `[MICRO_ENTRY]` run instead returns to [micro.md](../workflows/micro.md) § 4 on the new head, where a fix inside the admitted paths keeps the tier. A head another push moved escapes by micro.md § Escape condition 8.
+- A new head: the triage pushed a fix. Return to merge-pr.md § 3 at its `pr-merge --check`, so § 3.1's CI wait and § 3.2's gates run on that head before any arm. A `[MICRO_ENTRY]` run instead returns to [micro.md](../workflows/micro.md) § 4 on the new head, where a fix inside the admitted paths keeps the tier while the range stays within the `micro` ceiling, and the tier check escapes it otherwise. A head another push moved escapes by micro.md § Escape condition 8.
 
 ## What reads an open thread
 

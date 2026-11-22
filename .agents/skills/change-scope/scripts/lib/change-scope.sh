@@ -34,10 +34,11 @@
 #
 # change_scope_read BASE HEAD REPO STDERR_FILE runs the classifier beside this
 # library over REPO's pull-request range BASE...HEAD, appends its stderr to
-# STDERR_FILE and sets CHANGE_SCOPE_CLASS to the class it printed and
-# CHANGE_SCOPE_MEASURED to the `measured=` value of the last `class:` line,
-# empty where it carries none. Returns 1 with CHANGE_SCOPE_CAUSE set to
-# classifier-absent, classifier-exit-N or classifier-unreadable.
+# STDERR_FILE and sets CHANGE_SCOPE_CLASS to the class it printed, and from
+# the last `class:` line CHANGE_SCOPE_MEASURED to its `measured=` value and
+# CHANGE_SCOPE_RULE to the cause fields after it, each empty where that line
+# carries none. Returns 1 with CHANGE_SCOPE_CAUSE set to classifier-absent,
+# classifier-exit-N or classifier-unreadable.
 # change_scope_rank CLASS sets CHANGE_SCOPE_RANK to CLASS's place in the order
 # render < trivial < micro < small < standard, returning 1 for another word.
 # change_scope_floor CLASS returns 0 when CLASS ranks at or above micro, the
@@ -400,6 +401,7 @@ private_checkout() { # DIR REV ERR
 CHANGE_SCOPE_CLASS=""
 CHANGE_SCOPE_CAUSE=""
 CHANGE_SCOPE_MEASURED=""
+CHANGE_SCOPE_RULE=""
 CHANGE_SCOPE_RANK=""
 
 change_scope_rank() { # CLASS
@@ -421,10 +423,11 @@ change_scope_floor() { # CLASS
 }
 
 change_scope_read() { # BASE HEAD REPO STDERR_FILE
-  local classifier="$CHANGE_SCOPE_LIB_DIR/../change-scope" answer status=0
+  local classifier="$CHANGE_SCOPE_LIB_DIR/../change-scope" answer line status=0
   CHANGE_SCOPE_CLASS=""
   CHANGE_SCOPE_CAUSE=""
   CHANGE_SCOPE_MEASURED=""
+  CHANGE_SCOPE_RULE=""
   if [ ! -x "$classifier" ]; then
     CHANGE_SCOPE_CAUSE=classifier-absent
     return 1
@@ -442,7 +445,11 @@ change_scope_read() { # BASE HEAD REPO STDERR_FILE
     change_class=*) CHANGE_SCOPE_CLASS="${answer#change_class=}" ;;
     *) CHANGE_SCOPE_CAUSE=classifier-unreadable; return 1 ;;
   esac
-  CHANGE_SCOPE_MEASURED="$(sed -n 's/^class: class=[^ ]* measured=\([^ ]*\).*/\1/p' "$4")" ||
+  line="$(sed -n '/^class: class=[^ ]* measured=[^ ]*/p' "$4")" ||
     { CHANGE_SCOPE_CAUSE=classifier-unreadable; return 1; }
-  CHANGE_SCOPE_MEASURED="${CHANGE_SCOPE_MEASURED##*$'\n'}"
+  line="${line##*$'\n'}"
+  [ -n "$line" ] || return 0
+  line="${line#class: class=* measured=}"
+  CHANGE_SCOPE_MEASURED="${line%% *}"
+  [ "$line" = "$CHANGE_SCOPE_MEASURED" ] || CHANGE_SCOPE_RULE="${line#* }"
 }

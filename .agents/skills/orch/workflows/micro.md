@@ -16,7 +16,7 @@ An owner-directed small change, such as a settings line or a few lines of Markdo
 
 The cost of the check decides whether the overseer or a lane makes a change, never the kind of file. A change the commit chain checks in its diff-scoped pass is this tier's. A change whose check needs a build or a test run takes a lane in its own sandbox. A lane is keyed by a tracker item, so `directive-[ID]` never runs as a lane. The overseer files the change as a tracker item from the directive, as it files an item an `owner-note` asks for ([oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone)). That item launches under its own key, at the tier [oversee.md](oversee.md) § Item Tier assigns it, with neither the directive's branch nor its pull request. Its lane makes the change again from the item.
 
-The admission that launched the run reads the tier once, and the tier floors the run. § 4 judges a later edit by the paths it touches, never by a new class.
+The admission that launched the run reads the tier once, and the tier floors the run. The admission judges a later edit by the paths it touches. § 4 reads the class of the pushed range, its production lines included.
 
 `[WT_PATH]` is the running checkout's root throughout. A step marked **Main checkout only** runs on the main-checkout route alone, the directed change included. A lane never waits on the overseer for a step this workflow permits ([skill-rules.md § Lane asks](../references/skill-rules.md#lane-asks)).
 
@@ -186,7 +186,7 @@ Through the github skill, read the pull request's recorded base, not the base br
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid
 ```
 
-Check the pushed range against the tier:
+Check the pushed range's paths and production lines against the tier:
 
 ```bash
 [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
@@ -210,9 +210,9 @@ Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull 
 
 This entry skips merge-pr's § 3. `ci-classify-refusal --help` states the refusal's output and retry contract. Retry a refusal marked `retry: same-head` on that head by re-entering the step, within [merge-attempt.md § Exit routing](../references/merge-attempt.md#exit-routing)'s bound; it is no escape. Its limit stop ends the run as a merge-pr verdict. Any other refusal returns to merge-pr's § 3.2, and that return escapes (§ Escape condition 7).
 
-A `dequeued` verdict routes to that step's late-findings triage. Answer a wording, naming or index finding there, or at the step's [thread read](../references/thread-read.md), by reply ([finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow)). Judge a finding that needs a change by the paths the fix touches, never by a new class:
+A `dequeued` verdict routes to that step's late-findings triage. Answer a wording, naming or index finding there, or at the step's [thread read](../references/thread-read.md), by reply ([finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow)). Judge a finding that needs a change by the paths the fix touches:
 
-- A fix inside the admitted paths keeps the tier. Make it through § 2 steps 2 to 5 on this branch. Push it through § 3's submit-pr range, whose step 2 finds the open pull request. Then re-enter this section from its top on the new head: `[HEAD_SHA]` and `[MICRO_HEAD]` bind again, and the new head gets only the repository's own review.
+- A fix inside the admitted paths keeps the tier while the range stays within the `micro` ceiling; past it, this section's tier check escapes the run (condition 6). Make it through § 2 steps 2 to 5 on this branch. Push it through § 3's submit-pr range, whose step 2 finds the open pull request. Then re-enter this section from its top on the new head: `[HEAD_SHA]` and `[MICRO_HEAD]` bind again, and the new head gets only the repository's own review.
 - A fix that needs a path outside the admitted set asks the admission for it before any edit. A lane asks through its ask route ([skill-rules.md § Lane asks](../references/skill-rules.md#lane-asks)). The overseer judges the path against the fleet's holders through `orch-runtime admit` ([oversee.md § 2 Select Work](oversee.md#2-select-work)). The admission widens the lane's record or refuses. The overseer's own run admits a path the directive's change needs and nothing else. A refused path, or a path condition 3 excludes, escapes (condition 5).
 
 ## 5. Return

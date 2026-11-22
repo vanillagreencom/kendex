@@ -16,11 +16,21 @@
 # and a body with neither a valid delta nor an estimate is standard; --floor
 # is a class already held, at or above micro; --path is classified by the
 # shared path rules' launch phase, no render proved, and an unmatched path
-# changes nothing; --base and --head classify the range's changed paths, the
-# range itself micro, a names-only inventory change under rendered roots left
-# out, and a range that removes test protection, read as the size path below
-# reads it, small with cause=protection-removed (standard, measured=false,
-# cause=protection-unreadable where that read fails). HARNESS_CI_STANDARD_PATHS comes from the main checkout of --repo
+# changes nothing; --base and --head classify the range's changed paths: a
+# names-only inventory change under rendered roots is left to the classifier,
+# which answers standard for a range that adds a catalog source (its render
+# proof owns no catalog source) and reads a removal by its size, while a
+# changed lock is standard whatever the classifier answers; a range that
+# removes test protection, read as the size path below reads it, small with
+# cause=protection-removed (standard, measured=false,
+# cause=protection-unreadable where that read fails); and the range itself at
+# the class this script's classifier answers for it through
+# change_scope_read, its production lines included, render and trivial read
+# as micro: cause=branch-class class=C rule=R, R the classifier's cause and
+# fields, measured=false where the classifier's answer was, and standard,
+# measured=false, cause=branch-class-unreadable with the classifier's stderr
+# repeated where it could not be read.
+# HARNESS_CI_STANDARD_PATHS comes from the main checkout of --repo
 # (default .), never from a linked worktree's own settings. A list, ceiling
 # or settings file the arm cannot read answers standard, measured=false.
 # A malformed Expected delta prints one `launch-warning: cause=invalid-delta`
@@ -419,6 +429,31 @@ ceiling() { # KEY
   sed -n "s/^$1=\([0123456789][0123456789]*\)\$/\1/p" "$NARROW_CONF" | tail -1
 }
 
+# The range's class as this script's own classifier reads it, the reading
+# review depth takes through the same reader, so the range's production lines
+# decide its cycle as they decide its review. A work item runs at micro or
+# wider, so a ranked class below micro reads as micro; an unranked one reaches
+# launch_consider, which refuses it.
+launch_range_class() { # BASE HEAD REPO STDERR_FILE
+  local class rule
+  if ! change_scope_read "$1" "$2" "$3" "$4"; then
+    # The classifier's own cause, which the detail cannot carry.
+    [ ! -s "$4" ] || cat -- "$4" >&2
+    launch_consider standard "branch-class-unreadable detail=$CHANGE_SCOPE_CAUSE" unmeasured
+    return 0
+  fi
+  rule="branch-class class=$CHANGE_SCOPE_CLASS rule=${CHANGE_SCOPE_RULE#cause=}"
+  class="$CHANGE_SCOPE_CLASS"
+  if change_scope_rank "$class" && ! change_scope_floor "$class"; then
+    class=micro
+  fi
+  if [ "$CHANGE_SCOPE_MEASURED" = true ]; then
+    launch_consider "$class" "$rule"
+  else
+    launch_consider standard "$rule" unmeasured
+  fi
+}
+
 launch_class() { # ARG...
   local production="" body="" base="" head="" repo=. body_text delta="" path floor
   local micro_max small_max paths=() floors=() launch_work
@@ -508,7 +543,6 @@ launch_class() { # ARG...
     elif ! change_scope_location_load "$repo"; then
       launch_consider standard "$CHANGE_CLASS_CAUSE" unmeasured
     else
-      launch_consider micro branch-paths
       while IFS= read -r -d '' path; do
         change_class_path "$path" launch
         if [ "$path" = .kendex-generated.json ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = excluded-path\ * ]] &&
@@ -522,6 +556,7 @@ launch_class() { # ARG...
       elif [ -n "$BRANCH_PROTECTION_KIND" ]; then
         launch_consider small "protection-removed kind=$BRANCH_PROTECTION_KIND path=$BRANCH_PROTECTION_PATH removed=$BRANCH_PROTECTION_REMOVED added=$BRANCH_PROTECTION_ADDED"
       fi
+      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"
     fi
   fi
 

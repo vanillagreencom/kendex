@@ -97,6 +97,13 @@ impl Repo {
         // directory, and an untracked link would dirty the checkout.
         fs::write(main.join(".gitignore"), "tmp/\n.agents\n").unwrap();
         fs::write(main.join("base"), "base\n").unwrap();
+        // The classifier the micro tier check reads measures a range only
+        // over a base that holds the generated-file inventory.
+        fs::write(
+            main.join(".kendex-generated.json"),
+            "[\".kendex-generated.json\"]\n",
+        )
+        .unwrap();
         git(&main, &["add", "."]);
         git(&main, &["commit", "-qm", "base"]);
         git(
@@ -1501,7 +1508,7 @@ mod push {
         let receipt = prepared(&repo);
         assert_eq!(
             refusal(&publish(&receipt, &[])),
-            "orch-runtime: delivery-tier result=tier=small brief=small cause=instruction-file path=AGENTS.md glob=AGENTS.md estimate=- delta=- paths=0"
+            "orch-runtime: delivery-tier result=tier=small brief=small cause=instruction-file path=AGENTS.md glob=AGENTS.md estimate=- delta=- paths=2"
         );
         assert_eq!(repo.remote("main"), base, "a wider cycle publishes nothing");
     }

@@ -14,6 +14,26 @@ CONF="$CHANGE_SCOPE_PACKAGE/references/narrow-change.conf"
 WORK="$(new_repo work)"
 
 conf_value() { sed -n "s/^$1=//p" "$CONF"; }
+
+# kendex as the arm's classifier meets it: a verify that passes and names the
+# positions a real run names, the render tree and the two bookkeeping files,
+# never a catalog source. No row runs the host's kendex.
+STUB_BIN="$SANDBOX/stub-bin"
+mkdir -p "$STUB_BIN"
+cat >"$STUB_BIN/kendex" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  --version) echo 'kendex 0.0.0-stub' ;;
+  'verify --help') echo '  --scope <SCOPE> --json' ;;
+  'verify '*)
+    printf '%s\n' '{"version":1,"checked":3,"failed":0,"rows":[
+{"kind":"skill","name":"x","harness":"claude","state":"ok","positions":[{"path":".agents/skills/x","owns":"tree"}]},
+{"kind":"record","name":".kendex-lock.json","state":"ok","positions":[{"path":".kendex-lock.json","owns":"file"}]},
+{"kind":"inventory","name":".kendex-generated.json","state":"ok","positions":[{"path":".kendex-generated.json","owns":"file"}]}]}' ;;
+  *) exit 2 ;;
+esac
+STUB
+chmod +x "$STUB_BIN/kendex"
 MICRO_MAX="$(conf_value micro_max_production)"
 SMALL_MAX="$(conf_value small_max_production)"
 [[ "$MICRO_MAX" =~ ^[0-9]+$ && "$SMALL_MAX" =~ ^[0-9]+$ ]] || {
@@ -25,7 +45,7 @@ SMALL_MAX="$(conf_value small_max_production)"
 # the whole class line instead of the key.
 run_arm() { # ARG...
   local out rc=0 line
-  out="$(env -i GIT_CEILING_DIRECTORIES="${CEILING:-$SANDBOX}" PATH="$PATH" HOME="$SANDBOX" \
+  out="$(env -i GIT_CEILING_DIRECTORIES="${CEILING:-$SANDBOX}" PATH="$STUB_BIN:$PATH" HOME="$SANDBOX" \
     TMPDIR="$SANDBOX" "${ARM_BIN:-$ARM}" launch --repo "$WORK" "$@" 2>"$SANDBOX/arm.err")" || rc=$?
   line="$(sed -n 's/^class: //p' "$SANDBOX/arm.err")"
   if [ "${ARM_RAW:-false}" != true ]; then
@@ -279,22 +299,112 @@ assert_eq "an unreadable list under a Location path is standard" \
   "standard cause=narrow-change-list-unreadable rc=0" \
   "$(ARM_BIN="$SANDBOX/no-conf/change-scope/scripts/change-scope" run_arm --floor micro --path src/main.rs)"
 
-# A range: its changed paths take the same rules; its size never decides.
+# A range: its changed paths take the same rules, and the classifier's reading
+# of it, its production lines included, is one more input.
 RANGE="$(new_repo range)"
 printf 'seed\n' >"$RANGE/seed"
 git -C "$RANGE" add -A
 git -C "$RANGE" commit -qm seed
 BASE="$(git -C "$RANGE" rev-parse HEAD)"
 mkdir -p "$RANGE/src"
-awk 'BEGIN {for (i=0;i<1000;i++) print "pub fn source_" i "() {}"}' >"$RANGE/src/main.rs"
+printf 'pub fn source() {}\n' >"$RANGE/src/main.rs"
 git -C "$RANGE" add -A
 git -C "$RANGE" commit -qm source
-assert_eq "branch growth does not replace the launch estimate" "micro cause=estimate-within-micro rc=0" \
-  "$(run_arm --production 1 --base "$BASE" --head HEAD --repo "$RANGE")"
-assert_eq "branch growth does not replace the recorded floor" "small cause=floor class=small rc=0" \
-  "$(run_arm --floor small --base "$BASE" --head HEAD --repo "$RANGE")"
-assert_eq "a range alone is micro" "micro cause=branch-paths rc=0" \
+assert_eq "a range alone takes the classifier's class" "micro cause=branch-class class=micro rc=0" \
   "$(run_arm --base "$BASE" --head HEAD --repo "$RANGE")"
+
+# Ranges of a measured size, each a branch off one base. The MEM-460 range
+# changes 7 files under one directory, 3 new and 4 modified, with 506
+# production lines added.
+SIZED="$(new_repo sized)"
+mkdir -p "$SIZED/apps/sidecar/src"
+for name in auth session store net; do
+  awk -v n="$name" 'BEGIN {for (i=0;i<60;i++) print "export const " n "_" i " = " i ";"}' \
+    >"$SIZED/apps/sidecar/src/$name.ts"
+done
+git -C "$SIZED" add -A
+git -C "$SIZED" commit -qm seed
+SIZED_BASE="$(git -C "$SIZED" rev-parse HEAD)"
+sized_branch() { # BRANCH FILE=LINES...
+  local spec file
+  git -C "$SIZED" checkout -q -B "$1" "$SIZED_BASE"
+  shift
+  for spec in "$@"; do
+    file="$SIZED/${spec%%=*}"
+    mkdir -p "${file%/*}"
+    awk -v n="${spec%%=*}" -v k="${spec#*=}" \
+      'BEGIN {for (i=0;i<k;i++) print "export const added_" i " = \"" n "\";"}' >>"$file"
+  done
+  git -C "$SIZED" add -A
+  git -C "$SIZED" commit -qm "$1"
+}
+sized_branch docs README.md=3
+sized_branch micro "src/lib.rs=$MICRO_MAX"
+sized_branch small "src/lib.rs=$SMALL_MAX"
+sized_branch past-small "src/lib.rs=$((SMALL_MAX + 1))"
+sized_branch mem-460 apps/sidecar/src/auth.ts=90 apps/sidecar/src/session.ts=70 \
+  apps/sidecar/src/store.ts=40 apps/sidecar/src/net.ts=26 apps/sidecar/src/stall.ts=120 \
+  apps/sidecar/src/retry.ts=100 apps/sidecar/src/signal.ts=60
+awk 'NR > 20' "$SIZED/apps/sidecar/src/store.ts" >"$SANDBOX/store.ts"
+cp -- "$SANDBOX/store.ts" "$SIZED/apps/sidecar/src/store.ts"
+git -C "$SIZED" commit -qam "mem-460 deletions"
+assert_eq "the MEM-460 fixture changes 7 files, 3 of them new" "7 3" \
+  "$(git -C "$SIZED" diff --name-only "$SIZED_BASE...mem-460" | wc -l | tr -d ' ') $(
+    git -C "$SIZED" diff --name-only --diff-filter=A "$SIZED_BASE...mem-460" | wc -l | tr -d ' ')"
+assert_sized_ranges() {
+  local args want name rows=0
+  while IFS='|' read -r args want name; do
+    rows=$((rows + 1))
+    # shellcheck disable=SC2086
+    assert_eq "$name" "$want" "$(run_arm $args --base "$SIZED_BASE" --repo "$SIZED")"
+  done <<SIZED_ROWS
+--head docs|micro cause=branch-class class=trivial rc=0|a docs range reads micro
+--head micro|micro cause=branch-class class=micro rc=0|a range at the micro ceiling is micro
+--head small|small cause=branch-class class=small rc=0|a range at the small ceiling is small
+--head past-small|standard cause=branch-class class=standard rc=0|a range one past the small ceiling is standard
+--floor small --head past-small|standard cause=branch-class class=standard rc=0|a small floor keeps no range past the small ceiling
+--production 1 --head past-small|standard cause=branch-class class=standard rc=0|the range's size widens a narrower estimate
+--floor small --head micro|small cause=floor class=small rc=0|a floor raises a micro range
+--head mem-460|standard cause=branch-class class=standard rc=0|the MEM-460 range is standard
+--floor small --head mem-460|standard cause=branch-class class=standard rc=0|the MEM-460 range is standard under a small floor
+SIZED_ROWS
+  require_rows sized "$rows"
+  assert_eq "the MEM-460 range names the classifier's rule and its production lines" \
+    "change_class=standard class=standard measured=true delta=- cause=branch-class class=standard rule=production-past-small production=506 rc=0" \
+    "$(ARM_RAW=true run_arm --base "$SIZED_BASE" --head mem-460 --repo "$SIZED")"
+}
+assert_sized_ranges
+ARM_BIN="$(mutant no-range-class change-scope \
+  '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"' \
+  '      launch_consider micro branch-class')" \
+  control no-range-class assert_sized_ranges
+ARM_BIN="$(mutant narrow-unfloored change-scope '    class=micro' '    true')" \
+  control narrow-unfloored assert_sized_ranges
+
+# A classifier that cannot answer, here one whose harness-only is gone,
+# leaves the range standard, unmeasured, and its own cause reaches the arm's
+# stderr, where the tier verb carries it as a note.
+assert_unread_class() { # ARM
+  assert_eq "a classifier that cannot answer is standard, unmeasured" \
+    "change_class=standard class=standard measured=false delta=- cause=branch-class-unreadable detail=classifier-exit-2 rc=0" \
+    "$(ARM_BIN="$1" ARM_RAW=true run_arm --base "$SIZED_BASE" --head micro --repo "$SIZED")"
+}
+assert_class_err_replayed() {
+  run_arm --base "$SIZED_BASE" --head micro --repo "$SIZED" >/dev/null
+  assert_eq "the arm repeats the classifier's cause" "wiring-error: cause=harness-only-failed" \
+    "$(grep -o '^wiring-error: cause=[a-z-]*' "$SANDBOX/arm.err" || true)"
+}
+cp -R "$LAYOUT" "$SANDBOX/no-reader"
+rm -- "$SANDBOX/no-reader/change-scope/scripts/harness-only"
+assert_unread_class "$SANDBOX/no-reader/change-scope/scripts/change-scope"
+ARM_BIN="$SANDBOX/no-reader/change-scope/scripts/change-scope" assert_class_err_replayed
+DROPPED_ARM="$(mutant class-err-dropped change-scope '    [ ! -s "$4" ] || cat -- "$4" >&2' -)"
+rm -- "$SANDBOX/class-err-dropped/change-scope/scripts/harness-only"
+ARM_BIN="$DROPPED_ARM" control class-err-dropped assert_class_err_replayed
+UNREAD_ARM="$(mutant class-unread-continues change-scope \
+  '    launch_consider standard "branch-class-unreadable detail=$CHANGE_SCOPE_CAUSE" unmeasured' '    true')"
+rm -- "$SANDBOX/class-unread-continues/change-scope/scripts/harness-only"
+control class-unread-continues assert_unread_class "$UNREAD_ARM"
 assert_unread_range() {
   assert_eq "an unreadable range is standard, unmeasured" \
     "change_class=standard class=standard measured=false delta=- cause=branch-paths-unreadable rc=0" \
@@ -302,7 +412,7 @@ assert_unread_range() {
 }
 assert_unread_range
 ARM_BIN="$(mutant range-unread change-scope \
-  '      launch_consider standard branch-paths-unreadable unmeasured' '      launch_consider micro branch-paths')" \
+  '      launch_consider standard branch-paths-unreadable unmeasured' '      launch_consider micro branch-class')" \
   control range-unread assert_unread_range
 assert_standard_setting "$RANGE" range
 rm -rf -- "$RANGE/kendex.settings.toml" "$RANGE/.kendex"
@@ -387,7 +497,7 @@ assert_range_deletes() {
     "$(ARM_RAW=true run_arm --base "$PROTECT_BASE" --head "$PROTECT_DELETED" --repo "$PROTECT")"
 }
 assert_range_rewrites() {
-  assert_eq "a range rewriting a test in place stays micro" "micro cause=branch-paths rc=0" \
+  assert_eq "a range rewriting a test in place stays micro" "micro cause=branch-class class=micro rc=0" \
     "$(run_arm --base "$PROTECT_BASE" --head "$PROTECT_REWRITTEN" --repo "$PROTECT")"
 }
 assert_range_unreadable() {
@@ -408,13 +518,18 @@ ARM_BIN="$(mutant range-read-continues change-scope \
   '        launch_consider standard protection-unreadable unmeasured' '        true')" \
   control range-read-continues assert_range_unreadable
 
-# Catalog additions carry their render and its inventory name in the same diff.
+# Catalog additions and removals carry their render and its inventory name in
+# the same diff. A names-only inventory change under rendered roots is left to
+# the classifier: an addition is standard there, since its render proof owns
+# no catalog source, and a removal is read by its size.
 INVENTORY_RANGE="$(new_repo inventory-range)"
-printf '[".kendex-generated.json",{"path":".agents/skills/x/scripts/kept","template":"x","templateHash":"sha256:%064d"}]\n' 0 \
+printf '[".kendex-generated.json",{"path":".agents/skills/x/scripts/kept","template":"x","templateHash":"sha256:%064d"},".agents/skills/x/scripts/gone"]\n' 0 \
   >"$INVENTORY_RANGE/.kendex-generated.json"
 mkdir -p "$INVENTORY_RANGE/.agents/skills/x/scripts" "$INVENTORY_RANGE/skills/x/scripts"
-printf 'kept\n' >"$INVENTORY_RANGE/.agents/skills/x/scripts/kept"
-printf 'kept\n' >"$INVENTORY_RANGE/skills/x/scripts/kept"
+for name in kept gone; do
+  printf '%s\n' "$name" >"$INVENTORY_RANGE/.agents/skills/x/scripts/$name"
+  printf '%s\n' "$name" >"$INVENTORY_RANGE/skills/x/scripts/$name"
+done
 git -C "$INVENTORY_RANGE" add -A
 git -C "$INVENTORY_RANGE" commit -qm inventory-base
 INVENTORY_BASE="$(git -C "$INVENTORY_RANGE" rev-parse HEAD)"
@@ -428,11 +543,17 @@ assert_inventory_ranges() {
     [ "$edit" != unrendered-root ] || root=.other
     [ "$edit" != repository-standard ] ||
       printf '[env]\nHARNESS_CI_STANDARD_PATHS = ".kendex-generated.json"\n' >"$INVENTORY_RANGE/kendex.settings.toml"
-    mkdir -p "$INVENTORY_RANGE/$root/skills/x/scripts"
-    printf 'added\n' >"$INVENTORY_RANGE/skills/x/scripts/added"
-    printf 'added\n' >"$INVENTORY_RANGE/$root/skills/x/scripts/added"
-    jq --arg added "$root/skills/x/scripts/added" '. + [$added]' \
-      "$INVENTORY_RANGE/.kendex-generated.json" >"$SANDBOX/next-inventory"
+    if [ "$edit" = removed ]; then
+      git -C "$INVENTORY_RANGE" rm -q skills/x/scripts/gone .agents/skills/x/scripts/gone
+      jq 'map(select(. != ".agents/skills/x/scripts/gone"))' \
+        "$INVENTORY_RANGE/.kendex-generated.json" >"$SANDBOX/next-inventory"
+    else
+      mkdir -p "$INVENTORY_RANGE/$root/skills/x/scripts"
+      printf 'added\n' >"$INVENTORY_RANGE/skills/x/scripts/added"
+      printf 'added\n' >"$INVENTORY_RANGE/$root/skills/x/scripts/added"
+      jq --arg added "$root/skills/x/scripts/added" '. + [$added]' \
+        "$INVENTORY_RANGE/.kendex-generated.json" >"$SANDBOX/next-inventory"
+    fi
     case "$edit" in
       hash-edited)
         jq --arg hash "sha256:$(printf '%064d' 1)" \
@@ -447,7 +568,8 @@ assert_inventory_ranges() {
     assert_eq "inventory range: $edit" "$expected" \
       "$(run_arm --floor small --base "$INVENTORY_BASE" --head HEAD --repo "$INVENTORY_RANGE")"
   done <<'INVENTORY'
-added|small cause=floor class=small rc=0
+added|standard cause=branch-class class=standard rc=0
+removed|small cause=floor class=small rc=0
 hash-edited|standard cause=excluded-path rc=0
 kept-unlisted|standard cause=excluded-path rc=0
 unrendered-root|standard cause=excluded-path rc=0
@@ -457,6 +579,6 @@ INVENTORY
 assert_inventory_ranges
 ARM_BIN="$(mutant no-inventory-exception change-scope \
   '          change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then' \
-  '          false; then')" INVENTORY_ONLY=added control no-inventory-exception assert_inventory_ranges
+  '          false; then')" INVENTORY_ONLY=removed control no-inventory-exception assert_inventory_ranges
 
 report launch

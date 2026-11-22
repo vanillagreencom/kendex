@@ -5,10 +5,10 @@
 //! the Expected delta, the path rules, the standard paths and the range.
 //! This module owns what orch adds: a body with no Location line refused, the
 //! paths judged as the admission's one touched-set function reads them over
-//! the body and the brief the launch will be given, the cycle each class
-//! opens, and the line a launch brief carries. A class the arm could not
-//! measure answers standard with the arm's cause: standard is the widest
-//! cycle and grants nothing.
+//! the body and the brief the launch will be given, the count of those paths
+//! and the range's changed paths, the cycle each class opens, and the line a
+//! launch brief carries. A class the arm could not measure answers standard
+//! with the arm's cause: standard is the widest cycle and grants nothing.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -306,7 +306,7 @@ pub fn run(scope_paths_cli: &Path, args: &Args) -> i32 {
         repo: args.repo.clone(),
     };
     let mut err = std::io::stderr().lock();
-    match tier(&arm_cli(scope_paths_cli), &request) {
+    match tier(scope_paths_cli, &request) {
         Ok(answer) => {
             for note in &answer.classified.notes {
                 let _ = writeln!(err, "{note}");
@@ -341,6 +341,7 @@ pub struct Answer {
     pub classified: Classified,
     /// The launch estimate as given, before the delta floors it.
     pub estimate: Option<u64>,
+    /// The distinct paths the body and the brief name and the range changes.
     pub paths: usize,
 }
 
@@ -377,9 +378,10 @@ fn read(path: &Path, cause: &str) -> Result<String, Refused> {
 
 /// The `tier` verb: a body with no Location line, or one whose Location
 /// names no path, goes back to filing for a per-subsystem split; else the
-/// arm classifies the estimate, the body, the floor, the range and the
-/// touched set the body and the brief name.
-pub fn tier(cli: &Path, r: &Request) -> Result<Answer, Refused> {
+/// arm beside `scope_paths_cli` classifies the estimate, the body, the floor,
+/// the range and the touched set the body and the brief name, and the range's
+/// changed paths, read through `scope_paths_cli`, join the count.
+pub fn tier(scope_paths_cli: &Path, r: &Request) -> Result<Answer, Refused> {
     let refile = |cause: &str| Refused::new(cause, &[("route", "per-subsystem-split")], 1);
     let body = r
         .body
@@ -400,7 +402,7 @@ pub fn tier(cli: &Path, r: &Request) -> Result<Answer, Refused> {
         .map_err(|_| refile("location-unread"))?;
     let floors: Vec<&str> = r.floor.as_deref().into_iter().collect();
     let classified = classify(
-        cli,
+        &arm_cli(scope_paths_cli),
         &ArmInput {
             production: r.production,
             body: r.body.as_deref(),
@@ -410,10 +412,17 @@ pub fn tier(cli: &Path, r: &Request) -> Result<Answer, Refused> {
             repo: Some(&r.repo),
         },
     )?;
+    let range_paths = match &r.range {
+        Some(range) => admission::read_range_paths(scope_paths_cli, &r.repo, range)
+            .map_err(|cause| Refused::new("range-paths-unreadable", &[("detail", &cause)], 2))?,
+        None => Vec::new(),
+    };
+    let counted = admission::touched(body.as_deref(), brief.as_deref(), &range_paths, &[])
+        .map_err(|_| refile("location-unread"))?;
     Ok(Answer {
         classified,
         estimate: r.production,
-        paths: touched.len(),
+        paths: counted.len(),
     })
 }
 

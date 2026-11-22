@@ -855,7 +855,7 @@ fn micro_tier(settings: &Settings, worktree: &Path, base: &str, head: &str) -> R
         repo: worktree.to_path_buf(),
         ..tier::Request::default()
     };
-    let answer = tier::tier(&tier::arm_cli(&settings.scope_paths_cli), &request)
+    let answer = tier::tier(&settings.scope_paths_cli, &request)
         .map_err(|refused| refuse("delivery-tier", &[("result", &refused.line())]))?;
     if answer.classified.cycle != tier::Cycle::Micro {
         return Err(refuse("delivery-tier", &[("result", &answer.line())]));
