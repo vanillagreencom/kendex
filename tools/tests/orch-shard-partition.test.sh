@@ -1113,17 +1113,47 @@ while IFS='|' read -r shard step battery stem; do
   check "must-fail: a pooled assertion fails its owning step: $step $battery" failed "$result"
 done <<< "$POOLED_ROWS"
 
+owner_selection() { # <ci-job-set> <repository> <field> <shard> <path> <out> ; missed `shard<tab>path`
+  local job_set="$1" repository="$2" field="$3" shard="$4" path="$5" out="$6" selected
+  : > "$out"
+  ( cd "$repository" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" EVENT=pull_request \
+    GITHUB_OUTPUT="$out" "$job_set" --event-parity ) 2>/dev/null ||
+    { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; return; }
+  selected="$(cat "$out")" || return 1
+  [[ -z "$field" ]] || selected="$(sed -n "s/^$field=//p" "$out")" || return 1
+  grep -qF "\"$shard\"" <<< "$selected" || printf '%s\t%s\n' "$shard" "$path"
+}
+
+# Each row is a one-path diff whose answer costs a whole `tools/guard
+# --suite-reach`, which reads every consumer tree for that path, so the rows
+# run as many at a time as run-all.sh runs suites. A row's answer exists only
+# once its query ended, and a row without one is named unread.
 unselected_owners() { # <ci-job-set> <owners file> [repository] [field] ; missed `shard<tab>path`
-  local job_set="$1" repository="${3:-$ROOT}" field="${4:-}" shard path selected out="$TMP/owner-selection"
+  local job_set="$1" repository="${3:-$ROOT}" field="${4:-}" shard path dir width n=0 i pending="" oldest
+  width="$(nproc 2>/dev/null)" || width=4
+  case "$width" in '' | *[!0-9]* | 0) width=4 ;; esac
+  dir="$(mktemp -d "$TMP/owner-selection.XXXXXX")" || { printf 'owner-selection\tscratch\tmktemp-failed\n'; return 0; }
   while IFS=$'\t' read -r shard path; do
-    : > "$out"
-    ( cd "$repository" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" EVENT=pull_request \
-      GITHUB_OUTPUT="$out" "$job_set" --event-parity ) 2>/dev/null ||
-      { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; continue; }
-    selected="$(cat "$out")"
-    [[ -z "$field" ]] || selected="$(sed -n "s/^$field=//p" "$out")"
-    grep -qF "\"$shard\"" <<< "$selected" || printf '%s\t%s\n' "$shard" "$path"
+    printf '%s\t%s\n' "$shard" "$path" > "$dir/$n.row"
+    { owner_selection "$job_set" "$repository" "$field" "$shard" "$path" "$dir/$n.out" > "$dir/$n.part" &&
+      mv -- "$dir/$n.part" "$dir/$n.answer"; } &
+    pending="${pending:+$pending }$!"
+    n=$((n + 1))
+    if [[ "$n" -ge "$width" ]]; then
+      oldest="${pending%% *}"
+      pending="${pending#"$oldest"}"
+      pending="${pending# }"
+      wait "$oldest" || true
+    fi
   done < "$2"
+  for oldest in $pending; do wait "$oldest" || true; done
+  for ((i = 0; i < n; i++)); do
+    if [[ -f "$dir/$i.answer" ]]; then
+      cat "$dir/$i.answer" || printf '%s\towner-row-unread\n' "$(cat "$dir/$i.row")"
+    else
+      printf '%s\towner-row-unread\n' "$(cat "$dir/$i.row")"
+    fi
+  done
 }
 
 check "must-fail: a tail with no suite calls has no selection owners" "" \
@@ -1184,6 +1214,22 @@ awk '$0 == "    skills/github) want_shard rest ;;" {
 check "must-fail: routing GitHub away from rest names its unselected suite" \
   "$(cat "$TMP/github-selection-owner")" \
   "$(unselected_owners "$GITHUB_SELECT/tools/ci-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT")"
+# A selector that exits 0 and leaves no output gives its row no answer, which
+# must read as unread and never as selected.
+printf '#!/usr/bin/env bash\nrm -f -- "$GITHUB_OUTPUT"\n' > "$TMP/outputless-job-set"
+chmod +x "$TMP/outputless-job-set"
+check "must-fail: a row whose selection left no output is named unread" \
+  "$(sed 's/$/	owner-row-unread/' "$TMP/github-selection-owner")" \
+  "$(unselected_owners "$TMP/outputless-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT" 2>/dev/null)"
+# A failed selector's line that cannot be written must fail the row's query,
+# so the row commits no answer and reads as unread, never as selected.
+printf '#!/usr/bin/env bash\nexit 3\n' > "$TMP/failing-job-set"
+chmod +x "$TMP/failing-job-set"
+lost_status=0
+owner_selection "$TMP/failing-job-set" "$GITHUB_SELECT" "" rest skills/github/tests/pr-view.test.sh \
+  "$TMP/failing-job-set.out" >&- 2>/dev/null || lost_status=$?
+check "must-fail: a failed selection whose line is lost fails its query" \
+  failed "$([[ "$lost_status" -ne 0 ]] && echo failed || echo "status=$lost_status")"
 
 # Must-fail: removing a dedicated package's row sends its diffs to `rest`
 # alone, leaving its own shard standing down, and the suite its selection
