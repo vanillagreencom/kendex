@@ -1,15 +1,37 @@
 #!/usr/bin/env bash
-# Consumer CI uses the stable release on its refresh caller's major tag.
-# A checkout with no refresh caller uses releases/latest. The commits API
-# resolves tags, including annotated tags. target_commitish can name a branch.
-# Report protocol: kendex-install: version=TAG commit=SHA on success, or
-# kendex-install: cause=KEY on failure. The following English is not parsed.
+# The commits API resolves tags, including annotated tags. target_commitish
+# can name a branch, so release selection never reads it.
 set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: install-latest.sh [--help]
+
+Installs the stable kendex release CLI into $HOME/.local/bin. A checkout with
+a refresh caller installs the one stable tag on the commit the caller's major
+tag names; any other checkout installs releases/latest. GITHUB_TOKEN, when set,
+authorizes the GitHub API reads alone. Under GitHub Actions, $GITHUB_PATH
+gains $HOME/.local/bin.
+
+Success prints `kendex-install: version=TAG commit=SHA` on stdout. A failure
+prints `kendex-install: cause=KEY` on stderr, then English that is not parsed,
+and exits 1. --help changes nothing and reads nothing from the network.
+USAGE
+}
 
 fail() {
   printf 'kendex-install: cause=%s\n%s\n' "$1" "$2" >&2
   exit 1
 }
+# Read the arguments before any path, network or file effect, so asking for
+# usage installs nothing.
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+    usage
+    exit 0
+  fi
+  fail invalid-arguments "install-latest.sh takes no arguments but --help, got: $*"
+fi
 repo=vanillagreencom/kendex
 # Only the supplied read-only workflow token authorizes API reads. GH_TOKEN
 # may hold an app credential and must not reach any download or installer.
