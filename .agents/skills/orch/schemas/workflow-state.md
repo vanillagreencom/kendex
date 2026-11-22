@@ -60,7 +60,7 @@ The Owner column names the writer. An `op` request is `orch-runtime op --item [I
 | `review_fix_round` | boolean | `record-round` step `base` with `review_fix: true` | `true` once the review's fix round ran; never cleared. |
 | `dev_delegated_at`, `review_delegated_at` | number | `record-round` step `delegated` with `round: dev`, `ci` or `review` | The delegation's epoch second: a dev or CI round's, or a review round's. |
 | `cycles` | number | `record-round` step `counted` with `counter: fix` | Fix rounds run. |
-| `rereview_cycles` | number | `record-panel` with `panel: rereview` | Re-review cycles entered. |
+| `rereview_cycles` | number | `record-panel` with `panel: rereview` below the cap | Re-review cycles entered. |
 | `first_panel`, `rereview_panel`, `verification_panel` | object | `record-panel` with `panel: first`, `rereview` or `verification` | `{agents, reason, external?, domain_reasons?}`: distinct reviewers and a non-empty reason. |
 | `submit_cycles` | number | `state increment` from [submit-pr.md](../workflows/submit-pr.md) | Re-submit loops run. |
 | `dev_round_id`, `review_round_id`, `ci_round_id` | string | `begin-round` with `kind: dev`, `review` or `ci` | The round token, minted before each delegation and carried in it. |
@@ -112,7 +112,7 @@ The members' rules, in the table's order:
 - `review_fix_round`: at a `REVIEW_MAX_CYCLES` of 0, `state cap --item` reads `below` until it is set and `at-cap` after.
 - `review_delegated_at`: `review-artifact check --delegated-at` takes it as the freshness boundary.
 - `cycles`: summaries read it; it decides no cap.
-- `rereview_cycles`: recording the rereview panel raises it in the same write, and refuses at the `REVIEW_MAX_CYCLES` limit.
+- `rereview_cycles`: recording the rereview panel raises it in the same write below the `REVIEW_MAX_CYCLES` limit. At the limit the write records `verification_panel` instead and raises nothing.
 - `first_panel`, `rereview_panel`, `verification_panel`: on a `small` item, a panel carries a boolean `external` and at most three reviewers, the external lane counted.
 - `first_panel`, `rereview_panel`, `verification_panel`: a later panel that holds every `first_panel` reviewer needs `domain_reasons` saying why the fix diff concerns each.
 - `dev_round_id`, `review_round_id`, `ci_round_id`: a `dev` or `review` round opens a stage.
