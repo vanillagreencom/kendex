@@ -106,7 +106,7 @@ Create the record unless it stands, by [start-worktree.md § 1](start-worktree.m
 
 2. **Make the edit** the item's Done-when, or the directive, states. Put nothing else in the diff.
 
-3. **Check each claim the diff states about code**, once. **Skip if** no changed sentence states what a file, script, setting or test does, holds, counts or refuses. Read each such sentence against the code that defines or implements what it states: the file it names, or the file a search for the setting, script or symbol it names finds. Judge it as [reviewer/SKILL.md](../../reviewer/SKILL.md) § Ethos judges a claim and a number in prose: a claim no code makes true is false. Fix a false claim in this edit.
+3. **Check each claim the diff states about code**, once. **Skip if** no changed sentence states what a file, script, setting or test does, holds, counts or refuses. Read each such sentence against the code that defines or implements what it states: the file it names, or the file a search for the setting, script or symbol it names finds, searched only where [skill-rules.md § File searches](../references/skill-rules.md#file-searches) permits. Judge it as [reviewer/SKILL.md](../../reviewer/SKILL.md) § Ethos judges a claim and a number in prose: a claim no code makes true is false. Fix a false claim in this edit.
 
 4. **Read the changed paths against § Escape condition 3**:
 
