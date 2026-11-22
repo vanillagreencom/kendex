@@ -14,7 +14,12 @@ A change that touches a record for any reason rewrites its legacy `Retired` stat
 - in the INDEX row;
 - in the decision file, where one exists.
 
-Where a legacy retirement has no document, its Link cell a backticked filename, or only a one-line one, the rewrite leaves that as it is and recreates no document. A row nothing touches stays valid as written.
+A legacy retirement may have no document, with a backticked filename in its Link cell, or only a one-line document. For such a retirement, the rewrite:
+
+- leaves that form as it is;
+- recreates no document.
+
+A row nothing touches stays valid as written.
 
 A re-assessment that changes the choice is a new record, per `create-decision.md`, and this workflow supersedes the old one with it.
 
@@ -53,9 +58,10 @@ For a supersession, repoint `REVISIT([DECISION_ID])` comments at the new ID. For
 For a retirement or a removal:
 
 1. Find every citation of the ID and of the document's file name by a literal search for both, in code, docs and `AGENTS.md`. A sibling record's `[ID](ID-descriptor.md)` link is one.
-2. Point a removal's citations at the reason's new home: the comment at the code or the principle doc's section.
-3. Keep a retirement's historical citations pointing at its retained document.
-4. Remove active-policy citations and `REVISIT` markers. Keep a comment at the site only where the code still needs the reason.
+2. Then, by the update:
+   - Removal: point the citations at the reason's new home, the comment at the code or the principle doc's section.
+   - Retirement: keep the historical citations pointing at the retained document.
+3. Remove active-policy citations and `REVISIT` markers. Keep a comment at the site only where the code still needs the reason.
 
 ## 4. Return
 

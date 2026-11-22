@@ -51,7 +51,7 @@ An active, superseded or withdrawn significant record has a short document. A re
 | `Removed` | The choice holds; its reason lives in the code or principle doc the Rationale cell names |
 
 - A `Withdrawn` record keeps its short document, its withdrawal reason and its INDEX link.
-- A legacy `Retired` record may have no document, its Link cell a backticked filename, or only a one-line one.
+- A legacy `Retired` record may have no document, with a backticked filename in its Link cell, or only a one-line document.
 - A `Removed` row alone keeps the ID reserved. Its Link cell follows § INDEX.md.
 
 ## Cross-references
@@ -65,4 +65,6 @@ An active, superseded or withdrawn significant record has a short document. A re
 | Code → removed decision | the reason as a comment at the code, or a `<path>.md § Heading` citation of the principle doc |
 | Issue → decision | `**Decision [DECISION_ID]**: [path/to/DECISION_ID-descriptor.md]` |
 
-A `REVISIT` comment goes only where that code carries out the choice.
+A `REVISIT` comment goes only where the code carries out the choice.
+
+A citation of a decision ID outside its own INDEX row needs a tracked decision document or a link to the rule's current home.

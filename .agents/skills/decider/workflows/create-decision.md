@@ -21,7 +21,7 @@ Derive a 2-5 word kebab-case descriptor from the summary — "Use Redis for sess
 
 ## 2. Write the decision file
 
-Create `[DECISIONS_DIR]/[DECISION_ID]-[DESCRIPTOR].md` from `templates/decision-entry.md`. Write nothing longer than `schemas/decision-format.md` § Decision document allows.
+Create `[DECISIONS_DIR]/[DECISION_ID]-[DESCRIPTOR].md` from `templates/decision-entry.md`. Date it today. Write nothing longer than `schemas/decision-format.md` § Decision document allows.
 
 Link related decisions as `[DECISION_ID](DECISION_ID-descriptor.md)`. Add `**Refines**:` when this extends prior work.
 
