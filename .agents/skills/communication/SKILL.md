@@ -22,11 +22,16 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## Scope
 
-Use this package for messages to a person. Agent-to-agent messages, literal return formats, tool prompts, documentation and text sent as the user follow their own owners. The caller owns authority, delivery and report schedules. It selects the [presentation choices](references/messages.md#reader-modes) from its own settings.
+- Use this package for messages to a person.
+- Agent-to-agent messages, literal return formats, tool prompts, documentation and text sent as the user follow their own owners.
+- The caller owns authority, delivery and report schedules.
 
 ## Reading routes
 
-Read this file and [messages](references/messages.md) once per revision, then apply them to every message. A revision is the file text the session last read. Read a file again only when it changed after that read, or when that read is no longer in the session's context, for example after a context summary. Add only the reference the task needs, read on the same terms:
+- Read this file and [messages](references/messages.md) once per revision, then apply them to every message.
+- A revision is the file text the session last read.
+- Read a file again only when it changed after that read, or when that read is no longer in the session's context, for example after a context summary.
+- Add only the reference the task needs, and read it on the same terms:
 
 | Task | Read |
 |---|---|
@@ -39,11 +44,11 @@ Read this file and [messages](references/messages.md) once per revision, then ap
 For a global install, put this writing reference in the user-scope instruction file:
 
 ```text
-Read `$HOME/.agents/skills/communication/SKILL.md` once per revision, and apply it before every message to a person.
+Read `$HOME/.agents/skills/communication/SKILL.md` once per revision, on the terms of its § Reading routes, and apply it before every message to a person.
 ```
 
 For a project install, put this writing reference in the project-scope instruction file. The path is relative to the project root:
 
 ```text
-Read `.agents/skills/communication/SKILL.md` once per revision, and apply it before every message to a person.
+Read `.agents/skills/communication/SKILL.md` once per revision, on the terms of its § Reading routes, and apply it before every message to a person.
 ```

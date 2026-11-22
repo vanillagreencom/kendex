@@ -4,64 +4,108 @@ Read when writing a report, briefing, work-item description, comment or completi
 
 ## Work story
 
-Write a plain briefing as a chain of events. Open each area with good or bad, done or incomplete, and why. Then connect its goal, progress, completed work, remaining work, failures and the action taken. Use the person's words for the problem, its state and the outcome they experience.
-
-State the goal as the outcome the person needs. Put the observed reading beside it. A measure alone is not the goal.
-
-Apply the [visible comparison](questions.md#today-and-after). Keep technical detail on the tracker item.
-
-A report names the author's own misses since the previous report. Give each miss its cause and the fix, or the reason no fix is needed.
+- Write a plain briefing as a chain of events.
+- Open each area with good or bad, done or incomplete, and why.
+- Then connect its goal, progress, completed work, remaining work, failures and the action taken.
+- Use the person's words for the problem, its state and the outcome they experience.
+- State the goal as the outcome the person needs.
+- Put the observed reading beside the goal.
+- A measure alone is not the goal.
+- Apply the [visible comparison](questions.md#today-and-after).
+- Keep technical detail on the tracker item.
+- A report names the author's own misses since the previous report.
+- Give each miss its cause and the fix, or the reason no fix is needed.
 
 ## Work-item descriptions and comments
 
 Descriptions explain the person's problem and why the work matters. Follow the owning package's description template for its quoted Story and Why this matters opening and body sections.
 
-A comment records one change, reading or decision. Start with its result for the person, with the earlier and current behavior in plain words where that comparison applies. Do not repeat the issue's Story or Why this matters. A question starts with the decision needed. A machine-read marker that must be first, such as `Proposal:`, stays first; the plain explanation follows it. The tracker's author and date are sufficient unless a reading needs its own observation date or delegated authority.
+Comments:
 
-Use `##` for body sections and `###` for subsections in descriptions and ordinary comments. Use `**Label**: value` for record fields at line start. Put blank lines between paragraphs, between every filing-record field, before and after every section heading, and around lists. Quote source words under Evidence. Reserve other blockquotes for the description's opening blocks and the report's overview paragraphs. Omit empty sections and optional fields; keep every required value and the owning writer's markers, evidence bindings and authority records.
+- A comment records one change, reading or decision.
+- Start with its result for the person, with the earlier and current behavior in plain words where that comparison applies.
+- Do not repeat the issue's Story or Why this matters.
+- A question starts with the decision needed.
+- A machine-read marker that must be first, such as `Proposal:`, stays first. The plain explanation follows it.
+- The tracker's author and date are sufficient unless a reading needs its own observation date or delegated authority.
+
+Markup:
+
+- Use `##` for body sections and `###` for subsections in descriptions and ordinary comments.
+- Use `**Label**: value` for record fields at line start.
+- Put blank lines between paragraphs, between every filing-record field, before and after every section heading, and around lists.
+- Quote source words under Evidence.
+- Reserve other blockquotes for the description's opening blocks and the report's overview paragraphs.
+- Omit empty sections and optional fields.
+- Keep every required value and the owning writer's markers, evidence bindings and authority records.
 
 ## Reports
 
-Say the outcome for the person or fleet. A project name or item title does not replace its effect. A report does not retell each item's Story. Link each work item to its owning tracker issue: the Linear issue for a Linear item or the GitHub issue for an `issue-N` item. Do not use its pull request or commit as the work-item link. The tracker issue links to its pull request.
-
-Put detail in the report file. Send one post per report, not a thread of fragments. Give each blocked item its cause and next action.
+- Say the outcome for the person or fleet. A project name or item title does not replace its effect.
+- A report does not retell each item's Story.
+- Link each work item to its owning tracker issue: the Linear issue for a Linear item or the GitHub issue for an `issue-N` item. Do not use its pull request or commit as the work-item link.
+- Put detail in the report file.
+- Send one post per report, not a thread of fragments.
+- Give each blocked item its cause and next action.
 
 ## Report opening
 
-Open with Overall in the [summary template](#summary-template). Put the repository's outcome readings in Readings, each with its date, scope and source. Name the decision taken when the reading moved. Omit a reading when it has no change and no decision. Reuse existing evidence comments and rulings.
+- Open with Overall in the [summary template](#summary-template).
+- Put the repository's outcome readings in Readings, each with its date, scope and source.
+- Name the decision taken when the reading moved.
+- Omit a reading when it has no change and no decision.
+- Reuse existing evidence comments and rulings.
 
 ## Evidence
 
-List completed work only after its acceptance check passes. Put a merge under Completed only after reading it from the source service in this session. An agent's notice that it is merging, or an approval, is not a landing.
+- List completed work only after its acceptance check passes.
+- Put a merge under Completed only after reading it from the source service in this session. An agent's notice that it is merging, or an approval, is not a landing.
 
 ## Waiting on you
 
-Use **Waiting on you** in the template's order, with `Nothing` when empty. Read current open requests and the person's replies since the last report when writing it. Do not copy this section from a handoff. Keep a step here only when no available tool can do it.
-
-Name each open ask by its question, so the person can find its thread. Link each unanswered decision. State what its deadline does and when, using the [person's time zone](messages.md#times). This section is never empty while an ask is open.
+- Write `Nothing` under **Waiting on you** when it is empty.
+- Read current open requests and the person's replies since the last report when writing it.
+- Do not copy this section from a handoff.
+- Keep a step here only when no available tool can do it.
+- Name each open ask by its question, so the person can find its thread.
+- Link each unanswered decision.
+- State what its deadline does and when, using the [person's time zone](messages.md#times).
+- This section is never empty while an ask is open.
 
 ## Account headroom
 
-Report headroom for every harness the consumer runs. Put one line per provider under Headroom remaining, with its remaining percent and account count.
+- Report headroom for every harness the consumer runs.
+- Put one line per provider under Headroom remaining, with its remaining percent and account count.
 
 ## Summary shape
 
 A consumer's user instruction that sets a report format for its reader overrides the shared format for that reader.
 
-Jarvis and overseer reports follow the [summary template](#summary-template), including its quote opening, full code-block headers, opening bold bracketed linked item ids, bold bullet labels, plain italic section notes and inline Next report line. Name the reporting session in the last section. Use no emoji, dividers or spacer lines. Ordinary Slack messages follow [Slack messages](messages.md#slack-messages).
+Jarvis and overseer reports follow the [summary template](#summary-template). Keep its quote opening, full code-block headers, opening bold bracketed linked item ids, bold bullet labels, plain italic section notes and inline Next report line.
 
-- The first three sections use plain sentences with no engineering language. Overall uses one or two sentences. These prose lines have no 20-word limit.
-- Put one item and one sentence per bullet line, at most 20 words. Use indented sub-bullets and third-tier bullets for detail, with each figure on its own sub-bullet. Italicize parenthetical text, including its parentheses.
-- Keep top-level bullet lines within the caller's line cap. Prose, headers, blank lines, sub-bullets, third-tier bullets and the Next report line do not count. Leave excess items in the report file. Never pack a line to fit the cap.
-- Use no table in a message to a person.
+- Use no emoji, dividers or spacer lines.
+- Ordinary Slack messages follow [Slack messages](messages.md#slack-messages).
+- The first three sections use plain sentences with no engineering language.
+- Overall uses one or two sentences.
+- The prose lines of the first three sections have no 20-word limit.
+- Put one item and one sentence per bullet line, at most 20 words.
+- Use indented sub-bullets and third-tier bullets for detail, with each figure on its own sub-bullet.
+- Italicize parenthetical text, including its parentheses.
+- Keep top-level bullet lines within the caller's line cap. Prose, headers, blank lines, sub-bullets, third-tier bullets and the Next report line do not count.
+- Leave excess items in the report file.
+- Never pack a line to fit the cap.
 
 ## Summary template
 
-Jarvis and overseer reports use this shared summary shape. Use this mrkdwn template for the report file's comment. For a post without a file, use standard Markdown under [References and markup](messages.md#references-and-markup).
+Use this mrkdwn template for the report file's comment. For a post without a file, use standard Markdown under [References and markup](messages.md#references-and-markup).
 
-Use each section where it applies. Keep the general format and the section order.
+- Use each section where it applies.
+- Keep the general format and the section order.
+- Give Overall, What's going well and What's not going well separate quote blocks, with an unquoted blank line between them in both forms.
+- Apply the [work story](#work-story) to each What's not going well problem: state the action taken, or that nothing is being done and why.
+- Apply [Evidence and costs](messages.md#evidence-and-costs) to each Readings line: state its meaning and the action taken.
 
-Give Overall, What's going well and What's not going well separate quote blocks, with an unquoted blank line between them in both forms. Apply the [work story](#work-story) to each What's not going well problem: state the action taken, or that nothing is being done and why. Apply [Evidence and costs](messages.md#evidence-and-costs) to each Readings line: state its meaning and the action taken. For standard Markdown, use this opening and convert the remaining mrkdwn example under [References and markup](messages.md#references-and-markup):
+For standard Markdown, use this opening and convert the remaining mrkdwn example under [References and markup](messages.md#references-and-markup):
 
 ```markdown
 > **Overall:** [Overall outcome.]
@@ -71,7 +115,7 @@ Give Overall, What's going well and What's not going well separate quote blocks,
 > **What's not going well:** [Each problem and action taken, or no action and why.]
 ```
 
-The figures and items below are fictitious examples, not readings. Use each section where it applies, in this order. Replace Jarvis with the reporting session's name.
+The figures and items below are fictitious examples, not readings. Replace Jarvis with the reporting session's name.
 
 ````text
 > *Overall:* CI work is ahead of plan this week, and lanes now finish within the day. Account room is the one risk until Saturday's resets.

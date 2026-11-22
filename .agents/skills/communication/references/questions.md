@@ -4,13 +4,18 @@ Read when requesting a decision or action. The caller decides whether to ask and
 
 ## Decision requests
 
-Ask one question per message. When a chat or relay may show only the ask's first sentence, name the person's decision and its subject in that sentence, for example 'Decision for you on ITEM, SUBJECT: ...'. Give the options and a recommendation. Use the [visible comparison](#today-and-after). Each option states its gain, its cost and the likelihood of that cost. Use the reader mode from [messages](messages.md#reader-modes).
+- Ask one question per message.
+- When a chat or relay may show only the ask's first sentence, name the person's decision and its subject in that sentence, for example 'Decision for you on ITEM, SUBJECT: ...'.
+- Give the options and a recommendation.
+- Use the [visible comparison](#today-and-after).
+- Each option states its gain, its cost and the likelihood of that cost.
 
 ## Today and After
 
-Show Today and After side by side in the words of the screen or app the person uses. Put this comparison first in work-item descriptions, comments and completion summaries. A goal statement alone never replaces the Today and After picture.
-
-For a folder change, show the folders today and where each moves.
+- Show Today and After side by side in the words of the screen or app the person uses.
+- Put this comparison first in work-item descriptions, comments and completion summaries.
+- A goal statement alone never replaces the Today and After picture.
+- For a folder change, show the folders today and where each moves.
 
 ## CEO questions
 
@@ -28,7 +33,8 @@ Decision for you on [ITEM], [SUBJECT]: [WHAT THIS CHANGES FOR THE USER, ONE SENT
 **Recommended:** [A OR B], because [ONE SENTENCE IN OUTCOME TERMS].
 ```
 
-Use outcomes only. Name no mechanism the person does not act on and no option by its internal name.
+- Use outcomes only.
+- Name no mechanism the person does not act on and no option by its internal name.
 
 ## Engineer questions
 
@@ -38,7 +44,10 @@ Use outcomes only. Name no mechanism the person does not act on and no option by
 
 ## Action requests
 
-Give numbered steps in plain words, with one action per step. Say what evidence closes the request. State what the deadline does. Omit the recommendation when the caller's ask form records none.
+- Give numbered steps in plain words, with one action per step.
+- Say what evidence closes the request.
+- State what the deadline does.
+- Omit the recommendation when the caller's ask form records none.
 
 ## Opening question
 
