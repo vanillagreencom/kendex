@@ -25,7 +25,6 @@ standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
-small|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest
 standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md .claude/agents/reviewer.md agents/reviewer.md hooks/AGENTS.md .kendex-generated.json|$SHARD_PROSE|+orch-rest
 standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|+orch-rest
 standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md $LOCAL_TOML|$SHARD_CODE|+orch-rest

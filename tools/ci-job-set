@@ -79,13 +79,13 @@
 #   - On every measured class (`micro`, `small`, `standard`) two Linux lanes
 #     always run: cargo_linux and bot_instructions.
 #   - Skill Markdown, a diff with at least one Markdown path whose every
-#     path is SKILL_MARKDOWN, selects no smoke at any class, and on a
-#     measured or `trivial` read row no platform lane and no macOS leg; its
-#     other lanes are that row's. That text is what agents load, and no
-#     platform reads it differently. cargo_linux stays: workspace tests read those files at
-#     run time, kendex-core's render, inventory and hooks README byte proofs
-#     and the kendex-core, kendex-cli and kendex-app tests over the real
-#     skills/ tree, and the merge group is their only proof.
+#     path is SKILL_MARKDOWN, selects on a measured or `trivial` read row no
+#     platform lane and no macOS leg; its other lanes are that row's. That
+#     text is what agents load, and no platform reads it differently.
+#     cargo_linux stays: workspace tests read those files at run time,
+#     kendex-core's render, inventory and hooks README byte proofs and the
+#     kendex-core, kendex-cli and kendex-app tests over the real skills/
+#     tree, and the merge group is their only proof.
 #   - The suites and Rust targets a measured diff runs are its reach, the one
 #     reach local validation selects by: `tools/guard --suite-reach` over the
 #     changed paths, whose mapped_suites header states which suites and
@@ -569,7 +569,8 @@ RUNNERS='^(skills/orch/tests/run-all\.sh|tools/tests/run-all\.sh)$'
 # kendex.toml uses the explicit default layout in source/config.rs and
 # source/layout.rs. The release check also reads Git ignore rules. Smoke
 # builds its own catalog in cli_smoke.rs; its compiled inputs come from
-# rust-reads below. Both jobs use this union, save smoke on skill Markdown.
+# rust-reads below. Both jobs use this union, save smoke, which skill
+# Markdown selects only through a compiled input.
 CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|plugins|\.claude-plugin)/|kendex\.toml$|\.git(ignore|attributes|modules)$|tools/catalog-release-check$)'
 # A shard cited by name in prose: a name in backticks, then `shard`.
 SHARD_CITATION='`[a-z0-9][a-z0-9-]*` shards?'
