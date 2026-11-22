@@ -253,6 +253,12 @@ Its JSON stdout is `[CHECK]`.
 - Require a valid readiness object for an open pull request. A command failure, an unreadable object or a pull request that is not open escapes (§ Escape condition 6).
 - A red required check or a merge conflict never reaches a merge: `pr-merge` refuses both, and merge-pr's § 5 step 1 routes that refusal.
 
+A Copilot finding that only a review body carries takes the body-finding route of [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route) with managed context, as [submit-pr.md § 6.1](submit-pr.md#61-merge-gates) sends it. That route sends the overseer its `copilot-declined-unchanged` or `copilot-approved-on-rerequest` notice, and a reply alone sends none.
+
+- `[CHECK]` names such a finding as a `suppressed-entry` in its `review_replies:` issue.
+- Complete the route's triage pass and its §§ 7.2-8. A fix that pass makes follows the path rules of the late-findings triage below.
+- Then re-enter this section from its top on the current head.
+
 **Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]` and `[STATE_KEY]` as `[ISSUE_ID]`.
 
 - Bind `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`; merge-pr's § 5 step 1 refuses a prepared head that is not this one.
@@ -265,7 +271,8 @@ This entry skips merge-pr's § 3. `ci-classify-refusal --help` states the refusa
 
 A `dequeued` verdict routes to that step's late-findings triage.
 
-- Answer a wording, naming or index finding there, or at the step's [thread read](../references/thread-read.md), by reply ([finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow)).
+- Answer a wording, naming or index finding in a thread there, or at the step's [thread read](../references/thread-read.md), by reply ([finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow)).
+- A finding in a Copilot review body takes the body-finding route above, never a reply alone.
 - Judge a finding that needs a change by the paths the fix touches:
 
   - A fix inside the admitted paths keeps the tier while the range stays within the `micro` ceiling; past it, this section's tier check escapes the run (condition 6).
