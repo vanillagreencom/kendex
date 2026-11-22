@@ -259,11 +259,11 @@ assert_eq "$(cat "$TMP_ROOT/out")" "agent-runtime-setup: key=$KEY binary=$TMP_RO
 # One cache holding a key of each kind setup tells apart, then a build of the
 # package's key. The registered checkouts: a repository and its linked
 # worktree, a folder in no repository (a source catalog's skills/ layout),
-# beside the home directory. The unregistered ones: a hosted lane's clone,
-# which built its own key, and a runtime a cargo is building now. Each holds
-# the package's runtime one comment off, so each resolves to a key of its
-# own. Every finished build's dep-info names a checkout that is gone unless a
-# row says otherwise, so no key stands on its build record by accident.
+# beside the home directory. The unregistered ones: a runtime a cargo is
+# building now, and a hosted lane's clone for the row after. Each holds the
+# package's runtime one comment off, so each resolves to a key of its own.
+# Every finished build's dep-info names a checkout that is gone unless a row
+# says otherwise.
 PC="$TMP_ROOT/cache-prune"
 PB="$PC/build/agent-runtime"
 mkdir -p "$PB" "$PC/bin"
@@ -321,16 +321,14 @@ HOME_KEY="$(key_at "$HOME/.agents/skills/agent-runtime/runtime")"
 PI_KEY="$(key_at "$HOME/.pi/agent/skills/agent-runtime/runtime")"
 CLONE_KEY="$(key_at "$CLONE")"
 BUILDING_KEY="$(key_at "$BUILDING")"
-CHECKOUT_KEYS="$REPO_KEY $LANE_KEY $COPY_KEY $PLAIN_KEY $HOME_KEY $PI_KEY $CLONE_KEY $BUILDING_KEY"
+CHECKOUT_KEYS="$REPO_KEY $LANE_KEY $COPY_KEY $PLAIN_KEY $HOME_KEY $PI_KEY $BUILDING_KEY"
 # shellcheck disable=SC2086 # the keys, one word each
-assert_eq "$(printf '%s\n' "$KEY" $CHECKOUT_KEYS | grep -c -E '^[0-9a-f]{64}$' | tr -d ' ')|$(printf '%s\n' "$KEY" $CHECKOUT_KEYS | sort -u | wc -l | tr -d ' ')" '9|9' 'premise: each checkout resolves to a key of its own'
+assert_eq "$(printf '%s\n' "$KEY" $CHECKOUT_KEYS "$CLONE_KEY" | grep -c -E '^[0-9a-f]{64}$' | tr -d ' ')|$(printf '%s\n' "$KEY" $CHECKOUT_KEYS "$CLONE_KEY" | sort -u | wc -l | tr -d ' ')" '9|9' 'premise: each checkout resolves to a key of its own'
 for checkout_key in $CHECKOUT_KEYS; do
   [ "$checkout_key" = "$BUILDING_KEY" ] || built "$checkout_key"
 done
-# The lane host's clone is in no project list: its build record names it.
-built_from "$CLONE_KEY" "$CLONE"
-# A build of a key no checkout holds now, its dep-info naming a checkout that
-# has since moved to another key.
+# A build of a key no checkout holds now, its dep-info naming a recorded
+# checkout that has since moved to another key.
 UNUSED="$(hex a)"
 built "$UNUSED"
 built_from "$UNUSED" "$PLAIN/skills/agent-runtime/runtime"
@@ -406,6 +404,20 @@ done
 assert_eq "$(ls -A "$PB" | sort)" "$(printf '%s\n' "$expected_build" | sort)" 'prune: build/ loses the unused, failed and lost-claim keys whole, the builds in flight kept'
 kill "$holder" "$runner" "$cargo_pid" 2>/dev/null || :
 wait "$holder" "$runner" "$cargo_pid" 2>/dev/null || :
+
+# A key built from a checkout that stands outside every recorded one, as a
+# hosted lane's clone does, shows the host holds checkouts its record misses:
+# another clone can share a key the dep-info names for this one alone, so
+# nothing goes, not even a key no checkout holds.
+PC="$TMP_ROOT/cache-prune-clone"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+built "$CLONE_KEY"
+built_from "$CLONE_KEY" "$CLONE"
+built "$UNUSED"
+run "$PC" "$SETUP"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=checkout-unrecorded runtime=$CLONE" 'prune: a build from an unrecorded checkout passes the build and names the skip'
+assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$CLONE_KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$CLONE_KEY" "$CLONE_KEY.log" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: a build from an unrecorded checkout removes nothing'
 
 # A project list that does not read proves nothing unused: nothing goes.
 PC="$TMP_ROOT/cache-prune-unread"

@@ -67,20 +67,24 @@ After a build, setup removes every other key of <name> that nothing uses:
 its <cache>/bin/<name>-<key>, its <cache>/build/<name>/<key> folder and the
 key's .lock, .log, .failed and .told-* files. A key is in use while a
 running process's arguments name it, while a running cargo builds a runtime
-whose sources key to it, or while a checkout resolves to it: the checkout
-its binary was built from, as cargo's dep-info beside the binary records
-it, the home directory, and each folder `kendex project list --json` names
-with every worktree of its repository, each read through its
-skills/*/runtime, .<dir>/skills/*/runtime and .<dir>/<dir>/skills/*/runtime
-sources. Setup also keeps a key whose build holds its claim, a binary whose
-dep-info names no source it was built from, a build folder with neither a
-binary nor a .failed record (a build in flight), and a binary with no build
-folder (installed from elsewhere). Where it cannot read the processes, the
-project list, a repository's worktrees or a source's key, it removes nothing
-and prints on stderr:
+whose sources key to it, or while a recorded checkout resolves to it: the
+home directory, and each folder `kendex project list --json` names with
+every worktree of its repository, each read through its skills/*/runtime,
+.<dir>/skills/*/runtime and .<dir>/<dir>/skills/*/runtime sources. Setup
+also keeps a key whose build holds its claim, a binary whose dep-info names
+no source it was built from, a build folder with neither a binary nor a
+.failed record (a build in flight), and a binary with no build folder
+(installed from elsewhere). Where a binary's dep-info (cargo's record of the
+sources it was built from) names a checkout that still stands outside the
+recorded ones, such as a hosted lane's clone, the host holds checkouts its
+record does not cover, and setup removes nothing (cause
+checkout-unrecorded). Where it cannot read the processes, the project list,
+a repository's worktrees or a source's key, it also removes nothing. Either
+way it prints on stderr:
   <name>-setup: prune-skipped cause=<cause> [field=value ...]
 Causes: processes-unread, kendex-missing, jq-missing, projects-unread,
-project-unreadable, git-missing, worktrees-unread, key-unread.
+project-unreadable, git-missing, worktrees-unread, key-unread,
+checkout-unrecorded.
 USAGE
 }
 
@@ -149,54 +153,25 @@ prune() (
   # fall inside the key.
   procs="$(ps -A -ww -o args= 2>/dev/null)" && [ -n "$procs" ] || skip processes-unread
 
-  # Every runtime source to key, each once by its resolved path: what the
-  # checkouts hold, what each candidate was built from and what a running
-  # cargo builds.
+  # Every runtime source to key, each once by its resolved path.
   sources=""
-  add_source() {
-    local resolved
-    [ -f "$1/Cargo.toml" ] || return 0
-    resolved="$(cd -- "$1" 2>/dev/null && pwd -P)" || skip key-unread "runtime=$1"
+  in_list() { # LIST ITEM
     case "
-$sources
+$1
 " in *"
-$resolved
-"*) ;; *) sources="$sources
-$resolved" ;; esac
+$2
+"*) return 0 ;; esac
+    return 1
   }
-  # A build that holds no claim, a setup without --detach, is a cargo whose
-  # arguments name the runtime's manifest.
-  building="$(printf '%s\n' "$procs" | sed -n 's#.*--manifest-path \(/.*\)/Cargo\.toml.*#\1#p')"
-  while IFS= read -r source; do
-    [ -z "$source" ] || add_source "$source"
-  done <<EOF
-$building
-EOF
-  # The checkout a candidate was built from, read from the dep-info file
-  # cargo leaves beside the binary, which lists the absolute path of every
-  # source file the binary was built from, a space escaped as `\ `
-  # (https://doc.rust-lang.org/cargo/reference/build-cache.html#dep-info-files).
-  # The crate's own is the one whose src/main.rs it lists: a dependency
-  # contributes its library alone. This finds the checkouts no project list
-  # records, such as a hosted lane's clone or a tool's copy of the skill.
-  unrecorded=" "
-  for candidate in $candidates; do
-    [ -d "$builds/$candidate" ] && [ -e "$cache/bin/$name-$candidate" ] || continue
-    builders=""
-    [ ! -f "$builds/$candidate/release/$name.d" ] ||
-      builders="$(awk '{ gsub(/\\ /, "\001"); for (i = 1; i <= NF; i++) { f = $i; gsub(/\001/, " ", f)
-        if (f ~ /^\/.*\/src\/main\.rs$/) { sub(/\/src\/main\.rs$/, "", f); print f } } }' \
-        "$builds/$candidate/release/$name.d" 2>/dev/null)" || builders=""
-    if [ -z "$builders" ]; then
-      unrecorded="$unrecorded$candidate "
-      continue
-    fi
-    while IFS= read -r source; do
-      add_source "$source"
-    done <<EOF
-$builders
-EOF
-  done
+  resolve() { # RUNTIME — sets resolved
+    resolved="$(cd -- "$1" 2>/dev/null && pwd -P)" || skip key-unread "runtime=$1"
+  }
+  add_source() { # RUNTIME
+    [ -f "$1/Cargo.toml" ] || return 0
+    resolve "$1"
+    in_list "$sources" "$resolved" || sources="$sources
+$resolved"
+  }
 
   # The checkouts: the home directory's global skills, and each project
   # kendex records with every worktree of its repository, since a lane's
@@ -259,6 +234,47 @@ EOF
   done <<EOF
 $roots
 EOF
+  recorded="$sources"
+
+  # A build that holds no claim, a setup without --detach, is a cargo whose
+  # arguments name the runtime's manifest.
+  building="$(printf '%s\n' "$procs" | sed -n 's#.*--manifest-path \(/.*\)/Cargo\.toml.*#\1#p')"
+  while IFS= read -r source; do
+    [ -z "$source" ] || add_source "$source"
+  done <<EOF
+$building
+EOF
+
+  # The checkout a candidate was built from, read from the dep-info file
+  # cargo leaves beside the binary, which lists the absolute path of every
+  # source file the binary was built from, a space escaped as `\ `
+  # (https://doc.rust-lang.org/cargo/reference/build-cache.html#dep-info-files).
+  # The crate's own is the one whose src/main.rs it lists: a dependency
+  # contributes its library alone. A builder that still stands outside the
+  # recorded checkouts, such as a hosted lane's clone, shows the host holds
+  # checkouts its record does not cover, any of which may share a key the
+  # dep-info names for another: nothing on this host is proved unused.
+  unrecorded=" "
+  for candidate in $candidates; do
+    [ -d "$builds/$candidate" ] && [ -e "$cache/bin/$name-$candidate" ] || continue
+    builders=""
+    [ ! -f "$builds/$candidate/release/$name.d" ] ||
+      builders="$(awk '{ gsub(/\\ /, "\001"); for (i = 1; i <= NF; i++) { f = $i; gsub(/\001/, " ", f)
+        if (f ~ /^\/.*\/src\/main\.rs$/) { sub(/\/src\/main\.rs$/, "", f); print f } } }' \
+        "$builds/$candidate/release/$name.d" 2>/dev/null)" || builders=""
+    if [ -z "$builders" ]; then
+      unrecorded="$unrecorded$candidate "
+      continue
+    fi
+    while IFS= read -r builder; do
+      [ -f "$builder/Cargo.toml" ] || continue
+      resolve "$builder"
+      in_list "$recorded" "$resolved" || skip checkout-unrecorded "runtime=$builder"
+    done <<EOF
+$builders
+EOF
+  done
+
   keep=" "
   while IFS= read -r source; do
     [ -n "$source" ] || continue
