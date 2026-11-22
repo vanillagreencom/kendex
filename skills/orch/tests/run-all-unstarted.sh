@@ -10,6 +10,7 @@ TMP_ROOT="$(mktemp -d)" || { echo 'run-all-unstarted: scratch=mktemp-failed' >&2
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'run-all-unstarted: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 if python3 - "$TEST_DIR" "$TMP_ROOT" "$BASH" <<'PY'
+import errno
 import os
 from pathlib import Path
 import shutil
@@ -64,6 +65,22 @@ for phase, marker in (
             assert time.monotonic() < deadline, "suite acknowledgement deadline"
             time.sleep(0.01)
         os.killpg(process.pid, signal.SIGTERM)
+        # The runner writes the acknowledgement before it enters its read, and
+        # bash holds a TERM that lands between the two until that read
+        # returns. Released now, the read returns and bash runs the trap
+        # before the next command, so the stop lands at the same phase
+        # wherever the TERM fell; a runner already gone has no reader.
+        if marker:
+            try:
+                hold = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError as error:
+                if error.errno != errno.ENXIO:
+                    raise
+            else:
+                try:
+                    os.write(hold, b"release\n")
+                finally:
+                    os.close(hold)
         # The runner's teardown sends KILL after its own stop grace.
         grace = int(next(line.split("=", 1)[1] for line in text.splitlines()
                          if line.startswith("STOP_GRACE=")))

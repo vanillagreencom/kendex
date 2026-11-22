@@ -3,12 +3,15 @@ set -euo pipefail
 # The client's whole argv, one word per line, is kept as $unit.argv. A call
 # naming no unit is the launcher's probe: it starts, or with
 # VALIDATE_PROBE_ANSWER=no-manager answers as systemd 262's client answers
-# where no user manager listens.
+# where no user manager listens. The job's standard error goes where its
+# StandardError=append: property names, as the manager sends it.
 words=("$@")
 unit=""
+err=/dev/null
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --unit=*) unit="${1#--unit=}" ;;
+    StandardError=append:*) err="${1#StandardError=append:}" ;;
     --) shift; break ;;
   esac
   shift
@@ -40,6 +43,6 @@ for word in "$@"; do
   job+=("${word//\$\$/\$}")
 done
 set -m
-"${job[@]}" </dev/null >/dev/null 2>&1 &
+"${job[@]}" </dev/null >/dev/null 2>>"$err" &
 printf '%s\n' "$!" > "$VALIDATE_MANAGER_DIR/$unit.pid"
 [ "${VALIDATE_START_ANSWER:-success}" != lost ] || exit 1
