@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::clock::SystemClock;
+use crate::harness::Harness;
 use crate::observe::{self, WallKind};
 use crate::process;
 use crate::reading::Reading;
@@ -678,15 +679,16 @@ fn turn_end(transcript: &Path, line: &mut Map<String, Value>) -> Result<(), Unwr
 /// `server` (tmux forks every pane's process from its server), that
 /// process included. A harness nested under another, which the other one's
 /// tool shell started, counts two; a harness that is the pane's process
-/// itself, as a launch's `exec` leaves it, counts one. Codex's installed
-/// Node launcher and its native child count as one, which `launcher`
-/// judges of the parent of a `codex`. A process under no pane of `server`
-/// never reaches one, and the walk refuses past 64 steps.
+/// itself, as a launch's `exec` leaves it, counts one. A harness's
+/// installed Node launcher ([`NODE_LAUNCHERS`]) and its native child count
+/// as one, which `launcher` judges of the native process's parent. A
+/// process under no pane of `server` never reaches one, and the walk
+/// refuses past 64 steps.
 pub fn top_level(
     rows: &[process::Row],
     from: u32,
     server: u32,
-    launcher: &dyn Fn(u32) -> bool,
+    launcher: &dyn Fn(u32, Harness) -> bool,
 ) -> bool {
     let by_pid: HashMap<u32, &process::Row> = rows.iter().map(|row| (row.pid, row)).collect();
     let mut pid = from;
@@ -696,7 +698,10 @@ pub fn top_level(
         let Some(row) = by_pid.get(&pid).filter(|_| pid > 1) else {
             return false;
         };
-        let uncounted = process::is_shell(&row.name) || (child == Some("codex") && launcher(pid));
+        let launched = child
+            .and_then(launched_by_node)
+            .is_some_and(|harness| launcher(pid, harness));
+        let uncounted = process::is_shell(&row.name) || launched;
         if !uncounted {
             harnesses += 1;
         }
@@ -717,7 +722,7 @@ pub fn top_level_here(server: u32) -> Result<bool, Unwritten> {
         &rows,
         std::os::unix::process::parent_id(),
         server,
-        &codex_launcher,
+        &node_launcher,
     ))
 }
 
@@ -725,16 +730,17 @@ pub fn top_level_here(server: u32) -> Result<bool, Unwritten> {
 /// recorded harness process `recorded`: `recorded` stands on `from`'s
 /// ancestor chain, `from` included, and no other process `is_harness`
 /// names stands between them, so a job a lane lead's tool shell started
-/// under a harness of its own is told apart from the lead. Codex's native
-/// process directly under a recorded installed Node launcher, which
-/// `launcher` judges, is the launcher's own. A chain that ends first, or a
-/// cycle the walk's bound of 64 steps ends, is not served by `recorded`.
+/// under a harness of its own is told apart from the lead. A harness's
+/// native process directly under a recorded installed Node launcher
+/// ([`NODE_LAUNCHERS`]), which `launcher` judges, is the launcher's own. A
+/// chain that ends first, or a cycle the walk's bound of 64 steps ends, is
+/// not served by `recorded`.
 pub fn served_by(
     rows: &[process::Row],
     from: u32,
     recorded: u32,
     is_harness: &dyn Fn(&str) -> bool,
-    launcher: &dyn Fn(u32) -> bool,
+    launcher: &dyn Fn(u32, Harness) -> bool,
 ) -> bool {
     let by_pid: HashMap<u32, &process::Row> = rows.iter().map(|row| (row.pid, row)).collect();
     let mut pid = from;
@@ -745,7 +751,8 @@ pub fn served_by(
         let Some(row) = by_pid.get(&pid).filter(|_| pid > 1) else {
             return false;
         };
-        let launched = row.name == "codex" && row.ppid == recorded && launcher(recorded);
+        let launched = row.ppid == recorded
+            && launched_by_node(&row.name).is_some_and(|harness| launcher(recorded, harness));
         if is_harness(&row.name) && !launched {
             return false;
         }
@@ -766,23 +773,45 @@ pub fn served_by_here(
         std::os::unix::process::parent_id(),
         recorded,
         is_harness,
-        &codex_launcher,
+        &node_launcher,
     ))
 }
 
-/// Whether `pid` is the installed `@openai/codex` Node launcher.
-fn codex_launcher(pid: u32) -> bool {
+/// The harnesses whose npm install puts a Node launcher on `PATH` that
+/// spawns the native binary and stays as its parent, each with the
+/// launcher's script under its package: Codex's `bin/codex.js`, and
+/// Copilot CLI's `npm-loader.js`, which runs `spawn(<platform binary>,
+/// argv, {stdio: "inherit"})`.
+const NODE_LAUNCHERS: [(Harness, &str); 2] = [
+    (Harness::Codex, "@openai/codex/bin/codex.js"),
+    (Harness::Copilot, "@github/copilot/npm-loader.js"),
+];
+
+/// The harness of [`NODE_LAUNCHERS`] that owns the process named `name`
+/// (`Harness::owns_process`), whose parent may be that harness's launcher.
+fn launched_by_node(name: &str) -> Option<Harness> {
+    NODE_LAUNCHERS
+        .iter()
+        .map(|(harness, _)| *harness)
+        .find(|harness| harness.owns_process(name))
+}
+
+/// Whether `pid` is `harness`'s installed Node launcher.
+fn node_launcher(pid: u32, harness: Harness) -> bool {
+    let Some((_, script)) = NODE_LAUNCHERS.iter().find(|(h, _)| *h == harness) else {
+        return false;
+    };
     process::command_lines().is_ok_and(|lines| {
         lines
             .iter()
-            .any(|(p, words)| *p == pid && is_codex_launcher(words))
+            .any(|(p, words)| *p == pid && is_node_launcher(words, script))
     })
 }
 
-/// Whether a process's argument words are the installed `@openai/codex`
-/// Node launcher's: `node` running an absolute script that resolves,
-/// through every link, to its `bin/codex.js`.
-fn is_codex_launcher(words: &[String]) -> bool {
+/// Whether a process's argument words are an installed Node launcher's:
+/// `node` running an absolute script that resolves, through every link, to
+/// `script` under its package.
+fn is_node_launcher(words: &[String], script_in_package: &str) -> bool {
     let (Some(executable), Some(script)) = (words.first(), words.get(1)) else {
         return false;
     };
@@ -794,8 +823,7 @@ fn is_codex_launcher(words: &[String]) -> bool {
     if !script.is_absolute() {
         return false;
     }
-    fs::canonicalize(script)
-        .is_ok_and(|real| real.is_file() && real.ends_with("@openai/codex/bin/codex.js"))
+    fs::canonicalize(script).is_ok_and(|real| real.is_file() && real.ends_with(script_in_package))
 }
 
 #[cfg(test)]
@@ -1160,11 +1188,13 @@ mod tests {
 
     /// The pane's own top-level harness alone writes a row: a harness under
     /// the pane's shell, through any shells between, counts one; a harness
-    /// another harness's tool shell started counts two; a harness that is
-    /// the pane's process, as a launch's `exec` leaves it, counts one;
-    /// Codex's installed Node launcher and its native child count one,
-    /// under the pane's shell or as the pane's process, and any other
-    /// parent of a `codex` its own; a process under no pane of the server,
+    /// another harness's tool shell started counts two, under the pane's
+    /// shell or under the pane's own harness; a harness that is the pane's
+    /// process, as a launch's `exec` leaves it, counts one; Codex's and
+    /// Copilot CLI's installed Node launchers and their native child count
+    /// one, under the pane's shell or as the pane's process, and any other
+    /// parent of a native process, another harness's launcher included,
+    /// its own; a process under no pane of the server,
     /// a parent the table lacks, or a cycle the walk's bound ends, is no
     /// top-level session. Every pid is synthetic.
     #[test]
@@ -1181,8 +1211,13 @@ mod tests {
                 })
                 .collect()
         };
-        let launcher = |pid: u32| pid == 31;
-        let cases: [(&str, Vec<process::Row>, bool); 8] = [
+        let launcher = |pid: u32, harness: Harness| {
+            matches!(
+                (pid, harness),
+                (31, Harness::Codex) | (41, Harness::Copilot)
+            )
+        };
+        let cases: [(&str, Vec<process::Row>, bool); 12] = [
             (
                 "a harness under the pane's shell",
                 table(&[(20, SERVER, "bash"), (21, 20, "claude"), (22, 21, "bash")]),
@@ -1193,6 +1228,16 @@ mod tests {
                 table(&[
                     (20, SERVER, "zsh"),
                     (21, 20, "claude"),
+                    (23, 21, "bash"),
+                    (24, 23, "codex"),
+                    (22, 24, "sh"),
+                ]),
+                false,
+            ),
+            (
+                "a harness nested under the pane's own harness",
+                table(&[
+                    (21, SERVER, "claude"),
                     (23, 21, "bash"),
                     (24, 23, "codex"),
                     (22, 24, "sh"),
@@ -1230,6 +1275,35 @@ mod tests {
                 false,
             ),
             (
+                "copilot under its installed node launcher as the pane's process",
+                table(&[
+                    (41, SERVER, "node-MainThread"),
+                    (42, 41, "MainThread"),
+                    (23, 42, "sh"),
+                    (22, 23, "bash"),
+                ]),
+                true,
+            ),
+            (
+                "copilot under its installed node launcher",
+                table(&[
+                    (20, SERVER, "bash"),
+                    (41, 20, "node"),
+                    (42, 41, "copilot"),
+                    (22, 42, "bash"),
+                ]),
+                true,
+            ),
+            (
+                "copilot under codex's node launcher",
+                table(&[
+                    (31, SERVER, "node"),
+                    (42, 31, "MainThread"),
+                    (22, 42, "bash"),
+                ]),
+                false,
+            ),
+            (
                 "a process under no pane of the server",
                 table(&[(2, 1, "systemd"), (21, 2, "claude"), (22, 21, "bash")]),
                 false,
@@ -1248,14 +1322,15 @@ mod tests {
         let cycle = table(&[(21, 22, "claude"), (22, 21, "bash")]);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(top_level(&cycle, 22, SERVER, &|_| false));
+            let _ = tx.send(top_level(&cycle, 22, SERVER, &|_, _| false));
         });
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(false));
     }
 
     /// A call is served by the recorded harness process where that process
-    /// stands on its chain with only shells, hook runners and the recorded
-    /// Codex launcher's native child between; a job the lead's tool shell
+    /// stands on its chain with only shells, hook runners and the native
+    /// child of a recorded Codex or Copilot CLI launcher between; a job the
+    /// lead's tool shell
     /// started under a harness of its own is not, nor is a chain that never
     /// reaches the record, a parent the table lacks, or a cycle the walk's
     /// bound ends. Every pid is synthetic.
@@ -1273,9 +1348,14 @@ mod tests {
                 })
                 .collect()
         };
-        let harness = |name: &str| matches!(name, "claude" | "codex" | "pi");
-        let launcher = |pid: u32| pid == 31;
-        let cases: [(&str, Vec<process::Row>, u32, bool); 8] = [
+        let harness = |name: &str| matches!(name, "claude" | "codex" | "pi" | "MainThread");
+        let launcher = |pid: u32, harness: Harness| {
+            matches!(
+                (pid, harness),
+                (31, Harness::Codex) | (41, Harness::Copilot)
+            )
+        };
+        let cases: [(&str, Vec<process::Row>, u32, bool); 9] = [
             (
                 "the lead's hook under shells",
                 table(&[(21, 10, "claude"), (22, 21, "sh"), (23, 22, "bash")]),
@@ -1303,6 +1383,12 @@ mod tests {
                 "codex under its recorded installed node launcher",
                 table(&[(31, 10, "node"), (32, 31, "codex"), (23, 32, "bash")]),
                 31,
+                true,
+            ),
+            (
+                "copilot under its recorded installed node launcher",
+                table(&[(41, 10, "node"), (42, 41, "MainThread"), (23, 42, "bash")]),
+                41,
                 true,
             ),
             (
@@ -1340,7 +1426,7 @@ mod tests {
         let cycle = table(&[(22, 23, "bash"), (23, 22, "sh")]);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(served_by(&cycle, 23, 21, &|_| false, &|_| false));
+            let _ = tx.send(served_by(&cycle, 23, 21, &|_| false, &|_, _| false));
         });
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)), Ok(false));
     }
@@ -1403,25 +1489,30 @@ mod tests {
         );
     }
 
-    /// Codex's installed Node launcher is known by its argument words: an
+    /// An installed Node launcher is known by its argument words: an
     /// executable named `node` and an absolute script that resolves,
-    /// through a link, to `@openai/codex/bin/codex.js`; a relative script,
-    /// another executable, another script and a missing one are not it.
+    /// through a link as npm installs it on `PATH`, to that harness's
+    /// launcher script ([`NODE_LAUNCHERS`]); a relative script, another
+    /// executable, another script, another harness's launcher and a missing
+    /// script are not it.
     #[test]
-    fn codexs_installed_node_launcher_is_known_by_its_resolved_script() {
+    fn an_installed_node_launcher_is_known_by_its_resolved_script() {
         let root = tempfile::tempdir().unwrap();
-        let real = root
-            .path()
-            .join("lib/node_modules/@openai/codex/bin/codex.js");
-        fs::create_dir_all(real.parent().unwrap()).unwrap();
-        fs::write(&real, "").unwrap();
+        let [(_, codex), (_, copilot)] = NODE_LAUNCHERS;
+        let installed = |script: &str, bin: &str| {
+            let real = root.path().join("lib/node_modules").join(script);
+            fs::create_dir_all(real.parent().unwrap()).unwrap();
+            fs::write(&real, "").unwrap();
+            let link = root.path().join("bin").join(bin);
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(Path::new("../lib/node_modules").join(script), &link)
+                .unwrap();
+            link.display().to_string()
+        };
+        let link = installed(codex, "codex");
+        let loader = installed(copilot, "copilot");
         let other = root.path().join("lib/other.js");
         fs::write(&other, "").unwrap();
-        let link = root.path().join("bin/codex");
-        fs::create_dir_all(link.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink("../lib/node_modules/@openai/codex/bin/codex.js", &link)
-            .unwrap();
-        let link = link.display().to_string();
         let other = other.display().to_string();
         let gone = root.path().join("gone.js").display().to_string();
         // The link as a path relative to this process's directory: it names
@@ -1432,18 +1523,21 @@ mod tests {
             "../".repeat(cwd.components().count() - 1),
             link.trim_start_matches('/')
         );
-        let cases: [(&[&str], bool); 7] = [
-            (&["/usr/bin/node", &link], true),
-            (&["node", &link, "--yolo"], true),
-            (&["node", "bin/codex"], false),
-            (&["node", &relative], false),
-            (&["/usr/bin/bun", &link], false),
-            (&["node", &other], false),
-            (&["node", &gone], false),
+        let cases: [(&[&str], &str, bool); 10] = [
+            (&["/usr/bin/node", &link], codex, true),
+            (&["node", &link, "--yolo"], codex, true),
+            (&["node", &loader, "--help"], copilot, true),
+            (&["node", &loader], codex, false),
+            (&["node", &link], copilot, false),
+            (&["node", "bin/codex"], codex, false),
+            (&["node", &relative], codex, false),
+            (&["/usr/bin/bun", &link], codex, false),
+            (&["node", &other], codex, false),
+            (&["node", &gone], codex, false),
         ];
-        for (words, want) in cases {
+        for (words, script, want) in cases {
             let words: Vec<String> = words.iter().map(|w| (*w).to_owned()).collect();
-            assert_eq!(is_codex_launcher(&words), want, "{words:?}");
+            assert_eq!(is_node_launcher(&words, script), want, "{words:?} {script}");
         }
     }
 
