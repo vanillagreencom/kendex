@@ -88,7 +88,7 @@ Get the issue → dev implements → publication, review and fixes in the order 
     - At a cap, `orch-runtime state post-pr-stop record` persists the named stop with its rendered Markdown comment. The workflow posts that file to the PR and returns the stored stop.
     - A nested caller uses `post-pr-stop record-if-empty`, so a precise upstream stop stands.
     - Every continuing action lifts the stop with `post-pr-stop clear`.
-    - `ORCH_MERGE_AUTONOMY` controls merge consent only.
+  - `ORCH_MERGE_AUTONOMY` controls merge consent only.
 - **The overseer reads results.**
   - It accepts green lane checks and CI without reruns.
   - It grants no prepare, commit, push or merge, and no shared validation slot.
