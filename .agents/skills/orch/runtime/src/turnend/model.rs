@@ -208,10 +208,11 @@ fn awaiting_reset(doc: &serde_json::Map<String, Value>, item: &str) -> Option<Va
 
 /// A launched lane's account mark at its turn end, once its context mark
 /// held nothing: the account its credential bills, judged by the one account
-/// judge, this binary's `lane pick`, asked as one child under the ceiling. A
-/// hosted lane's account is the controller's to measure. An account at its
-/// mark is refused with the handoff; every other answer but room is told and
-/// passed, never read as room.
+/// judge, this binary's `lane pick`, asked as one child under the ceiling.
+/// The turn end reads the judge's reply and counts a `rate_limited` record
+/// it judged room or walled as at the mark. A hosted lane's account is the controller's to measure. An
+/// account at its mark is refused with the handoff; every other answer but
+/// room is told and passed, never read as room.
 pub(super) fn account_mark(
     turn: &mut Turn,
     judge: &marks::Judge<'_>,
@@ -277,6 +278,17 @@ pub(super) fn account_mark(
             let said = Said::Headroom {
                 headroom,
                 bucket,
+                mark,
+                instruction,
+            };
+            Err(turn.refuse(said, ""))
+        }
+        Told::Refused { last, bucket, age } => {
+            let instruction = judge.instruction(turn, Value::Null, None)?;
+            let said = Said::HeadroomRefused {
+                last,
+                bucket,
+                age,
                 mark,
                 instruction,
             };
@@ -435,6 +447,18 @@ enum Told {
         headroom: String,
         bucket: String,
     },
+    /// A usage read the provider refused with a 429, which the listing
+    /// answers from its last kept figure for up to five hours: counted at
+    /// the mark whatever that figure's room, since the account can drain
+    /// past the mark behind it, a missed handoff stops every lane on the
+    /// account, and an unneeded one costs a relaunch. The last figure's
+    /// headroom, its binding bucket and its age in seconds, where the
+    /// record states one.
+    Refused {
+        last: String,
+        bucket: String,
+        age: Option<u64>,
+    },
     /// Unjudged: the account line's word and the words the read left.
     Gap(&'static str, String),
 }
@@ -443,7 +467,8 @@ enum Told {
 /// judgement at status 0, the judge's exit inside its reply: 0 room; 3 a
 /// mark reached, or the owner's word refusing the account; 4 no account
 /// of the inventory; 7 a cloud account no repository rule gives this
-/// checkout. A run killed at the ceiling is a timeout; any other status,
+/// checkout. A record whose `status` is `rate_limited` at 0 or walled at 3
+/// is [`Told::Refused`]. A run killed at the ceiling is a timeout; any other status,
 /// exit or reply nobody can read is an account nothing measured.
 fn told(read: agent_runtime::Result<Output>) -> Told {
     let out = match read {
@@ -477,15 +502,28 @@ fn told(read: agent_runtime::Result<Output>) -> Told {
         other => other.to_string(),
     };
     let detail = record["detail"].as_str().unwrap_or_default().to_owned();
+    let headroom = || {
+        record["wall"]
+            .as_f64()
+            .map_or_else(|| "unknown".to_owned(), |wall| figure(100.0 - wall))
+    };
+    let refused = || Told::Refused {
+        last: headroom(),
+        bucket: text("binding_bucket"),
+        age: record["usage_age_s"].as_u64(),
+    };
+    let rate_limited = record["status"] == "rate_limited";
     match exit {
+        0 if rate_limited => refused(),
         0 => Told::Room,
         3 => {
-            let headroom = record["wall"]
-                .as_f64()
-                .map_or_else(|| "unknown".to_owned(), |wall| figure(100.0 - wall));
             let bucket = text("binding_bucket");
             match record["verdict"].as_str().unwrap_or("walled") {
-                "walled" => Told::Headroom { headroom, bucket },
+                "walled" if rate_limited => refused(),
+                "walled" => Told::Headroom {
+                    headroom: headroom(),
+                    bucket,
+                },
                 "excluded" => Told::Gap("excluded", detail),
                 "reserved" => Told::Gap("reserved", detail),
                 "retired" => Told::Gap("retired", detail),
@@ -1302,7 +1340,8 @@ mod tests {
     }
 
     /// Each judgement the verb answers at status 0 is told by its exit and,
-    /// at 3, by the record's verdict and figures; a ceiling's kill is a
+    /// at 3, by the record's verdict and figures; a refused read is at the
+    /// mark on a walled figure, and the owner's word still wins over it; a ceiling's kill is a
     /// timeout; any other status, exit or reply is an account nothing
     /// measured, never room.
     #[test]
@@ -1311,6 +1350,11 @@ mod tests {
             |wall: Value| json!({"verdict": "walled", "wall": wall, "binding_bucket": "weekly"});
         let word =
             |verdict: &str| json!({"verdict": verdict, "wall": 10, "detail": "the owner's word"});
+        let refused = |mut record: Value| {
+            record["status"] = json!("rate_limited");
+            record["usage_age_s"] = json!(4080);
+            record
+        };
         let unreadable = "the account judge returned an unreadable refusal record";
         let killed = agent_runtime::Error::External {
             program: "orch-runtime",
@@ -1351,6 +1395,20 @@ mod tests {
                     headroom: "unknown".to_owned(),
                     bucket: "unknown".to_owned(),
                 },
+            ),
+            (
+                "a refused read on a walled figure",
+                ran(0, &judged(3, refused(walled(json!(98)))), ""),
+                Told::Refused {
+                    last: "2".to_owned(),
+                    bucket: "weekly".to_owned(),
+                    age: Some(4080),
+                },
+            ),
+            (
+                "the owner's word on a refused read",
+                ran(0, &judged(3, refused(word("excluded"))), ""),
+                gap("excluded", "the owner's word"),
             ),
             (
                 "excluded",

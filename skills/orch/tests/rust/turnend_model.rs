@@ -589,7 +589,8 @@ fn plant_launch_record(lane: &Path, record: &[u8]) {
 /// hold, judged by this binary's own pick over the planted listing: room
 /// tells nothing, on an account a controller sits on too, whatever that
 /// controller spends; the headroom mark holds the turn end with the
-/// handoff, on a seat as on any account; the owner's word, a directory the inventory does not
+/// handoff, on a seat as on any account, and so does a usage read refused
+/// with a 429 whose last figure had room; the owner's word, a directory the inventory does not
 /// hold, an account nothing measured, a hosted lane, a Pi reading that named
 /// no model and an install naming no harness are told and passed; a
 /// headroom setting outside its form holds on the setting.
@@ -597,6 +598,9 @@ fn plant_launch_record(lane: &Path, record: &[u8]) {
 fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
     let mut unmeasured = account_row(10);
     unmeasured["status"] = json!("no_credentials");
+    let mut refused = account_row(10);
+    refused["status"] = json!("rate_limited");
+    refused["usage_age_s"] = json!(4080);
     type Case<'a> = (
         &'a str,
         Value,
@@ -627,6 +631,16 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
             Beside::Nothing,
             2,
             Some("headroom=2 bucket=weekly mark=3"),
+        ),
+        (
+            "a refused read on a figure with room",
+            refused,
+            "claude",
+            &[],
+            ".aclaude",
+            Beside::Nothing,
+            2,
+            Some("headroom=refused last=90 bucket=weekly age="),
         ),
         (
             "a seat with room on a measured week",
