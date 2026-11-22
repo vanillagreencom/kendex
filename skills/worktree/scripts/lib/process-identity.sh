@@ -90,16 +90,17 @@ process_identity_status() { # PID START
 # bare name. Status 1 is a table that could not be read.
 process_table() {
   local raw
-  raw="$(LC_ALL=C ps -A -o pid= -o ppid= -o comm= 2>/dev/null)" || return 1
+  raw="$(LC_ALL=C ps -A -ww -o pid= -o ppid= -o comm= 2>/dev/null)" || return 1
   awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }' <<<"$raw"
 }
 
 # Each process's argv[0] as `PID NAME` rows, its directory and a login
 # shell's leading `-` stripped. On Linux a script started through a `#!`
 # line carries the script's name in the table above and the interpreter's
-# here. Status 1 is a table that could not be read.
+# here. Status 1 is a table that could not be read. -ww: without it procps
+# cuts each row at an exported COLUMNS, which can fall inside argv[0].
 process_argv0_table() {
   local raw
-  raw="$(LC_ALL=C ps -A -o pid= -o args= 2>/dev/null)" || return 1
+  raw="$(LC_ALL=C ps -A -ww -o pid= -o args= 2>/dev/null)" || return 1
   awk '{ name = $2; sub(/.*\//, "", name); sub(/^-/, "", name); print $1, name }' <<<"$raw"
 }

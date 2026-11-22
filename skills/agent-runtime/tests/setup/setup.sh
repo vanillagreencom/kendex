@@ -257,16 +257,24 @@ assert_eq "$(cat "$TMP_ROOT/out")" "agent-runtime-setup: key=$KEY binary=$TMP_RO
 
 # --- after a build, setup removes the keys nothing uses ---------------------
 # One cache holding a key of each kind setup tells apart, then a build of the
-# package's key. The checkouts: a registered repository and its linked
-# worktree, a registered folder in no repository (a source catalog's
-# skills/ layout) and the home directory's global skills, each with the
-# package's runtime one comment off, so each resolves to a key of its own.
+# package's key. The registered checkouts: a repository and its linked
+# worktree, a folder in no repository (a source catalog's skills/ layout),
+# beside the home directory. The unregistered ones: a hosted lane's clone,
+# which built its own key, and a runtime a cargo is building now. Each holds
+# the package's runtime one comment off, so each resolves to a key of its
+# own. Every finished build's dep-info names a checkout that is gone unless a
+# row says otherwise, so no key stands on its build record by accident.
 PC="$TMP_ROOT/cache-prune"
 PB="$PC/build/agent-runtime"
 mkdir -p "$PB" "$PC/bin"
 hex() { printf '%064d' 0 | tr 0 "$1"; }
 placed() { printf '#!/bin/sh\n' >"$PC/bin/agent-runtime-$1" && chmod -- 755 "$PC/bin/agent-runtime-$1"; }
-built() { mkdir -p "$PB/$1/release" && : >"$PB/$1.log" && placed "$1"; }
+built_from() { # KEY RUNTIME — the dep-info cargo leaves, a space escaped as `\ `
+  local escaped="${2// /\\ }"
+  printf '%s: %s/src/main.rs %s/src/lib.rs %s/skills/other/runtime/src/lib.rs\n' \
+    "$PB/$1/release/agent-runtime" "$escaped" "$escaped" "$TMP_ROOT/dependency" >"$PB/$1/release/agent-runtime.d"
+}
+built() { mkdir -p "$PB/$1/release" && : >"$PB/$1.log" && placed "$1" && built_from "$1" "$TMP_ROOT/gone/$1"; }
 runtime_copy() { # DEST MARK
   mkdir -p "$1"
   cp -p "$PKG/runtime/Cargo.toml" "$PKG/runtime/Cargo.lock" "$1/"
@@ -274,9 +282,19 @@ runtime_copy() { # DEST MARK
   printf '// %s\n' "$2" >>"$1/src/lib.rs"
 }
 key_at() { bash -c 'refuse() { exit 1; }; . "$1"; agent_runtime_key "$2"' _ "$SRC/scripts/lib/key.sh" "$1"; }
+until_args() { # PID PREFIX — until ps shows the process's arguments opening with PREFIX
+  local n=0
+  until [[ "$(ps -p "$1" -ww -o args= 2>/dev/null || :)" == "$2"* ]]; do
+    n=$((n + 1))
+    [ "$n" -lt 100 ] || return 1
+    sleep 0.1
+  done
+}
 REPO="$TMP_ROOT/checkouts/repo"
 LANE="$TMP_ROOT/checkouts/lane"
 PLAIN="$TMP_ROOT/checkouts/plain"
+CLONE="$TMP_ROOT/lane host/clone/.agents/skills/agent-runtime/runtime"
+BUILDING="$TMP_ROOT/building/.agents/skills/agent-runtime/runtime"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
 git -C "$REPO" config gc.auto 0
@@ -286,23 +304,53 @@ git -C "$REPO" add -A
 git -C "$REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m fixture
 git -C "$REPO" worktree add -q -b lane "$LANE"
 printf '// lane\n' >>"$LANE/.agents/skills/agent-runtime/runtime/src/lib.rs"
+# A copy delivery: the tool's own directory holds a copy, not a link.
+runtime_copy "$REPO/.claude/skills/agent-runtime/runtime" copy
 runtime_copy "$PLAIN/skills/agent-runtime/runtime" plain
 runtime_copy "$HOME/.agents/skills/agent-runtime/runtime" home
+runtime_copy "$HOME/.pi/agent/skills/agent-runtime/runtime" pi
+runtime_copy "$CLONE" clone
+runtime_copy "$BUILDING" building
 printf '[{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"folder-not-found","worktree":null}]\n' \
   "$REPO" "$PLAIN" "$TMP_ROOT/gone" >"$FAKE_KENDEX_REGISTRY"
 REPO_KEY="$(key_at "$REPO/.agents/skills/agent-runtime/runtime")"
 LANE_KEY="$(key_at "$LANE/.agents/skills/agent-runtime/runtime")"
+COPY_KEY="$(key_at "$REPO/.claude/skills/agent-runtime/runtime")"
 PLAIN_KEY="$(key_at "$PLAIN/skills/agent-runtime/runtime")"
 HOME_KEY="$(key_at "$HOME/.agents/skills/agent-runtime/runtime")"
-assert_eq "$(printf '%s\n' "$KEY" "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY" | grep -c -E '^[0-9a-f]{64}$' | tr -d ' ')|$(printf '%s\n' "$KEY" "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY" | sort -u | wc -l | tr -d ' ')" '5|5' 'premise: each checkout resolves to a key of its own'
-for checkout_key in "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY"; do built "$checkout_key"; done
+PI_KEY="$(key_at "$HOME/.pi/agent/skills/agent-runtime/runtime")"
+CLONE_KEY="$(key_at "$CLONE")"
+BUILDING_KEY="$(key_at "$BUILDING")"
+CHECKOUT_KEYS="$REPO_KEY $LANE_KEY $COPY_KEY $PLAIN_KEY $HOME_KEY $PI_KEY $CLONE_KEY $BUILDING_KEY"
+# shellcheck disable=SC2086 # the keys, one word each
+assert_eq "$(printf '%s\n' "$KEY" $CHECKOUT_KEYS | grep -c -E '^[0-9a-f]{64}$' | tr -d ' ')|$(printf '%s\n' "$KEY" $CHECKOUT_KEYS | sort -u | wc -l | tr -d ' ')" '9|9' 'premise: each checkout resolves to a key of its own'
+for checkout_key in $CHECKOUT_KEYS; do
+  [ "$checkout_key" = "$BUILDING_KEY" ] || built "$checkout_key"
+done
+# The lane host's clone is in no project list: its build record names it.
+built_from "$CLONE_KEY" "$CLONE"
+# A build of a key no checkout holds now, its dep-info naming a checkout that
+# has since moved to another key.
 UNUSED="$(hex a)"
 built "$UNUSED"
+built_from "$UNUSED" "$PLAIN/skills/agent-runtime/runtime"
 : >"$PB/$UNUSED.told-0-build-failed"
+# A finished build whose dep-info names no source proves no builder.
+UNRECORDED="$(hex 3)"
+built "$UNRECORDED"
+: >"$PB/$UNRECORDED/release/agent-runtime.d"
 FAILED="$(hex 1)"
 mkdir -p "$PB/$FAILED"
 printf 'build-failed\n' >"$PB/$FAILED.failed"
 : >"$PB/$FAILED.log"
+# A failed detached build that a setup without --detach is building again:
+# no claim, a .failed record, and a cargo naming the runtime's manifest.
+mkdir -p "$PB/$BUILDING_KEY"
+printf 'build-failed\n' >"$PB/$BUILDING_KEY.failed"
+bash -c 'exec -a "cargo build --release --locked --manifest-path $1/Cargo.toml" sleep 30' _ "$BUILDING" &
+cargo_pid=$!
+until_args "$cargo_pid" "cargo build --release --locked --manifest-path $BUILDING/Cargo.toml" ||
+  fail 'premise: the running cargo shows its manifest path'
 STALE="$(hex 2)"
 built "$STALE"
 ln -s '1 1200' "$PB/$STALE.lock"
@@ -317,13 +365,7 @@ built "$RUNNING"
 # leaves it.
 bash -c 'exec -a "$1" sleep 30' _ "$PC/bin/agent-runtime-$RUNNING" &
 runner=$!
-n=0
-until [[ "$(ps -p "$runner" -o args= 2>/dev/null || :)" == "$PC/bin/agent-runtime-$RUNNING"* ]]; do
-  n=$((n + 1))
-  [ "$n" -lt 100 ] || fail 'premise: the running program shows its path as argv[0]'
-  [ "$n" -lt 100 ] || break
-  sleep 0.1
-done
+until_args "$runner" "$PC/bin/agent-runtime-$RUNNING" || fail 'premise: the running program shows its path as argv[0]'
 # Installed from elsewhere on a host with no cargo: a binary, and only the
 # .log and .told-* its detached setup leaves under build/.
 FLEET="$(hex d)"
@@ -333,15 +375,19 @@ printf 'agent-runtime-setup: cargo-missing key=%s\n' "$FLEET" >"$PB/$FLEET.log"
 FLIGHT="$(hex e)"
 mkdir -p "$PB/$FLIGHT/release"
 
-run "$PC" "$SETUP"
+# A narrow COLUMNS, as a terminal or harness exports it, ends a cut ps line
+# well inside the running program's key.
+COLUMNS=40 run "$PC" "$SETUP"
 assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|" 'prune: the build passes with its one line and no diagnostic'
 expected_bin=""
-for k in "$KEY" "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY" "$LOCKED" "$RUNNING" "$FLEET"; do
-  expected_bin="$expected_bin
+for k in "$KEY" $CHECKOUT_KEYS "$UNRECORDED" "$LOCKED" "$RUNNING" "$FLEET"; do
+  [ "$k" = "$BUILDING_KEY" ] || expected_bin="$expected_bin
 agent-runtime-$k"
 done
-assert_eq "$(ls -A "$PC/bin" | sort)" "$(printf '%s\n' "$expected_bin" | sed '/^$/d' | sort)" 'prune: bin/ keeps the built, checkout, claimed, running and installed keys alone'
+assert_eq "$(ls -A "$PC/bin" | sort)" "$(printf '%s\n' "$expected_bin" | sed '/^$/d' | sort)" 'prune: bin/ keeps the built, checkout, unrecorded, claimed, running and installed keys alone'
 expected_build="$KEY
+$BUILDING_KEY
+$BUILDING_KEY.failed
 $FLIGHT
 $FLEET.log
 $FLEET.told-0123-cargo-missing
@@ -349,15 +395,17 @@ $LOCKED
 $LOCKED.log
 $LOCKED.lock
 $RUNNING
-$RUNNING.log"
-for k in "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY"; do
-  expected_build="$expected_build
+$RUNNING.log
+$UNRECORDED
+$UNRECORDED.log"
+for k in $CHECKOUT_KEYS; do
+  [ "$k" = "$BUILDING_KEY" ] || expected_build="$expected_build
 $k
 $k.log"
 done
-assert_eq "$(ls -A "$PB" | sort)" "$(printf '%s\n' "$expected_build" | sort)" 'prune: build/ loses the unused, failed and lost-claim keys whole, the build in flight kept'
-kill "$holder" "$runner" 2>/dev/null || :
-wait "$holder" "$runner" 2>/dev/null || :
+assert_eq "$(ls -A "$PB" | sort)" "$(printf '%s\n' "$expected_build" | sort)" 'prune: build/ loses the unused, failed and lost-claim keys whole, the builds in flight kept'
+kill "$holder" "$runner" "$cargo_pid" 2>/dev/null || :
+wait "$holder" "$runner" "$cargo_pid" 2>/dev/null || :
 
 # A project list that does not read proves nothing unused: nothing goes.
 PC="$TMP_ROOT/cache-prune-unread"
