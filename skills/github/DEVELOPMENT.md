@@ -1,40 +1,33 @@
 # github skill development
 
-Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SKILL.md](SKILL.md).
-
 ## Adding a command
 
 1. Create `scripts/commands/<command-name>.sh`, sourcing `../lib/github-api.sh` for auth, GraphQL, REST and error handling.
 2. Give it a `show_help()`.
 3. Add the command to the case statement in `scripts/github.sh` and to the Commands table in `SKILL.md`.
 
-Parse arguments with an explicit `while`/`shift` loop that rejects unknown flags and surplus positionals. Emit JSON with `jq -n`, never string interpolation: API error text routinely contains quotes. A `{error}` refusal on stderr goes through `github_error` in `scripts/lib/json-error.sh`, which `github-api.sh` sources; `tests/json-error.test.sh` drives each refusal that echoes a caller's argument, path or `GH_REPO` value with a double quote in it; `tests/edit-comment.test.sh` holds edit-comment's non-numeric id. A failed dependency exits nonzero rather than returning an empty result that reads as "none found".
-
-Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wall-clock bound. Token resolution and the keyring fallback are `scripts/lib/gh-auth.sh`, shared with `scripts/gh-auth-ladder`, which the orch runtime runs for its GitHub reads. Check-rollup run scoping and the required set are `scripts/lib/ci-run-correlation.sh`, sourced by `pr-merge`, `ci-classify-refusal`, `ci-rerun` and `pr-timeline`; orch's `approve-head` request, which runs the overseer's approvals, reads Copilot's check runs in the runtime. The process-group leader prefix every bounded child forks through is `scripts/lib/group-leader.sh`, shared with the second-opinion runtime, reviewer's `mutation-stability` and the orch runtime's attached validation run. All three skills require `github`. Jarvis and worktree declare `github` optional. Jarvis needs the helper for detached sessions without `setsid`. Worktree needs it for configured setup commands.
+- Parse arguments with an explicit `while`/`shift` loop that rejects unknown flags and surplus positionals.
+- Emit JSON with `jq -n`, never string interpolation: API error text routinely contains quotes.
+- Send a `{error}` refusal on stderr through `github_error` in `scripts/lib/json-error.sh`, which `github-api.sh` sources.
+- `tests/json-error.test.sh` drives each refusal that echoes a caller's argument, path or `GH_REPO` value with a double quote in it.
+- `tests/edit-comment.test.sh` holds edit-comment's non-numeric id.
+- Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wall-clock bound.
+- Token resolution and the keyring fallback are `scripts/lib/gh-auth.sh`, shared with `scripts/gh-auth-ladder`, which the orch runtime runs for its GitHub reads.
+- Check-rollup run scoping and the required set are `scripts/lib/ci-run-correlation.sh`, sourced by `pr-merge`, `ci-classify-refusal`, `ci-rerun` and `pr-timeline`. Orch's `approve-head` request, which runs the overseer's approvals, reads Copilot's check runs in the runtime.
+- The process-group leader prefix every bounded child forks through is `scripts/lib/group-leader.sh`. The second-opinion runtime, reviewer's `mutation-stability` and the orch runtime's attached validation run share it.
+- Second-opinion, reviewer and orch require `github`.
+- Jarvis and worktree declare `github` optional.
+- Jarvis needs `group-leader.sh` for detached sessions without `setsid`.
+- Worktree needs `group-leader.sh` for configured setup commands.
 
 ## Pull-request watcher
 
-`scripts/pr-watch.sh` stands outside the router: the orch runtime's watch and its lane close run it by path, and `OVERSEE_WATCH_PR_WATCH` names a replacement for both. It reads `PR_REVIEW_WAIT_SECS` through `scripts/lib/kendex-env.sh` in a subshell, so the project files set nothing else in the watcher. Its stdout lines are the protocol those callers parse; `pr-watch.sh --help` states it.
+- `scripts/pr-watch.sh` stands outside the router: the orch runtime's watch and its lane close run it by path, and `OVERSEE_WATCH_PR_WATCH` names a replacement for both.
+- It reads `PR_REVIEW_WAIT_SECS` through `scripts/lib/kendex-env.sh` in a subshell, so the project files set nothing else in the watcher.
+- Its stdout lines are the protocol those callers parse. `pr-watch.sh --help` states it.
 
 ## Tests
 
-`tests/` holds one self-contained suite per file; CI runs each as `bash <file>`. The watcher suites share `tests/lib/pr-watch-fixture.sh`, and `tests/pr-watch-process.test.sh` also sources orch's `tests/lib/process-count.sh`. `tests/corpus/` is the contract for the decline grammar in `scripts/commands/check-review-replies.sh`: a new label goes into a corpus file first, and the word list widens until `tests/check-review-replies-threads.test.sh` passes.
-
-## Declaration-site test scoping (`git-diff-summary`)
-
-A `.rs` file with no file-local test marker can still be test-only when its gate lives at the declaration site in the declaring module. Classification therefore reads the modules that could declare the file, on the diff's new side: `HEAD` for a `base...HEAD` diff, the index for `--staged`, the worktree for `--head`, tracked files only, so an untracked file never reclassifies a tracked change. Every `.rs` file in the candidate's own directory and its ancestor directories is scanned once, emitting candidate-agnostic declaration records that the per-candidate evaluator filters afterwards.
-
-The form read is a run of column-zero outer attributes followed by a column-zero `mod name;`, `pub`/`pub(...)` accepted, `#[path]` optional, `#[cfg(test)]` anywhere in the run:
-
-```rust
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-#[path = "scan_fixtures.rs"]
-mod scan_fixtures;
-```
-
-Any other line ends the run and drops the pending gate. Bare `mod name;` emits both legal forms (`name.rs` and `name/mod.rs`) and resolves in the declaring file's module directory: its own directory for `mod.rs`, `lib.rs` and `main.rs`, its directory plus its file stem otherwise. A `#[path]` value resolves in the containing file's directory, per the Rust reference. Targets are lexically normalized so equivalent spellings compare equal.
-
-The scan is line-based, with no comment or literal masking and no nesting state. Column-zero text that is not a top-level item is read as one anyway, so the pair written flush left inside a block comment, a raw string, a macro body or an inline `mod` block emits a record. A declaration the scan cannot see (an `include!`, one indented inside a body, one spelled across lines) emits nothing, so a file production-reachable only through one of those while also carrying a `#[cfg(test)]`-gated declaration classifies as test. This is review-flag hygiene, not an adversarial control.
-
-Verdict: a candidate whose every found declaration is `#[cfg(test)]`-gated is test scope. Any ungated declaration, none found, a `bin/` segment or `lib.rs`/`main.rs` crate root, or a read failure, including a symlinked declaring module whose blob is link text rather than source, keeps the file-local classification.
+- `tests/` holds one self-contained suite per file. CI runs each as `bash <file>`.
+- The watcher suites share `tests/lib/pr-watch-fixture.sh`. `tests/pr-watch-process.test.sh` also sources orch's `tests/lib/process-count.sh`.
+- `tests/corpus/` is the contract for the decline grammar in `scripts/commands/check-review-replies.sh`. A new label goes into a corpus file first, and the word list widens until `tests/check-review-replies-threads.test.sh` passes.

@@ -61,8 +61,8 @@ decl_of() {
     # An attribute binds to the next line only.
     stale-gate) printf '#[cfg(test)]\nfn helper() {}\n\nmod candidate;\n' ;;
     # The scan is line-based: a declaration written flush left inside a block
-    # comment is read as a real one. Documented in DEVELOPMENT.md and the
-    # git-diff-summary header; pinned here so the claim reds if it stops holding.
+    # comment is read as a real one. Documented in the git-diff-summary
+    # header; pinned here so the claim reds if it stops holding.
     commented-out) printf '/*\n#[cfg(test)]\nmod candidate;\n*/\n' ;;
     none) printf 'pub fn unrelated() -> u32 {\n    1\n}\n' ;;
     # The gate sits in an ancestor directory's module, reached through a
