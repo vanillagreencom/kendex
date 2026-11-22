@@ -377,12 +377,22 @@ format_initiative_single() {
     }'
 }
 
+# The attribution line `comments create` opens every body with, and the blank
+# line under it (commands/comments.sh comment_attribution). `unattributed` is
+# the body without them: the body its caller posted. The writer drops a
+# caller's own copy of the line with it, so the one line a body opens with is
+# the writer's reading; the safe comment shape reads the body with it, so a
+# reader that finds its own comment by its opening text or bytes still finds it.
+readonly COMMENT_ATTRIBUTION_JQ='
+def unattributed: sub("\\A> Posted by Agent: [^\\n]*, Model: [^\\n]*, Effort: [^\\n]*\\n\\n"; "");
+'
+
 # One comment's safe shape. `comments list` and `comments bulk-list` both emit
 # it, so the two cannot drift apart.
-readonly COMMENT_SAFE_JQ='
+readonly COMMENT_SAFE_JQ="$COMMENT_ATTRIBUTION_JQ"'
 def comment_safe: {
     id: .id,
-    body: (.body // ""),
+    body: ((.body // "") | unattributed),
     user: (.user.name // ""),
     user_email: (.user.email // ""),
     user_id: (.user.id // ""),

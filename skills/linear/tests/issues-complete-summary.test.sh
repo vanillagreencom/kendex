@@ -109,8 +109,8 @@ out="$(run_complete ok "$inline_payload" CC-720 --summary "Shipped it" 2>"$TMP_R
 assert "complete --summary reports the summary as posted" \
   jq -e '.success == true and .summary_posted == true' >/dev/null <<<"$out"
 inline_body="$(jq -s -r '[.[] | select(.query | contains("commentCreate"))][0].variables.input.body' "$inline_payload")"
-assert_eq "an inline summary is prefixed with the canonical heading" \
-  "$inline_body" "## Completion Summary"$'\n\n'"Shipped it"
+assert_eq "an inline summary is prefixed with the canonical heading, under the attribution line" \
+  "$inline_body" "> Posted by Agent: unknown, Model: unknown, Effort: unknown"$'\n\n'"## Completion Summary"$'\n\n'"Shipped it"
 
 # --- a failed comment post leaves the issue state unchanged
 fail_payload="$TMP_ROOT/fail-payloads.jsonl"

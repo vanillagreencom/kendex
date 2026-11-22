@@ -127,7 +127,7 @@ assert_log "the PUT carries the returned headers plus Content-Type" \
     and (.put.headers | index("Content-Type: image/png")))'
 assert_log "the image embed lands in the comment body after the --body text" \
   'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "Note\n\n![shot.png](https://uploads.linear.app/asset/shot.png)\n")'
+    and .variables.input.body == "> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\nNote\n\n![shot.png](https://uploads.linear.app/asset/shot.png)\n")'
 
 echo "=== non-image attach appends a markdown link, never attachmentCreate ==="
 
@@ -135,7 +135,7 @@ run_linear comments create TEAM-1 --body "Report" --attach "$TMP_ROOT/notes.pdf"
 assert_eq "a pdf attach comment exits zero" "$RC" 0
 assert_log "a non-image attach appends a markdown link to the body" \
   'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "Report\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")'
+    and .variables.input.body == "> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\nReport\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")'
 assert_not_log "comments never call attachmentCreate" \
   'any(.[]; .query? // "" | contains("attachmentCreate"))'
 
@@ -145,7 +145,7 @@ run_linear comments create TEAM-1 --attach "$TMP_ROOT/shot.png"
 assert_eq "an attach-only comment exits zero" "$RC" 0
 assert_log "an attach-only comment body is the bare embed" \
   'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "![shot.png](https://uploads.linear.app/asset/shot.png)\n")'
+    and .variables.input.body == "> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\n![shot.png](https://uploads.linear.app/asset/shot.png)\n")'
 
 echo "=== --attach composes with --body-file ==="
 
@@ -153,7 +153,7 @@ run_linear comments create TEAM-1 --body-file "$TMP_ROOT/body.md" --attach "$TMP
 assert_eq "a --body-file plus --attach comment exits zero" "$RC" 0
 assert_log "the link appends to the --body-file content" \
   'any(.[]; (.query? // "" | contains("commentCreate"))
-    and .variables.input.body == "Body from file.\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")'
+    and .variables.input.body == "> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\nBody from file.\n\n[notes.pdf](https://uploads.linear.app/asset/notes.pdf)\n")'
 
 echo "=== missing file refuses before any API call ==="
 

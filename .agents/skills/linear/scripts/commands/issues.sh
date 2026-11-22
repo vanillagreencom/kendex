@@ -3389,22 +3389,8 @@ block_issue() {
     local comment_body="BLOCKED: Waiting for $blocker."
     [ -n "$reason" ] && comment_body="BLOCKED: Waiting for $blocker. $reason"
 
-    local comment_mutation='
-    mutation CreateComment($input: CommentCreateInput!) {
-        commentCreate(input: $input) {
-            success
-            comment { id }
-        }
-    }'
-
-    local escaped_body
-    escaped_body=$(echo "$comment_body" | jq -Rs '.')
-    local comment_input="{\"issueId\": \"$issue_id\", \"body\": $escaped_body}"
-
     # Comment is secondary - don't fail the whole operation if it fails
-    set +e
-    graphql_query "$comment_mutation" "{\"input\": $comment_input}" >/dev/null 2>&1
-    set -e
+    "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$comment_body" >/dev/null 2>&1 || true
 
     # Return combined result
     local identifier
@@ -3444,22 +3430,8 @@ unblock_issue() {
     # Post unblocked comment
     local comment_body="Unblocked. Resuming work."
 
-    local comment_mutation='
-    mutation CreateComment($input: CommentCreateInput!) {
-        commentCreate(input: $input) {
-            success
-            comment { id }
-        }
-    }'
-
-    local escaped_body
-    escaped_body=$(echo "$comment_body" | jq -Rs '.')
-    local comment_input="{\"issueId\": \"$issue_id\", \"body\": $escaped_body}"
-
     # Comment is secondary - don't fail the whole operation if it fails
-    set +e
-    graphql_query "$comment_mutation" "{\"input\": $comment_input}" >/dev/null 2>&1
-    set -e
+    "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$comment_body" >/dev/null 2>&1 || true
 
     # Return combined result
     local identifier
