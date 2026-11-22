@@ -280,7 +280,7 @@ The two files:
 2. Apply [publish-artifacts.md](publish-artifacts.md) to both files and the research/spec inputs.
    - With an origin issue:
      1. Reconcile and publish both files there.
-     2. Upload a research/spec input only when its `context.research_source_issue` was null. Otherwise link the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on its source issue.
+     2. Upload a research/spec input only when its `context.research_source_issue` was null. Otherwise link the `url` that [linear patterns/workflow-actions.md § Resolve a cited artifact](../../linear/patterns/workflow-actions.md#resolve-a-cited-artifact) selects for its path on its source issue.
      3. Only after success, append `--source-issue [ORIGIN_ISSUE.id]`.
    - Without one, carry the repository files and command into roadmap-create, whose § 5 publishes them.
 3. Return `CREATE_COMMAND` unchanged in the report and to the managed caller.

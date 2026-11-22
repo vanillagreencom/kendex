@@ -250,7 +250,7 @@ This section is the run's one publisher under [publish-artifacts.md](publish-art
 
 - The plan's source issue is the one [planning-artifacts.md](../references/planning-artifacts.md) selects.
 - An invocation `--source-issue` already holds the plan markdown and its JSON from roadmap-plan § 6. Any other source issue receives both now.
-- A research/spec input whose `context.research_source_issue` is set already sits on that issue and is uploaded nowhere. Its link takes the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on `[RESEARCH_SOURCE_ISSUE]`.
+- A research/spec input whose `context.research_source_issue` is set already sits on that issue and is uploaded nowhere. Its link takes the `url` that [linear patterns/workflow-actions.md § Resolve a cited artifact](../../linear/patterns/workflow-actions.md#resolve-a-cited-artifact) selects for its path on `[RESEARCH_SOURCE_ISSUE]`.
 - An input with a null `context.research_source_issue`, an inline or local-only file, is uploaded to the plan's source issue with the plan:
   1. Set the field to that source issue.
   2. Rewrite the plan JSON before attaching it, as [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) requires.

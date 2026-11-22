@@ -48,7 +48,7 @@ For Linear:
 - A project taxonomy states which labels are shared and which belong to its team. Prose using this existing `team` representation is sufficient.
 - The CLI's `--labels` resolves names. If the item's team and workspace labels contain multiple labels with the same name, stop before mutation and report their IDs and scopes.
 - Ignore same-name labels from other teams.
-- Definition changes follow [Linear shared label maintenance](../../linear/SKILL.md#shared-label-maintenance).
+- Definition changes follow [Linear shared label maintenance](../../linear/patterns/workflow-actions.md#shared-label-maintenance).
 
 ## Project Taxonomy Contract
 
