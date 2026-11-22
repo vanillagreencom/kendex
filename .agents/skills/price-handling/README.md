@@ -7,7 +7,8 @@ Price-handling patterns for agents working on trading software. The skill covers
 - Choose a price representation for the application.
 - Compare prices with a tolerance.
 - Round and format prices using symbol metadata.
-- Normalize incoming feed values and wrap prices in dedicated types.
+- Normalize incoming feed values.
+- Wrap prices in dedicated types.
 
 ## Install
 

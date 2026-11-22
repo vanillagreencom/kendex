@@ -20,22 +20,30 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Price Handling Patterns
 
-## The price type is `f64`
+## Price type
 
-IEEE 754 double precision. No fixed-point, no decimal types.
+Store prices as `f64`. Use no fixed-point or decimal type.
 
-Use `i64` fixed-point **only** for a matching engine (bit-exact required), a regulatory audit trail mandating reproducibility, or a settlement system with legal precision requirements. Hybrid: `i64` on the execution hot path, `f64` for display and analytics.
+Use `i64` fixed-point **only** for:
 
-## Never `==` on prices
+- a matching engine, where results must be bit-exact;
+- a regulatory audit trail that mandates reproducibility;
+- a settlement system with legal precision requirements.
 
-Each comparison domain takes its own rule. An absolute tolerance collapses every tick finer than itself, so no single epsilon serves all prices.
+A hybrid uses `i64` on the execution hot path and `f64` for display and analytics.
+
+## Comparing prices
+
+Never compare prices with `==`. Compare them by the rule of their domain.
 
 | Domain | Comparison |
 |---|---|
-| Executable prices: limits, order prices, fills | `prices_equal`: at most four representable doubles (ULPs) apart, no absolute tolerance |
-| Tick alignment | `tick_index`: the nearest tick count, admitting representation noise capped at a quarter tick |
-| Derived summaries: a broker's average or last-fill price | `derived_equal`, with a relative tolerance the project chooses |
+| Executable prices: limits, order prices, fills | `prices_equal` |
+| Tick alignment | `tick_index` |
+| Derived summaries: a broker's average or last-fill price | `derived_equal` |
 | Raw depth ordering | strict `<` and `>` on the feed values |
+
+Executable prices take no absolute tolerance.
 
 ```rust
 /// Representable doubles (ULPs) an executable price may drift from its value.
@@ -72,14 +80,16 @@ pub fn derived_equal(a: f64, b: f64, rel_tol: f64) -> bool {
 }
 ```
 
-## Round only at the boundaries
+## Rounding
+
+Round a price only at these boundaries.
 
 | Boundary | Rounding |
 |---|---|
-| Order submission (OrderRequest → broker API) | Round to tick, then validate alignment |
-| Display formatting | Round to the symbol's `display_decimals` |
-| Market data ingestion (ticks, bars, quotes) | **Never**. Preserve full feed precision |
-| P&L calculation | **Never**. Use raw values |
+| Order submission (OrderRequest → broker API) | To tick |
+| Display formatting | To the symbol's `display_decimals` |
+| Market data ingestion (ticks, bars, quotes) | **Never** |
+| P&L calculation | **Never** |
 
 ```rust
 pub fn round_to_tick(price: f64, tick_size: f64) -> f64 {
@@ -111,9 +121,15 @@ pub fn validate_tick_alignment(price: f64, tick_size: f64) -> bool {
 }
 ```
 
-Prices that `tick_index` accepts on two different ticks never compare equal: it refuses a grid whose neighbouring ticks lie twelve or fewer representable doubles apart, three times the four-ULP allowance. Real grids clear that floor by far: BTC at 1e5 with a 1e-8 tick has 687 doubles between ticks. `PRICE_ULPS` and the quarter-tick cap are defaults a project with a measured need can change, and the floor follows `PRICE_ULPS`; the relative tolerance is the project's own constant.
+`PRICE_ULPS` and the quarter-tick cap are defaults a project with a measured need can change.
 
-Order submission order: round to tick, validate alignment (on failure return an error, never re-round), then format for the broker API if it takes a string.
+Submit an order in this order:
+
+1. Round the price to tick.
+2. Validate its alignment.
+   - On failure, return an error.
+   - Never re-round.
+3. If the broker API takes a string, format the price for it.
 
 Format with the symbol's precision, never hardcoded decimals (EURUSD 5, AAPL 2, BTC 8):
 
@@ -121,9 +137,9 @@ Format with the symbol's precision, never hardcoded decimals (EURUSD 5, AAPL 2, 
 format!("{:.1$}", price, symbol.display_decimals as usize)
 ```
 
-## Symbol metadata owns precision
+## Symbol metadata
 
-Tick size and display precision belong to the symbol, not to the price value. A `Price { value, decimals }` struct is the wrong shape.
+Tick size and display precision belong to the symbol, not to the price value. Never build a `Price { value, decimals }` struct.
 
 ```rust
 #[derive(Clone, Copy)]
@@ -145,15 +161,27 @@ impl SymbolSpec {
 }
 ```
 
-The symbol table loads at subscription setup (cold path), is keyed by symbol ID, and re-syncs on reconnect or symbol list change.
+For the symbol table:
+
+- Load it at subscription setup, on the cold path.
+- Key it by symbol ID.
+- Re-sync it on reconnect and when the symbol list changes.
 
 ## Price newtype
 
-Optional: wrap `f64` in a `#[repr(transparent)]` newtype with **no `PartialEq`**; equality goes through `prices_equal`. Constructor `debug_assert!`s `is_finite()`. Use for order types; skip on the market-data hot path.
+A price newtype is optional. Where you use one:
 
-## Normalize feeds to `f64` at ingest
+- Wrap `f64` in a `#[repr(transparent)]` newtype.
+- Give it **no `PartialEq`**.
+- Compare through `prices_equal`.
+- Have its constructor `debug_assert!` that the value `is_finite()`.
+- Use it for order types.
+- Skip it on the market-data hot path.
 
-Convert at the entry boundary; downstream code sees plain `f64` regardless of feed source.
+## Feed ingestion
+
+- Convert each feed value to `f64` where it enters.
+- Pass downstream code plain `f64`, whatever the feed source.
 
 ```rust
 // doubles (IB, dxFeed, Rithmic): pass through
