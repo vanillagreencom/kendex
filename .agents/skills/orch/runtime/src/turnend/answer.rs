@@ -361,6 +361,17 @@ pub enum Said {
         mark: u32,
         instruction: String,
     },
+    /// The lane's account counted at its headroom mark on a refused usage
+    /// read: the last figure's headroom, its bucket, its age in seconds
+    /// where the record states one, and the mark. Keyed `headroom` too, as
+    /// the same mark's hold.
+    HeadroomRefused {
+        last: String,
+        bucket: String,
+        age: Option<u64>,
+        mark: u32,
+        instruction: String,
+    },
     /// A session already told at a handoff mark ends a turn without its
     /// handoff record: the key of the line it was told under.
     HandoffStopped(String),
@@ -545,6 +556,19 @@ impl Said {
             } => (
                 "headroom",
                 format!("{headroom} bucket={bucket} mark={mark}"),
+            ),
+            Said::HeadroomRefused {
+                last,
+                bucket,
+                age,
+                mark,
+                ..
+            } => (
+                "headroom",
+                format!(
+                    "refused last={last} bucket={bucket} age={} mark={mark}",
+                    age.map_or_else(|| "unknown".to_owned(), |age| age.to_string())
+                ),
             ),
             Said::HandoffStopped(told) => ("handoff-stopped", told.clone()),
             Said::LaneStopped { item, .. } => ("lane-stopped", item.clone()),
@@ -904,6 +928,19 @@ impl Said {
                 instruction,
             } => format!(
                 "The binding bucket {bucket} has {headroom} percent headroom left. This is at or below the ORCH_HANDOFF_HEADROOM_PCT mark of {mark}. No handoff record stands. Hand this lane off at the next safe point before the account reaches its limit.\n{instruction}"
+            ),
+            Said::HeadroomRefused {
+                last,
+                bucket,
+                age,
+                mark,
+                instruction,
+            } => format!(
+                "The provider refused this account's usage read with HTTP 429. Its last figure, {last} percent headroom on the binding bucket {bucket}, {}, is not the account now. A refused read counts as at the ORCH_HANDOFF_HEADROOM_PCT mark of {mark}, whatever that figure says. No handoff record stands. Hand this lane off at the next safe point before the account reaches its limit.\n{instruction}",
+                age.map_or_else(
+                    || "of unknown age".to_owned(),
+                    |age| format!("taken {age} seconds ago")
+                )
             ),
             Said::HandoffStopped(_) => "this session was already told to write its handoff record at a mark this turn end still meets, and ended this turn without it. The hook holds no further turn end of this session at a handoff mark, so a session that does not hand off spends no forced turns: the turn ends and the session stays stopped. A lane's overseer is sent that fact as a notice from the lane. The line this turn end met follows:".to_owned(),
             Said::LaneStopped { told, .. } => format!(
