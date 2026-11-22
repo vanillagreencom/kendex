@@ -62,7 +62,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## Setup
 
-1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` in the `[env]` table of `kendex.settings.toml` at the repository root. It has no default. `check` reports the value. `adopt` and setup refuse while it is empty. No other command reads it.
+1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` in the `[env]` table of `kendex.settings.toml` at the repository root. It has no default. `check` reports the value. `adopt` and setup refuse while it is empty. `adopt`, `render`, `check` and setup refuse any value other than `hosted`, `local` or empty.
 2. Choose `GITHUB_STANDARD_BOT_REVIEW`: `off`, the default, selects the library's local output, and `on` selects its full output and the bots the manifest enables.
 3. Use Set up on this package's desktop page, or run the `kendex add` or `kendex apply` that installs this package with `--allow-repo-effects`, with kendex 1.23.0 or later.
 
