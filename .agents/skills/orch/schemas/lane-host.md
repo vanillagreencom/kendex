@@ -296,7 +296,7 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 
 `scripts/lane-host-ssh` binds each item to one SSH target and clone from a JSON inventory. `lane-host-ssh --help` is its contract: the inventory, the account files, the host preparation, and what each verb does. It lacks `wait`, `capture`, `send`, `viewer-prefix`, `stop-sandbox`, `start` and `accounts`, so a park on it refuses.
 
-- `create` runs the clone's orch and agent-runtime setups right after it brings an existing clone up to date, on a create, a reuse and a relaunch alike. No runtime call in those paths comes before the setup for the tree it runs in.
+- Every verb that brings the clone up to date runs the clone's orch and agent-runtime setups right after that update: `create` on a create, a reuse and a relaunch alike, and `close` after it refreshes the clone. No runtime call after an update comes before the setup for the tree it runs in.
 - A host with no Rust toolchain holds the orch runtime and agent-runtime binaries in the setup cache (`AGENT_RUNTIME_CACHE`).
 - `close` exits `3` on changes it cannot save as render drift. Check and preserve needed files before asking it to close.
 
