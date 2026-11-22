@@ -55,7 +55,7 @@ Run when a pull request changes a screen.
 
 1. Capture every changed screen at the configured sizes.
 2. Compare each capture with the base. On `pair-ready`, read `references/pair-record.md` for the event meaning and conditional remedies.
-3. Prepare the approval packet from that reference and request the owner's approval for the current revision.
+3. Prepare the approval packet from that reference. Request the owner's approval for the current revision.
 4. Attach only the approved images for that revision.
 ```
 

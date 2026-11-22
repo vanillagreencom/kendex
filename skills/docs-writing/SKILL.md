@@ -26,7 +26,7 @@ Do not hand-copy code-owned inventories or defaults.
 ## The standard
 
 - Write short sentences. Put one idea in each sentence. A condition and its exception are one idea, and so are a field and its grammar.
-- Give each instruction of a step its own sentence or list item, in the order the reader follows them.
+- Give each instruction its own sentence or list item, in the order the reader follows them.
 - A table cell holds one fact. A rule with conditions moves out of its cell into a list under the table.
 - State a condition in full: "If the read fails, stop", not "Read fails: stop".
 - Use active voice. Name the actor. Say what the code does, not what is done.
@@ -59,12 +59,18 @@ This is the default layout for a repository with no established structure. A rep
 | `CHANGELOG.md`, `changelog.d/` | a person reading a release | release notes | released packages |
 | `<dir>/AGENTS.md` | an agent working in that folder | the folder's commands, rules every agent there needs that no linked principle doc owns, and task triggers for the principle docs that govern it | where a folder has its own rules |
 | `docs/architecture/<name>.md` | an agent about to do the work the doc governs | one principle: the approach, why, the rules, one code example | where a principle exists |
-| `docs/decisions/INDEX.md` and `<DECISION_ID>-<slug>.md` (names and locations follow decider) | a reviewer or agent about to reverse a choice | decision records: the choice, why, the rejected option, when to revisit | where such choices exist |
+| `docs/decisions/INDEX.md` and `<DECISION_ID>-<slug>.md` | a reviewer or agent about to reverse a choice | decision records: the choice, why, the rejected option, when to revisit | where such choices exist |
 | `docs/images/` | a reader of a README or doc | the screenshots and images those files show | when used |
 | `docs/runbook.md` | an operator | step-by-step procedures for a running system | operated systems |
-| `.github/copilot-instructions.md` | Copilot features that support repository instructions, including code review | repository instructions and the review pointer; bot-instructions owns the render | yes, written by kendex |
-| `.github/instructions/*.instructions.md` | Copilot features that support matching path instructions | path rules; bot-instructions owns the render and cloud-agent exclusion | yes, written by kendex |
-| `.github/instructions/code-review.md` | review agents following the generated pointer | shared review doctrine; bot-instructions owns the render, not a native Copilot instruction file | yes, written by kendex |
+| `.github/copilot-instructions.md` | Copilot features that support repository instructions, including code review | repository instructions and the review pointer | yes |
+| `.github/instructions/*.instructions.md` | Copilot features that support matching path instructions | path rules | yes |
+| `.github/instructions/code-review.md` | review agents following the generated pointer | shared review doctrine | yes |
+
+- Decision record names and locations follow decider.
+- The bot-instructions skill owns the render of the three `.github` files.
+- kendex writes the three `.github` files.
+- The bot-instructions skill also owns the cloud-agent exclusion of the `.github/instructions/*.instructions.md` files.
+- `.github/instructions/code-review.md` is not a native Copilot instruction file.
 
 Nothing else lives under `docs/`. A software implementation plan, research report, measurement or handoff is tracker or `tmp/` content (§ Plans and research). An assistant home's policy, memory and session records keep their owning locations and reading routes. When writing or rewriting those records, read [references/assistant-home.md](references/assistant-home.md). Product content a repository ships to its users, such as a help site, legal pages or an adapter reference, stays. That repository's `AGENTS.md` names it. A skill's reference docs stay in its `references/`.
 
@@ -84,7 +90,12 @@ Each finished example under [examples/](examples/) ends with a contrast drawn fr
 
 A passage stays in a file only if a reader of that file needs it for their task. A file's readers are the ones its type's section names, where § Per file type has one. A file with two readers, such as a `DEVELOPMENT.md` or a runbook, keeps a passage that either reader needs. For an agent, a rule is needed only when the mistake it prevents is real and costly, and nothing else already prevents it: a command that refuses the wrong input, a rule the same agent already loads, a step of the workflow it runs, or ordinary competence. Move a passage that a reader of another file needs to that file under § Layout. Delete the rest. A licence or notice file keeps the text its licence requires.
 
-Before writing a file, find its type in this table. Then read its section and its example. The first row whose path matches wins. `*` matches across `/`. Shape names the structural rules that apply to the type: `order` is the numbered section order, and `value-table` is the rule against a value table. The commit-guards `md-type` lane checks them.
+Before writing a file:
+
+- Find its type in this table.
+- Then read its section and its example.
+
+The first row whose path matches wins. `*` matches across `/`. Shape names the structural rules that apply to the type: `order` is the numbered section order, and `value-table` is the rule against a value table. The commit-guards `md-type` lane checks them.
 
 | Path | Section | Example | Shape |
 |---|---|---|---|
