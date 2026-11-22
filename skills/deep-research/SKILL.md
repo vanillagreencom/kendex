@@ -18,17 +18,21 @@ tags: [research]
 
 # Deep Research
 
-In Pi with the `web_research` tool active, use that tool, passing `outputPath` when creating a report. In every other harness, run `scripts/deep-research` with `EXA_API_KEY` set.
+- In Pi with the `web_research` tool active, use that tool. Pass `outputPath` when creating a report.
+- In every other harness, run `scripts/deep-research` with `EXA_API_KEY` set.
 
 ## Rules
 
 - Exa is the research source. Substitute a general web search only when Exa is unavailable and the user approves the fallback.
-- Write `findings.md` to the path the caller requested, exactly. Given no path, write it to `tmp/plans/<slug>-research.md`, never under a tracked `docs/` path; the full rule is `agents/planner.md` § Plan Artifacts. The report reaches other sessions as an attachment on its tracker issue.
+- Write `findings.md` to the path the caller requested, exactly.
+- Given no path, write it to `tmp/plans/<slug>-research.md`, never under a tracked `docs/` path. The full rule is `agents/planner.md` § Plan Artifacts.
+- The report reaches other sessions as an attachment on its tracker issue.
 - Research on building against another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
-- Cite sources for material claims. Provider payloads go in the sidecar JSON (`findings.raw.json` beside the report by default), never inline. Sanitize evidence excerpts: source-page headings must not render as headings.
-- Once the report and its sidecar exist, run `validate` and stop. No local reproduction, benchmarks, tests, code inspection, or implementation unless the caller asked for it.
-- A missing `EXA_API_KEY` fails with setup instructions. Set it on this package's Customize tab in the kendex app, or by hand in the project's private env file — `.env.local` unless `KENDEX_ENV_FILE` names another. The value may be a key or a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
-- Every mode uses the same findings sections. Record mode and source counts in `## Research Metadata`.
+- Cite sources for material claims.
+- Provider payloads go in the sidecar JSON (`findings.raw.json` beside the report by default), never inline.
+- Sanitize evidence excerpts: source-page headings must not render as headings.
+- Once the report and its sidecar exist, run `validate` and stop.
+- Do no local reproduction, benchmarks, tests, code inspection or implementation unless the caller asked for it.
 
 ## Running
 
@@ -40,13 +44,16 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 .agents/skills/deep-research/scripts/deep-research doctor
 ```
 
-`deep-research help` lists the flags and mode settings. Their declarations and accepted limits live in `scripts/deep-research`: `modeDefaults`, `parseArgs` and `applyMode`.
+`deep-research help` lists the flags and mode settings.
 
-Use `lite` for an evidence brief. `standard` and `full` request synthesized findings. Use `full` when the research needs a separate request for each additional query. The flags can override a mode's settings.
+- Use `lite` for an evidence brief.
+- `standard` and `full` request synthesized findings.
+- Use `full` when the research needs a separate request for each additional query.
 
-`--additional-query` (repeatable) reaches Exa as `additionalQueries` within the single request under `lite` and `standard`, and as one request per query with URLs deduped across responses under `full`.
+`--include-domain` is a hard host filter, not a quality filter: `--include-domain github.com` admits every repo on it and excludes everything else.
 
-`--include-domain` is a hard host filter, not a quality filter: `--include-domain github.com` admits every repo on it and excludes everything else. Name authoritative projects and organizations in the query text for quality; audit the returned source list either way.
+- Name authoritative projects and organizations in the query text for quality.
+- Audit the returned source list either way.
 
 ## Validation
 
@@ -54,15 +61,15 @@ Use `lite` for an evidence brief. `standard` and `full` request synthesized find
 .agents/skills/deep-research/scripts/deep-research validate path/to/findings.md path/to/findings.raw.json
 ```
 
-Prints `{ok, errors, warnings, mode, synthesis, queryCount}`; exits 0 when there are no errors. Checks structure only: required sections present, sidecar parses, query-expansion metadata self-consistent, synthesized answer present for modes that requested one.
+`validate` checks structure only. Read the report yourself:
 
-Read for these yourself:
-
-- Claims the cited sources contradict. Spot-check material numbers against the sidecar source text.
-- Off-topic sources that share an acronym or name with the subject.
-- Recommendations with no claim-level support in Evidence and Sources.
-- Results generalized past what the source established.
+- Find claims the cited sources contradict.
+- Spot-check material numbers against the sidecar source text.
+- Find off-topic sources that share an acronym or name with the subject.
+- Find recommendations with no claim-level support in Evidence and Sources.
+- Find results generalized past what the source established.
 
 ## Findings format
 
-`templates/findings.md` carries exactly the sections `validate` requires, in order. `Key Findings` holds distinct claims, not a restatement of the summary.
+- `templates/findings.md` carries exactly the sections `validate` requires, in order.
+- `Key Findings` holds distinct claims, not a restatement of the summary.

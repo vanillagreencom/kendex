@@ -21,10 +21,13 @@ You give the CLI a question and a research mode. It sends the request to Exa. It
 
 ## Setup
 
-Requires Node 18 or newer and `EXA_API_KEY`. Set the key in the kendex app, on this package's Customize tab: it goes to the project's private env file, which is `.env.local` unless `KENDEX_ENV_FILE` names another. Setting it by hand in that file works too. Use `scripts/deep-research doctor` to check the setup.
+Requires Node 18 or newer and `EXA_API_KEY`, the only setting.
 
-- `EXA_API_KEY`: the only setting; it lives in the project's private env file, not in committed configuration.
-- Domain, date, result-count and context flags are per call, listed by `scripts/deep-research help`.
+- Set the key in the kendex app, on this package's Customize tab. The app writes it to the project's private env file: `.env.local`, unless `KENDEX_ENV_FILE` names another.
+- Or set the key by hand in that file. Keep it out of committed configuration.
+- Check the setup with `scripts/deep-research doctor`.
+
+Domain, date, result-count and context flags are per call. `scripts/deep-research help` lists them.
 
 ## Licence
 
