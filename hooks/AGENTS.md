@@ -2,19 +2,48 @@
 
 Catalog hooks, one bash script per hook, each with its suite under `tests/<name>.test.sh`.
 
-- A hook opens with a commented frontmatter block between `# ---` lines: `name`, `event` (a name from `crates/core/src/hook.rs::EVENTS`), `matcher`, `description`, `summary`, `safety`, `timeout` (seconds), an optional `harnesses: [..]` restricting delivery (Antigravity is reached only when named there, because its payload is `toolCall.args`, not `tool_input`) and an optional `requires: [..]` naming companion hooks, `requires-on: [..]` restricting those hook requirements to named harnesses, and `requires-skills: [..]` naming skills this hook needs in the same scope; `crates/core/src/hook.rs::parse_hook` reads it.
-- A hook names under `requires` each companion it runs beside itself, and under `requires-skills` each skill it needs, from its catalog in the same scope; `crates/core/src/engine/deps.rs` installs both through the dependency walk. Without `requires-on`, a companion is required on every harness the requiring hook runs on; the companion's `harnesses` line narrows that. A required dependency kept removed or switched off withholds the hook on the tools that need it, with a finding naming both. An applicable companion that cannot be delivered also withholds it. Cross-catalog ownership, kept records and orphan removal follow [engine.md](../docs/architecture/engine.md).
-- A companion added to a `requires:` line needs its `harnesses` pin in `kendex-local.toml` to list every harness both hooks run on: a narrower pin withholds the requiring hook on the rest and fails `cargo test -p kendex-core --lib own_inventory` on stale renders.
-- A `harnesses:` line spells each harness by its `HarnessId::name` id. For each harness it leaves out or that never fires the hook's event, `description` carries one sentence `Not run on <id>: <reason>.` naming the payload field or event that harness lacks. A harness the hook runs on where a fallback does its job (the orch runtime's watch reading a Codex or Copilot pane for `session-end-row`'s row) takes `On <id>: <reason>.` instead, naming the fallback. `crates/core/src/package/support.rs` reads both forms through `hook.rs::stated_reason` into the supported-tools row of `kendex show`, `kendex index --json` and the desktop package pages; `crates/core/tests/hooks_readme.rs`, by the row's reach, refuses a missing or wrong-form sentence and a reached harness withholding a `requires` companion.
-- `description` is the constraint, for the agent. `summary` is one or two plain sentences for the person browsing: what the hook stops and what it costs them. It is what a catalog row, a Library row and the package page show, and a hook that writes none is shown its `description` instead. Both are one line — the header is read line by line, not as YAML.
-- Exit 0 allows; exit 2 refuses with the reason on stderr. An unreadable payload refuses unless the hook declares an advisory reader. On Copilot a turn-end refusal is `decision: block` on stdout at exit 0 (`skills/orch/runtime/src/turnend/answer.rs::refusal`); its `agentStop` also fires at a custom subagent's end, under the subagent's own session and the lead's transcript (Copilot CLI 1.0.91; its hooks reference names the main agent alone), so a turn-end hook that must not judge a subagent's end leaves `copilot` off `harnesses:`.
-- A refusal the caller cannot clear is a trap, not a guard. Where the remedy would name a command the install does not carry, or a fact outside the caller's reach, report the gap under its own key and exit 0; a gap the session must act on reaches it as context (`orch-runtime turn-end`'s hand-over), never on stderr alone, which Claude Code keeps from the model. Exit 2 is for a condition the refusal's own text tells the caller how to end. A hook that holds every turn end on something nothing the caller does will lift stops the session from ever ending.
-- A hook here is guard code for finding disposition, its turn-end refusals and the marks it reports included: a mark passed with no keyed line is a fail-open defect, never an excluded class.
-- A refusal states what it refused, why, and the preferred remedy first, before any exemption path; its wording follows [OUTPUT.md](../crates/cli/OUTPUT.md#person-facing-copy).
-- The first line of a refusal or a notice is `<hook-name>: <key>=<value>`; the rule it follows is [`../skills/code-quality/SKILL.md`](../skills/code-quality/SKILL.md). Nothing precedes it: where a command the hook runs writes its own words, capture them at the site and hand them to the message function, which prints the keyed line, then the English, then that cause. A suite asserts the keyed line at position 1 and the cause below it.
+- A hook opens with a commented frontmatter block between `# ---` lines. `crates/core/src/hook.rs::parse_hook` reads it. Its keys:
+  - `name`, `event` (a name from `crates/core/src/hook.rs::EVENTS`), `matcher`, `description`, `summary`, `safety` and `timeout` (seconds).
+  - An optional `harnesses: [..]` restricting delivery. Antigravity is reached only when named there, because its payload is `toolCall.args`, not `tool_input`.
+  - An optional `requires: [..]` naming companion hooks, and `requires-on: [..]` restricting those hook requirements to named harnesses.
+  - An optional `requires-skills: [..]` naming skills this hook needs in the same scope.
+- A hook names under `requires` each companion it runs beside itself, and under `requires-skills` each skill it needs, from its catalog in the same scope. `crates/core/src/engine/deps.rs` installs both through the dependency walk.
+  - Without `requires-on`, a companion is required on every harness the requiring hook runs on. The companion's `harnesses` line narrows that.
+  - A required dependency kept removed or switched off withholds the hook on the tools that need it, with a finding naming both.
+  - An applicable companion that cannot be delivered also withholds it.
+  - Cross-catalog ownership, kept records and orphan removal follow [engine.md](../docs/architecture/engine.md).
+- A companion added to a `requires:` line needs its `harnesses` pin in `kendex-local.toml` to list every harness both hooks run on. A narrower pin withholds the requiring hook on the rest, and fails `cargo test -p kendex-core --lib own_inventory` on stale renders.
+- A `harnesses:` line spells each harness by its `HarnessId::name` id.
+  - For each harness it leaves out, or that never fires the hook's event, `description` carries one sentence `Not run on <id>: <reason>.` naming the payload field or event that harness lacks.
+  - A harness the hook runs on where a fallback does its job takes `On <id>: <reason>.` instead, naming the fallback (the orch runtime's watch reading a Codex or Copilot pane for `session-end-row`'s row).
+  - `crates/core/src/package/support.rs` reads both forms through `hook.rs::stated_reason` into the supported-tools row of `kendex show`, `kendex index --json` and the desktop package pages.
+  - `crates/core/tests/hooks_readme.rs`, by the row's reach, refuses a missing or wrong-form sentence, and a reached harness withholding a `requires` companion.
+- `description` is the constraint, for the agent.
+- `summary` is one or two plain sentences for the person browsing: what the hook stops and what it costs them.
+  - It is what a catalog row, a Library row and the package page show.
+  - A hook that writes none is shown its `description` instead.
+- `description` and `summary` are each one line. The header is read line by line, not as YAML.
+- Exit 0 allows. Exit 2 refuses, with the reason on stderr.
+  - An unreadable payload refuses unless the hook declares an advisory reader.
+  - On Copilot a turn-end refusal is `decision: block` on stdout at exit 0 (`skills/orch/runtime/src/turnend/answer.rs::refusal`).
+  - Copilot's `agentStop` also fires at a custom subagent's end, under the subagent's own session and the lead's transcript (Copilot CLI 1.0.91; its hooks reference names the main agent alone). A turn-end hook that must not judge a subagent's end leaves `copilot` off `harnesses:`.
+- A refusal the caller cannot clear is a trap, not a guard.
+  - Where the remedy would name a command the install does not carry, or a fact outside the caller's reach, report the gap under its own key and exit 0.
+  - A gap the session must act on reaches it as context (`orch-runtime turn-end`'s hand-over), never on stderr alone, which Claude Code keeps from the model.
+  - Exit 2 is for a condition the refusal's own text tells the caller how to end.
+  - A hook that holds every turn end on something nothing the caller does will lift stops the session from ever ending.
+- A hook here is guard code for finding disposition, its turn-end refusals and the marks it reports included. A mark passed with no keyed line is a fail-open defect, never an excluded class.
+- A refusal states what it refused, why, and the preferred remedy first, before any exemption path. Its wording follows [OUTPUT.md](../crates/cli/OUTPUT.md#person-facing-copy).
+- The first line of a refusal or a notice is `<hook-name>: <key>=<value>`. The rule it follows is [`../skills/code-quality/SKILL.md`](../skills/code-quality/SKILL.md).
+  - Nothing precedes it. Where a command the hook runs writes its own words, capture them at the site and hand them to the message function, which prints the keyed line, then the English, then that cause.
+  - A suite asserts the keyed line at position 1 and the cause below it.
 - A suite runs the hook `HOOK_UNDER_TEST` names, else the one beside it, so a must-fail control reruns its assertions on a planted copy.
-- There is no exception for text a person or a model reads. A format is exempt only where a named program parses that exact whole output; none does here, so what a suite would have read out of prose (which arm `session-drift-check`'s exit code chose) is emitted as a value and pinned as one. Relay producer reports unchanged, except for the lane count in `session-drift-check.sh::report`.
-- The one thing a hook cannot put under its keyed line is a diagnostic from shell startup, before the script runs; everything the hook itself runs is captured at the site and replayed.
-- Two hooks use fixed keys. `block-bare-cd`: payload or tool errors warn once at exit 0; `missing-tools` lists jq,cat,grep,sed in that order; `refused=bare-cd` exits 2; no bare cd exits 0 silently. `pre-commit-check`: `bypass=<matched word, verbatim>` exits 2; `missing-tools=<comma list, order jq,cat,grep>`, `payload=invalid-json`, `payload=read-failed`, `command=unresolved`, `unarmed=<directory judged>` and `judged=<directory judged>` exit 0. An unarmed notice adds `setup=consent` or `setup=<main checkout path>`.
-- A render lands as [`../skills/AGENTS.md`](../skills/AGENTS.md) states; `tests/*` renders nowhere.
-- Shell stays Bash 3.2 compatible: [`../skills/AGENTS.md`](../skills/AGENTS.md).
+- There is no exception for text a person or a model reads.
+  - A format is exempt only where a named program parses that exact whole output. None does here.
+  - So what a suite would have read out of prose (which arm `session-drift-check`'s exit code chose) is emitted as a value and pinned as one.
+  - Relay producer reports unchanged, except for the lane count in `session-drift-check.sh::report`.
+- The one thing a hook cannot put under its keyed line is a diagnostic from shell startup, before the script runs. Everything the hook itself runs is captured at the site and replayed.
+- Two hooks use fixed keys.
+  - `block-bare-cd`: payload or tool errors warn once at exit 0; `missing-tools` lists jq,cat,grep,sed in that order; `refused=bare-cd` exits 2; no bare cd exits 0 silently.
+  - `pre-commit-check`: `bypass=<matched word, verbatim>` exits 2; `missing-tools=<comma list, order jq,cat,grep>`, `payload=invalid-json`, `payload=read-failed`, `command=unresolved`, `unarmed=<directory judged>` and `judged=<directory judged>` exit 0. An unarmed notice adds `setup=consent` or `setup=<main checkout path>`.
+- `tests/*` renders nowhere.
