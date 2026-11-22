@@ -2,7 +2,7 @@
 
 Review instructions for GitHub review bots. Repository owners use one configuration file to set the rules each bot reads.
 
-When you set up github-repository-settings, it takes over these files, and this package stays installed as its renderer. A github-repository-settings that arrives only as another package's dependency takes nothing over until you set it up.
+When you install github-repository-settings, it takes over these files, and this package stays installed as its renderer. A github-repository-settings that arrives only as another package's dependency takes nothing over until you set it up.
 
 ## Features
 

@@ -2,7 +2,7 @@
 
 Every bot in this set fails silently: a rejected config, a mistyped enum or a stale exclusion list still leaves the review running and posting, with nothing said about the configuration it discarded. Each validator below names the silent failure it catches, then what it rejects. A failure fails the run; none of them warns. § Where these run says which tree each one reads and which verb runs it.
 
-Remote-file validation below applies to full mode. Local mode judges the `AGENTS.md` region only, as SKILL.md defines.
+Remote-file validation below applies to full mode. Local mode judges the `AGENTS.md` region only, as `renders.md` § Local output defines.
 
 **No validator parses a render back.** The structure is in hand before it is serialised, so a validator that judges a document reads that structure; what is left to judge on bytes is size. A validator whose input is the REPO's own files is a different thing: `orphan`, `drift` and `agents-section` are it.
 
@@ -52,7 +52,7 @@ Its sites, and which answer each takes:
 
 **Rejects, the shape set.** Any key or table the schema does not define, any value of the wrong type, an empty glob list, a surface name that is empty, malformed, duplicated or reserved, an unknown doctrine block id in `[bot-instructions.doctrine.append]` or `[bot-instructions.doctrine.replace]`, an exclusion glob that appears twice in the resolved set, and a `schema` value other than `1`.
 
-**Rejects, an absent required key.** The clause derives from the Required column of § Keys rather than restating which fields are required, and covers any key that column marks plus any `repo-toml.md` states in prose rather than in a table row, as it does `schema`. Absent is a different state from empty, which the empty-value clauses cover.
+**Rejects, an absent required key.** The clause derives from the Required column of `repo-toml.md` § Keys rather than restating which fields are required, and covers any key that column marks plus any `repo-toml.md` states in prose rather than in a table row, as it does `schema`. Absent is a different state from empty, which the empty-value clauses cover.
 
 **Rejects, the content set.** The clauses are the cells of `repo-toml.md` § The content refusals **whose row this file supplies**: every marked cell on such a row names a rejection clause, and the predicates are that table's, the `qodo_commands` verb set included. The `doctrine block text` row is not this validator's: its enforcer is the render-side check `repo-toml.md` § Render-side second checks names. The glob row's path-shape rule is the one entry whose clauses that table names rather than marks: an empty glob, a leading or trailing `/`, a `..` component, and an empty component, each a rejection clause.
 
@@ -178,7 +178,7 @@ That covers a retired surface's `.instructions.md` and `correctness/*.md`, the r
 
 **Marker-agnostic, unlike every other rule here.** A deleted marker is its own byte difference, which reds. A marker-gated `drift` would let a one-line deletion drop a file out of `drift`, `orphan` and `render` at once.
 
-A repo that has not run `adopt` reds on every hand-written file at a path its TOML produces, and `adopt` clears it. The seam with `orphan` is the TOML: `drift` judges paths the TOML produces now, `orphan` judges marked files it does not. A file at a path the TOML does not produce and that this package never wrote is neither.
+A repo that has not run `adopt` reds on every hand-written file at a path its TOML produces. `adopt` keeps the file's bytes and adds the marker, so the finding stands until the `render` after it, which clears it. The seam with `orphan` is the TOML: `drift` judges paths the TOML produces now, `orphan` judges marked files it does not. A file at a path the TOML does not produce and that this package never wrote is neither.
 
 **Which tree.** `check` reads the working tree by default. Under `--staged` it reads the index for **every render input**, not only the outputs: every path in SKILL.md § The render inputs. A file absent from the index is that absence, not its worktree copy.
 

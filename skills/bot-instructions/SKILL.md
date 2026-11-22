@@ -73,7 +73,7 @@ The effective manifest holds `[bot-instructions]`: bots, repo context, cadence, 
 
 `[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`, and makes the `AGENTS.md` § Code Review Rules region one directive line naming that file. The generator owns only that region of `AGENTS.md` and never creates the file or the heading. A repo without the heading adds it, sets `codex`, runs `adopt`, then `render`. Region body and bounds: [schemas/renders.md](schemas/renders.md) § `AGENTS.md` § Code Review Rules.
 
-A repo enabling `codex` renders a canary to check whether the bots follow the pointer. Before choosing that rule or interpreting a comment, read [references/limits.md § GitHub Copilot code review](references/limits.md#github-copilot-code-review).
+A repo enabling `codex` renders a canary, a line of its own `[bot-instructions.doctrine.append]`, to check whether the bots follow the pointer; no script adds one. Before choosing that rule or interpreting a comment, read [references/limits.md § GitHub Copilot code review](references/limits.md#github-copilot-code-review).
 
 ## Every rendered config excludes the render trees
 
@@ -93,7 +93,7 @@ Run `check` in CI from the default branch's package copy when the two copies are
 
 ## Doctrine
 
-The `###` blocks below are the doctrine every render carries. The section ends at the next level-one or level-two heading, and only a `###` heading inside it is a block. Put repo names, paths, issues and repo-specific rules in `[bot-instructions]`, never in a block: every repository that installs this package renders these blocks.
+The `###` blocks below are the doctrine every render carries. `--spec` names the spec copy these blocks and the routing table in `schemas/renders.md` are read from; the default is the running copy. The section ends at the next level-one or level-two heading, and only a `###` heading inside it is a block. Put repo names, paths, issues and repo-specific rules in `[bot-instructions]`, never in a block: every repository that installs this package renders these blocks.
 
 ### scope
 

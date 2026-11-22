@@ -96,7 +96,7 @@ Integer, required. `1`. The generator refuses a value it does not know rather th
 
 The parent-directory clause keeps a retired path findable: `orphan` walks `.github/instructions`, so a file left at a path an earlier value named is reported by `check` and removed by the next `render` after it writes the new path. It also keeps every path this package writes inside its declared `repo-effects.writes`.
 
-`summary` is prose about this repo. A claim that would be true of another repo belongs in a doctrine block instead. It is under the same content refusals as `[[bot-instructions.surface]] instructions`: § The content refusals.
+`summary` is prose about this repo. A claim that would be true of another repo belongs in a doctrine block instead. It is under the refusals its row in § The content refusals marks.
 
 ### `[bot-instructions.bots]`
 
@@ -110,8 +110,9 @@ Booleans, each defaulting to `false`, one per capability rather than one per ven
 | `qodo` | `.pr_agent.toml` |
 | `qodo_best_practices` | `best_practices.md`. Automatic loading of that file is Qodo Merge, the commercial product; open-source PR-Agent does not read it |
 | `qodo_review_md` | `REVIEW.md`. Inert until the portal's "REVIEW.md instructions" toggle is on, so someone sets the flag after doing the checklist line; the generator never infers it |
+| `macroscope` | the `.macroscope/` tree |
 
-**Every flag false is not an error.** A TOML that enables nothing has nothing to render: it is how a repo commits its `[bot-instructions]` in the repo-wide pass of `references/checklist.md` § Adding a repo, and how a fleet stages a rollout one bot at a time. `render` says it wrote nothing rather than exiting quietly. `agents-section`'s nested-`AGENTS.md` clause is gated by no flag and runs before every write, so an all-off render still fails on a repo holding such a section.
+**Every flag false is not an error.** A TOML that enables nothing has nothing to render: it is how a repo commits its `[bot-instructions]` in the repo-wide pass of `workflows/add-repository.md`, and how a fleet stages a rollout one bot at a time. `render` says it wrote nothing rather than exiting quietly. `agents-section`'s nested-`AGENTS.md` clause is gated by no flag and runs before every write, so an all-off render still fails on a repo holding such a section.
 
 Three flag combinations, where something enabled reaches nothing, fail `toml-schema`:
 
@@ -193,7 +194,7 @@ Every derived entry carries that exact string. A render rule that wants a reason
 | `glob` | string | yes | A pattern in the dialect above |
 | `reason` | string | yes | Why this path is not reviewable. Rendered as a comment beside the entry on the surfaces whose render rules say so |
 
-Two classes are worth an entry in most repos, each with its own reason: a vendored tree this repo pins byte for byte, whose reason names the upstream where the fix lands, and lock files (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml` and the rest) wherever they sit, whose reason is that a package manager writes them. Exclude a lock file, not the manifest beside it. `exclusion-consistency`'s dead-exclusion clause names an entry this repo does not need.
+Two classes are worth an entry in most repos, each with its own reason: a vendored tree this repo pins byte for byte, whose reason names the upstream where the fix lands, and lock files (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml` and the rest) wherever they sit, whose reason is that a package manager writes them. A pattern with no wildcard matches from the repo root only, so write `**/Cargo.lock` to match at any depth. Exclude a lock file, not the manifest beside it. `exclusion-consistency`'s dead-exclusion clause names an entry this repo does not need.
 
 ### `[[bot-instructions.surface]]`
 
@@ -262,4 +263,4 @@ Both tables use doctrine block IDs as keys. `append` adds text to a block; `repl
 
 Prefer `append`. A `replace` means this repo disagrees with doctrine, which is worth arguing at the doctrine source rather than in one repo's TOML. A `replace` on `trust-model` or `render-out-of-scope` also weakens what every bot is told about evidence and scope, so a repo whose gate reads bot output should treat one as the policy change it is.
 
-Put reviewer-only, repo-specific guidance in a `[[bot-instructions.surface]]` with `reviewer_only`, never in an override. `AGENTS.md` and the pointed `code-review.md` carry every block, a working agent may read either, and `excludeAgent` can hide only a `.instructions.md` file.
+Put reviewer-only, repo-specific guidance in a `[[bot-instructions.surface]]` with `reviewer_only`, never in an override. A working agent may read `AGENTS.md`, whose directive names the pointed `code-review.md`, and that file carries every block; `excludeAgent` can hide only a `.instructions.md` file.
