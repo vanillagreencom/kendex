@@ -167,7 +167,7 @@ A price newtype is optional. Where you use one:
 
 - Wrap `f64` in a `#[repr(transparent)]` newtype.
 - Give it **no `PartialEq`**.
-- Compare through `prices_equal`.
+- Test its equality through `prices_equal`.
 - Have its constructor `debug_assert!` that the value `is_finite()`.
 - Use it for order types.
 - Skip it on the market-data hot path.
