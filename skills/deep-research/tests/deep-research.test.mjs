@@ -787,6 +787,17 @@ test("KENDEX_KEY_FILE supplies EXA_API_KEY to the client alone, and refuses nami
   assert.deepEqual(JSON.parse(readFileSync(seen, "utf8")), { key: "from-key-file", env: null });
   assert.equal("EXA_API_KEY" in env, false);
 
+  // A key the project holds wins over the key file, and a key file with no
+  // key line does not refuse a project that holds one.
+  writeFileSync(join(project, ".env.local"), "EXA_API_KEY=from-project\n");
+  for (const [name, contents] of [["file holds the line", "EXA_API_KEY=from-key-file\n"], ["file lacks the line", "OTHER_KEY=other\n"]]) {
+    writeFileSync(keyFile, contents);
+    writeFileSync(seen, "{}");
+    const held = run({ KENDEX_KEY_FILE: keyFile });
+    assert.equal(held.status, 0, `${name}: ${held.stderr}`);
+    assert.equal(JSON.parse(readFileSync(seen, "utf8")).key, "from-project", name);
+  }
+
   // Only the environment the client starts with names the key file.
   writeFileSync(join(project, ".env.local"), `KENDEX_KEY_FILE=${keyFile}\n`);
   assert.equal(diagnostic(run({})).key, "credential-missing");
