@@ -98,7 +98,7 @@ Read it without `--actionable`, which drops the outdated threads the Filter belo
 
 **Baseline for re-runs.**
 
-1. Find the prior summary comment this run's GitHub identity posted, whether a person or a GitHub App installation:
+1. Find the prior summary comment this run's GitHub identity posted, whether a person or a GitHub App installation, by the `## Recommendations Processed` heading [post-summary.md § 1](post-summary.md#1-post-the-summary) keeps in every summary § 7 and submit-pr post:
 
    ```bash
    .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --pattern "Recommendations.*Processed" --self

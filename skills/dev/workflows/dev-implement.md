@@ -459,7 +459,7 @@ A validation-routing check reads these durable comments on the originating item.
 - Keep `## Completion Summary` as the first line. Orch's acceptance finds the item's summary comment by that heading. The opening paragraph follows it.
 - Do not repeat the issue's Story or Why this matters.
 - Omit any section that has nothing in it.
-- Link each proof once under Evidence. A checked box's Evidence line cites this comment rather than a copy of the proof.
+- Link each proof once under Evidence. In a bundled round, a sub-issue box § 10 ticks cites this posted comment in its Evidence line rather than a copy of the proof. A single round's boxes take their Evidence lines at merge from the PR body's `## Done-when evidence` ([merge-pr.md § 5](../../orch/workflows/merge-pr.md#5-execute-the-merge)).
 - Discovered Work is backlog work beyond this scope.
 - Handoff Notes are for the next agent only, with no aspirational suggestions.
 
@@ -525,7 +525,7 @@ The writer refuses it where the item's description does not hold the sentence, H
 
 - A bundled Linear sub-issue stays In Progress through the dev round; make no tracker state write here.
 - Read its current description, tick each branch-provable Done-when box verified by this round, and add a nonblank indented `Evidence:` line directly below each ticked box.
-- Cite the proving artifact at its revision and conditions.
+- Cite the sub-issue's Completion Summary comment § 9.1 posted, which carries the proving artifact at its revision and conditions.
 - Save the updated description under `tmp/` and run `linear.sh issues update [SUB_ISSUE_ID] --description-file [DESCRIPTION_FILE]` with no state flag.
 - Leave unproved boxes open.
 - Its proof also stays in its completion summary and the bundle artifact's `--item` result (§ 11).

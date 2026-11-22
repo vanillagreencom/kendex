@@ -69,7 +69,8 @@ Send a ruling that answers one lane's question to every lane in the same situati
 
 - The ruling's text names the decision, its cause, its source and the next action or blocker.
 - A required text prefix, such as `filed ` or `design-review`, stays first.
-- An item-specific decision's detail stays on the issue. The ruling names that record.
+- A ruling whose text another section fixes, such as `filed `, `design-review` or `long-reason`, keeps every field that form names: [design-review.md](design-review.md)'s dedup reads them.
+- Any other ruling keeps an item-specific decision's detail on the issue and names that record.
 
 ### Lanes merge their own pull requests
 

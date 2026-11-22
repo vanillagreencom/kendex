@@ -96,7 +96,7 @@ With no `pr_number`, post no pull-request comment.
 - [Changed contract the next session needs, and its downstream action]
 ```
 
-- Omit empty sections.
+- Omit empty sections. A summary submit-pr or review-pr-comments posts always keeps `## Recommendations Processed` with its `**Fix rounds**` line, its subsections empty or not: the Baseline for re-runs in [review-pr-comments.md § 1](review-pr-comments.md#1-fetch-and-parse) finds that run's prior summary by that heading.
 - List an issue under Completed Issues only after reading its result from the source service in this session. Implemented work awaiting merge stays in the opening.
 - Put QA results under Evidence with their source.
 - Link the completion summaries instead of copying their files, decisions, screenshots or measures.

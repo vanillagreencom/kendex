@@ -52,7 +52,8 @@ An overseer's question to the owner is one owner ask through the mailbox skill's
 
 1. Write the question with communication's [question template](../../communication/references/questions.md) for the mode, to a file with the harness file tool.
    - The template's recommendation is the option the ask records as `recommend`.
-   - The relay and the item comment render the options, the recommendation and the deadline from the ask's fields. Leave the template's `**Recommended:**` line out of the file, and give the reason for the recommended option in that option's text.
+   - A chat-only ask's relay renders the options, the recommendation and the deadline from the ask's fields. An item ask's comment renders them, and its relay line points at the item with the question's first line and the deadline.
+   - Leave the recommendation out of the file: the CEO template's `**Recommended:**` line and the Engineer template's `with [RECOMMENDED_OPTION] recommended`. Where the template gives each option its text, give the reason for the recommended option there.
 2. Choose the deadline. `--wait [MINUTES]` sets it for one ask; without it the ask takes `ORCH_ASK_WAIT_MINUTES`. An ask sent during the owner's night gets no reply before morning. Set its deadline after the owner's morning, unless the ask can stand on its recommended option as the safe choice.
 3. Send it, and show one chat line naming the ask:
 
