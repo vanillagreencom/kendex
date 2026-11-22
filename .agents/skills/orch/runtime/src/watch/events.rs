@@ -96,6 +96,21 @@ pub enum Event {
         start: Option<String>,
         reason: Takeover,
     },
+    /// The runner replaced its program in place, from the program keyed
+    /// `from` to the one its checkout's sources key `to`, keeping its claim
+    /// and its log (`watch::program`).
+    WatchReplaced {
+        from: String,
+        to: String,
+    },
+    /// The checkout's sources key `checkout`, not the running `program`,
+    /// and the runner cannot replace itself, `cause` why; printed once per
+    /// checkout key.
+    WatchStale {
+        program: String,
+        checkout: String,
+        cause: String,
+    },
     /// A duty's body failed `count` times in a row; the run goes on
     /// (`watch::Thread`).
     WatchStepFailed {
@@ -531,6 +546,14 @@ impl Event {
                     reason.word()
                 )
             }
+            Event::WatchReplaced { from, to } => {
+                format!("EVENT watch-replaced from={from} to={to}")
+            }
+            Event::WatchStale {
+                program,
+                checkout,
+                cause,
+            } => format!("EVENT watch-stale program={program} checkout={checkout} cause={cause}"),
             Event::WatchStepFailed { step, count } => {
                 format!("EVENT watch-step-failed step={} count={count}", step.word())
             }

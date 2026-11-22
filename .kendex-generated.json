@@ -860,6 +860,7 @@
   ".agents/skills/orch/runtime/src/watch/overseer.rs",
   ".agents/skills/orch/runtime/src/watch/owner_alert.rs",
   ".agents/skills/orch/runtime/src/watch/pr_watch.rs",
+  ".agents/skills/orch/runtime/src/watch/program.rs",
   ".agents/skills/orch/runtime/src/watch/report.rs",
   ".agents/skills/orch/runtime/src/watch/report/escapes.rs",
   ".agents/skills/orch/runtime/src/watch/retention.rs",

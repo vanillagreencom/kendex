@@ -2563,6 +2563,11 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                         Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e))
                     })?,
             };
+            let program = watch::program::Program::of(
+                Path::new(&record.script),
+                &settings.roots.project,
+                settings.engine.verify.get()?,
+            );
             let mut runner = watch::Runner::new(
                 paths,
                 &clock,
@@ -2576,6 +2581,9 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 identity,
                 record,
             )?;
+            if let Some(program) = program {
+                runner.follow(program);
+            }
             // The tracker read duty: the inventories once per pass, the
             // terminal closes, the heartbeat's inputs; the GitHub duty shares
             // its slot.
