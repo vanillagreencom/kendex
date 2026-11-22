@@ -12,8 +12,8 @@ A command and Rust library that starts one AI coding-agent session, watches it, 
 - Finds the session file each harness writes for a working directory.
 - Reads how much use each account has left and picks the account a launch uses.
 - Keeps launch records as JSON that another package can add its own fields to.
-- Answers every command with one versioned JSON reply, `agent-runtime-v1`.
-- Builds itself once into a user cache, rebuilds when its sources change, and refuses to run before that build exists.
+- Answers most commands with one versioned JSON reply, `agent-runtime-v1`.
+- Builds into a user cache through its setup command, once per source revision, and refuses to run before that build exists.
 - Builds a dependent package's runtime, such as orch's, the same way.
 
 ## Install
@@ -30,7 +30,9 @@ kendex add vanillagreencom/kendex --skill agent-runtime
 .agents/skills/agent-runtime/scripts/agent-runtime --help
 ```
 
-Rust 1.96 or later. The build lands in the user cache `setup --help` names, never in the installed files. Offline, run `setup --offline` with a populated cargo cache, or reuse a runtime already built from the same sources.
+- Rust 1.96 or later.
+- The build lands in the user cache `setup --help` names, never in the installed files.
+- Offline, run `setup --offline` with a populated cargo cache, or reuse a runtime already built from the same sources.
 
 ## How it works
 
@@ -51,21 +53,33 @@ Each version was tested on Linux on 2026-10-26. The runtime refuses a harness na
 
 | Platform | Support |
 |---|---|
-| Linux | Supported, with the sandbox. |
-| macOS | Supported. Every session runs outside the sandbox. |
-| Windows | Sessions are unsupported; only the library's logic builds and is tested. |
+| Linux | Supported. |
+| macOS | Sessions run outside the sandbox. |
+| Windows | Sessions are unsupported. |
+
+- On Linux, a launch whose grants ask for the sandbox runs in it.
+- [SKILL.md § Confinement](SKILL.md#confinement) names the launches that run outside it.
+- On Windows, only the library's logic builds and is tested.
 
 ## Setup
 
-Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`. A personal value goes in `.env.local`. `agent-runtime <verb> --help` names the settings each command reads. orch's `references/settings.md` holds each default.
+- Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`.
+- A personal value goes in `.env.local`.
+- `agent-runtime <verb> --help` names the settings each command reads.
+- orch's `references/settings.md` holds each default.
 
 | Setting | What it changes |
 | --- | --- |
 | `AGENT_RUNTIME_ACCOUNT_DIRS` | The account folders a launch may pick from, separated by `:`. |
-| `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended. `native` keeps the harness's own prompts. |
+| `AGENT_RUNTIME_LAUNCH_PERMISSION` | Whether a launch runs unattended or keeps the harness's own prompts. |
 | `AGENT_RUNTIME_HARNESS_BINARIES` | Where a harness is installed when it is not on `PATH`, as `harness=/absolute/path` pairs. |
 | `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | Where account usage and limit records live: an absolute or `~/` path. |
-| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | The token file a successor on each Claude account signs in with, as `<account dir>=<token file>` pairs. The value names paths, never a token. Declare it in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every successor inherits. |
+| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | When a running session hands over to a new session on a Claude account, the token file the new session signs in with, as `<account dir>=<token file>` pairs. |
+
+- `AGENT_RUNTIME_LAUNCH_PERMISSION=bypass` runs every launch unattended.
+- `AGENT_RUNTIME_LAUNCH_PERMISSION=native` keeps the harness's own prompts.
+- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` names paths, never a token.
+- Declare `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every new session inherits.
 
 ## Licence
 
