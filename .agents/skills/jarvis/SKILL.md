@@ -29,7 +29,7 @@ The Jarvis home is the folder that holds Jarvis's instructions, skills and memor
 
 The declared agents need a kendex installation of Jarvis: `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`. A copy of the skill folder alone, an app-supplied copy included, supplies none of their harness agent files. From the Jarvis home, run the bundle command in [README: Install](README.md#install). It installs Jarvis, its required skills, its declared agents, their assigned skills and the session hooks. Installing `orch` alone installs neither Jarvis nor its declared agents.
 
-Read the [home contract](references/home-contract.md) when starting a session or finding a memory note.
+Read the [home contract](references/home-contract.md) by section, only for the step that needs it: [Session start](references/home-contract.md#session-start) when starting a session, and [Read a note](references/home-contract.md#read-a-note) when finding a memory note.
 
 kendex inserts no package text into `AGENTS.md`. The persona lives at `persona.md`, beside `SKILL.md`.
 

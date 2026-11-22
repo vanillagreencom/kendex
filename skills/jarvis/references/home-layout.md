@@ -141,7 +141,7 @@ A tmux picker such as sesh lists only your default server, so it does not show t
 
 kendex does not write your picker's configuration. One sesh session entry serves both sesh and television's sesh channel, which lists sesh's configured sessions and connects through `sesh connect`. To reach Jarvis from a picker:
 
-1. Add an entry that runs the attach command:
+1. Add an entry that runs the attach command, with HOME's absolute path in place of HOME:
 
    ```toml
    [[session]]
@@ -150,7 +150,6 @@ kendex does not write your picker's configuration. One sesh session entry serves
    startup_command = "HOME/.agents/skills/jarvis/scripts/jarvis-session attach --home HOME && exit"
    ```
 
-2. Bind television's sesh channel to a key such as Ctrl+Shift+S.
-3. Put HOME's absolute path in place of HOME.
+2. For television, bind its sesh channel to a key such as Ctrl+Shift+S.
 
 The picker creates a session on your server and runs the command in it. The `&& exit` closes that session once the window opens. tmux's `detach-on-destroy` option then decides where your client goes. A refusal leaves its line on screen.

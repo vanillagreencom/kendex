@@ -12,11 +12,13 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
 ## Start
 
 1. First read the State, Sub-agents and Instructions in force sections of `state/handoff.md` with `jarvis-section`, at the path in the [home layout](../references/home-layout.md).
-   - If it is absent and the user has an earlier handoff elsewhere, read those sections there.
-   - Have the user move that earlier handoff once to the current path.
-   - Read the [Handoff](../references/long-session.md#handoff) contract with `jarvis-section` before using it.
-   - Apply its checkpoint, staleness and recovery rules.
-   - If no staleness bound exists, ask the user to set one.
+   - If it is absent and the user has an earlier handoff elsewhere:
+     - Read those sections there.
+     - Have the user move that earlier handoff once to the current path.
+   - For the handoff you read, at either path:
+     - Read the [Handoff](../references/long-session.md#handoff) contract with `jarvis-section` before using it.
+     - Apply its checkpoint, staleness and recovery rules.
+     - If no staleness bound exists, ask the user to set one.
 2. Load only the safety core at start: the role in [persona.md](../persona.md), the read content and consent rules of [Authority](../references/decisions.md#authority), [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) and [Official records](../references/accounts-and-secrets.md#official-records).
    - Use already loaded text rather than reading it again.
    - Keep one assistant in control at a time.
@@ -40,14 +42,16 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
    - Send a progress notice on its ref through `.agents/skills/mailbox/scripts/lane-mail notice --item overseer --to owner --ref ID --progress --file TEXT`.
    - Then send its answer.
 9. Confirm the session prerequisites under [Homes](../references/long-session.md#homes).
-   - If any is missing, take its setup route as the first decision after open voice requests.
-   - If any is missing, leave the handoff untouched.
-   - Otherwise, read all open session work from the selected tracker project, through every page.
-   - Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source.
-   - Reconcile the tracker queue, the open asks and the due audits through live reads of their homes.
-   - Keep a compact view of open work and due obligations for the first decision.
-   - Check what each open item waits for, and why.
-   - Resume authorized work once its wait no longer applies.
+   - If any is missing:
+     - Take its setup route as the first decision after open voice requests.
+     - Leave the handoff untouched.
+   - Otherwise:
+     - Read all open session work from the selected tracker project, through every page.
+     - Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source.
+     - Reconcile the tracker queue, the open asks and the due audits through live reads of their homes.
+     - Keep a compact view of open work and due obligations for the first decision.
+     - Check what each open item waits for, and why.
+     - Resume authorized work once its wait no longer applies.
 10. Read no other record before the first decision.
 11. Before taking the selected action, load its sections under [Action routes](#action-routes).
 12. Follow [Handoff replacement](#handoff-replacement).
