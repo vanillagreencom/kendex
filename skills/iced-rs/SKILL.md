@@ -17,7 +17,8 @@ tags: [ui]
 ## Workflow
 
 1. Classify the surface with [Surface Selection](references/guide-surface-selection.md).
-2. Read the canonical example in `examples/`, never generate 0.14 code from memory.
+2. Read the canonical example in `examples/`.
+   - Never generate 0.14 code from memory.
 3. Read the guide for that surface.
    - For animated layered UI, read `references/guide-animated-layout.md` first.
 4. When debugging, check the guide’s failure modes and API notes.
@@ -52,7 +53,7 @@ tags: [ui]
 
 ### `iced_wgpu/` and external fallbacks
 
-Renderer source for shader work: `iced_wgpu/src/`.
+For shader work, read the renderer source in `iced_wgpu/src/`.
 
 The bundled `iced_wgpu/` and `examples/` come from [Iced 0.14.0](https://github.com/iced-rs/iced/blob/3997291f318a8bc06fa522f5579836fb3feb94df/Cargo.toml).
 
@@ -88,7 +89,7 @@ if enable {
 area
 ```
 
-### view() is pure
+### view()
 
 - Keep `view()` free of side effects, redraw requests, and caches that depend on how often it runs.
 - Change app state in `update()`.
@@ -147,19 +148,21 @@ Stacked `mouse_area(...).interaction(...)` layers can block underlying hover/mov
 
 ### Subscriptions
 
-Each data source needs stable identity: `Subscription::run_with(id, build_stream)` or `.with(id)`, batched with `Subscription::batch`. See `references/subscription.md`.
+- Give each data source a stable identity with `Subscription::run_with(id, build_stream)` or `.with(id)`.
+- Combine the sources with `Subscription::batch`.
 
-Pre-aggregate high-frequency data in the subscription worker: emit one batch per non-empty ~16ms window, over bounded channels with producer-side `try_send()`.
+See `references/subscription.md`.
 
-### Theming: no custom Theme type for tokens
+- Pre-aggregate high-frequency data in the subscription worker.
+- Emit one batch per non-empty ~16ms window.
+- Use bounded channels with producer-side `try_send()`.
+
+### Theming
 
 - Build the palette with `Theme::custom_with_fn("My Dark", palette, |p| theme::palette::Extended::generate(p))`.
 - Keep app tokens in a `LazyLock<AppTokens>` sidecar.
 - Route every visual value through it from style closures that ignore the passed `&Theme`.
 - Introduce a custom `Theme` type only when runtime theme switching demands it.
-
-Fonts:
-
 - Load fonts on the entry point (`.font(include_bytes!(...))`).
 - `Font::MONOSPACE` selects the monospace family.
 - Use `Font::with_name("...")` to specify a family by name.
@@ -179,11 +182,14 @@ See `references/theme.md`, `references/theme-palette.md`, `references/catalog.md
 
 For multiple windows:
 
-- Save the ID from `window::open(settings)` and return its open task.
-- Use `window::close(id)` to close it. See [Window](references/window.md).
+- Save the ID from `window::open(settings)`.
+- Return its open task.
+- Use `window::close(id)` to close it.
 
-Testing: `iced_test` provides `Simulator` (headless widget), `Emulator` (full runtime), and snapshot support.
+See [Window](references/window.md).
+
+For testing, `iced_test` provides `Simulator` (headless widget), `Emulator` (full runtime), and snapshot support.
 
 ## Dev tools
 
-`cargo-hot`, `comet`, the built-in F12 debugger, stress-test switches, and `iced::debug::time`: `references/debug.md`.
+For `cargo-hot`, `comet`, the built-in F12 debugger, stress-test switches, and `iced::debug::time`, read `references/debug.md`.
