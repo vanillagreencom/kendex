@@ -34,7 +34,7 @@ Under `on`, use the session's technical vocabulary for the same outcomes and cos
 | `concise` | yes | [Plain language](#plain-language) as written |
 | `fun` | no | As `friendly` |
 
-- Under `friendly`, a message may open with one short greeting before the answer and end with one short closing line. Those two lines are exempt from "Start with the answer itself", "Stop after the last fact" and "Delete a sentence that could sit in an answer about anything else".
+- Under `friendly`, a message may open with one short greeting before the answer and end with one short closing line. Those two lines are exempt from "Start with the answer itself", "Give no summary, preamble, verdict or fact the reader did not ask about", "Stop after the last fact", "Write no closing sentence", "Delete a sentence that could sit in an answer about anything else" and "Keep only specific facts the reader needs".
 - Under `fun`, a sentence may also carry light humor or a playful word.
 - Under `fun`, each fact stays in a plain sentence of its own.
 - Every combination of Technical and Style writes the same facts from the same input.
