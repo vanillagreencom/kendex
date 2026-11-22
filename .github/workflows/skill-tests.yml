@@ -988,14 +988,11 @@ jobs:
       # in runs 44611935189, 44789074453, 44843919810 and 44860396393: each
       # test binary waits on the processes and real time it holds, with about
       # one CPU in four busy. So each package's fmt, clippy and test build come
-      # first, then its test targets, its doctests where its lib runs and its
-      # privacy harness run as units, `nproc` at a time across the packages,
-      # each binary keeping its own threads. This load delays a spawned
-      # process's write past any fixed time, so a test that reads such a
-      # write waits for the write itself. Each unit prints a start line, then
-      # its exit and whole log when it ends, so a hung unit is the one with no
-      # end. Every unit runs whatever another answered, and the failed ones
-      # are named last.
+      # first, and its test executables, its doctests where its lib runs and
+      # its privacy harness become one suite each of a battery run-all.sh runs
+      # `nproc` at a time across the packages, under the leg's suite bound and
+      # deadline. This load delays a spawned process's write past any fixed
+      # time, so a test that reads such a write waits for the write itself.
       - name: the package runtimes' Rust targets
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && runner.os == 'Linux' && needs.changes.outputs.rust_targets != '[]' }}
         env:
@@ -1006,9 +1003,19 @@ jobs:
           targets="${RUST_TARGETS:-[\"agent-runtime/*\",\"orch/*\"]}"
           packages="$(jq -r '.[] | split("/")[0]' <<<"$targets" | sort -u)"
           out="$RUNNER_TEMP/rust-targets"
-          mkdir -p "$out"
-          : >"$out/units"
+          battery="$out/tests"
+          mkdir -p "$battery"
           : >"$out/failed"
+          unit() { # NAME COMMAND... ; the battery's suite NAME runs COMMAND
+            local name="$1"
+            shift
+            { printf '#!/usr/bin/env bash\nexec'; printf ' %q' "$@"; printf '\n'; } >"$battery/$name.sh"
+          }
+          # A listing line of libtest's `--list --format terse` is `<name>: test`
+          # (library/test/src/console.rs, list_tests_console). A unit listing
+          # none would run no row, which run-all.sh reds, as both runtimes' bin
+          # targets and doctests would.
+          has_test() { grep -q ': test$' <<<"$1"; }
           for package in $packages; do
             manifest="skills/$package/runtime/Cargo.toml"
             args=()
@@ -1025,7 +1032,7 @@ jobs:
             # code for each planted case: a doctest cannot hold which rule
             # refused. Its copy of the runtime leaves out the target/ folder
             # the test units write.
-            echo "$manifest privacy" >>"$out/units"
+            unit "$package.privacy" bash "skills/$package/tests/privacy/privacy-cases.sh"
             # The test-profile executables `cargo test` would run, read from
             # cargo's JSON artifact messages: lib, bin and test targets.
             if ! cargo test --no-run --locked --manifest-path "$manifest" ${args[@]+"${args[@]}"} \
@@ -1033,36 +1040,33 @@ jobs:
               echo "$manifest build" >>"$out/failed"
               continue
             fi
-            jq -r --arg m "$manifest" 'select(.reason == "compiler-artifact" and .profile.test and .executable != null)
-              | .target.kind[0] as $kind
-              | if $kind == "lib" then "\($m) --lib" else "\($m) --\($kind) \(.target.name)" end' "$out/$package.plan.json" |
-              sort -u >"$out/$package.units"
-            if [ ! -s "$out/$package.units" ]; then
-              echo "$manifest no-test-executable ${args[*]-}" >>"$out/failed"
-              continue
-            fi
-            cat "$out/$package.units" >>"$out/units"
+            units=0
+            while read -r kind name executable; do
+              listing="$("$executable" --list --format terse </dev/null)" || { echo "$manifest list $kind $name" >>"$out/failed"; continue; }
+              has_test "$listing" || continue
+              if [ "$kind" = lib ]; then
+                unit "$package.lib" cargo test --locked --manifest-path "$manifest" --lib
+              else
+                unit "$package.$kind.$name" cargo test --locked --manifest-path "$manifest" "--$kind" "$name"
+              fi
+              units=$((units + 1))
+            done < <(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null)
+              | "\(.target.kind[0]) \(.target.name) \(.executable)"' "$out/$package.plan.json" | sort -u)
             # --lib leaves the doctests out, and cargo takes --doc alone; the
             # whole manifest runs them too.
-            case " ${args[*]-} " in "  " | *" --lib "*) echo "$manifest --doc" >>"$out/units" ;; esac
+            case " ${args[*]-} " in
+              "  " | *" --lib "*)
+                if ! listing="$(cargo test --doc --locked --manifest-path "$manifest" -- --list --format terse)"; then
+                  echo "$manifest list doc" >>"$out/failed"
+                elif has_test "$listing"; then
+                  unit "$package.doc" cargo test --doc --locked --manifest-path "$manifest"
+                  units=$((units + 1))
+                fi
+                ;;
+            esac
+            [ "$units" -gt 0 ] || echo "$manifest no-test ${args[*]-}" >>"$out/failed"
           done
-          [ -s "$out/units" ] || { echo "rust-targets: no unit in $targets" >&2; exit 1; }
-          # The lock keeps one unit's lines whole among the others'.
-          OUT="$out" xargs -P "$(nproc)" -L1 bash -c '
-            manifest="$1"
-            shift
-            unit="$manifest $*"
-            log="$OUT/$(printf "%s" "$unit" | tr "/ " "__").log"
-            { flock 9; echo "rust-targets: start $unit"; } 9>>"$OUT/print.lock"
-            status=0
-            if [ "$1" = privacy ]; then
-              bash "${manifest%/runtime/Cargo.toml}/tests/privacy/privacy-cases.sh" >"$log" 2>&1 || status=$?
-            else
-              cargo test --no-fail-fast --locked --manifest-path "$manifest" "$@" >"$log" 2>&1 || status=$?
-            fi
-            [ "$status" -eq 0 ] || printf "%s\n" "$unit" >>"$OUT/failed"
-            { flock 9; echo "--- $unit exit=$status"; cat "$log"; } 9>>"$OUT/print.lock"' unit <"$out/units" ||
-            echo "xargs exit=$?" >>"$out/failed"
+          bash skills/orch/tests/run-all.sh --battery "$RUNNER_TEMP/rust-targets/tests" || echo "run-all.sh exit=$?" >>"$out/failed"
           if [ -s "$out/failed" ]; then
             echo "rust-targets: failed:" >&2
             sed 's/^/  /' "$out/failed" >&2

@@ -113,15 +113,16 @@ suite() { # DIR NAME STATUS BODY [ERR]
 }
 
 # The green roster: one suite per summary shape, and the counts it reports.
-GREEN_NAMES=(shape-colon shape-words shape-short shape-unittest shape-rowless)
+GREEN_NAMES=(shape-colon shape-words shape-short shape-unittest shape-libtest shape-rowless)
 GREEN_BODIES=(
   $'pass: 1   fail: 9\npass: 3   fail: 0'
   'Results: 4 passed, 0 failed'
   'container-close: 5 pass, 0 fail'
   $'Ran 6 tests in 0.1s\n\nOK'
+  'test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s'
   'rowless: this host lacks what the suite measures'
 )
-GREEN_WANT=('pass=3 fail=0' 'pass=4 fail=0' 'pass=5 fail=0' 'pass=6 fail=0' 'pass=0 fail=0')
+GREEN_WANT=('pass=3 fail=0' 'pass=4 fail=0' 'pass=5 fail=0' 'pass=6 fail=0' 'pass=7 fail=0' 'pass=0 fail=0')
 
 green_battery() { # DIR
   local i=0
@@ -182,8 +183,8 @@ while [ "$i" -lt "${#GREEN_NAMES[@]}" ]; do
     "${GREEN_NAMES[i]} prints one start line, before its output"
   i=$((i + 1))
 done
-assert_eq "$(printf '%s\n' "$OUT" | sed -n 's/^total suites=5 seconds=[0-9][0-9]* /total suites=5 seconds=N /p')" \
-  "total suites=5 seconds=N pass=18 fail=0" "the total line counts every suite and sums its counts"
+assert_eq "$(printf '%s\n' "$OUT" | sed -n 's/^total suites=6 seconds=[0-9][0-9]* /total suites=6 seconds=N /p')" \
+  "total suites=6 seconds=N pass=25 fail=0" "the total line counts every suite and sums its counts"
 assert_eq "$(ls -A "$B.tmp")" "" "the run removes the directory that held suite output"
 
 # The lower bound is the suite's own sleep; load only makes it longer.

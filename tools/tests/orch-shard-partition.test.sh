@@ -308,8 +308,11 @@ export PARTITION_POOL="$POOL" PARTITION_POOL_CLAIMS="$TMP/pool-claims" PARTITION
 # Serial blocks carry the path marker. Pooled blocks invoke a battery runner.
 ROSTER_MARK='=== $t'
 roster_block() { # FILE ; a serial roster or a pooled battery invocation
+  # A battery under $RUNNER_TEMP is one the step writes as it runs, such as
+  # the Rust targets step's cargo units, so it holds no suite of this tree.
   grep -qF -e "$ROSTER_MARK" -e 'bash tools/tests/run-all.sh' "$1" ||
-    { grep -qF 'bash skills/orch/tests/run-all.sh' "$1" && grep -qF -- '--battery' "$1"; }
+    { grep -qF 'bash skills/orch/tests/run-all.sh' "$1" &&
+      awk 'index($0, "--battery") && !index($0, "--battery \"$RUNNER_TEMP/") { found = 1 } END { exit !found }' "$1"; }
 }
 
 run_roster_step() (
@@ -1690,11 +1693,12 @@ targets_runs() { # WORKFLOW SHARD OS RUST_TARGETS ; whether the targets step run
 check "the runtimes' targets run on the orch-rest Linux leg where a target is listed, and where no classifier ran" \
   "true true false false false" \
   "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-state Linux '["orch/lib"]')"
-# The targets step's own body, run over a stub cargo and privacy harness:
-# which units it hands cargo test and the privacy harness, and whether the
-# step ends red, for each failure it must not hide. The stub answers the
-# build with cargo's JSON artifact lines, as the real build does in the
-# step's log; flock and nproc are stubbed for a host without them.
+# The targets step's own body, over a stub cargo and privacy harness and the
+# real run-all.sh: which units it hands that pool, and whether the step ends
+# red, for each failure it must not hide. The stub answers the build with
+# cargo's JSON artifact lines, as the real build does in the step's log, and
+# each listing as libtest does; the bin targets list no test, as both
+# runtimes' do, and only orch holds a doctest.
 targets_step() { # WORKFLOW RUST_TARGETS FAILING ; `green|red: unit,...` with the units run, sorted
   local run cond block="" f package
   run="$(mktemp -d "$TMP/targets-step.XXXXXX")" || exit 1
@@ -1704,20 +1708,25 @@ targets_step() { # WORKFLOW RUST_TARGETS FAILING ; `green|red: unit,...` with th
     [[ "$(cat "$f")" != "$cond" ]] || { [[ -z "$block" ]] || { printf 'two-steps\n'; return 0; }; block="${f%.cond}.sh"; }
   done
   [[ -n "$block" ]] || { printf 'no-step\n'; return 0; }
-  mkdir -p "$run/bin" "$run/runner"
+  mkdir -p "$run/bin" "$run/runner" "$run/tmp" "$run/work/skills/orch/tests" "$run/work/skills/github/scripts"
+  ln -s "$ROOT/skills/orch/tests/run-all.sh" "$run/work/skills/orch/tests/run-all.sh"
+  ln -s "$ROOT/skills/orch/tests/lib" "$run/work/skills/orch/tests/lib"
+  ln -s "$ROOT/skills/github/scripts/lib" "$run/work/skills/github/scripts/lib"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "tests::a: test" "tests::b: test"\n' > "$run/bin/lists-tests"
+  printf '#!/usr/bin/env bash\n:\n' > "$run/bin/lists-none"
   # A call fails where FAILING holds `<package> <what>`, the step's own
   # spelling of the unit.
   cat > "$run/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
 verb="$1"
 shift
-manifest="" args=() build=false
+manifest="" args=() mode=run
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --manifest-path) manifest="$2"; shift ;;
-    --no-run) build=true ;;
-    --locked | --no-fail-fast | --check | --all-targets | --message-format=*) ;;
-    --) break ;;
+    --no-run) mode=build ;;
+    --locked | --check | --all-targets | --message-format=*) ;;
+    --) [[ "${2-}" != --list ]] || mode=list; break ;;
     *) args+=("$1") ;;
   esac
   shift
@@ -1725,50 +1734,61 @@ done
 package="${manifest#skills/}"
 package="${package%%/*}"
 what="${args[*]-}"
-[[ "$verb" != test ]] || ! $build || what=build
-[[ "$verb" == test ]] || what="$verb"
-[[ "$verb" != test || "$what" == build ]] || printf '%s\n' "$package $what" >> "$STUB_RAN"
-case ",$STUB_FAILING," in *",$package $what,"*) exit 101 ;; esac
-if [[ "$what" == build ]]; then
-  artifact() { printf '{"reason":"compiler-artifact","profile":{"test":true},"executable":"/stub","target":{"kind":["%s"],"name":"%s"}}\n' "$1" "$2"; }
-  printf '{"reason":"build-finished","success":true}\n'
-  [[ ${#args[@]} -gt 0 ]] || { artifact lib "$package"; artifact bin "$package"; artifact test one; artifact test two; exit 0; }
-  set -- "${args[@]}"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in --lib) artifact lib "$package" ;; --test) artifact test "$2"; shift ;; esac
-    shift
-  done
-fi
+case "$verb $mode" in
+  "test build") what=build ;;
+  "test list") what="list $what" ;;
+  "test run") printf '%s\n' "$package $what" >> "$STUB_RAN" ;;
+  *) what="$verb" ;;
+esac
+case ",$STUB_FAILING," in
+  *",$package $what,"*)
+    [[ "$verb $mode" != "test run" ]] || echo 'test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s'
+    exit 101 ;;
+esac
+case "$verb $mode" in
+  "test run") echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s' ;;
+  "test list") [[ "$package" != orch ]] || echo 'src/lib.rs - f (line 1): test' ;;
+  "test build")
+    artifact() { printf '{"reason":"compiler-artifact","profile":{"test":true},"executable":"%s/lists-%s","target":{"kind":["%s"],"name":"%s"}}\n' "$STUB_BIN" "$3" "$1" "$2"; }
+    printf '{"reason":"build-finished","success":true}\n'
+    [[ ${#args[@]} -gt 0 ]] || { artifact lib "$package" tests; artifact bin "$package" none; artifact test one tests; artifact test two tests; exit 0; }
+    set -- "${args[@]}"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in --lib) artifact lib "$package" tests ;; --test) artifact test "$2" tests; shift ;; esac
+      shift
+    done ;;
+esac
 exit 0
 STUB
-  printf '#!/usr/bin/env bash\n:\n' > "$run/bin/flock"
-  printf '#!/usr/bin/env bash\necho 2\n' > "$run/bin/nproc"
-  chmod +x "$run/bin/cargo" "$run/bin/flock" "$run/bin/nproc"
+  chmod +x "$run/bin/cargo" "$run/bin/lists-tests" "$run/bin/lists-none"
   for package in agent-runtime orch; do
     mkdir -p "$run/work/skills/$package/tests/privacy"
-    printf 'printf "%%s\\n" "%s privacy" >> "$STUB_RAN"\ncase ",$STUB_FAILING," in *",%s privacy,"*) exit 1 ;; esac\n' \
+    printf 'printf "%%s\\n" "%s privacy" >> "$STUB_RAN"\ncase ",$STUB_FAILING," in *",%s privacy,"*) echo "pass: 0  fail: 1"; exit 1 ;; esac\necho "pass: 1  fail: 0"\n' \
       "$package" "$package" > "$run/work/skills/$package/tests/privacy/privacy-cases.sh"
   done
   : > "$run/ran"
-  if (cd "$run/work" && PATH="$run/bin:$PATH" RUNNER_TEMP="$run/runner" RUST_TARGETS="$2" \
-    STUB_FAILING="$3" STUB_RAN="$run/ran" "$BASH" "$block") >"$run/log" 2>&1; then
+  if (cd "$run/work" && env -u RUN_ALL_NATIVE_CONTRACTS -u RUN_ALL_SUITE_SECS -u RUN_ALL_DEADLINE_EPOCH \
+    -u RUN_ALL_REVIEW_SECS -u RUN_ALL_PENDING_SUITES PATH="$run/bin:$PATH" TMPDIR="$run/tmp" \
+    RUNNER_TEMP="$run/runner" RUST_TARGETS="$2" STUB_FAILING="$3" STUB_RAN="$run/ran" STUB_BIN="$run/bin" \
+    "$BASH" "$block") >"$run/log" 2>&1; then
     printf 'green: '
   else
     printf 'red: '
   fi
-  sort "$run/ran" | paste -sd, -
+  LC_ALL=C sort "$run/ran" | paste -sd, -
 }
 LISTED='agent-runtime --test controller,agent-runtime privacy,orch --doc,orch --lib,orch privacy'
 while IFS='|' read -r label targets failing expected; do
   check "the targets step: $label" "$expected" "$(targets_step "$WORKFLOW" "$targets" "$failing")"
 done <<TARGETS
-every listed unit passes|["agent-runtime/controller","orch/lib"]||green: $LISTED
-a whole manifest runs every test executable its build lists, and its doctests|["orch/*"]||green: orch --bin orch,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
-no classifier ran, so both whole manifests run|||green: agent-runtime --bin agent-runtime,agent-runtime --doc,agent-runtime --lib,agent-runtime --test one,agent-runtime --test two,agent-runtime privacy,orch --bin orch,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
-a failed target in the first package reds the step and stops no other unit|["agent-runtime/controller","orch/lib"]|agent-runtime --test controller|red: $LISTED
+every listed unit passes, the doctests of a listed lib among them|["agent-runtime/controller","orch/lib"]||green: $LISTED
+a whole manifest runs each test executable that lists a test, and its doctests|["orch/*"]||green: orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
+no classifier ran, so both whole manifests run|||green: agent-runtime --lib,agent-runtime --test one,agent-runtime --test two,agent-runtime privacy,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
+a failed target reds the step|["agent-runtime/controller","orch/lib"]|agent-runtime --test controller|red: $LISTED
 a failed privacy harness reds the step|["agent-runtime/controller","orch/lib"]|orch privacy|red: $LISTED
 a failed fmt or clippy reds the step and stops no unit|["agent-runtime/controller","orch/lib"]|agent-runtime fmt,orch clippy|red: $LISTED
 a failed build reds the step and runs that package's privacy harness|["agent-runtime/controller","orch/lib"]|orch build|red: agent-runtime --test controller,agent-runtime privacy,orch privacy
+a failed doctest listing reds the step|["orch/lib"]|orch list --doc|red: orch --lib,orch privacy
 TARGETS
 plant "$WORKFLOW" "            exit 1" "            :" "$TMP/targets-unfailed.yml" \
   "skill-suites-shard/$TARGETS_STEP" line

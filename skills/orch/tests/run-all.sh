@@ -138,8 +138,9 @@
 # A suite report's `seconds` is its wall time; the total's is the whole run's.
 # `pass` and `fail` are the counts from the last summary line the suite
 # printed in any of the shapes the suites use (`pass: N  fail: M`,
-# `N passed, M failed`, `N pass, M fail`, or Python unittest's `Ran N tests`
-# with `OK` or `FAILED (failures=N, errors=M)`). A suite that exits 0 with no
+# `N passed, M failed`, `N pass, M fail`, libtest's `test result: ok. N
+# passed; M failed; ...`, or Python unittest's `Ran N tests` with `OK` or
+# `FAILED (failures=N, errors=M)`). A suite that exits 0 with no
 # row counted, pass and fail both 0, ran nothing it proved: it is red, under
 #
 #   run-all.sh: no-rows suite=<name>
@@ -616,7 +617,7 @@ counts_of() { # FILE
   awk '
     /^rowless: ./ { r = 1 }
     match($0, /pass: *[0-9]+ +fail: *[0-9]+/) ||
-    match($0, /[0-9]+ pass(ed)?, *[0-9]+ fail(ed)?/) {
+    match($0, /[0-9]+ pass(ed)?[,;] *[0-9]+ fail(ed)?/) {
       s = substr($0, RSTART, RLENGTH); gsub(/[^0-9]+/, " ", s)
       split(s, n, " "); p = n[1]; f = n[2]; next
     }
