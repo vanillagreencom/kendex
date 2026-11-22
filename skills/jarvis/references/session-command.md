@@ -12,11 +12,12 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - Before the first Start with Copilot CLI, follow [Copilot folder trust](home-layout.md#copilot-folder-trust) unless the home's `JARVIS_UNATTENDED_HARNESSES` names `copilot`.
 - Before the first Start with Claude Code in a home whose `JARVIS_UNATTENDED_HARNESSES` names `claude`, follow [Claude Code bypass consent](home-layout.md#claude-code-bypass-consent).
 - `JARVIS_UNATTENDED_HARNESSES`, in the home's `kendex.settings.toml` `[env]`, lists comma-separated the start harnesses whose managed session runs with nobody at its pane.
-  - Start, resume and succession launch each named harness with the full-bypass permission words orch writes for overseers: `--dangerously-skip-permissions` on Claude Code, `--dangerously-bypass-approvals-and-sandbox` on Codex and `--allow-all` on Copilot CLI.
+  - Start and resume launch each named harness with the full-bypass permission words orch writes for overseers: `--dangerously-skip-permissions` on Claude Code, `--dangerously-bypass-approvals-and-sandbox` on Codex and `--allow-all` on Copilot CLI.
   - Pi has no such word.
-  - Succession's walk over `AGENT_RUNTIME_CONTROLLER_PREFERENCE` does not read the setting.
-  - To keep every successor unattended, name every harness that preference can reach.
-  - Per-account setup, such as Claude Code bypass consent, applies to every account that preference's harnesses can pick.
+  - Succession does not read the setting. A successor carries its predecessor's recorded posture.
+  - After a bypass start, a successor on another harness launches under the full bypass. After a native start, succession's walk over `AGENT_RUNTIME_CONTROLLER_PREFERENCE` skips every entry of another harness.
+  - To keep a later start or resume on a successor's harness unattended, name every harness that preference can reach.
+  - After a bypass start, per-account setup, such as Claude Code bypass consent, applies to every account that preference's harnesses can pick.
   - The [settings example](../kendex.settings.toml.example) states its empty default.
 - Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`.
   - Use the Jarvis package installed in HOME.
