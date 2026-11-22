@@ -180,7 +180,7 @@ A brief or workflow names a setting and its reader, `orch-env NAME DEFAULT` ([sc
 
 ### File searches
 
-A lane, and every dev, review, QA, fix or research agent, searches files only inside its worktree or under a path it names, with a shell command or with the harness's own search tool. It never searches from `/` or the home folder. A source from outside the worktree, such as another project's code, comes from that project's repository at the installed version: `gh api` on the repository at the installed tag, or a shallow clone under the worktree's `tmp/`. An installed header or package file is read at the path its installation names. A source none of these reaches is reported as unread, never sought by a wider search.
+A dev, fix, review or QA agent searches files only inside its worktree or under a path it names, with a shell command or with the harness's own search tool. It never searches from `/` or the home folder. A source from outside the worktree, such as another project's code, comes from that project's repository at the installed version: `gh api` on the repository at the installed tag, or a shallow clone under the worktree's `tmp/`. An installed header or package file is read at the path its installation names. A source none of these reaches is reported as unread, never sought by a wider search.
 
 ### Voice requests
 
