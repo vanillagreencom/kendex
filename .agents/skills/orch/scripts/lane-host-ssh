@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -46,16 +47,73 @@ def remote_command(row, script, *args):
             "--", row["target"], command]
 
 
+# The line a failed step's report keys as its refusal, read by what each
+# program the provider runs marks a refusal with, never by where it falls: a
+# step can print a notice after its refusal, and a report a notice before it.
+# The first row that matches decides, its last match the refusal. A report no
+# row matches, an unkeyed tool's (ssh, git, gh, npm, tar, mktemp), stands on
+# its last line.
+REFUSALS = (
+    # The protocol's own shape: this provider's refusals and a setup's
+    # toolchain-missing carry fix= last on the line.
+    re.compile(rb"^(.*?) fix=(.*)$", re.M),
+    # The worktree command keys every line and writes Error: prose under a
+    # refusal alone, so the branch-deleted notice remove prints after
+    # lane-mail-kept, or the github-auth one before a refusal, is never taken.
+    re.compile(rb"^(worktree-[a-z0-9-]+: [^\n]*)\n  Error: ", re.M),
+    # The keyed line that leads each refusal of the clone's lane-marker and
+    # sync-base, of either runtime, and a setup's one failure line.
+    re.compile(rb"^((?:worktree-[a-z0-9-]+|lane-marker|sync-base|[a-z-]+-setup|orch-runtime|agent-runtime): [^\n]*)$",
+               re.M),
+)
+
+
+def refusal_of(report):
+    """The refusal REPORT names and the repair its own fix= field states, if any."""
+    for shape in REFUSALS:
+        found = shape.findall(report)
+        if found:
+            line = found[-1]
+            refusal, fix = line if isinstance(line, tuple) else (line, None)
+            return refusal.decode("utf-8", errors="replace").strip(), fix and fix.decode("utf-8", errors="replace")
+    lines = [line.strip() for line in report.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    return (lines[-1] if lines else "none"), None
+
+
+def step_failed(key, report, fix, **values):
+    """End a failed step's stderr with the line the runtime records as the
+    call's cause (the last one carrying fix=): KEY and VALUES, the step's
+    refusal as cause=, and the refusal's own fix=, else FIX. A fix= line an
+    earlier step printed, or the routine output that preceded the refusal,
+    is therefore never what the runtime records."""
+    refusal, own = refusal_of(report)
+    notice(key, **values, cause=refusal, fix=own or fix)
+
+
+def relay(report):
+    """Pass a step's whole report to this provider's stderr, in step order."""
+    sys.stderr.flush()
+    sys.stderr.buffer.write(report)
+    sys.stderr.buffer.flush()
+
+
 def remote(row, script, *args, data=None, accept=(), capture_error=False):
-    """Run Bash through SSH; accept=None returns every transport status."""
+    """Run Bash through SSH; accept=None returns every transport status.
+
+    Each step's stderr is read whole, so a status outside ACCEPT names the
+    step's own refusal. It is relayed unless capture_error hands it to the
+    caller."""
     if "session" in row:
         result = row["session"].request(script, args, data or b"")
     else:
         result = subprocess.run(remote_command(row, script, *args),
                                 input=data if data is not None else b"", stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE if capture_error else None)
+                                stderr=subprocess.PIPE)
+    if not capture_error:
+        relay(result.stderr)
     if accept is not None and result.returncode != 0 and result.returncode not in accept:
-        notice("remote-failed", target=row["target"], exit=result.returncode)
+        step_failed("remote-failed", result.stderr, "repair what cause= names on the host, then retry",
+                    target=row["target"], exit=result.returncode)
         raise SystemExit(result.returncode if result.returncode > 0 else 1)
     return result
 
@@ -92,10 +150,11 @@ while read -r command_size input_size; do
   test "$((arrived + 0))" -eq "$input_size" || exit 1
   code=0
   # The command is exclusively shlex.join output from this provider.
-  bash "$session/command" < "$session/input" > "$session/output" || code=$?
+  bash "$session/command" < "$session/input" > "$session/output" 2> "$session/error" || code=$?
   size=$(wc -c < "$session/output")
-  printf '%s %s\\n' "$code" "$((size + 0))"
-  cat -- "$session/output"
+  errors=$(wc -c < "$session/error")
+  printf '%s %s %s\\n' "$code" "$((size + 0))" "$((errors + 0))"
+  cat -- "$session/output" "$session/error"
 done
 '''
         self.process = subprocess.Popen(remote_command(row, script, row["clone"] + ".lane-host.lock"),
@@ -108,17 +167,18 @@ done
             self.process.stdin.write(f"{len(command)} {len(data)}\n".encode() + command + data)
             self.process.stdin.flush()
             header = self.process.stdout.readline().split()
-            if len(header) != 2 or not all(word.isdigit() for word in header):
+            if len(header) != 3 or not all(word.isdigit() for word in header):
                 raise EOFError
-            code, size = map(int, header)
+            code, size, error_size = map(int, header)
             output = self.process.stdout.read(size)
-            if len(output) != size:
+            error = self.process.stdout.read(error_size)
+            if len(output) != size or len(error) != error_size:
                 raise EOFError
         except (BrokenPipeError, EOFError):
             notice("ownership-channel-failed", target=self.row["target"], clone=self.row["clone"],
                    fix="retry once SSH to the target holds the connection")
             raise SystemExit(1) from None
-        return subprocess.CompletedProcess(command, code, output)
+        return subprocess.CompletedProcess(command, code, output, error)
 
     def close(self):
         """Bound an SSH client stalled in the remote EOF exchange."""
@@ -163,10 +223,15 @@ def ownership_lock(row):
         code = session.close()
         if not ready and code == 0:
             code = 1
-        if code:
-            notice("ownership-busy" if code == 75 else "ownership-lock-failed",
-                   target=row["target"], clone=row["clone"], exit=code)
-        if error is None or isinstance(error, SystemExit) and error.code == 0:
+        decides = error is None or isinstance(error, SystemExit) and error.code == 0
+        if code == 75:
+            notice("ownership-busy", target=row["target"], clone=row["clone"], exit=code)
+        elif code:
+            # Where the lock's exit decides the call it is the recorded cause;
+            # after a failed step that step's refusal stays the cause.
+            fix = {"fix": "retry once SSH to the target holds the connection"} if decides else {}
+            notice("ownership-lock-failed", target=row["target"], clone=row["clone"], exit=code, **fix)
+        if decides:
             if code:
                 raise SystemExit(code if code > 0 else 1)
             sys.stdout.buffer.write(session.output)
@@ -396,33 +461,19 @@ def claude_state(current, snapshot):
 
 
 def worktree(row, *args, preliminary=False):
-    """Keep path resolution and ownership in the installed worktree command.
-
-    Its refusal carries no fix= field and can follow sync-base's output, so a
-    status outside the verb's accepted ones adds this provider's own refusal
-    after the command's report, naming the command's last keyed line."""
-    accept = (0, 75, REUSE_UNREBASED) if args[0] == "create" else (0,)
-    command = '''cd -- "$1"; accepted=" $2 "; shift 2
-errors=$(mktemp) || exit 1
-trap 'rm -f -- "${errors:?}"' EXIT
-code=0
-.agents/skills/worktree/scripts/worktree "$@" 2>"$errors" || code=$?
-cat -- "$errors" >&2
-case "$accepted" in *" $code "*) exit "$code" ;; esac
-key=$(sed -n 's/^\\(worktree-[a-z0-9-]*\\): .*/\\1/p' -- "$errors")
-key=${key##*$'\\n'}
-printf 'lane-host-ssh: worktree-refused verb=%s exit=%s cause=%s fix=repair what the worktree report above names in the clone on the host\\n' \\
-  "$1" "$code" "${key:-none}" >&2
-exit "$code"'''
+    """Keep path resolution and ownership in the installed worktree command."""
+    command = 'cd -- "$1"; shift; exec .agents/skills/worktree/scripts/worktree "$@"'
     if preliminary:
         command = 'export WORKTREE_SETUP_CMD=\n' + command
-    return remote(row, command, row["clone"], " ".join(map(str, accept)), *args, accept=accept[1:])
+    return remote(row, command,
+                  row["clone"], *args, accept=(75, REUSE_UNREBASED) if args[0] == "create" else ())
 
 
 # The worktree command's exit for a reuse that handed the tree back, set up, on
 # a head that does not contain the base.
 REUSE_UNREBASED = 76
 PATH_FIX = "run worktree path ITEM in the clone on the host and repair what it reports"
+RUNTIME_FIX = "repair what the clone's runtime reports in cause= on the host, then retry"
 # A standing tree is reused with the item's work kept: a tree the reuse cannot
 # rebase stays as it stands rather than failing the create.
 REUSE_KEEPING = ["--reuse", "--keep-on-conflict"]
@@ -932,8 +983,12 @@ tar -chzf - -C "$manifest" "${names[@]}" -C / "${paths[@]}"''', row["clone"], wo
         raise FileNotFoundError(2, "Bash is required to read archive settings", "bash")
     suffix = row["repo"].rsplit("/", 1)[-1] + "/" + item
     root = subprocess.run([bash, str(Path(__file__).resolve().parent / "orch-runtime"),
-                           "archive", "root", "--suffix", suffix], stdout=subprocess.PIPE)
+                           "archive", "root", "--suffix", suffix], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    relay(root.stderr)
     if root.returncode != 0:
+        step_failed("archive-root-failed", root.stderr,
+                    "set ORCH_ARCHIVE_ROOT on this machine to what cause= asks, then close again",
+                    item=item, exit=root.returncode)
         raise SystemExit(root.returncode if root.returncode > 0 else 1)
     placed = json.loads(root.stdout)["result"]["root"]
     if placed is None:
@@ -972,7 +1027,7 @@ def status(row, item):
                     accept=None)
     word = {"live": "running", "gone": "exited"}.get(runtime_result(answer).get("reading"))
     if answer.returncode != 0 or word is None:
-        notice("status-read-failed", item=item, exit=answer.returncode)
+        step_failed("status-read-failed", answer.stderr, RUNTIME_FIX, item=item, exit=answer.returncode)
         raise SystemExit(1)
     lifecycle_output(row, (word + "\n").encode())
 
@@ -990,14 +1045,16 @@ cd -- "$2"
 ORCH_STATE_DIR="$2/tmp" exec "$1$3" validate entry --stop --worktree "$2"''',
                          row["clone"], path, ORCH_RUNTIME, accept=None)
     if validations.returncode != 0:
-        notice(verb + "-validations-failed", item=item, exit=validations.returncode)
+        step_failed(verb + "-validations-failed", validations.stderr, RUNTIME_FIX,
+                    item=item, exit=validations.returncode)
         raise SystemExit(1)
     answer = remote(row, 'exec "$1$2" process stop --file "$1$3"', row["clone"], AGENT_RUNTIME, IDENTITY_FILE,
                     accept=None)
     stopped = runtime_result(answer).get("stop") or {}
     if answer.returncode == 0 and stopped.get("outcome") in ("stopped", "already-gone"):
         return stopped.get("signaled", 0)
-    notice(failed, item=item, outcome=stopped.get("outcome", "refused"), exit=answer.returncode)
+    step_failed(failed, answer.stderr, RUNTIME_FIX,
+                item=item, outcome=stopped.get("outcome", "refused"), exit=answer.returncode)
     raise SystemExit(1)
 
 
@@ -1131,12 +1188,19 @@ and no workflow state outside it means no archive and no kept line. Archives con
 follow symlinks, so linked records remain in the archive after their target is gone.
 close --merged, the caller's word that the item's pull request merged, is
 accepted and changes nothing: a static host keeps the whole archive.
-A refusal create or close prints after its gh repo clone or sync-base step
-ends with a fix= field naming the repair, so the runtime records it as the
-call's cause rather than that step's output. remote-failed, the status line
-after a remote step's own refusal, carries none. A refusal of the clone's
-worktree command adds worktree-refused verb=VERB exit=N cause=KEY after that
-command's report, KEY its last keyed line (none where it printed none).
+Each remote step's stderr arrives whole when the step ends. A step that fails
+ends the call's stderr with remote-failed target=TARGET exit=N cause=REFUSAL
+fix=REPAIR below the step's report, so the runtime, which records the last line
+carrying fix=, records the step's own refusal, never an earlier step's output
+or fix= line. REFUSAL is the report's last line carrying fix=, cut before that
+field, whose repair REPAIR repeats; else the worktree command's last keyed line
+with Error: prose under it; else the last line keyed by the clone's worktree
+command, lane-marker, sync-base, a setup or a runtime; else the report's last
+line; none for an empty report. The same cause= and fix= end a failed runtime
+call's status-read-failed, stop-validations-failed, close-validations-failed,
+stop-failed and close-stop-failed, and close's archive-root-failed item=ID
+exit=N when this machine's orch-runtime archive root refuses. An
+ownership-lock-failed that decides the exit carries fix= too.
 list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
 static hosts. touch probes SSH; static hosts have no idle expiry.
 capabilities prints the static ssh host kind's one capability line

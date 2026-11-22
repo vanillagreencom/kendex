@@ -8669,36 +8669,55 @@ fn a_failed_host_create_records_the_provider_s_refusal_line() {
     }
 }
 
-/// The shipped ssh provider's keyed refusal after its sync-base step is the
-/// cause a failed relaunch records, not the step's own output printed before
-/// it: a clone whose lane-marker is not executable fails the relaunch
-/// `host-create-failed` naming `marker-script-missing` and the marker's path.
+/// The refusal of the shipped ssh provider's failed step after its sync-base
+/// step is the cause a failed relaunch records, not the sync output printed
+/// before it: a clone whose lane-marker is not executable fails the relaunch
+/// `host-create-failed` naming the provider's own `marker-script-missing`
+/// and the marker's path, and one whose agent-runtime setup refuses with its
+/// keyed line, which carries no `fix=`, names that line.
 #[test]
-fn a_shipped_ssh_relaunch_records_the_provider_s_keyed_refusal_over_its_sync_output() {
+fn a_shipped_ssh_relaunch_records_the_failed_step_s_refusal_over_its_sync_output() {
     use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let world = HostedLaunch::ssh(&server, dir.path());
-    world.launched_and_retired();
-    let clone = world.clone();
-    // The sync-base step refuses a tracked change, so the clone ignores the
-    // mode bit the provider's marker step tests.
-    git(&clone, &["config", "core.fileMode", "false"]);
-    let marker = clone.join(".agents/skills/orch/scripts/lane-marker");
-    std::fs::set_permissions(&marker, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let report = effect_report(&world.runner.op_fleet(&world.request()));
-    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
-    let refusal = format!(
-        "host-create-failed create exit=1 lane-host-ssh: marker-script-missing path={} fix=",
-        marker.display()
-    );
-    assert!(
-        report["intent"]["observation"]["cause"]
-            .as_str()
-            .is_some_and(|cause| cause.starts_with(&refusal)),
-        "{report}"
-    );
-    effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    let marker = ".agents/skills/orch/scripts/lane-marker";
+    let setup = ".agents/skills/agent-runtime/scripts/setup";
+    for case in ["marker", "setup"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let world = HostedLaunch::ssh(&server, dir.path());
+        world.launched_and_retired();
+        let clone = world.clone();
+        // The sync-base step refuses a tracked change, so the clone reads
+        // past each planted one.
+        let refusal = if case == "marker" {
+            git(&clone, &["config", "core.fileMode", "false"]);
+            std::fs::set_permissions(clone.join(marker), std::fs::Permissions::from_mode(0o644))
+                .unwrap();
+            format!(
+                "lane-host-ssh: marker-script-missing path={}",
+                clone.join(marker).display()
+            )
+        } else {
+            git(&clone, &["update-index", "--skip-worktree", setup]);
+            std::fs::write(
+                clone.join(setup),
+                "#!/bin/sh\nprintf 'agent-runtime-setup: build-failed status=101 key=k\\n' >&2\nexit 1\n",
+            )
+            .unwrap();
+            "agent-runtime-setup: build-failed status=101 key=k".to_owned()
+        };
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        let cause = format!(
+            "host-create-failed create exit=1 lane-host-ssh: remote-failed target=lane.example exit=1 cause={refusal} fix="
+        );
+        assert!(
+            report["intent"]["observation"]["cause"]
+                .as_str()
+                .is_some_and(|recorded| recorded.starts_with(&cause)),
+            "{case}: {report}"
+        );
+        effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    }
 }
 
 /// A parked relaunch stopped part way keeps its slot until a close confirms
