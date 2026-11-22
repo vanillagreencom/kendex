@@ -23,7 +23,7 @@ The agent reads the dependency inventory and checks for upstream releases. It co
 
 kendex also installs the github skill. Add worktree when a run needs separate working copies for several updates. Invoke `/dep-radar` in your coding tool.
 
-- The inventory is the configuration: risk tiers, refresh procedures and owner rules are rows in `docs/dep-radar/inventory.md`. No settings keys.
+The inventory is the configuration: risk tiers, refresh procedures and owner rules are rows in `docs/dep-radar/inventory.md`. The package reads no settings keys.
 
 ## Licence
 
