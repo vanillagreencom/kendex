@@ -96,7 +96,8 @@ ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_li
 ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL skipped_suites=[] rust_targets=[\"agent-runtime/*\",\"orch/*\"]"
 # `render` and `trivial` run the one verify job.
 VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[] rust_targets=[]"
-# Every measured class runs cargo_linux and bot_instructions. The shell
+# Every measured class runs cargo_linux and bot_instructions, save skill
+# Markdown, whose row ci-job-set-case.sh's SHARD_SKILL_MD spells. The shell
 # shards run per package, on the runners LEGS names: none, linux or both;
 # the platform lanes stand down only on an all-prose diff, the macOS legs
 # also where no shard runs, the compile lanes where no build input changed,

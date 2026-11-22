@@ -368,6 +368,13 @@ check "the gated set is read out of the workflow" "$EVERY_GATED" \
 
 one_skill="$(selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
+# Skill Markdown at any class, with its renders and the inventory they move,
+# runs no cargo, smoke, ui, Windows or macOS job.
+skill_markdown="$(selection standard false 'skills/orch/SKILL.md
+.agents/skills/orch/SKILL.md
+agents/reviewer.md
+.claude/agents/reviewer.md
+.kendex-generated.json')"
 # A standard diff of product code, the full battery a merge group of that
 # class runs.
 standard_code="$(selection standard false 'crates/core/src/lib.rs')"
@@ -384,7 +391,8 @@ pull_request|$VERIFY_ROW|
 merge_group|$VERIFY_ROW|bot-instructions
 pull_request|$ALL_ON|
 merge_group|$ALL_ON|$EVERY_GROUP_LANE
-merge_group|$one_skill|bot-instructions cargo-linux catalog skill-suites-shard smoke
+merge_group|$one_skill|bot-instructions catalog skill-suites-shard
+merge_group|$skill_markdown|bot-instructions catalog skill-suites-shard
 pull_request|$CODE_ROW|
 merge_group|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows
 merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke
