@@ -15,8 +15,8 @@
 # close's code, with `run: &Run`, `intent: &Intent` and
 # `op: &mut LaneOperation` in scope. CARGO_TARGET_DIR is honoured for the
 # copy's build; it defaults to a folder under the copy, removed at exit.
-# Prints `PASS|FAIL <case> expected=<...> found=<...>` per case; exits 1 on
-# any FAIL.
+# Prints `PASS|FAIL <case> expected=<...> found=<...>` per case, then
+# `pass: N  fail: M`, the summary run-all.sh counts; exits 1 on any FAIL.
 # bash-runtime: 3.2
 set -euo pipefail
 
@@ -54,6 +54,7 @@ if [ "$#" -eq 0 ]; then
   done
 fi
 
+passed=0
 failed=0
 for case_name in "$@"; do
   file="$here/cases/$case_name.rs"
@@ -88,15 +89,16 @@ for case_name in "$@"; do
       ;;
     *)
       echo "FAIL $case_name: no expect header" >&2
-      failed=1
+      failed=$((failed + 1))
       continue
       ;;
   esac
   case " $found " in
-    *" $wanted "*) [ "$status" -ne 0 ] && echo "PASS $case_name expected=$wanted found=$found" && continue ;;
+    *" $wanted "*) [ "$status" -ne 0 ] && echo "PASS $case_name expected=$wanted found=$found" && passed=$((passed + 1)) && continue ;;
   esac
   echo "FAIL $case_name expected=$wanted found=${found:-none}"
   sed -n '1,40p' "$log" >&2
-  failed=1
+  failed=$((failed + 1))
 done
-exit "$failed"
+printf 'pass: %d  fail: %d\n' "$passed" "$failed"
+[ "$failed" -eq 0 ] || exit 1
