@@ -51,7 +51,7 @@ No changes: report "No changes to review" and **END**.
    - `0` delegates to every reviewer in one parallel batch.
    - A positive value below the reviewer count runs bounded waves: launch up to the available slots, wait for each return, retire the finished session, then launch the next wave.
    - When a spawn fails with the runtime's thread-limit error under an unlimited budget, continue in waves the size of the reviewers that spawned.
-   - Recommend that observed budget to the user.
+     - Recommend that observed budget to the user.
 6. On Codex, spawn each canonical reviewer name by [codex-runtime.md § Spawning Codex collaboration agents](../references/codex-runtime.md#spawning-codex-collaboration-agents), under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
 
 <delegation_format>

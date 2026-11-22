@@ -44,6 +44,8 @@ The judge reads a Pi pick on a `github-copilot/` model on the Copilot pool, from
 - An `unmeasured` answer whose `refusal.cause` is `provider-unmeasured` means no reading measured the pool. Never wait it out. Repair the provider's read, whose row `orch-runtime lane roster` shows, or state the pool in `AGENT_RUNTIME_COPILOT_POOL`.
 - A walled pool reopens at its `binding_resets_at`. A walled stated pool moves only when the owner restates it: report it to the operator.
 
+For a Pi pick on another model:
+
 - A Pi pick on a `pi-claude/` model is a Claude pick on the Claude seats.
 - A Pi pick on an `anthropic/` model spends an API-credit grant; a refused grant (`cause=api-credit`) has no retry time, and a local host reads no API credit.
 - An `unmeasured` answer with no `refusal` is a model whose provider nothing bills: launch on a model of a billed provider.
@@ -255,6 +257,8 @@ Outside § Parked record, a host whose capability line declares `park=none` ([la
 
 - Standing, as the `no_landing` close of § Recovery relaunch step 2 keeps it: the launch asks the provider's `start`, then `create --relaunch`.
 - Gone: the launch asks no `start` and goes straight to `create --relaunch`.
+
+For every hosted relaunch:
 
 - A list that fails refuses the launch `host-list-failed`.
 - A hosted relaunch whose provider's `start` answers it holds no sandbox for the item gets a fresh sandbox, with no kept worktree, session or mailbox: its observation reads `host_start: item-unknown` and `route_cause` `sandbox-absent`.

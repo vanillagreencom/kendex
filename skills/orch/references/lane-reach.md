@@ -183,20 +183,20 @@ Each harness's launch and dialog answers:
 - **Claude Code**
   - Launch: a first launch in a folder the wrapper has not trusted shows a trust prompt with "No, exit" selected: press `Down`, then `Enter`, then relaunch.
   - Dialog: press `Up` or `Down`, then `Enter`; the recorded choice line confirms it.
-  - Where `critical-path-deny` is installed, it denies a launched lane's [critical-path](https://code.claude.com/docs/en/permission-modes#critical-paths) prompt at once, and the lane does not wait.
-  - For any other prompt, read the command, and press `Enter` on Yes only when it stays inside the lane's own worktree.
+    - Where `critical-path-deny` is installed, it denies a launched lane's [critical-path](https://code.claude.com/docs/en/permission-modes#critical-paths) prompt at once, and the lane does not wait.
+    - For any other prompt, read the command, and press `Enter` on Yes only when it stays inside the lane's own worktree.
 - **Codex**
   - Launch: no dialog at launch.
   - Dialog: press the number the dialog shows, at the idle prompt.
 - **Copilot CLI**
   - Launch: [copilot-runtime.md § Launch environment](copilot-runtime.md#launch-environment) holds its launch environment, and § Recovery its recovery.
-  - A lane whose record's `allow_all` shows no folder-trust grant, in a folder its account has not trusted, opens on "Confirm folder trust", which the watch reports as `lane-asking`. Press `Enter` on "1. Yes".
-  - Relaunch the lane if its composer then sits empty with no turn started.
+    - A lane whose record's `allow_all` shows no folder-trust grant, in a folder its account has not trusted, opens on "Confirm folder trust", which the watch reports as `lane-asking`. Press `Enter` on "1. Yes".
+    - Relaunch the lane if its composer then sits empty with no turn started.
   - Dialog: press `Up` or `Down`, then `Enter`.
 - **Pi**
   - Launch: no dialog at launch. Use `pi-bridge state` only when the event carries no pane payload; never `history` or `stream`.
   - Dialog: `pi-bridge questions` lists a pending dialog with its request id. `pi-bridge answer` answers it with that id and the option label.
-  - Never answer through the pane, where a typed number lands on the default option.
+    - Never answer through the pane, where a typed number lands on the default option.
 - **App or other**
   - Launch: the session or thread launcher the harness or an app-specific skill exposes ([oversee.md § 1](../workflows/oversee.md#1-resolve-the-launch-surface)). Read only the bounded state that explains the event, through its API or tooling.
   - Dialog: the API or tooling that surface exposes; a pane at its idle prompt only when nothing else exists.

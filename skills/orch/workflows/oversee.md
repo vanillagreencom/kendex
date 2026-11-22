@@ -374,9 +374,9 @@ A brief naming design and implementation runs both in one lane.
 
 - A phase boundary is a handoff, never a relaunch.
 - A design-only phase exists only where the consumer's design-review trigger names it.
-- Its brief names the outcome, the admitted source and scratch paths, the required artifacts and the acceptance owner.
-- It sends no unstarted design phase through `start`'s implementation preparation.
-- It keeps the status, mailbox, context and admission outputs at their required paths.
+  - Its brief names the outcome, the admitted source and scratch paths, the required artifacts and the acceptance owner.
+  - It sends no unstarted design phase through `start`'s implementation preparation.
+  - It keeps the status, mailbox, context and admission outputs at their required paths.
 - A design-only lane reads its brief and the recorded handoff.
 - An opinion that lacks an input says so and nothing more.
 
@@ -602,15 +602,14 @@ A fix, take-over or closure follows only the owner's answer to its one ask, neve
    - On an open item, act only on the owner's answer, the `owner-ask-resolved` event with `by=text`, and only on the head its ask named.
      - A pull request whose live `headRefOid` differs acts on nothing; its new head goes back to step 1 when the watch reports it.
      - A deadline's `owner-ask-resolved` with `by=default` acts on nothing. Send the ask again as step 2 only where the item is still open and the ask named the current head.
-
-   - `merge-as-is`: merge by the normal route, [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) step 1's arm, only where the `[PREPARED_HEAD]` it reads is the head the ask named. Any other head arms nothing and goes back to step 1.
-   - `request-changes`: post the changes on the pull request, about the change alone. The watch reports the contributor's next push again on its new head.
-   - `take-over`: file a follow-up item and launch it through § 3. Its lane adds what is missing, bookkeeping included, and merges by the normal route.
-     - For an issue, the follow-up item is the take-over.
-     - For a pull request, the item names the pull request and the head the ask named.
-     - The lane's branch starts from the contributor's commits up to that head: `git fetch origin pull/[N]/head`, then a merge of that head. A head the fetch does not bring back is a new ask.
-     - Close the contributor's pull request with a thank-you and a link to the one that merged.
-   - `close`: close it with the owner's reason as the closing comment.
+     - `merge-as-is`: merge by the normal route, [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) step 1's arm, only where the `[PREPARED_HEAD]` it reads is the head the ask named. Any other head arms nothing and goes back to step 1.
+     - `request-changes`: post the changes on the pull request, about the change alone. The watch reports the contributor's next push again on its new head.
+     - `take-over`: file a follow-up item and launch it through § 3. Its lane adds what is missing, bookkeeping included, and merges by the normal route.
+       - For an issue, the follow-up item is the take-over.
+       - For a pull request, the item names the pull request and the head the ask named.
+       - The lane's branch starts from the contributor's commits up to that head: `git fetch origin pull/[N]/head`, then a merge of that head. A head the fetch does not bring back is a new ask.
+       - Close the contributor's pull request with a thank-you and a link to the one that merged.
+     - `close`: close it with the owner's reason as the closing comment.
 
    Thank the contributor of a merged contribution in a comment, and close the issue it fixes. Record the outcome in the fleet log.
 
@@ -663,7 +662,7 @@ At an overseer trigger under [oversee-events.md § Judgement rules](../reference
    - Where the handoff cannot wait, name every unfinished child and its known output path in the handoff's State, or say that its state and path are unknown.
 2. Write the progress report under the [report-due event](../references/oversee-events.md#report-due), whatever `ORCH_REPORT` says: `orch-runtime report write --state [OVERSEE_STATE] --repo [ITEMS_REPO] --summary-file [SUMMARY_FILE] --succession`.
    - Do not repeat a refused write during this handover.
-   - Tell the user the handover has no report, give the cause from its first stderr line, put that line in the handoff, and go on.
+     - Tell the user the handover has no report, give the cause from its first stderr line, put that line in the handoff, and go on.
 3. Complete § 5 steps 5 and 6, including the snapshot write.
 4. Save the successor's choice.
    - Name this controller's pane, and add `--mark [KIND]` (`context`, `headroom`, `rate` or `memory`) at a reported mark.

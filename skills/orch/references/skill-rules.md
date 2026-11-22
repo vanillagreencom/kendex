@@ -111,7 +111,8 @@ Within the slots:
 
 - Apply [§ Delegation](#delegation) before reusing reviewers by exact name.
 - Spawn only the missing or context-exhausted ones.
-- Over the slots, or on a thread-limit spawn error, run waves. Each wave's `record-agents` `wave-start` step records the spawn count the harness allowed as `slots_observed`.
+
+Over the slots, or on a thread-limit spawn error, run waves. Each wave's `record-agents` `wave-start` step records the spawn count the harness allowed as `slots_observed`.
 
 Review state lives on disk, never in a reviewer's session memory.
 
@@ -129,8 +130,8 @@ Apply this rule to every Codex spawn, re-delegation, retirement and respawn, rev
 - **Retirement.**
   - Where the surface exposes `close_agent` (MultiAgent V1), close finished threads through it.
   - MultiAgentV2 has no close call: end the task, with `interrupt_agent` for a running task. The thread stays allocated.
-  - Confirm it stopped before reuse.
-  - An interrupt frees no slot.
+    - Confirm it stopped before reuse.
+    - An interrupt frees no slot.
 - **Selection.** On MultiAgentV2, reuse the role's finished stored thread when it is eligible, that is, when its fixed runtime instructions permit the target task.
   - A specialist thread qualifies for its own role. A generic thread that completed review work can qualify for another review or for implementation. Never relabel a specialist to override its fixed instructions.
   - Otherwise spawn fresh only when the spawn fits the cap. At the cap, or after a thread-limit spawn error, do not retry the spawn and do not ask the overseer for reuse permission.

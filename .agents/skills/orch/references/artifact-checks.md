@@ -82,10 +82,10 @@ Read when a workflow writes, checks or recovers a round's completion artifact, o
 - **A watchdog runs where its end wakes the session.**
   - A lane launches it as [skill-rules.md § Round Closure](skill-rules.md#round-closure) step 5 states, then ends its turn; the job's end arrives as the lane's mail.
   - A session that is no lane keeps its own wait.
-  - Claude Code runs the watchdog as a background shell, whose exit is the event.
-  - Codex holds it as [codex-runtime.md § Delegated round wait](codex-runtime.md#delegated-round-wait) states for a dev round and [§ Reviewer round wait](codex-runtime.md#reviewer-round-wait) for a reviewer.
-  - Pi runs it under `bg_task`, paired with the per-wake check.
-  - Any other harness runs the check on each wake.
+    - Claude Code runs the watchdog as a background shell, whose exit is the event.
+    - Codex holds it as [codex-runtime.md § Delegated round wait](codex-runtime.md#delegated-round-wait) states for a dev round and [§ Reviewer round wait](codex-runtime.md#reviewer-round-wait) for a reviewer.
+    - Pi runs it under `bg_task`, paired with the per-wake check.
+    - Any other harness runs the check on each wake.
 - **A watchdog that ends without a verdict leaves the round unwatched.**
   - A verdict exits 0 or 1. Exit 2 is a keyed refusal; any other status is an abort.
   - Judge on the status, since the keyed line may not arrive with it.

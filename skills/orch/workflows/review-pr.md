@@ -12,6 +12,8 @@ When [start-worktree.md](start-worktree.md) § 2.1 opened the pull request early
 - `dev_agent`: a live dev agent for fix rounds.
 - `issue_id`: the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
+Worktree resolution:
+
 - **With a PR number.** `.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text` prints `ISSUE`. Apply [Worktree Scope](../SKILL.md#workflow-execution), and ask before `worktree create [ISSUE] --pr [PR_NUMBER]`.
 - With no argument, `WT_PATH` is `git-context repo-root .`.
 - Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, where `[DIR]` is the checkout `WT_PATH` resolves from.
@@ -812,6 +814,8 @@ This is QA's one exit predicate and the only route to § 8. § 6, a QA re-check 
 - A blocker first raised on this pass, or a suggestion § 4's rule makes one, is a new finding, and the predicate is false.
 - Any other `category == "fix"` suggestion takes § 4's one-pass disposition with `[SOURCE]` `qa-review`.
 - A `category == "issue"` suggestion rides through to § 8, which files it.
+
+Route on the predicate:
 
 - True: the disposition below, then § 8.
 - False: the fix round above. The loop runs while each round finds a distinct defect this diff introduced. It stops the moment one root cause reappears at a new site, which takes [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence)'s structural close, never another patch round.

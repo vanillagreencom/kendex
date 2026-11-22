@@ -577,7 +577,10 @@ Do not wait for a bot's re-review round.
 The re-submit set is the issues this session filed for work the cap did not deny. Some filings stand in for a fix the cap refused: one made at or past `REVIEW_MAX_EXTERNAL_ROUNDS`, or deferred instead of fixed.
 
 - Record such a filing in `pr_comment_review.issues_created` and report it in the PR body. It never enters the set.
-- Tell work the item's goal needs from separable work of another concern. Finish the first here.
+
+Tell work the item's goal needs from separable work of another concern.
+
+- Finish the first here.
 - Give the second its own item, with its actual owner, in the same pass.
 
 Implement the re-submit set before merge, in at most two re-submit cycles:

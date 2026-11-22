@@ -419,18 +419,18 @@ Use `-C` and absolute paths, never `cd &&` chains.
    - `ejected`:
      - `reach: within` or `reach: unread` takes the Recovery cycle below, with the resolved gate mode and `[RECOVERY_COUNT]`.
      - `reach: outside` means the consumer's reach command answered every failed check outside the change's paths. It re-arms the same head once under the re-queue rule, after sending the failure to the overseer.
-     - Write `[ITEM_DIR]/queue-reach-[STATE_KEY].md` with the harness file tool, naming the head and each of `failed_checks` with its `reach` and its `url`. Send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [STATE_KEY] --file [ITEM_DIR]/queue-reach-[STATE_KEY].md`. The overseer files it as [oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone) states.
-     - A second `outside` ejection at the same head hands back naming both runs.
+       - Write `[ITEM_DIR]/queue-reach-[STATE_KEY].md` with the harness file tool, naming the head and each of `failed_checks` with its `reach` and its `url`. Send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [STATE_KEY] --file [ITEM_DIR]/queue-reach-[STATE_KEY].md`. The overseer files it as [oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone) states.
+       - A second `outside` ejection at the same head hands back naming both runs.
    - `disarmed`:
      - `cause: merge_hold`: a person, `disarmed_by`, disabled the automatic merge on purpose, and the wait opened the item's merge hold. Take no Recovery cycle and never re-arm: the merge waits on that person.
-     - Ask for their answer through the run's question route (in a lane, `lane-mail ask`, [skill-rules.md § Lane mail](../references/skill-rules.md#lane-mail)).
-     - When it arrives, first close the hold with `.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"merge-answered"}'`. Then follow the answer: a merge returns to step 1, and anything else hands back.
+       - Ask for their answer through the run's question route (in a lane, `lane-mail ask`, [skill-rules.md § Lane mail](../references/skill-rules.md#lane-mail)).
+       - When it arrives, first close the hold with `.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"merge-answered"}'`. Then follow the answer: a merge returns to step 1, and anything else hands back.
      - Any other cause takes the Recovery cycle below.
    - `armed_blocked`: armed and not enqueued when the wait ended.
      - `cause: check_failed` takes the Recovery cycle below.
      - `cause: not_mergeable` is the wait's last check read before its deadline, no check verdict ([gates.md](../references/gates.md#which-waiter-answers-which-state)). Read the head's CI afresh with merge-attempt.md's `verify-pr` call.
-     - On that read, `fail` takes the Recovery cycle, and `pending` waits again as `armed_awaiting_checks` does.
-     - `pass` or `none` returns to § 3 for a fresh readiness check, spending no recovery cycle; that check names what keeps the PR out of the queue. A readiness check that passes on the same head arms and waits again under the wall-clock budget below. One that names a blocker routes it by § 3.2.
+       - On that read, `fail` takes the Recovery cycle, and `pending` waits again as `armed_awaiting_checks` does.
+       - `pass` or `none` returns to § 3 for a fresh readiness check, spending no recovery cycle; that check names what keeps the PR out of the queue. A readiness check that passes on the same head arms and waits again under the wall-clock budget below. One that names a blocker routes it by § 3.2.
    - `dequeued`: on `cause: late_findings_dequeue_failed`, first confirm the dequeue or the disarm.
    - `queued`: unconfirmed at the deadline. With an entry, under every cause but `exit_unconfirmed`, the PR is still armed.
      - `cause: still_progressing`: the merge is live. Run the wait again, and repeat until a verdict ends it.
@@ -755,13 +755,13 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    - A lane leaves its worktree: the overseer's close stops the session, then releases the worktree (step 4). § 6's worktree line reads `standing — left to the overseer's close`.
    - A run outside a lane removes the worktree once the project verification passed and the close-out is done.
-   - First run step 4's disposal predicate again, whole: step 5's replies and this step's build can each dirty the tree or move the branch.
-   - `worktree remove` refuses nothing itself. Uncommitted content, untracked content and a worktree moved to another branch all leave with the folder. The predicate is the only guard.
-   - Where every part holds, remove the worktree from `[MAIN_REPO_ROOT]`:
+     - First run step 4's disposal predicate again, whole: step 5's replies and this step's build can each dirty the tree or move the branch.
+     - `worktree remove` refuses nothing itself. Uncommitted content, untracked content and a worktree moved to another branch all leave with the folder. The predicate is the only guard.
+     - Where every part holds, remove the worktree from `[MAIN_REPO_ROOT]`:
 
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
-   ```
+       ```bash
+       env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
+       ```
 
    A foreign-lease refusal keeps the worktree. Carry its diagnostic onto § 6's worktree line. Where § 4 found an issue worktree, read its path last, whichever way the removal went:
 

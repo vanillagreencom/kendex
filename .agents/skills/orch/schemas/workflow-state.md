@@ -201,8 +201,8 @@ A `stages[]` entry is `{kind, round_id, start, end}` in epoch seconds, with `out
 - `context` is the context decision that caused the hand-off, as the turn end judged it.
 - `written_at` is the request's ISO 8601 UTC time, no later than the clock, else the runtime's clock.
 - While the record carries no `resumed_at`, every field but `written_at` is its identity.
-- The same content again reports `recorded_now: false`.
-- Other content needs `supersede: true`.
+  - The same content again reports `recorded_now: false`.
+  - Other content needs `supersede: true`.
 - The next `record-handoff` replaces a record that carries `resumed_at` whole.
 - No pointer write reaches an item record's `/handoff`.
 

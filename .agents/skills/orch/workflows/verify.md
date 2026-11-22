@@ -38,6 +38,8 @@ The verb reads each named pull request's merge from GitHub and judges the item's
 - Where the item has no linked merged pull request, or the reply refuses a named read, report the item, its open boxes and the failed read.
 - Do not repeat the watch's repository search.
 
+For every item:
+
 - For acceptance and failed checks, apply [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results. It governs a scheduled session's reading too.
 - A merged item never returns to In Progress, also after a failed check: never select that state with `linear.sh issues update`.
 - Read the evidence `Where:` names. Never run `Where:` text as a command line.
@@ -100,42 +102,42 @@ When a box's deadline arrives with no evidence and no proved defect:
 - With an overseer, follow [communication-modes.md § Owner-only verification](../references/communication-modes.md#owner-only-verification).
 - With no overseer, keep that reader selection. This pass takes an accessible tool reading; a delegate reading follows the delegate notice route.
 
-For an owner-only box, or § 2's ask, ask directly through the linear skill:
+  For an owner-only box, or § 2's ask, ask directly through the linear skill:
 
-1. Read the item and its comments.
-   - Reuse an open verification ask for this box.
-   - Where another box has an open owner ask on the item, leave this box pending until that ask closes.
-   - Resolve `ORCH_OWNER_EMAIL` and `ORCH_OWNER_ASK_LABEL` ([settings.md § Talking to you](../references/settings.md#talking-to-you)). Report an unset owner or label as a blocked ask.
+  1. Read the item and its comments.
+     - Reuse an open verification ask for this box.
+     - Where another box has an open owner ask on the item, leave this box pending until that ask closes.
+     - Resolve `ORCH_OWNER_EMAIL` and `ORCH_OWNER_ASK_LABEL` ([settings.md § Talking to you](../references/settings.md#talking-to-you)). Report an unset owner or label as a blocked ask.
 
-2. Keep the current labels. Assign the owner and add the owner-ask label:
+  2. Keep the current labels. Assign the owner and add the owner-ask label:
 
-   ```bash
-   .agents/skills/linear/scripts/linear.sh issues update [ITEM] --assignee [OWNER_EMAIL] --labels [FULL_LABEL_SET]
-   ```
+     ```bash
+     .agents/skills/linear/scripts/linear.sh issues update [ITEM] --assignee [OWNER_EMAIL] --labels [FULL_LABEL_SET]
+     ```
 
-   Post the question, naming the box, the check, `Where:` and the deadline:
+     Post the question, naming the box, the check, `Where:` and the deadline:
 
-   ```bash
-   .agents/skills/linear/scripts/linear.sh comments create [ITEM] --body-file [FILE]
-   ```
+     ```bash
+     .agents/skills/linear/scripts/linear.sh comments create [ITEM] --body-file [FILE]
+     ```
 
-   Record which box the ask covers. Keep the item Verifying.
+     Record which box the ask covers. Keep the item Verifying.
 
-3. On the next pass, read the owner's one-comment answer after that ask; the owner's email identifies it.
-   - For a reading, apply the answer acceptance rule of [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks). An accepted reading passes the check; a change request follows § 1's acceptance rule.
-   - For § 2's ask, act on the chosen option under § 2 step 3.
-   - An absent answer leaves the ask open.
+  3. On the next pass, read the owner's one-comment answer after that ask; the owner's email identifies it.
+     - For a reading, apply the answer acceptance rule of [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks). An accepted reading passes the check; a change request follows § 1's acceptance rule.
+     - For § 2's ask, act on the chosen option under § 2 step 3.
+     - An absent answer leaves the ask open.
 
-4. Before closing the ask:
-   - Record the answer and the reading on the item.
-   - Complete a passing check under § 1's Completion.
-   - Read the labels fresh, remove only the owner-ask label, and clear the assignee:
+  4. Before closing the ask:
+     - Record the answer and the reading on the item.
+     - Complete a passing check under § 1's Completion.
+     - Read the labels fresh, remove only the owner-ask label, and clear the assignee:
 
-   ```bash
-   .agents/skills/linear/scripts/linear.sh issues update [ITEM] --labels [FULL_LABEL_SET] --clear-assignee
-   ```
+     ```bash
+     .agents/skills/linear/scripts/linear.sh issues update [ITEM] --labels [FULL_LABEL_SET] --clear-assignee
+     ```
 
-   Keep another open owner ask's assignment and label until that ask closes, as the watch's `../runtime/src/watch/tracker.rs::clear_owner_item` does.
+     Keep another open owner ask's assignment and label until that ask closes, as the watch's `../runtime/src/watch/tracker.rs::clear_owner_item` does.
 
 ## 4. Record the pass
 
