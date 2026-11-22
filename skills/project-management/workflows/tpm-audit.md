@@ -557,7 +557,7 @@ Ask: **would these ship together in one PR?**
 
 - Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8).
 - No means separate items with blocking relations for ordering.
-- They are children of one container only when they are the parts of one deliverable accepted as one thing ([filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent)), under § 7.1's existing-deliverable or new-deliverable case. Otherwise each stands alone in its project.
+- The items are children of one container only when they are the parts of one deliverable accepted as one thing ([filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent)), under § 7.1's existing-deliverable or new-deliverable case. Otherwise each stands alone in its project.
 
 Which way to lean:
 
@@ -624,9 +624,7 @@ An architecture module may extend beyond any PR's changed paths.
 - When concrete module paths are missing, resolve repository discovery separately as `PROJECT_VERIFICATION_CONTEXT` and use it here only.
 - A `docs-only` issue context is never evidence that architecture modules are missing.
 
-Classify each component as implemented (exists, functions present, no major TODOs), stubbed (returns placeholders), or missing.
-
-- A component is a gap when the architecture requires it, no issue covers it in any backlog, and it is not implemented.
+Classify each component as implemented (exists, functions present, no major TODOs), stubbed (returns placeholders), or missing. A component is a gap when the architecture requires it, no issue covers it in any backlog, and it is not implemented.
 
 **A gap is still an issue, so it still clears the creation bar.**
 
@@ -729,7 +727,7 @@ Every project, initiative, and issue read below is filtered to the § 1.1.1 scop
    - A `started` project with no open item left that § Project kinds lets complete is a `complete_candidates[]` entry noting what it unblocks, with the `ends_when` evidence for a map deliverable.
    - A map deliverable that rule holds open is a `complete_held[]` entry.
    - Assuming reorders applied, the first `planned`/`backlog` project with no incomplete blockers is `recommended_next`. It is null, with a `rationale` listing each candidate's blockers, when nothing is ready.
-   - Its `blocked_by_active` names the started project that holds activation by [§ Project kinds](../references/project-map.md#project-kinds): one that counts as active and is no `complete_candidates[]` entry, a `complete_held[]` deliverable included. It is null when none does.
+   - `recommended_next.blocked_by_active` names the started project that holds activation by [§ Project kinds](../references/project-map.md#project-kinds): one that counts as active and is no `complete_candidates[]` entry, a `complete_held[]` deliverable included. It is null when none does.
 
 Return per § 13 with the `tmp/audit-project-order-YYYYMMDD-HHMMSS.json` hint and the project-order schema in [audit-output.md](../schemas/audit-output.md).
 
@@ -806,7 +804,7 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
 
 5. **Action.** § 10.1, then `create` or `skip`. No other action.
    - A `create` fills `create_fields` per § 10.2.
-   - Its `hierarchy` is `{"action": "make_child", "parent": null}` when the input's `parent_issue` names a container whose one deliverable the item is a part of, or when the input's `in_pr_bundle` is true and its `parent_issue` is the issue being worked (§ 7.1's in-PR bundle case). Otherwise it is `{"action": "none", "parent": null}`.
+   - The create's `hierarchy` is `{"action": "make_child", "parent": null}` when the input's `parent_issue` names a container whose one deliverable the item is a part of, or when the input's `in_pr_bundle` is true and its `parent_issue` is the issue being worked (§ 7.1's in-PR bundle case). Otherwise it is `{"action": "none", "parent": null}`.
    - When the input `description` has `## Owner directive (verbatim)`, copy its block unchanged into `create_fields.description`. Restated Requirements and Done when may add detail, never replace, shorten or reorder it.
 
 Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row.

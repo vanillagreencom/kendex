@@ -25,13 +25,17 @@ A proposal carries `Source:`, either `Source PR:` or `Source commit:`, `Priority
 
 1. Run every command in `Worktree`, and confirm it belongs to `Source repository`.
 2. Resolve the source:
-   - For `Source PR:`, read `gh pr view [N] --repo [SOURCE_OWNER/REPO] --json state,mergeCommit,baseRefName`. Require the PR to be merged. Use its merge commit as `[SOURCE_SHA]` and its base branch as `[BASE_BRANCH]`.
-   - For `Source commit: [SHA]`, use that commit as `[SOURCE_SHA]`. Resolve the source repository's base branch with `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE]`.
+   - For `Source PR:`:
+     1. Read `gh pr view [N] --repo [SOURCE_OWNER/REPO] --json state,mergeCommit,baseRefName`.
+     2. Require the PR to be merged. Defer an unmerged PR without resolving its binding.
+     3. Use its merge commit as `[SOURCE_SHA]` and its base branch as `[BASE_BRANCH]`.
+   - For `Source commit: [SHA]`:
+     1. Use that commit as `[SOURCE_SHA]`.
+     2. Resolve the source repository's base branch with `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE]`.
 3. Fetch `[BASE_BRANCH]`.
-4. Require `git merge-base --is-ancestor [SOURCE_SHA] origin/[BASE_BRANCH]` to pass.
-5. Defer an unmerged PR or an unlanded commit without resolving its binding.
-6. Inspect evidence with `git show [SOURCE_SHA]:[EVIDENCE_PATH]`.
-7. Use the refreshed base for current duplicate and cancellation checks.
+4. Require `git merge-base --is-ancestor [SOURCE_SHA] origin/[BASE_BRANCH]` to pass. Defer an unlanded commit without resolving its binding.
+5. Inspect evidence with `git show [SOURCE_SHA]:[EVIDENCE_PATH]`.
+6. Use the refreshed base for current duplicate and cancellation checks.
 
 Then treat the candidate as a proposed item in [tpm-audit](tpm-audit.md) issue mode:
 

@@ -89,7 +89,10 @@ List a technical change only when it changes what a user or operator experiences
 
 **Cross-domain impact reported** →
 
-1. Add the new domain labels: compute the final set, preflight, update.
+1. Add the new domain labels:
+   1. Compute the final set.
+   2. Preflight.
+   3. Update.
 2. Append `## Affected Domains` to the description.
 3. Switch to § 5.2.
 
@@ -98,8 +101,7 @@ Do not assess severity yourself.
 **Initiative-level scope** (10+ issues, needs phasing) →
 
 1. Ask the user "Research scope suggests a new initiative. Escalate to a roadmap?"
-2. On yes, append `## Creates Roadmap`.
-3. Switch to § 5.3.
+2. On yes, append `## Creates Roadmap` and switch to § 5.3.
 
 ### 5.2 Pervasive
 
@@ -234,7 +236,11 @@ For each blocked issue, keeping the Research, Artifacts, and Decision references
 - **Children were created** → apply [parent-issue-template.md](../templates/parent-issue-template.md):
   1. Replace `## Requirements` with `## Sub-Issues` and `## Context`.
   2. Remove every implementation-level requirement.
-  3. Set the parent's agent label to the project's multi-agent label when the children span 2+ agent domains: compute the final set, replace only the agent category, preflight, update.
+  3. When the children span 2+ agent domains, set the parent's agent label to the project's multi-agent label:
+     1. Compute the final set.
+     2. Replace only the agent category.
+     3. Preflight.
+     4. Update.
   4. Clear the parent's estimate.
 - **No children** →
   1. Replace the vague summary with the concrete scope from the decision (1-2 sentences).

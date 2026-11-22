@@ -35,7 +35,7 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
    - A non-zero exit halts with its error output.
    - `map-absent` leaves § 3 as written.
 2. When `project_placement.project_name` is a map project, keep its `projects[].id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing.
-3. Otherwise:
+3. When a declared map does not list it:
    1. Halt before any tracker write.
    2. Report the project as `project_needed`, with the fields [project-map.md § Routing](../references/project-map.md#routing) names.
    3. Run `roadmap create` again on the same plan once the map lists it.
@@ -48,8 +48,7 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 - Actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking, only under the same provenance as `approved_at_plan_gate`: this wrapper collected that answer in this session on this identical presented set.
 - A plan loaded in a later session, or edited since, presents every action.
-- Otherwise present only what changed since that gate or was not shown there.
-- Then ask once: `Execute all` | `Review each` | `Skip`.
+- Otherwise present only what changed since that gate or was not shown there, then ask once: `Execute all` | `Review each` | `Skip`.
 
 <output_format>
 
@@ -102,7 +101,7 @@ For a new initiative:
 
 1. Complete [initiative-project-template.md](../templates/initiative-project-template.md) § Required inputs if § 3.1 did not collect them.
 2. Following that template, use the plan's project outcome for `[PROJECT_DESC]`.
-3. Use its deliverables and acceptance for `[PROJECT_CONTENT]`.
+3. Following that template, use the plan's deliverables and acceptance for `[PROJECT_CONTENT]`.
 4. Add `--link "[RESOURCE_LABEL]=[RESOURCE_URL]"` when the project has research or design.
 
 ```bash
@@ -177,7 +176,7 @@ Deterministic mapping only:
   - `Skip this issue` omits it.
   - A resolution with no representable effect halts naming the conflict.
 
-The two rules the rows above defer to:
+The two rules the entries above defer to:
 
 1. **Retargeting.** A reference to any entry § 2 omitted — a relation or a `hierarchy.parent`:
    - Retargets to that entry's existing `target` issue id when the action executed.
@@ -204,10 +203,8 @@ Each entry's `create_fields` carries:
 - `agent_label`, `is_bundle_parent`.
 - `source_path` = the plan markdown path.
 
-A bundle parent:
-
-- Sets `is_bundle_parent: true` with no description or recommendation.
-- Gets [parent-issue-template.md](../templates/parent-issue-template.md) content generated after the children exist, via workflow-actions § Descriptions (parent rebuild).
+- A bundle parent sets `is_bundle_parent: true` with no description or recommendation.
+- Generate its [parent-issue-template.md](../templates/parent-issue-template.md) content after the children exist, via workflow-actions § Descriptions (parent rebuild).
 
 Top-level: `{"mode": "issue", "source": "roadmap-create", "parent_issue": [from hierarchy_recommendation.origin_issue or null], "research_ref": [context.research_path], "plan_path": [context.plan_path], "approved_at_plan_gate": [true|false]}`.
 

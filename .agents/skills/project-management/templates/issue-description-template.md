@@ -103,7 +103,7 @@ Notes per placeholder:
 - `[REQUIREMENT_*]`: use as written, already a `* bullet` list, less what [filing.md](../references/filing.md) § Requirements cuts before filing.
 - `[OWNER_DIRECTIVE]`:
   - Include this section after Context when present, copied unchanged.
-  - The Requirements row's cuts never apply to it.
+  - The `[REQUIREMENT_*]` cuts never apply to it.
   - Omit the section when absent.
 - `[FILE_PATH]`: a backticked path.
   - **Never line numbers.**

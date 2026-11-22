@@ -131,13 +131,14 @@ Collect the artifact per § 4.2 step 1-2, then present:
 
 ### 2.3 Apply and Activate
 
-- Apply reorders and the `complete_candidates[]` completions without asking, with these commands.
-- A `complete_held[]` project stays started.
+- Apply reorders and the `complete_candidates[]` completions without asking:
 
-```bash
-.agents/skills/linear/scripts/linear.sh projects set-sort-order [PROJECT_ID] --position [NEW_SORT_ORDER]
-.agents/skills/linear/scripts/linear.sh projects update [PROJECT_ID] --state completed
-```
+  ```bash
+  .agents/skills/linear/scripts/linear.sh projects set-sort-order [PROJECT_ID] --position [NEW_SORT_ORDER]
+  .agents/skills/linear/scripts/linear.sh projects update [PROJECT_ID] --state completed
+  ```
+
+- A `complete_held[]` project stays started.
 
 **Skip if** `recommended_next.id` is null or `recommended_next.blocked_by_active` is set, the active project tpm-audit § 11 step 5 found. Otherwise:
 
@@ -403,8 +404,7 @@ A Linear create:
 
 - Backlog is mandatory, never the team-default Triage.
 - A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`.
-- A child must share the parent's project. If it cannot, create it standalone with `related`.
-- For `hierarchy_contract` items the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone.
+- A child must share the parent's project. If it cannot, create it standalone with `related`, except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone.
 - Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies.
 
 A `create` whose `create_fields.review_born` is true came from a review finding, and passes `--review-born` so the creation bar holds it to a reported `Symptom:` at priority 2:
@@ -512,8 +512,13 @@ Once every create has landed and its relations and parent are attached, never pe
 
 Propagate to children:
 
-- Linear: `issues get [ISSUE_ID] | jq -r '.children[].id'`, then repeat per child. `issues get` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
-- GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
+- Linear:
+  1. Read `issues get [ISSUE_ID] | jq -r '.children[].id'`.
+  2. Repeat per child.
+  3. `issues get` returns three levels. Walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
+- GitHub has no recursive child query:
+  - Propagate only to issues created in this audit carrying `Parent: #[N]`.
+  - Report deeper propagation as not performed.
 
 ### 7.4 Post-Cancellation Cleanup
 
@@ -521,7 +526,10 @@ For each issue cancelled in § 7.1 or § 7.2:
 
 **Linear**: a cancelled blocker leaves its targets' `blocked_by_open`.
 
-**GitHub**: there are no relation objects. Scan the § 1.2.2 inventory and the issues touched here for body lines referencing the closed number, and update those bodies through the § 7.2 route or note the stale reference in a comment.
+**GitHub**: there are no relation objects.
+
+1. Scan the § 1.2.2 inventory and the issues touched here for body lines referencing the closed number.
+2. Update those bodies through the § 7.2 route, or note the stale reference in a comment.
 
 If a target's `blocked_by_open` is left empty and this audit created an issue covering the same domain:
 

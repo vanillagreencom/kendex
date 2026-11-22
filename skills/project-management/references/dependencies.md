@@ -32,7 +32,7 @@ The Linear CLI enforces that rule at mutation time.
 A blocking relation pointing at a Done or Canceled issue is **auto-satisfied**: the relation stays as provenance.
 
 - Never remove or "fix" a relation whose blocker is Done/Canceled, except by the § Level lift.
-- Never list one under a stale-metadata heading.
+- Never list such a relation under a stale-metadata heading.
 - The only legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` where the audit reports findings per project, or "gates cleared, ready to schedule" in the issue's `reason` where it reports per issue.
 
 ### Reading a Full Subtree

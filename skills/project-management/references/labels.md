@@ -56,7 +56,7 @@ Declare it in the project's kendex manifest (`kendex.toml`, or `kendex-local.tom
 
 - kendex renders it into this skill's SKILL.md in each project skills directory it delivers the skill to.
 - The linear CLI reads every render in one project's `.<tool>/skills` directories, never the source layout `skills/`.
-- That project is the nearest directory from the working directory up to a bound that holds a render, else the bound.
+- The project it reads is the nearest directory from the working directory up to a bound that holds a render, else the bound.
 - The bound is the project holding the linear install when the install sits in a `.<tool>/skills` directory in the repository, so a nested project's own taxonomy applies inside it. Run from outside that project, the CLI reads the install's project.
 - For any other install, global or source layout, the bound is the git top level.
 
@@ -77,9 +77,6 @@ The block:
 
 - Category matching order: explicit `labels[]`, then `match.prefix`, then `match.parent` from live inventory, then a project-documented matcher.
 - A label matching two categories must be disambiguated by the taxonomy before mutation.
-
-The declared names:
-
 - The declared names are every category's `labels[]` names and its `match.parent` group name, plus each name in `LINEAR_AGENT_LABELS`. A `match.prefix` declares none.
 - The group name declares none of its children, so a `match.parent` category lists in `labels[]` the child labels issues carry.
 - Under a declared taxonomy the linear CLI refuses, before any write, a label it does not declare, on the commands [linear SKILL.md § Issue Creation Routing](../../linear/SKILL.md#issue-creation-routing) names.
@@ -89,9 +86,9 @@ The declared names:
 
 A taxonomy still in an earlier form (TOML, JSON or prose in `[skill-instructions]`, or a linked project doc or reference file) under no `### Project taxonomy` heading:
 
-- Still binds agents: they validate labels against it as before until it moves into that block.
-- Gets no enforcement from the linear CLI, as in earlier releases.
-- Makes `linear.sh labels audit` report `taxonomy-absent` until it moves.
+- It still binds agents: they validate labels against it as before until it moves into that block.
+- The linear CLI enforces nothing for it, as in earlier releases.
+- `linear.sh labels audit` reports `taxonomy-absent` until it moves.
 
 ## Validation
 
@@ -104,10 +101,9 @@ Validate the **final label set** before every create and update:
 - Optional exclusive categories have at most one.
 - Labels the taxonomy does not map are rejected unless the taxonomy explicitly allows uncategorized labels.
 
-On a failure:
+Any failure halts before mutation and reports: the requested set, the missing labels, any group labels attempted, the category that failed, and whether a missing label exists in the taxonomy but not in the tracker.
 
-- Any failure halts before mutation and reports: the requested set, the missing labels, any group labels attempted, the category that failed, and whether a missing label exists in the taxonomy but not in the tracker.
-- Never rely on the CLI's warn-and-skip behavior to catch an invalid label.
+Never rely on the CLI's warn-and-skip behavior to catch an invalid label.
 
 ## Creates Carry the Full Set
 

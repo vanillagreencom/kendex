@@ -58,7 +58,7 @@ Decline every other candidate with one line in the report: no issue, no placehol
 - Where no project says what they share, they share one existing label.
 - The grouping adds no label and no field.
 - An audit, a holistic pass, a redesign or any other pass files no parent for its subject.
-- It files each item it produces in the project its route names.
+- Such a pass files each item it produces in the project its route names.
 - Items that share an outcome, a mechanism or a subject the owner reads in one place form no parent either.
 
 A parent exists only when its children are the parts of one deliverable accepted as one thing. Examples: a design and its build of one feature, the domain parts research-complete splits from one implementation issue, and the review audit's in-PR bundle.

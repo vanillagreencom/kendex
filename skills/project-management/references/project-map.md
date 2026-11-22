@@ -147,7 +147,6 @@ Examples, against the § Declaration map:
 
 - A single filing ([tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) step 3) with Location `.github/workflows/ci.yml` returns `project.recommended: "Review Gate & CI"` and a `reason` that quotes the sentence: `Review Gate & CI admits "Changes to CI workflows, the review gate and the merge rail."; .github/workflows/ci.yml is a CI workflow.`
 - A filing with Location `docs/legal/terms.md` matches no `admits` sentence, so its row has `project.recommended: null` and a `project_needed[]` row whose `reason` says no sentence names that Location. The create is held.
-- Control: § 14 step 3 as main words it asks for no quote, so the first filing's `reason` holds none.
 
 No default project exists. Under a declared map:
 

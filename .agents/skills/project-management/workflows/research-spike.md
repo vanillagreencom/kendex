@@ -45,7 +45,7 @@ Carry this search's rows, actual search terms and proposed dispositions as `prio
 - Include each matched identifier, title, scope evidence and reason.
 - A proposal to replace or transfer scope carries the existing [audit-output.md](../schemas/audit-output.md) `supersedes[]` shape and its `when`.
 - A covering match carries its identifier as `target`.
-- These are recommendations until that writer obtains authorization and applies them. This search performs no disposition.
+- The proposed dispositions are recommendations until that writer obtains authorization and applies them. This search performs no disposition.
 
 ## 3. Hand Off
 

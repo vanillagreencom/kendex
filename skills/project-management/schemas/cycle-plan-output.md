@@ -20,7 +20,7 @@ The active project has no open item left, read by its recorded id as [project-ma
 ```
 
 - `actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1), and when `completed_project` is null.
-- Its `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`.
+- `actions.mark_complete.ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`.
 - `blocked_by_active` is the started project that holds activation by [§ Project kinds](../references/project-map.md#project-kinds) once this result is applied: `completed_project` when held open, otherwise another started project that counts as active. It is null when none does.
 - `ready: true` means every dependency is satisfied.
 - `sort_order` is the manual ordering from the tracker UI.

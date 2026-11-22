@@ -16,9 +16,9 @@ This workflow mutates project state; every read below is live, so it acts on the
    </delegation_format>
 
 2. **Materialize the artifact.** The agent returns a `File:` hint and fenced JSON.
-   1. Write the inline JSON to that path under the current repo root.
-   2. Read it.
-   3. If inline JSON is missing and the path is not already readable, halt and request a rerun with inline JSON.
+   1. With inline JSON present, write it to that path under the current repo root.
+   2. Without inline JSON, use the path only if it is already readable. If it is not, halt and request a rerun with inline JSON.
+   3. Read the file.
 
 3. **Route on `status`**: `project_complete` → § 2, `plan_ready` → § 3.
 
@@ -58,8 +58,8 @@ With `blocked_by_active` null:
 
 1. Ask: `Activate [recommended.name]` | other projects with `ready: true` | `Skip`.
    - A project with `ready: false` is not offered. Show its blockers instead.
-2. Activating starts the project and re-runs § 1.
-3. `Skip` ends the workflow.
+   - Activating starts the project and re-runs § 1.
+   - `Skip` ends the workflow.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects update [PROJECT_ID] --state started
@@ -144,7 +144,8 @@ Then sync bundle state. A parent's children are the parts of one deliverable ([f
 
 - An assigned parent pulls its pending children into the same cycle and state.
 - An assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle.
-- A parent with children is a container and stays open while a child is open.
+
+A parent with children is a container and stays open while a child is open.
 
 No comments on priority updates.
 

@@ -48,7 +48,7 @@ Use this template when roadmap-create creates an initiative or project.
 
 - Take initiative-label names from the approved plan or the user's answers. The initiative create command resolves them against initiative labels.
 - Read `linear.sh project-labels list --max` for project-label names.
-- These are separate label lists, as [labels.md](../references/labels.md) defines.
+- Initiative labels and project labels are separate label lists, as [labels.md](../references/labels.md) defines.
 
 ## Fields and links
 

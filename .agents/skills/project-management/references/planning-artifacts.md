@@ -54,7 +54,7 @@ With no published source issue, keep the existing local-until-creation flow.
 ## Unpublished artifacts
 
 - On Linear, a run with no issue writes keeps its files locally until creation.
-- It creates no issue only to hold files.
+  - It creates no issue only to hold files.
 - A run whose writes leave no open issue to hold them, such as one that only cancels, keeps its files locally and reports them as unpublished.
 - On GitHub, report binary inputs that have no tracker upload route as incomplete.
-- Never claim that a local-only file is available to another lane.
+  - Never claim that a local-only file is available to another lane.
