@@ -96,6 +96,6 @@ A lane that died to a signal is a KILL, recorded as `status: "killed"` and repor
 
 When **every** lane fails there is no artifact, and the run takes the aggregate of those classes:
 
-- 4 when at least one lane answered unusably: its own exit 4, an artifact the merge could not consume, or a response-defect exit 1.
-- Else 6 when any lane was killed.
-- Else 5 when no lane ever answered.
+1. 4 when at least one lane answered unusably: its own exit 4, an artifact the merge could not consume, or a response-defect exit 1.
+2. Else 6 when any lane was killed.
+3. Else 5 when no lane ever answered.

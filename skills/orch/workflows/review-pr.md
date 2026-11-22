@@ -234,7 +234,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
    - A failure, `none` or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`.
    - Anything else sets it `true`. The output signals availability only; the review runs without `--target`.
-   - On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once, `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]`, where `[FIX]` is each reason's remedy in the second-opinion skill's SKILL.md § Error Handling.
+   - On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once, `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]`, where `[FIX]` is each reason's remedy in the second-opinion skill's references/error-handling.md.
 
 4. **Record the panel** on a fresh § 1 entry, before any spawn, with `external` set to `EXTERNAL_REVIEW_REQUESTED`. A `small` item's panel holds three reviewers at most, the external lane counted:
 

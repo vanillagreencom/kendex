@@ -987,6 +987,7 @@
   ".agents/skills/second-opinion/README.md",
   ".agents/skills/second-opinion/SKILL.md",
   ".agents/skills/second-opinion/kendex.settings.toml.example",
+  ".agents/skills/second-opinion/references/error-handling.md",
   ".agents/skills/second-opinion/references/multi-lane.md",
   ".agents/skills/second-opinion/schemas/review-finding-prompt.md",
   ".agents/skills/second-opinion/scripts/lib/kendex-env.sh",
