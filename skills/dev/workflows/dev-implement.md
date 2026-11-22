@@ -222,7 +222,7 @@ The validation gate is this complete list:
 - Run the must-fail controls [code-quality § Tests](../../code-quality/SKILL.md#tests) requires, each scoped as [§ Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) sets. A changed test file takes no run of its own: the runner's result covers it, locally or through required CI.
 - The declared validation command passes once against the round's final worktree contents, run through `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] [--run-id [RUN_ID]]` as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out, `--run-id` present exactly when the admission step above ran.
   - The agent never chooses a class or a narrower command.
-  - A run that needs `DEV_VALIDATE_CMD` refuses an empty declaration before starting. Run nothing in its place.
+  - A run that needs `DEV_VALIDATE_CMD` refuses an empty declaration before starting: a validation failure, never a fallback. Run nothing in its place.
 - A project whose own policy forbids orch's validation runner and requires its validation entry point in the foreground runs that entry point here, in the foreground as the policy sets out, in place of the runner. It takes these steps:
   1. Record the run in `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]`. A recovery attempt below records itself in `[WORKTREE_PATH]/tmp/validate-record-[ARTIFACT_KEY]-[DEV_ROUND_ID]-recovery` and preserves the original record.
   2. Before the entry point starts, commit the final edits, where any exist, with the active workflow's commit instructions and metadata and no `[validate: ...]` line, since no verdict exists yet. Reuse that commit through completion and skip the workflow's later commit step.
@@ -306,6 +306,8 @@ Where `orch-runtime validate policy --stage doc-limits`, with `--base-checkout` 
 ```bash
 .agents/skills/doc-limits/scripts/doc-limits
 ```
+
+Run the gate in this order:
 
 1. Run the delegation's required verification commands through their route in [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation).
 2. Then run `DEV_VALIDATE_CMD` through `orch-runtime validate entry`, or the project's entry point by the foreground route above.

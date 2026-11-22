@@ -27,7 +27,7 @@ orch is the caller and runtime: it owns the delegation format, round acceptance 
 - Review and QA-review belong to the reviewer skill's workflows/review.md and workflows/qa-review.md.
 - Command shapes are orch's [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell.
 - Literal format tags and round mechanics are its [`../orch/references/skill-rules.md`](../orch/references/skill-rules.md) § Format Tags Are Literal and § Round Closure.
-- Where a file search may look is its § File searches.
+- Where a file search may look is [`../orch/references/skill-rules.md`](../orch/references/skill-rules.md) § File searches.
 
 ## Implementer selection
 
@@ -133,10 +133,10 @@ A session at its context mark hands over at once, whatever step is open.
 
 - The handoff record names the open step and the run in flight, with the runner identity, the log and exit-receipt paths and one recovery route, under `traps`.
 - A verdict, a review or any other step is never a precondition of that record.
-- On a host whose agent warden reaps orphan scopes, a foreground project entry-point run or an `--attached` run does not survive its agent's scope.
-- The successor confirms the interrupted run has stopped, preserves its log and any exit receipt, and reruns only those interrupted checks once.
-- Use the orch job runner or orch's validation runner according to this section's command routes, with a runner that survives the successor's agent scope.
-- Never wait on an orphan queued run whose parent is gone.
+- On a host whose agent warden reaps orphan scopes, a foreground project entry-point run or an `--attached` run does not survive its agent's scope. For such a run:
+  - The successor confirms the interrupted run has stopped, preserves its log and any exit receipt, and reruns only those interrupted checks once.
+  - The successor uses the orch job runner or orch's validation runner according to this section's command routes, with a runner that survives its own agent scope.
+  - The successor never waits on an orphan queued run whose parent is gone.
 
 A command that can outlast the harness's tool-call limit never runs as one blocking foreground tool call. There are two exceptions:
 
@@ -146,7 +146,7 @@ A command that can outlast the harness's tool-call limit never runs as one block
 The command routes:
 
 - Run the project's declared validation commands through orch's validation runner, `orch-runtime validate entry`, outside that route.
-- Never override these settings per run.
+- Never override per run the `DEV_VALIDATE_*` settings that declare those commands.
 - Run every other long command, including standalone preflight, doc-limits and mutation-control sweeps, through the orch job runner per [waiter-launch.md](../orch/references/waiter-launch.md).
 - Read each completion file, preserve nonzero exit codes, and report an interruption without a verdict as failure.
 

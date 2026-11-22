@@ -19,13 +19,14 @@ Every harness row below plans without a spawned harness child, a harness process
 
 - **Claude Code.**
   - Run the BARE command `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]` in the foreground, never piped or chained, under the harness's maximum command timeout. It starts the run detached and then blocks until the verdict.
-  - A run that outlasts that timeout comes back cut off or moved to the background. Read the `run-dir=` value off the `state=started` line in the output it returned or in the output file the harness names.
-  - Take the foreground poll `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]` as the turn's next step, under the same timeout because one call runs for up to nine minutes. Repeat it for as long as it exits 3 and prints `state=running`.
+  - A run that outlasts that timeout comes back cut off or moved to the background. For such a run:
+    - Read the `run-dir=` value off the `state=started` line in the output it returned or in the output file the harness names.
+    - Take the foreground poll `.agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir [RUN_DIR]` as the turn's next step, under the same timeout because one call runs for up to nine minutes. Repeat it for as long as it exits 3 and prints `state=running`.
   - Never end the turn while the run is still running and never wait for a completion notice. A subagent whose turn has ended is not woken when the run ends, the runtime's end notice reaches the lane's mailbox and never that subagent, and the harness can kill a background shell on a low-memory heuristic that fires with free memory to spare. Neither loses the verdict, because the sentinel is on disk.
-  - The verdict is the `validate=` value on the `state=done` line: `pass`, `FAILING`, or `no-verdict` for a command's exit 3 or an unavailable host check, which [dev-implement.md § 5. Validate](dev-implement.md#5-validate) routes. The log holds command output and never an exit status.
-  - `state=lost` is a failed validation.
+  - Read the verdict, then resume the tail:
+    - The verdict is the `validate=` value on the `state=done` line: `pass`, `FAILING`, or `no-verdict` for a command's exit 3 or an unavailable host check, which [dev-implement.md § 5. Validate](dev-implement.md#5-validate) routes. The log holds command output and never an exit status.
+    - `state=lost` is a failed validation.
   - A tool-started `claude -p` is the spawned child this workflow forbids: its sign-in is unproven.
-  - Then resume the tail.
 - **Codex.**
   - Start `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]` with `exec_command`.
   - While a call returns a `session_id`, hold it inside the turn with empty `write_stdin` polls on it. A return that carries an `exit_code` ended the command.

@@ -93,7 +93,7 @@ Follow that section from the worktree root, with two changes:
 1. Its `DEV_VALIDATE_CMD` item validates this round's changes only.
    - Start it as `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --base [BASE_SHA] --run-id [RUN_ID]`, `[RUN_ID]` from the reply of the admission that section's admission step runs before every start. `orch-runtime validate start` resolves the mode from the project's declaration for a start that names a base, and records it on the round's admitted `validate` entry, so the start names no `--validate-mode`.
    - A delegation that carries no `Validation admission:` line starts `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --validate-mode range --base [BASE_SHA]` instead, and the entry resolves that request as `orch-runtime validate entry --help` states.
-   - Use `[ROUND_BASE]` as `[BASE_SHA]`, and poll it the same way.
+   - Use `[ROUND_BASE]` as `[BASE_SHA]`, and poll it with the `--wait --run-dir` poll [long-running-validation.md](./long-running-validation.md) gives that section's start.
    - The runner decides whether CI covers the change and whether local validation must run.
    - A project whose policy forbids orch's validation runner takes that section's foreground route instead, with the record's line `validate-mode=range` where the project sets `DEV_VALIDATE_RANGE_CMD` and `validate-mode=full` where it does not. That route's commit is the commit command below, with its review label, run before the record's `head=` line; skip that command after validation.
 2. Use the Visual QA rule below.
