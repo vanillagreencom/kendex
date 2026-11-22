@@ -160,6 +160,9 @@ pub struct Capabilities {
     /// How a kind's lane is stopped (`stop=`); `None` where the line names
     /// none, which no close has an arm for.
     pub stop: Option<StopKind>,
+    /// Whether the kind's provider holds the `stop-sandbox` and `start`
+    /// pair (`park=`).
+    pub park: ParkKind,
     /// The credit a kind's lane spends (`pool=`).
     pub pool: CreditPool,
 }
@@ -204,6 +207,15 @@ const CAPABILITY_SETS: [(&str, &[&str]); 12] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopKind {
     Window,
+    Verb,
+    None,
+}
+
+/// Whether a kind's provider stops a sandbox with its disk kept and starts
+/// it again (`park=`): `Verb` holds the `stop-sandbox` and `start` pair,
+/// `None` neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParkKind {
     Verb,
     None,
 }
@@ -277,6 +289,10 @@ impl Capabilities {
                 "verb" => StopKind::Verb,
                 _ => StopKind::None,
             }),
+            park: match of("park") {
+                "verb" => ParkKind::Verb,
+                _ => ParkKind::None,
+            },
             pool: match of("pool") {
                 "plan" => CreditPool::Plan,
                 _ => CreditPool::CloudCredit,
@@ -2642,6 +2658,7 @@ mod tests {
                 pane: PaneKind::Local,
                 launch: Some(Launch::Ssh),
                 stop: Some(StopKind::Verb),
+                park: ParkKind::None,
                 pool: CreditPool::Plan,
             })
         );

@@ -8229,6 +8229,14 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
         "the standing record's worktree is reused: {:?}",
         world.calls()
     );
+    // The shipped provider declares `park=none`: its sandbox never stops.
+    let calls = world.calls();
+    assert!(
+        !calls.iter().any(|c| {
+            c.contains(" stop-sandbox ") || c.ends_with(" list") || c.contains(" start ")
+        }),
+        "a park=none provider is asked neither check, list nor start: {calls:?}",
+    );
     assert_eq!(report["lane"]["mail_root"], world.host(), "{report}");
     assert_eq!(
         std::fs::read_to_string(world.host_path.join("item.txt")).unwrap(),
@@ -8272,6 +8280,11 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
             &std::fs::read_to_string(world.scripts.join("lane-host.json")).unwrap(),
         )
         .unwrap();
+        let line = answers["capabilities"]["stdout"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        answers["capabilities"]["stdout"] = json!(line.replace("park=none", "park=verb"));
         answers["start --item KEN-H"] = start;
         answers[format!(
             "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
@@ -8310,6 +8323,173 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
             }
         }
         effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    }
+}
+
+/// A lane that handed off is closed on the `no_landing` ground, which keeps
+/// its sandbox, then relaunched over its record. On a `park=verb` provider,
+/// where its list still names the sandbox, its start takes it up before
+/// `create --relaunch`, which the provider refuses as another session's
+/// (`item-owned`) over a standing sandbox no start took up. A list naming
+/// none asks no start, and a list that fails refuses with nothing asked of
+/// the sandbox. The `park=none` relaunch is
+/// `a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree`.
+#[test]
+fn a_relaunch_after_a_no_landing_close_starts_the_standing_sandbox_before_its_create() {
+    struct Row {
+        name: &'static str,
+        list: Value,
+        outcome: &'static str,
+        starts: bool,
+        creates: bool,
+    }
+    let rows = [
+        Row {
+            name: "standing",
+            list: json!({"stdout": "o/r/KEN-H\tstarted\t3m\tlane-o-r-ken-h\n"}),
+            outcome: "confirmed",
+            starts: true,
+            creates: true,
+        },
+        Row {
+            name: "gone",
+            list: json!({"stdout": ""}),
+            outcome: "confirmed",
+            starts: false,
+            creates: true,
+        },
+        Row {
+            name: "list failed",
+            list: json!({"exit": 1, "stderr": "lane-host-fixture: list-failed\n"}),
+            outcome: "failed",
+            starts: false,
+            creates: false,
+        },
+    ];
+    for row in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let mut world = HostedLaunch::new(&server, dir.path(), record);
+        world
+            .runner
+            .env
+            .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
+        let mut answers = json!({
+            "capabilities": {"stdout": DETACHED_CAPABILITIES.replace("park=none", "park=verb")},
+        });
+        for file in [
+            "to-lane.jsonl",
+            "to-overseer.jsonl",
+            "to-lane.cursor",
+            "to-lane.cursor.lock",
+        ] {
+            answers[format!(
+                "cat --item KEN-H {}/tmp/lane-mail/KEN-H/{file}",
+                world.host()
+            )] = json!({"exit": 2});
+        }
+        world.plant_detached("exec true", answers.clone());
+        let launched = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(
+            launched["intent"]["outcome"], "confirmed",
+            "{}: {launched}",
+            row.name
+        );
+
+        // The recovery close: the harness reads exited after the provider's
+        // stop, and the sandbox is kept.
+        let status = "status --item KEN-H --harness claude";
+        let reads = |world: &HostedLaunch| world.verbs().iter().filter(|v| *v == status).count();
+        let read = reads(&world);
+        answers[format!("{status}#{}", read + 1)] = json!({"stdout": "running\n"});
+        for nth in read + 2..read + 12 {
+            answers[format!("{status}#{nth}")] = json!({"stdout": "exited\n"});
+        }
+        world.plant_detached("exec true", answers.clone());
+        let closed = effect_report(&world.runner.op_fleet(&json!({
+            "op": "close-owned-resources",
+            "item": "KEN-H",
+            "no_landing": {"reason": "handoff", "source": "overseer", "interrupt": true},
+        })));
+        assert_eq!(
+            closed["intent"]["outcome"], "confirmed",
+            "{}: {closed}",
+            row.name
+        );
+        assert_eq!(
+            world.runner.fleet()["lanes"][0]["sandbox"],
+            "standing",
+            "{}",
+            row.name
+        );
+
+        // The relaunch over the kept sandbox.
+        let from = world.verbs().len();
+        let read = reads(&world);
+        for nth in read + 1..read + 12 {
+            answers[format!("{status}#{nth}")] = json!({"stdout": "running\n"});
+        }
+        let account = world.runner.state_dir().display().to_string();
+        let created = json!({
+            "stdout": format!("ssh-target=lane.example\tpath={}\tremote-prefix=exec true\n", world.host())
+        });
+        answers[format!(
+            "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+        )] = json!({
+            "after": "start --item KEN-H",
+            "unmet": {"exit": 75},
+            "stdout": created["stdout"],
+        });
+        if !row.starts {
+            answers[format!(
+                "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+            )] = created;
+        }
+        answers["list"] = row.list;
+        answers["start --item KEN-H"] = json!({"stdout": "sandbox-started item=KEN-H\n"});
+        answers["cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"] =
+            json!({"stdout": format!("{}\n", world.host())});
+        world.plant_detached("exec true", answers);
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        let verbs = world.verbs()[from..].to_vec();
+        assert_eq!(
+            report["intent"]["outcome"], row.outcome,
+            "{}: {report}\n{verbs:?}",
+            row.name
+        );
+        let at = |verb: &str| verbs.iter().position(|v| v.starts_with(verb));
+        assert!(at("list").is_some(), "{}: {verbs:?}", row.name);
+        assert_eq!(
+            at("start ").is_some(),
+            row.starts,
+            "{}: {verbs:?}",
+            row.name
+        );
+        assert_eq!(
+            at("create ").is_some(),
+            row.creates,
+            "{}: {verbs:?}",
+            row.name
+        );
+        if row.starts {
+            assert!(at("start ") < at("create "), "{}: {verbs:?}", row.name);
+        }
+        if !row.creates {
+            assert!(
+                report["intent"]["observation"]["cause"]
+                    .as_str()
+                    .is_some_and(|c| c.starts_with("host-list-failed ")),
+                "{}: {report}",
+                row.name
+            );
+            assert_eq!(
+                world.runner.fleet()["lanes"][0]["sandbox"],
+                "standing",
+                "{}: the kept sandbox still holds its slot",
+                row.name
+            );
+        }
     }
 }
 

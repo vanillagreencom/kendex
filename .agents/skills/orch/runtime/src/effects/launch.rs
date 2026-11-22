@@ -31,7 +31,7 @@ use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
 use crate::policy::{Stage, Stages};
 use crate::settings::{LaneOutput, Settings};
 use crate::state::{self, Lane, LaneMembers, SANDBOX, STANDING};
-use crate::watch::hosted::{self, Launch, PaneKind};
+use crate::watch::hosted::{self, Launch, PaneKind, ParkKind};
 use agent_runtime::effects::prepare::{
     Kept, Spec, Unready, accountless_kept, build_launch, build_runtimes, check_directory,
     check_program, gate, launch_home, pending_observation, read_brief, up,
@@ -984,11 +984,6 @@ fn local_launch(
     Ok(outcome)
 }
 
-/// A hosted lane: the provider's `create` (and `wait`), the launch record
-/// verified on the host, then the fleet window running the ssh client
-/// whose one typed line starts the harness under the provider's prefix, or,
-/// where the provider owns the harness's session (`pane=verb`), that
-/// prefix run here with no window.
 /// Whether the lane's last pause is a park: its sandbox was stopped with its
 /// disk kept, and no launch has brought it back for certain since.
 fn parked_last(lane: &Lane) -> bool {
@@ -1001,8 +996,16 @@ fn parked_last(lane: &Lane) -> bool {
         == Some("parked")
 }
 
-/// `stands` is set once the provider answered a start or a create: the
-/// sandbox stands from then, whatever later step fails.
+/// A hosted lane: the provider's `create` (and `wait`), the launch record
+/// verified on the host, then the fleet window running the ssh client
+/// whose one typed line starts the harness under the provider's prefix, or,
+/// where the provider owns the harness's session (`pane=verb`), that
+/// prefix run here with no window.
+///
+/// `stands` is set only once the provider's start answered
+/// `sandbox-started` or its create was accepted, the answers that take the
+/// sandbox up for this lane: it stands from then, whatever later step
+/// fails. A list row is no such answer.
 fn hosted_launch(
     run: &Run,
     mut operation: Operation,
@@ -1068,13 +1071,27 @@ fn hosted_launch(
         Ok(mode) => lane_brief(&opening, harness, &r.item, mode),
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
-    // A parked lane's sandbox is stopped with its disk kept: the provider's
-    // start brings it back before `create --relaunch` resumes the harness on
-    // that disk. A provider answers `sandbox-started` for a sandbox already
-    // up, so a relaunch after a start that failed asks it again. Each ask is
-    // recorded before it is made, so a launch cut after it leaves a step
-    // its reconcile holds.
-    if parked {
+    // `create --relaunch` resumes on the sandbox the item's work stands in.
+    // A provider holding the stop-sandbox and start pair (`park=verb`) may
+    // refuse a create over a standing sandbox no start took up as another
+    // session's (`item-owned`), so its start brings that sandbox up first: a
+    // parked lane's, stopped with its disk kept, and on any other relaunch
+    // one its list still names, as a no-landing close keeps it. A `park=none`
+    // provider's sandbox never stops and its create reuses it as it stands,
+    // so it is asked neither list nor start. A provider answers
+    // `sandbox-started` for a sandbox already up, so a relaunch after a start
+    // that failed asks it again. Each start is recorded before it is made, so
+    // a launch cut after it leaves a step its reconcile holds.
+    let starts = parked
+        || (relaunch
+            && match caps.park {
+                ParkKind::None => false,
+                ParkKind::Verb => match hosted::lists_item(&scripts, provider, &r.item) {
+                    Ok(state) => state.is_some(),
+                    Err(cause) => return failed(operation, &format!("host-list-failed {cause}")),
+                },
+            });
+    if starts {
         operation.record_phase(Phase::Preparing {
             step: HOST_START.to_owned(),
             at: provider.to_owned(),

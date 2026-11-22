@@ -155,7 +155,7 @@ Every lane window opens in one session on the fleet's tmux server: the one `AGEN
 A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
 
 1. End the lane. The record must not be in flight, and no recorded harness or detached turn may still run. End it through its own close-out, [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver), or the runtime close in step 2.
-2. Where the lane still stands, run the runtime close. It retires the attempt and keeps the item's work, the worktree and its validation runs among it. Write the request with the harness file tool:
+2. Where the lane still stands, run the runtime close. It retires the attempt and keeps the item's work, the worktree and its validation runs among it, and a hosted lane's sandbox stands after it (§ Resume or fresh). Write the request with the harness file tool:
 
    ```json
    {"op": "close-owned-resources", "item": "[ITEM_KEY]", "no_landing": {"reason": "[REASON]", "source": "overseer"}}
@@ -185,8 +185,15 @@ A relaunch is not judged by the [Ancestor gate](skill-rules.md#ancestor-gate) or
 
 ### Resume or fresh
 
-A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt. A switched harness or account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`. A hosted relaunch always starts fresh. A fresh start continues through the handoff record: its brief is the `start` brief ([start.md § 0](../workflows/start.md#0-resume-from-a-handoff)), and a harness switch's brief also carries the transcript sentence of [handoff.md § 2](../workflows/handoff.md#2-launch). The brief carries the continuation either way, so paste nothing into the pane after a relaunch.
+A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt. A switched harness or account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`. A hosted relaunch always starts the harness fresh. Outside § Parked record, a host whose capability line declares `park=none` ([lane-host.md § Host kinds](../schemas/lane-host.md#host-kinds)) is asked neither `list` nor `start`: the launch goes straight to `create --relaunch`. A `park=verb` host is asked its `list`, which tells its sandbox's two states apart:
+
+- Standing, as the `no_landing` close of § Recovery relaunch step 2 keeps it: the launch asks the provider's `start`, then `create --relaunch`.
+- Gone: the launch asks no `start` and goes straight to `create --relaunch`.
+
+A list that fails refuses the launch `host-list-failed`.
+
+A fresh start continues through the handoff record: its brief is the `start` brief ([start.md § 0](../workflows/start.md#0-resume-from-a-handoff)), and a harness switch's brief also carries the transcript sentence of [handoff.md § 2](../workflows/handoff.md#2-launch). The brief carries the continuation either way, so paste nothing into the pane after a relaunch.
 
 ### Parked record
 
-A `parked` record ([oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait)) is relaunched with the same request. The launch asks the provider's `start` for the stopped sandbox before its `create`. The relaunch moves the parked pull request into `pending_pr` ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), so an OPEN pull request still prevents the terminal close. A parked record holds no slot without a live identity or a reservation, so its relaunch can meet `cap-reached`.
+A `parked` record ([oversee-lanes.md § Parking a merge wait](oversee-lanes.md#parking-a-merge-wait)) is relaunched with the same request. The launch asks the provider's `start` for the stopped sandbox before its `create`, with no `list` read. The relaunch moves the parked pull request into `pending_pr` ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), so an OPEN pull request still prevents the terminal close. A parked record holds no slot without a live identity or a reservation, so its relaunch can meet `cap-reached`.
