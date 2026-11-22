@@ -33,10 +33,11 @@ This package owns launch, account selection under the caller's policy, session i
 ## Rules
 
 - Start, read, hand work to and stop a session through `launch`, `inspect`, `deliver` and `stop`. Write no harness flag, process classifier or stop sequence of your own.
-- Every verb but `session model` prints one JSON reply on stdout. Its `protocol` is `agent-runtime-v1`. `ok` is true with a `result`, or false with a `refusal` of `key`, `fields` and `text`. A refusal also prints `agent-runtime: <key> field=value ...` on stderr and exits 1. A malformed command line prints `agent-runtime: usage` and exits 2. Route on the key, never the text. Refuse a reply whose protocol you do not know.
-- An effect reports one outcome: `not-started`, `confirmed`, `failed` or `unconfirmed`. Reconcile an `unconfirmed` effect before you ask for the same effect again.
+- Every verb prints one JSON reply on stdout, except `session model`, `process lead`, which becomes its program, and `accounts pick --env`. Each one's `--help` states its output. A reply's `protocol` is `agent-runtime-v1`. `ok` is true with a `result`, or false with a `refusal` of `key`, `fields` and `text`. A refusal also prints `agent-runtime: <key> field=value ...` on stderr and exits 1. A malformed command line prints `agent-runtime: usage` and exits 2. Route on the key, never the text. Refuse a reply whose protocol you do not know.
+- An effect reports one outcome: `not-started`, `confirmed`, `failed` or `unconfirmed`. Reconcile an `unconfirmed` effect before you ask for the same effect again. For `deliver`, run `deliver --no-paste` with the same text and the reply's `turns_before` as `--turns-before`.
 - `deliver --force` is for a probe that knows better, never for a workflow.
 - Stop a session with `stop`, by its recorded identity. Never stop a session by process name or by a pid alone.
+- `launch --intent` reads a JSON object whose members are the fields of `LaunchIntent` in `runtime/src/launch.rs`. `grants` takes the fields of `Grants` in `runtime/src/confine.rs`. `launch` ignores a member it does not know.
 - `launch` writes the launch record, and `inspect` heals it as the harness comes up. Pass the same file to every later verb.
 - Charge a worker that runs outside an orch lane to its account: start it with `agent-runtime process lead --file <root>/workers/<name> --account <config dir> -- <program>`. `<root>` is the account records root, `AGENT_RUNTIME_ACCOUNT_STATE_DIR`.
 
@@ -44,12 +45,14 @@ This package owns launch, account selection under the caller's policy, session i
 
 A launch intent that names `grants` runs the harness inside a kernel boundary. On Linux the runtime runs it under `bwrap`: the whole tree read-only, a private `/tmp`, the user's runtime folder hidden, and only the granted paths bound back writable. Every process the harness starts runs inside too. A controller's intent names no grants, so a controller runs unconfined.
 
-`Harness::home_writes` in `runtime/src/harness.rs` names, per harness, what a confined lane may write in the account seat it runs on. The rest of the seat is read-only.
-
 - Copilot CLI runs unconfined on every host.
 - A launch whose grants name an `unconfined` cause runs unconfined under it.
 - Every harness runs unconfined on a host other than Linux.
 - The launch record names the answer and its cause. No setting changes it.
+
+A misspelled `grants` member launches the harness unconfined, with no refusal. After a launch that must run confined, read the record's `confinement`: its `state` is `confined`, or `unconfined` with a `cause`. A record with no `confinement` comes from an intent that named no grants.
+
+In the account seat it runs on, a confined Claude Code lane writes only the session folders `Harness::home_writes` in `runtime/src/harness.rs` names. A confined Codex or Pi lane writes its whole home, except its settings file and the code entries `home_writes` names.
 
 Inside the boundary, `AGENT_RUNTIME_CONFINED` is `1`, and `AGENT_RUNTIME_GRANTS` names the grants file. Read that file before you write outside the working tree: the kernel refuses a write outside the grants.
 

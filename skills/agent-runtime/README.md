@@ -12,8 +12,8 @@ A command and Rust library that starts one AI coding-agent session, watches it, 
 - Finds the session file each harness writes for a working directory.
 - Reads how much use each account has left and picks the account a launch uses.
 - Keeps launch records as JSON that another package can add its own fields to.
-- Answers every command with one versioned JSON reply, `agent-runtime-v1`.
-- Builds itself once into a user cache, rebuilds when its sources change, and refuses to run before that build exists.
+- Answers most commands with one versioned JSON reply, `agent-runtime-v1`.
+- Builds into a user cache through its setup command, once per source revision, and refuses to run before that build exists.
 - Builds a dependent package's runtime, such as orch's, the same way.
 
 ## Install
@@ -65,7 +65,7 @@ Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`
 | `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended. `native` keeps the harness's own prompts. |
 | `AGENT_RUNTIME_HARNESS_BINARIES` | Where a harness is installed when it is not on `PATH`, as `harness=/absolute/path` pairs. |
 | `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | Where account usage and limit records live: an absolute or `~/` path. |
-| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | The token file a successor on each Claude account signs in with, as `<account dir>=<token file>` pairs. The value names paths, never a token. Declare it in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every successor inherits. |
+| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | When a running session hands over to a new session on a Claude account, the token file the new session signs in with, as `<account dir>=<token file>` pairs. The value names paths, never a token. Declare it in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every new session inherits. |
 
 ## Licence
 

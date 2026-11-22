@@ -35,3 +35,7 @@ Add no conversion code before a version changes. The change that raises a versio
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 ```
+
+## Effect boundary
+
+`clippy.toml` lists the acting primitives as `disallowed-methods`. A call of one outside `effects` needs `#[allow(clippy::disallowed_methods, reason = "...")]` on the module, function, trait impl's method or test module that makes it. Review reads those attributes as the inventory.
