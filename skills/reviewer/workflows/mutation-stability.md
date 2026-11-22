@@ -28,11 +28,11 @@ Read [Mutation-Stability Pairing](../SKILL.md#mutation-stability-pairing) before
 
 ## 3. Await completion
 
-1. A call that can outlast one foreground tool call runs through the orch job runner per [orch waiter-launch.md](../../orch/references/waiter-launch.md) § Launch.
-2. Take its `[RUN_DIR]` from `mktemp -d "${TMPDIR:-/tmp}/waiter.XXXXXX"` on the copy base in [§ 1](#1-prepare-copies), in place of the worktree's `tmp/`, where an active `reviewer-read-only` hook refuses the job's writes.
-3. Wait for its end inside your own turn, never through the monitor in waiter-launch.md § Completion.
-4. Run the foreground poll `sh -c 'bound=$(command -v timeout || command -v gtimeout) || { printf "%s\n" "reviewer: missing-command commands=timeout,gtimeout" >&2; exit 127; }; exec "$bound" "$@"' sh 540 sh -c 'until test -s "[RUN_DIR]/wait.exit"; do sleep 30; done'` under the harness's maximum command timeout.
-5. Run it again for as long as it exits 124.
-6. Never end the turn while `wait.exit` is empty, and never wait for a completion notice: a subagent whose turn has ended is not woken when the run ends.
-7. Then read `wait.exit`, whose nonzero code stays nonzero, and the `mutation: … stability: …` line in `[RUN_DIR]/wait.log`.
-8. Never wait on `pgrep -f` or `ps | grep` of the command: the pattern also stands in the waiting shell's own command line, so the wait matches itself and never sees the run end.
+- A call that can outlast one foreground tool call runs through the orch job runner per [orch waiter-launch.md](../../orch/references/waiter-launch.md) § Launch.
+- Take its `[RUN_DIR]` from `mktemp -d "${TMPDIR:-/tmp}/waiter.XXXXXX"` on the copy base in [§ 1](#1-prepare-copies), in place of the worktree's `tmp/`, where an active `reviewer-read-only` hook refuses the job's writes.
+- Wait for its end inside your own turn, never through the monitor in waiter-launch.md § Completion.
+- Run the foreground poll `sh -c 'bound=$(command -v timeout || command -v gtimeout) || { printf "%s\n" "reviewer: missing-command commands=timeout,gtimeout" >&2; exit 127; }; exec "$bound" "$@"' sh 540 sh -c 'until test -s "[RUN_DIR]/wait.exit"; do sleep 30; done'` under the harness's maximum command timeout.
+- Run it again for as long as it exits 124.
+- Never end the turn while `wait.exit` is empty, and never wait for a completion notice: a subagent whose turn has ended is not woken when the run ends.
+- Then read `wait.exit`, whose nonzero code stays nonzero, and the `mutation: … stability: …` line in `[RUN_DIR]/wait.log`.
+- Never wait on `pgrep -f` or `ps | grep` of the command: the pattern also stands in the waiting shell's own command line, so the wait matches itself and never sees the run end.
