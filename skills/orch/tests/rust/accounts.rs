@@ -541,7 +541,11 @@ fn a_relaunch_takes_no_account_whose_usage_read_is_refused() {
     );
     assert_eq!(fresh["record"]["status"], json!("rate_limited"), "{fresh}");
     let relaunch = world.pick_replacing(&claude(None), Some("KEN-1"));
-    assert_eq!(chosen(&relaunch).as_deref(), Some(open.as_str()), "{relaunch}");
+    assert_eq!(
+        chosen(&relaunch).as_deref(),
+        Some(open.as_str()),
+        "{relaunch}"
+    );
     world.plant_listing(&[refused]);
     let alone = world.pick_replacing(&claude(None), Some("KEN-1"));
     assert_eq!(

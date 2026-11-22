@@ -420,6 +420,42 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
     assert_eq!(fleet.lane("KEN-3")["account"], "/home/me/.other");
 }
 
+/// Whether a launch over a record is a relaunch for its account's room is
+/// the record's status: a `done` record's request is the item's next phase,
+/// judged as a first launch, while a stopped record's is the relaunch it
+/// replaces. The account's usage read is refused (`rate_limited`, its kept
+/// figure 10 percent used, room for a first launch): the next phase over a
+/// `done` record is admitted onto it, and the stopped record's relaunch is
+/// refused `account-unmeasured`, since its successor would hold again on
+/// that reading.
+#[test]
+fn a_done_records_next_phase_is_judged_for_room_as_a_first_launch() {
+    let cases = [("done", None), ("stopped", Some("account-unmeasured"))];
+    for (status, refusal) in cases {
+        let mut fleet = Fleet::new(4);
+        fleet.init_fleet();
+        let now = epoch_now();
+        let mut refused = listing_row(10, now);
+        refused["status"] = json!("rate_limited");
+        refused["usage_age_s"] = json!(600);
+        fleet.plant_listing(&[refused]);
+        fleet.write_lanes(vec![lane_on(
+            "KEN-1",
+            status,
+            None,
+            None,
+            fleet.state_dir(),
+        )]);
+
+        let out = fleet.op(&launch_on("KEN-1", fleet.state_dir()));
+        let answer = reply(&out);
+        match refusal {
+            None => assert_eq!(answer["ok"], true, "{status}: {}", stderr(&out)),
+            Some(key) => assert_eq!(answer["refusal"]["key"], key, "{status}: {}", stderr(&out)),
+        }
+    }
+}
+
 /// A launch that asks for its account's room under a provider whose
 /// `accounts` read fails, or is refused at the provider-call bound with
 /// every slot held, is refused `account-unjudged`, naming the host and the
