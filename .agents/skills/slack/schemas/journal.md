@@ -261,6 +261,7 @@ One thread read was refused.
 | `pid` | The relay's process id |
 | `code` | The fingerprint of the code the relay runs |
 | `channel` | The bound channel id |
+| `bound_at` | The binding's `bound_at`, which `setup --take` restores from when `binding.json` is lost beside its journal |
 | `poll_seconds` | The `SLACK_POLL_SECONDS` the relay runs with |
 | `inbound` | The source selected at startup, `socket` or `queue` |
 | `compacted_day` | The UTC day the journal was last compacted, or first seen |

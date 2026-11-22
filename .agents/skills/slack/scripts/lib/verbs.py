@@ -19,7 +19,7 @@ from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, author_of, jarvis_session_h
 from secret import check as secret_check
 from secret import checked_file
 from settings import CALLER_ENV, Settings, load, load_presence, user_handle
-from store import Binding, RelayLock, compact, format_at, journal_exists, parse_at, read_binding, read_journal, read_status, write_binding
+from store import Binding, RelayLock, compact, format_at, journal_exists, parse_at, read_binding, read_status, write_binding
 
 UNIT = "slack-listen.service"
 # Seconds between the restart and the read of the unit's state: long
@@ -189,11 +189,14 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
     try:
         bound_before = read_binding(root) if journal_exists(root) else None
     except Refusal as err:
-        # --take restores a binding lost beside its journal; its history
-        # position bounds catch-up, so replies sent meanwhile still arrive.
+        # --take restores a binding lost beside its journal from the relay's
+        # status record, which names the journal's channel and lifetime start.
         if err.key != "root-unbound" or not take:
             raise
-        bound_before = Binding(channel, channel_name, read_journal(root).seen_ts, [], {})
+        # A record without both names no identity, so the take is refused.
+        record = read_status(root) or {}
+        before = str(record["channel"]) if "channel" in record and "bound_at" in record else "unknown"
+        bound_before = Binding(before, channel_name, str(record.get("bound_at")), [], {})
     if bound_before is not None and bound_before.channel != channel:
         raise Refusal(
             "channel-changed",
