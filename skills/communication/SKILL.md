@@ -38,11 +38,11 @@ tags: [communication]
 For a global install, put this writing reference in the user-scope instruction file:
 
 ```text
-Read `$HOME/.agents/skills/communication/SKILL.md` once per revision, and apply it before every message to a person.
+Read `$HOME/.agents/skills/communication/SKILL.md` once per revision, on the terms of its § Reading routes, and apply it before every message to a person.
 ```
 
 For a project install, put this writing reference in the project-scope instruction file. The path is relative to the project root:
 
 ```text
-Read `.agents/skills/communication/SKILL.md` once per revision, and apply it before every message to a person.
+Read `.agents/skills/communication/SKILL.md` once per revision, on the terms of its § Reading routes, and apply it before every message to a person.
 ```

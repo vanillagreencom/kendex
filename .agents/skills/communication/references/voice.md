@@ -6,7 +6,8 @@ Read when answering a voice request.
 
 - Voice replies go to the call only.
 - A decision that comes up during a call is asked and answered on that call, never moved to a text channel.
-- Answer a voice request before resuming other work. If the answer needs work, say what is needed in the spoken reply.
+- Answer a voice request before resuming other work.
+- If the answer needs work, say what is needed in the spoken reply.
 - Start with the answer in one or two spoken sentences.
 - Use plain spoken words, no Markdown and no links.
 - Say numbers as a person says them.

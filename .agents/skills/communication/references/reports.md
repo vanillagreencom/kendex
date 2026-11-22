@@ -8,10 +8,13 @@ Read when writing a report, briefing, work-item description, comment or completi
 - Open each area with good or bad, done or incomplete, and why.
 - Then connect its goal, progress, completed work, remaining work, failures and the action taken.
 - Use the person's words for the problem, its state and the outcome they experience.
-- State the goal as the outcome the person needs. Put the observed reading beside it. A measure alone is not the goal.
+- State the goal as the outcome the person needs.
+- Put the observed reading beside the goal.
+- A measure alone is not the goal.
 - Apply the [visible comparison](questions.md#today-and-after).
 - Keep technical detail on the tracker item.
-- A report names the author's own misses since the previous report. Give each miss its cause and the fix, or the reason no fix is needed.
+- A report names the author's own misses since the previous report.
+- Give each miss its cause and the fix, or the reason no fix is needed.
 
 ## Work-item descriptions and comments
 
@@ -26,13 +29,15 @@ Comments:
 - A machine-read marker that must be first, such as `Proposal:`, stays first. The plain explanation follows it.
 - The tracker's author and date are sufficient unless a reading needs its own observation date or delegated authority.
 
-Markup in descriptions and ordinary comments:
+Markup:
 
-- Use `##` for body sections and `###` for subsections.
+- Use `##` for body sections and `###` for subsections in descriptions and ordinary comments.
 - Use `**Label**: value` for record fields at line start.
 - Put blank lines between paragraphs, between every filing-record field, before and after every section heading, and around lists.
-- Quote source words under Evidence. Reserve other blockquotes for the description's opening blocks and the report's overview paragraphs.
-- Omit empty sections and optional fields. Keep every required value and the owning writer's markers, evidence bindings and authority records.
+- Quote source words under Evidence.
+- Reserve other blockquotes for the description's opening blocks and the report's overview paragraphs.
+- Omit empty sections and optional fields.
+- Keep every required value and the owning writer's markers, evidence bindings and authority records.
 
 ## Reports
 
@@ -59,7 +64,8 @@ Markup in descriptions and ordinary comments:
 ## Waiting on you
 
 - Write `Nothing` under **Waiting on you** when it is empty.
-- Read current open requests and the person's replies since the last report when writing it. Do not copy this section from a handoff.
+- Read current open requests and the person's replies since the last report when writing it.
+- Do not copy this section from a handoff.
 - Keep a step here only when no available tool can do it.
 - Name each open ask by its question, so the person can find its thread.
 - Link each unanswered decision.
@@ -68,7 +74,8 @@ Markup in descriptions and ordinary comments:
 
 ## Account headroom
 
-Report headroom for every harness the consumer runs. Put one line per provider under Headroom remaining, with its remaining percent and account count.
+- Report headroom for every harness the consumer runs.
+- Put one line per provider under Headroom remaining, with its remaining percent and account count.
 
 ## Summary shape
 
@@ -78,19 +85,22 @@ Jarvis and overseer reports follow the [summary template](#summary-template). Ke
 
 - Use no emoji, dividers or spacer lines.
 - Ordinary Slack messages follow [Slack messages](messages.md#slack-messages).
-- The first three sections use plain sentences with no engineering language. Overall uses one or two sentences. These prose lines have no 20-word limit.
+- The first three sections use plain sentences with no engineering language.
+- Overall uses one or two sentences.
+- The prose lines of the first three sections have no 20-word limit.
 - Put one item and one sentence per bullet line, at most 20 words.
 - Use indented sub-bullets and third-tier bullets for detail, with each figure on its own sub-bullet.
 - Italicize parenthetical text, including its parentheses.
 - Keep top-level bullet lines within the caller's line cap. Prose, headers, blank lines, sub-bullets, third-tier bullets and the Next report line do not count.
-- Leave excess items in the report file. Never pack a line to fit the cap.
-- Use no table in a message to a person.
+- Leave excess items in the report file.
+- Never pack a line to fit the cap.
 
 ## Summary template
 
 Use this mrkdwn template for the report file's comment. For a post without a file, use standard Markdown under [References and markup](messages.md#references-and-markup).
 
-- Use each section where it applies. Keep the general format and the section order.
+- Use each section where it applies.
+- Keep the general format and the section order.
 - Give Overall, What's going well and What's not going well separate quote blocks, with an unquoted blank line between them in both forms.
 - Apply the [work story](#work-story) to each What's not going well problem: state the action taken, or that nothing is being done and why.
 - Apply [Evidence and costs](messages.md#evidence-and-costs) to each Readings line: state its meaning and the action taken.
