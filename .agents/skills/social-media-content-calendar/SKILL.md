@@ -20,7 +20,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Social media content calendar
 
-The calendar holds post drafts for the publicist's approval gate. This skill stops at draft handoff. It sends no post, upload, comment or message, and creates no scheduled job.
+The campaign calendar holds post drafts for the publicist's approval gate. This skill stops at draft handoff. It sends no post, upload, comment or message, and creates no scheduled job.
 
 ## Use
 

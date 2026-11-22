@@ -15,7 +15,7 @@ Read when planning a campaign or preparing its draft handoff.
 - List product facts, launches, articles, media, brand assets and campaign dates.
 - Record each claim's source, owner and expiry where applicable.
 - Record permission for testimonials and third-party assets.
-- Mark unsupported claims and missing assets for review.
+- Mark unsupported or expired claims, missing permissions and missing assets for review.
 
 ## Build calendar slots
 
@@ -51,7 +51,7 @@ Read when planning a campaign or preparing its draft handoff.
 ## Hand off the approval batch
 
 - Show the publicist the exact copy, assets, destination account and proposed timing for each piece.
-- List unresolved claims and missing assets.
+- List unresolved claims, missing permissions and missing assets.
 - Link each piece to its tracker item.
 - Leave approval pending until the user's explicit yes for that exact piece is recorded on that tracker item.
 - If the tracker record is unavailable, keep the piece in `needs review`.
@@ -62,6 +62,6 @@ Read when planning a campaign or preparing its draft handoff.
 ## Verify the handoff
 
 - Every slot has an objective, an owner, draft copy and asset status.
-- Each claim has evidence or an open review question.
+- Each claim has current evidence or an open review question.
 - Each approved piece links to the user's record for that piece.
 - The package distinguishes proposed dates from confirmed sending results.
