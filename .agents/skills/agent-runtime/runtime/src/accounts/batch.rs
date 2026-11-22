@@ -514,14 +514,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
         let state = Judged::of("state", Ok(dir.path().to_path_buf()));
-        let tokens = Judged::of("account-tokens", Ok(Vec::new()));
         let env = Env {
             accounts: &accounts,
             account_state: &state,
             home: None,
             copilot_home: None,
             controller_preference: "",
-            account_tokens: &tokens,
         };
         let read = accounts.get().unwrap();
         let mut ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();

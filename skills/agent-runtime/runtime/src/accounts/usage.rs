@@ -596,9 +596,10 @@ pub fn expired(expires_ms: u64, now: u64) -> bool {
 }
 
 /// Whether a home holds a sign-in on this machine, as a session opened here
-/// under it signs in: its stored login ([`stored_login`]), or on a Claude
-/// home a declared token file signs in, that file alone
-/// ([`declared_token`]).
+/// under it signs in. The account walk reads a home's stored login
+/// ([`stored_login`]); a controller's transfer reads the same answer except
+/// on a Claude home a declared token file signs in, which it judges by that
+/// file alone ([`declared_token`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoredLogin {
     /// The home holds a credential whose login has not expired, or its
@@ -610,37 +611,10 @@ pub enum StoredLogin {
     Unjudged { cause: &'static str },
 }
 
-impl StoredLogin {
-    /// The reading as a listing row carries it under `sign_in`: `state`
-    /// `held`, `missing` or `unjudged`, with the cause of the last two.
-    pub fn record(&self) -> Value {
-        match self {
-            StoredLogin::Held => json!({"state": "held", "cause": Value::Null}),
-            StoredLogin::Missing { cause } => json!({"state": "missing", "cause": cause}),
-            StoredLogin::Unjudged { cause } => json!({"state": "unjudged", "cause": cause}),
-        }
-    }
-}
-
-/// The sign-in a session of `harness` opened on the account `dir` starts
-/// with at `now`: the one reader the roster, the walk and the transfer
-/// judge it by. An account that declares a token file (`declared`,
-/// [`declared_token_file`]) is judged by that file alone, since the launch
-/// exports its text over anything else: no other source stands in for a
-/// file that is wrong. Otherwise the account's stored login. A token
-/// variable a launch inherits is no account's sign-in: it bills the
-/// token's own account, whichever directory the launch names.
-pub fn sign_in(harness: Harness, dir: &str, declared: Option<&Path>, now: u64) -> StoredLogin {
-    match declared {
-        Some(file) => declared_token(file),
-        None => stored_login(harness, dir, now),
-    }
-}
-
 /// The stored login of `harness` under `dir` at `now`: the credential file
 /// the listing reads, Claude's on Linux alone, since another platform keeps
 /// it in its own store; Copilot's and Pi's are read by nothing here.
-fn stored_login(harness: Harness, dir: &str, now: u64) -> StoredLogin {
+pub fn stored_login(harness: Harness, dir: &str, now: u64) -> StoredLogin {
     if matches!(harness, Harness::Copilot | Harness::Pi) {
         return StoredLogin::Unjudged {
             cause: "harness-unread",
@@ -668,21 +642,14 @@ fn stored_login(harness: Harness, dir: &str, now: u64) -> StoredLogin {
     }
 }
 
-/// The token file `tokens` (`AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`) declares
-/// for the home `dir` of `harness`, the two sides matched by their one
-/// spelling ([`canon`]). Only a Claude launch exports one, so any other
-/// harness's home has none and reads nothing of the setting: a malformed
-/// one refuses a Claude home alone. Two declarations matching one home
-/// refuse `setting-invalid`, since either file could be its.
+/// The token file `pairs` (`AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`) declares
+/// for the home `dir`, the two sides matched by their one spelling
+/// ([`canon`]). Two declarations matching one home refuse
+/// `setting-invalid`, since either file could be its.
 pub fn declared_token_file(
-    harness: Harness,
-    tokens: &settings::Judged<Vec<(String, PathBuf)>>,
+    pairs: &[(String, PathBuf)],
     dir: &str,
 ) -> crate::error::Result<Option<PathBuf>> {
-    if harness != Harness::Claude {
-        return Ok(None);
-    }
-    let pairs = tokens.get()?;
     let dir = canon(dir);
     let matched: Vec<&(String, PathBuf)> = pairs
         .iter()
@@ -706,7 +673,7 @@ pub fn declared_token_file(
 /// on the file alone, since the launch exports its text over anything the
 /// session inherits: held where that text less trailing newlines, as the
 /// launch's `$(cat FILE)` takes it, is non-empty.
-fn declared_token(file: &Path) -> StoredLogin {
+pub fn declared_token(file: &Path) -> StoredLogin {
     match std::fs::read(file) {
         Ok(text) if text.iter().any(|b| *b != b'\n') => StoredLogin::Held,
         Ok(_) => StoredLogin::Missing {
@@ -959,33 +926,6 @@ mod tests {
         ];
         for (name, expected) in rows {
             assert_eq!(declared_token(&path(name)), expected, "{name}");
-        }
-    }
-
-    /// The token setting is read for a Claude home alone: a malformed one
-    /// refuses a Claude home, and leaves any other harness's home with no
-    /// declared file, since no launch of that harness exports one.
-    #[test]
-    fn a_malformed_token_setting_refuses_a_claude_home_alone() {
-        let malformed = settings::Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Err("run/t6"));
-        for harness in [
-            Harness::Claude,
-            Harness::Codex,
-            Harness::Copilot,
-            Harness::Pi,
-        ] {
-            let read = declared_token_file(harness, &malformed, "/home/o/.6claude");
-            match (harness, read) {
-                (
-                    Harness::Claude,
-                    Err(crate::Error::Refused {
-                        key: "setting-invalid",
-                        ..
-                    }),
-                ) => {}
-                (Harness::Codex | Harness::Copilot | Harness::Pi, Ok(None)) => {}
-                (harness, read) => panic!("{harness:?}: {read:?}"),
-            }
         }
     }
 

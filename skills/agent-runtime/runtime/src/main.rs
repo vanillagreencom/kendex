@@ -723,7 +723,7 @@ enum AccountsOp {
         /// An overseer's walk at a mark: where no entry finds room, take the
         /// caller's own account where it is left in and still reads
         /// unmeasured, else an account whose usage query was refused with a
-        /// 429 and whose successor's sign-in reads held.
+        /// 429 and whose stored login reads held.
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
     },
@@ -761,7 +761,6 @@ struct AccountSettings {
     home: Option<String>,
     copilot_home: Option<String>,
     preference: String,
-    account_tokens: settings::Judged<Vec<(String, PathBuf)>>,
     /// The notice of each private env file line the load passed over, for
     /// the verb to say ahead of its reply.
     skipped: Vec<String>,
@@ -786,15 +785,13 @@ impl AccountSettings {
         };
         let values = settings::layered(&roots.project, &environment, true, &keys)?;
         let skipped = values.skipped();
-        let controller = settings::ControllerSettings::read(&values);
         let loaded = AccountSettings {
             skipped,
             accounts: settings::AccountSettings::read(&values),
             state: settings::account_state_dir(&values),
             home: values.get(settings::HOME_KEY).map(str::to_owned),
             copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
-            preference: controller.preference,
-            account_tokens: controller.account_tokens,
+            preference: settings::ControllerSettings::read(&values).preference,
             project: roots.project,
         };
         // Every verb reads the account keys first: a value outside its form
@@ -819,7 +816,6 @@ impl AccountSettings {
             home: self.home.as_deref(),
             copilot_home: self.copilot_home.as_deref(),
             controller_preference: &self.preference,
-            account_tokens: &self.account_tokens,
         }
     }
 }
@@ -904,7 +900,7 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                 min_headroom_pct,
                 binding_floor,
                 admit_unread_scope: false,
-                opens: accounts::Opens::Elsewhere,
+                opens_here: false,
             };
             let answer =
                 accounts::here::pick(&env, &loaded.project, record.as_deref(), &request, now)?;

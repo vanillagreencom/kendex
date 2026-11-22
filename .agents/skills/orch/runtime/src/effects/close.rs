@@ -428,7 +428,7 @@ pub(crate) fn account_room(
         min_headroom_pct: None,
         binding_floor: false,
         admit_unread_scope: false,
-        opens: agent_runtime::accounts::Opens::Elsewhere,
+        opens_here: false,
     };
     match super::lane_operation::pick_account(settings, fleet, host, &request, now).exit() {
         0 => "room",

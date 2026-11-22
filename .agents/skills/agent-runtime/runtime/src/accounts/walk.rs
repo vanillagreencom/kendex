@@ -14,7 +14,7 @@ use crate::harness::{Harness, PermissionMeaning};
 use crate::host::{self, Place};
 use serde_json::{Value, json};
 
-use super::{Env, Judged, Opens, PickAnswer, PickRequest};
+use super::{Env, Judged, PickAnswer, PickRequest};
 use crate::accounts;
 use crate::error::{Error, Result};
 use crate::settings::DEFAULT_CONTROLLER_PREFERENCE;
@@ -85,8 +85,8 @@ pub struct WalkRequest {
     /// takes one account nothing measured, the caller's own lane where the
     /// request leaves it in and the judge still reads it unmeasured, else
     /// an account an entry's choice kept as its fallback, one whose usage
-    /// query was refused with a 429 and whose successor's sign-in reads
-    /// held. A certain wall is the alternative, and a failed attempt leaves
+    /// query was refused with a 429 and whose stored login reads held. A
+    /// certain wall is the alternative, and a failed attempt leaves
     /// the predecessor in control.
     pub keep_unmeasured: bool,
 }
@@ -925,18 +925,9 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 // binding bucket, never a model's window.
                 binding_floor: overseer && !matches!(harness, Harness::Claude | Harness::Pi),
                 admit_unread_scope: overseer,
-                // An overseer's successor runs here, exporting a declared
-                // token file only on Claude (`usage::declared_token_file`),
-                // so one on another harness, a `pi-claude/` model's among
-                // them, signs in as a window's lane does; a lane runs here
-                // where its host opens it in a window of this machine.
-                opens: if overseer && harness == Harness::Claude {
-                    Opens::Successor
-                } else if overseer || launch == Some("window") {
-                    Opens::Window
-                } else {
-                    Opens::Elsewhere
-                },
+                // An overseer runs here; a lane does where its host opens
+                // it in a window of this machine.
+                opens_here: overseer || launch == Some("window"),
             }
         };
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
@@ -985,10 +976,9 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                         // The caller's own account, asked by name: the
                         // running session is the proof it serves, so a
                         // reading nothing took keeps it, unless the
-                        // request leaves it out or its successor's sign-in
-                        // reads signed out, which the transfer refuses.
+                        // request leaves it out.
                         match pick(&request(None, Some(lane.clone()), req.exclude.clone())) {
-                            PickAnswer::Unmeasured(j) if j.row.signed_in != Some(false) => {
+                            PickAnswer::Unmeasured(j) => {
                                 own = Some(chosen(
                                     launch,
                                     Some(j.row.config_dir.clone()),
@@ -1005,7 +995,6 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                             | PickAnswer::Reserved(_)
                             | PickAnswer::Retired { .. }
                             | PickAnswer::Excluded(_)
-                            | PickAnswer::Unmeasured(_)
                             | PickAnswer::ProviderUnmeasured { .. }
                             | PickAnswer::Unbilled { .. }
                             | PickAnswer::NoRecord

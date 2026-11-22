@@ -24,7 +24,7 @@ use super::{
     Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
     predecessor_identity,
 };
-use crate::accounts::usage::{self, StoredLogin};
+use crate::accounts::usage::{StoredLogin, declared_token, stored_login};
 use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted};
 use crate::error::{Error, Result};
 use crate::intent::Intent;
@@ -482,6 +482,8 @@ pub fn server_home(server: &Server, session: &str, harness: Harness) -> Result<O
 pub enum SignIn {
     /// The account holds a credential the harness signs in with.
     Held,
+    /// The launch environment carries this token variable.
+    Token(&'static str),
     /// The account's declared token file holds a token, which the launch
     /// exports for the harness alone.
     File,
@@ -673,17 +675,52 @@ impl Operation<'_> {
     }
 
     /// The sign-in a successor's launch on `account` starts with, read
-    /// before anything is written for it by the one reader the roster and
-    /// the walk read ([`usage::sign_in`]): its declared token file alone
-    /// where it names one, else its stored login on this machine.
-    pub fn sign_in(&self, harness: Harness, account: &Path, declared: Option<&Path>) -> SignIn {
+    /// before anything is written for it. An account that declares a token
+    /// file is judged by that file alone, since the launch exports its text
+    /// over anything the window inherits: no other source stands in for a
+    /// file that is wrong. Otherwise a token variable the window on
+    /// `server` inherits in `session`, which signs the harness in whatever
+    /// the account holds; else the account's stored login on this machine
+    /// ([`stored_login`]).
+    pub fn sign_in(
+        &self,
+        server: &Server,
+        session: &str,
+        harness: Harness,
+        account: &Path,
+        declared: Option<&Path>,
+    ) -> SignIn {
+        if let Some(file) = declared {
+            return match declared_token(file) {
+                StoredLogin::Held => SignIn::File,
+                StoredLogin::Missing { cause } => SignIn::Missing { cause },
+                StoredLogin::Unjudged { cause } => SignIn::Unjudged { cause },
+            };
+        }
+        let tokens: &[&'static str] = match harness {
+            Harness::Claude => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+            Harness::Codex => &["OPENAI_API_KEY"],
+            Harness::Copilot | Harness::Pi => &[],
+        };
+        // An environment that cannot be read may hold a token: no account
+        // is refused on a read that did not answer.
+        for token in tokens {
+            match tmux::inherited(server, session, token) {
+                Ok(Some(value)) if !value.is_empty() => return SignIn::Token(token),
+                Ok(_) => {}
+                Err(_) => {
+                    return SignIn::Unjudged {
+                        cause: "environment-unread",
+                    };
+                }
+            }
+        }
         let now = self
             .clock
             .wall()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        match usage::sign_in(harness, &account.display().to_string(), declared, now) {
-            StoredLogin::Held if declared.is_some() => SignIn::File,
+        match stored_login(harness, &account.display().to_string(), now) {
             StoredLogin::Held => SignIn::Held,
             StoredLogin::Missing { cause } => SignIn::Missing { cause },
             StoredLogin::Unjudged { cause } => SignIn::Unjudged { cause },

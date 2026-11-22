@@ -668,11 +668,7 @@ pub const UNPROVED_NOTES: &[&str] = &[
 /// account, a later failure replacing it. The controller walk leaves an
 /// account out while its stamp is within the hold
 /// (`successor::UNPROVED_HOLD_SECS`), and the next confirmed hand-over
-/// drops the member. A refusal of the sign-in read before any window
-/// opened (`successor-not-signed-in` with no first-turn `auth-wall`)
-/// marks nothing: the walk reads that sign-in itself, in its choice among
-/// accounts and before it keeps the caller's own, and admits the account
-/// once it is signed in, so a hold would only keep a repaired account out.
+/// drops the member.
 fn mark_unproved(record: &mut Document, observation: Option<&Value>, at: &str) {
     let field = |key: &str| observation.and_then(|o| o.get(key));
     let Some(note) = field("note")
@@ -681,11 +677,6 @@ fn mark_unproved(record: &mut Document, observation: Option<&Value>, at: &str) {
     else {
         return;
     };
-    if note == "successor-not-signed-in"
-        && field("cause").and_then(Value::as_str) != Some("auth-wall")
-    {
-        return;
-    }
     let Some(account) = record
         .get("pending")
         .and_then(|pending| pending.get("account"))
@@ -2425,10 +2416,9 @@ mod tests {
         assert_eq!(fleet(&path).intents[0].notice, Some(owed));
     }
 
-    /// A failed attempt's mark on its account: a refusal of the sign-in
-    /// read before any window opened leaves none, a first-turn login wall
-    /// stamps one, a later failure on the account replaces it rather than
-    /// adding a second, and a confirmed hand-over drops the member.
+    /// A failed attempt's mark on its account: a failure stamps one, a
+    /// later failure on the account replaces it rather than adding a
+    /// second, and a confirmed hand-over drops the member.
     #[test]
     fn a_failed_attempt_stamps_its_account_once_and_a_confirmed_hand_over_drops_it() {
         let dir = tempfile::tempdir().unwrap();
@@ -2443,9 +2433,6 @@ mod tests {
             object(&path)[MEMBER].get("unproved").cloned()
         };
         let account = successor().account.unwrap();
-        let read_refusal = json!({"retired": false, "note": "successor-not-signed-in",
-                                  "fields": {"account": account, "cause": "no-credential"}});
-        assert_eq!(attempt(Outcome::Failed, read_refusal), None, "nothing held");
         let marks = |observation: Value| {
             let marked = attempt(Outcome::Failed, observation).unwrap();
             let entries = marked.as_array().unwrap();

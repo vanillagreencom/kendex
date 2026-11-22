@@ -77,9 +77,8 @@ pub use renewal::step as renewal_step;
 pub const TAG: &str = "accounts";
 
 /// What the reading takes of the loaded settings: the account keys, the
-/// account records' root, the homes an account directory is resolved under,
-/// the controller's preference the walk reads and the token files the
-/// accounts declare, which their sign-in is read by.
+/// account records' root, the homes an account directory is resolved under
+/// and the controller's preference the walk reads.
 #[derive(Debug, Clone, Copy)]
 pub struct Env<'a> {
     pub accounts: &'a settings::Judged<AccountSettings>,
@@ -87,7 +86,6 @@ pub struct Env<'a> {
     pub home: Option<&'a str>,
     pub copilot_home: Option<&'a str>,
     pub controller_preference: &'a str,
-    pub account_tokens: &'a settings::Judged<Vec<(String, PathBuf)>>,
 }
 
 /// The host word of a read with no provider named.
@@ -211,15 +209,6 @@ pub struct AccountRow {
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
-    /// The account's sign-in as this machine's listing read it
-    /// ([`usage::sign_in`]): its declared token file where the setting
-    /// names one, else its stored login. Held, missing, or `None` where
-    /// nothing here judged it, a provider's row among them.
-    pub signed_in: Option<bool>,
-    /// The account's stored login as this machine's listing read it, the
-    /// sign-in a launch that exports no token file starts with: held,
-    /// missing, or `None` where nothing here judged it.
-    pub stored_login: Option<bool>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
     /// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: the judge refuses it
@@ -270,21 +259,6 @@ fn flag(record: &Value, key: &str) -> bool {
         Some(Value::Number(n)) => n.as_u64() == Some(1),
         Some(Value::String(s)) => s == "1" || s == "true",
         None | Some(Value::Null | Value::Array(_) | Value::Object(_)) => false,
-    }
-}
-
-/// A sign-in reading the listing carries under `key`
-/// ([`usage::StoredLogin::record`]): held, missing, or `None` where nothing
-/// judged it or the row carries none.
-fn held(record: &Value, key: &str) -> Option<bool> {
-    match record
-        .get(key)
-        .and_then(|s| s.get("state"))
-        .and_then(Value::as_str)
-    {
-        Some("held") => Some(true),
-        Some("missing") => Some(false),
-        Some(_) | None => None,
     }
 }
 
@@ -365,8 +339,6 @@ impl AccountRow {
             },
             reserved: flag(raw, "reserved"),
             seat: flag(raw, "seat"),
-            signed_in: held(raw, "sign_in"),
-            stored_login: held(raw, "stored_login"),
             retire,
             excluded,
             configured: raw.get("configured") != Some(&Value::Bool(false)),
@@ -518,21 +490,10 @@ impl AccountRow {
             .and_then(|bucket| bucket.label.as_deref())
     }
 
-    /// The field text both the roster line and the `account` event print,
-    /// the sign-in as `sign_in=<state>[:<cause>]`, `-` where the row
-    /// carries none.
+    /// The field text both the roster line and the `account` event print.
     pub fn fields(&self) -> String {
-        let sign_in = self.raw.get("sign_in");
-        let sign_in = match (
-            sign_in.and_then(|s| s.get("state")).and_then(Value::as_str),
-            sign_in.and_then(|s| s.get("cause")).and_then(Value::as_str),
-        ) {
-            (Some(state), Some(cause)) => format!("{state}:{cause}"),
-            (Some(state), None) => state.to_owned(),
-            (None, _) => "-".to_owned(),
-        };
         format!(
-            "{} config_dir={} harness={} through={} status={} verdict={} headroom_pct={} binding_bucket={} binding_resets_at={} sign_in={sign_in}",
+            "{} config_dir={} harness={} through={} status={} verdict={} headroom_pct={} binding_bucket={} binding_resets_at={}",
             self.alias,
             self.config_dir,
             self.harness,
@@ -712,18 +673,18 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// reading included. An account with one reading keeps it. The roster is
 /// never resolved: it reports both readings.
 ///
-/// A session that opens on this machine ([`Opens`]) signs in with this
-/// machine's sign-in of the home, never with the token a provider measured
-/// it through: the provider's reading stands for it only where this
-/// machine's own row reads the sign-in its launch starts with held, else
-/// the account is judged on that own row, and a provider's row with no
-/// home listed here is no candidate for it. This machine's sign-in
-/// readings stand on whichever row stands, as the provider's words do.
+/// A session that opens on this machine (`opens_here`) signs in with this
+/// machine's stored login of the home, never with the token a provider
+/// measured it through: the provider's reading stands for it only where
+/// that login reads held ([`usage::stored_login`]), else the account is
+/// judged on this machine's own row, and a provider's row with no home
+/// listed here is no candidate for it.
 fn resolve(
     rows: &[AccountRow],
     billed: Harness,
     model: &str,
     req: &PickRequest,
+    now: u64,
 ) -> Vec<AccountRow> {
     let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
@@ -739,17 +700,15 @@ fn resolve(
                 } else {
                     (row.clone(), out[i].clone())
                 };
-                let launch_held =
-                    req.opens == Opens::Elsewhere || req.opens.sign_in(&own) == Some(true);
+                let signed_in = !req.opens_here
+                    || usage::stored_login(own.harness, &own.config_dir, now)
+                        == usage::StoredLogin::Held;
                 let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
-                let (signed_in, stored_login) = (own.signed_in, own.stored_login);
-                let mut stands = if launch_held {
+                let mut stands = if signed_in {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
                 } else {
                     own
                 };
-                stands.signed_in = signed_in;
-                stands.stored_login = stored_login;
                 stands.reserved |= reserved;
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
@@ -759,7 +718,7 @@ fn resolve(
             None => out.push(row.clone()),
         }
     }
-    if req.opens != Opens::Elsewhere {
+    if req.opens_here {
         out.retain(|r| {
             !provider_reading(r)
                 || rows.iter().any(|own| {
@@ -948,40 +907,11 @@ pub struct PickRequest {
     /// walk's question alone, where the account-wall succession covers the
     /// unread window. Otherwise that account is unmeasured for the model.
     pub admit_unread_scope: bool,
-    /// Where the session the pick places opens, which names the sign-in
-    /// it starts with ([`resolve`]).
-    pub opens: Opens,
-}
-
-/// Where the session a pick places opens. One opened on this machine signs
-/// in with this machine's sign-in of the account, never with the token a
-/// provider measured the account through, and which of the account's
-/// sign-ins it starts with is fixed by its launch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Opens {
-    /// Nowhere on this machine: no sign-in here is the launch's.
-    Elsewhere,
-    /// A Claude controller's successor here: its launch exports the
-    /// account's declared token file where the setting names one, else
-    /// signs in with the stored login ([`AccountRow::signed_in`]).
-    Successor,
-    /// A session in a window of this machine whose launch exports no token
-    /// file and signs in with the stored login ([`AccountRow::stored_login`]):
-    /// a lane, or a successor on another harness.
-    Window,
-}
-
-impl Opens {
-    /// The sign-in of this machine's `row` the session starts with: held,
-    /// missing, or `None` where nothing here judged it. A session opened
-    /// elsewhere starts with none of this machine's, so the listing's own
-    /// reading stands for it.
-    fn sign_in(self, row: &AccountRow) -> Option<bool> {
-        match self {
-            Opens::Elsewhere | Opens::Successor => row.signed_in,
-            Opens::Window => row.stored_login,
-        }
-    }
+    /// The session the pick places opens on this machine (an overseer, a
+    /// lane in a local window), so it signs in with this machine's stored
+    /// login of the account and never with the token a provider measured
+    /// the account through.
+    pub opens_here: bool,
 }
 
 impl PickRequest {
@@ -999,7 +929,7 @@ impl PickRequest {
             min_headroom_pct: None,
             binding_floor: false,
             admit_unread_scope: false,
-            opens: Opens::Elsewhere,
+            opens_here: false,
         }
     }
 
@@ -1487,7 +1417,7 @@ fn grant(row: &AccountRow, floor: f64, now: u64) -> Option<Grant> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Judged {
     pub row: AccountRow,
-    /// `room`, `walled`, `unmeasured`, `signed-out`, `cloud-repo-unset`,
+    /// `room`, `walled`, `unmeasured`, `cloud-repo-unset`,
     /// `reserved`, `retired` or `plan-end-invalid`.
     pub verdict: String,
     /// The reading's wall: the binding window's percentage used.
@@ -1809,19 +1739,13 @@ impl FleetFacts {
     }
 }
 
-/// The verdict of an account whose stored login this machine reads absent
-/// or expired, in an overseer's choice among accounts: a successor opened
-/// there could not sign in.
-const SIGNED_OUT: &str = "signed-out";
-
 /// Judge one row for `req`: the one limit every pick, handoff mark and
 /// overseer mark is held to. The bound is the request's, or the setting,
 /// on every account: a seat, an account a controller sits on
 /// ([`FleetFacts::seat`]), holds nothing back from a worker. An overseer's
 /// own question reads no seat; its choice among accounts charges each
 /// other controller seated on an account as it charges the candidate, so
-/// overseers that walk together do not all land on one account, and
-/// refuses one whose sign-in reads signed out.
+/// overseers that walk together do not all land on one account.
 fn judge(
     row: &AccountRow,
     req: &PickRequest,
@@ -1861,7 +1785,6 @@ fn judge(
         facts.seats.get(&row.canon).copied().unwrap_or(0)
     };
     let seat = seats > 0;
-    let signed_out = overseer_choice && req.opens.sign_in(row) == Some(false);
     let projection = binding.as_ref().map(|b| {
         projection(
             row,
@@ -1908,7 +1831,6 @@ fn judge(
         Standing::Reserved => "reserved",
         Standing::Retired { .. } => "retired",
         Standing::EndUnread { .. } => "plan-end-invalid",
-        Standing::Open if signed_out => SIGNED_OUT,
         Standing::Open => reads.verdict(),
     };
     let verdict = match &facts.cloud_repo {
@@ -2025,7 +1947,7 @@ pub fn pick(
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    let rows = &resolve(rows, billed, model, req);
+    let rows = &resolve(rows, billed, model, req, now);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {
@@ -2107,19 +2029,19 @@ pub fn pick(
             .filter(|j| j.verdict != "room")
             .map(|j| (j.row.config_dir.clone(), j.verdict.clone()))
             .collect(),
-        fallback: fallback(&judged, req).map(Box::new),
+        fallback: fallback(&judged, req, now).map(Box::new),
     }
 }
 
 /// An overseer's choice with no account of room: the account whose usage
-/// query was refused with a 429 and kept no figure, and whose successor's
-/// sign-in reads held, the fewest claims first, then listing order. A 429
-/// from the usage endpoint shows the token was accepted and the plan
-/// answered; the token endpoint's 429 posted no usage query, and an
-/// unreachable endpoint, a 401 or 403 and a reading with no data show
-/// neither, so they are never taken. Nothing measured it, so the walk names
-/// it unmeasured.
-fn fallback(judged: &[Judged], req: &PickRequest) -> Option<Judged> {
+/// query was refused with a 429 and kept no figure, and whose stored login
+/// on this machine reads held ([`usage::stored_login`]), the fewest claims
+/// first, then listing order. A 429 from the usage endpoint shows the token
+/// was accepted and the plan answered; the token endpoint's 429 posted no
+/// usage query, and an unreachable endpoint, a 401 or 403 and a reading
+/// with no data show neither, so they are never taken. Nothing measured
+/// it, so the walk names it unmeasured.
+fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
     if !req.for_overseer || req.lane.is_some() {
         return None;
     }
@@ -2129,7 +2051,8 @@ fn fallback(judged: &[Judged], req: &PickRequest) -> Option<Judged> {
             j.verdict == "unmeasured"
                 && j.row.usage_refused_429()
                 && j.row.headroom_pct.is_none()
-                && req.opens.sign_in(&j.row) == Some(true)
+                && usage::stored_login(j.row.harness, &j.row.config_dir, now)
+                    == usage::StoredLogin::Held
         })
         .min_by_key(|j| j.claims)
         .cloned()
@@ -2231,9 +2154,9 @@ mod tests {
         assert_eq!(
             roster.lines("2026-10-19"),
             vec![
-                "account a config_dir=/h/.a harness=claude through=local status=ok verdict=room headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=-",
-                "account oldclaude config_dir=/h/.oldclaude harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at=- sign_in=- word=retired:2026-10-20",
-                "account r config_dir=/h/.r harness=claude through=host status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at=- sign_in=- word=reserve",
+                "account a config_dir=/h/.a harness=claude through=local status=ok verdict=room headroom_pct=0 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z",
+                "account oldclaude config_dir=/h/.oldclaude harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at=- word=retired:2026-10-20",
+                "account r config_dir=/h/.r harness=claude through=host status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at=- word=reserve",
             ]
         );
         assert_eq!(roster.rows[0].word(), Word::Pick);

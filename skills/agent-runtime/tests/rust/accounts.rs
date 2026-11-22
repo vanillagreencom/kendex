@@ -32,7 +32,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use account_planters::*;
 use agent_runtime::accounts::{
-    self, AccountRow, EndSource, FleetFacts, Opens, PickAnswer, PickRequest, Roster, Word,
+    self, AccountRow, EndSource, FleetFacts, PickAnswer, PickRequest, Roster, Word,
 };
 use agent_runtime::harness::Harness;
 use agent_runtime::reading::Reading;
@@ -486,7 +486,7 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
     assert_eq!(
         roster.lines(&accounts::today(now()))[0],
         format!(
-            "account 5claude config_dir=/home/me/.5claude harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={} sign_in=- word=reserve",
+            "account 5claude config_dir=/home/me/.5claude harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={} word=reserve",
             stamp(now() + 60 * 3600)
         )
     );
@@ -541,13 +541,13 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
         roster["lines"],
         json!([
             format!(
-                "account 4claude config_dir={d4} harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} sign_in=held word=retired:{today}"
+                "account 4claude config_dir={d4} harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} word=retired:{today}"
             ),
             format!(
-                "account 6claude config_dir={d6} harness=claude through=local status=ok verdict=room headroom_pct=70 binding_bucket=weekly binding_resets_at={weekly} sign_in=held word=retired:{tomorrow}"
+                "account 6claude config_dir={d6} harness=claude through=local status=ok verdict=room headroom_pct=70 binding_bucket=weekly binding_resets_at={weekly} word=retired:{tomorrow}"
             ),
             format!(
-                "account 7claude config_dir={d7} harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly} sign_in=held"
+                "account 7claude config_dir={d7} harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly}"
             ),
             format!(
                 "account-end-contradicted 4claude config_dir={d4} ends={today} source=AGENT_RUNTIME_ACCOUNT_RETIRE status=ok"
@@ -1216,89 +1216,6 @@ fn the_controllers_an_overseers_choice_charges_are_the_other_seats_and_marks() {
     );
 }
 
-/// A session opened on this machine is judged on the provider's reading of
-/// its account only where this machine's row reads the sign-in its own
-/// launch starts with held: a controller's successor starts with the
-/// listing's `sign_in`, a lane's window and an overseer's choice opened in
-/// a window with its `stored_login`. A session opened elsewhere is judged
-/// on the provider's reading whatever this machine reads. Here the local
-/// reading is walled and the provider's has room, so the account is picked
-/// exactly where the provider's reading stands; an overseer's choice also
-/// leaves out an account signed out of the sign-in its launch starts with.
-#[test]
-fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
-    let world = World::new(&[]);
-    let settings = world.settings.accounts.get().unwrap();
-    let elsewhere = claude(None);
-    let successor = PickRequest {
-        for_overseer: true,
-        opens: Opens::Successor,
-        ..claude(None)
-    };
-    let window = PickRequest {
-        opens: Opens::Window,
-        ..claude(None)
-    };
-    let overseer_window = PickRequest {
-        for_overseer: true,
-        ..window.clone()
-    };
-    // case, the listing's sign-in, its stored login, picked for a session
-    // opened elsewhere, for a controller's successor, for a lane's window
-    // and for an overseer's choice opened in a window
-    let arms = [
-        (
-            "declared file held, stored login missing",
-            Some("held"),
-            Some("missing"),
-            true,
-            true,
-            false,
-            false,
-        ),
-        (
-            "declared file absent, stored login held",
-            Some("missing"),
-            Some("held"),
-            true,
-            false,
-            true,
-            true,
-        ),
-        ("nothing judged here", None, None, true, false, false, false),
-    ];
-    let dir = world.dir("b");
-    for (case, sign_in, stored_login, for_elsewhere, for_successor, for_window, for_overseer) in
-        arms
-    {
-        let mut local = measured("b", 96, 5);
-        local["config_dir"] = json!(dir);
-        for (key, state) in [("sign_in", sign_in), ("stored_login", stored_login)] {
-            if let Some(state) = state {
-                local[key] = json!({"state": state, "cause": null});
-            }
-        }
-        let mut provider = measured("b", 10, 5);
-        provider["config_dir"] = json!(dir);
-        provider["measured_through"] = json!("host");
-        let rows = rows(&[local, provider], &world.settings);
-        let facts = FleetFacts::default();
-        for (who, req, expected) in [
-            ("elsewhere", &elsewhere, for_elsewhere),
-            ("successor", &successor, for_successor),
-            ("window", &window, for_window),
-            ("overseer's window", &overseer_window, for_overseer),
-        ] {
-            let answer = accounts::pick(&rows, req, &facts, &settings, now());
-            assert_eq!(
-                picked(&answer),
-                expected.then(|| dir.clone()),
-                "{case}, {who}: {answer:?}"
-            );
-        }
-    }
-}
-
 /// The account a Pi lane spends follows its model's provider, and
 /// `Harness::billed` answers it by the pick's own rule: a `pi-claude/`
 /// model spends a Claude seat, a `github-copilot/` or `anthropic/` one the
@@ -1885,10 +1802,10 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
         roster.lines(&accounts::today(now())),
         vec![
             format!(
-                "account v config_dir=/home/me/.v harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} sign_in=- word=plan-end-invalid"
+                "account v config_dir=/home/me/.v harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} word=plan-end-invalid"
             ),
             format!(
-                "account w config_dir=/home/me/.w harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly} sign_in=-"
+                "account w config_dir=/home/me/.w harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly}"
             ),
             "account-plan-end-invalid alias=v value=2026-10-21T00:00:00Z".to_owned(),
         ]

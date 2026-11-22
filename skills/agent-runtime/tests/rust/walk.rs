@@ -632,29 +632,28 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
 /// The keep of an overseer's walk at a mark (`--keep-unmeasured`) where
 /// nothing measured has room: one account nothing measured, the caller's
 /// own where the mark leaves it in (the session running there is the
-/// proof, whatever its harness or its stated end), else a signed-in
-/// account whose usage query was refused with a 429 and kept no figure.
-/// Measured room wins over either; a caller's account the mark leaves out
-/// is never kept, and a signed-out account, the token endpoint's 429, a
-/// 401 or 403, an unreachable endpoint and a walk without the keep take
-/// none. Signed out is judged on the sign-in the successor's launch starts
-/// with: a `pi-claude/` successor exports no declared token file, so its
-/// account's stored login holds it whatever file the account declares. Each row:
-/// the case, the preference, the listing, the caller's harness and
-/// account, whether the mark leaves the caller's account out, the account
-/// whose declared token file is absent, the retirement setting, the keep,
-/// and the account and entry chosen with whether nothing measured it.
+/// proof, whatever its harness or its stated end), else an account whose
+/// usage query was refused with a 429 and kept no figure, and whose stored
+/// login this machine reads held. Measured room wins over either; a
+/// caller's account the mark leaves out is never kept, and a 429 account
+/// whose stored login nothing here reads (a Copilot one), the token
+/// endpoint's 429, a 401 or 403, an unreachable endpoint and a walk
+/// without the keep take none. Each row: the case, the preference, the
+/// listing, the caller's harness and account, whether the mark leaves the
+/// caller's account out, the retirement setting, the keep, and the account
+/// and entry chosen with whether nothing measured it.
 #[test]
 fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
     let mut copilot = unreachable("acopilot");
     copilot["harness"] = json!("copilot");
+    let mut copilot_429 = refused_429("bcopilot");
+    copilot_429["harness"] = json!("copilot");
     type Row = (
         &'static str,
         &'static str,
         Vec<Value>,
         (&'static str, &'static str),
         bool,
-        Option<&'static str>,
         Option<&'static str>,
         bool,
         Option<(&'static str, &'static str, bool)>,
@@ -668,7 +667,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             vec![measured("aclaude", 96, 5), refused_429("bclaude")],
             claude,
             true,
-            None,
             None,
             true,
             Some(("bclaude", entry, true)),
@@ -684,31 +682,18 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             claude,
             true,
             None,
-            None,
             true,
             Some(("cclaude", entry, false)),
         ),
         (
-            "a signed-out 429 account",
-            entry,
-            vec![measured("aclaude", 96, 5), refused_429("bclaude")],
-            claude,
-            true,
-            Some("bclaude"),
-            None,
+            "a Copilot 429 account no stored login here reads",
+            "",
+            vec![copilot.clone(), copilot_429.clone()],
+            ("copilot", "acopilot"),
             true,
             None,
-        ),
-        (
-            "a Pi successor's 429 account its declared file signs out",
-            "pi:pi-claude/claude-fable-5-1:high",
-            vec![measured("aclaude", 96, 5), refused_429("bclaude")],
-            ("pi", "aclaude"),
             true,
-            Some("bclaude"),
             None,
-            true,
-            Some(("bclaude", "pi:pi-claude/claude-fable-5-1:high", true)),
         ),
         (
             "a 429 from the token endpoint",
@@ -716,7 +701,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             vec![measured("aclaude", 96, 5), token_429("bclaude")],
             claude,
             true,
-            None,
             None,
             true,
             None,
@@ -728,7 +712,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             claude,
             true,
             None,
-            None,
             true,
             None,
         ),
@@ -738,7 +721,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             vec![measured("aclaude", 96, 5), unreachable("bclaude")],
             claude,
             true,
-            None,
             None,
             true,
             None,
@@ -750,7 +732,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             claude,
             true,
             None,
-            None,
             false,
             None,
         ),
@@ -760,7 +741,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             vec![unreachable("aclaude"), refused_429("bclaude")],
             claude,
             true,
-            None,
             None,
             true,
             Some(("bclaude", entry, true)),
@@ -772,7 +752,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             claude,
             false,
             None,
-            None,
             true,
             Some(("aclaude", "caller", true)),
         ),
@@ -783,7 +762,6 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             ("copilot", "acopilot"),
             false,
             None,
-            None,
             true,
             Some(("acopilot", "caller", true)),
         ),
@@ -793,44 +771,14 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             vec![unreachable("aclaude")],
             claude,
             false,
-            None,
             Some("aclaude=2020-01-01"),
             true,
             Some(("aclaude", "caller", true)),
         ),
-        (
-            "the caller's own account signed out",
-            entry,
-            vec![unreachable("aclaude")],
-            claude,
-            false,
-            Some("aclaude"),
-            None,
-            true,
-            None,
-        ),
     ];
-    for (
-        case,
-        preference,
-        listing,
-        (harness, own),
-        at_headroom,
-        signed_out,
-        retire,
-        keep,
-        chosen,
-    ) in rows
-    {
+    for (case, preference, listing, (harness, own), at_headroom, retire, keep, chosen) in rows {
         let mut world = World::new(&[]);
         world.plant_listing(&listing);
-        if let Some(alias) = signed_out {
-            let absent = world.path().join("absent-token").display().to_string();
-            world.env.push((
-                "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES".to_owned(),
-                format!("{}={absent}", world.dir(alias)),
-            ));
-        }
         if let Some(retire) = retire {
             world
                 .env
@@ -848,10 +796,8 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             "--caller-account",
             lane.as_str(),
         ];
-        match harness {
-            "claude" => args.extend(["--caller-pick-model", "fable"]),
-            "pi" => args.extend(["--caller-pick-model", "pi-claude/claude-fable-5-1"]),
-            _ => {}
+        if harness == "claude" {
+            args.extend(["--caller-pick-model", "fable"]);
         }
         if at_headroom {
             args.extend(["--exclude-account", lane.as_str()]);

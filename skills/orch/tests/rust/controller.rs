@@ -525,9 +525,9 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
 
 /// A named account holding no credential its harness signs in with is no
 /// successor: refused `successor-not-signed-in` before any window opens or
-/// any trust record is written into it, the predecessor running, whatever
-/// token the launch environment carries, since that token bills its own
-/// account and not the one the launch names.
+/// any trust record is written into it, the predecessor running. The same
+/// account under a launch environment that carries a token is left to the
+/// first turn, which signs it in, and the outcome names the token.
 #[test]
 fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file() {
     for token in [false, true] {
@@ -563,7 +563,16 @@ fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file(
         request["successor"] = unsigned;
         runner.transfer_started(&request);
         let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-        assert_eq!(intent["outcome"], "failed", "{token}: {intent}");
+        if token {
+            assert_eq!(intent["outcome"], "confirmed", "{intent}");
+            assert_eq!(
+                intent["observation"]["sign_in"],
+                json!({"token": "CLAUDE_CODE_OAUTH_TOKEN"}),
+                "{intent}"
+            );
+            continue;
+        }
+        assert_eq!(intent["outcome"], "failed", "{intent}");
         let observation = &intent["observation"];
         assert_eq!(observation["note"], "successor-not-signed-in", "{intent}");
         assert_eq!(
@@ -611,256 +620,73 @@ fn transfer_to_account(
     (intent, panes, predecessor)
 }
 
-/// A named Claude account signs the successor in with its own sign-in
-/// alone, in its own window: its declared token file's token where it
-/// declares one, else its stored login. A token, a key the tmux server's
-/// environment holds that would outrank that sign-in and an endpoint it
-/// would be sent to are cleared from the harness's environment, and
-/// neither the server's environment nor the pane's screen holds the file's
-/// token.
+/// A named Claude account whose declared token file holds a token signs
+/// the successor in with that token in its own window alone: the harness's
+/// environment carries it, a key the server holds that would outrank it and
+/// an endpoint it would be sent to are cleared, and neither the tmux
+/// server's environment nor the pane's screen holds it.
 #[test]
-fn a_named_claude_account_signs_the_successor_in_with_its_own_sign_in_alone() {
-    // case, whether the account declares a token file (else it holds a
-    // stored login)
-    for (case, declared) in [("declared token file", true), ("stored login", false)] {
-        let dir = tempfile::tempdir().unwrap();
-        let server = Server::start(dir.path(), "fleet");
-        let runner = suite_runner(&server, "stub-confirm");
-        runner.init_fleet();
-        let account = runner.state_dir().join("6claude");
-        std::fs::create_dir_all(&account).unwrap();
-        let token = runner.state_dir().join("6claude.token");
-        let setting = if declared {
-            std::fs::write(&token, "planted-token\n").unwrap();
-            format!("{}={}", account.display(), token.display())
-        } else {
-            let far = (now_secs() + 365 * 86_400) * 1000;
-            std::fs::write(
-                account.join(".credentials.json"),
-                json!({"claudeAiOauth": {"accessToken": "token-6", "refreshToken": "refresh-6",
-                       "expiresAt": far, "refreshTokenExpiresAt": far}})
-                .to_string(),
-            )
-            .unwrap();
-            String::new()
-        };
-        let (intent, _, _predecessor) = transfer_to_account(
-            &server,
-            &runner,
-            &account,
-            &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
-            &[
-                ("CLAUDE_CODE_OAUTH_TOKEN", "inherited-token"),
-                ("ANTHROPIC_API_KEY", "planted-key"),
-                ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
-            ],
-        );
-        assert_eq!(intent["outcome"], "confirmed", "{case}: {intent}");
-        assert_eq!(
-            intent["observation"]["sign_in"],
-            if declared {
-                json!({"token_file": token.display().to_string()})
-            } else {
-                Value::Null
-            },
-            "{case}: {intent}"
-        );
-        let pane = runner.fleet()["controller"]["pane"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let environ = std::fs::read(format!("/proc/{}/environ", server.pane_pid(&pane))).unwrap();
-        let entries: Vec<&[u8]> = environ.split(|b| *b == 0).collect();
-        let tokens: Vec<String> = entries
+fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let account = runner.state_dir().join("6claude");
+    let token = runner.state_dir().join("6claude.token");
+    std::fs::write(&token, "planted-token\n").unwrap();
+    let setting = format!("{}={}", account.display(), token.display());
+    let (intent, _, _predecessor) = transfer_to_account(
+        &server,
+        &runner,
+        &account,
+        &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
+        &[
+            ("ANTHROPIC_API_KEY", "planted-key"),
+            ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
+        ],
+    );
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(
+        intent["observation"]["sign_in"],
+        json!({"token_file": token.display().to_string()}),
+        "{intent}"
+    );
+    let pane = runner.fleet()["controller"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let environ = std::fs::read(format!("/proc/{}/environ", server.pane_pid(&pane))).unwrap();
+    let entries: Vec<&[u8]> = environ.split(|b| *b == 0).collect();
+    assert!(
+        entries.contains(&&b"CLAUDE_CODE_OAUTH_TOKEN=planted-token"[..]),
+        "the harness signs in with the file's token"
+    );
+    assert!(
+        !entries.iter().any(|e| e.starts_with(b"ANTHROPIC_API_KEY=")),
+        "a key that outranks the token is cleared"
+    );
+    assert!(
+        !entries
             .iter()
-            .filter(|e| e.starts_with(b"CLAUDE_CODE_OAUTH_TOKEN="))
-            .map(|e| String::from_utf8_lossy(e).into_owned())
-            .collect();
-        let expected: Vec<String> = if declared {
-            vec!["CLAUDE_CODE_OAUTH_TOKEN=planted-token".to_owned()]
-        } else {
-            Vec::new()
-        };
-        assert_eq!(
-            tokens, expected,
-            "{case}: the harness signs in with the account's own sign-in"
-        );
+            .any(|e| e.starts_with(b"ANTHROPIC_BASE_URL=")),
+        "an endpoint that would receive the token is cleared"
+    );
+    for scope in [vec!["-g"], vec!["-t", runner.session.as_str()]] {
+        let mut args = vec!["show-environment"];
+        args.extend(&scope);
+        args.push("CLAUDE_CODE_OAUTH_TOKEN");
+        let out = tmux(&server.socket, &args);
         assert!(
-            !entries.iter().any(|e| e.starts_with(b"ANTHROPIC_API_KEY=")),
-            "{case}: a key that outranks the sign-in is cleared"
-        );
-        assert!(
-            !entries
-                .iter()
-                .any(|e| e.starts_with(b"ANTHROPIC_BASE_URL=")),
-            "{case}: an endpoint that would receive the token is cleared"
-        );
-        for scope in [vec!["-g"], vec!["-t", runner.session.as_str()]] {
-            let mut args = vec!["show-environment"];
-            args.extend(&scope);
-            let out = tmux(&server.socket, &args);
-            assert!(
-                !String::from_utf8_lossy(&out.stdout).contains("planted-token"),
-                "{case}, {scope:?}: the server holds no file's token"
-            );
-        }
-        let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
-        assert!(
-            !String::from_utf8_lossy(&screen.stdout).contains("planted-token"),
-            "{case}: the pane's screen never shows the token"
+            !out.status.success(),
+            "{scope:?}: the server holds no token: {}",
+            String::from_utf8_lossy(&out.stdout)
         );
     }
-}
-
-/// The roster, the overseer walk and the transfer read an account's
-/// sign-in one way: its declared token file alone where it declares one,
-/// else its stored login. For each account the roster's `sign_in=`, the
-/// walk's answer and a hand-composed transfer's note agree: an account the
-/// roster reads held is never refused `successor-not-signed-in` and never
-/// left out `signed-out`, and one it reads missing is refused by both. A
-/// provider's reading beside the local one leaves the local sign-in
-/// standing; the transfer reads no provider row, so that arm's transfer is
-/// the arm before it.
-#[test]
-fn an_account_the_roster_reads_signed_in_is_never_refused_successor_not_signed_in() {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Store {
-        DeclaredOnly,
-        CredentialOnly,
-        DeclaredMissingBesideCredential,
-    }
-    // case, the account's store, a provider row beside it, the sign-in
-    let arms = [
-        ("declared token only", Store::DeclaredOnly, false, "held"),
-        ("credential only", Store::CredentialOnly, false, "held"),
-        (
-            "declared file missing beside a credential",
-            Store::DeclaredMissingBesideCredential,
-            false,
-            "missing:declared-token-absent",
-        ),
-        (
-            "the same with a provider row",
-            Store::DeclaredMissingBesideCredential,
-            true,
-            "missing:declared-token-absent",
-        ),
-    ];
-    for (case, store, provider, sign_in) in arms {
-        let held = sign_in == "held";
-        let mut world = MarksWorld::new();
-        let mut row = measured_account("bclaude", 10);
-        if store == Store::DeclaredOnly {
-            row["status"] = json!("no_credentials");
-        }
-        let home = world.dir("bclaude");
-        let mut rows = vec![measured_account("eclaude", 97), row];
-        if provider {
-            let mut beside = measured_account("bclaude", 10);
-            beside["config_dir"] = json!(home);
-            beside["measured_through"] = json!("host");
-            rows.push(beside);
-        }
-        world.plant(provider.then_some("vm"), &rows);
-        world.write_fleet(&world.dir("eclaude"));
-        let token = world.path().join("bclaude.token");
-        if store == Store::DeclaredOnly {
-            std::fs::write(&token, "planted-token\n").unwrap();
-        }
-        let declared = match store {
-            Store::CredentialOnly => String::new(),
-            Store::DeclaredOnly | Store::DeclaredMissingBesideCredential => {
-                format!("{home}={}", token.display())
-            }
-        };
-        let env = [("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", declared.as_str())];
-        let roster = reply(&world.run(&["lane", "roster"], &env))["result"].clone();
-        let line = roster["lines"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(Value::as_str)
-            .find(|l| l.contains(&format!("config_dir={home} ")) && l.contains("through=local"))
-            .unwrap_or_else(|| panic!("{case}: {roster}"))
-            .to_owned();
-        assert!(
-            line.contains(&format!(" sign_in={sign_in}")),
-            "{case}: {line}"
-        );
-        let cwd = world.path().display().to_string();
-        let walked = reply(&world.run(
-            &[
-                "successor",
-                "--fleet",
-                "--cwd",
-                &cwd,
-                "--predecessor",
-                "%1",
-                "--mark",
-                "headroom",
-            ],
-            &env,
-        ))["result"]
-            .clone();
-        let signed_out = walked["walk"]["skipped"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|s| s["lane"] == json!(home) && s["reason"] == json!("signed-out"));
-        assert_eq!(signed_out, !held, "{case}: {walked}");
-        if held && store == Store::CredentialOnly {
-            assert_eq!(
-                walked["successor"]["account"],
-                json!(home),
-                "{case}: {walked}"
-            );
-        }
-        if provider {
-            continue;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let server = Server::start(dir.path(), "fleet");
-        let runner = suite_runner(&server, "stub-confirm");
-        runner.init_fleet();
-        let account = runner.state_dir().join("bclaude");
-        std::fs::create_dir_all(&account).unwrap();
-        if store != Store::DeclaredOnly {
-            let far = (now_secs() + 365 * 86_400) * 1000;
-            std::fs::write(
-                account.join(".credentials.json"),
-                json!({"claudeAiOauth": {"accessToken": "token-b", "refreshToken": "refresh-b",
-                       "expiresAt": far, "refreshTokenExpiresAt": far}})
-                .to_string(),
-            )
-            .unwrap();
-        }
-        let transfer_token = runner.state_dir().join("bclaude.token");
-        if store == Store::DeclaredOnly {
-            std::fs::write(&transfer_token, "planted-token\n").unwrap();
-        }
-        let setting = match store {
-            Store::CredentialOnly => String::new(),
-            Store::DeclaredOnly | Store::DeclaredMissingBesideCredential => {
-                format!("{}={}", account.display(), transfer_token.display())
-            }
-        };
-        let (intent, _, _predecessor) = transfer_to_account(
-            &server,
-            &runner,
-            &account,
-            &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
-            &[],
-        );
-        let refused = intent["observation"]["note"] == json!("successor-not-signed-in");
-        assert_eq!(refused, !held, "{case}: {intent}");
-        if !held {
-            assert_eq!(
-                intent["observation"]["fields"]["cause"],
-                json!("declared-token-absent"),
-                "{case}: {intent}"
-            );
-        }
-    }
+    let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
+    assert!(
+        !String::from_utf8_lossy(&screen.stdout).contains("planted-token"),
+        "the pane's screen never shows the token"
+    );
 }
 
 /// An account whose declared token file holds no token is no successor,
@@ -11290,7 +11116,7 @@ fn measured_codex(alias: &str, used: u64) -> Value {
 /// stored login of its home: a home holding no credential here, which the
 /// provider measures with room through its own token, is judged on this
 /// machine's row, so the real `successor` verb passes it over as
-/// `signed-out` and opens on the next entry's credentialed home.
+/// `unmeasured` and opens on the next entry's credentialed home.
 #[test]
 fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
     let dir = tempfile::tempdir().unwrap();
@@ -11314,7 +11140,7 @@ fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
     );
     let skipped = &result["walk"]["skipped"][0];
     assert_eq!(skipped["entry"], "claude:fable:high", "{result}");
-    assert_eq!(skipped["reason"], "signed-out", "{result}");
+    assert_eq!(skipped["reason"], "unmeasured", "{result}");
     assert_eq!(skipped["lane"], signed_out, "{result}");
 }
 
