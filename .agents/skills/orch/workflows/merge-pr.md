@@ -536,8 +536,6 @@ Use `-C` and absolute paths, never `cd &&` chains.
    - After the merge-group CI passes, keep the original pending, failed and no-verdict rows. Record that CI proof separately by its run reference.
    - Post each bundled child's rows on its own item through the same comment interface. A validation-routing Done-when box reads these comments on that item.
 
-   **GitHub only.** An item the PR body names on a `Refs` line stays open. Record `[ISSUE_ID] → still open — post-merge boxes` on § 6's Issue Tracker row. [verify.md § GitHub items](verify.md#github-items) closes it.
-
    **Linear only from here**, under [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution): the rest of this step runs for a Linear item alone.
 
    The lane owns completion after merge. Where its sandbox is gone, or its item reads Done with the lane ended, the runtime's close completes the item from the PR body's `## Done-when evidence` section. The overseer owns the remaining post-merge checks on the same item.
