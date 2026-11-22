@@ -66,6 +66,7 @@ function helpPayload() {
       "deep-research report --query-file prompt.txt --context-glob 'context-*.md' --mode full --output findings.md",
       "deep-research json 'question' --output raw.json",
       "deep-research validate findings.md findings.raw.json",
+      "deep-research validate findings.md",
     ],
     modes: modeDefaults,
     flags: [
@@ -88,7 +89,7 @@ function helpPayload() {
       "--timeout <seconds>",
     ],
     sidecar: "report --output findings.md writes findings.raw.json by default unless --raw-output or --no-raw-output is supplied. Raw provider JSON is not embedded in findings.md.",
-    validate: "validate <findings.md> <findings.raw.json> runs deterministic post-run checks and prints {ok, errors, warnings}. Exit 0 = no errors.",
+    validate: "validate <findings.md> [findings.raw.json] runs deterministic post-run checks and prints {ok, errors, warnings}. Exit 0 = no errors. With no sidecar it checks a report written by hand on the approved fallback route: its sections only, and it refuses a report deep-research report wrote.",
   };
 }
 
@@ -636,9 +637,12 @@ function normalizedProse(text) {
 
 async function validateCommand(options) {
   const [reportArg, rawArg] = options.positional;
-  if (!reportArg || !rawArg) fail("argument-missing", "report+raw", "Usage: deep-research validate <findings.md> <findings.raw.json>");
+  if (!reportArg) fail("argument-missing", "report+raw", "Usage: deep-research validate <findings.md> [findings.raw.json]");
   const reportPath = resolvePath(reportArg);
-  const rawPath = resolvePath(rawArg);
+  // No sidecar is the fallback route: a report written by hand from an
+  // approved general web search has no provider payload to keep, so only its
+  // sections are checked.
+  const rawPath = rawArg ? resolvePath(rawArg) : undefined;
   const errors = [];
   const warnings = [];
   const problems = [];
@@ -659,16 +663,16 @@ async function validateCommand(options) {
   }
 
   let sidecar;
-  if (!existsSync(rawPath)) recordError("raw-sidecar-not-found", rawPath, `Raw sidecar not found: ${rawPath}`);
-  else {
+  if (rawPath && !existsSync(rawPath)) recordError("raw-sidecar-not-found", rawPath, `Raw sidecar not found: ${rawPath}`);
+  else if (rawPath) {
     try { sidecar = JSON.parse(await readFile(rawPath, "utf8")); }
     catch (parseError) { recordError("raw-sidecar-invalid-json", rawPath, `Raw sidecar is not valid JSON: ${parseError.message}`); }
   }
 
   const metadata = sidecar && typeof sidecar.metadata === "object" && sidecar.metadata ? sidecar.metadata : undefined;
   const payload = sidecar && typeof sidecar.raw === "object" && sidecar.raw ? sidecar.raw : undefined;
-  if (sidecar && !metadata) recordError("raw-sidecar-metadata-missing", rawPath, "Raw sidecar has no metadata object.");
-  if (sidecar && !payload) recordError("raw-sidecar-payload-missing", rawPath, "Raw sidecar has no raw provider payload.");
+  if (sidecar && !metadata) recordError("raw-sidecar-metadata-missing", rawPath, "Raw sidecar has no `metadata` key holding an object.", { missing: "metadata" });
+  if (sidecar && !payload) recordError("raw-sidecar-payload-missing", rawPath, "Raw sidecar has no `raw` key holding the provider payload object. A report written on the fallback route takes no sidecar: validate the report alone.", { missing: "raw" });
 
   const sections = report ? reportSections(report) : {};
   for (const section of requiredReportSections) {
@@ -688,8 +692,8 @@ async function validateCommand(options) {
   if (metadata && typeof metadata.synthesis === "boolean" && metadata.synthesis !== synthesis) recordWarning("synthesis-metadata-mismatch", metadata.synthesis, `metadata.synthesis is ${metadata.synthesis} but the raw payload ${synthesis ? "contains" : "lacks"} a synthesized answer.`, { actual: synthesis });
   if (payload && !synthesis) {
     const mode = metadata?.researchMode;
-    if (mode === "standard" || mode === "full") recordError("synthesis-missing", mode, `Mode ${mode} requests server-side synthesis (outputSchema) but the raw payload has no synthesized answer. Re-run, or treat the report as an evidence brief only.`);
-    else recordWarning("synthesis-missing", mode, "No synthesized answer in the raw payload — this is an evidence brief. Do not use it as a decision recommendation; re-run with --mode standard or --mode full if the deliverable is a recommendation.");
+    if (mode === "standard" || mode === "full") recordError("synthesis-missing", mode, `Mode ${mode} requests server-side synthesis (outputSchema) but the raw payload has no synthesized answer (no \`raw.answer\` or \`raw.output.content\`). Re-run, or treat the report as an evidence brief only.`, { missing: "raw.answer" });
+    else recordWarning("synthesis-missing", mode, "No synthesized answer in the raw payload (no `raw.answer` or `raw.output.content`) — this is an evidence brief. Do not use it as a decision recommendation; re-run with --mode standard or --mode full if the deliverable is a recommendation.", { missing: "raw.answer" });
   }
   if (payload && !normalizeResults(payload).length) recordWarning("sources-empty", 0, "Raw payload contains zero sources. Re-run with broader terms or fewer filters.");
 
@@ -701,10 +705,14 @@ async function validateCommand(options) {
   }
 
   const sidecarRef = report.match(/Raw metadata sidecar:\s*(\S+)/);
-  if (sidecarRef) {
-    const referenced = stripMarkdownPathDelimiters(sidecarRef[1]);
-    if (resolve(referenced) !== rawPath) recordWarning("sidecar-reference-mismatch", referenced, `Report references sidecar ${referenced} but ${rawPath} was validated.`, { validated: rawPath });
-  }
+  const referenced = sidecarRef ? stripMarkdownPathDelimiters(sidecarRef[1]) : undefined;
+  // `renderFindings` writes `- Exa type:` into every report `report` renders,
+  // with or without a sidecar, and the fallback template has no such line: a
+  // provider report validated alone would skip its provider checks.
+  if (!rawPath && /^- Exa type:/m.test(report)) {
+    const remedy = referenced ? `run validate <findings.md> ${referenced}` : "re-run report without --no-raw-output and validate the report with its sidecar";
+    recordError("raw-sidecar-omitted", referenced, `Report was written by deep-research report, which validate checks only with its sidecar: ${remedy}.`);
+  } else if (referenced && rawPath && resolve(referenced) !== rawPath) recordWarning("sidecar-reference-mismatch", referenced, `Report references sidecar ${referenced} but ${rawPath} was validated.`, { validated: rawPath });
 
   const ok = errors.length === 0;
   jsonOut(process.stdout, { ok, report: reportPath, raw: rawPath, mode: metadata?.researchMode, synthesis, queryCount: metadata?.queryCount, errors, warnings, problems });
