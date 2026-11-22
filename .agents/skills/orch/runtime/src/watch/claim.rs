@@ -226,30 +226,9 @@ pub enum Written {
     reason = "the claim's one writer: the record beside the fleet state, linked into place exclusively"
 )]
 pub fn write(paths: &Paths, record: &Record) -> Result<Written> {
-    let whole = |tmp: &Path, bytes: &[u8]| -> std::io::Result<()> {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(tmp)?;
-        file.write_all(bytes)?;
-        file.sync_data()
-    };
-    let pid = format!(
-        "pid={}\nstate={}\npane={}\norigin={}\nscript={}\ncwd={}\nstart={}\n",
-        record.identity.pid,
-        paths.state.display(),
-        record.pane,
-        record.origin,
-        record.script,
-        record.cwd,
-        record.identity.start
-    );
-    let tmp = paths
-        .pid
-        .with_extension(format!("{}.tmp", record.identity.pid));
+    let tmp = temporary(paths, record);
     let link = || -> std::io::Result<Written> {
-        whole(&tmp, pid.as_bytes())?;
+        whole(&tmp, text(paths, record).as_bytes())?;
         let linked = std::fs::hard_link(&tmp, &paths.pid);
         std::fs::remove_file(&tmp)?;
         match linked {
@@ -260,6 +239,57 @@ pub fn write(paths: &Paths, record: &Record) -> Result<Written> {
     };
     let written = link().map_err(|e| record_error(&paths.pid, "write", e))?;
     Ok(written)
+}
+
+/// Write the claim this runner already holds over itself, renamed onto the
+/// record's path whole: a watch that replaced its program in place keeps its
+/// identity and records the program it now runs. The caller has read the
+/// standing record naming `record.identity`; no other start takes a live
+/// claim, so nothing but this runner writes the path meanwhile.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the claim's one writer: the runner's own record, rewritten whole by the identity it names"
+)]
+pub fn rewrite(paths: &Paths, record: &Record) -> Result<()> {
+    let tmp = temporary(paths, record);
+    whole(&tmp, text(paths, record).as_bytes())
+        .and_then(|()| std::fs::rename(&tmp, &paths.pid))
+        .map_err(|e| record_error(&paths.pid, "write", e).into())
+}
+
+/// The record's lines for `record` over `paths`' state file.
+fn text(paths: &Paths, record: &Record) -> String {
+    format!(
+        "pid={}\nstate={}\npane={}\norigin={}\nscript={}\ncwd={}\nstart={}\n",
+        record.identity.pid,
+        paths.state.display(),
+        record.pane,
+        record.origin,
+        record.script,
+        record.cwd,
+        record.identity.start
+    )
+}
+
+/// The pid-named temporary a record is written whole in before it lands.
+fn temporary(paths: &Paths, record: &Record) -> PathBuf {
+    paths
+        .pid
+        .with_extension(format!("{}.tmp", record.identity.pid))
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the claim's writers' one temporary, written whole and synced before it is linked or renamed into place"
+)]
+fn whole(tmp: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(tmp)?;
+    file.write_all(bytes)?;
+    file.sync_data()
 }
 
 /// Remove a record read gone, so the taker's link can land. A record that

@@ -33,6 +33,14 @@
 //! unbuilt the line wakes the session it follows to a cause naming the
 //! setup.
 //!
+//! A runner placed from an orch install's sources follows them
+//! (`program`): at the start of each long pass it reads their key, and
+//! where it names another placed program the two threads end at their next
+//! duty boundary and the process replaces itself with that program in
+//! place, the same pid and start, so the claim still names it, the log and
+//! every reader's cursor stand, and the new program reads the claim as its
+//! own. A program not placed yet leaves the run on its own program.
+//!
 //! The runner reconciles every open intent on the long cadence through the
 //! existing `reconcile` request, which is read-only toward a live or
 //! unreadable owner; a transfer's or stop's effect keeps its own detached
@@ -53,6 +61,7 @@ pub mod outside;
 pub mod overseer;
 pub mod owner_alert;
 pub mod pr_watch;
+pub mod program;
 pub mod report;
 pub mod retention;
 pub mod security;
@@ -62,6 +71,7 @@ pub mod wake;
 
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
@@ -75,6 +85,7 @@ use agent_runtime::clock::Clock;
 
 use crate::schedule::{Anchor, Cadences, Duty, Schedule};
 use crate::settings::Settings;
+use program::{Current, Program};
 
 pub use baseline::{Baseline, Change};
 pub use claim::{Paths, Stopped};
@@ -162,6 +173,19 @@ pub struct Runner<'a> {
     cadences: Cadences,
     mark_repeat: u32,
     bodies: Vec<(Duty, Body<'a>)>,
+    /// The placed program this runner runs as, followed against its
+    /// install's sources; `None` follows nothing.
+    program: Option<Program>,
+}
+
+/// How the runner holds its claim.
+enum Held {
+    /// Linked into place by this start; `takeover` is the line where it
+    /// took a gone runner's claim over.
+    Claimed { takeover: Option<Event> },
+    /// Standing under this runner's own identity: this process held it
+    /// before it replaced its program in place, and `replaced` says so.
+    Resumed { replaced: Event },
 }
 
 /// What the claim records of the process beside its identity.
@@ -231,6 +255,7 @@ impl<'a> Runner<'a> {
             cadences,
             mark_repeat: watch.mark_repeat,
             bodies: Vec::new(),
+            program: None,
         };
         // The heartbeat's line with the fields the runner holds; its pass
         // stamp is the runner's, as every duty's is. The heartbeat module's
@@ -257,11 +282,16 @@ impl<'a> Runner<'a> {
         &self.cadences
     }
 
+    /// Follow `program` against its install's sources.
+    pub fn follow(&mut self, program: Program) {
+        self.program = Some(program);
+    }
+
     /// Claim, open the records, run the duties until a stop, release.
     pub fn run(mut self) -> Result<Ended> {
-        let takeover = self.claim()?;
+        let held = self.claim()?;
         let bodies = std::mem::take(&mut self.bodies);
-        let outcome = self.serve(takeover, bodies);
+        let outcome = self.serve(held, bodies);
         // The claim is released whatever ended the run, where it still
         // names this runner, so a stop leaves no record a successor must
         // read gone first and a moved claim is left to its holder.
@@ -276,7 +306,9 @@ impl<'a> Runner<'a> {
     /// Take the claim: refuse a live one, take over a gone one with the event
     /// that says so, refuse an unreadable one. Linked into place before any
     /// duty runs; where another start links first, what it wrote is read.
-    fn claim(&self) -> Result<Option<Event>> {
+    /// One that names this runner's identity is this process's own from
+    /// before it replaced its program, and is resumed.
+    fn claim(&self) -> Result<Held> {
         let record = claim::Record {
             identity: &self.identity,
             pane: &self.record.pane,
@@ -287,6 +319,9 @@ impl<'a> Runner<'a> {
         for _ in 0..CLAIM_TRIES {
             let mut takeover = None;
             if let Some(standing) = claim::read(&self.paths)? {
+                if standing.names(&self.identity) {
+                    return self.resume(&standing);
+                }
                 match claim::read_live(&standing) {
                     Reading::Live(live) => {
                         return Err(WatchError::Running {
@@ -319,7 +354,7 @@ impl<'a> Runner<'a> {
                     // A stop request left for the runner this one replaces
                     // is served.
                     claim::clear_stop(&self.paths)?;
-                    return Ok(takeover);
+                    return Ok(Held::Claimed { takeover });
                 }
                 claim::Written::Held => continue,
             }
@@ -334,24 +369,59 @@ impl<'a> Runner<'a> {
         .into())
     }
 
+    /// Resume this process's own claim under the program it now runs: the
+    /// record is rewritten with its script, its origin kept, and a stop
+    /// request naming the identity is left standing for the loop to serve.
+    fn resume(&self, standing: &claim::Claim) -> Result<Held> {
+        claim::rewrite(
+            &self.paths,
+            &claim::Record {
+                identity: &self.identity,
+                pane: &self.record.pane,
+                origin: &standing.origin,
+                script: &self.record.script,
+                cwd: &self.record.cwd,
+            },
+        )?;
+        let key = |script: &str| {
+            program::key_of(Path::new(script))
+                .unwrap_or("none")
+                .to_owned()
+        };
+        Ok(Held::Resumed {
+            replaced: Event::WatchReplaced {
+                from: key(&standing.script),
+                to: key(&self.record.script),
+            },
+        })
+    }
+
     /// Open the records, start the schedules at the clock's instant from the
-    /// recorded rows, and run the two duty threads until one ends.
+    /// recorded rows, and run the two duty threads until one ends. Where
+    /// they ended for a placed program, replace the process with it; an
+    /// exec that fails is said and the threads run again.
     #[allow(
         clippy::disallowed_methods,
         reason = "the runner's start: the one instant the schedules count from, read off the injected clock"
     )]
-    fn serve(&self, takeover: Option<Event>, bodies: Vec<(Duty, Body<'a>)>) -> Result<Ended> {
+    fn serve(&self, held: Held, bodies: Vec<(Duty, Body<'a>)>) -> Result<Ended> {
+        // A resumed claim's log is the one its readers follow: a fresh
+        // start's emptying was this process's first start's.
+        let (opening, fresh) = match held {
+            Held::Claimed { takeover } => (takeover, self.flags.fresh),
+            Held::Resumed { replaced } => (Some(replaced), false),
+        };
         let mut baseline = Baseline::load(&self.paths.baseline)?;
         baseline.cadences = Some(baseline::Cadences {
             mail_secs: self.cadences.mail.every.as_secs(),
             interval_secs: self.cadences.long.every.as_secs(),
             max_loops: self.flags.max_loops,
         });
-        if self.flags.fresh {
+        if fresh {
             events::empty(&self.paths.log)?;
         }
         let mut log = EventLog::open(&self.paths.log)?;
-        if let Some(event) = takeover {
+        if let Some(event) = opening {
             log.append(&[event])?;
         }
         let now = self.clock.now();
@@ -389,6 +459,14 @@ impl<'a> Runner<'a> {
         let failure: Mutex<Option<Error>> = Mutex::new(None);
         let (mut mail_body, mut shared_body): (Vec<_>, Vec<_>) =
             bodies.into_iter().partition(|(d, _)| *d == Duty::Mail);
+        let follow = self.program.as_ref().map(|program| Follow {
+            program,
+            cadences: self.cadences,
+            said: Mutex::new(None),
+            unread: Mutex::new(None),
+            placed: Mutex::new(None),
+            failed: Mutex::new(None),
+        });
         let thread = Thread {
             store: &store,
             stop: &stop,
@@ -396,28 +474,132 @@ impl<'a> Runner<'a> {
             paths: &self.paths,
             identity: &self.identity,
             mark_repeat: self.mark_repeat,
+            follow: follow.as_ref(),
         };
-        std::thread::scope(|s| {
-            if !mail_body.is_empty() {
-                let mail = &mut mail;
-                let mail_body = &mut mail_body;
-                let failure = &failure;
-                s.spawn(move || {
-                    let ended = thread.serve(mail, mail_body);
-                    thread.ended(ended, failure);
-                });
+        loop {
+            std::thread::scope(|s| {
+                if !mail_body.is_empty() {
+                    let mail = &mut mail;
+                    let mail_body = &mut mail_body;
+                    let failure = &failure;
+                    s.spawn(move || {
+                        let ended = thread.serve(mail, mail_body);
+                        thread.ended(ended, failure);
+                    });
+                }
+                let ended = thread.serve(&mut shared, &mut shared_body);
+                thread.ended(ended, &failure);
+            });
+            if let Some(error) = lock(&failure).take() {
+                return Err(error);
             }
-            let ended = thread.serve(&mut shared, &mut shared_body);
-            thread.ended(ended, &failure);
-        });
-        if let Some(error) = failure.into_inner().unwrap_or_else(|p| p.into_inner()) {
-            return Err(error);
+            let Some((follow, (key, binary))) = follow
+                .as_ref()
+                .and_then(|f| lock(&f.placed).take().map(|p| (f, p)))
+            else {
+                break;
+            };
+            // Both threads stand between duties, every line synced: the
+            // process becomes the placed program here, or says why not.
+            let cause = program::replace(&binary);
+            let _ = writeln!(
+                std::io::stderr(),
+                "watch-replace-failed binary={} cause={cause}",
+                binary.display()
+            );
+            follow.stale(&store, key.clone(), "exec-failed")?;
+            *lock(&follow.failed) = Some(key);
+            stop.store(false, Ordering::SeqCst);
         }
         let store = store.into_inner().unwrap_or_else(|p| p.into_inner());
         Ok(Ended {
             events: store.log.last(),
             stopped: "requested",
         })
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// The runner's program followed against its install's sources, read on
+/// the shared thread at the start of each long pass.
+struct Follow<'p> {
+    program: &'p Program,
+    cadences: Cadences,
+    /// The checkout key and cause the last `watch-stale` line named, so
+    /// each is said once.
+    said: Mutex<Option<(String, &'static str)>>,
+    /// The cause the last unread key was said with on stderr.
+    unread: Mutex<Option<String>>,
+    /// The checkout's key and its placed program, found by the shared
+    /// thread, for the runner to replace itself with once both threads end.
+    placed: Mutex<Option<(String, PathBuf)>>,
+    /// The checkout key whose placed program failed to exec: not tried
+    /// again, since its due duties would never run, until the key moves.
+    failed: Mutex<Option<String>>,
+}
+
+impl Follow<'_> {
+    /// Whether `due` opens a long pass, where the comparison is made.
+    fn opens_pass(&self, due: &[Duty]) -> bool {
+        due.iter()
+            .any(|duty| self.cadences.of(*duty) == self.cadences.long)
+    }
+
+    /// Compare the program with its sources now: `true` where a placed
+    /// program is to replace it. An unread key is said on stderr when its
+    /// cause changes and replaces nothing, the run going on as it was.
+    fn compare(&self, store: &Mutex<Store>) -> Result<bool> {
+        match self.program.current() {
+            Current::Same => {
+                *lock(&self.said) = None;
+                *lock(&self.unread) = None;
+                *lock(&self.failed) = None;
+                Ok(false)
+            }
+            Current::Placed { key, .. } if lock(&self.failed).as_deref() == Some(key.as_str()) => {
+                Ok(false)
+            }
+            Current::Placed { key, binary } => {
+                *lock(&self.placed) = Some((key, binary));
+                Ok(true)
+            }
+            Current::Unready { key, cause } => self.stale(store, key, cause).map(|()| false),
+            Current::Unread { cause } => {
+                let mut unread = lock(&self.unread);
+                if unread.as_deref() != Some(cause.as_str()) {
+                    let _ = writeln!(std::io::stderr(), "watch-program-unread {cause}");
+                    *unread = Some(cause);
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// The `watch-stale` line for the checkout key `key`, once per key and
+    /// cause.
+    fn stale(&self, store: &Mutex<Store>, key: String, cause: &'static str) -> Result<()> {
+        let mut said = lock(&self.said);
+        if said.as_ref().is_some_and(|(k, c)| *k == key && *c == cause) {
+            return Ok(());
+        }
+        let line = Event::WatchStale {
+            program: self.program.key().to_owned(),
+            checkout: key.clone(),
+            cause: cause.to_owned(),
+        };
+        commit(
+            store,
+            Produced {
+                events: vec![line],
+                ..Produced::default()
+            },
+            None,
+        )?;
+        *said = Some((key, cause));
+        Ok(())
     }
 }
 
@@ -432,6 +614,8 @@ struct Thread<'r, 'a> {
     identity: &'r Identity,
     /// Every how many failures in a row the failure line repeats.
     mark_repeat: u32,
+    /// The program followed, where the runner follows one.
+    follow: Option<&'r Follow<'r>>,
 }
 
 impl Thread<'_, '_> {
@@ -472,7 +656,14 @@ impl Thread<'_, '_> {
                 return Ok(());
             }
             let now = self.clock.now();
-            for duty in schedule.due_at(now) {
+            let due = schedule.due_at(now);
+            if let Some(follow) = self.follow
+                && follow.opens_pass(&due)
+                && follow.compare(self.store)?
+            {
+                return Ok(());
+            }
+            for duty in due {
                 let Some((_, body)) = bodies.iter_mut().find(|(d, _)| *d == duty) else {
                     unreachable!("a schedule carries only registered duties")
                 };

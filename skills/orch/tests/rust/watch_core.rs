@@ -2987,3 +2987,230 @@ fn a_watch_start_naming_no_mailbox_or_server_is_refused_before_any_server_or_ale
         );
     }
 }
+
+/// The key agent-runtime's `lib/key.sh` reads for the crate at `crate_dir`:
+/// the one rule the install's wrapper and the watch read it by.
+fn sources_key(crate_dir: &Path) -> String {
+    let key_lib =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agent-runtime/scripts/lib/key.sh");
+    let out = program("/bin/bash")
+        .args([
+            "-c",
+            "refuse() { echo \"$*\" >&2; exit 1; }; . \"$1\"; agent_runtime_key \"$2\"",
+            "_",
+        ])
+        .arg(key_lib)
+        .arg(crate_dir)
+        .output()
+        .expect("bash");
+    assert!(out.status.success(), "the key: {}", stderr(&out));
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// A crate of one source file, `source`, at `crate_dir`.
+fn write_sources(crate_dir: &Path, source: &str) {
+    std::fs::create_dir_all(crate_dir.join("src")).unwrap();
+    std::fs::write(
+        crate_dir.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\n",
+    )
+    .unwrap();
+    std::fs::write(crate_dir.join("Cargo.lock"), "").unwrap();
+    std::fs::write(crate_dir.join("src/lib.rs"), source).unwrap();
+}
+
+/// The key `source` gives the install's crate, read off a scratch copy so
+/// the program can be placed before the install's sources move.
+fn key_for(scratch: &Path, source: &str) -> String {
+    write_sources(scratch, source);
+    sources_key(scratch)
+}
+
+/// This suite's binary placed as setup places a build, a file under its own
+/// keyed name in the cache's `bin`: a hard link, so the running program's
+/// own path, the one its key is read off, carries the key.
+fn place_as(cache: &Path, key: &str) -> PathBuf {
+    let placed = cache.join("bin").join(format!("orch-runtime-{key}"));
+    std::fs::create_dir_all(placed.parent().unwrap()).unwrap();
+    std::fs::hard_link(binary(), &placed).unwrap();
+    placed
+}
+
+/// The log's lines once `until` holds of them, bounded; a runner that ends
+/// first fails the row with its stderr.
+fn await_lines(
+    child: &mut Owned,
+    log: &Path,
+    what: &str,
+    until: impl Fn(&[String]) -> bool,
+) -> Vec<String> {
+    let deadline = Instant::now() + secs(30);
+    loop {
+        let lines = lines_of(log);
+        if until(&lines) {
+            return lines;
+        }
+        if let Ok(Some(status)) = child.0.try_wait() {
+            let mut err = String::new();
+            if let Some(stderr) = child.0.stderr.as_mut() {
+                let _ = std::io::Read::read_to_string(stderr, &mut err);
+            }
+            panic!("the runner ended {status} before {what}: {err}");
+        }
+        assert!(Instant::now() < deadline, "{what} never came: {lines:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A placed watch whose install's sources move to a key whose program
+/// stands placed replaces itself with that program at its next pass: the
+/// same process under the same start, its claim naming the new program,
+/// its log kept line for line (a `--fresh` start's emptying is not run
+/// again) and one `watch-replaced` line. Sources moved on to a key no
+/// program is placed for leave it on its own program with one
+/// `watch-stale` line, however many passes follow, and so does a key
+/// whose placed program does not answer or does not declare that it
+/// resumes its own claim (a build from older sources), the pass's duties
+/// running on.
+#[test]
+fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_cannot() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let (_cache_dir, cache) = outside_tmp();
+    let scratch = cache.join("scratch");
+    // The install's layout: orch's scripts and sources beside the key
+    // reader the wrapper sources.
+    let skills = state_dir.join(".agents/skills");
+    let key_lib = skills.join("agent-runtime/scripts/lib/key.sh");
+    std::fs::create_dir_all(key_lib.parent().unwrap()).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agent-runtime/scripts/lib/key.sh"),
+        &key_lib,
+    )
+    .unwrap();
+    std::fs::create_dir_all(skills.join("orch/scripts")).unwrap();
+    let sources = skills.join("orch/runtime");
+    let first = key_for(&scratch, "// first\n");
+    let second = key_for(&scratch, "// second\n");
+    let third = key_for(&scratch, "// third\n");
+    let fourth = key_for(&scratch, "// fourth\n");
+    let fifth = key_for(&scratch, "// fifth\n");
+    write_sources(&sources, "// first\n");
+    let started_as = place_as(&cache, &first);
+    let replaced_by = place_as(&cache, &second);
+
+    let mut command = watch_run_command(
+        &state_dir,
+        &["--interval", "1", "--max-loops", "1", "--fresh"],
+    );
+    command.env("AGENT_RUNTIME_CACHE", &cache);
+    // The same start under the placed program's own path.
+    let mut command_as = program(&started_as);
+    command_as
+        .args(command.get_args())
+        .envs(command.get_envs().filter_map(|(k, v)| Some((k, v?))))
+        .current_dir(&state_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = Owned(command_as.spawn().expect("watch run"));
+    let paths = paths_in(&state_dir);
+    await_claim(&mut child, &paths);
+    let start = start_of(child.pid());
+    let before = await_lines(&mut child, &paths.log, "a heartbeat", |lines| {
+        lines.iter().any(|l| l.starts_with("EVENT heartbeat "))
+    });
+
+    write_sources(&sources, "// second\n");
+    let replaced = format!("EVENT watch-replaced from={first} to={second}");
+    let after = await_lines(&mut child, &paths.log, "the replacement", |lines| {
+        lines.contains(&replaced)
+    });
+    assert_eq!(&after[..before.len()], &before[..], "the log's lines stand");
+    assert_eq!(
+        after.iter().filter(|l| **l == replaced).count(),
+        1,
+        "one replacement: {after:?}"
+    );
+    assert!(
+        !after
+            .iter()
+            .any(|l| l.starts_with("EVENT watch-taken-over ")),
+        "the claim was never let go: {after:?}"
+    );
+    assert_eq!(
+        std::fs::read_link(format!("/proc/{}/exe", child.pid())).unwrap(),
+        replaced_by,
+        "the process runs the program its sources' key names"
+    );
+    let claim = watch::claim::read(&paths).unwrap().expect("the claim");
+    assert_eq!(
+        (claim.pid, claim.start.as_deref(), claim.script.as_str()),
+        (
+            child.pid(),
+            Some(start.as_str()),
+            replaced_by.to_str().unwrap()
+        ),
+        "the claim names the same process under its new program"
+    );
+
+    // A program placed under the fourth key that no kernel runs, and one
+    // under the fifth that answers `version` as a program built before
+    // in-place replacement does.
+    let unstartable = cache.join("bin").join(format!("orch-runtime-{fourth}"));
+    write_executable(&unstartable, "not a program\n");
+    write_executable(
+        &cache.join("bin").join(format!("orch-runtime-{fifth}")),
+        "#!/bin/sh\nprintf '%s\\n' '{\"protocol\":\"orch-runtime-v1\",\"ok\":true,\"result\":{\"protocol\":\"orch-runtime-v1\"}}'\n",
+    );
+    let mut stale_lines = 0;
+    for (source, line) in [
+        (
+            "// third\n",
+            format!("EVENT watch-stale program={second} checkout={third} cause=absent"),
+        ),
+        (
+            "// fourth\n",
+            format!("EVENT watch-stale program={second} checkout={fourth} cause=unanswered"),
+        ),
+        (
+            "// fifth\n",
+            format!("EVENT watch-stale program={second} checkout={fifth} cause=unresumable"),
+        ),
+    ] {
+        write_sources(&sources, source);
+        let said = await_lines(&mut child, &paths.log, &line, |lines| lines.contains(&line));
+        let at = said.len();
+        let later = await_lines(&mut child, &paths.log, "two passes past it", |lines| {
+            lines[at.min(lines.len())..]
+                .iter()
+                .filter(|l| l.starts_with("EVENT heartbeat "))
+                .count()
+                >= 2
+        });
+        stale_lines += 1;
+        assert_eq!(
+            later
+                .iter()
+                .filter(|l| l.starts_with("EVENT watch-stale "))
+                .count(),
+            stale_lines,
+            "one line for the key, however many passes: {later:?}"
+        );
+        assert_eq!(
+            std::fs::read_link(format!("/proc/{}/exe", child.pid())).unwrap(),
+            replaced_by,
+            "{line}: the program runs on"
+        );
+    }
+
+    let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
+    assert!(
+        reply(&stop)["ok"].as_bool().unwrap_or(false),
+        "{}",
+        stderr(&stop)
+    );
+    let out = output(child);
+    assert!(out.status.success(), "{}", stderr(&out));
+}

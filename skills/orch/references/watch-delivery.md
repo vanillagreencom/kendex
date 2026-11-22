@@ -6,7 +6,7 @@ Oversight stands from the watch's first launch until [oversee.md § 5](../workfl
 
 ## The watch
 
-The watch is the runtime's standing scheduler, `orch-runtime watch run`. A controller that `start-controller` opens has its watch from the start: the request carries the watch's words. A session that `orch-runtime register --fleet` recorded, with no live claim, starts the watch once from its own pane with the block [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states. The watch outlives the session that started it, a succession, and a death or wall recovery. Nothing hands it over; a successor follows the same log.
+The watch is the runtime's standing scheduler, `orch-runtime watch run`. A controller that `start-controller` opens has its watch from the start: the request carries the watch's words. A session that `orch-runtime register --fleet` recorded, with no live claim, starts the watch once from its own pane with the block [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states. The watch outlives the session that started it, a succession, and a death or wall recovery. It also outlives an update to its own code: it replaces its program in place, keeping its claim and log ([oversee-events.md § `watch-replaced`](oversee-events.md#watch-replaced)). Nothing hands it over; a successor follows the same log.
 
 Follow the watch's log. Never start a second watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside its turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
 

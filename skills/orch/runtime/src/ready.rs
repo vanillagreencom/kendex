@@ -354,7 +354,7 @@ pub fn on_path(name: &str) -> Option<PathBuf> {
 
 /// Why `path` is no program to run: `absent` or `not-executable`; `None`
 /// for a regular file someone may execute.
-fn executable(path: &Path) -> Option<&'static str> {
+pub(crate) fn executable(path: &Path) -> Option<&'static str> {
     use std::os::unix::fs::PermissionsExt;
     match std::fs::metadata(path) {
         Ok(m) if m.is_file() && m.permissions().mode() & 0o111 != 0 => None,

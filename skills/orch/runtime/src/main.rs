@@ -1591,11 +1591,15 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         private_env: !cli.no_private_env,
     };
     let value = match cli.verb {
-        Verb::Version => serde_json::json!({
-            "protocol": protocol::PROTOCOL,
-            "crate": env!("CARGO_PKG_VERSION"),
-            "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
-        }),
+        Verb::Version => {
+            let mut answer = serde_json::json!({
+                "protocol": protocol::PROTOCOL,
+                "crate": env!("CARGO_PKG_VERSION"),
+                "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
+            });
+            answer[watch::program::RESUMES] = serde_json::Value::Bool(true);
+            answer
+        }
         Verb::Ready { duties } => ready_verb(&duties, &flags)?,
         Verb::Host { host, args } => {
             load_settings(&flags)?; // Mailbox reads the first stderr line.
@@ -2563,6 +2567,11 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                         Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e))
                     })?,
             };
+            let program = watch::program::Program::of(
+                Path::new(&record.script),
+                &settings.roots.project,
+                settings.engine.verify.get()?,
+            );
             let mut runner = watch::Runner::new(
                 paths,
                 &clock,
@@ -2576,6 +2585,9 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 identity,
                 record,
             )?;
+            if let Some(program) = program {
+                runner.follow(program);
+            }
             // The tracker read duty: the inventories once per pass, the
             // terminal closes, the heartbeat's inputs; the GitHub duty shares
             // its slot.
