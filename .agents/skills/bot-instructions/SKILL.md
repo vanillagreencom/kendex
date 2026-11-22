@@ -40,22 +40,24 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Bot Instructions
 
-When github-repository-settings declares repository effects, core selects that package as the review-file owner, except where it was installed only as another package's dependency and is set up neither in this checkout nor in its main checkout: this package then keeps the files until that setup. Keep this declaration available for predecessor discovery and recovery. Scopes without that declaration retain this renderer and checker.
+Renders each enabled review bot's instruction files from the doctrine below and the repository's `[bot-instructions]` manifest table, and checks them.
+
+Where github-repository-settings declares repository effects, core selects it as the review-file owner, and this package stays installed as its renderer. One exception: a github-repository-settings installed only as another package's dependency, and set up neither in this checkout nor in its main checkout, leaves this package the owner until that setup. Keep this package's `repo-effects` declaration: core reads it for predecessor discovery and recovery.
+
+## Commands
 
 ```bash
-.agents/skills/bot-instructions/scripts/bot-instructions render   # write every enabled surface
-.agents/skills/bot-instructions/scripts/bot-instructions check    # re-render and compare
-.agents/skills/bot-instructions/scripts/bot-instructions adopt    # take hand-written files over
-.agents/skills/bot-instructions/scripts/bot-instructions retire   # revoke kendex automatic rendering on removal
+.agents/skills/bot-instructions/scripts/bot-instructions render   # validate, then write every enabled output
+.agents/skills/bot-instructions/scripts/bot-instructions check    # re-render and compare; --staged reads the index
+.agents/skills/bot-instructions/scripts/bot-instructions adopt    # take a hand-written file or region over, once
+.agents/skills/bot-instructions/scripts/bot-instructions retire   # revoke kendex automatic rendering on removal; files stay as they are
 ```
 
-Flags: `--repo`, `--spec`, `--staged`, `--output full|local`, `--dry-run`, `--discover`; `bot-instructions --help`. Python 3.11 or newer, for `tomllib`, and no third-party package: every repo that vendors this package renders and checks with what it already has.
+Options: `bot-instructions --help`. The scripts need Python 3.11 or newer and no third-party package; keep it so, since every repository that installs this package renders with what it already has. Before choosing `--output local`, read [schemas/renders.md § Local output](schemas/renders.md#local-output).
 
-`render --discover` lists, for kendex's commit-offer discovery, the files and region a render may replace, and writes nothing. A hand-written file or region at a generated path is left out of the list.
+Exit codes: 0 clean, 1 findings, 2 could not complete. A manifest with no `[bot-instructions]` table follows [schemas/validators.md](schemas/validators.md) § `orphan`. Where commit-guards is installed, its pre-commit chain runs `check --staged`; elsewhere, wire `check --staged` into the repository's own guards. This package ships no hook.
 
-`--output local` limits `render`, `check` and `adopt` to the `AGENTS.md` review region; the default `--output full` keeps every enabled bot output. Local mode refuses an external `--spec` without a matching selected installation inside the checkout. Before choosing local mode, read [schemas/renders.md § Local output](schemas/renders.md#local-output). `adopt --dry-run` reports the content to take over and its divergence, writes no marker, and refuses symlinked targets.
-
-Exit codes: 0 clean, 1 findings, 2 could not complete. An unconfigured repository follows [schemas/validators.md](schemas/validators.md) § `orphan`, including its empty JSON ownership report. The `commit-guards` chain runs `check --staged` itself where this package is installed. A pre-commit lane blocks on nonzero codes, except an older check's `unconfigured` refusal carrying its `renders=none` attestation.
+`render` replaces only a file or region that carries its marker. A hand-written file or region at a generated path is taken over by `adopt`, never overwritten: [schemas/renders.md](schemas/renders.md) § Common rules.
 
 ## What reads what
 
@@ -67,37 +69,23 @@ Exit codes: 0 clean, 1 findings, 2 could not complete. An unconfigured repositor
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
 | Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, plus `.macroscope/check-run-agents/**` and `.macroscope/approvability.md`, which this package never writes | the pull request's most recent commit, or the default branch for a fork |
 
-Codex and Copilot reach the doctrine by following a pointer rather than by reading it in place. The `AGENTS.md` region is one directive line naming the pointed file, and `.github/copilot-instructions.md` carries the same pointer; CodeRabbit follows a real file reference. No block is restated to those three anywhere else, with two exceptions. `render-out-of-scope` rides `.coderabbit.yaml`'s catch-all entry, where it is doing scoping work: [schemas/renders.md](schemas/renders.md) § Doctrine routing note (a). `severity` rides `.github/copilot-instructions.md`: it holds the approve rule, which decides whether a head merges on a repo that requires an approval, so the rule goes in a file Copilot loads itself, note (b).
-
-Routing per block and surface: [schemas/renders.md](schemas/renders.md) § Doctrine routing. Vendor caps: [references/limits.md](references/limits.md).
+Codex and Copilot reach the doctrine through a pointer to the rendered `code-review.md`, and CodeRabbit through a file reference. Which blocks each destination still carries, and why: [schemas/renders.md](schemas/renders.md) § Doctrine routing. Vendor caps and read semantics: [references/limits.md](references/limits.md).
 
 ## The pieces
 
-The effective manifest holds `[bot-instructions]`. Its child tables configure bots, repo context, cadence, exclusions, path instructions and doctrine overrides. The generator writes the enabled bots' native files. Table selection and precedence: [schemas/repo-toml.md](schemas/repo-toml.md).
+The effective manifest holds `[bot-instructions]`: bots, repo context, cadence, exclusions, path instructions and doctrine overrides. Keys, manifest selection and refusals: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
 
-A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plus Qodo through `best_practices.md` when `[bot-instructions.bots] qodo_best_practices` is on. Only Macroscope honors `exclude_globs`, so narrow `globs` where scoping matters. The spec copy's own surfaces, § Default surfaces, reach the same routes in every repo with no manifest entry. Keys: [schemas/repo-toml.md](schemas/repo-toml.md). Validators: [schemas/validators.md](schemas/validators.md).
+`[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`, and makes the `AGENTS.md` § Code Review Rules region one directive line naming that file. The generator owns only that region of `AGENTS.md` and never creates the file or the heading. A repo without the heading adds it, sets `codex`, runs `adopt`, then `render`. Region body and bounds: [schemas/renders.md](schemas/renders.md) § `AGENTS.md` § Code Review Rules.
 
-- `render` writes every enabled surface after validating it.
-- `check --json` reports verified whole-file paths for `kendex verify`; it grants no ownership of the shared `AGENTS.md` region.
-- `check` re-renders and diffs, reading the index under `--staged`.
-- `adopt` takes a hand-written file or `AGENTS.md` region under management once.
-- `retire` lets kendex revoke automatic rendering when it removes the package. It leaves generated files unchanged.
-
-The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. `render` removes each marked file the TOML no longer produces after its writes, and prints `removed PATH` for it. A manifest that declares no `[bot-instructions]` table writes nothing; [schemas/validators.md](schemas/validators.md) § `orphan` says what the run reports instead. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
-
-## The doctrine lives in one file per repo
-
-In full mode, `[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`, and writes the `AGENTS.md` owned region as one directive line naming it. A longer region is a finding: `adopt` reports it under `agents-region` and still writes the marker unless `--dry-run` is set, `check` reports it under `drift`, and `render` replaces it. A repo migrates by rendering. Body and bounds: [schemas/renders.md](schemas/renders.md) § `code-review.md`.
-
-A repo enabling `codex` renders a canary to check whether the bot follows the doctrine pointer. Before choosing that rule or interpreting a comment, read [references/limits.md § GitHub Copilot code review](references/limits.md#github-copilot-code-review) for the evidence, failure mode and exclusivity conditions.
+A repo enabling `codex` renders a canary to check whether the bots follow the pointer. Before choosing that rule or interpreting a comment, read [references/limits.md § GitHub Copilot code review](references/limits.md#github-copilot-code-review).
 
 ## Every rendered config excludes the render trees
 
-A repo enables `[bot-instructions.exclusions] derive_render` or lists every render tree in `[[bot-instructions.exclusions.path]]`. Set construction: [schemas/repo-toml.md](schemas/repo-toml.md) § `[bot-instructions.exclusions]`. Placement and enforcement: [schemas/renders.md](schemas/renders.md) § Doctrine routing.
+A repo enables `[bot-instructions.exclusions] derive_render` or lists every render tree in `[[bot-instructions.exclusions.path]]`. Set construction: [schemas/repo-toml.md](schemas/repo-toml.md) § `[bot-instructions.exclusions]`. Placement per bot: [schemas/renders.md](schemas/renders.md) § Doctrine routing.
 
 ## A pull request changing its own review
 
-- Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy; when they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render, so run the candidate's copy and print a warning that the pull request changes the package. The package's own source repository runs the pull request's checker always.
+Run `check` in CI from the default branch's package copy when the two copies are byte-identical, with `--spec` naming the pull request tree's copy. When they differ, the pull request upgrades the package and the default-branch checker cannot reproduce the candidate's render: run the candidate's copy and print a warning that the pull request changes the package. The package's own source repository always runs the pull request's checker.
 
 ## The render inputs
 
@@ -107,12 +95,9 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 - `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
 - The existing `AGENTS.md` when Codex is on.
 
-
-Version and marker semantics: [schemas/renders.md](schemas/renders.md) § Common rules.
-
 ## Doctrine
 
-Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the default is the running package. End the section at the next level-one or level-two heading. A `###` heading outside the section is not a doctrine block, whatever its name, so a project-instructions block a harness injects after the frontmatter never parses as doctrine. A second `## Doctrine` line anywhere in the file is refused. Keep each `###` block ID unchanged and unique. Keep every block non-empty. Write text that YAML and TOML scalars can carry verbatim. Put repo names, paths, issues, and repo-specific rules in `[bot-instructions]`.
+The `###` blocks below are the doctrine every render carries. The section ends at the next level-one or level-two heading, and only a `###` heading inside it is a block. Put repo names, paths, issues and repo-specific rules in `[bot-instructions]`, never in a block: every repository that installs this package renders these blocks.
 
 ### scope
 
