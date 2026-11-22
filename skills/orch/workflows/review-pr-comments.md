@@ -761,21 +761,8 @@ Under `ask` only: awaiting your response to ask questions, override skipped item
 
 **Standalone only.** When the triage fixed anything or created issues:
 
-1. Write the cumulative summary to a file and post it as a PR comment.
-2. When `TRACKER` is `linear`, post it on the Linear issue too:
-
-```markdown
-## Recommendations Processed
-
-### Fixed in PR
-- [SOURCE]: [ITEM] — [SHA]
-
-### Issues Created
-- [ISSUE_ID] - [TITLE] — [PROJECT]
-
-### Not Addressed
-- [SOURCE]: [ITEM] — [REASON]
-```
+1. Write the cumulative summary to a file in the session-summary form of [post-summary.md § 1](post-summary.md#1-post-the-summary), and post it as a PR comment. Items not addressed go under its Skipped subsection with their reason.
+2. When `TRACKER` is `linear`, post it on the Linear issue too.
 
 ## 8. Update State And Return
 

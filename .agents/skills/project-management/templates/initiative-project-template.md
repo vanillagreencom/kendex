@@ -14,13 +14,15 @@ Use this template when roadmap-create creates an initiative or project.
 
 `--content` is the markdown body.
 
-- Fill at most four short sections in plain words.
+- Open with the quoted Story and quoted Why this matters blocks, separated by an unquoted blank line, as [issue-description-template.md](issue-description-template.md) § Field Mapping and § Rules describe them.
+- Then fill at most three short sections in plain words, in this order.
 - Omit a section with nothing to say.
+- Separate every section with blank lines.
 
 ```markdown
-## Why
+> **Story:** [Who this outcome is for.] [What they face today.] [What changes once it ships, and its consequence.]
 
-[The need and its effect on people]
+> **Why this matters:** [The cost today, and what the outcome buys.]
 
 ## What ships
 
