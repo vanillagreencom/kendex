@@ -653,7 +653,7 @@ The watch's retention duty runs the retention [workflow-state.md § Recording po
 
 ### Succession
 
-At an overseer trigger under [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules), take these steps:
+At an overseer trigger under [oversee-events.md § The overseer's own marks](../references/oversee-events.md#the-overseers-own-marks), take these steps:
 
 1. Wait for a safe point: finish any `merged` event, answer each lane waiting on a root answer, and collect every attached child's return.
    - Wait for each inside the current turn.

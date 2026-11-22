@@ -1,12 +1,10 @@
 # Oversee events
 
-Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles a line of the watch's log. Apply § Judgement rules to every line, then take the line's entry under § Event kinds.
+Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles a line of the watch's log. Apply § Judgement rules to every line, then take the line's entry under § Event kinds. An entry that runs a procedure of § Shared procedures names it; [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) names § Direct-push cycle records.
 
 ## Judgement rules
 
 The overseer owns the fleet's judgement and its liveness. It implements nothing: a fix goes to a lane as an item.
-
-Review panels take the [pre-panel context check](../workflows/review-pr.md#2-prepare-reviewers) before any attached reviewer starts.
 
 A record, below, is one fleet-log row in the fleet state's `fleet_log[]` ([workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state) holds its kinds). `[ITEM]` is the issue or repository the row is about. `[ONE_LINE]` holds text the overseer did not author, so it crosses a file, never argv ([SKILL.md § Harness-Safe Shell](../SKILL.md#harness-safe-shell)). Write the row to a file with the harness file-write tool, then append it:
 
@@ -23,42 +21,13 @@ A record, below, is one fleet-log row in the fleet state's `fleet_log[]` ([workf
 
 A standing instruction from the owner, and its lift, follow [communication-modes.md § Recording](communication-modes.md#recording).
 
-### Lane proposals
+Review panels take the [pre-panel context check](../workflows/review-pr.md#2-prepare-reviewers) before any attached reviewer starts.
 
-A lane posts each proposal as a tracker comment and reports it with a `Proposal comment:` notice.
+Between a lane's turn ends, judge its context and account marks by § Hand off a lane before it runs out.
 
-1. Record each `Proposal comment:` notice in the fleet log: the tracker, the repository, the issue, and the comment's ID or URL.
-2. Group the pending comments by tracker and by the source pull request's repository. A proposal whose source pull request has not merged waits for the next sweep.
-3. For each group, launch one fresh one-shot canonical `tpm` subagent on the surface's lowest-cost model, by the launch call § `triage` names, with `tpm` in place of `maintainer`.
-   - Send it the project-management skill's `workflows/proposal-sweep.md`.
-   - The brief names a checkout of the source repository on this host as its worktree, the group's tracker, tracker repository and source repository, the fleet's issue IDs, and the group's comment bindings.
-   - The sweep creates no carrier item and starts no lane.
-   - Its analysis never runs in the overseer.
-4. Capture its single final return, then retire it as § `triage` says.
-5. Accept the return only when all of these hold:
-   - It holds no other text and parses as one issue-mode audit object.
-   - Its `tracker`, and for GitHub its `repository`, equal the group's.
-   - Each `create` and `skip` row carries exactly one `proposal_sources[]` entry by `index`.
-   - Each entry names a distinct binding of this group, and no entry points at another row.
-6. On a launch, capture, parse or validation failure, stop: post no reply and record no outcome.
-7. Write the accepted object with the harness file-write tool to `tmp/proposal-audit-[UTC_EPOCH].json` in the overseer's checkout, with a fresh `[UTC_EPOCH]` per group.
-8. Check its rows against live fleet work. Then run the project-management skill's `workflows/audit-issues.md` as `audit-issues --analyzed tmp/proposal-audit-[UTC_EPOCH].json` under `PM_CREATE_AUTONOMY`.
-9. Reply to each comment with its outcome: the created issue's ID or a one-line decline.
-   - On Linear, run `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --parent [COMMENT_ID] --body-file [PATH]`.
-   - On GitHub, run `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`, with the body's first line `Proposal outcome for [COMMENT_URL]:`.
-10. Record each source and its outcome in the fleet log.
+Before fleet close, run § Lane proposals as § `heartbeat` step 5 runs it.
 
-### Heartbeat backstop for lane proposals
-
-At each `heartbeat` and before fleet close, run § Lane proposals over every fleet issue in its tracker and repository group.
-
-### Heartbeat backlog audit
-
-At each `heartbeat`, apply [heartbeat-audit.md](heartbeat-audit.md), apart from the proposal sweep and the `triage` verifier.
-
-### Heartbeat design review
-
-At each `heartbeat`, apply [design-review.md](design-review.md)'s `heartbeat` entry to every `running` lane.
+A successor reads the output its predecessor's children left before it repeats their tasks.
 
 ### Cut scope blowups
 
@@ -94,32 +63,9 @@ A deterministic check beats prose where it stays simple. Complex or brittle mach
 - A lane's gap is a proposal ([skill-rules.md § Coordination](skill-rules.md#coordination)).
 - The overseer files its own through § File one item alone.
 
-### File one item alone
-
-1. Read [design-review.md](design-review.md) before filing.
-2. Write the one item, a class under § Fix the source or an issue an `owner-note` asks for, to a file in the project-management skill's audit-issues input form, with `source: "oversee"`, `parent_issue: null` and the fleet's `tracker`.
-3. Run the project-management skill's `workflows/audit-issues.md` as `audit-issues --single [FILE_PATH]`. `--issues` is for a batch: its TPM run sweeps the whole backlog for cancellations.
-4. Append one fleet-log `ruling` whose text starts `filed ` and names the filed item, its Location files and its defect-class rule, stated as the rule every site breaks.
-
 ### Rule once for the fleet
 
 Send a ruling that answers one lane's question to every lane in the same situation, and record it in the fleet log.
-
-### Held merges
-
-Under `ORCH_MERGE_AUTONOMY=ask` a lane's merge question arrives as `lane-question`.
-
-1. Read the gate results the lane reports. Do not reproduce them.
-2. Relay the question to the owner, worded as the communication skill's [questions reference](../../communication/references/questions.md) requires.
-3. Send `MERGE` to the lane only after the owner authorizes it, or send the one directive the owner gave.
-   - A directive may carry the authorization ("with that landed, MERGE stands").
-   - The lane then merges once the change is in, with no second answer.
-
-A merge hold is a person who disabled a pull request's automatic merge, never a fault.
-
-- `queue-watch` reads it as `cause: merge_hold`, with `disarmed_by` naming that person.
-- The lane asks about it through `lane-mail ask`, so it arrives as `lane-question`.
-- Relay it to the owner as above, naming who holds it.
 
 ### Lanes merge their own pull requests
 
@@ -128,6 +74,55 @@ A lane whose gates read met merges its own head by [merge-pr.md § 5](../workflo
 The overseer's own GitHub App acts only for the head approvals [copilot-head-notices.md](copilot-head-notices.md) sets. The one exception is an emergency merge in a consumer whose ruleset lists that app as a bypass actor, as that step's "Who acts" names.
 
 When a CI input read from the default branch breaks and a merge group cannot pass, take the recovery route in the review-gate skill's `SKILL.md` § 4. Operations.
+
+### Keep the report's inputs current
+
+After each [oversee.md § 2](../workflows/oversee.md#2-select-work) selection, write the items not yet launched in launch order:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"launch-queue","items":["[ITEM]",...]}'
+```
+
+### Decide without the user
+
+The ask set is [communication-modes.md § Ask set](communication-modes.md#ask-set); nothing here narrows or widens it. For any other call:
+
+1. Take the option that costs nothing.
+2. Record it in the fleet log as [communication-modes.md § Recording](communication-modes.md#recording) requires.
+
+## Shared procedures
+
+### Lane proposals
+
+A lane posts each proposal as a tracker comment and reports it with a `Proposal comment:` notice.
+
+1. Record each `Proposal comment:` notice in the fleet log: the tracker, the repository, the issue, and the comment's ID or URL.
+2. Group the pending comments by tracker and by the source pull request's repository. A proposal whose source pull request has not merged waits for the next sweep.
+3. For each group, launch one fresh one-shot canonical `tpm` subagent on the surface's lowest-cost model, by the launch call § `triage` names, with `tpm` in place of `maintainer`.
+   - Send it the project-management skill's `workflows/proposal-sweep.md`.
+   - The brief names a checkout of the source repository on this host as its worktree, the group's tracker, tracker repository and source repository, the fleet's issue IDs, and the group's comment bindings.
+   - The sweep creates no carrier item and starts no lane.
+   - Its analysis never runs in the overseer.
+4. Capture its single final return, then retire it as § `triage` says.
+5. Accept the return only when all of these hold:
+   - It holds no other text and parses as one issue-mode audit object.
+   - Its `tracker`, and for GitHub its `repository`, equal the group's.
+   - Each `create` and `skip` row carries exactly one `proposal_sources[]` entry by `index`.
+   - Each entry names a distinct binding of this group, and no entry points at another row.
+6. On a launch, capture, parse or validation failure, stop: post no reply and record no outcome.
+7. Write the accepted object with the harness file-write tool to `tmp/proposal-audit-[UTC_EPOCH].json` in the overseer's checkout, with a fresh `[UTC_EPOCH]` per group.
+8. Check its rows against live fleet work. Then run the project-management skill's `workflows/audit-issues.md` as `audit-issues --analyzed tmp/proposal-audit-[UTC_EPOCH].json` under `PM_CREATE_AUTONOMY`.
+9. Reply to each comment with its outcome: the created issue's ID or a one-line decline.
+   - On Linear, run `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --parent [COMMENT_ID] --body-file [PATH]`.
+   - On GitHub, run `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`, with the body's first line `Proposal outcome for [COMMENT_URL]:`.
+10. Record each source and its outcome in the fleet log.
+
+### File one item alone
+
+1. Read [design-review.md](design-review.md) before filing.
+2. Write the one item, a class under § Fix the source or an issue an `owner-note` asks for, to a file in the project-management skill's audit-issues input form, with `source: "oversee"`, `parent_issue: null` and the fleet's `tracker`.
+3. Run the project-management skill's `workflows/audit-issues.md` as `audit-issues --single [FILE_PATH]`. `--issues` is for a batch: its TPM run sweeps the whole backlog for cancellations.
+4. Append one fleet-log `ruling` whose text starts `filed ` and names the filed item, its Location files and its defect-class rule, stated as the rule every site breaks.
 
 ### Hand off a lane before it runs out
 
@@ -165,7 +160,7 @@ The overseer judges the same marks between turn ends, and for a lane whose hook 
 
    After the write succeeds, the lane sends `lane-mail notice --item [ITEM] --file [PATH]` with a file naming what is left, then ends its session.
 
-6. On the lane's `handoff` line, relaunch the item through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which resumes from the handoff record. A Copilot lane's relaunch starts a fresh session on that record.
+6. On the lane's `handoff` line, relaunch the item as § `handoff` says.
 
 The hook refuses a new attached launch near the mark: the attached-launch reserve, `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`.
 
@@ -179,28 +174,7 @@ A handoff record names any in-flight foreground validation in `traps`.
 
 On a hosted fleet, also read `.agents/skills/orch/scripts/orch-runtime host list`. A row whose item has no `running` lane record is a sandbox no lane claims: tell the owner.
 
-### The overseer's own marks
-
-The watch reports a mark `orch-runtime marks --fleet` reached on the overseer as `overseer-mark` ([overseer-session-events.md § Event kinds](overseer-session-events.md#event-kinds)). An unread or unmeasured mark is never room, and a silent interval does not mean the mark lifted. At a mark, follow [oversee.md § Succession](../workflows/oversee.md#succession).
-
-[overseer-session-events.md](overseer-session-events.md) holds a dead or walled overseer's events and recovery. A successor reads the output its predecessor's children left before it repeats their tasks.
-
-### Keep the report's inputs current
-
-After each [oversee.md § 2](../workflows/oversee.md#2-select-work) selection, write the items not yet launched in launch order:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"launch-queue","items":["[ITEM]",...]}'
-```
-
-### Decide without the user
-
-The ask set is [communication-modes.md § Ask set](communication-modes.md#ask-set); nothing here narrows or widens it. For any other call:
-
-1. Take the option that costs nothing.
-2. Record it in the fleet log as [communication-modes.md § Recording](communication-modes.md#recording) requires.
-
-## Direct-push cycle records
+### Direct-push cycle records
 
 A direct push raises no `merged` line. When a lane reports a successful direct push to the base branch, close the lane with the pushed commit as the close's `delivery`. The close then writes its cycle.
 
@@ -459,6 +433,7 @@ Each answer:
 `EVENT handoff [ITEM]`: the item's lane recorded its handoff and exited. The record follows the line.
 
 - Relaunch the item through [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch), which composes the request from the record.
+- A Copilot lane's relaunch starts a fresh session on that record.
 - A record whose `cause` is `model-switched` relaunches on the record's `model`.
 
 A handoff does not confirm that its session stopped: a relaunch refuses `lane-live` while the record reads in flight.
@@ -669,14 +644,18 @@ Take the first arm that matches the new reading:
 3. `verdict=unmeasured`: nothing measured the account. Launch nothing new on it, and handle its status per [lane-directive.md § No lane has room](lane-directive.md#no-lane-has-room).
 4. `verdict=walled`: launch nothing on it before `binding_resets_at`. With `binding_bucket=credits`:
    - The account is a grant at or below its credit floor, which no reset reopens.
-   - Launch nothing on it, and direct each live lane on it to write its handoff record.
+   - Launch nothing on it, and direct each live lane on it to write its handoff record by § Hand off a lane before it runs out step 5.
 5. `verdict=room`: resume any launch the judge refused for want of an account. Wake a lane parked on this account only where its `usage-limit` carried no `resets=`.
 
 [agent-runtime's accounts judge](../../agent-runtime/runtime/src/accounts/mod.rs) owns the verdict rules, the buckets and the credit floors.
 
 ### `overseer-dead`, `overseer-walled`, `overseer-reserve`, `overseer-context-unmeasured`, `overseer-context-stale`, `overseer-mark`
 
-The overseer's own session: [overseer-session-events.md](overseer-session-events.md).
+The overseer's own session: [overseer-session-events.md](overseer-session-events.md) holds these events and a dead or walled overseer's recovery.
+
+#### The overseer's own marks
+
+The watch reports a mark `orch-runtime marks --fleet` reached on the overseer as `overseer-mark` ([overseer-session-events.md § Event kinds](overseer-session-events.md#event-kinds)). An unread or unmeasured mark is never room, and a silent interval does not mean the mark lifted. At a mark, follow [oversee.md § Succession](../workflows/oversee.md#succession).
 
 ### `lane-question`
 
@@ -690,10 +669,27 @@ An answer may accept a step the lane's workflow would otherwise ask about. It ca
 
 An overseer resuming a fleet reads what it still owes with `lane-mail pending --item [ISSUE_ID]`. For a lane whose record puts it on another host, add `--root [MAIL_ROOT] --host`.
 
+#### Held merges
+
+Under `ORCH_MERGE_AUTONOMY=ask` a lane's merge question arrives as `lane-question`.
+
+1. Read the gate results the lane reports. Do not reproduce them.
+2. Relay the question to the owner, worded as the communication skill's [questions reference](../../communication/references/questions.md) requires.
+3. Send `MERGE` to the lane only after the owner authorizes it, or send the one directive the owner gave.
+   - A directive may carry the authorization ("with that landed, MERGE stands").
+   - The lane then merges once the change is in, with no second answer.
+
+A merge hold is a person who disabled a pull request's automatic merge, never a fault.
+
+- `queue-watch` reads it as `cause: merge_hold`, with `disarmed_by` naming that person.
+- The lane asks about it through `lane-mail ask`, so it arrives as `lane-question`.
+- Relay it to the owner as above, naming who holds it.
+
 ### `lane-notice`
 
 `EVENT lane-notice [ITEM] [ID]`, then the notice: the lane reports something it is not waiting on. Act on it where it needs action. It needs no reply.
 
+- A `Proposal comment:` notice takes § Lane proposals.
 - A `copilot-*` notice takes [copilot-head-notices.md](copilot-head-notices.md).
   - A `copilot-fallback` notice whose first line carries `cause=` comes from the lane's review call, and can arrive twice.
   - One with no `cause=` is the lane's own, from its triage's `timeout` row ([review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route)).
@@ -714,7 +710,9 @@ An overseer resuming a fleet reads what it still owes with `lane-mail pending --
 
 `EVENT owner-note [ID]`, then the note: a note to the overseer mailbox from the owner or a delegate. `from=owner` is routing, not authorship. A record names the stated speaker per [communication-modes.md § Recording](communication-modes.md#recording).
 
-1. Act on it, or record it in the fleet log as a ruling. A standing instruction follows [communication-modes.md § Recording](communication-modes.md#recording).
+1. Act on it, or record it in the fleet log as a ruling.
+   - A standing instruction follows [communication-modes.md § Recording](communication-modes.md#recording).
+   - File an issue the note asks for through § File one item alone.
 2. Where a reply is owed, send it with `lane-mail notice --item overseer --to owner --ref [ID] --file [PATH]`.
    - The owner then reads it on the note's own channel ([oversee-takeover.md § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff)).
    - Route it per [communication-modes.md § Owner delivery](communication-modes.md#owner-delivery).
@@ -821,7 +819,10 @@ A refused `write`:
    - `verdict=merged [DELIVERY]`: the record carries the cycle of that merge while the tracker still holds the item open. Where the merge finished the item, complete it in the tracker. Where the item went back to work after it, queue it as for `queue`.
    - `verdict=dated harness=[H] until=[UTC]`: every account for the record's harness and model is walled. Launch and queue nothing. When first judged so, name the item with its `until=` in the chat and in that summary. Each heartbeat judges it again.
    - `verdict=unjudged harness=[H]`: the host's account listing or the judge failed, as the watch's stderr names. The next heartbeat judges it again.
-5. Run § Heartbeat backstop for lane proposals, § Heartbeat backlog audit and § Heartbeat design review.
+5. Run each of these:
+   - Run § Lane proposals over every fleet issue in its tracker and repository group.
+   - Apply [heartbeat-audit.md](heartbeat-audit.md), apart from the proposal sweep and the `triage` verifier.
+   - Apply [design-review.md](design-review.md)'s `heartbeat` entry to every `running` lane.
 6. Run the triage pass:
    1. Run [oversee.md § Bounded issue reads](../workflows/oversee.md#bounded-issue-reads).
    2. Drop the IDs the fleet state's `triaged` already records, and send the rest through § `triage`.

@@ -1,6 +1,6 @@
 # Proposal sweep
 
-- Run this workflow only as the subagent that [oversee](../../orch/workflows/oversee.md) launches for one proposal batch, per [oversee-events.md § Judgement rules](../../orch/references/oversee-events.md#judgement-rules).
+- Run this workflow only as the subagent that [oversee](../../orch/workflows/oversee.md) launches for one proposal batch, per [oversee-events.md § Lane proposals](../../orch/references/oversee-events.md#lane-proposals).
 - Read proposal comments, verify them, and return analyzed audit JSON.
 - Do not modify the tracker or repository source.
 

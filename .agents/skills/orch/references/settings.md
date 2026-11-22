@@ -254,7 +254,7 @@ The keys' rules, in the table's order:
 
 | Key | What it changes | Default |
 |---|---|---|
-| `ORCH_HANDOFF_CONTEXT_PCT` | The share of the context window strictly past which a context reading is due, held to the judge's ceiling: [oversee-events.md](oversee-events.md) § Judgement rules. | `90` |
+| `ORCH_HANDOFF_CONTEXT_PCT` | The share of the context window strictly past which a context reading is due, held to the judge's ceiling: [oversee-events.md](oversee-events.md) § Hand off a lane before it runs out. | `90` |
 | `ORCH_HANDOFF_CONTEXT_TOKENS` | Tokens used at which every context reading is due, whatever the window. | `650000` |
 | `ORCH_HANDOFF_AGENT_RESERVE_TOKENS` | Tokens an attached launch keeps below the context mark for returns still to come: a whole number. | `150000` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | The account headroom a lane's turn end hands off at. | `3` |

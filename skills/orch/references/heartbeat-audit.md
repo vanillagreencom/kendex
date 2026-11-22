@@ -1,6 +1,6 @@
 # Heartbeat audit
 
-Read when [oversee-events.md § Heartbeat backlog audit](oversee-events.md#heartbeat-backlog-audit) runs at a `heartbeat`. The audit covers the fleet's Linear team. A GitHub-only fleet skips it with a note, since `audit-issues team` has no GitHub mode.
+Read when [oversee-events.md § `heartbeat`](oversee-events.md#heartbeat) step 5 applies this audit. The audit covers the fleet's Linear team. A GitHub-only fleet skips it with a note, since `audit-issues team` has no GitHub mode.
 
 Keep Triage enabled only for a team whose public repository receives outside issues.
 

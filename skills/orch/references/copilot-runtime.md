@@ -50,7 +50,7 @@ agent-runtime's launch builder spells the words and variables of every Copilot l
 
 The turn end reads a Copilot session's context in this order (orch `turnend/marks.rs` `copilot_reading`). A flag the session's automatic compaction left in its mailbox comes first: the session is then past its mark whatever a reading says, and the turn end holds until the handoff record stands. Then come the extension's reading of this session, the session's status-line record, and the session's own `events.jsonl`.
 
-The turn end reports a gap and never reads it as room. The shared judge hands a lane off by [oversee-events.md § Judgement rules](oversee-events.md#judgement-rules).
+The turn end reports a gap and never reads it as room. The shared judge hands a lane off by [oversee-events.md § Hand off a lane before it runs out](oversee-events.md#hand-off-a-lane-before-it-runs-out).
 
 Credits: [schemas/copilot-credits.md](../schemas/copilot-credits.md) states the monthly pool record the account listing reads. A Pi root on a `github-copilot/` model is judged as [lane-directive.md § No lane has room](lane-directive.md#no-lane-has-room) says.
 
