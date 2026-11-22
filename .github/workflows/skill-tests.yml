@@ -124,17 +124,19 @@ permissions:
 env:
   APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
 
-# A push to a pull request's branch cancels the run its previous head started,
-# which could only report on a head the pull request no longer has. A merge
-# group or a nightly run keys its group to its own run and cancels nothing:
-# cancelling a queue run would eject its entry. Every push to main shares one
-# group keyed to the ref and cancels nothing: GitHub runs one and holds one
-# pending, and a newer push replaces the pending run, so the merges that land
-# while a push run goes share the next one, which proves the newest head; no
-# merge waits for it.
+# No run cancels another. A pull request, merge group or nightly run keys its
+# group to its own run, so no later run cancels it or replaces it pending. A
+# cancelled pull-request run leaves a cancelled check that blocks the pull
+# request though nothing in the change failed, and the run reports `CI`
+# alone, so cancelling saves little (skills/harness-ci/references/wiring.md
+# § The CI template). Cancelling a queue run would eject its entry. Every
+# push to main shares one group keyed to the ref and cancels nothing: GitHub
+# runs one and holds one pending, and a newer push replaces the pending run,
+# so the merges that land while a push run goes share the next one, which
+# proves the newest head; no merge waits for it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   # THE ONE READ OF THE CHANGE CLASS. Every gated lane below answers to a line
@@ -156,7 +158,8 @@ jobs:
   # to main only the root checkout and the select step run: tools/ci-job-set
   # reads the same-head merge group's jobs and published selection, which
   # `actions: read` admits, and publishes the suites, shards and targets
-  # that group left unproved, selected across the coalesced push range.
+  # that group left unproved, selected across the coalesced push range,
+  # and the package runtime builds no main run has published yet.
   # A schedule publishes the decision to run the full night. The root
   # checkout there is main itself.
   changes:
@@ -197,6 +200,7 @@ jobs:
       rust_targets: ${{ steps.select.outputs.rust_targets }}
       cache_compile: ${{ steps.select.outputs.cache_compile }}
       main_suites: ${{ steps.select.outputs.main_suites }}
+      runtime_publish: ${{ steps.select.outputs.runtime_publish }}
       nightly: ${{ steps.select.outputs.nightly }}
     # The installer, classifier and orch contract come from the default
     # branch's checkout. The action wrapper, tools/ci-job-set and
@@ -877,6 +881,55 @@ jobs:
           cache="$RUNNER_TEMP/agent-runtime"
           echo "AGENT_RUNTIME_CACHE=$cache" >>"$GITHUB_ENV"
           AGENT_RUNTIME_CACHE="$cache" skills/orch/scripts/setup
+
+      # A main push publishes each package runtime build its head has no
+      # artifact for, tools/ci-job-set's runtime_publish, from this one leg:
+      # `<name>-<key>` holds the binary under that name and its sha256 beside
+      # it as `<name>-<key>.sha256`, the key lib/key.sh gives. A lane-host
+      # provider in another repository of this organization (Fleet) fetches
+      # these by name to fill a shared runtime cache. It counts only an
+      # unexpired artifact whose workflow_run.head_branch is main and whose
+      # head_repository_id equals its repository_id, the filter
+      # runtime_publish applies: a fork's pull-request run can upload any
+      # name, and the bundled sha256 checks the transfer, not who made the
+      # artifact. A change to the name, the files, the filter or the leg's
+      # event is told to its overseer before it lands.
+      # They publish before the suites, so a suite's failure keeps no build
+      # from the machines that run main.
+      - name: the runtime builds main has no artifact for, staged
+        id: runtime-publish
+        if: matrix.shard == 'orch-state' && runner.os == 'Linux' && github.event_name == 'push' && needs.changes.result == 'success' && needs.changes.outputs.runtime_publish != '[]'
+        env:
+          PUBLISH: ${{ needs.changes.outputs.runtime_publish }}
+        run: |
+          set -euo pipefail
+          rows="$(jq -er '.[] | "\(.name) \(.key)"' <<<"$PUBLISH")"
+          while read -r name key; do
+            binary="$AGENT_RUNTIME_CACHE/bin/$name-$key"
+            [ -x "$binary" ] || { echo "runtime-publish: binary-missing name=$name key=$key path=$binary" >&2; exit 1; }
+            out="$RUNNER_TEMP/runtime-publish/$name"
+            mkdir -p "$out"
+            cp "$binary" "$out/$name-$key"
+            (cd "$out" && sha256sum "$name-$key" >"$name-$key.sha256")
+            echo "$name=$key" >>"$GITHUB_OUTPUT"
+            echo "runtime-publish: name=$name key=$key sha256=$(cut -d' ' -f1 "$out/$name-$key.sha256")"
+          done <<<"$rows"
+      - name: agent-runtime, published under its key
+        if: steps.runtime-publish.outputs.agent-runtime != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-runtime-${{ steps.runtime-publish.outputs.agent-runtime }}
+          path: ${{ runner.temp }}/runtime-publish/agent-runtime
+          if-no-files-found: error
+          overwrite: true
+      - name: orch-runtime, published under its key
+        if: steps.runtime-publish.outputs.orch-runtime != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: orch-runtime-${{ steps.runtime-publish.outputs.orch-runtime }}
+          path: ${{ runner.temp }}/runtime-publish/orch-runtime
+          if-no-files-found: error
+          overwrite: true
 
       # ---- shard: review-gate — the heavyweight review-gate suites alone ----
       - name: review-gate suites
