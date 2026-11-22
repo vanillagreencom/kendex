@@ -3,7 +3,8 @@
 Read when writing a review or QA artifact.
 
 - Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`.
-- Store paths as an array without status prefixes; retain Git's quoted and rename spelling.
+- Store paths as an array without status prefixes.
+- Retain Git's quoted and rename spelling.
 - Write these values unchanged in the completed artifact.
 - A failed read is a review failure.
 - The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`.
@@ -87,7 +88,7 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 | `category` | Suggestions only | `fix` (this PR's concern) or `issue` (track separately) |
 
 - Line or hunk evidence belongs in `description`.
-- Set `owner` when another site can break that rule; omit it otherwise.
+- Set `owner` when another site can break the rule it names; omit it otherwise.
 - A finding in the classes [code-quality § Finding Evaluation](../../code-quality/SKILL.md#finding-evaluation) names ends its `description` with that section's evaluation line.
 - There is no P5: a finding below P4 is not worth reporting.
 - The orchestrator routes on `category`; orch [review-pr.md § 4](../../orch/workflows/review-pr.md#4-handle-review-items) says what reaches a fix round.
@@ -129,14 +130,19 @@ In `perf_qa`, one of these stands in place of `percentiles`: `metric_kind: "inst
 
 ## Measurement Claims
 
-- `.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned.
-- Copy each call's printed `mutation: … stability: …; seconds: …` line into `.summary`; the same numbers written only into a blocker or suggestion are not checked.
+- `.summary` and `.qa_metadata` state your OWN measurements.
+- Only those two are scanned.
+- Copy each call's printed `mutation: … stability: …; seconds: …` line into `.summary`.
+- The same numbers written only into a blocker or suggestion are not checked.
 - `orch-runtime review-artifact check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT, the denominator or the thread count, is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`.
 - An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure.
 - A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
 
+Other figures:
+
 - Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`, `values` (an object of numbers) and `samples` (how many samples produced them).
-- It is refused when `name` or `unit` is missing or blank, `samples` is not above zero, or `values` holds no number; a zero value is a result and stays valid.
+- It is refused when `name` or `unit` is missing or blank, `samples` is not above zero, or `values` holds no number.
+- A zero value is a result and stays valid.
 - Record it under its true name and unit, never outside `perf_qa` or as a failed measurement:
 
 ```json

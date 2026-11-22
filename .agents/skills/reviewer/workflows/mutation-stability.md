@@ -13,7 +13,9 @@ Read [Mutation-Stability Pairing](../SKILL.md#mutation-stability-pairing) before
 - For controls, apply [code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards).
 - Remove the probe directory and its build output before returning.
 
-`mutation-stability` takes the worktree itself as `--worktree`. It extracts a clean and a mutant copy of `--sha` under its own `mktemp -d` on the base above, runs the test in each, and removes them on exit unless `--keep` or a cleanup that reports `workspace kept`. Before the call, check that two copies fit, each with its build output.
+`mutation-stability` takes the worktree itself as `--worktree`. It extracts a clean and a mutant copy of `--sha` under its own `mktemp -d` on the base above, runs the test in each, and removes them on exit unless `--keep` or a cleanup that reports `workspace kept`.
+
+Before the call, check that two copies fit, each with its build output.
 
 ## 2. Run the probe
 

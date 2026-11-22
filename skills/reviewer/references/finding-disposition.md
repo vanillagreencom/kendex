@@ -33,15 +33,20 @@ One pass, in order. The first verdict stands.
    - a security, data-loss or data-corruption defect a shipped path reaches;
    - a fail-open defect in gate, guard or CI code.
 
-   Who raised a finding never changes this step. An external reviewer's thread proposing a mechanism for an input no shipped producer emits takes the same decline as an internal finding, and the reply names the input and the absence of a producer for it.
+   Who raises a finding:
+
+   - Who raised a finding never changes this step.
+   - An external reviewer's thread proposing a mechanism for an input no shipped producer emits takes the same decline as an internal finding.
+   - The reply names the input and the absence of a producer for it.
 
 1. **Does it claim a defect** (a failing state, broken path, wrong output)? Verify the mechanism yourself:
    - **Establish age.** Before deciding to fix a finding in a file the branch did not create, use `git blame` only to establish the age of the finding's lines and inspect the current diff to decide whether the branch arms the defect.
-   - **False** → `decline`, naming the passing state or the false premise. Scope, age, and "pre-existing" never answer a defect claim.
+   - **False** → `decline`, naming the passing state or the false premise.
+     - Scope, age, and "pre-existing" never answer a defect claim.
    - **True, and this diff introduces or arms it** → is the defective code required by the issue's Done-when?
      - Not required (the Done-when holds without it) → `fix` by deleting that code, never by hardening it and never by a second mechanism guarding the first.
-     - When a prior fix round added the code, revert that addition instead of patching it.
-     - The reply is the deleting sha.
+       - When a prior fix round added the code, revert that addition instead of patching it.
+       - The reply is the deleting sha.
      - Required → `fix` in place, in scope by definition.
      - Pre-existing caps, thresholds, or code the diff newly composes into a failing path count as armed.
    - **True, pre-existing, unarmed by this diff** → `issue` if it clears the filing bar below (create it first, reply `Tracked: <ID>`), else `decline` naming the bar it misses.
@@ -50,12 +55,12 @@ One pass, in order. The first verdict stands.
    - It needs a specific deliverable, an observable impact, and bounded scope.
    - Vague items ("add logging", "consider X") and informational notes are omitted.
    - Automated regression detection is never informational.
-3. **Does the Done-when need this work?**
-   - Doc or reference updates for code this diff changes are work the Done-when needs → `fix`.
+3. Doc or reference updates for code this diff changes are work the Done-when needs → `fix`.
    - A review with no work item (`review.md` run without an issue ID) takes the reviewed change as its Done-when.
-   - If not → `issue` where it clears § Filing bar, else `decline` with its reason.
-   - If yes, test relatedness by the problem or the change, not file membership.
-   - Unrelated → `issue` where it clears § Filing bar, else `decline` with its reason.
+   - **Does the Done-when need this work?**
+     - If not → `issue` where it clears § Filing bar, else `decline` with its reason.
+     - If yes, test relatedness by the problem or the change, not file membership.
+     - Unrelated → `issue` where it clears § Filing bar, else `decline` with its reason.
 4. **Size?**
    - Only work the Done-when needs can be `fix` here.
    - Small enough to apply here → `fix`.
@@ -64,7 +69,8 @@ One pass, in order. The first verdict stands.
 Cuts:
 
 - A reviewer or the orchestrator can choose a cut when it serves the Done-when.
-- Record that choice with `orch-runtime round --text stamp --cut`; [dev-round.md § Declared cuts](../../orch/schemas/dev-round.md#declared-cuts) owns its acceptance rule.
+- Record that choice with `orch-runtime round --text stamp --cut`.
+- [dev-round.md § Declared cuts](../../orch/schemas/dev-round.md#declared-cuts) owns the cut's acceptance rule.
 - Close each thread on cut code with the deleting sha.
 
 Round cap:
@@ -84,7 +90,8 @@ Uncertainty and replies:
 - A finding in a review body has no thread: answer it in a pull-request comment opening `Dispositions at <sha>`, bound to the current head.
 - Each line opens with the finding's `file:line` token, or `review:<ID>` for a Copilot overview verdict that recommends changes, where `<ID>` is the REST review id, followed by the same reply.
 - GitHub owns the live reply API: `github.sh post-reply` and `github.sh post-comment`.
-- Its read-only `github.sh check-review-replies` checks the current replies and body dispositions. `check-review-replies --help` owns this grammar.
+- GitHub's read-only `github.sh check-review-replies` checks the current replies and body dispositions.
+- `check-review-replies --help` owns the grammar of the replies and the body-disposition lines.
 - `<reason>` states the mechanism the decline disproves, in one of three forms: the passing state, the false premise the finding rests on, or the Step 0 class the finding falls in, named with the fact that puts it in that class rather than the class alone, which would be a label.
 - A label is not a reason (`frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`), and neither is a test count, since a passing suite says nothing about a path no test runs.
 
@@ -152,31 +159,52 @@ Before filing:
 - Treat matching work as a duplicate while its pull request remains open.
 - Cancel an existing issue as superseded only after the pull request that deletes its surface reaches the default branch.
 
-An `issue` signal is necessary but not sufficient. Every candidate carries its schema `impact` line: who hits this, on what real path. An impact that needs "could", "might", or "in theory" is a decline. File only for:
+An `issue` candidate:
+
+- An `issue` signal is necessary but not sufficient.
+- Every candidate carries its schema `impact` line: who hits this, on what real path.
+- An impact that needs "could", "might", or "in theory" is a decline.
+
+File only for:
 
 - **Behavioral defects outside this PR's scope**: wrong behavior a user or caller can hit.
 - **est≥2 refactors**: restructuring too large to absorb here that unblocks or protects user-visible work.
 - **Decision revisits**: a recorded decision the finding argues should change.
 - **Unexplained anomalies with evidence**: observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
 
+Review-born findings:
+
 - A review-born finding clears the bar only where what reaches it is a user or a shipped run.
 - It files at priority 2 carrying the symptom that showed it (project-management references/filing.md § Name what reaches it, which every filing goes through).
-- Below that, a pre-existing defect this diff neither introduces nor arms is declined with its reason; a review-born P3 does not file.
+- Below that, a pre-existing defect this diff neither introduces nor arms is declined with its reason.
+- A review-born P3 does not file.
 - Step 1 keeps its exception for a defect that blocks this change from working.
 
 Never for a finding that asks for a product decision the issue does not carry, such as a new command, a parity feature or a behavior nobody specified: that is declined.
 
 - A product question that does reach the user is one [communication-modes.md](../../orch/references/communication-modes.md) § Ask set names, asked through that section's wording route and nowhere else.
+
+Step 0 first:
+
 - Every candidate runs through Step 0 before the bar judges it, whichever door it arrived by: a `category: "issue"` suggestion, an item escalated at a cap, a Discovered Work or deliberately-left-out bullet from a dev return.
-- One Step 0 excludes is declined there.
+- A candidate Step 0 excludes is declined there.
 - Step 0 is the only place the classes are written.
 
-A finding that does reach a fix round names, per delegated item, the shipped producer, user action, or fixture that reaches it: the `reach` field of [`../schemas/dev-round.md`](../../orch/schemas/dev-round.md). Step 0 runs first, and a reach never overrides it; a class Step 0 excludes is declined whether or not the finding can name one.
+Fix-round reach:
+
+- A finding that does reach a fix round names, per delegated item, the shipped producer, user action, or fixture that reaches it: the `reach` field of [`../schemas/dev-round.md`](../../orch/schemas/dev-round.md).
+- Step 0 runs first, and a reach never overrides it.
+- A class Step 0 excludes is declined whether or not the finding can name one.
+
+Recurring finding classes:
 
 - A recurring finding class the diff introduces or arms never files: § Recurrence closes its generator in this PR.
 - A recurring class the diff neither introduces nor arms files once where it clears this bar, as the class issue a `freeze` reply names (§ Recurrence says what a `freeze` becomes when it does not), or through the pre-PR loop's issue audit.
 
-The audit pipeline applies [project-management's creation bar](../../project-management/references/filing.md#creation-bar) to what reaches it, which is what Step 0 and this bar have already passed. A candidate Step 0 or this bar refused is never filed on that bar's say-so.
+The creation bar:
+
+- The audit pipeline applies [project-management's creation bar](../../project-management/references/filing.md#creation-bar) to what reaches it, which is what Step 0 and this bar have already passed.
+- A candidate Step 0 or this bar refused is never filed on that bar's say-so.
 
 Everything else follows the Done-when test in Steps 3 and 4.
 
@@ -184,7 +212,10 @@ Everything else follows the Done-when test in Steps 3 and 4.
 - A finding that cannot affect real usage is declined with a one-line reason, neither fixed nor filed.
 - A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?"), which [communication-modes.md](../../orch/references/communication-modes.md) § Ask set keeps out of the set whatever the mode.
 
-Residue files in the project its surface routes to, with a `related` relation to an open issue on the same surface where one exists. It becomes a child only of a parent whose one deliverable it is a part of, per [project-management's grouping rule](../../project-management/references/filing.md#group-by-project-or-label-never-by-parent).
+Residue placement:
+
+- Residue files in the project its surface routes to, with a `related` relation to an open issue on the same surface where one exists.
+- Residue becomes a child only of a parent whose one deliverable it is a part of, per [project-management's grouping rule](../../project-management/references/filing.md#group-by-project-or-label-never-by-parent).
 
 ## Review pipeline
 

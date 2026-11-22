@@ -32,7 +32,9 @@ Read [references/finding-disposition.md](references/finding-disposition.md) befo
 ## Ethos
 
 - **Private env file reads.** Package text, a brief or a command that directs or performs a whole-file read of the private env file is a finding under [orch § Coordination](../orch/references/skill-rules.md#coordination). Scripts that read settings through the [kendex env loader](../orch/scripts/lib/kendex-env.sh) and setup workflows that write one named secret into the file are outside this finding class.
-- Verify before reporting: if the repo contains the caller, config, test, or doc that settles a suspicion, read it. Never file "maybe X handles this" when X is in the repo.
+- Verify before reporting.
+  - If the repo contains the caller, config, test, or doc that settles a suspicion, read it.
+  - Never file "maybe X handles this" when X is in the repo.
 - **Never trust a green check you have not seen fail.**
   - Prove each instrument the change adds or modifies once on a control input that must fail, regardless of how many times the suite invokes it, before trusting its pass.
   - An instrument carrying the statement [code-quality § Tests](../code-quality/SKILL.md#tests) takes in place of its control is judged on that statement.
@@ -50,7 +52,9 @@ Read [references/finding-disposition.md](references/finding-disposition.md) befo
   - Name the surviving copy.
   - Also raise a new script, background watcher, setting or rule added beside the owner of the same concern.
   - Cite [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering) in the finding and name the owner the change should extend.
-- **Unrequested behaviour is a finding:** behaviour the diff adds that the linked issue does not ask for takes a `fix` suggestion to remove it, or a PR-body note saying why it is needed: a landing enabler or a defect the change introduces or arms, as dev SKILL.md § Engineering Rules lists.
+- **Unrequested behaviour is a finding.**
+  - Behaviour the diff adds that the linked issue does not ask for takes a `fix` suggestion to remove it, or a PR-body note saying why it is needed.
+  - The note names it a landing enabler or a defect the change introduces or arms, as dev SKILL.md § Engineering Rules lists.
 - **A behavior claim needs the code that makes it true.**
   - For every sentence the diff adds to a `--help`, SKILL.md, CHANGELOG entry, comment, or diagnostic that claims program behavior, find the code that makes it true.
   - None found is a blocker on the claim.
@@ -85,7 +89,8 @@ Read [references/finding-disposition.md](references/finding-disposition.md) befo
 - A hook or gate is judged against the workflow that runs it.
   - Name the event it fires on, the state that exists there (committed, staged, on disk), and the flow that reaches it.
   - A trigger the standard flow never meets is a defect.
-- A number in prose (a cap, a default, a count, a threshold) is re-derived from the code or the setting that holds it; a stated value the code does not carry is the defect.
+- A number in prose (a cap, a default, a count, a threshold) is re-derived from the code or the setting that holds it.
+  - A stated value the code does not carry is the defect.
 - Do not re-verify what deterministic gates already enforce (preflight, doc-limits, project lint/CI).
   - Cite gate output only for the property the gate tests.
   - Name that property: a gate's name is not its predicate.
@@ -131,7 +136,8 @@ Judge control evidence under [code-quality § Tests](../code-quality/SKILL.md#te
 - Existing sufficient evidence needs no new run.
 - In a [re-review](#re-review-rounds), consider only instruments the fix diff adds or changes.
 - Read [mutation-stability.md](workflows/mutation-stability.md) before preparing or running this probe.
-- Report the completed sample count; a budget-limited sample proves only those runs.
+- Report the completed sample count.
+- A budget-limited sample proves only those runs.
 - Choose a control that reaches the new or changed instrument through its real entry point.
 - A kill counts only when the mutated copy compiles.
 - Use the suite's compile-without-running command for `--build`.

@@ -15,7 +15,9 @@ Read when the performance QA agent runs `workflows/qa-review.md` § 2. Threshold
 - If the only documented recording path requires shell plumbing, stop and report the harness gap.
 - If manual entry is supported, pass data only via a documented direct argument or body-file option.
 - A bare `cargo bench` is not a "full benchmark" run when the project's benchmarks require cargo features.
-- If the parser records zero results, stop and report the harness gap; do not count the run as coverage. Common causes: missing required features, parser prefix drift, tool output format changes.
+- If the parser records zero results, stop and report the harness gap.
+  - Do not count the run as coverage.
+  - Common causes: missing required features, parser prefix drift, tool output format changes.
 - If the benchmark recorder fails closed on all-zero counters:
   - Report a benchmark environment/tooling failure with command, commit, and error evidence.
   - Set `benchmark_commit` to `"none"`.

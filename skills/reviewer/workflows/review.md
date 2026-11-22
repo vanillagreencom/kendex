@@ -26,7 +26,7 @@ Either case beside a re-review block declares the pass unscoped: open § 3's art
 - Review the changed code and directly affected call paths per your agent file and the reviewer skill's Ethos.
 - Read from the worktree as needed.
 - Inspect a deleted path through the diff or git history.
-- Research documents are excluded.
+- Exclude research documents from what you read.
 - Findings respect the delegation's listed decisions, each read in full with its status.
 - A decision marked superseded binds only what its status leaves active, and a retired one binds nothing.
 - If a listed decision file does not exist, do not hunt for it.
