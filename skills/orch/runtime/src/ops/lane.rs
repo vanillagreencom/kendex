@@ -1049,7 +1049,7 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
 /// judge, under the host the request names, else the fleet's, with the charge of the lane this relaunch replaces, its own
 /// record, left out, since the relaunch takes that record's slot (its
 /// reservation goes with the relaunch patch): a replacement adds no lane.
-/// A launch with no record is judged fresh. A host built without the
+/// A launch with no record, or over a `done` record, is judged fresh. A host built without the
 /// judge's settings judges no account. Room, or no row to
 /// judge, proceeds; walled, unmeasured and unjudged refuse with their
 /// cause, an unread window being no empty one; an account
@@ -1392,12 +1392,13 @@ pub(super) fn launch_lane(
         })));
     }
     // The account's room, judged before the cap; a relaunch is judged with
-    // its own record's charge left out.
+    // its own record's charge left out, and a `done` record's next phase as
+    // the first launch it is (a `done` record charges nothing to leave out).
     room(
         path,
         r,
         harness,
-        position.map(|_| r.item.as_str()),
+        relaunch.map(|_| r.item.as_str()),
         env,
         host,
     )?;

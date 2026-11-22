@@ -704,7 +704,9 @@ enum LaneOp {
         #[arg(long = "exclude-lane")]
         exclude: Vec<String>,
         /// The item of the lane a relaunch replaces: its charge is left
-        /// out, so a replacement adds no lane.
+        /// out, so a replacement adds no lane, and an account whose usage
+        /// read is refused (`rate_limited`) and whose kept figure would
+        /// leave room is `unmeasured`.
         #[arg(long)]
         replaces: Option<String>,
         /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
@@ -734,7 +736,9 @@ enum LaneOp {
         #[arg(long = "exclude-lane")]
         exclude: Vec<String>,
         /// The item of the lane this launch replaces: its charge is left
-        /// out, and no cloud session is taken.
+        /// out, no cloud session is taken, and an account whose usage read
+        /// is refused (`rate_limited`) and whose kept figure would leave
+        /// room is `unmeasured`.
         #[arg(long)]
         replaces: Option<String>,
         /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.

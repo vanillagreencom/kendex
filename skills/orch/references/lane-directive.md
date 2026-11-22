@@ -57,7 +57,7 @@ For a Pi pick on another model:
 | Option | Use |
 |---|---|
 | `--lane [DIR]` | Judge every entry on one account, a directory or a listed alias. |
-| `--replaces [ITEM_KEY]` | On a relaunch: leave that lane's charge out and take no cloud session. |
+| `--replaces [ITEM_KEY]` | On a relaunch: leave that lane's charge out, take no cloud session, and judge an account whose usage read is refused (`rate_limited`) and whose kept figure would leave room `unmeasured`. |
 | `--source-harness [HARNESS]`, `--source-flags [WORDS]` | Pass over an entry whose harness cannot carry the asking session's permission posture. |
 
 Read `.result.answer`:

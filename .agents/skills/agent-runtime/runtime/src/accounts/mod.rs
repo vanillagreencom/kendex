@@ -1709,6 +1709,11 @@ pub struct FleetFacts {
     /// On a `cloud-session` host, the config dirs the caller's repository rule
     /// gives this checkout's repository; `None` for every other launch.
     pub cloud_repo: Option<Vec<String>>,
+    /// The pick places a relaunch's successor (`--replaces`). A turn end
+    /// holds on a usage reading its provider refuses, so a refused
+    /// reading's kept figure is no room for the successor: it would land
+    /// back on the account and hold again while the refusal stands.
+    pub relaunch: bool,
 }
 
 impl FleetFacts {
@@ -1836,6 +1841,10 @@ fn judge(
     let verdict = match &facts.cloud_repo {
         Some(admitted) if !admitted.contains(&row.config_dir) => "cloud-repo-unset",
         Some(_) | None => verdict,
+    };
+    let verdict = match verdict {
+        "room" if facts.relaunch && row.status == "rate_limited" => "unmeasured",
+        verdict => verdict,
     };
     let score = if let Some(grant) = &grant {
         Some(grant.score)
