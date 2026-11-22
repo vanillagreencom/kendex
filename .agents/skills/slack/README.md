@@ -33,30 +33,41 @@ Requires Python 3.8 or newer. Installation adds the required skills, including o
 
 - Settings go in the project's `kendex.settings.toml` under `[env]`.
 - Tokens go in its private env file or process environment.
-- Installation writes no required settings. [kendex.settings.toml.example](kendex.settings.toml.example) describes the keys; `slack --help` gives commands, defaults and diagnostics.
+- Installation writes no required settings.
+- [kendex.settings.toml.example](kendex.settings.toml.example) describes the keys.
+- `slack --help` gives commands, defaults and diagnostics.
 - Set `SLACK_OWNERS` to the owners' comma-separated email addresses, or use `KENDEX_USER_EMAIL` for one owner.
 - Set `KENDEX_USER_HANDLE` for the person in the default channel name; otherwise setup uses that email's local part.
-- Setup keeps an existing channel binding and purpose. Use `--name` to choose a name or `--take` to adopt a private channel the app has joined.
+- Setup keeps an existing channel binding and purpose.
+- Use `--name` to choose a name, or `--take` to adopt a private channel the app has joined.
 - Run `slack setup` for each checkout, then serve the checkouts with one relay.
+- Two checkouts cannot share one bound channel.
 - After changing `SLACK_OWNERS`, run setup for each bound checkout: a plain restart does not invite an added owner.
-- Restart after changing tokens or other process-wide settings. Package updates reload the running relay in place; they do not replace this configuration step.
-- Process-wide settings use the launch checkout, the first `--root` for an installed unit. Caller exports take precedence.
+- Restart after changing tokens or other process-wide settings.
+- Package updates reload the running relay in place; they do not replace this configuration step.
+- Process-wide settings use the launch checkout, the first `--root` for an installed unit.
+- Caller exports take precedence.
 - The [Jarvis presence settings](#the-jarvis-session-hold) are per checkout and reload without a restart.
 
 ### Slack app
 
 Use one Slack app per machine for Socket Mode, the standard mode when you have no hosted receiver:
 
-1. Create it from [this manifest](app-manifest.yaml) and install it to the workspace.
-2. Put its bot token in the private env file as `SLACK_BOT_TOKEN`.
-3. Under Basic Information, create an app-level token with `connections:write` and save it as `SLACK_APP_TOKEN` in the same file.
+1. Create it from [this manifest](app-manifest.yaml).
+2. Install it to the workspace.
+3. Put its bot token in the private env file as `SLACK_BOT_TOKEN`.
+4. Under Basic Information, create an app-level token with `connections:write`.
+5. Save it as `SLACK_APP_TOKEN` in the same file.
 
 For a hosted receiver, use one app per workspace.
 
 - Set `SLACK_INBOUND=queue` before setup and listen.
-- The receiver's worker calls `slack deliver --root ROOT` for each message. Queue mode needs the bot token alone.
-- Disable Socket Mode on the hosted app and configure HTTP delivery; the manifest describes the Socket Mode app.
-- Each mode is explicit and never falls back to the other. Switching modes keeps the existing binding and journal.
+- The receiver's worker calls `slack deliver --root ROOT` for each message.
+- Queue mode needs the bot token alone.
+- Disable Socket Mode on the hosted app.
+- Configure HTTP delivery; the manifest describes the Socket Mode app.
+- Each mode is explicit and never falls back to the other.
+- Switching modes keeps the existing binding and journal.
 
 For an existing app:
 
@@ -64,14 +75,18 @@ For an existing app:
 2. Subscribe to `message.groups` under Event Subscriptions.
 3. Reinstall it.
 
-Enable Socket Mode only for a Socket Mode app. The app must join every channel it posts to. Invite it to any separate alert channel. Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
+- Enable Socket Mode only for a Socket Mode app.
+- The app must join every channel it posts to.
+- Invite it to any separate alert channel.
+- Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
 
 ### Token rotation
 
 1. Revoke the old token in the Slack app's settings.
 2. Reinstall the app to the workspace. A person completes Slack's sudo step if shown.
-3. Save the replacement token in the private env file and restart the relay.
-4. Re-add the bot to each private channel it serves.
+3. Save the replacement token in the private env file.
+4. Restart the relay.
+5. Re-add the bot to each private channel it serves.
 
 ## Steering contract
 
@@ -88,7 +103,7 @@ Only `SLACK_OWNERS` steer. Anyone in the channel can read what the overseer post
 
 - [Parent pointers](schemas/journal.md#parent-pointers) define the thread context.
 - A failed file download does not hold back the message.
-- The relay replies once to a message it does not route; moving its journal aside allows that reply again.
+- The relay replies once to a message with no text and no file, or from a nonowner; moving its journal aside allows that reply again.
 
 An :eyes: reaction means delivered; :white_check_mark: means read. These marks post no text. Refused marks retry on the next poll. Owner text reaches the overseer as plain text: Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
 
@@ -102,7 +117,9 @@ A request forwarded by a satellite's Jarvis appears as a new channel message nam
 - The overseer judges the confirmation words in its mailbox, where the references stay.
 - If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
 
-Send text and file comments as standard Markdown; the package converts a file comment to Slack's mrkdwn. [Message standard](SKILL.md#message-standard) explains the difference. Use `slack thread` for an explicit thread read and `slack post --thread TS` for a reply confined to that thread.
+- Send text and file comments as standard Markdown; the package converts a file comment to Slack's mrkdwn. [Message standard](SKILL.md#message-standard) explains the difference.
+- Use `slack thread` for an explicit thread read.
+- Use `slack post --thread TS` for a reply confined to that thread.
 
 Repeat `--file` on one `slack post` to share related files with one comment: `slack post --thread TS --file A --file B --text T`. A rejected file or failed upload shares no partial group. Slack's recipient settings decide notifications.
 
@@ -122,8 +139,9 @@ To enable them on an app:
 
 1. Add the bot scope `commands` under OAuth & Permissions.
 2. Register each enabled command under Slash Commands: `/lanes`, `/asks`, `/report`. Socket Mode needs no request URL.
-3. For Home, enable the Home tab under App Home and subscribe to `app_home_opened` under Event Subscriptions.
-4. Reinstall the app to the workspace.
+3. For Home, enable the Home tab under App Home.
+4. For Home, subscribe to `app_home_opened` under Event Subscriptions.
+5. Reinstall the app to the workspace.
 
 Register `/lanes` for status output. Slack reserves `/status`; the relay accepts the retired name until kendex 2.0.0 and warns with its replacement. If two apps register the same command name in one workspace, Slack uses the most recently installed app.
 

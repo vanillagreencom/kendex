@@ -53,7 +53,10 @@ What each verb does, every setting, and every keyed line: `slack --help`.
 
 ## Message standard
 
+- `markup.py` owns outbound tracker links and their representation.
 - Pull requests use `OWNER/REPO#N`, or `REPO#N` and `#N` in the sending repository.
+- Commit hashes link only when Git finds one commit in that repository.
+- The relay and `slack post` keep secret-pattern matches unexpanded for refusal. Other bare tracker ids link before the final secret check and Markdown cap.
 - Existing links, Slack angle tokens, bare URLs, inline code and fenced code stay literal. Never put a tracker id in a code span.
 - `slack post` text without `--file`, and the relay's ask, notice and answer posts, go out as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks.
 - Slack takes at most 12,000 characters of standard Markdown.

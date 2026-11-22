@@ -39,7 +39,7 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 - Each queue attempt has a unique name.
 - The inbox and outcomes directories have mode 700; request and outcome files have mode 600.
 - The receiver retries the same event with its original `channel:ts`.
-- A threaded event can still read its thread for parent context.
+- A threaded event can read its thread for parent context.
 
 ## Journal lines
 
@@ -110,35 +110,35 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 - It is written after the posts, even if a dead token stops them.
 - `compact` keeps the skipped ids with this line and drops it once its `at` is older than `SLACK_THREAD_DAYS`.
 
-**`in`, delivered**
+**`in`, `kind` = `directive` or `answer`**
 
 - `kind` is `directive` or `answer`, `id` the envelope it landed as, `thread` the parent stamp it belongs to.
 - `generation` names the reader generation at delivery; it is absent on older lines.
 - A directive marks every message through its `ts` as delivered to that generation. An answer marks only its own `ts`, so earlier unseen thread messages remain eligible.
 - Replay keeps each generation's latest directive mark and the individually delivered answers beyond it.
 
-**`in`, ignored**
+**`in`, `kind` = `ignored`**
 
 - `reason` is `not-owner`, or `no-text` for a message with no text and no file.
 
-**`out`, posted**
+**`out`, `state` = `open` or `resolved`**
 
 - `kind` is `ask`, `notice` or `answer`.
 - `state` is `open` for an ask not yet closed, and `resolved` for a completed post, not question closure.
 - `thread` is the stamp the post is under, the ask's own for an ask.
 - A forwarded directive's root is a `notice` line under the directive's own `id`. Its `thread` is the root's stamp, which the directive's notices post under.
 
-**`out`, `file`**
+**`out`, `state` = `file`**
 
 - A later `bound` line binds its thread.
 
-**`out`, `inflight`**
+**`out`, `state` = `inflight`**
 
 - Replay treats it as `unknown` until a later outcome line for the same id.
 - An append failure sends nothing.
 - Compaction drops redundant settled pre-send lines; lone in-flight lines stay unknown.
 
-**`out`, `progress`**
+**`out`, `state` = `progress`**
 
 - New and overdue questions must fit one message and write no continuation progress.
 - `thread` is the original root, `next` the zero-based index of the next part, and `hash` the SHA-256 of the prepared sequence and its requested thread.
@@ -148,17 +148,17 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 - A fully acknowledged sequence finalizes without another post.
 - The ordinary terminal outcome removes progress. Compaction drops settled progress and expires incomplete progress by the envelope's `at`.
 
-**`out`, `unknown`**
+**`out`, `state` = `unknown`**
 
 - `--status` shows it. It is never repeated.
 
-**`out`, `retry`**
+**`out`, `state` = `retry`**
 
 - `reason` is the refusal key.
 - Replay clears `unknown` and makes the envelope postable again, retaining any acknowledged continuation prefix.
 - A token refusal writes this line before stopping the relay.
 
-**`out`, `refused`**
+**`out`, `state` = `refused`**
 
 - `reason` is the refusal key: `secret-value`, `file-unreadable`, `text-too-long`, `text-not-literal` or `continuation-changed`.
 
@@ -217,13 +217,14 @@ Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decim
 
 | Field | Value |
 |-------|-------|
-| `thread_ts` | Root stamp on a threaded directive; absent on a top-level message or an ask's answer |
+| `thread_ts` | Root stamp on a threaded directive |
 | `parent.ts` | The same root stamp |
 | `parent.author` | `owner` for a user message, `bot` for a message carrying `bot_id` |
 | `parent.excerpt` | The parent's first 300 characters, with newlines collapsed to one line |
 | `parent.envelope` | The envelope id only when the relay posted the parent |
 | `parent.thread` | Every thread message up to and including the reply, root and both sides, that the reader generation has not been delivered, oldest first |
 
+- `thread_ts` is absent on a top-level message or an ask's answer.
 - Each `parent.thread` entry is `{ts, author, text}`: `author` is `owner` or `app`, and another person's message is left out.
 - A generation's first directive carries all earlier messages except answers already delivered to that generation.
 - `parent.thread` is read from Slack with the reply, never journaled.
@@ -257,23 +258,29 @@ One thread read was refused.
 
 | Field | Value |
 |-------|-------|
-| `pid` | The relay's process id, which a re-execution onto updated code keeps |
+| `pid` | The relay's process id |
 | `code` | The fingerprint of the code the relay runs |
 | `channel` | The bound channel id |
 | `poll_seconds` | The `SLACK_POLL_SECONDS` the relay runs with |
 | `inbound` | The source selected at startup, `socket` or `queue` |
 | `compacted_day` | The UTC day the journal was last compacted, or first seen |
-| `last_poll`, `last_poll_ok` | The clock at the last poll and whether it succeeded |
-| `last_error` | The keyed refusal of the last failed poll, empty after a successful one |
-| `last_delivered_ts`, `seen_ts` | The last stamp delivered and the history position |
-| `open_asks`, `unknown`, `refused` | Envelope ids: asks not yet closed, posts with a lost response, posts refused |
+| `last_poll` | The clock at the last poll |
+| `last_poll_ok` | Whether the last poll succeeded |
+| `last_error` | The keyed refusal of the last failed poll |
+| `last_delivered_ts` | The last stamp delivered |
+| `seen_ts` | The history position |
+| `open_asks` | Envelope ids of asks not yet closed |
+| `unknown` | Envelope ids of posts with a lost response |
+| `refused` | Envelope ids of posts refused |
 | `calls_last_minute` | Slack Web API calls made with the bot token in the last minute |
 | `connection` | The Socket Mode connection state |
 | `connection_since` | The UTC second the state began |
 | `connection_error` | The keyed refusal of the last refused connect or drop while `reconnecting` |
 | `held_by` | `jarvis` while a hold stands, empty otherwise |
 
+- A re-execution onto updated code keeps `pid`.
 - `code` is 12 hex characters of one sha256 over `scripts/slack`, sorted `scripts/lib/*.py`, and the mailbox store, projection definitions and common-root resolver from the mailbox package installed beside Slack.
+- `last_error` is empty after a successful poll.
 - `connection` is `connected` while the Socket Mode connection is open, `reconnecting` while the relay tries to open one, and `disconnected` for a `--once` run or the unused socket default in queue mode.
 - The reader uses `inbound` to choose its output, including for `--once` records.
 - `connection_error` is empty once a connection opens.
@@ -281,18 +288,19 @@ One thread read was refused.
 `listen --status` prints per root:
 
 - `state`:
-  - `ok` inside two poll intervals plus five seconds of a successful poll;
-  - `failing` inside that of a refused one, or of one with a `connection_error` after 120 seconds `reconnecting`;
-  - `stale` past it;
+  - `ok` inside two poll intervals plus five seconds of a successful poll.
+  - `failing` inside two poll intervals plus five seconds of a refused poll, or of a poll with a `connection_error` after 120 seconds `reconnecting`.
+  - `stale` past two poll intervals plus five seconds of the last poll.
   - `never` with no record.
 - `channel`.
 - `code`, `-` for a record without one.
 - `last_poll_age`.
 - `inbound`.
 - `connection` and `connection_since`:
-  - `connection=none` without `connection_since` whenever the record's `inbound` is `queue`, fresh or stale, regardless of its stored socket fields;
-  - otherwise, for a `stale` record, `disconnected` since its `last_poll`, since its relay is gone;
-  - for a record an older relay wrote without the connection fields, `unknown` since its `last_poll`, its state read from freshness and `last_poll_ok` alone.
+  - `connection=none` without `connection_since` whenever the record's `inbound` is `queue`, fresh or stale, regardless of its stored socket fields.
+  - Otherwise:
+    - For a `stale` record, `disconnected` since its `last_poll`, since its relay is gone.
+    - For a record an older relay wrote without the connection fields, `unknown` since its `last_poll`, its state read from freshness and `last_poll_ok` alone.
 - `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`.
 - `held-by=jarvis` while a hold stands.
 - `fix=` when the state is not `ok`: `last_error` for a refused poll, else `connection_error` for `failing`, a restart for `stale`, the start command for `never`.

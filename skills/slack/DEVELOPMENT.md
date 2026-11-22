@@ -6,14 +6,14 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SK
 
 - `scripts/slack`: the Bash launcher. It loads the checkout's settings through the orch skill's `kendex-env.sh`, checks for Python 3.8 and the orch install, names that install in `SLACK_ORCH_DIR`, and execs `scripts/lib/main.py`.
 - `scripts/lib/main.py`: argv to one verb.
-- `verbs.py` holds setup, post, thread, compact, install and status.
+- `verbs.py` holds setup, post, read, thread, compact, install and status.
 - `relay.py` holds the listener and its selected inbound loop.
 - `inbound.py` holds the local queue transport.
 - `scripts/lib/api.py`: the Slack Web API client.
 - `websocket.py`: the RFC 6455 client the Socket Mode connection runs on.
 - `mailbox.py`: the mailbox store reader and `lane-mail` writes.
 - `markup.py`: the outbound tracker-link judge, a file comment's standard Markdown converted to mrkdwn, and Slack markup read back as typed.
-- `store.py`: the binding, journal, status record and lock.
+- `store.py`: the binding, journal, status record, relay and hold locks, and the files owners sent.
 - `secret.py`: the secret-value check.
 - `settings.py`: the environment.
 - `refusals.py`: every keyed line and its explanation.
@@ -71,5 +71,5 @@ The rows the fake cannot prove. Each needs the owner's Slack app and channel; a 
 | Chat and Slack answers both remain answers until explicit close; a later reply is a directive | `lane-mail send --item overseer --re <ASK> --file a.txt`; reply in Slack; `lane-mail resolve --item overseer --id <ASK>`; reply again; inspect `lane-mail events --item overseer` | pending |
 | An apply that changes the package reloads the unit's relay | `kendex apply` with a changed `relay.py`; `slack listen --status` shows the new `code=` and `systemctl --user show -p MainPID slack-listen.service` the same pid | pending |
 | The relay's resident memory under the user slice with three bound checkouts | `systemctl --user status slack-listen.service` after an hour | pending |
-| The same on a workstation with a local overseer, token from the private env file | the Setup steps above with `--name kendex-<name>-local` | pending |
-| The same for a Codex and a Pi overseer | the Setup steps above in each checkout | pending |
+| Every row above, on a workstation with a local overseer, token from the private env file | the [README § Setup](README.md#setup) steps with `--name kendex-<name>-local` | pending |
+| Every row above, for a Codex and a Pi overseer | the [README § Setup](README.md#setup) steps in each checkout | pending |
