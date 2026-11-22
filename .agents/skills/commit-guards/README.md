@@ -29,7 +29,7 @@ Requires Git, awk, jq 1.7 or newer and standard POSIX tools. Bash 3.2 is support
 
 Obtain the repository owner’s consent before setup runs repository scripts. In each fresh clone, run `kendex guard install`, or `bash .agents/skills/commit-guards/scripts/install-git-hooks` without kendex. Check the installation with `kendex guard check` or the installer's `--check` option. Git does not clone hooks; commits run no Git checks until setup is armed. Hook layering and setup limits: [hooks and settings](references/hooks-and-settings.md#hook-layering).
 
-Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Set keys under `[env]` in committed `kendex.settings.toml`. Resolution order and the settings-file grammar: [references/hooks-and-settings.md](references/hooks-and-settings.md).
+The keys a project usually sets, with their meanings: [kendex.settings.toml.example](kendex.settings.toml.example). Each check's own keys: its section in [CHECKS.md](CHECKS.md). Set keys under `[env]` in committed `kendex.settings.toml`. Resolution order and the settings-file grammar: [references/hooks-and-settings.md](references/hooks-and-settings.md).
 
 ```toml
 [env]

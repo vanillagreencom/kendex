@@ -45,26 +45,24 @@ repo-effects:
 .agents/skills/commit-guards/scripts/md-reflow PATH...                    # paragraph reflow
 ```
 
-Read [CHECKS.md](CHECKS.md) before adding, tuning or debugging a check. It owns check contracts, scopes and unavailable-tool conditions. `scripts/commit-guards --help` names the batch checks and flags. Exit codes are `0` clean, `1` violations and `2` usage, configuration or collection error; an unmerged scanned path is a collection error.
+- Before adding, tuning or debugging a check, read [CHECKS.md](CHECKS.md). It owns check contracts, scopes, exit codes and unavailable-tool conditions.
+- `scripts/commit-guards --help` names the batch checks and flags.
 
 ## Git hooks
 
-Obtain the repository owner's consent before setup runs repository scripts. Arming and disarming affect the whole repository. Disarm before removing the skill.
-
-Before installing, checking or repairing Git hooks, read `scripts/install-git-hooks --help` and [DEVELOPMENT.md § Git hook install contract](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#git-hook-install-contract).
-
-Before changing setup, hook order or the repo-local check, read [hooks and settings](references/hooks-and-settings.md). Before judging a push, read its [Pre-push scope](references/hooks-and-settings.md#pre-push-scope) contract. Refuse a push whose tip is not HEAD, whose index differs from HEAD or whose ref/index evidence cannot be read. The credential scan never runs at push; [CHECKS.md § secrets](CHECKS.md#secrets) owns the remaining CI boundary.
-
-For installer maintenance or ref/scope collection mechanics, read [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).
+- Obtain the repository owner's consent before setup runs repository scripts. Arming and disarming affect the whole repository.
+- Disarm before removing the skill.
+- Before installing, checking or repairing Git hooks, read `scripts/install-git-hooks --help`.
+- Before changing setup, hook order or the repo-local check, read [hooks and settings](references/hooks-and-settings.md).
+- Before judging a push, read its [Pre-push scope](references/hooks-and-settings.md#pre-push-scope) contract.
+- For installer maintenance or ref/scope collection mechanics, read [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).
 
 ## Configuration
 
-Before resolving a setting, writing a settings file, exclusions or a baseline, or enabling release collation, read [hooks and settings](references/hooks-and-settings.md#settings-resolution). That reference owns settings resolution, grammar and exclusion/baseline formats. Use [kendex.settings.toml.example](kendex.settings.toml.example) for project declarations and the matching [CHECKS.md](CHECKS.md) section for check-specific semantics. Each check's script owns its defaults.
-
-The settings template also declares `COMMAND_SAFETY_HISTORY_POLICY` for the command-safety hook. Select its native Git history fence only with Git 2.45.1 or later, the floor kendex's command-safety reference derives under Git history policy.
-
-It declares `COMMAND_SAFETY_UPLOAD_HOSTS` too, the hosts the hook lets a command upload local data to; empty refuses every upload.
+- Before resolving a setting, writing a settings file, exclusions or a baseline, or enabling release collation, read [hooks and settings](references/hooks-and-settings.md#settings-resolution). That reference owns settings resolution, grammar and exclusion/baseline formats.
+- Use [kendex.settings.toml.example](kendex.settings.toml.example) for project declarations. It also declares the command-safety hook's keys, each with its requirements in its comment.
+- Use the matching [CHECKS.md](CHECKS.md) section for check-specific semantics. Each check's script owns its defaults.
 
 ## Generated-file exclusions
 
-Before changing render exclusions or handling an unread inventory, read [Generated-file exclusions](references/hooks-and-settings.md#generated-file-exclusions). Keep inventory repair with the refresh owner and non-render exceptions in the reasoned excludes list.
+Before changing render exclusions or handling an unread inventory, read [Generated-file exclusions](references/hooks-and-settings.md#generated-file-exclusions).
