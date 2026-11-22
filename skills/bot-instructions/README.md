@@ -2,7 +2,8 @@
 
 Review instructions for GitHub review bots. Repository owners use one configuration file to set the rules each bot reads.
 
-When github-repository-settings declares repository effects, core selects that package as the review-file owner, except where it was installed only as another package's dependency and is set up neither in this checkout nor in its main checkout: this package then keeps the files until that setup. This package stays installed as its temporary renderer and retains its declaration for transfer and recovery.
+- When you install github-repository-settings, it takes over these files, and this package stays installed as its renderer.
+- A github-repository-settings that arrives only as another package's dependency, and is set up neither in this checkout nor in its main checkout, takes nothing over until you set it up.
 
 ## Features
 
@@ -27,10 +28,10 @@ kendex add vanillagreencom/kendex --skill bot-instructions
 
 ## Setup
 
-Requires Python 3.11 or newer. Follow [references/checklist.md](references/checklist.md) § Adding a repo to enable the bots and adopt their files.
-
+- Requires Python 3.11 or newer.
+- Follow [workflows/add-repository.md](workflows/add-repository.md) to enable the bots and adopt their files.
 - `[bot-instructions]` in `kendex.toml`, or `kendex-local.toml` for a source catalog: every key and the glob dialect, [schemas/repo-toml.md](schemas/repo-toml.md).
-- Which block lands in which file, and why each omission is deliberate: [schemas/renders.md](schemas/renders.md).
+- Which rules land in which file: [schemas/renders.md](schemas/renders.md).
 - Per-repo settings no file can configure: [references/checklist.md](references/checklist.md) § The settings.
 
 ## Licence
