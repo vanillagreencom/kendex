@@ -79,6 +79,8 @@ Nothing else lives under `docs/`. A software implementation plan, research repor
 
 Each section says who reads the file, what it holds, and what it never carries. Each finished example under [examples/](examples/) ends with a contrast drawn from a real failure and one sentence on why that failure fails the reader.
 
+A passage stays in a file only if a reader of that file needs it for their task. A file's readers are the ones its type's section names, where § Per file type has one. A file with two readers, such as a `DEVELOPMENT.md` or a runbook, keeps a passage that either reader needs. For an agent, a rule is needed only when the mistake it prevents is real and costly, and nothing else already prevents it: a command that refuses the wrong input, a rule the same agent already loads, a step of the workflow it runs, or ordinary competence. Move a passage that a reader of another file needs to that file under § Layout, and delete the rest. A licence or notice file keeps the text its licence requires.
+
 Before writing a file, find its type in this table, then read its section and its example. The first row whose path matches wins; `*` matches across `/`. Shape names the structural rules that apply to the type: `order` is the numbered section order, and `value-table` is the rule against a value table. The commit-guards `md-type` lane checks them.
 
 | Path | Section | Example | Shape |
@@ -109,7 +111,7 @@ Read by a reviewer or agent about to reverse a choice. The bar, the format and t
 
 ### Runbooks
 
-Read by an operator maintaining or recovering a running system. A procedure names the task and when to use it, the target environment, required access and tools, and approval for effects that change service or data. Put steps in execution order. Give each step its expected reading and the condition that permits the next step. Name the source of the reading, such as a status page, command result or log. An unavailable reading is unresolved, not success.
+Read by an operator, a person or an agent, maintaining or recovering a running system. A procedure names the task and when to use it, the target environment, required access and tools, and approval for effects that change service or data. Put steps in execution order. Give each step its expected reading and the condition that permits the next step. Name the source of the reading, such as a status page, command result or log. An unavailable reading is unresolved, not success.
 
 State when the operator stops, how to leave or restore the system, and who receives a failure with its evidence. Describe recovery only where the system's current operating contract supports it. Finish with the end-state check and cleanup of temporary access, files or changed settings; preserve evidence until its handoff is checked. Verify instructions against the current tools and operating contract. Link to declarations and tool help instead of copying their inventories or defaults.
 
@@ -121,7 +123,7 @@ Read in a browser. An offline page a skill or repository ships beside its markdo
 
 ### `CHANGELOG.md` and `changelog.d/`
 
-The `changelog-entries` lane owns the shape, and its release-version rule, the commit-guards skill's CHECKS.md § Release versions, owns the version and the fragment section. Follow the repository's `changelog.d/README.md`.
+Read by a person reading a release. The `changelog-entries` lane owns the shape, and its release-version rule, the commit-guards skill's CHECKS.md § Release versions, owns the version and the fragment section. Follow the repository's `changelog.d/README.md`.
 
 ## Maintenance
 

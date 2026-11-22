@@ -2,7 +2,7 @@
 
 Read when writing, editing or reviewing a `README.md`.
 
-Read by a person choosing or using the repository, package, skill, plugin or Pi extension. Its sections, in this order, each only where the thing needs it:
+Read by a person choosing or using the repository, package, skill, plugin or Pi extension, and by an agent an `AGENTS.md` route, skill or workflow sends to it. Its sections, in this order, each only where the thing needs it:
 
 1. A brief description: what it is and who it is for.
 2. A screenshot, where the thing has a screen.
