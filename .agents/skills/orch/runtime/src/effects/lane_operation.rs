@@ -742,14 +742,6 @@ impl<'a> LaneOperation<'a> {
         }
     }
 
-    /// The state the provider's `list` names for the lane's sandbox after
-    /// its close, `None` where it names none, or the cause of a list that
-    /// failed.
-    pub(super) fn host_listed(&self, lane: &Lane) -> std::result::Result<Option<String>, String> {
-        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
-        crate::watch::hosted::lists_item(&scripts, crate::watch::hosted::host_of(lane), &lane.item)
-    }
-
     /// Whether `worktree merged ITEM`, asked from the project checkout,
     /// shows the item's branch merged: `Ok(true)` on 0, `Ok(false)` on 1,
     /// `Err` with the status on any other answer.

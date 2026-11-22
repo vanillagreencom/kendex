@@ -514,7 +514,7 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
    **The close-out elsewhere.** In an unconfined lane, save the item's record for the overseer's cycle row before the close-out. Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`. Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed. Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is. Where an earlier close-out already removed the record, keep the saved copy. Where neither reads as a JSON object, report the failure and keep the worktree.
 
-   Close the item out under the main checkout's state folder before any worktree removal. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive. Otherwise drop the `--archive` pair:
+   Close the item out before any worktree removal, whatever the item's tracker state: Done, Verifying, or In Review with a box still open. A hosted lane is unconfined and runs this close-out itself. Pass no `--state-dir`: the runtime resolves the state folder the run's launch names. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive. Otherwise drop the `--archive` pair:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY] --archive [WORKTREE_PATH]/tmp

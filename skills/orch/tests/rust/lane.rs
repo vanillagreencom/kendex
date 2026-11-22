@@ -2874,51 +2874,20 @@ type CloseCase = (
 /// the real dispatcher between: the harness stopped through `lane-host
 /// stop`, the item's files archived and removed, then the provider's close,
 /// `--merged` since the record carries the merge, and the mailbox read under
-/// the record's host. The provider's close answer and its `list` after it
-/// decide the close: an archive line with no row listed for the item, or
-/// only an `available` one or one torn down (`destroying`, `exited`), closes
-/// the lane with that line on the observation, none reads `kept=none`;
-/// `closed=absent` is the provider's own word that no sandbox stands and
-/// closes it with no list asked, a stale row beside it; a row still listed
-/// holds the close `standing` with the row's state and its cause, a list
-/// that fails holds it `unconfirmed`; a refusal, a failure or no answer of
-/// the close itself leaves the lane running and the close unconfirmed with
-/// what it read, no list asked, the item's files already gone.
+/// the record's host. The provider's close answer decides the close, and no
+/// `list` is asked after it: an archive line closes the lane with that line
+/// on the observation, none reads `kept=none`, `closed=absent` is the
+/// provider's own word that no sandbox stands, and a row its `list` would
+/// still name `started` while its teardown runs holds nothing; a refusal, a
+/// failure or no answer of the close itself leaves the lane running and the
+/// close unconfirmed with what it read, the item's files already gone.
 #[test]
 fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_items_files() {
-    let rows: [CloseCase; 12] = [
+    let rows: [CloseCase; 8] = [
         ("kept", &[], "closed", "kept=/srv/archive/KEN-1", "done"),
         (
-            "listed standing",
-            &[("LIST", "o/r/KEN-1\thosted\t-\tlane.example")],
-            "unconfirmed",
-            "standing",
-            "running",
-        ),
-        (
-            "list failed",
-            &[("LIST_STATUS", "1")],
-            "unconfirmed",
-            "unconfirmed",
-            "running",
-        ),
-        (
-            "listed available",
-            &[("LIST", "o/r/KEN-1\tavailable\t-\tlane.example")],
-            "closed",
-            "kept=/srv/archive/KEN-1",
-            "done",
-        ),
-        (
-            "listed destroying",
-            &[("LIST", "o/r/KEN-1\tdestroying\t-\tlane.example")],
-            "closed",
-            "kept=/srv/archive/KEN-1",
-            "done",
-        ),
-        (
-            "listed exited",
-            &[("LIST", "o/r/KEN-1\texited\t-\tlane.example")],
+            "listed started",
+            &[("LIST", "o/r/KEN-1\tstarted\t-\tlane.example")],
             "closed",
             "kept=/srv/archive/KEN-1",
             "done",
@@ -2988,27 +2957,12 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
         if case == "refused" {
             assert_eq!(result["observation"]["path"], "/srv/clone", "{result}");
         }
-        if case == "listed standing" {
-            assert_eq!(
-                result["observation"]["cause"], "host-still-listed",
-                "{result}"
-            );
-            assert_eq!(result["observation"]["listed"], "hosted", "{result}");
-            assert_eq!(
-                result["observation"]["closed"], "kept=/srv/archive/KEN-1",
-                "{result}"
-            );
-        }
         assert_eq!(fleet.lane("KEN-1")["status"], status, "{case}");
         assert!(
             std::fs::symlink_metadata(&item_state).is_err(),
             "{case}: the item's files left before the provider's close"
         );
-        let mut calls = RUNNING_CLOSE.to_vec();
-        if !(case.starts_with("absent") || matches!(case, "refused" | "failed" | "unanswered")) {
-            calls.push("list");
-        }
-        assert_eq!(fleet.provider_calls(), calls, "{case}");
+        assert_eq!(fleet.provider_calls(), RUNNING_CLOSE, "{case}");
         let mail = fleet.mail_log();
         assert!(
             mail.iter()
@@ -3250,14 +3204,12 @@ fn a_terminal_close_keeps_a_callers_folders_named_after_the_item() {
     }
 }
 
-/// A close held after the provider answered it, its sandbox still listed,
+/// A close held after the item's files left, its provider's close failed,
 /// is asked again once the sandbox is gone, now with the merge it delivered:
-/// the repeat ends the lane done with that merge's cycle, keeps the
-/// first answer's local archive of the item's files and the provider's
-/// `kept=` line, which the repeat's own `closed=absent` answer and its
-/// removal of files already gone cannot give, and reads no box the sandbox
-/// took with it. A repeat between them that the provider's close fails
-/// holds with both receipts still on its answer.
+/// the repeat ends the lane done with that merge's cycle, keeps the first
+/// answer's local archive of the item's files, which the repeat's removal
+/// of files already gone cannot give, and reads no box the sandbox took
+/// with it.
 #[test]
 fn a_held_hosted_close_asked_again_keeps_its_receipts_and_records_its_delivery() {
     let archive_root = tempfile::tempdir().unwrap();
@@ -3289,31 +3241,18 @@ fn a_held_hosted_close_asked_again_keeps_its_receipts_and_records_its_delivery()
     fleet.write_lanes(vec![lane]);
     fleet.plant_tracker("KEN-1", "completed");
     plant(fleet.state_dir(), "items/KEN-1/workflow-state-KEN-1.json");
-    fleet.answer("LIST", "o/r/KEN-1\tstarted\t-\tlane.example");
+    fleet.answer("CLOSE_STATUS", "1");
     let held = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
     let observation = &held["result"]["observation"];
     assert_eq!(held["result"]["word"], "unconfirmed", "{held}");
-    assert_eq!(observation["host_close"], "standing", "{held}");
-    assert_eq!(observation["closed"], "kept=/srv/archive/KEN-1", "{held}");
+    assert_eq!(observation["host_close"], "failed", "{held}");
     let archive = observation["archive"].clone();
     assert!(archive.is_string(), "the first close archived: {held}");
-
-    fleet.answer("CLOSE_STATUS", "1");
-    let failed = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
-    let observation = &failed["result"]["observation"];
-    assert_eq!(failed["result"]["word"], "unconfirmed", "{failed}");
-    assert_eq!(observation["host_close"], "failed", "{failed}");
-    assert_eq!(
-        (&observation["closed"], &observation["archive"]),
-        (&json!("kept=/srv/archive/KEN-1"), &archive),
-        "{failed}"
-    );
     fleet
         .env
         .retain(|(name, _)| name != "LANE_HOST_STUB_CLOSE_STATUS");
 
     fleet.answer("CLOSE_LINE", "closed=absent item=KEN-1");
-    fleet.answer("LIST", "");
     for (name, value) in MAIL_UNREACHABLE {
         fleet.answer(name, value);
     }
@@ -3323,7 +3262,7 @@ fn a_held_hosted_close_asked_again_keeps_its_receipts_and_records_its_delivery()
     let observation = &closed["result"]["observation"];
     assert_eq!(closed["result"]["word"], "closed", "{closed}");
     assert_eq!(
-        observation["host_close"], "kept=/srv/archive/KEN-1",
+        observation["host_close"], "closed=absent item=KEN-1",
         "{closed}"
     );
     assert_eq!(observation["archive"], archive, "{closed}");
@@ -3446,7 +3385,7 @@ fn a_keep_over_a_refused_full_close_is_refused_and_asks_no_provider_close() {
     assert_eq!(answer["result"]["word"], "closed", "{answer}");
     assert_eq!(
         fleet.provider_calls().last().map(String::as_str),
-        Some("list"),
+        Some("close --item KEN-1"),
         "the full close asked again ran its provider close"
     );
 }
@@ -3651,10 +3590,7 @@ fn a_hosted_lane_whose_merge_landed_and_worktree_left_ends_with_its_items_files_
         "{notes:?}"
     );
     let calls = fleet.provider_calls();
-    assert_eq!(
-        calls[calls.len().saturating_sub(2)..],
-        ["close --item KEN-1", "list"]
-    );
+    assert_eq!(calls.last().map(String::as_str), Some("close --item KEN-1"));
     assert!(
         std::fs::symlink_metadata(&item_state).is_ok(),
         "the open item's files stay"
@@ -3753,14 +3689,74 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
                     "{case}: {calls:?}"
                 );
                 assert_eq!(
-                    calls[calls.len().saturating_sub(2)..],
-                    ["close --item KEN-1", "list"],
+                    calls.last().map(String::as_str),
+                    Some("close --item KEN-1"),
                     "{case}"
                 );
                 assert_eq!(fleet.lane("KEN-1")["status"], "done", "{case}");
             }
         }
     }
+}
+
+/// A merged hosted lane whose item stays in Verifying, its record in its
+/// worktree's `tmp`, the state directory its launch names, closes on one
+/// close once merge-pr § 5 step 6 has run: the close-out, pointed at the
+/// clone's state directory with the worktree's `tmp` as its `--archive`,
+/// takes the item's record from that `tmp` too, its lock staying, and the
+/// close that follows reads the record gone and ends the lane done,
+/// asking no `list` after the provider's close though the provider still
+/// lists the sandbox `started` while its teardown runs.
+#[test]
+fn a_merged_hosted_lane_in_verifying_closes_once_after_its_close_out() {
+    let archive_root = tempfile::tempdir().unwrap();
+    let mut fleet = Fleet::hosted(4);
+    fleet.env.push((
+        "ORCH_ARCHIVE_ROOT".to_owned(),
+        archive_root.path().display().to_string(),
+    ));
+    git_checkout(fleet.state_dir());
+    let disk = fleet.state_dir().join("provider-disk");
+    let worktree = disk.join(REMOTE_ROOT.trim_start_matches('/'));
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        "gitdir: /w/clone/.git/worktrees/ken-1\n",
+    )
+    .unwrap();
+    let record = worktree.join("tmp/items/KEN-1/workflow-state-KEN-1.json");
+    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+    std::fs::write(&record, "{}\n").unwrap();
+    let lock = plant(&worktree, "tmp/items/KEN-1/workflow-state-KEN-1.json.lock");
+    let clone_tmp = disk.join("w/clone/tmp");
+    std::fs::create_dir_all(&clone_tmp).unwrap();
+    let mut remove = isolated();
+    remove
+        .args(["--state-dir", &clone_tmp.display().to_string()])
+        .args(["state", "remove", "--item", "KEN-1", "--archive"])
+        .arg(worktree.join("tmp"))
+        .current_dir(fleet.state_dir());
+    for (name, value) in &fleet.env {
+        remove.env(name, value);
+    }
+    let removed = reply(&remove.output().unwrap());
+    assert_eq!(removed["ok"], true, "{removed}");
+    assert!(
+        std::fs::symlink_metadata(&record).is_err(),
+        "the close-out took the record from the worktree's tmp: {removed}"
+    );
+    assert!(std::fs::symlink_metadata(&lock).is_ok(), "the lock stays");
+
+    fleet.answer("LIST", "o/r/KEN-1\tstarted\t-\tlane.example");
+    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    fleet.plant_tracker("KEN-1", "started");
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    assert_eq!(fleet.lane("KEN-1")["status"], "done");
+    assert_eq!(
+        fleet.provider_calls().last().map(String::as_str),
+        Some("close --item KEN-1")
+    );
 }
 
 /// The close reads a lane where the watch does: on the tmux server the
@@ -4573,19 +4569,19 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             CloseCase2::new("stopped", vec![with("status", json!("stopped"))]),
             "closed",
             "done",
-            vec!["close --item KEN-1 --merged", "list"],
+            vec!["close --item KEN-1 --merged"],
         ),
         (
             CloseCase2::new("stopped, park owed", vec![owes_park]),
             "closed",
             "done",
-            vec!["close --item KEN-1 --merged", "list"],
+            vec!["close --item KEN-1 --merged"],
         ),
         (
             CloseCase2::new("parked", vec![parked_lane.clone()]),
             "closed",
             "done",
-            vec!["close --item KEN-1 --merged", "list"],
+            vec!["close --item KEN-1 --merged"],
         ),
         (
             CloseCase2::new("parked, park asked", vec![parked_lane.clone()]),
@@ -4613,7 +4609,6 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             vec![
                 "status --item KEN-1 --harness claude",
                 "close --item KEN-1 --merged",
-                "list",
             ],
         ),
     ];
@@ -7728,23 +7723,15 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
         }
     }
 
-    // A provider close that fails, or that answered while its sandbox is
-    // still listed, leaves the close unconfirmed, which is asked again: the
-    // comment waits for the close that confirms, here the repeat the
-    // provider answers absent, and is posted once.
+    // A provider close that fails leaves the close unconfirmed, which is
+    // asked again: the comment waits for the close that confirms and is
+    // posted once.
     type Answers = &'static [(&'static str, &'static str)];
-    let holds: [(&str, Answers, Answers); 2] = [
-        (
-            "refused",
-            &[("CLOSE_STATUS", "1")],
-            &[("CLOSE_STATUS", "0")],
-        ),
-        (
-            "still listed",
-            &[("LIST", "o/r/KEN-1\tstarted\t-\tlane.example")],
-            &[("LIST", ""), ("CLOSE_LINE", "closed=absent item=KEN-1")],
-        ),
-    ];
+    let holds: [(&str, Answers, Answers); 1] = [(
+        "refused",
+        &[("CLOSE_STATUS", "1")],
+        &[("CLOSE_STATUS", "0")],
+    )];
     for (case, held, released) in holds {
         let mut fleet = Fleet::boxes_world("Verifying", &done_when(false), one);
         for (name, value) in held {
