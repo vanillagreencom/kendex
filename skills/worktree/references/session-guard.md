@@ -12,9 +12,13 @@ Claiming is the caller's job:
 - `create` never claims.
 - The orchestrating workflow claims once the worktree is the session's.
 - `remove` releases at teardown.
+
+The session hook, and the workflow's claim after it:
+
 - The catalog's `worktree-session-claim` hook claims at session start under the env ladder below, so a session opened by hand holds a lease too.
 - The hook claims only a worktree whose private git dir holds the `kendex-issue` record. Every tree `create` returns carries it, one adopted through `--reuse` or `--restack` included.
 - By default, a start meeting a lock another owner name or tool holds, an issue lease with no association to this session included, leaves that lock as it stands and says nothing.
+- The exception is a guard lease past the TTL that records session processes all verified dead: the start takes it over.
 - The hook's catalog declaration defines which harnesses refuse or only advise in its optional required-claim mode.
 - The workflow's `claim --owner <ISSUE_ID> --adopt` takes over a lease the caller's env identity holds, so its claim follows the hook's.
 
@@ -28,7 +32,8 @@ Bare `create <ID>` exits 75 on existing ownership. `create --reuse|--restack` sk
 
 For a lease that records no session process, staleness is heartbeat age with **no liveness check**:
 
-- The heartbeat moves only when a caller re-enters or re-claims the tree, and nothing does so on a timer. So `release --stale` or `sweep` unlocks such a lease past its TTL while its session may still work.
+- The heartbeat moves only when a caller re-enters or re-claims the tree, and nothing does so on a timer.
+- Past its TTL, `release --stale` or `sweep` unlocks such a lease while its session may still work.
 - `worktree-session-guard refresh <path> --owner <ISSUE_ID>` holds it open.
 - Nothing runs `sweep` automatically. Confirm the owner is really gone before releasing such a lease.
 

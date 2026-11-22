@@ -43,12 +43,13 @@ Every command's contract is its `--help`: flags, exit codes, failure semantics a
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch to remote |
 | `fix-links` | Restore configured symlinks |
-| `repair-links` | Restore configured symlinks from a git hook, never destroying untracked data |
+| `repair-links` | Restore configured symlinks, run by the git hooks |
 | `codex-setup` / `codex-branch` / `codex-cleanup`, `claude-setup` / `claude-cleanup` | App-created worktree hooks |
 
+- `repair-links` never destroys untracked data.
 - `create` is a new-work claim, not a discovery command. Existing ownership exits 75.
 - Inspect or monitor owned work. Never give it a second implementer.
-- A branch is rebased through `worktree push`, `create --restack` or `create --reuse`.
+- Rebase a branch through `worktree push`, `create --restack` or `create --reuse`.
 
 ## Policy-blocked rebase (cherry-pick replay fallback)
 
