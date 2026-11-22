@@ -48,7 +48,7 @@ A parent exists only when its children are the parts of one deliverable accepted
 Every issue carries a `Reached by:` line. It names the user action, run, check or shipped producer that arrives at the defect. An owner-directed item names the ask.
 
 - These are not a reach: the thread a finding came from, a shape such as "a name containing a quote", and something true only in theory. An item with nothing to name is a decline, not an issue.
-- The author judges the reach. The create command checks only that the line is filled.
+- The author judges the reach. Linear `issues create` refuses only a body with no `Reached by:` line, and counts a placeholder or a null token as no line, unless `LINEAR_REQUIRE_REACH` is set empty. The GitHub route checks nothing.
 - A filing whose source is a review round carries, at priority 2, a `Symptom:` line. It names the run, the user or the red check that already showed the defect. A Linear `issues create` for it passes `--review-born`; the GitHub route is [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations).
 
 ## Requirements
@@ -57,9 +57,11 @@ Write each requirement, Done-when box and test plan against the code-quality ski
 
 ## Estimate
 
-The numeric estimate is a size class within the team: 1 for its smallest work, through 5 for its largest. It is never a unit of time.
+The numeric estimate is a size class within the team: 1 for its smallest work, through 5 for its largest. It is never a unit of time. An estimate already set stays valid: replace it only when the item's scope changes.
 
 ## Done when
+
+Prove every box the branch can prove before the change is published, by a merge or by a push to the base branch.
 
 Add a post-merge box on the same item only when all three conditions hold:
 
@@ -76,7 +78,7 @@ Write each post-merge box on one line:
 ```
 
 - `Post-merge:` states the check's pass condition. The absence of an event passes only when the check states absence as its pass condition.
-- `Trigger:` is one of three forms. `merge`. A UTC time at or after merge. `release OWNER/REPO TAG-GLOB`: the first matching GitHub release published after merge.
+- `Trigger:` takes one of three forms: `merge`, a UTC time at or after merge, or `release OWNER/REPO TAG-GLOB`, the first matching GitHub release published after merge that contains the item's merge commit, where the item merged in OWNER/REPO.
 - `Deadline:` is `+Nh`, with N from 1 through 72, counted from the trigger: the merge, the stated time, or the release publication. Write a merge trigger's deadline as `+Nh`, because the merge time is unknown when the box is written. A merge or time trigger also takes a real UTC deadline after its trigger and at most 72 hours later. A release trigger takes only `+Nh`.
 - Example: `Trigger: release example/widget v*; Deadline: +24h`.
 

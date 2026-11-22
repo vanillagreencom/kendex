@@ -106,7 +106,7 @@ These goals decide a case that no workflow step covers:
 
 ## Disposition
 
-The rules for an item are in [references/filing.md](references/filing.md): Judge the approach, Creation bar, Group by project or label, never by parent, Name what reaches it, Requirements, Estimate, Done when with the post-merge box form, and One landing per subsystem. Read that file before you judge, write, split or file a tracked item, and at a launch read.
+The rules for an item are in [references/filing.md](references/filing.md). Read that file before you judge, write, split or file a tracked item, and at a launch read.
 
 ## Commands
 

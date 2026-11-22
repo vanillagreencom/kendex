@@ -17,7 +17,7 @@ An artifact's durable home is its source issue: the issue it already sits on, el
 A reader given a cited path reads that file when it exists in its checkout. Otherwise it finds the artifact by the tracker:
 
 - **Linear**: the link in the read issue's `**Artifacts**` list, which names the current copy, else an attachment on the source issue. Read both through [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact).
-- **GitHub Issues**: the text in the source issue's body or a comment, read with `gh issue view [N] --repo [OWNER/REPO] --json body,comments`.
+- **GitHub Issues**: the text in the source issue's body, or the latest comment whose first line is the cited path, where [publish-artifacts.md § GitHub](../workflows/publish-artifacts.md#github) puts it. Read both with `gh issue view [N] --repo [OWNER/REPO] --json body,comments`.
 - **No tracker**: the caller's named path, else `tmp/`. Nothing makes the file durable, and a missing one is reported missing.
 
 An artifact this route does not find is missing, and the calling workflow's missing-file behavior applies.
