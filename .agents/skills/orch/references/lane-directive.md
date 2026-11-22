@@ -185,12 +185,12 @@ A relaunch is not judged by the [Ancestor gate](skill-rules.md#ancestor-gate) or
 
 ### Resume or fresh
 
-A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt. A switched harness or account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`. A hosted relaunch always starts the harness fresh. Outside § Parked record, the provider's `list` tells its sandbox's two states apart:
+A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt. A switched harness or account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`. A hosted relaunch always starts the harness fresh. Outside § Parked record, the launch first asks the provider's `stop-sandbox --check`. A provider without the `stop-sandbox` and `start` pair, which the check answers with exit `2`, is asked neither `list` nor `start`: the launch goes straight to `create --relaunch`. A provider with the pair is asked its `list`, which tells its sandbox's two states apart:
 
-- Standing, as the `no_landing` close of § Recovery relaunch step 2 keeps it: the launch asks the provider's `start`, then `create --relaunch` resumes on its disk. A provider without `start` reuses it as it stands.
-- Gone: `create --relaunch` restores the item's work into a new sandbox.
+- Standing, as the `no_landing` close of § Recovery relaunch step 2 keeps it: the launch asks the provider's `start`, then `create --relaunch`.
+- Gone: the launch asks no `start` and goes straight to `create --relaunch`.
 
-A list that fails refuses the launch `host-list-failed`.
+A check or a list that fails refuses the launch, `host-check-failed` or `host-list-failed`.
 
 A fresh start continues through the handoff record: its brief is the `start` brief ([start.md § 0](../workflows/start.md#0-resume-from-a-handoff)), and a harness switch's brief also carries the transcript sentence of [handoff.md § 2](../workflows/handoff.md#2-launch). The brief carries the continuation either way, so paste nothing into the pane after a relaunch.
 

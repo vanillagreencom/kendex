@@ -715,9 +715,10 @@ pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<Hos
 
 /// `stop-sandbox [--check] --item ITEM`: the check confirmed by
 /// `sandbox-stoppable item=ITEM`, the stop by `sandbox-stopped item=ITEM`.
-/// A refusal is `Asked::Failed` with `exit=N` (2 the absent-verb status of a
-/// provider without the pair), `cause=answer-unparsed` or [`BUSY`].
-pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Result<(), Asked> {
+/// `Ok(false)` is exit 2, the absent-verb status of a provider without the
+/// stop-sandbox and start pair. A refusal is `Asked::Failed` with `exit=N`,
+/// `cause=answer-unparsed` or [`BUSY`].
+pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Result<bool, Asked> {
     let mut args = vec!["stop-sandbox"];
     if check {
         args.push("--check");
@@ -731,29 +732,21 @@ pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Resu
     let out = call(scripts, host, "stop-sandbox", &args, READ_BOUND, step)?;
     match exit_code(&out) {
         0 => {}
+        2 => return Ok(false),
         code => return Err(Asked::Failed(format!("exit={code}"))),
     }
     if host::stdout_text(&out) == format!("{word} item={item}") {
-        Ok(())
+        Ok(true)
     } else {
         Err(Asked::Failed("cause=answer-unparsed".to_owned()))
     }
 }
 
-/// How a provider answered `start`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Start {
-    /// `sandbox-started item=ITEM`, which a provider answers for a sandbox
-    /// already up as for a stopped one.
-    Started,
-    /// Exit 2, the protocol's absent verb: a provider without the sandbox
-    /// pair, whose sandbox never stops. Its [`cause_of`].
-    Absent(String),
-}
-
-/// `start --item ITEM` read as a [`Start`]. A refusal is `Asked::Failed`
-/// with its [`cause_of`], `cause=answer-unparsed` or [`BUSY`].
-pub fn start(scripts: &Path, host: &str, item: &str) -> Result<Start, Asked> {
+/// `start --item ITEM`, confirmed by `sandbox-started item=ITEM`,
+/// which a provider answers for a sandbox already up as for a stopped one.
+/// A refusal is `Asked::Failed` with its [`cause_of`],
+/// `cause=answer-unparsed` or [`BUSY`].
+pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
     let out = call(
         scripts,
         host,
@@ -762,13 +755,11 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<Start, Asked> {
         PREPARE_BOUND,
         "start",
     )?;
-    match exit_code(&out) {
-        0 => {}
-        2 => return Ok(Start::Absent(cause_of("start", &out))),
-        _ => return Err(Asked::Failed(cause_of("start", &out))),
+    if !out.status.success() {
+        return Err(Asked::Failed(cause_of("start", &out)));
     }
     if host::stdout_text(&out) == format!("sandbox-started item={item}") {
-        Ok(Start::Started)
+        Ok(())
     } else {
         Err(Asked::Failed("cause=answer-unparsed".to_owned()))
     }

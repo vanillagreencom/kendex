@@ -984,11 +984,6 @@ fn local_launch(
     Ok(outcome)
 }
 
-/// A hosted lane: the provider's `create` (and `wait`), the launch record
-/// verified on the host, then the fleet window running the ssh client
-/// whose one typed line starts the harness under the provider's prefix, or,
-/// where the provider owns the harness's session (`pane=verb`), that
-/// prefix run here with no window.
 /// Whether the lane's last pause is a park: its sandbox was stopped with its
 /// disk kept, and no launch has brought it back for certain since.
 fn parked_last(lane: &Lane) -> bool {
@@ -1001,8 +996,16 @@ fn parked_last(lane: &Lane) -> bool {
         == Some("parked")
 }
 
-/// `stands` is set once the provider answered a start or a create: the
-/// sandbox stands from then, whatever later step fails.
+/// A hosted lane: the provider's `create` (and `wait`), the launch record
+/// verified on the host, then the fleet window running the ssh client
+/// whose one typed line starts the harness under the provider's prefix, or,
+/// where the provider owns the harness's session (`pane=verb`), that
+/// prefix run here with no window.
+///
+/// `stands` is set only once the provider's start answered
+/// `sandbox-started` or its create was accepted, the answers that take the
+/// sandbox up for this lane: it stands from then, whatever later step
+/// fails. A list row is no such answer.
 fn hosted_launch(
     run: &Run,
     mut operation: Operation,
@@ -1068,35 +1071,37 @@ fn hosted_launch(
         Ok(mode) => lane_brief(&opening, harness, &r.item, mode),
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
-    // `create --relaunch` resumes on the sandbox the item's work stands in,
-    // which the provider's start brings up first: a parked lane's, stopped
-    // with its disk kept, and on any other relaunch one the provider's list
-    // still names, as a no-landing close keeps it. A provider may refuse a
-    // create over a standing sandbox no start took up as another session's
-    // (`item-owned`). A provider answers `sandbox-started` for a sandbox
-    // already up, so a relaunch after a start that failed asks it again. A
-    // provider without `start` holds a sandbox that never stops, which its
-    // create reuses as it stands; only a parked one needs the verb. Each
-    // ask is recorded before it is made, so a launch cut after it leaves a
-    // step its reconcile holds.
-    let listed = relaunch
-        && !parked
-        && match hosted::lists_item(&scripts, provider, &r.item) {
-            Ok(state) => state.is_some(),
-            Err(cause) => return failed(operation, &format!("host-list-failed {cause}")),
-        };
-    *stands |= listed;
-    if parked || listed {
+    // `create --relaunch` resumes on the sandbox the item's work stands in.
+    // A provider holding the stop-sandbox and start pair may refuse a create
+    // over a standing sandbox no start took up as another session's
+    // (`item-owned`), so its start brings that sandbox up first: a parked
+    // lane's, stopped with its disk kept, and on any other relaunch one its
+    // list still names, as a no-landing close keeps it. A provider whose
+    // check exits 2 has no pair: its sandbox never stops and its create
+    // reuses it as it stands, so it is asked neither list nor start. A
+    // provider answers `sandbox-started` for a sandbox already up, so a
+    // relaunch after a start that failed asks it again. Each start is
+    // recorded before it is made, so a launch cut after it leaves a step its
+    // reconcile holds.
+    let starts = parked
+        || (relaunch
+            && match hosted::stop_sandbox(&scripts, provider, &r.item, true) {
+                Ok(false) => false,
+                Ok(true) => match hosted::lists_item(&scripts, provider, &r.item) {
+                    Ok(state) => state.is_some(),
+                    Err(cause) => return failed(operation, &format!("host-list-failed {cause}")),
+                },
+                Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) => {
+                    return failed(operation, &format!("host-check-failed {cause}"));
+                }
+            });
+    if starts {
         operation.record_phase(Phase::Preparing {
             step: HOST_START.to_owned(),
             at: provider.to_owned(),
         })?;
         match hosted::start(&scripts, provider, &r.item) {
-            Ok(hosted::Start::Started) => *stands = true,
-            Ok(hosted::Start::Absent(cause)) if parked => {
-                return failed(operation, &format!("host-start-failed {cause}"));
-            }
-            Ok(hosted::Start::Absent(_)) => {}
+            Ok(()) => *stands = true,
             Err(hosted::Asked::Failed(cause)) => {
                 return failed(operation, &format!("host-start-failed {cause}"));
             }

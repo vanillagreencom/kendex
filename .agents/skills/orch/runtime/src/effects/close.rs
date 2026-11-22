@@ -1339,7 +1339,11 @@ impl Close<'_> {
             ));
         }
         match hosted::stop_sandbox(self.scripts, self.host, self.item(), true) {
-            Ok(()) => Ok(()),
+            Ok(true) => Ok(()),
+            Ok(false) => Err(self.park_refused(
+                "provider-unsupported",
+                &[("host", self.host), ("cause", "exit=2")],
+            )),
             Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => Err(refused(
                 hosted::BUSY,
                 &[("item", self.item()), ("step", "stop-sandbox-check")],
@@ -1750,7 +1754,13 @@ impl Close<'_> {
     /// stopped, and only the confirmed line records parked.
     fn park_sandbox(&self, park: &ParkLane, notes: Vec<String>) -> Result<Closed> {
         match hosted::stop_sandbox(self.scripts, self.host, self.item(), false) {
-            Ok(()) => {}
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(refused(
+                    "park-failed",
+                    &[("item", self.item()), ("cause", "exit=2")],
+                ));
+            }
             Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
                 return Err(refused(
                     hosted::BUSY,
