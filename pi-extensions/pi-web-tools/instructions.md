@@ -1,11 +1,24 @@
 ## pi-web-tools — web and code retrieval
 
-Tool selection (choose only active tools, then pick the cheapest option that answers the question). Select `code_search`, `web_answer`, `web_find_similar` and `web_research` only when Exa is configured; `web_research` also requires `exaDeepResearchEnabled`:
+Tool selection:
+
+1. Choose only active tools.
+2. Pick the cheapest option that answers the question.
+
+- Select `code_search`, `web_answer`, `web_find_similar` and `web_research` only when Exa is configured; `web_research` also requires `exaDeepResearchEnabled`.
+
+Tools:
 
 - `code_search` — code patterns, library APIs, developer documentation. Token-efficient via Exa Code; the default for "how do I use X library / what's the API for Y".
 - `web_search` — general web queries; the default for "find me…" when not code-specific.
+  - For a simple factual question, run one search with `numResults` of 5 or fewer and answer from the best source.
 - `web_answer` — quick cited answer to a focused factual question (single short response, not a deep dive).
-- `web_fetch` — a URL or local PDF you already have. YouTube transcript requests use complete native captions; other YouTube/local video prompts use Gemini understanding. Stores extracted text so later `get_web_content` calls retrieve without refetching: direct/GitHub/PDF/HTTP/YouTube-caption paths store full text (a page or file past 8 MB is cut there and its preview says so; a PDF past 32 MB is refused; a URL past the call's byte budget is cut or fails with the budget named, or goes to the Exa fallback: fetch fewer URLs per call), Exa-provider paths store provider-capped excerpts (default 6000 chars; override per call with `textMaxCharacters`). Multi-URL calls (2–5 URLs) shrink each per-URL preview to fit a 16 KB aggregate cap; 6+ URLs return a manifest plus short 512-char preview heads under a 25 KB aggregate cap. Pass `textMaxCharacters` to opt back into larger inlined previews; the sidecar stores per-URL data as described above (full for direct paths, capped excerpt for Exa). Use `videoMode: "transcript"` for explicit transcript retrieval and `videoMode: "understand"` for audio/visual analysis.
+- `web_fetch` — a URL or local PDF you already have.
+  - Exa-provider paths store provider-capped excerpts (default 6000 chars; override per call with `textMaxCharacters`).
+  - 6+ URLs return a manifest plus short 512-char preview heads.
 - `web_find_similar` — expand from a known good URL.
-- `web_research` — multi-source deep-dive findings report. Expensive; only when the user wants a researched recommendation, not a quick lookup.
-- `get_web_content` — re-read content already fetched/searched in this session by id (`web-...`). Never refetch what you already have. To page another tool's truncated output, re-call that tool with `offset:` — don't pass its tool-call id or sidecar path here.
+- `web_research` — multi-source deep-dive findings report.
+  - Expensive; use it only when the user wants a researched recommendation, not a quick lookup.
+- `get_web_content` — re-read content already fetched/searched in this session by id (`web-...`).
+  - Never refetch what you already have.
+  - To page another tool's truncated output, re-call that tool with `offset:` — don't pass its tool-call id or sidecar path here.

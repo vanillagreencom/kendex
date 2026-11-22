@@ -1,6 +1,6 @@
 # pi-caveman development
 
-For maintainers. What it does for a consumer is [README.md](README.md); the directive text and its rendering rules are `extensions/prompt.ts::instructions`, and the snapshot matrix under `tests/__snapshots__/` is the record of what each mode renders.
+What it does for a consumer is [README.md](README.md). The directive text and its rendering rules are `extensions/prompt.ts::instructions`, and the snapshot matrix under `tests/__snapshots__/` is the record of what each mode renders.
 
 ## Invariants
 

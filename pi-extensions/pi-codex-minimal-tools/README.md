@@ -17,14 +17,17 @@ Image and patch tools for Pi sessions using OpenAI or Codex models. It adds imag
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-codex-minimal-tools`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-codex-minimal-tools"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 

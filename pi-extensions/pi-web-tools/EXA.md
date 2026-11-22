@@ -4,14 +4,27 @@
 
 ## API paths used
 
-| Pi tool/path | Exa API | Purpose | Stored content semantics |
+| Pi tool/path | Exa API | Purpose | Stored content |
 |---|---|---|---|
-| `web_search provider=exa` | `POST /search` with `type: auto` by default | General web search with optional text/highlights. | Stores Exa-returned text as a **stored excerpt** capped by `textMaxCharacters` (default 12k/result). |
-| `web_research` | `POST /search` with `type: deep-lite`, `deep`, or `deep-reasoning` | Evidence-backed research. Modes tune result count, text/highlight caps, summaries, structured output, and report sidecars. | Usually writes findings/raw files; source text is provider-capped evidence, not a local crawl. |
-| `web_fetch provider=exa` or URL fetch fallback | `POST /contents` | Extract known remote URLs when forced or when direct fetch fails. | Stores Exa-returned page contents; capped by `textMaxCharacters` (default 6k/url — lower than search/findSimilar because `web_fetch` can pass dozens of URLs in one call). |
-| `web_answer` | `POST /answer` | Exa performs search + LLM synthesis for a direct answer. | Answer text is returned directly; any sources with text are stored as excerpts. |
-| `web_find_similar` | `POST /findSimilar` | Find pages similar to one URL. | Stores returned source text as excerpts capped by `textMaxCharacters` (default 12k/result). |
-| `code_search` | `POST /search` with code/docs domain hints | Search code and technical docs, currently biased to GitHub/docs/Stack Overflow. | Stores returned text as excerpts. |
+| `web_search provider=exa` | `POST /search` | General web search | A **stored excerpt** per result |
+| `web_research` | `POST /search` | Evidence-backed research | Findings and raw files |
+| `web_fetch provider=exa` | `POST /contents` | Extract known remote URLs | Exa-returned page contents |
+| URL fetch fallback | `POST /contents` | Extract known remote URLs | Exa-returned page contents |
+| `web_answer` | `POST /answer` | A direct answer from Exa's search and LLM synthesis | The answer text, returned directly |
+| `web_find_similar` | `POST /findSimilar` | Find pages similar to one URL | Returned source text as excerpts |
+| `code_search` | `POST /search` | Search code and technical docs | Returned text as excerpts |
+
+- `textMaxCharacters` defaults to 12k per result for `web_search` and `web_find_similar`.
+- `textMaxCharacters` defaults to 6k per URL for `web_fetch`, lower than for search because `web_fetch` can pass dozens of URLs in one call.
+- `web_search` sends `type: auto` by default.
+- `web_search` text and highlights are optional.
+- `web_research` sends `type: deep-lite`, `deep`, or `deep-reasoning`.
+- `web_research` modes tune result count, text and highlight caps, summaries, structured output, and report sidecars.
+- `web_research` source text is provider-capped evidence, not a local crawl.
+- `web_fetch` calls `/contents` when `provider=exa` is forced or when a direct fetch fails.
+- `web_answer` stores any source with text as an excerpt.
+- `code_search` sends code/docs domain hints.
+- `code_search` is currently biased to GitHub, docs and Stack Overflow.
 
 ## Search vs answer vs research
 
@@ -24,9 +37,3 @@
 Session storage uses generated content ids internally so the assistant can call `get_web_content`. Compact renderers intentionally hide those ids from users and show URLs/source metadata instead.
 
 `get_web_content` labels search/answer/similar/code stored text as `stored excerpt` when it came from provider-capped Exa text. Direct `web_fetch` paths show `full` when the extension stored the full extracted text before preview truncation, and `source cut at N bytes` when a byte limit cut the source short.
-
-## Settings and keys
-
-- Exa key source: `EXA_API_KEY`, project `.env.local`/`.env`, or `PI_WEB_TOOLS_CONFIG_FILE`/private config.
-- Advanced tools (`web_answer`, `web_find_similar`, `code_search`) are registered but only auto-enabled when `pi-web-tools.exaAdvancedEnabled=true` and an Exa key is available.
-- Deep research is controlled separately by `pi-web-tools.exaDeepResearchEnabled`.

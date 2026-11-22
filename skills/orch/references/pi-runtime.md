@@ -75,7 +75,7 @@ On a hosted lane the gate reads the Pi root's `settings.json` and the worktree's
 
 ## Standing watch (Pi)
 
-The oversee watch ([watch-delivery.md](watch-delivery.md)) reaches a Pi overseer through a `pi-background-tasks` output wake. The package's [instructions](https://github.com/vanillagreencom/kendex/blob/main/pi-extensions/pi-background-tasks/instructions.md) give the spawn parameters.
+The oversee watch ([watch-delivery.md](watch-delivery.md)) reaches a Pi overseer through a `pi-background-tasks` output wake.
 
 | Step | Call |
 |---|---|

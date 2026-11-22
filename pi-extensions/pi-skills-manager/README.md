@@ -15,14 +15,17 @@ A skill browser and editor for Pi. You can find installed skills, insert their c
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-skills-manager`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-skills-manager"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 

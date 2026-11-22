@@ -1,30 +1,69 @@
 # pi-background-tasks development
 
-For maintainers. What it does for a consumer is [README.md](README.md); the agent-facing contract (`bg_task` parameters, notify modes, durability promises) is `instructions.md`, and the mechanics live as comments on the modules named below. This file holds the invariants that span them.
+What it does for a consumer is [README.md](README.md). `instructions.md` holds the agent-facing rules and durability promises. The `bg_task` parameters and notify modes are the parameter descriptions in `extensions/registrations.ts`. The mechanics live as comments on the modules named below. This file holds the invariants that span them.
 
 ## Invariants
 
-- A wake never depends on `pi-output-policy`. Wakes go out through `pi.sendMessage`, which that policy does not see, so every byte a wake adds to the transcript is bounded here: one inline tail capped by `outputAlertMaxChars`, a task manifest whose long fields are cut at `WAKE_MANIFEST_FIELD_MAX_CHARS`, a headline command preview cut at `WAKE_CONTENT_COMMAND_MAX_CHARS`, and a per-task output-wake budget after which one exhaustion notice is sent and further output wakes are dropped. `extensions/wake-events.ts::compactBackgroundTaskSnapshot`, `shouldEmitOutputWake`, `sendOutputWakeBudgetExhaustedNotice`. The same compact manifest is what `bg_task` and `bg_status` return in `details`, so a log-polling loop cannot grow the transcript through tool results either.
-- Exit wakes are durable and fire exactly once. A task's snapshot carries `exitNotified`; a terminal task that never fired its exit wake is replayed on the next `session_start`. Exit wakes ignore the output-wake budget. `extensions/lifecycle.ts::closeTaskLifecycle` sets a task's terminal state and `sendExitWakeLifecycle` sends its exit wake. `extensions/background-tasks.ts::finalizeTask` (exit, spawn error, timeout, stop) and `extensions/lifecycle.ts::finalizeTaskLifecycle` (orphan watcher) call both. Restore (`extensions/snapshot.ts::restoredTaskFromSnapshot`) and `session_shutdown` set status themselves, and `extensions/lifecycle.ts::replayMissedExitsLifecycle` sends the wakes restore finds missing.
-- The orphan watcher observes and never signals. A task whose child outlived Pi rehydrates as `running` and `extensions/orphan-watcher.ts` polls an asynchronous identity probe (pid plus process start time; the kernel comm name is recorded but is not part of identity, because `exec` rotates it) until the process is gone or the pid was reused, then finalizes through the lifecycle. Adding a `kill` there resurrects a failure where a snapshot flicker terminates a live workload.
-- Resource controls change nothing when off. They are on by default in `nice-ionice` mode, which keeps Pi's environment; `systemd-run` mode runs the task with the user manager's environment. With `resourceControlEnabled=false` the spawn is `getShellConfig` plus the command as one argument in a detached process group; `extensions/resource-control.ts::planResourceControlledSpawn` wraps it only when enabled, and a `systemd-run` task persists its unit name so stop, timeout and shutdown stop the unit rather than the wrapper. A failed unit stop leaves the task running rather than reporting it stopped.
-- Session-state writes are bounded. `extensions/persistence.ts::createPersistence` is the only writer of the `kendex-background-tasks:state` entry: identical task lists are deduplicated by fingerprint, and a payload over `BG_TASKS_SNAPSHOT_MAX_BYTES` degrades to a manifest while the sidecar at `sidecarStatePath` stays canonical and is read first on restore. `extensions/tool-result-details.ts::bgToolResultTasks` bounds `details.tasks` the same way, and `restoreSnapshots` treats a manifest as a barrier so an older full snapshot cannot regress restored state.
-- A chunk of task output costs no synchronous log write, no widget render and no full state write. `extensions/log-writer.ts::createLogWriter` batches log appends per window with one asynchronous write in flight per file, and `extensions/background-tasks.ts` coalesces the widget refresh and the output-driven persist into windows (`extensions/coalesce.ts`). Pending text at `LOG_WRITE_NOW_BYTES` is written without the window, and pending text at `LOG_MAX_PENDING_BYTES` behind a write in flight makes `append` return a hold, on which the task pauses its stdout and stderr. `LOG_WRITE_STALL_MS` is the one deadline for a write in flight: past it the file is stalled, the hold, `flush` and `drain` stop waiting, and text past the cap is counted into a marker line until the write settles. A slow disk costs no log bytes; a stalled or failing one costs counted bytes and never holds a task's output or its close. A task's close sets its final status and clears its timers at once through `extensions/lifecycle.ts::closeTaskLifecycle`; only the exit wake waits for `flush`. After the wake, the task drops its in-memory output unless `LogWriter.settled` says its last write failed or is still stalled, and the finished-task bound runs; a task whose exit wake still waits is not counted by the bound. `clear` and the bound delete a task's log only after `flush` settles its file, so a held write cannot create the log again; a write still stalled past `LOG_WRITE_STALL_MS` can, and the lane prune removes the file it leaves in the session's own lane.
-- Liveness has one decision. `extensions/snapshot.ts::livenessVerdict` answers alive, pid-gone, pid-reused or unknown for restore and for the orphan watcher; unknown counts as alive for that pass, and the orphan pass logs a diagnostic for it. Subprocess checks (`ps`, `systemctl`) go through `extensions/probes.ts::runProbe`, which is asynchronous, or `runProbeSync` for synchronous spawn planning, both with a 1 s timeout. A restore or orphan pass runs at most `PROBE_CONCURRENCY` probes. Restore replays plain snapshot data from the whole history and probes only the final task set, and the watcher's first pass waits one poll interval.
+- A wake never depends on `pi-output-policy`. Wakes go out through `pi.sendMessage`, which that policy does not see, so every byte a wake adds to the transcript is bounded here:
+  - one inline tail capped by `outputAlertMaxChars`;
+  - a task manifest whose long fields are cut at `WAKE_MANIFEST_FIELD_MAX_CHARS`;
+  - a headline command preview cut at `WAKE_CONTENT_COMMAND_MAX_CHARS`;
+  - a per-task output-wake budget after which one exhaustion notice is sent and further output wakes are dropped.
+
+  The owners are `extensions/wake-events.ts::compactBackgroundTaskSnapshot`, `shouldEmitOutputWake` and `sendOutputWakeBudgetExhaustedNotice`. The same compact manifest is what `bg_task` and `bg_status` return in `details`, so a log-polling loop cannot grow the transcript through tool results either.
+
+- Exit wakes are durable and fire exactly once.
+  - A task's snapshot carries `exitNotified`; a terminal task that never fired its exit wake is replayed on the next `session_start`.
+  - Exit wakes ignore the output-wake budget.
+  - `extensions/lifecycle.ts::closeTaskLifecycle` sets a task's terminal state and `sendExitWakeLifecycle` sends its exit wake. `extensions/background-tasks.ts::finalizeTask` (exit, spawn error, timeout, stop) and `extensions/lifecycle.ts::finalizeTaskLifecycle` (orphan watcher) call both.
+  - Restore (`extensions/snapshot.ts::restoredTaskFromSnapshot`) and `session_shutdown` set status themselves, and `extensions/lifecycle.ts::replayMissedExitsLifecycle` sends the wakes restore finds missing.
+- The orphan watcher observes and never signals.
+  - A task whose child outlived Pi rehydrates as `running`, and `extensions/orphan-watcher.ts` polls an asynchronous identity probe until the process is gone or the pid was reused, then finalizes through the lifecycle.
+  - The identity is the pid plus the process start time. The kernel comm name is recorded but is not part of identity, because `exec` rotates it.
+  - Adding a `kill` there resurrects a failure where a snapshot flicker terminates a live workload.
+- Resource controls change nothing when off.
+  - They are on by default in `nice-ionice` mode, which keeps Pi's environment; `systemd-run` mode runs the task with the user manager's environment.
+  - With `resourceControlEnabled=false` the spawn is `getShellConfig` plus the command as one argument in a detached process group; `extensions/resource-control.ts::planResourceControlledSpawn` wraps it only when enabled.
+  - A `systemd-run` task persists its unit name so stop, timeout and shutdown stop the unit rather than the wrapper. A failed unit stop leaves the task running rather than reporting it stopped.
+- Session-state writes are bounded.
+  - `extensions/persistence.ts::createPersistence` is the only writer of the `kendex-background-tasks:state` entry.
+  - Identical task lists are deduplicated by fingerprint, and a payload over `BG_TASKS_SNAPSHOT_MAX_BYTES` degrades to a manifest while the sidecar at `sidecarStatePath` stays canonical and is read first on restore.
+  - `extensions/tool-result-details.ts::bgToolResultTasks` bounds `details.tasks` the same way.
+  - `restoreSnapshots` treats a manifest as a barrier so an older full snapshot cannot regress restored state.
+- A chunk of task output costs no synchronous log write, no widget render and no full state write.
+  - `extensions/log-writer.ts::createLogWriter` batches log appends per window with one asynchronous write in flight per file, and `extensions/background-tasks.ts` coalesces the widget refresh and the output-driven persist into windows (`extensions/coalesce.ts`).
+  - Pending text at `LOG_WRITE_NOW_BYTES` is written without the window.
+  - Pending text at `LOG_MAX_PENDING_BYTES` behind a write in flight makes `append` return a hold, on which the task pauses its stdout and stderr.
+  - `LOG_WRITE_STALL_MS` is the one deadline for a write in flight: past it the file is stalled, the hold, `flush` and `drain` stop waiting, and text past the cap is counted into a marker line until the write settles. A slow disk costs no log bytes; a stalled or failing one costs counted bytes and never holds a task's output or its close.
+  - A task's close sets its final status and clears its timers at once through `extensions/lifecycle.ts::closeTaskLifecycle`; only the exit wake waits for `flush`.
+  - After the wake, the task drops its in-memory output unless `LogWriter.settled` says its last write failed or is still stalled, and the finished-task bound runs. A task whose exit wake still waits is not counted by the bound.
+  - `clear` and the bound delete a task's log only after `flush` settles its file, so a held write cannot create the log again. A write still stalled past `LOG_WRITE_STALL_MS` can, and the lane prune removes the file it leaves in the session's own lane.
+- Liveness has one decision.
+  - `extensions/snapshot.ts::livenessVerdict` answers alive, pid-gone, pid-reused or unknown for restore and for the orphan watcher. Unknown counts as alive for that pass, and the orphan pass logs a diagnostic for it.
+  - Subprocess checks (`ps`, `systemctl`) go through `extensions/probes.ts::runProbe`, which is asynchronous, or `runProbeSync` for synchronous spawn planning, both with a 1 s timeout.
+  - A restore or orphan pass runs at most `PROBE_CONCURRENCY` probes.
+  - Restore replays plain snapshot data from the whole history and probes only the final task set, and the watcher's first pass waits one poll interval.
 - Broker publication is best-effort and outside control flow. `extensions/activity.ts::publishBackgroundTaskActivity` and `publishBackgroundTaskStarted` publish `bg_task.*` events to `pi-session-bridge`'s broker when present, catch every publisher error, and are never awaited by task control.
 - Diagnostics never touch the terminal. `extensions/diagnostics.ts::logBackgroundDiagnostic` writes to a log file only when `PI_BG_TASK_DEBUG`, `PI_BG_TASK_DIAGNOSTICS` or `PI_BG_TASK_DIAGNOSTIC_LOG` is set; stdout and stderr would corrupt the TUI widgets.
 
 ## Log reads and matching
 
-The dashboard's synchronous renderer consumes the last completed asynchronous log read. A read completion requests another frame only when the selected task's output changes. The log reader owns a weak per-task cache and checks file metadata before reusing a tail. Disk limits count UTF-16 code units, as JavaScript string length does. UTF-8 acquisition needs at most three bytes per unit plus one byte when the suffix starts inside a surrogate pair; clipping follows decoding. Disk-backed exit wakes wait for their tail read before recording delivery. The reader admits at most `PROBE_CONCURRENCY` disk acquisitions across all consumers and holds each slot through file close. Reader clear cancels queued reads without releasing active descriptors. Replay uses the same exit sender as live and orphan completion. Queued and active exits stay protected from finished-history eviction until delivery or suppression settles. Task identity and shutdown checks suppress both queued acquisition and late delivery after clear or replacement. The reader retains whether it omitted disk bytes or decoded characters. Exit formatting uses that information for the truncation marker and outputTailTruncated metadata.
+- The dashboard's synchronous renderer consumes the last completed asynchronous log read. A read completion requests another frame only when the selected task's output changes.
+- The log reader owns a weak per-task cache and checks file metadata before reusing a tail.
+- Disk limits count UTF-16 code units, as JavaScript string length does. UTF-8 acquisition needs at most three bytes per unit plus one byte when the suffix starts inside a surrogate pair; clipping follows decoding.
+- Disk-backed exit wakes wait for their tail read before recording delivery.
+- The reader admits at most `PROBE_CONCURRENCY` disk acquisitions across all consumers and holds each slot through file close. Reader clear cancels queued reads without releasing active descriptors.
+- Replay uses the same exit sender as live and orphan completion.
+- Queued and active exits stay protected from finished-history eviction until delivery or suppression settles.
+- Task identity and shutdown checks suppress both queued acquisition and late delivery after clear or replacement.
+- The reader retains whether it omitted disk bytes or decoded characters. Exit formatting uses that information for the truncation marker and outputTailTruncated metadata.
 
 Notification regexes run in a Node VM context with an execution timeout. Only pattern data enters the context, not executable source. The matcher releases the input after each attempt and disables a timed-out pattern. The native deadline check in `tests/output-matcher.test.ts` runs under Node. Bun runs the rest of the suite and does not prove that native deadline.
 
 ## Mechanics worth knowing
 
 - Auto-backgrounding covers the agent's `bash` tool, interactive `!` commands, and bash issued over RPC; an RPC caller gets the acknowledgement text in place of the output. The built-in patterns and the `sleep`-loop heuristic are `extensions/auto-background.ts::autoBackgroundDecision`; user patterns are `/regex/flags` or a case-insensitive plain regex per line.
-- `notifyMode` unset resolves to `first-match-only` when `notifyPattern` is set and to `transition` otherwise (`extensions/wake-events.ts::resolveNotifyMode`); `transition` wakes only when the tail hash changes, and `dedupeKey` shares one hash bucket across tasks.
-- An output wake scheduled before a `stop` or `clear` is voided; a queued callback that still fires is suppressed and logged as a `voided-wake-fired` diagnostic, which separates stale Pi-core delivery from an extension bug.
+- An output wake scheduled before a `stop` or `clear` is voided. A queued callback that still fires is suppressed and logged as a `voided-wake-fired` diagnostic, which separates stale Pi-core delivery from an extension bug.
 - The `f5` shortcut always opens the dashboard alongside the configured `dashboardShortcut`; shortcuts register at load, so a changed key needs a restart.
 
 ## Tests
@@ -33,8 +72,12 @@ Notification regexes run in a Node VM context with an execution timeout. Only pa
 bun test ./tests ./extensions/__tests__
 ```
 
-Lifecycle, wake budgets, orphan identity (including a live probe of exec drift), resource-control planning and stop semantics, bounded snapshots, tool-result details, and the per-chunk write path and restore probe count (`tests/write-path.test.ts`) each have a suite under `tests/`. A change to a bound above ships with the control that overruns it. `tests/log-tail.test.ts` checks decoded character limits, UTF-8 byte bounds, short reads, independent caches and file changes. Held real file closes prove shared admission, stale-queue cancellation and clear/new-session overlap. Disposable controls remove admission, validity and close ordering, or reset active capacity on clear. `tests/dashboard.test.ts` checks non-blocking output reads, late reads after task selection changes, and command layout reuse across frames, expansion, width and theme changes. Both include controls against disposable production copies.
+`tests/component-benchmark.test.ts` drives the production dashboard and its extension-owned log reader with a restored log.
 
-`tests/component-benchmark.test.ts` drives the production dashboard and its extension-owned log reader with a restored log. It counts file reads, bytes and command wraps across repeated frames, then checks expansion, width, content, theme and task selection changes. Its 12,000-character tail requires at most 36,001 UTF-8 bytes. Each measured step includes asynchronous read completion and must fit within the dashboard's refresh interval. The terminal peer uses plain-text fixture rendering; the benchmark does not measure terminal drawing or interactive Pi. Ordinary package CI checks the branch and a cache-bypass control without requiring git history.
+- It counts file reads, bytes and command wraps across repeated frames, then checks expansion, width, content, theme and task selection changes.
+- Its 12,000-character tail requires at most 36,001 UTF-8 bytes.
+- Each measured step includes asynchronous read completion and must fit within the dashboard's refresh interval.
+- The terminal peer uses plain-text fixture rendering; the benchmark does not measure terminal drawing or interactive Pi.
+- Ordinary package CI checks the branch and a cache-bypass control without requiring git history.
 
 Set `PI_BG_BENCHMARK_BASE_REF` to the main commit under comparison when running the package suite to enable the main controls and print both measurements. Main code comes from a disposable copy of that tracked extension tree; fixture code stays on the branch. The same setting enables the pathological matcher control against main. An unreadable baseline fails the measurement instead of skipping it.

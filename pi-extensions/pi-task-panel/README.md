@@ -12,14 +12,17 @@ A task list above the Pi editor. The agent updates it through a tool, and you ca
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-task-panel`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-task-panel"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 
@@ -31,7 +34,12 @@ The saved lists sit in `kendex/sessions/<session>/pi-task-panel/` under the Pi u
 
 ## Memory use
 
-The visible panel keeps one rendered layout of at most 65,536 characters. It keeps sorted order for lists of at most 256 tasks. Larger lists sort when layout changes. A task change replaces these caches. Session shutdown removes the widget.
+The visible panel keeps one rendered layout of at most 65,536 characters.
+
+- It keeps sorted order for lists of at most 256 tasks.
+- Larger lists sort when layout changes.
+- A task change replaces these caches.
+- Session shutdown removes the widget.
 
 ## Setup
 

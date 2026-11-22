@@ -15,14 +15,19 @@ A Pi provider that uses a logged-in Claude Code account through the Claude Agent
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-claude-bridge`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-claude-bridge"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. A Claude Code login is required. Make `claude` available on `PATH` or set its executable path below.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
+- A Claude Code login is required.
+- Make `claude` available on `PATH` or set its executable path below.
 
 Fable 5.1 requires [Claude Code 2.1.255 or later](https://code.claude.com/docs/en/model-config#work-with-fable). This includes any executable chosen through `pathToClaudeCodeExecutable` or found on `PATH`, which takes precedence over the SDK's bundled CLI. Account access and usage-credit requirements still apply.
 
@@ -41,15 +46,30 @@ Fable 5.1 requires [Claude Code 2.1.255 or later](https://code.claude.com/docs/e
 
 ## Prompt context
 
-The bridge sends the nearest context file and Pi's skills list with the prompt. It checks `AGENTS.override.md`, `AGENTS.md` and `AGENTS.MD` while walking up from the working directory. With no context file found, it falls back to the one in the Pi agent directory (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), unless the loaded settings sources include `user`. Then Claude Code's own user `CLAUDE.md` and output style carry the global instructions. This rule follows the loaded sources, not the connectors switch. The nearest project context file and Pi skills still append when `appendSystemPrompt` is on. Claude Code loads its own CLAUDE.md files. Use the prompt settings above to forward other Pi extension instructions.
+The bridge sends the nearest context file and Pi's skills list with the prompt.
+
+- It checks `AGENTS.override.md`, `AGENTS.md` and `AGENTS.MD` while walking up from the working directory.
+- With no context file found, it falls back to the one in the Pi agent directory (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), unless the loaded settings sources include `user`. Then Claude Code's own user `CLAUDE.md` and output style carry the global instructions. This rule follows the loaded sources, not the connectors switch.
+- The nearest project context file and Pi skills still append when `appendSystemPrompt` is on.
+- Claude Code loads its own CLAUDE.md files.
+- Use the prompt settings in [Setup](#setup) to forward other Pi extension instructions.
 
 ## Connectors
 
 Connectors are disabled by default. Set `enableConnectors` in user settings, user `claude-bridge.json`, or the `CLAUDE_BRIDGE_ENABLE_CONNECTORS` environment variable. Project settings cannot enable them.
 
-Connector access is read-only unless `connectorWriteMode` is exactly `allow`. Set `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` only for a dedicated process running an approved write. Keep it out of persistent settings. Use `/pi-claude:connectors` to list the account's connectors.
+Connector access is read-only unless `connectorWriteMode` is exactly `allow`.
 
-With connectors enabled, Claude Code loads user settings by default. An explicit `provider.settingSources` list in `claude-bridge.json` wins verbatim with connectors on or off. For example, `{"provider":{"settingSources":["user"]}}` loads Claude user settings while connectors stay off and Pi's project context and skills still append. The Pi agent-directory fallback follows the loaded sources as described in [Prompt context](#prompt-context). Including project or local settings lets those files affect the subprocess.
+- Set `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` only for a dedicated process running an approved write.
+- Keep it out of persistent settings.
+- Use `/pi-claude:connectors` to list the account's connectors.
+
+With connectors enabled, Claude Code loads user settings by default.
+
+- An explicit `provider.settingSources` list in `claude-bridge.json` wins verbatim with connectors on or off.
+- For example, `{"provider":{"settingSources":["user"]}}` loads Claude user settings while connectors stay off and Pi's project context and skills still append.
+- The Pi agent-directory fallback follows the loaded sources as described in [Prompt context](#prompt-context).
+- Including project or local settings lets those files affect the subprocess.
 
 With connectors off, the bridge pins `ENABLE_CLAUDEAI_MCP_SERVERS` to `0` in both the child environment and command-line settings. User settings cannot turn it back on. Strict MCP config also stays on, even if `strictMcpConfig` is false, so only MCP servers declared by the bridge load.
 

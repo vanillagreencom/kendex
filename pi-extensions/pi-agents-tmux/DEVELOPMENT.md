@@ -1,6 +1,6 @@
 # pi-agents-tmux development
 
-For maintainers. What the package does for a consumer is [README.md](README.md); the calling rules an agent follows are `instructions.md`; the mechanics of each subsystem are doc comments on the functions named below. This file holds the vocabulary and the invariants that span modules.
+What the package does for a consumer is [README.md](README.md). The calling rules an agent follows are `instructions.md`. The rules on the lane badge, `delegate_subagent` and activity publishing are in [AGENTS.md](AGENTS.md). The mechanics of each subsystem are doc comments on the functions named below. This file holds the vocabulary and the invariants that span modules.
 
 ## Vocabulary
 
@@ -8,46 +8,109 @@ For maintainers. What the package does for a consumer is [README.md](README.md);
 - A **session** is one Pi runtime carrying an agent, with a `sessionId` and a JSONL transcript. A pane agent has one persistent session per pane; a background agent gets a fresh session per task unless the call names a `sessionKey` lane.
 - A **task** is one `subagent` invocation: a `taskId`, the prompt, a status from `extensions/subagent/types.ts::PaneTaskStatus`, a summary, a transcript path and usage (`extensions/subagent/types.ts::PaneTaskRecord`). It is what the person observes; prefer these names over "run" or "invocation" in code and UI.
 - A record's `sessionMode` is `fresh`, `resumed` or `new` (`types.ts::SessionMode`); a pane's runtime-only `paneSessionMode` is `live`, `resumed` or `new`, and both `live` and `resumed` normalise to `resumed`.
-- The dashboard's `bg` or `pane` lane badge renders from `SingleResult.kind`, stamped at dispatch from the lane the task ran in, never from `taskId`, which records only whether a task was queued and is absent on a pane dispatch refused before queueing. A dispatch declined before anything ran also sets `refused: true` so the row reads `refused`, not `failed`, and shows no usage.
 
 ## Invariants
 
-- `extensions/subagent/settings.ts::resolveAgentModel` refreshes the local registry without network access and sends child intent and authenticated registry facts to core at the effective child working directory. An absent agent model or parent model source sends `inherit`; the parent selector stays in the context's default path. The selected raw model still owns effort-suffix precedence. `extensions/subagent/runner.ts` and `extensions/subagent/pane.ts` consume the core-selected selector without an effort suffix or the native-default action. They pass effort through `--thinking`. `extensions/subagent/agents-command.ts` supplies the same registry to both command dispatch paths. `tests/model-resolution.test.ts` holds transport, configuration precedence, warning lifetime and missing-core behavior. `tests/model-child-paths.test.ts` reaches both child argument builders and proves their bypass controls with named assertion failures. The warning receipt resets on session shutdown.
-
-- `pane.ts::defaultExecCapture` starts fixed probes, the resolver's latest bridge path, or the current runtime executable used by capture fixtures. Bash runs only the fixed bridge lookup, at a separate spawn call from bridge arguments. Shell execution stays disabled. `tests/pane-exec.test.ts` checks refusal before spawn and accepts bridge paths with spaces and shell-like argument values.
-- `child-budget.ts::withChildBudget` owns admission across dispatch modes in one extension runtime. A pane dispatch holds a slot only through launch and enqueue. Nested command captures take its cancellation signal. `tests/child-budget.test.ts` drives concurrent dispatches and cancels queued work before spawn. `tests/pane-exec.test.ts` checks real stalled-process cleanup, and `tests/child-inbox.test.ts` checks post-claim registry failure recovery. `tests/spawn.bench.ts` (`npm run bench:spawn`, outside `npm test`) and `tests/dispatch-benchmark.test.ts` compare retained components with the immutable pre-change baseline selected by `tests/browser-fixture.ts::BENCHMARK_BASELINE`, extracted from git objects into test scratch. Both log elapsed time and peak children. The dispatch benchmark runs five concurrent calls with real finite faux-bridge children and proves its cap assertion with a disposable dispatch edit.
-- `subagent-render.ts::renderResult` marks streamed rows in Pi's renderer state. Their partial results and collapsed completion stay empty; the static call preview remains. Expanded completion and restored final results render the final data. Even a first partial can arrive after a later row, so keeping its snapshot would still rewrite history. `tests/subagent-render.test.ts` holds the unchanged-lines rule after a later component is appended. Live activity and usage remain owned by the existing dashboard.
+- `extensions/subagent/settings.ts::resolveAgentModel` refreshes the local registry without network access and sends child intent and authenticated registry facts to core at the effective child working directory.
+  - An absent agent model or parent model source sends `inherit`; the parent selector stays in the context's default path.
+  - The selected raw model still owns effort-suffix precedence.
+  - `extensions/subagent/runner.ts` and `extensions/subagent/pane.ts` consume the core-selected selector without an effort suffix or the native-default action. They pass effort through `--thinking`.
+  - `extensions/subagent/agents-command.ts` supplies the same registry to both command dispatch paths.
+  - The warning receipt resets on session shutdown.
+  - `tests/model-resolution.test.ts` holds transport, configuration precedence, warning lifetime and missing-core behavior. `tests/model-child-paths.test.ts` reaches both child argument builders and proves their bypass controls with named assertion failures.
+- `pane.ts::defaultExecCapture` starts fixed probes, the resolver's latest bridge path, or the current runtime executable used by capture fixtures.
+  - Bash runs only the fixed bridge lookup, at a separate spawn call from bridge arguments.
+  - Shell execution stays disabled.
+  - `tests/pane-exec.test.ts` checks refusal before spawn and accepts bridge paths with spaces and shell-like argument values.
+- `child-budget.ts::withChildBudget` owns admission across dispatch modes in one extension runtime.
+  - A pane dispatch holds a slot only through launch and enqueue.
+  - Nested command captures take its cancellation signal.
+  - `tests/child-budget.test.ts` drives concurrent dispatches and cancels queued work before spawn. `tests/pane-exec.test.ts` checks real stalled-process cleanup, and `tests/child-inbox.test.ts` checks post-claim registry failure recovery.
+  - `tests/spawn.bench.ts` (`npm run bench:spawn`, outside `npm test`) and `tests/dispatch-benchmark.test.ts` compare retained components with the immutable pre-change baseline selected by `tests/browser-fixture.ts::BENCHMARK_BASELINE`, extracted from git objects into test scratch. Both log elapsed time and peak children. The dispatch benchmark runs five concurrent calls with real finite faux-bridge children and proves its cap assertion with a disposable dispatch edit.
+- `subagent-render.ts::renderResult` marks streamed rows in Pi's renderer state.
+  - Their partial results and collapsed completion stay empty; the static call preview remains.
+  - Expanded completion and restored final results render the final data.
+  - Even a first partial can arrive after a later row, so keeping its snapshot would still rewrite history. `tests/subagent-render.test.ts` holds the unchanged-lines rule after a later component is appended.
+  - Live activity and usage remain owned by the existing dashboard.
 - `transcript-tail.ts` folds the child's recorded timestamp into its bounded activity snapshot. Dashboard polls never advance that time themselves. Argument previews use `format.ts::formatToolCall`; `tests/dashboard-widget.test.ts` holds operation and time visibility before usage at terminal width 100.
-
-- Child identity and pane ownership are separate environment markers. `PI_SUBAGENT_CHILD_AGENT` is exported for pane children and background one-shot children alike and authorises `delegate_subagent`; `PI_SUBAGENT_CHILD_PANE=1` is exported only by the persistent pane launcher and is the only marker that lets session-start code set the pane title or poll the pane inbox. The background runner deletes inherited `PI_SUBAGENT_CHILD_PANE`, `PI_SUBAGENT_PARENT_SESSION_ID` and `PI_BRIDGE_*` because it runs inside the parent's process tree.
-- `delegate_subagent` stays narrow: single mode, background targets only, the allowlist read from the caller agent's `allowed-subagents:` frontmatter (`agents.ts::AgentConfig.allowedSubagents`), no `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn` or `resumeSession` in its schema (`extensions/subagent/tools.ts::DelegateSubagentParams`). Growing the schema or short-circuiting the allowlist defeats the dev-agent-without-orchestration design; `tests/allowed-subagents.test.ts` and `tests/delegate-subagent-runtime.test.ts` hold it.
-- Child spawning resolves the Pi entry through `extensions/subagent/pane.ts::getPiInvocation`, which self-re-invokes `argv[1]` only when the nearest `package.json` proves it is Pi, and every spawned child carries `PI_SUBAGENT_DEPTH`; `pane.ts::assertSubagentSpawnDepth` refuses a spawn past the depth cap so a mis-resolved entry dies loudly instead of fork-bombing. `PI_SUBAGENT_ENTRY` pins the entry for direct-import callers; `tests/pi-invocation.test.ts` holds the resolution rules.
+- Child identity and pane ownership are separate environment markers.
+  - `PI_SUBAGENT_CHILD_AGENT` is exported for pane children and background one-shot children alike and authorises `delegate_subagent`.
+  - `PI_SUBAGENT_CHILD_PANE=1` is exported only by the persistent pane launcher and is the only marker that lets session-start code set the pane title or poll the pane inbox.
+  - The background runner deletes inherited `PI_SUBAGENT_CHILD_PANE`, `PI_SUBAGENT_PARENT_SESSION_ID` and `PI_BRIDGE_*` because it runs inside the parent's process tree.
+- `delegate_subagent` has no `tasks`, `chain`, `agentScope`, `sessionKey`, `forceSpawn` or `resumeSession` in its schema (`extensions/subagent/tools.ts::DelegateSubagentParams`); the allowlist is `agents.ts::AgentConfig.allowedSubagents`. `tests/allowed-subagents.test.ts` and `tests/delegate-subagent-runtime.test.ts` hold it.
+- Child spawning resolves the Pi entry through `extensions/subagent/pane.ts::getPiInvocation`, which self-re-invokes `argv[1]` only when the nearest `package.json` proves it is Pi.
+  - Every spawned child carries `PI_SUBAGENT_DEPTH`; `pane.ts::assertSubagentSpawnDepth` refuses a spawn past the depth cap so a mis-resolved entry dies loudly instead of fork-bombing.
+  - `PI_SUBAGENT_ENTRY` pins the entry for direct-import callers.
+  - `tests/pi-invocation.test.ts` holds the resolution rules.
 - Background one-shot children complete through their final assistant output. `complete_subagent` is filtered out of their inherited tools, and only pane and follow-up tasks instruct a child to call it.
-- `outcomes.ts::taskStatus` owns the exhaustive task lifecycle and presentation contract. `singleResultStatus` adapts child results into it. A `needs_completion` turn is finished but remains recoverable; an irreversible terminal record rejects missing-completion updates. Persistence, watchdogs, dispatch, activity and renderers consume this owner without importing the persistence layer. `tests/task-status.test.ts`, `tests/dispatch-outcomes.test.ts` and both watchdog suites hold these distinctions.
-- `sessions.ts::guardReusedSessionBudget` owns the saved-session estimate and threshold. The status reader exposes that same guard result. Background checks select the agent profile and model through the parent directory, as dispatch does, and read budget settings from the requested child directory. Pane task checks use the pane registry directory and model. Ordinary background reuse above the threshold hands the new task and prior final result to a fresh session without changing the prior file. An exact-session request refuses. `tests/context-handoff.test.ts` and `tests/context-status.test.ts` hold both the runtime handoff and the figure the parent reads.
-- Dispatch reports each explicit session key in model-facing metadata outside answer truncation, including earlier handoffs before a chain stops. Internal one-shot keys stay out of that metadata because they do not enter the reuse guard. Structured details retain the actual key. `tests/context-handoff.test.ts` holds all dispatch modes and early stops.
-- The one-shot attempt owns temporary system and user prompt files through child exit and finally cleanup. Pi's JSON CLI reads the user prompt through its documented `@absolute-file` input so a handoff keeps the caller task and prior final result outside process argument limits. The system prompt remains separate. `tests/context-handoff.test.ts` holds transport and cleanup.
+- `outcomes.ts::taskStatus` owns the exhaustive task lifecycle and presentation contract.
+  - `singleResultStatus` adapts child results into it.
+  - A `needs_completion` turn is finished but remains recoverable; an irreversible terminal record rejects missing-completion updates.
+  - Persistence, watchdogs, dispatch, activity and renderers consume this owner without importing the persistence layer.
+  - `tests/task-status.test.ts`, `tests/dispatch-outcomes.test.ts` and both watchdog suites hold these distinctions.
+- `sessions.ts::guardReusedSessionBudget` owns the saved-session estimate and threshold.
+  - The status reader exposes that same guard result.
+  - Background checks select the agent profile and model through the parent directory, as dispatch does, and read budget settings from the requested child directory.
+  - Pane task checks use the pane registry directory and model.
+  - Ordinary background reuse above the threshold hands the new task and prior final result to a fresh session without changing the prior file. An exact-session request refuses.
+  - `tests/context-handoff.test.ts` and `tests/context-status.test.ts` hold both the runtime handoff and the figure the parent reads.
+- Dispatch reports each explicit session key in model-facing metadata outside answer truncation, including earlier handoffs before a chain stops.
+  - Internal one-shot keys stay out of that metadata because they do not enter the reuse guard.
+  - Structured details retain the actual key.
+  - `tests/context-handoff.test.ts` holds all dispatch modes and early stops.
+- The one-shot attempt owns temporary system and user prompt files through child exit and finally cleanup.
+  - Pi's JSON CLI reads the user prompt through its documented `@absolute-file` input so a handoff keeps the caller task and prior final result outside process argument limits.
+  - The system prompt remains separate.
+  - `tests/context-handoff.test.ts` holds transport and cleanup.
 - Returned output is artifact-first: `resultMaxBytes` and `resultMaxLines` are base budgets that parallel dispatch divides across returned agents with per-agent floors, and `preserveFullOutput` writes the rest under the session runtime. Tool results are replayed into later model requests, so this path stays compact.
 - Failed-result preparation selects diagnostics before partial assistant output. The selected text enters the same truncation and artifact writer as completed output; failures keep the diagnostic tail, and completed results keep the answer head. `tests/dispatch-output.test.ts` holds selection and saved output.
-- Registry writes go through `extensions/subagent/file-lock.ts::withCrossProcessFileLock`, and the default lock timeout stays longer than the stale-lock window so a killed process's lock is reaped before callers give up. Dashboard and Monitor refreshes that meet contention keep the last record and retry on the next poll; completion collection persists the terminal record before it archives the outbox, and leaves the outbox as the retry source when persistence fails.
-- Task updates, completion polling and the dashboard share `extensions/subagent/task-records.ts::taskRegistryReader`. The reader keeps one runtime's frozen registry and its JSON text. An update checks the file version inside the writer lock and parses a mutable copy from that text. Successful local replacements publish the written JSON before releasing the lock. The returned records remain mutable and cannot change the reader's snapshot. `tests/task-registry.test.ts` holds sequential usage-write and unchanged-poll reads, external replacement visibility and mutation isolation; `tests/task-records.test.ts` holds cache eviction and release.
-- Session-state snapshots are bounded (`extensions/subagent/session-persistence.ts::appendBoundedSnapshot`, `BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES`): an unchanged fingerprint is skipped and an oversized payload becomes a small manifest, while the sidecar registries under `paths.ts::taskRegistryPath` and `paths.ts::registryPath` stay canonical and are read first on restore. Registries mirror into session custom entries only when the session file's on-disk leaf still matches the in-memory leaf, so an orphaned Pi process cannot advance an older branch.
-- Activity broker publication (`extensions/subagent/activity.ts`) is fail-open: a publish error never affects dispatch, steering, completion or result retrieval. `activity.ts::buildSubagentActivity` takes the normalized task outcome as authoritative over the completion bus envelope. Its null outcome suppresses failure publication for an intended stop. Pre-dispatch refusal emits no lifecycle event. `extensions/subagent/__tests__/activity.test.ts` drives real parent cancellation through a capture broker.
-- No module in the static import closure of `index.ts` through `rate-limit-watchdog.ts`, `rate-limit-decision.ts`, `rate-limit-reset.ts` and `rate-limit-quota-normalize.ts` may take a `node:*` import; Pi's binary TS loader resolves transpiled modules through `data:` URLs and a large module with such imports trips `NameTooLong`. The provider fetch in `rate-limit-quota.ts` stays behind a dynamic import for that reason. The constraint is stated on each module and not enforced by a check.
+- Registry writes go through `extensions/subagent/file-lock.ts::withCrossProcessFileLock`.
+  - The default lock timeout stays longer than the stale-lock window so a killed process's lock is reaped before callers give up.
+  - Dashboard and Monitor refreshes that meet contention keep the last record and retry on the next poll.
+  - Completion collection persists the terminal record before it archives the outbox, and leaves the outbox as the retry source when persistence fails.
+- Task updates, completion polling and the dashboard share `extensions/subagent/task-records.ts::taskRegistryReader`.
+  - The reader keeps one runtime's frozen registry and its JSON text.
+  - An update checks the file version inside the writer lock and parses a mutable copy from that text.
+  - Successful local replacements publish the written JSON before releasing the lock.
+  - The returned records remain mutable and cannot change the reader's snapshot.
+  - `tests/task-registry.test.ts` holds sequential usage-write and unchanged-poll reads, external replacement visibility and mutation isolation; `tests/task-records.test.ts` holds cache eviction and release.
+- Session-state snapshots are bounded (`extensions/subagent/session-persistence.ts::appendBoundedSnapshot`, `BOUNDED_SNAPSHOT_DEFAULT_MAX_BYTES`).
+  - An unchanged fingerprint is skipped and an oversized payload becomes a small manifest.
+  - The sidecar registries under `paths.ts::taskRegistryPath` and `paths.ts::registryPath` stay canonical and are read first on restore.
+  - Registries mirror into session custom entries only when the session file's on-disk leaf still matches the in-memory leaf, so an orphaned Pi process cannot advance an older branch.
+- Activity broker publication is `extensions/subagent/activity.ts`.
+  - `activity.ts::buildSubagentActivity` takes the normalized task outcome as authoritative over the completion bus envelope. Its null outcome suppresses failure publication for an intended stop.
+  - Pre-dispatch refusal emits no lifecycle event.
+  - `extensions/subagent/__tests__/activity.test.ts` drives real parent cancellation through a capture broker.
+- No module in the static import closure of `index.ts` through `rate-limit-watchdog.ts`, `rate-limit-decision.ts`, `rate-limit-reset.ts` and `rate-limit-quota-normalize.ts` may take a `node:*` import.
+  - Pi's binary TS loader resolves transpiled modules through `data:` URLs, and a large module with such imports trips `NameTooLong`.
+  - The provider fetch in `rate-limit-quota.ts` stays behind a dynamic import for that reason.
+  - The constraint is stated on each module and not enforced by a check.
 - `cwdSnapshot` reads for `needs_completion` records write nothing: every git call runs with optional locks off, fsmonitor and untracked cache disabled, and `GIT_CONFIG_GLOBAL=/dev/null`. A repository-local clean filter is reached, which is accepted because `.git/config` is never cloned; an LFS repository can read dirty where the worker's own status reads clean, which is the safe direction. `tests/cwd-snapshot-dirty-status.test.ts` holds it.
-- Pane support tools are registered from `index.ts` through explicit dependency injection into `extensions/subagent/pane-support-tools.ts::registerPaneSupportTools`; steer-path helpers such as `pane.ts::ensurePaneBridgeMetadata` are passed in, never imported by that module, which keeps it out of the pane and task import graph.
-- Completed records keep their durable summary in `PaneTaskRecord.summary`; the dashboard, Monitor and `get_subagent_result` reads that field and shows `format.ts::COMPLETION_SUMMARY_UNAVAILABLE` rather than echoing the prompt when it is empty.
+- Pane support tools are registered from `index.ts` through explicit dependency injection into `extensions/subagent/pane-support-tools.ts::registerPaneSupportTools`. Steer-path helpers such as `pane.ts::ensurePaneBridgeMetadata` are passed in, never imported by that module, which keeps it out of the pane and task import graph.
+- Completed records keep their durable summary in `PaneTaskRecord.summary`. The dashboard, Monitor and `get_subagent_result` read that field and show `format.ts::COMPLETION_SUMMARY_UNAVAILABLE` rather than echoing the prompt when it is empty.
 
 ## Lifecycle edges
 
-- Pane title commands serialize one active command and one latest pending update. Each update captures its target environment before enqueue. `tests/own-tmux-server.test.ts` covers an environment switch while a title command is active and includes a dropped-update control.
-
-- Each dispatch probes tmux once before any launch (`extensions/subagent/dispatch.ts::resolvePaneLane`, `pane.ts::probeTmux`). Where `$TMUX` is unset or its server does not answer, every `pane: true` agent in that dispatch runs through the one-shot runner as any bg agent does, on a fresh session unless the call names a `sessionKey` lane, with the same background deadline. The tool result carries one `pane-fallback reason=no-tmux` notice; `paneOnly` skips the probe, which leaves the refusal to the pane launch's own tmux check. `pane.ts::retireSubagent` lets `stop_subagent` succeed for an agent whose latest task ran that way. `tests/pane-fallback.test.ts` holds both.
+- Each dispatch probes tmux once before any launch (`extensions/subagent/dispatch.ts::resolvePaneLane`, `pane.ts::probeTmux`).
+  - Where `$TMUX` is unset or its server does not answer, every `pane: true` agent in that dispatch runs through the one-shot runner as any bg agent does, on a fresh session unless the call names a `sessionKey` lane, with the same background deadline.
+  - The tool result carries one `pane-fallback reason=no-tmux` notice.
+  - `paneOnly` skips the probe, which leaves the refusal to the pane launch's own tmux check.
+  - `pane.ts::retireSubagent` lets `stop_subagent` succeed for an agent whose latest task ran that way.
+  - `tests/pane-fallback.test.ts` holds both.
 - Live pane reuse on Linux runs a cwd preflight against `/proc/<pid>/cwd` and refuses with `pane-cwd-stale` when the directory is gone or differs from the task's `cwd`; no task record is written because nothing was queued.
-- Provider-overflow retry policy is in [instructions.md](instructions.md). Only error envelopes and stderr are trusted, never tool output that mentions overflow wording. A `session_compact` followed by an empty `agent_end` on the post-compact slice is classified `compact-then-empty` and reported `needs_completion`; the two paths are mutually exclusive, retry first.
-- Pi's `agent_settled` event is the lifecycle boundary for background children and for the missing-completion watchdog (`extensions/subagent/agent-end-watchdog.ts::createAgentEndWatchdog`, `settled-handler.ts`), because unlike `agent_end` it waits out retries, compaction retries and queued continuations. The watchdog writes a synthetic `needs_completion` outbox with `O_EXCL` after `KENDEX_AGENT_END_WATCHDOG_GRACE_SEC` so a real `complete_subagent` always wins; `KENDEX_AGENT_END_WATCHDOG=0` disables it.
-- A settled background child gets a short grace for print-mode shutdown; activity in that window cancels the shutdown and restores the original timeout deadline, and once `SIGTERM` is delivered the shutdown is irreversible. `tests/settled-handler.test.ts` and the runner cases in `tests/session-lanes.test.ts` enumerate the orderings.
-- The rate-limit watchdog classifies only assistant messages with `stopReason: "error"`; the retry schedule prefers a structured quota snapshot, then an SDK reset field, then prose parsing, then a plain backoff ladder, and records which source it used on the activity payload.
+- Provider-overflow retry policy is in [instructions.md](instructions.md).
+  - Only error envelopes and stderr are trusted, never tool output that mentions overflow wording.
+  - A `session_compact` followed by an empty `agent_end` on the post-compact slice is classified `compact-then-empty` and reported `needs_completion`.
+  - The two paths are mutually exclusive, retry first.
+- Pi's `agent_settled` event is the lifecycle boundary for background children and for the missing-completion watchdog (`extensions/subagent/agent-end-watchdog.ts::createAgentEndWatchdog`, `settled-handler.ts`), because unlike `agent_end` it waits out retries, compaction retries and queued continuations.
+  - The watchdog writes a synthetic `needs_completion` outbox with `O_EXCL` after `KENDEX_AGENT_END_WATCHDOG_GRACE_SEC` so a real `complete_subagent` always wins.
+  - `KENDEX_AGENT_END_WATCHDOG=0` disables it.
+- A settled background child gets a short grace for print-mode shutdown.
+  - Activity in that window cancels the shutdown and restores the original timeout deadline.
+  - Once `SIGTERM` is delivered the shutdown is irreversible.
+  - `tests/settled-handler.test.ts` and the runner cases in `tests/session-lanes.test.ts` enumerate the orderings.
+- The rate-limit watchdog classifies only assistant messages with `stopReason: "error"`. The retry schedule prefers a structured quota snapshot, then an SDK reset field, then prose parsing, then a plain backoff ladder, and records which source it used on the activity payload.
 - One-shot transcripts drop successful `message_update` events and rebuild a partial assistant message from accumulated deltas only when the process fails after an unfinalised update (`extensions/subagent/__tests__/partial-assistant-message.test.ts`). `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` in the parent environment keeps the whole stream.
 
 ## Tests
@@ -56,6 +119,6 @@ For maintainers. What the package does for a consumer is [README.md](README.md);
 bun test ./tests ./extensions/subagent/__tests__
 ```
 
-The suite needs the `tmux` binary: `tests/preload.ts` drops the launching shell's `TMUX` and `TMUX_PANE`, starts a tmux server of its own for the run and points both variables at it, so no case and no spawned child reaches the server the suite was launched from; `tests/own-tmux-server.test.ts` holds it.
+The suite needs the `tmux` binary. `tests/preload.ts` drops the launching shell's `TMUX` and `TMUX_PANE`, starts a tmux server of its own for the run and points both variables at it, so no case and no spawned child reaches the server the suite was launched from; `tests/own-tmux-server.test.ts` holds it.
 
-`tests/settings-manifest.test.ts` holds the settings defaults in `package.json` to the runtime defaults the code applies. A behaviour that depends on process orderings (timeouts, settled shutdown, lock contention) gets a test that drives the orderings explicitly rather than a sleep.
+`tests/settings-manifest.test.ts` holds the settings defaults in `package.json` to the runtime defaults the code applies.

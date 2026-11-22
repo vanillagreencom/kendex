@@ -16,14 +16,17 @@ Tool and message displays for Pi. It provides compact output, optional file diff
 Requires Pi 1.0.1 or later. Update older Pi installations before installing this package.
 
 - npm: `pi install npm:@vanillagreen/pi-tool-renderer`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-tool-renderer"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 

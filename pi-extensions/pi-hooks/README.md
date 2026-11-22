@@ -17,14 +17,18 @@ A Pi extension that runs hooks installed by kendex. It checks tool calls, hands 
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-hooks`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-hooks"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Install the hooks separately with kendex, for example `kendex add --hook block-bare-cd --hook block-repo-copy --hook pre-commit-check`.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
+- Install the hooks separately with kendex, for example `kendex add --hook block-bare-cd --hook block-repo-copy --hook pre-commit-check`.
 
 ## How it works
 
@@ -39,11 +43,18 @@ The other hook events cannot stop anything in Pi, so the extension delivers what
 | Hook event | Pi listener | What happens with the hook's output |
 | --- | --- | --- |
 | `PostToolUse` | `tool_result` | Appended to the tool result the agent reads. |
-| `Stop`, `TaskCompleted` | `turn_end`, read once per response on `agent_before_settle` | Added to the session, and Pi runs one more model request inside the same run so the agent answers it. At the end of that request the hooks run again with `stop_hook_active: true`, and what they say then is recorded without another request, so a response runs them at most twice. |
+| `Stop` | `agent_before_settle` | Added to the session. |
+| `TaskCompleted` | `agent_before_settle` | Added to the session. |
 | `SessionStart` | `session_start` | Added to the session's opening context. |
-| `StopFailure` | `agent_before_settle`, read only when Pi says the run ended on an error, after the `Stop` and `TaskCompleted` hooks, which still run | Shown to you. The agent does not read it. |
-| `SessionEnd` | `session_shutdown`, which Pi waits for before the session ends | Shown to you. The agent does not read it. |
+| `StopFailure` | `agent_before_settle` | Shown to you. |
+| `SessionEnd` | `session_shutdown` | Shown to you. |
 
+- After `Stop` and `TaskCompleted` output is added, Pi runs one more model request so the agent answers it.
+- `Stop` and `TaskCompleted` hooks are read from the registry's `turn_end` entry, once per response.
+- Pi runs that one more model request inside the same run. At the end of that request the hooks run again with `stop_hook_active: true`, and what they say then is recorded without another request, so a response runs them at most twice.
+- `StopFailure` hooks are read only when Pi says the run ended on an error, after the `Stop` and `TaskCompleted` hooks, which still run.
+- Pi waits for the `SessionEnd` hooks before the session ends.
+- The agent does not read what `StopFailure` and `SessionEnd` hooks say.
 - Every hook whose matcher fits runs on those events.
 - On `PostToolUse`, `Stop`, `TaskCompleted` and `SessionStart`, a hook that exits `2` hands the agent what it wrote to its error output, and one that exits `0` hands over what it wrote to its normal output. Any other exit status is reported to the agent as a hook that reached no verdict; a hook that ran out of time, or whose script is missing, is reported as one that did not run.
 - On `StopFailure` and `SessionEnd`, the same words and reports go to you instead: as a notification, or on Pi's error output where no notification can be shown, which is a session without a UI and the end of a session you quit.

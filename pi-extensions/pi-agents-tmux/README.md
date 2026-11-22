@@ -14,47 +14,100 @@ A Pi extension for assigning work to other agents. You can follow each agent in 
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-agents-tmux`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-agents-tmux"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation. Persistent agent panes require tmux; where no tmux server answers, a pane agent runs in the background instead.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
+- Persistent agent panes require tmux; where no tmux server answers, a pane agent runs in the background instead.
+- Waiting for a pane agent to go idle needs `@vanillagreen/pi-session-bridge` installed.
+- Without it, steering a pane agent queues a note the agent reads when idle.
 
 ## How it works
 
 The parent Pi session selects an agent file and sends it a task. The extension starts a separate Pi process with that agent's instructions. Agents configured for panes appear in tmux; other agents run in the background. The child returns its result to the parent. The dashboard shows the task state and saved transcript.
 
-Streamed tool rows keep only the static call preview in the transcript. Follow live progress in the existing Agents panel, which shows each working child's operation and last recorded progress time in UTC. The time changes only when a child writes another transcript record, not when the panel refreshes. After completion, press Ctrl+O to expand the row and read its final result. A restored session shows saved final results.
+Streamed tool rows keep only the static call preview in the transcript.
+
+- Follow live progress in the existing Agents panel, which shows each working child's operation and last recorded progress time in UTC.
+- The time changes only when a child writes another transcript record, not when the panel refreshes.
+- After completion, press Ctrl+O to expand the row and read its final result.
+- A restored session shows saved final results.
 
 ## Memory and disk use
 
-- All dispatch modes share `maxConcurrency`. At most 256 tasks wait for a slot. Cancellation removes queued work before it launches. Session shutdown cancels and drains queued or active dispatch actions and owned commands, and it stops the persistent pane inbox poller before any drain waits. Persistent pane agents can continue after their dispatch action returns. Command capture keeps the last 1,048,576 UTF-16 code units per output stream, with additional failure and signal diagnostics in stderr. Pane title updates keep one active command and the latest pending title.
+- All dispatch modes share `maxConcurrency`.
+  - At most 256 tasks wait for a slot.
+  - Cancellation removes queued work before it launches.
+  - Session shutdown cancels and drains queued or active dispatch actions and owned commands, and it stops the persistent pane inbox poller before any drain waits.
+  - Persistent pane agents can continue after their dispatch action returns.
+  - Command capture keeps the last 1,048,576 UTF-16 code units per output stream, with additional failure and signal diagnostics in stderr.
+  - Pane title updates keep one active command and the latest pending title.
 
 - The Agents popup retains the current prompt display and the 16 most recently viewed task traces. Closing it releases them. Saving a managed agent allows up to 120 seconds for refresh; Pi remains responsive during the wait.
 - Agent lists are retained for at most 8 project and user-source combinations in one Pi process. Changes are checked every 250 ms and appear in the next tool-call preview after detection.
 
 - Task information is retained for only the most recently used runtime and released when the session ends. Changes made outside that runtime appear on the next poll or task update.
 
-- A one-shot result keeps its last 20 assistant messages, and the newest earlier one with text when those 20 carry only tool calls, so the final answer is kept. Each keeps only its text and tool-call parts. Tool-call arguments are cut to the tool-details bound: 8,192 characters per string, 50 array items, 80 object fields and a nesting depth of 4. The expanded view says how many earlier messages it does not show. The result also keeps the last 65,536 characters of the child's stderr.
+- A one-shot result keeps its last 20 assistant messages, and the newest earlier one with text when those 20 carry only tool calls, so the final answer is kept.
+  - Each keeps only its text and tool-call parts.
+  - Tool-call arguments are cut to the tool-details bound: 8,192 characters per string, 50 array items, 80 object fields and a nesting depth of 4.
+  - The expanded view says how many earlier messages it does not show.
+  - The result also keeps the last 65,536 characters of the child's stderr.
 - Context handoff and background status reads inspect at most the last 2 MiB of the saved session for the prior final result. A normal or compact dashboard shows at most 512 characters of an unsuccessful task's reason.
 - Transcripts omit per-token updates unless `PI_AGENTS_TMUX_TRANSCRIPT_FULL=1` is set. Each event is saved once. Transcript collection pauses if more than 8 MiB waits to be saved, then resumes when saving catches up.
 - The dashboard retains one activity line of at most 180 characters per transcript, including its last-progress time. It keeps no argument history.
-- Transcripts live in `~/.pi/agent/kendex/sessions/<session>/pi-agents-tmux/transcripts/`, and full outputs too long for a tool result in `.../pi-agents-tmux/outputs/`. Each directory is deleted once the session's working directory is gone (a merged worktree), and any file in it older than 5 days is deleted. Pi applies both rules when a session starts. Pi applies them only to a directory that holds the ownership record this package writes from 3.2.0 on. A transcript directory an earlier version wrote gets that record when its session next starts; until then Pi deletes nothing in it.
+- Transcripts live in `~/.pi/agent/kendex/sessions/<session>/pi-agents-tmux/transcripts/`, and full outputs too long for a tool result in `.../pi-agents-tmux/outputs/`.
+  - Each directory is deleted once the session's working directory is gone (a merged worktree), and any file in it older than 5 days is deleted.
+  - Pi applies both rules when a session starts.
+  - Pi applies them only to a directory that holds the ownership record this package writes from 3.2.0 on.
+  - A transcript directory an earlier version wrote gets that record when its session next starts; until then Pi deletes nothing in it.
 
 ## Agent files
 
-The `model` field accepts a class, `inherit`, a provider-qualified family such as `anthropic/sonnet`, or an exact Pi model id. An exact id can contain `/` after the provider, as in `openrouter/anthropic/claude-sonnet-4`. Unknown model access or capacity keeps the native parent or child default and prints one warning per extension session. kendex must be on Pi's PATH for class and family resolution. With kendex absent, only inherit and one uniquely authenticated exact registry match can start. Other requests refuse before child startup.
+The `model` field accepts a class, `inherit`, a provider-qualified family such as `anthropic/sonnet`, or an exact Pi model id.
 
-The `subagent` tool accepts an optional `model` on a single call. It replaces the agent file's model for that call and uses the same grammar, including `light:medium`. An unresolvable call model falls back to the agent file's model and prints one warning per extension session. `subagentModelSource` set to `parent` keeps parent precedence. A reused live pane keeps its current model. Stop the pane, then use `forceSpawn` to start fresh with the call model. Omitting `model` keeps the agent file and settings behavior.
+- An exact id can contain `/` after the provider, as in `openrouter/anthropic/claude-sonnet-4`.
+- Unknown model access or capacity keeps the native parent or child default and prints one warning per extension session.
+- kendex must be on Pi's PATH for class and family resolution.
+- With kendex absent, only inherit and one uniquely authenticated exact registry match can start; other requests refuse before child startup.
+
+The `subagent` tool accepts an optional `model` on a single call.
+
+- It replaces the agent file's model for that call and uses the same grammar, including `light:medium`.
+- An unresolvable call model falls back to the agent file's model and prints one warning per extension session.
+- `subagentModelSource` set to `parent` keeps parent precedence.
+- A reused live pane keeps its current model. To start fresh with the call model:
+  1. Stop the pane.
+  2. Use `forceSpawn`.
+- Omitting `model` keeps the agent file and settings behavior.
 
 An absent agent model or `subagentModelSource` set to `parent` requests inheritance. The parent model remains in runtime context. `/agents:start` and `/agents:send` use the same authenticated registry as tool dispatch.
 
-An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (with an optional `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the selected raw model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`. Core-selected model ids have no effort suffix. The child receives their effort through `--thinking`. Everything after the frontmatter is the agent's system prompt. When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
+An agent is a markdown file whose YAML frontmatter holds `name` and `description`, and optionally `model` (with an optional `:effort` suffix), `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; passed to the child as `--thinking` when the selected raw model carries no suffix; `off` passes nothing, so the child runs at Pi's default level), `deny-tools`, `pane`, `color` and `allowed-subagents`.
 
-kendex resolves delegation targets from the catalog's role policy. Without a policy declaration or per-agent replacement, engineers get `allowed-subagents: scout` only when scout is enabled for Pi in the same scope. Otherwise engineers get no delegation targets. Other roles get no default delegation targets. Set per-agent overrides under `[agent-frontmatter.pi.<agent>]` in `kendex.toml`. An explicit `allowed-subagents = []` turns delegation off. `role-deny-tools` replaces role tool restrictions, including with an empty list; `deny-tools` adds restrictions. Forks and source detachment carry declared policy into these manifest settings. Pi reads the resulting `deny-tools` and `allowed-subagents` in the installed agent file. The kendex repository's `docs/authoring/README.md` § Agent permissions documents these overrides and transfers.
+- Core-selected model ids have no effort suffix.
+- The child receives their effort through `--thinking`.
+- Everything after the frontmatter is the agent's system prompt.
+- When the same name exists in several sources, project Pi wins over project Claude over user Pi over user Claude.
+
+kendex resolves delegation targets from the catalog's role policy.
+
+- Without a policy declaration or per-agent replacement, engineers get `allowed-subagents: scout` only when scout is enabled for Pi in the same scope. Otherwise engineers get no delegation targets.
+- Other roles get no default delegation targets.
+- Set per-agent overrides under `[agent-frontmatter.pi.<agent>]` in `kendex.toml`.
+- An explicit `allowed-subagents = []` turns delegation off.
+- `role-deny-tools` replaces role tool restrictions, including with an empty list.
+- `deny-tools` adds restrictions.
+- Forks and source detachment carry declared policy into these manifest settings.
+- Pi reads the resulting `deny-tools` and `allowed-subagents` in the installed agent file.
+- The kendex repository's `docs/authoring/README.md` § Agent permissions documents these overrides and transfers.
 
 ## Setup
 

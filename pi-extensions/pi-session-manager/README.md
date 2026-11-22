@@ -15,14 +15,17 @@ A session browser for Pi. You can search saved conversations, resume them, renam
 ## Install
 
 - npm: `pi install npm:@vanillagreen/pi-session-manager`.
-- kendex: add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope. Run `kendex update-pi`.
+- kendex:
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-session-manager"]
 source = "kendex"
 ```
 
-Restart Pi after installation. Use `kendex update-pi --check` to preview the installation.
+- Restart Pi after installation.
+- Use `kendex update-pi --check` to preview the installation.
 
 ## How it works
 
@@ -33,8 +36,6 @@ Delete refuses a session that another running Pi has open, such as another lane'
 ## Memory
 
 The browser keeps the prompt text of each session it searched while it stays open, and releases it when it closes. A `re:` search stops with an error when the pattern runs past 250 ms on the prompts of one session.
-
-Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Setup
 
@@ -47,6 +48,8 @@ Open `/extensions:settings`; settings appear under the **Session Manager** tab. 
 - `defaultScope`, `defaultSort`: the tab and sort the overlay opens with.
 - `visibleRows`, `overlayWidth`: overlay size.
 - `deleteUsesTrash`: try `trash` before a permanent unlink. A `trash` that runs past 5 seconds is stopped, with any helper it started. If the session file is still in place, the delete fails and keeps it; it never falls back to a permanent unlink.
+
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Licence
 

@@ -1,6 +1,6 @@
 # pi-codex-minimal-tools development
 
-For maintainers. What it does for a consumer is [README.md](README.md); the provider shim's doc comments in `src/provider-shim.ts` hold its wire-format mechanics.
+What it does for a consumer is [README.md](README.md). The provider shim's doc comments in `src/provider-shim.ts` hold its wire-format mechanics.
 
 ## Invariants
 
@@ -13,7 +13,6 @@ For maintainers. What it does for a consumer is [README.md](README.md); the prov
 - `apply_patch` paths resolve through `src/patch/apply.ts::resolvePatchPath` and a path outside `cwd` throws unless `allowAbsolutePaths`; application is all-or-nothing, rolling back touched files on a failed hunk, and CRLF files keep their line endings when the patch context is LF (`tests/apply-patch.test.ts`).
 - `apply_patch` rendering is deferred to `pi-tool-renderer` by default; `tests/renderer-compatibility.test.ts` holds the tool definition to the shape that renderer assumes, so a change to either side is made in both.
 - `/image-gen` authenticates with the token and headers Pi's model registry returns for the `openai-codex` provider and never with `OPENAI_API_KEY`; only `directImageGeneration` in `src/tools/image-generation.ts` reads the key, and only when `directImageApiFallback` is on.
-- Project settings are read only after `recordProjectTrust` saw Pi report the workspace trusted, and `PI_CODING_AGENT_DIR` counts only when root-anchored, matching `crates/core/src/harness/pi.rs::pi_root_is_absolute_for` (`src/package-config.ts`).
 
 ## Tests
 
@@ -25,4 +24,4 @@ npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @e
 npm run check
 ```
 
-`npm run check` is `typecheck` then `test`; `.github/workflows/skill-tests.yml` runs the same install, then `typecheck` and `test`. Provider suites stub `fetch` and assert the request bodies and streamed responses; a shim change ships with its parity case.
+`npm run check` is `typecheck` then `test`; `.github/workflows/skill-tests.yml` runs the same install, then `typecheck` and `test`. Provider suites stub `fetch` and assert the request bodies and streamed responses.

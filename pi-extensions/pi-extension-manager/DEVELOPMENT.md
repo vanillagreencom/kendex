@@ -4,19 +4,57 @@ User-facing commands and settings are in [README.md](README.md).
 
 ## Host boundary
 
-`extensions/manager/host.ts::HostAdapter` owns host selection, paths, settings codecs, native inventory, toggle state and action capabilities. The factory selects it from the running coding-agent module's exports. OMP resolves legacy Pi imports through its compatibility shim; the presence of an OMP installation or directory is not host identity. OMP's utils and discovery exports resolve user configuration, plugin storage and the asynchronous project plugin anchor. `prepare(cwd)` refreshes that anchor before an inventory opens; rendering consumes normalized items without host-name branches.
+`extensions/manager/host.ts::HostAdapter` owns host selection, paths, settings codecs, native inventory, toggle state and action capabilities.
 
-OMP's plugin roots are separate from its settings directories. Native inventory reads dependency names plus lock records, retaining disabled plugins and linked packages. Enabled project plugins shadow enabled user plugins; disabled project records do not hide a usable user installation. Native package/module association uses `InventoryItem.installationId`, not package name, across search, filters and inspectors. Only the active native manager installation exposes settings. Native enable writes the owning lock record, not a synthetic settings `packages` array or manager `disabledItems` entry. Project plugin suppression is visible but refuses an enable that would remain ineffective. Module-level writes are unsupported because host basename IDs can address modules in several packages. These contracts are exercised by `test/host.test.ts`.
+- The factory selects it from the running coding-agent module's exports.
+- OMP resolves legacy Pi imports through its compatibility shim; the presence of an OMP installation or directory is not host identity.
+- OMP's utils and discovery exports resolve user configuration, plugin storage and the asynchronous project plugin anchor.
+- `prepare(cwd)` refreshes that anchor before an inventory opens; rendering consumes normalized items without host-name branches.
 
-The OMP inventory covers native npm/link installations and persisted configured extension paths. It is not a snapshot of foreign-provider, CLI or runtime overlays, marketplace inventory, or optional plugin feature selection. It shows declared base entrypoints, not a proof that each module has executed. Package enable controls all native plugin contributions; restarting applies the change without relying on discovery caches being invalidated by an external writer.
+OMP's plugin roots are separate from its settings directories.
 
-OMP settings edits are restricted to this manager's namespace. A different kendex extension's Pi JSON reader does not start reading YAML because this manager can write it. Update, uninstall and append-system execution remain Pi-only. Unsupported actions refuse before invoking a process or writing a Pi filter. Existing YAML filenames and unknown fields survive writes; comments and formatting do not. Invalid documents or malformed manager/native state refuse rather than being replaced with defaults. This is a synchronous local read-modify-write boundary, not a concurrent-writer locking protocol.
+- Native inventory reads dependency names plus lock records, retaining disabled plugins and linked packages.
+- Enabled project plugins shadow enabled user plugins; disabled project records do not hide a usable user installation.
+- Native package/module association uses `InventoryItem.installationId`, not package name, across search, filters and inspectors.
+- Only the active native manager installation exposes settings.
+- Native enable writes the owning lock record, not a synthetic settings `packages` array or manager `disabledItems` entry.
+- Project plugin suppression is visible but refuses an enable that would remain ineffective.
+- Module-level writes are unsupported because host basename IDs can address modules in several packages.
+- These contracts are exercised by `test/host.test.ts`.
 
-OMP global settings prefer `config.yml`, then `config.yaml`. Native project settings layer `settings.json` before `config.yml`; edits target the last matching raw layer, never a merged document. `HostAdapter.projectSettingsWritable` treats trusted OMP project documents as creatable even when none exists, while Pi retains its existing-file fallback. The project settings directory is cwd-local, while the project plugin anchor can be an ancestor. Pi retains its root-anchored override policy when its runtime resolver returns a relative directory (`extensions/manager/package-config.ts::rootAnchored`).
+The OMP inventory covers native npm/link installations and persisted configured extension paths.
+
+- It is not a snapshot of foreign-provider, CLI or runtime overlays, marketplace inventory, or optional plugin feature selection.
+- It shows declared base entrypoints, not a proof that each module has executed.
+- Package enable controls all native plugin contributions; restarting applies the change without relying on discovery caches being invalidated by an external writer.
+
+OMP settings edits are restricted to this manager's namespace.
+
+- A different kendex extension's Pi JSON reader does not start reading YAML because this manager can write it.
+- Update, uninstall and append-system execution remain Pi-only.
+- Unsupported actions refuse before invoking a process or writing a Pi filter.
+- Existing YAML filenames and unknown fields survive writes; comments and formatting do not.
+- Invalid documents or malformed manager/native state refuse rather than being replaced with defaults.
+- This is a synchronous local read-modify-write boundary, not a concurrent-writer locking protocol.
+
+OMP global settings prefer `config.yml`, then `config.yaml`.
+
+- Native project settings layer `settings.json` before `config.yml`; edits target the last matching raw layer, never a merged document.
+- `HostAdapter.projectSettingsWritable` treats trusted OMP project documents as creatable even when none exists, while Pi retains its existing-file fallback.
+- The project settings directory is cwd-local, while the project plugin anchor can be an ancestor.
+- Pi retains its root-anchored override policy when its runtime resolver returns a relative directory (`extensions/manager/package-config.ts::rootAnchored`).
 
 ## Settings-changed event
 
-A quick-settings write emits `kendex:extension-settings-changed` on `pi.events` with `{ extensionId, key, value }` (`extensions/manager/quick-settings-ui.ts`). The other kendex packages memoize their settings reads through their vendored `package-config.ts` and drop them on this event, so a setting written here applies on their next read. `HostAdapter.settings` reads and parses each readable file at inventory refresh boundaries. The session owns one inventory and its completion labels. Popup searches index package children and memoize scoped config for that inventory. Saves and resets invalidate scoped config. External config resolvers run once per popup inventory. A write through `HostAdapter.write` also clears the glyph memo.
+A quick-settings write emits `kendex:extension-settings-changed` on `pi.events` with `{ extensionId, key, value }` (`extensions/manager/quick-settings-ui.ts`).
+
+- The other kendex packages memoize their settings reads through their vendored `package-config.ts` and drop them on this event, so a setting written here applies on their next read.
+- `HostAdapter.settings` reads and parses each readable file at inventory refresh boundaries.
+- The session owns one inventory and its completion labels.
+- Popup searches index package children and memoize scoped config for that inventory.
+- Saves and resets invalidate scoped config.
+- External config resolvers run once per popup inventory.
+- A write through `HostAdapter.write` also clears the glyph memo.
 
 ## External config resolvers
 
@@ -26,13 +64,22 @@ On Pi, the settings editor owns `kendex.extensionManager.config[<packageName>]` 
 type ExternalConfigResolver = (key: string, cwd: string) => { explicit: boolean; value: unknown; source?: string } | undefined;
 ```
 
-- `key` comes from the package's `kendex.extensionManager.settings` schema. Return `undefined` or `explicit: false` for an unset or unowned key.
-- Report only external channels. Manager config takes precedence in `extensions/manager/settings.ts::getConfigValue`.
-- Return the value the package's loader resolves, with its own normalization and file precedence. `source` names the concrete file, optionally home-relative.
-- Register before an early return that disables the package. The registry lives for the process and has no unregister operation.
-- A throwing resolver behaves like an unset value. The editor memoizes results per inventory so keystrokes do not reread external files.
+- `key` comes from the package's `kendex.extensionManager.settings` schema.
+- Return `undefined` or `explicit: false` for an unset or unowned key.
+- Report only external channels.
+- Manager config takes precedence in `extensions/manager/settings.ts::getConfigValue`.
+- Return the value the package's loader resolves, with its own normalization and file precedence.
+- `source` names the concrete file, optionally home-relative.
+- Register before an early return that disables the package.
+- The registry lives for the process and has no unregister operation.
+- A throwing resolver behaves like an unset value.
+- The editor memoizes results per inventory so keystrokes do not reread external files.
 
-`getConfigValue` returns scope `external` for a resolved external value. Reset names the source file because no manager override exists to delete. Editing remains allowed on Pi and writes a manager override. `test/settings.test.ts` exercises this contract.
+`getConfigValue` returns scope `external` for a resolved external value.
+
+- Reset names the source file because no manager override exists to delete.
+- Editing remains allowed on Pi and writes a manager override.
+- `test/settings.test.ts` exercises this contract.
 
 ## Pi invariants
 
@@ -40,15 +87,45 @@ type ExternalConfigResolver = (key: string, cwd: string) => { explicit: boolean;
 - npm actions use the scope-local npm directory. Git entries are inspected only under Pi's managed clone root; unsafe host or path components produce broken inventory items.
 - `extensions/manager/process.ts::runCommand` is the one command runner. It spawns the resolved executable asynchronously with a deadline and an `AbortSignal`, and resolves a `CommandResult` union. `commandFailure` classifies it: only an exit with code 0 is success, and a natural signal exit is a failure (`test/process.test.ts`).
 - The runner does not use `pi.exec`, which reports a natural signal exit as code 0. It does not use Pi's host bash either: under legacy WSL bash (System32 `bash.exe`) `npm` resolves inside WSL, not to the Windows npm that manages Windows Pi's packages. The legacy WSL host transport is therefore untouched.
-- A deadline or a cancellation stops the whole process tree, and the run settles only after the final kill. A POSIX child leads its own process group and session, so a Pi process killed outright leaves a running command to finish on its own; session shutdown stops it. Everything up to the SIGTERM runs synchronously inside the abort or deadline listener, so a host that exits right after aborting has still sent it. The stop sends SIGSTOP to the command's group, since a stopped process cannot fork or change group, then lists the tree with a bounded synchronous `/bin/ps`: a descendant whose parent dies is reparented out of the tree, and kendex starts each git and npm child in a group of its own. Each newly found descendant group is stopped and the tree listed again until no new group appears. Every group then gets SIGTERM and SIGCONT before the listener returns. SIGKILL follows 2 seconds later for any group still alive, even when the direct child has already exited; at quit it runs only because session shutdown waits for the session's work (`test/process.test.ts`). When a listing or a signal fails, or the tree still gains groups after 16 listings, the stop still signals every group stopped so far, reports partial, and the failure notice names the cause.
-- On Windows, `extensions/manager/windows-command.ts` owns the launch. A bare name resolves through PATH alone and a name holding a path through that path alone, never through the working directory, which is the open project. A name without an extension resolves only through PATHEXT, in cmd.exe's order, so `npm` reaches `npm.cmd` rather than the extensionless sh script beside it. A miss is a launch failure naming the directories searched, and nothing is spawned. A `.cmd` or `.bat` file runs under System32's `cmd.exe /d /s /c` by absolute path, with each argument quoted and caret-escaped by cross-spawn's rules (`test/windows-command.test.ts`). The runner stops the tree with System32's `taskkill.exe /T /F` by absolute path, which reaches npm under cmd.exe, and kills the direct child itself when taskkill fails or runs past 2 seconds. PATH entries lose one pair of surrounding quotes, as libuv and cmd.exe strip them, and an entry with no drive or UNC root is skipped. No CI runner exercises the Windows path.
-- The child inherits the live `process.env`, passed explicitly because Bun's child_process otherwise hands a child the environment the process started with. Tests pin `PATH`, `HOME` and `PI_CODING_AGENT_DIR` on `process.env` and use fake commands from `test/fixtures/commands.ts`.
-- Package updates and removals run under a 10-minute deadline and a signal that the progress overlay's Escape and session shutdown both abort. Settings change only after a confirmed exit 0 (`test/actions.test.ts`). `openManager` awaits each action under a progress overlay whose Escape cancels it, as session shutdown does (`test/manager-ui.test.ts`).
-- The inventory session owns the work started under its signal: `inventory.ts::sessionWork` runs each package action (`test/manager-ui.test.ts`), toggle and inventory build, npm-root lookups included. `closeInventorySession` aborts the signal and returns a promise that settles once that work has, at most 18 seconds later (`SHUTDOWN_WAIT_MS`): the stop of the command the abort reached, then a failed uninstall's restore, which the abort does not stop, for its 10-second deadline (`append-system.ts::APPEND_SYSTEM_DEADLINE_MS`) and its own stop. Each stop is bounded by `process.ts::STOP_SETTLE_MS`, 4 seconds: the POSIX grace or the Windows taskkill bound, whichever is longer, then the settle wait (`test/process.test.ts`, `test/actions.test.ts`). The `session_shutdown` handler returns that promise, and Pi's dispose awaits it before `process.exit`, so the SIGKILL past the grace and the restore run at quit (`test/lifecycle.test.ts`).
-- The manager delegates append-system changes to the package's vendored `scripts/append-system.mjs` under a 10-second deadline and the session signal. Package toggle and orphan uninstall run the fallible script before changing saved or in-memory settings. Uninstall removes the block before npm deletes that script. When the removal run or npm then fails, the uninstall puts the block back if it was live before: the package was not disabled and ships the script. An exit-0 removal notice leaves the block untouched, so it triggers no restore and no missing-instructions warning. The restore runs the script's install under its own 10-second deadline and a fresh signal, so it is the one instruction script that still runs to its deadline after Escape or session end. For the install and remove actions the manager passes, the script exits 0 after any notice it prints, so `runAppendSystemScript`, the one reader of its result, reads an exit 0 that printed an `append-system:` or older `append-system.mjs` notice as a failure: the toggle saves nothing, the uninstall ends before npm runs, and a restore's notice says the block is missing (`test/actions.test.ts`).
+- A deadline or a cancellation stops the whole process tree, and the run settles only after the final kill.
+  - A POSIX child leads its own process group and session, so a Pi process killed outright leaves a running command to finish on its own; session shutdown stops it.
+  - Everything up to the SIGTERM runs synchronously inside the abort or deadline listener, so a host that exits right after aborting has still sent it.
+  - The stop sends SIGSTOP to the command's group, since a stopped process cannot fork or change group, then lists the tree with a bounded synchronous `/bin/ps`: a descendant whose parent dies is reparented out of the tree, and kendex starts each git and npm child in a group of its own.
+  - Each newly found descendant group is stopped and the tree listed again until no new group appears.
+  - Every group then gets SIGTERM and SIGCONT before the listener returns.
+  - SIGKILL follows 2 seconds later for any group still alive, even when the direct child has already exited; at quit it runs only because session shutdown waits for the session's work (`test/process.test.ts`).
+  - When a listing or a signal fails, or the tree still gains groups after 16 listings, the stop still signals every group stopped so far, reports partial, and the failure notice names the cause.
+- On Windows, `extensions/manager/windows-command.ts` owns the launch.
+  - A bare name resolves through PATH alone and a name holding a path through that path alone, never through the working directory, which is the open project.
+  - A name without an extension resolves only through PATHEXT, in cmd.exe's order, so `npm` reaches `npm.cmd` rather than the extensionless sh script beside it.
+  - A miss is a launch failure naming the directories searched, and nothing is spawned.
+  - A `.cmd` or `.bat` file runs under System32's `cmd.exe /d /s /c` by absolute path, with each argument quoted and caret-escaped by cross-spawn's rules (`test/windows-command.test.ts`).
+  - The runner stops the tree with System32's `taskkill.exe /T /F` by absolute path, which reaches npm under cmd.exe, and kills the direct child itself when taskkill fails or runs past 2 seconds.
+  - PATH entries lose one pair of surrounding quotes, as libuv and cmd.exe strip them, and an entry with no drive or UNC root is skipped.
+  - No CI runner exercises the Windows path.
+- The child inherits the live `process.env`, passed explicitly because Bun's child_process otherwise hands a child the environment the process started with.
+  - Tests pin `PATH`, `HOME` and `PI_CODING_AGENT_DIR` on `process.env`.
+  - Tests use fake commands from `test/fixtures/commands.ts`.
+- Package updates and removals run under a 10-minute deadline and a signal that the progress overlay's Escape and session shutdown both abort.
+  - Settings change only after a confirmed exit 0 (`test/actions.test.ts`).
+  - `openManager` awaits each action under a progress overlay whose Escape cancels it, as session shutdown does (`test/manager-ui.test.ts`).
+- The inventory session owns the work started under its signal: `inventory.ts::sessionWork` runs each package action (`test/manager-ui.test.ts`), toggle and inventory build, npm-root lookups included.
+  - `closeInventorySession` aborts the signal and returns a promise that settles once that work has, at most 18 seconds later (`SHUTDOWN_WAIT_MS`): the stop of the command the abort reached, then a failed uninstall's restore, which the abort does not stop, for its 10-second deadline (`append-system.ts::APPEND_SYSTEM_DEADLINE_MS`) and its own stop.
+  - Each stop is bounded by `process.ts::STOP_SETTLE_MS`, 4 seconds: the POSIX grace or the Windows taskkill bound, whichever is longer, then the settle wait (`test/process.test.ts`, `test/actions.test.ts`).
+  - The `session_shutdown` handler returns that promise, and Pi's dispose awaits it before `process.exit`, so the SIGKILL past the grace and the restore run at quit (`test/lifecycle.test.ts`).
+- The manager delegates append-system changes to the package's vendored `scripts/append-system.mjs` under a 10-second deadline and the session signal.
+  - Package toggle and orphan uninstall run the fallible script before changing saved or in-memory settings.
+  - Uninstall removes the block before npm deletes that script.
+  - When the removal run or npm then fails, the uninstall puts the block back if it was live before: the package was not disabled and ships the script.
+  - An exit-0 removal notice leaves the block untouched, so it triggers no restore and no missing-instructions warning.
+  - The restore runs the script's install under its own 10-second deadline and a fresh signal, so it is the one instruction script that still runs to its deadline after Escape or session end.
+  - For the install and remove actions the manager passes, the script exits 0 after any notice it prints, so `runAppendSystemScript`, the one reader of its result, reads an exit 0 that printed an `append-system:` or older `append-system.mjs` notice as a failure: the toggle saves nothing, the uninstall ends before npm runs, and a restore's notice says the block is missing (`test/actions.test.ts`).
 - Pi package and module ids use scope and registered source, independent of physical resolution. Child grouping shares that identity. Relocation retains disabled state and first enable removes the exclusion (`test/inventory.test.ts`).
 - Toggle writes use the selected settings file's disabled ids, not the merged inventory. Legacy ids normalize in that file's in-memory document before states merge; saving a toggle persists only that file's migration (`test/inventory.test.ts`).
-- Inventory runs npm-root discovery only when cheap package roots miss and memoizes each lookup for the session. The session signal reaches the lookup's process, and a 15-second deadline bounds it. A failed lookup is named in the package's broken reason rather than read as not installed (`test/versions.test.ts`, `test/inventory.test.ts`). `test/popup-perf.test.ts` enforces the existing popup budget.
+- Inventory runs npm-root discovery only when cheap package roots miss and memoizes each lookup for the session.
+  - The session signal reaches the lookup's process, and a 15-second deadline bounds it.
+  - A failed lookup is named in the package's broken reason rather than read as not installed (`test/versions.test.ts`, `test/inventory.test.ts`).
+  - `test/popup-perf.test.ts` enforces the existing popup budget.
 - `HostAdapter.configScope` owns the manager's global-only `enabled` key. Value resolution, merged manager state, saves, resets and recovery honor that owner regardless of package scope; bootstrap never consumes project enable flags. Other keys retain project layering (`test/host.test.ts`, `test/bootstrap.test.ts`).
 
 ## Tests
@@ -59,7 +136,11 @@ bun test ./test
 
 From the repository root, also run `node --test pi-extensions/package-policy.test.mjs`.
 
-`test/component-benchmark.test.ts` measures inventory construction and the completion/filter path in disposable source copies. It counts inventory builds, child comparisons, scoped config builds and label construction without adding runtime instrumentation. Set `COMPONENT_BENCHMARK_BASE` to an immutable main commit when running the suite to report both timings and verify that main fails the hot-work bounds. Timings are evidence, not a machine-dependent test threshold.
+`test/component-benchmark.test.ts` measures inventory construction and the completion/filter path in disposable source copies.
+
+- It counts inventory builds, child comparisons, scoped config builds and label construction without adding runtime instrumentation.
+- Set `COMPONENT_BENCHMARK_BASE` to an immutable main commit when running the suite to report both timings and verify that main fails the hot-work bounds.
+- Timings are evidence, not a machine-dependent test threshold.
 
 Disposable benchmark and lifecycle copies contain explicit neutral Pi and terminal dependencies from `test/fixtures/isolated-host.ts`. Their children disable automatic package installation so an isolated HOME cannot cause network lookup. `test/lifecycle.test.ts` drives the factory's registered handlers separately from host bootstrap coverage.
 
@@ -67,4 +148,9 @@ The native disabled-package regression in `test/host.test.ts` has no settings JS
 
 Must-fail controls for the runner, package actions, npm-root discovery and the progress overlay plant their defect in a disposable copy of `extensions/manager` (`test/fixtures/commands.ts::mutantManager`) and run in the same case as the assertion they redden.
 
-OMP's compiled 18.1.11 host supports the imported utils/discovery exports and the existing custom-overlay UI. An isolated-home PTY smoke can open the manager, toggle a disabled native plugin and open settings without sending an agent prompt. Keep credentials out of that environment and disable startup setup/update checks. Recheck these runtime exports and plugin persistence contracts when raising the tested OMP baseline.
+OMP's compiled 18.1.11 host supports the imported utils/discovery exports and the existing custom-overlay UI.
+
+- An isolated-home PTY smoke can open the manager, toggle a disabled native plugin and open settings without sending an agent prompt.
+- Keep credentials out of that environment.
+- Disable startup setup/update checks in that environment.
+- Recheck these runtime exports and plugin persistence contracts when raising the tested OMP baseline.
