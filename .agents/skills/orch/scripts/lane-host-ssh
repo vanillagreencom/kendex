@@ -819,8 +819,8 @@ done''', row["clone"], item)
 
 def built(row, package, refusal):
     """The binary the clone's own setup of PACKAGE builds from the clone's
-    sources, keyed on them, so a lane never meets setup-required at its first
-    turn; a host that already holds it builds nothing. A clone without the
+    sources, keyed on them, so neither create's later steps nor a lane's first
+    turn meets setup-required; a host that already holds it builds nothing. A clone without the
     setup, or a setup that names no binary, refuses before any window."""
     return remote(row, '''setup="$1/.agents/skills/$2/scripts/setup"
 if [ ! -x "$setup" ]; then
@@ -856,6 +856,20 @@ fi''', row["clone"], args.repo, args.item)
     if result.stdout == b"existing":
         remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
 exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
+    # The clone's runtimes, built for the sources the update above left and
+    # before any step that runs them: a reuse asks the clone's orch runtime
+    # whether the tree's activity holds it, and a program the update left
+    # unbuilt answers setup-required, which refuses the reuse.
+    # The orch runtime is the one the lane's own workflow runs on this host,
+    # its path in the launch record for the launcher to read before it opens
+    # a window.
+    runtime = built(row, "orch", "runtime")
+    # The prefix's group leader: agent-runtime makes the lane's process group
+    # in place, records its leader beside the item marker and becomes the
+    # harness command, or refuses by name on the pane with the harness
+    # unstarted. The group is never the SSH server's: a server can run every
+    # session's command in one group of its own, which a stop must not reach.
+    lead = built(row, "agent-runtime", "agent-runtime")
     # Claim ownership first; the consumer setup command needs private-file
     # delivery. A relaunch's tree stands before the install reads its lockfile.
     prepared = result.stdout == b"existing" or args.relaunch
@@ -906,15 +920,6 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item, fix=PATH_FIX)
         raise SystemExit(1)
-    # The orch runtime the lane's own workflow runs on this host, its path in
-    # the launch record for the launcher to read before it opens a window.
-    runtime = built(row, "orch", "runtime")
-    # The prefix's group leader: agent-runtime makes the lane's process group
-    # in place, records its leader beside the item marker and becomes the
-    # harness command, or refuses by name on the pane with the harness
-    # unstarted. The group is never the SSH server's: a server can run every
-    # session's command in one group of its own, which a stop must not reach.
-    lead = built(row, "agent-runtime", "agent-runtime")
     prefix = "exec env " + shlex.join(["ORCH_STATE_DIR=" + path + "/tmp", *names, lead, "process", "lead",
                                        "--file", row["clone"] + IDENTITY_FILE, "--", *command])
     # The item marker is local to this clone; it is not part of the install record.
