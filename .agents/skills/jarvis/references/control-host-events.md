@@ -13,10 +13,10 @@ The [producer](../scripts/lib/watch.py) declares the event encoding, every heade
 
 An `EVENT` line opens a block, and the next `EVENT` or `cursor:` line closes it. A consumer check appends complete blocks under an exclusive advisory lock on the event log's inode:
 
-1. Open the log for append, or seek to its current end after taking the lock. Never write at a position cached before the lock.
-2. Write each append in full before releasing the lock.
-3. When no next event closes the last block, end the append with `cursor: {"side":"consumer","roots":{}}`.
-4. Encode the text as the producer encodes mail text.
+- Open the log for append, or seek to its current end after taking the lock. Never write at a position cached before the lock.
+- Write each append in full before releasing the lock.
+- When no next event closes the last block, end the append with `cursor: {"side":"consumer","roots":{}}`.
+- Encode the text as the producer encodes mail text.
 
 A consumer check sends no mailbox batch and changes no batch state.
 

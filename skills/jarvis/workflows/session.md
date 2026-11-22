@@ -81,11 +81,14 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
      - Retain the reply's `record`, `RUN.runner`, in the handoff.
      - Exit 75 may have started the loop: keep `RUN.runner` and launch no second loop.
      - Pi's installed mailbox wake delivers the directive. Copilot's installed hooks deliver at their native checkpoints; this producer supplies no idle extension.
-5. To stop the loop:
-   - Stop a job through `.agents/skills/orch/scripts/orch-runtime stop-job --record RUN.runner`, using its retained record; `"stopped":null` means the loop had already ended.
-   - Stop the Monitor-owned command through Monitor.
-   - Retain the event log and batch state for restart.
-6. Keep the source registration, home, launch route and runner record in the handoff's State section.
+
+To stop the loop:
+
+- Stop a job through `.agents/skills/orch/scripts/orch-runtime stop-job --record RUN.runner`, using its retained record; `"stopped":null` means the loop had already ended.
+- Stop the Monitor-owned command through Monitor.
+- Retain the event log and batch state for restart.
+
+Keep the source registration, home, launch route and runner record in the handoff's State section.
 
 ## Action routes
 

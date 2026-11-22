@@ -140,9 +140,9 @@ For guard delays and blocks:
    - Name transcripts by path and record.
    - Paste no user text or credential value.
    - Apply [Accounts and secrets: Secret transfer](../references/accounts-and-secrets.md#secret-transfer) to the report.
-2. Read the saved report back.
+2. List in the report each proposed tracker change: every unresolved audit action with its closing check, and the next audit due at report time plus 7 days with its scope.
+3. Read the saved report back.
    - Check its findings against the cited records under [Verification: Acceptance](../references/verification.md#acceptance).
-3. List in the report each proposed tracker change: every unresolved audit action with its closing check, and the next audit due at report time plus 7 days with its scope.
 4. The session that ran or launched the audit makes those tracker writes under [Task reconciliation](tasks.md) and [Long sessions: Homes](../references/long-session.md#homes), with the report link. The next audit stays a due tracker item, not a new scheduler.
 5. Return a progress report under [Communication: Message types](../references/communication.md#message-types) under the [persona's conduct route](../persona.md#conduct).
    - Open with the answer.
