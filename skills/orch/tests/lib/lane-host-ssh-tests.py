@@ -2164,7 +2164,8 @@ touch node_modules/dep
         The clone runs the real orch-runtime wrapper and key library, so its
         reuse meets setup-required unless setup placed a program for the
         sources the move left; the fixture setup places one, keyed the same
-        way, that runs this checkout's runtime. Returns the relaunch."""
+        way, that runs this checkout's runtime. Returns the first launch and
+        the relaunch."""
         self.real_worktree_source(".env.local")
         orch = self.source / ".agents/skills/orch"
         self.copy_file(PACKAGE / "scripts/orch-runtime", orch / "scripts/orch-runtime")
