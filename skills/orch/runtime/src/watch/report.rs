@@ -1050,27 +1050,27 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
             continue;
         }
         // The pull request the lane record names: its pending one, else the
-        // one its park judged, else the open ones GitHub lists as its own.
-        let recorded = ["pending_pr", "parked"]
-            .iter()
-            .find_map(|key| lane.extra.get(*key)?.get("pr")?.as_u64());
+        // one its park judged, else the open ones GitHub lists as its own,
+        // each with its repository, since one number names a different pull
+        // request in each. Both records are written with their repository;
+        // a hand-written one without it keeps the bare number.
+        let recorded = ["pending_pr", "parked"].iter().find_map(|key| {
+            let record = lane.extra.get(*key)?;
+            let number = record.get("pr")?.as_u64()?;
+            Some(match record.get("repo").and_then(Value::as_str) {
+                Some(repo) => format!("{}#{number}", repo.to_ascii_lowercase()),
+                None => format!("#{number}"),
+            })
+        });
         let pull = match recorded {
-            Some(number) => format!("#{number}"),
+            Some(pull) => pull,
             None => match open.get_or_insert_with(|| {
-                let repos = ctx
-                    .settings
-                    .reads
-                    .watched(ctx.repos.iter().map(String::as_str));
+                let repos = super::github::repositories(&ctx.repos, &lanes, &ctx.settings);
                 super::github::report_open(&super::github::handle(&ctx.gh), &repos, &lanes)
             }) {
-                Ok(own) => match own.get(&lane.item) {
-                    Some(numbers) => numbers
-                        .iter()
-                        .map(|number| format!("#{number}"))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    None => "no pull request".to_owned(),
-                },
+                Ok(own) => own
+                    .get(&lane.item)
+                    .map_or("no pull request".to_owned(), |keys| keys.join(", ")),
                 Err(e) => format!("pull request unread ({})", cell(&e.to_string())),
             },
         };

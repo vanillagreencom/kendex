@@ -4460,10 +4460,13 @@ fn report_names_the_gap_a_lanes_context_record_carries() {
 }
 
 /// A running lane whose record names no pull request is shown the open ones
-/// GitHub lists as its own, by its branch or its title's scope, and never a
+/// GitHub lists as its own, by its branch or its title's scope, in the
+/// report's, the lanes' and the connected repositories, each named with its
+/// repository and once however many records its item has, never a
 /// stranger's; a lane with none open says no pull request, one whose record
-/// names one keeps it, and an open list that cannot be read is said unread,
-/// never no pull request.
+/// names one keeps it, and an open list that cannot be read, refused or
+/// answered 404, in any repository read is said unread, never no pull
+/// request.
 #[test]
 fn report_in_progress_names_a_running_lanes_open_pull_request() {
     let world = World::new();
@@ -4477,58 +4480,73 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
         lane
     };
     world.write_fleet(&json!({"issue_id":"oversee","lanes":[
+        {"item":"KEN-21","status":"done","launched_at":"2026-09-30T06:00:00Z"},
         running("KEN-21", json!({})),
         running("KEN-22", json!({})),
         running("KEN-23", json!({})),
-        running("KEN-24", json!({"pending_pr": {"pr": 40, "repo": "owner/repo", "head": "abc"}}))
+        running("KEN-24", json!({"pending_pr": {"pr": 40, "repo": "owner/repo", "head": "abc"}})),
+        running("KEN-25", json!({"repo": "Lane/Repo"}))
     ]}));
-    let open = |number: u64, branch: &str, title: &str| {
+    let open = |repo: &str, number: u64, branch: &str, title: &str| {
+        let owner = repo.split('/').next().unwrap();
         json!({"number":number,"state":"open","title":title,"body":"","merged_at":null,
             "merge_commit_sha":null,"author_association":"NONE",
             "base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"},"user":null,
             "head":{"sha":"0000000000000000000000000000000000000000","ref":branch,
-                "repo":{"full_name":"owner/repo","owner":{"login":"owner","type":"User"}}}})
+                "repo":{"full_name":repo,"owner":{"login":owner,"type":"User"}}}})
     };
-    let key = "repos/owner/repo/pulls?state=open&per_page=100&page=1";
-    let ctx = world.report_context();
+    let key = |repo: &str| format!("repos/{repo}/pulls?state=open&per_page=100&page=1");
+    let mut planted = json!({});
+    planted[key("owner/repo")] = json!({"body": [
+        open("owner/repo", 33, "ken-99", "fix(KEN-99): a stranger's work"),
+        open("owner/repo", 32, "claude/side", "feat(KEN-22): the report rows"),
+        open("owner/repo", 31, "ken-21", "Report the rows")
+    ]});
+    planted[key("other/repo")] =
+        json!({"body": [open("other/repo", 31, "ken-21", "Ship the consumer")]});
+    planted[key("lane/repo")] = json!({"body": [open("lane/repo", 51, "ken-25", "Wire the lane")]});
+    let mut ctx = world.report_context();
+    ctx.settings.reads.connected_repos = vec!["other/repo".to_owned()];
     let now = epoch("2026-10-01T14:00:00Z");
-    let rows = |body: &str| -> Vec<String> {
-        section(body, "In progress")
+    let rows = |planted: &Value| -> (Vec<String>, String) {
+        world.plant("gh.json", planted);
+        let body = report::render(&ctx, now).unwrap();
+        let rows = section(&body, "In progress")
             .lines()
             .filter(|l| l.starts_with("- KEN-"))
             .map(str::to_owned)
-            .collect()
+            .collect();
+        (rows, body)
     };
-    world.plant(
-        "gh.json",
-        &json!({key: {"body": [
-            open(33, "ken-99", "fix(KEN-99): a stranger's work"),
-            open(32, "claude/side", "feat(KEN-22): the report rows"),
-            open(31, "ken-21", "Report the rows")
-        ]}}),
-    );
-    let body = report::render(&ctx, now).unwrap();
+    let (listed, body) = rows(&planted);
     assert_eq!(
-        rows(&body),
+        listed,
         [
-            "- KEN-21: Running, #31.",
-            "- KEN-22: Running, #32.",
+            "- KEN-21: Running, owner/repo#31, other/repo#31.",
+            "- KEN-22: Running, owner/repo#32.",
             "- KEN-23: Running, no pull request.",
-            "- KEN-24: Running, #40."
+            "- KEN-24: Running, owner/repo#40.",
+            "- KEN-25: Running, lane/repo#51."
         ],
         "{body}"
     );
-    world.plant("gh.json", &json!({key: {"exit": 1, "stderr": "HTTP 500"}}));
-    let body = report::render(&ctx, now).unwrap();
-    let rows = rows(&body);
-    assert_eq!(rows.len(), 4, "{body}");
-    for row in &rows[..3] {
-        assert!(
-            row.contains(": Running, pull request unread (") && row.contains("report-open"),
-            "{body}"
-        );
+    // The lane's repository, which neither `--repo` nor the connected list
+    // names, refused, then answered 404.
+    let mut refused = planted.clone();
+    refused[key("lane/repo")] = json!({"exit": 1, "stderr": "HTTP 500"});
+    let mut absent = planted.clone();
+    absent.as_object_mut().unwrap().remove(&key("lane/repo"));
+    for unread in [refused, absent] {
+        let (listed, body) = rows(&unread);
+        assert_eq!(listed.len(), 5, "{body}");
+        for row in [&listed[0], &listed[1], &listed[2], &listed[4]] {
+            assert!(
+                row.contains(": Running, pull request unread (") && row.contains("report-open"),
+                "{body}"
+            );
+        }
+        assert_eq!(listed[3], "- KEN-24: Running, owner/repo#40.", "{body}");
     }
-    assert_eq!(rows[3], "- KEN-24: Running, #40.", "{body}");
 }
 
 /// Blocked names each standing row that holds launches while its end has
@@ -5035,7 +5053,7 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
         "{body}"
     );
     for line in [
-        "- KEN-5: Parked, #14.\n",
+        "- KEN-5: Parked, owner/repo#14.\n",
         "- KEN-6: Running, #15.\n",
         "- KEN-7: Running, no pull request.\n",
         "- KEN-6 waits on the overseer to answer: Which schema?.\n",
