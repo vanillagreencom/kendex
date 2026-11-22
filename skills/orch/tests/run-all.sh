@@ -58,9 +58,9 @@
 # a set and that set negated therefore partition the battery: every suite
 # runs in exactly one of them, and a suite added later lands in the negated
 # run rather than in neither. --shard intersects shard_of membership with
-# these filters, and where rejectors alone reject every suite of the shard,
-# as a narrowed CI step's do, it runs none and passes. Its macOS table
-# spreads suites across the existing CI pools.
+# these filters; its macOS table spreads suites across the existing CI
+# pools. A run whose rejectors remove every suite the shard and selectors
+# took runs none and passes; a selection that takes no suite refuses.
 #
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
@@ -564,10 +564,8 @@ if [[ "$RUN" -eq 0 ]]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: no native contracts selected\n' "$BATTERY"
     exit 0
   fi
-  # Rejectors can remove every suite the shard and selectors took: a shard
-  # step's suite list can skip each suite of its shard, and a main push's
-  # main-only rejectors can reject the one suite a step's list kept. That
-  # step owes nothing; a selection that takes no suite still refuses.
+  # A narrowed shard step's list can skip each suite of its shard, and a main
+  # push's main-only rejectors can reject the one suite a step kept.
   if [ "$REJECTED" -gt 0 ]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every selected suite rejected\n' "$BATTERY"
     exit 0
