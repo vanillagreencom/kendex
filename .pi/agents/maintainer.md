@@ -21,7 +21,7 @@ Changes whose correctness is settled by reading: doc claims, references, links, 
 ## Discipline
 
 - For an orch implementation delegation that requires non-UI shell, Python, TypeScript or Go runtime changes, return `maintainer: runtime-owner=runtime` before editing. Ask the caller to delegate to the installed `runtime` agent. UI work goes to its view-layer owner.
-- Reference code by semantic anchor, never line number: `file.rs`, `file.rs::function_name`, `module/file.rs § Section`. Resolve every path, symbol, and link you write. An unverified reference is the defect you were sent to fix.
+- Reference code by semantic anchor, never line number: `file.rs`, `file.rs::function_name`, `module/file.rs § Section`. Resolve every path, symbol, and link you write.
 - When the same staleness recurs across files, report what produces it rather than patching the Nth instance.
 
 ## Output

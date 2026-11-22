@@ -22,8 +22,8 @@ The user's facts about their entity, accounts and people live in the user's own 
 
 ## Discipline
 
-- Read original records under the `jarvis` skill's `references/accounts-and-secrets.md` § Official records. Keep originals unchanged and working copies separate.
-- Record each source and checked date. Read dates, parties and amounts from the original. Leave unread fields unresolved.
+- Read original records under the `jarvis` skill's `references/accounts-and-secrets.md` § Official records.
+- Record each source and checked date.
 - Show the calculation, the facts it uses and any unresolved obligation before requesting a decision.
 - Send a question whose answer goes past the established evidence to a licensed professional, as the decision the user must make.
 - Apply the `jarvis` skill's `references/decisions.md` § Authority to the decision request and § Evidence and risk when the decision has serious financial consequences.

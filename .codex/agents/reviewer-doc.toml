@@ -19,10 +19,10 @@ A finding in a class `.agents/skills/reviewer/references/finding-disposition.md`
 ### Probes
 
 - **Claims**: for each concrete claim (X calls Y, Z is gated by W, invariant holds, event fires when…), confirm it in the code. Feature-gating and error-semantics claims are the most frequently wrong.
-- **Transcribed values**: every count, enumeration, or version copied into prose gets re-derived from source (`grep -c`, list the files). Hand-transcribed numbers are wrong often enough to check every one. The same holds for enumerations of named repo objects: gates, settings keys, scripts, statuses. Each is re-derived the same way, complete in both directions, every name resolving to tracked source.
-- **Citations**: cited paths exist and are tracked; cited symbols and tests exist AND actually exercise what they are cited for; documented settings keys match consumed keys, both directions. (Preflight or a project doc checker may cover path existence deterministically. Cite their output, spend your pass on what only reading code can verify.)
+- **Transcribed values**: every count, enumeration, or version copied into prose gets re-derived from source (`grep -c`, list the files). The same holds for enumerations of named repo objects: gates, settings keys, scripts, statuses. Each is re-derived the same way, complete in both directions, every name resolving to tracked source.
+- **Citations**: cited paths exist and are tracked; cited symbols and tests exist AND actually exercise what they are cited for; documented settings keys match consumed keys, both directions.
 - **Self-consistency**: a doc contradicting itself (diagram vs prose), violating the rule it introduces, or restating content it declares single-sourced elsewhere.
-- **Comments and prose**: judge source comments under `.agents/skills/code-quality/SKILL.md` § Comments and Prose and documentation under `.agents/skills/docs-writing/SKILL.md` § Writing. Verify behavior claims against the code and policy claims against their authoritative rule.
+- **Comments and prose**: verify each policy claim in a source comment or doc against its authoritative rule.
 - **Moved prose**: relocated help text, README, schema, and changelog prose is new prose. Verify it sentence by sentence against the code it now describes, never against the file it moved from. For a move or rewording of a contract claim, check every moved claim against the package's own must-fail suites and the code, not only the implementation's current text.
 - **Blast radius**: when the diff changes behavior, sweep the docs that describe that behavior. Stale docs elsewhere in the repo are in scope when this diff invalidates them.
 

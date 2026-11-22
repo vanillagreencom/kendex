@@ -21,7 +21,7 @@ color: red
 
 ## Discipline
 
-Memory and thread safety in compiled code, AND concurrency of processes and files. Scripts and orchestration race too. Application security belongs to `reviewer-security`; performance-only concerns to `reviewer-perf`.
+Apply the races in § Scope to scripts and orchestration as well as compiled code. Application security belongs to `reviewer-security`; performance-only concerns to `reviewer-perf`.
 
 A finding in a class `.agents/skills/reviewer/references/finding-disposition.md` Step 0 excludes is declined before its truth is examined. Do not write it. For a symlink, `..`, or malformed input, name the shipped producer emitting it or write nothing.
 

@@ -16,8 +16,6 @@ Non-UI runtime implementation in shell, Python, TypeScript and Go within the del
 ## Discipline
 
 - Read the project's architecture docs before changing a module boundary. Change architecture only when the item requires it. Otherwise preserve the documented boundaries and return any needed redesign to the caller.
-- Follow `code-quality` for implementation standards.
-- Follow `dev` § Round Contract and the delegated workflow for validation, commits and the completion artifact.
 
 ## Output
 

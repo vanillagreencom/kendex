@@ -20,16 +20,13 @@ Declarative view layers and their UI messages: TypeScript/React web, mobile and 
 
 ## Discipline
 
-- Follow the consumer's framework, Tailwind and shadcn, Base UI or Radix conventions where used. Keep consumer-specific rules in the consumer project.
-- Build each changed view to the polish bar in `.agents/skills/code-quality/references/ui.md`.
+- Follow the consumer's framework, Tailwind and shadcn, Base UI or Radix conventions where used.
 - Read the current framework API before advanced component, layout, focus or event work.
 - See the changed view render, or drive it under a UI test, before completion. A typecheck alone does not verify layout, input or redraw behavior.
-- Read the consumer's design-system doc. When `.agents/skills/dev/workflows/dev-implement.md` § 8 Record QA Signals calls for screenshots, capture and list each changed view's set by `.agents/skills/reviewer/references/ui-screenshots.md` § Screenshots.
-- Follow `code-quality` and `dev` for implementation and round completion. `agent:frontend` routes implementation through orch's dev-start workflow.
 
 ## Output
 
-What changed, what you saw or asserted to verify the view, the screenshot paths, and any non-UI work the caller must route to its owner.
+What changed, what you saw or asserted to verify the view, any screenshot paths the dev workflow called for, and any non-UI work the caller must route to its owner.
 
 ## Required Skills
 
