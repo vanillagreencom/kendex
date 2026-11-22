@@ -10,7 +10,7 @@ A repository under the organization standard reports the aggregate `CI` context 
 
 Every shape passes the event and the endpoints through `env:` rather than interpolating `${{ }}` into the shell — a workflow expression pasted into a command line is an injection surface.
 
-Every classifier checkout uses `fetch-depth: 0`. The classifier diffs two real commits; a shallow clone holds neither endpoint. An aggregate's `guards` checkout does not need history. The CI template's aggregate also checks out `subject` at depth 1 and then fetches that commit's ancestry, on `pull_request` runs only, for the credential scan; the secrets bullet in [§ The CI template](#the-ci-template) states why.
+Every checkout the classifier diffs uses `fetch-depth: 0`. The classifier diffs two real commits; a shallow clone holds neither endpoint. An aggregate's `guards` checkout does not need history. The CI template's aggregate also checks out `subject` at depth 1 and then fetches that commit's ancestry, on `pull_request` runs only, for the credential scan; the secrets bullet in [§ The CI template](#the-ci-template) states why.
 
 ## Action pinning
 
@@ -19,7 +19,8 @@ Review holds these rules when a consumer adopts or changes a workflow:
 - GitHub-owned and third-party actions use a full commit SHA with the release version in a trailing comment, such as `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`.
 - This organization's own actions use the default-branch ref, such as `vanillagreencom/kendex/.github/actions/change-class@main`.
 
-- Enable GitHub's Dependabot `github-actions` ecosystem in the consumer's `.github/dependabot.yml`.
+Enable GitHub's Dependabot `github-actions` ecosystem in the consumer's `.github/dependabot.yml`.
+
 - Dependabot groups action tag and commit pin updates into one weekly pull request.
 - Review those updates under the rules above.
 - Each repository's overseer copies this entry by hand into its existing `updates` list, or uses this file when none exists:
@@ -82,7 +83,7 @@ A docs-only adoption changes each applicable verdict site in the selected shape:
 
 ### Declared product text
 
-Set `HARNESS_CI_DOCS_PATHS` in the `[env]` tables of the commit `--base` names. The docs reader, change-scope's `harness-only`, reads it through change-scope's committed-settings reader and the settings parser that package ships. `.kendex/settings.toml` overrides `kendex.settings.toml`. The process environment, private env file, judged head and working tree cannot authorize a declaration. Unset or blank adds no files and preserves the built-in docs set.
+Set `HARNESS_CI_DOCS_PATHS` in the `[env]` tables of the commit `--base` names. The docs reader, change-scope's `harness-only`, reads it through change-scope's committed-settings reader and the settings parser that package ships. `.kendex/settings.toml` overrides `kendex.settings.toml`. The process environment, private env file, judged head and working tree cannot authorize a declaration. Unset or blank adds no files and preserves the built-in docs set. A path in the built-in docs set cannot be declared: the docs reader accepts it before it reads the declaration, so its entry is ignored. A lane that reads such a file follows the [built-in docs-set rule](#through-the-composite-action).
 
 The value is whitespace-separated exact repository-relative `.md` or `.markdown` file names. Supported characters are ASCII letters, digits, `.`, `_`, `-` and `/`. Use canonical paths without absolute names, dot segments, repeated separators or globs. A changed declared file must be a regular non-executable blob at each endpoint where it exists. The existing path rules exclude known agent instructions, high-risk paths and paths the trusted `HARNESS_CI_STANDARD_PATHS` names. Invalid syntax, unreadable settings or entries, and unavailable protected-path or settings readers grant no declaration waiver.
 
@@ -92,7 +93,7 @@ The value is whitespace-separated exact repository-relative `.md` or `.markdown`
 
 Use `change-class --output FILE --lanes-from DIR` or the composite action's `lanes` and per-lane outputs. Every trusted lane claiming a changed declared file remains selected, even when the class is trivial or `docs_only=true`. Unrelated lanes can stand down. An unclaimed declared file keeps the existing ordinary-lane fallback; absent or malformed lane declarations keep `lanes=true` and publish no invented lane verdict. Queue-default stand-down, queue deferral and nightly/manual full runs keep their existing rules. A declaration does not reduce measured line counts or admit a mixed product change to the docs-only set.
 
-Do not gate declared text's protecting checks on `docs_only` or on the trivial class alone. `harness-only --declared-output FILE` supplies the shared lane owner with the changed paths it admitted by declaration, from the same docs loop as `--outside-output`. Missing declaration evidence is a refusal, not an empty membership list. The action feature-detects this option for older classifier checkouts, which cannot use the new declaration. The built-in docs-set loaded-input rule below remains unchanged.
+Do not gate declared text's protecting checks on `docs_only` or on the trivial class alone. `harness-only --declared-output FILE` supplies the shared lane owner with the changed paths it admitted by declaration, from the same docs loop as `--outside-output`. Missing declaration evidence is a refusal, not an empty membership list. The action feature-detects this option for older classifier checkouts, which cannot use the new declaration. The [built-in docs-set loaded-input rule](#through-the-composite-action) remains unchanged.
 
 ## Shape 1 — a `changes` job feeding job-level `if:`
 
@@ -238,7 +239,7 @@ A settings change can answer `trivial`, so every lane stands down, only on a pul
 - Add only keys that no CI job or review gate reads, such as a second-opinion model choice.
 - Remove a marked key one of your own workflows reads.
 
-It stays queue-only. Rules and refusals: `change-scope --help`.
+A trivial settings change stays queue-only. Rules and refusals: `change-scope --help`.
 
 A consumer's `kendex.toml` changed alone, on a pull request or merge group, answers `small` with `cause=consumer-manifest` at most, which the default review policy gives one bot round, and prints `light-ci: kind=manifest` for the lanes, [§ Per-lane verdicts](#per-lane-verdicts). Its refusals: `change-scope --help`. Name `kendex.toml` in `HARNESS_CI_STANDARD_PATHS` to keep every manifest change on the full run.
 
@@ -315,7 +316,10 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
           --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
 ```
 
-Publish `change_class` as the job output in place of `harness_only`, and feed it to `aggregate-needs` as the waiver by naming the authorizing class where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`. `aggregate-needs` keeps its rule unchanged: a skipped job is accepted only against the class that authorized it.
+- Publish `change_class` as the job output in place of `harness_only`.
+- Feed it to `aggregate-needs` as the waiver by naming the authorizing class where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`.
+
+`aggregate-needs` keeps its rule unchanged: a skipped job is accepted only against the class that authorized it.
 
 ### Through the composite action
 
@@ -336,7 +340,10 @@ The classify step can instead call the composite action kendex publishes. It wra
           head: ${{ env.HEAD }}
 ```
 
-This step names no `lanes-from` and passes no `queue-only-default`, so it declares no lane and never stands its lanes down. A workflow that declares lanes adds `lanes-from`, [§ Per-lane verdicts](#per-lane-verdicts); one that takes the queue-only default also passes `queue-only-default: true`, as [the CI template](#the-ci-template) does.
+This step names no `lanes-from` and passes no `queue-only-default`, so it declares no lane and never stands its lanes down.
+
+- A workflow that declares lanes adds `lanes-from`, [§ Per-lane verdicts](#per-lane-verdicts).
+- One that takes the queue-only default also passes `queue-only-default: true`, as [the CI template](#the-ci-template) does.
 
 - **The classifier is kendex's, at the ref the step names.** The action reads `skills/harness-ci/scripts` out of its own tree, so a fix to the classifier reaches the consumer with no pull request of its own, and the class is never read out of the `classifier` checkout above. Select the ref under [§ Action pinning](#action-pinning).
 - **`classifier` names another checkout root to read those scripts from.** kendex's own CI passes its default-branch checkout there, because in kendex the action's tree is the pull request's tree. No input carries a class.
@@ -470,10 +477,14 @@ One of two routes gives the repository the `CI` context:
 - **The repository's own workflow.**
   1. Keep the workflow and its job names.
   2. Put `merge_group:` beside `pull_request:` under `on:`.
-  3. Add Shape 1's `changes` job and give every lane its condition.
-  4. Add Shape 3's aggregate with `name: CI`, its `needs:` naming every job in the workflow and each gated lane in a `--skippable`.
-  5. A lane in another workflow moves into this one, because a job waits only on jobs in its own workflow.
-  6. An aggregate the repository already runs under another name takes the name `CI` rather than running beside a second one.
+  3. Add Shape 1's `changes` job.
+  4. Give every lane its condition.
+  5. Add Shape 3's aggregate with `name: CI`, its `needs:` naming every job in the workflow and each gated lane in a `--skippable`.
+
+  In that workflow:
+
+  - A lane in another workflow moves into this one, because a job waits only on jobs in its own workflow.
+  - An aggregate the repository already runs under another name takes the name `CI` rather than running beside a second one.
 
 Run the platform report after the new CI workflow and required-checks ruleset are active.
 
@@ -483,13 +494,16 @@ A consumer with no required checks and an unprotected default branch needs no co
 
 The CI contract below applies to consumers with product CI.
 
-- Each publishes `change_class` from its `changes` job and installs the render prerequisites in Shape 4.
+- Each publishes `change_class` from its `changes` job.
+- Each installs the render prerequisites in Shape 4.
 - A class-only Shape 4 consumer skips product jobs when the classifier succeeds and reports `render`.
 - Use a status function in each job condition so a failed classifier cannot skip product checks.
-- Feed `needs.changes.outputs.change_class == 'render'` to `aggregate-needs` as the waiver and list each product job it may skip with `--skippable`.
+- Feed `needs.changes.outputs.change_class == 'render'` to `aggregate-needs` as the waiver.
+- List each product job it may skip with `--skippable`.
 - A composite-action or CI-template consumer reads `lanes` and per-lane verdicts under [§ Per-lane verdicts](#per-lane-verdicts), including the rule that runs the lanes claiming a path a render changes.
 
-- Except for the CodeQL pull-request scan below, a non-product guard job skips on `render` only when the render proof covers what it checks, or, in a composite-action or CI-template consumer, when it is a declared lane whose default-branch globs claim no path the render changes.
+Except for the CodeQL pull-request scan below, a non-product guard job skips on `render` only when the render proof covers what it checks, or, in a composite-action or CI-template consumer, when it is a declared lane whose default-branch globs claim no path the render changes.
+
 - The proof covers the bot instruction files comparison through the trusted sibling `bot-instructions` checker only when `kendex verify --help` advertises `--bot-instructions-from`. Every release since v1.12.2 advertises this option.
 - A consumer may skip its bot-instructions check on `render` when the selected verifier advertises this option. A consumer that pins a verifier older than v1.12.2 keeps that check running.
 - A repository may skip its CodeQL scan on a render-only pull request when CodeQL is not a required check and the push to the default branch scans the same paths.
@@ -514,12 +528,12 @@ A render that the refresh run lands on the default branch, under the review-gate
   - Give it the same `needs:`, and the condition and aggregate arguments [§ Per-lane verdicts](#per-lane-verdicts) sets out.
   - Name each lane in CI's `needs:`.
   - A lane that reads a file in the built-in docs set is the exception: it drops the `lanes` and verdict terms, runs on every diff and stays out of `--skippable` and `--lane`, per [§ Through the composite action](#through-the-composite-action).
-  - Copied as it stands, the placeholder fails, and `CI` fails with it.
+  - Copied as it stands, the placeholder fails wherever it runs, and `CI` fails with it. Under the queue-only default it first runs in the merge group.
 - **The merge-queue run is the only proof of a head.** The classify step passes `queue-only-default: true`, so on `pull_request` the action stands every lane down on a repository with no `HARNESS_CI_PER_PUSH_REASON`, per [§ Per-lane verdicts](#per-lane-verdicts). A copy that drops the input runs its lanes on every pull request. The pull request run then reports `Classify the diff` and a passing `CI`, which GitHub needs before it admits the pull request to the queue, and no product lane. The merge group runs the lanes its own diff selects. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for. The declaration is read from the `classifier` checkout, the default branch. No line of the template reads the change class.
 - **The default needs the merge-queue ruleset.** Without a queue no run proves the head, and `pr-merge` takes the plain route on the stub run. A repository with no merge queue sets `HARNESS_CI_PER_PUSH_REASON = "no merge queue"`, and its pull requests run their lanes.
 - **A push to the default branch runs no lane.** The template has no `push` trigger: the queue run already proved the merged head. A repository workflow that adds `push` gets the same stand-down; the opt-back is `HARNESS_CI_PER_PUSH_REASON`, which runs the lanes on both events.
 - **The nightly run.** The template's `schedule` trigger runs once a day on the default branch, and `workflow_dispatch` runs the same on demand. The action answers `lanes=true` with `lanes_cause=full-run` and every declared lane `true` there, so a platform lane marked `:nightly` runs across all paths. Mark macOS, Windows, GPU and larger-runner lanes `:nightly`, or `:queue` where they must prove each head.
-- **The opt-back.** `HARNESS_CI_PER_PUSH_REASON` in the default branch's settings, the reason as its value, runs the lanes on each pull-request push and push, queue-only changes included, with only `:queue` lanes deferred. It reopens the admin route where `HARNESS_CI_QUEUE_PATHS` and the queue selector allow it. Before setting `HARNESS_CI_QUEUE_SELECTOR`, update harness-ci on the default branch and sync the merging checkout. A blank value is refused with one `setting-refused:` line and a warning, and reads as unset. The README's settings table names it.
+- **The opt-back.** `HARNESS_CI_PER_PUSH_REASON` in the default branch's settings, the reason as its value, runs the lanes on each pull-request push and push, queue-only changes included, with only `:queue` lanes deferred. It reopens the admin route where `HARNESS_CI_QUEUE_PATHS` and the queue selector allow it. Before setting `HARNESS_CI_QUEUE_SELECTOR`, update harness-ci on the default branch. Then sync the merging checkout. A blank value is refused with one `setting-refused:` line and a warning, and reads as unset. The README's settings table names it.
 - **`changes` and `CI` stay separate jobs.** `changes` is the one reader of the opt-back, through `change-class`, and `aggregate-needs` refuses a classifier job that did not succeed, so the aggregate cannot read the answer in the job that produces it. Every lane fans out from `changes`, and `CI` runs under `always()` after every lane. A pull request run is these two jobs.
 - **No run cancels another.** The workflow has no `concurrency` group, so a copy adds none. A run cancelled under [GitHub's concurrency rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) ends its `CI` check as cancelled, and that check blocks the pull request though nothing in the change failed, including when one push starts two runs and the later cancels the earlier. A pull request run is only `changes` and `CI`, so cancelling a superseded one saves little. A release or publication workflow keeps its own serialization.
 - **The render prerequisites are Shape 4's.** The template uses harness-ci's `install-latest.sh` from the trusted default branch. The network steps and the render-candidate step permit failure in the classifier job. A missing prerequisite prevents the `render` class. Every other class is judged as usual. The install and mirror steps run only for a render candidate, on `pull_request` too: orch's consumer refresh approval reads the measured render class off the pull request run, and the merge group carries the same proof.
@@ -538,7 +552,8 @@ A render that the refresh run lands on the default branch, under the review-gate
   - Its `--policy-root` reads the exclusion list and its setting from `guards` too, so a pull request that excludes its own credential is still refused.
   - A scanner without `--policy-root` refuses the flag on every pull request, so a repository that updates its copy of the template first merges the kendex refresh that gives the default branch a commit-guards with the flag.
   - It runs on every pull request, including one the classifier clears.
-  - A repository without commit-guards deletes only the secrets step. Keep `guards` for the aggregate helper.
+  - A repository without commit-guards deletes only the secrets step.
+  - Keep `guards` for the aggregate helper.
 
 ## Verifying an adoption
 
@@ -548,6 +563,6 @@ Two probe PRs against the adopting repository:
    - **Class-only Shape 4, with the `render` class**: open a render-only refresh PR. Its diff contains only what `kendex refresh` or `kendex apply` writes. If no refresh is pending, wait for the next consumer refresh PR. Expect `change_class=render`, skipped heavy lanes and every required context green. Do not hand-edit a path kendex renders for this probe.
    - **The composite action or CI template**: use the same render-only refresh, with the shared lane producer available in the selected classifier checkout and no changed path that a default-branch lane claims. Expect `change_class=render`, `lanes=false`, skipped heavy lanes and every required context green. A refresh that changes a claimed path follows [§ Per-lane verdicts](#per-lane-verdicts); it is not a skip probe.
    - **Shapes 1–3, gating on `harness_only` alone**: hand-edit one file under `.agents/`. Expect `harness_only=true`, skipped heavy lanes and every required context green.
-2. **Mixed**: combine the first probe's changes with one product-file edit. The product lanes required by that diff run in its merge group; on the pull request they run only where the repository sets `HARNESS_CI_PER_PUSH_REASON`.
+2. **Mixed**: combine the first probe's changes with one product-file edit. The product lanes required by that diff run in its merge group. In a workflow that passes `queue-only-default: true`, as the CI template does, they run on the pull request only where the repository sets `HARNESS_CI_PER_PUSH_REASON`. In every other shape they run on the pull request too.
 
 Close both once the checks report.

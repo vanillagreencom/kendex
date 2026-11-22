@@ -10,7 +10,7 @@ A changed-file check for CI. It lets CI skip selected checks when a change conta
 - Support pull requests, pushes and merge-queue events.
 - Validate skipped jobs before a required-context aggregator reports success.
 - Name the kind of a change: a re-rendered install, a trivial edit, a micro or small change, or anything else.
-- Ship a CI workflow template that reports one `CI` check, the aggregate context every repository under the standard reports, and runs the same checks on a merge queue as on the pull request.
+- Ship a CI workflow template that reports one `CI` check, the aggregate context every repository under the standard reports, and runs the product checks in the merge queue.
 
 ## Install
 
@@ -51,13 +51,14 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | `HARNESS_CI_TRIVIAL_SETTINGS` | Adjustments to the installed packages' CI-unread keys. |
 | `ORCH_SIZE_TEST_PATHS` | Test paths outside the branch measurement's default patterns. |
 
-- `HARNESS_CI_DOCS_PATHS`: keep the checks claiming those files through the lane outputs. [Declaration contract](references/wiring.md#declared-product-text).
+- `HARNESS_CI_DOCS_PATHS`: keep the checks claiming those files through the lane outputs. A path in the built-in docs set cannot be declared, and its entry is ignored. [Declaration contract](references/wiring.md#declared-product-text).
 - `HARNESS_CI_UNREAD_PATHS`: a change to only those files, with no lane claiming them, runs no lane. Declared product text, a path on the shipped queue list, such as a workflow, and a path git quotes keep the unclaimed-path fallback. [Per-lane contract](references/wiring.md#per-lane-verdicts).
 - `HARNESS_CI_PER_PUSH_REASON`: unset, every change is queue-only. A repository with no merge queue sets it to `no merge queue`. What it changes: [references/wiring.md § The CI template](references/wiring.md#the-ci-template).
 - `HARNESS_CI_QUEUE_PATHS` is read only with `HARNESS_CI_PER_PUSH_REASON`. Set it empty when the shipped list covers all those inputs. Leaving it unset requires the queue for every change.
 - `HARNESS_CI_QUEUE_SELECTOR` is read only with `HARNESS_CI_PER_PUSH_REASON`. Before you set it: [references/wiring.md § The CI template](references/wiring.md#the-ci-template).
 - `HARNESS_CI_TRIVIAL_MAX_LINES`: a diff of admitted settings files alone has no ceiling.
-- `HARNESS_CI_TRIVIAL_SETTINGS`: add key globs, or prefix a glob with `!` to remove them. List only keys that no CI job or review gate reads.
+- `HARNESS_CI_TRIVIAL_SETTINGS`: add key globs, or prefix a glob with `!` to remove them.
+- `HARNESS_CI_TRIVIAL_SETTINGS`: list only keys that no CI job or review gate reads.
 
 For several test groups, declare their input paths in `.github/ci-lanes.conf`.
 

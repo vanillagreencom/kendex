@@ -15,10 +15,11 @@ Consumer docs: [README.md](README.md). The wiring rules: [SKILL.md](SKILL.md). T
 
 ## Tests
 
-`tests/` runs in kendex CI on every change to this repository.
+kendex's `.github/workflows/skill-tests.yml` runs the suites a change selects, in the merge group.
 
 - Run one suite locally with `bash skills/harness-ci/tests/queue-only.test.sh`.
-- The suites source change-scope's `tests/lib/sandbox.sh`, which lays out both packages.
+- Every suite but `aggregate-needs` and `install-latest` sources change-scope's `tests/lib/sandbox.sh`, which lays out both packages.
+- `install-latest` sources review-gate's `tests/lib/sandbox.sh` and `tests/lib/workflow-edit.sh`.
 - The classifier's own suites, the real-kendex rows among them, are change-scope's. [Its DEVELOPMENT.md](../change-scope/DEVELOPMENT.md) names them.
 - change-scope's `absence` suite holds the refusal at startup when change-scope is absent beside this package.
 - `tests/lib/workflow.sh` reads a workflow's job conditions, needs, names and triggers, and plants a defect in a copy. It runs `tests/lib/gh-eval.py`, which evaluates the conditions, through `gh_eval`, which turns a refusal into an answer no row expects. kendex's `tools/tests/ci-aggregate.test.sh` reads its own `skill-tests.yml` with the same two files.

@@ -33,11 +33,19 @@ Consumer setup and the workflow shapes to copy are in [references/wiring.md](ref
 
 ## Scripts
 
-- `scripts/harness-only` answers `harness_only=true|false`. Flags and exit codes: `harness-only --help`. The endpoints: [references/wiring.md § The endpoint expressions](references/wiring.md#the-endpoint-expressions).
+- `scripts/harness-only` answers `harness_only=true|false`. A `false` verdict prints its reason on stderr as a `fallback: cause=...` line. Flags and exit codes: `harness-only --help`. The endpoints: [references/wiring.md § The endpoint expressions](references/wiring.md#the-endpoint-expressions).
 - `harness-only --mode docs` answers `docs_only=true|false` for the docs-only path set that `harness-only --help` defines.
 - Declare exact product-text Markdown files through the trusted base's `HARNESS_CI_DOCS_PATHS`, by [references/wiring.md § Declared product text](references/wiring.md#declared-product-text).
 - Use `harness-only --mode render-candidate` only to gate the engine installation and the mirror refresh. It grants no CI skip. `change-class` must prove render before CI skips product checks.
-- `scripts/change-class` prints the change class: `render`, `trivial`, `micro`, `small` or `standard`. change-scope's `change-scope`, installed beside this package, decides the class. This package adds the queue-only class and the lane verdicts. Flags, the queue-only line and local lane selection: `change-class --help`. The classes, their settings, causes and refusals: `change-scope --help`.
+- `scripts/change-class` prints the change class: `render`, `trivial`, `micro`, `small` or `standard`. change-scope's `change-scope`, installed beside this package, decides the class. This package adds the queue-only class and the lane verdicts. Flags and the queue-only line: `change-class --help`. The classes, their settings, causes and refusals: `change-scope --help`.
+- Select lanes locally with `change-class --output FILE`. The lane verdicts print only with `--output`. `--lanes-from` names a separate checkout of the default branch, never the judged checkout. `--base` names the default branch's tip, as a pull request's base end does:
+
+  ```bash
+  .agents/skills/harness-ci/scripts/change-class --event pull_request \
+    --base origin/main --head HEAD \
+    --output "$OUT" --lanes-from "$DEFAULT_BRANCH_CHECKOUT"
+  ```
+
 - Required-context aggregators call `scripts/aggregate-needs`. Its arguments: `aggregate-needs --help`. The lane rules: [references/wiring.md § Per-lane verdicts](references/wiring.md#per-lane-verdicts).
 - Install the release engine with `scripts/install-latest.sh`.
 
@@ -57,6 +65,7 @@ Hold these rules when wiring it:
 - Keep the required-context job unconditional.
   - Gate the expensive lanes with a job-level `if:` off a `changes` job's output, or a step-level `if:` inside an aggregate.
   - Let the aggregate that carries the required name run on every event.
+- A job-level `if:` needs a status function, as [references/wiring.md § Shape 1](references/wiring.md#shape-1--a-changes-job-feeding-job-level-if) shows. Without one, a failed classifying job skips the lane.
 - A step that installs a tool for an unconditional lane stays unconditional. A harness-only `if:` on the install, while the lane that runs the tool runs on every event, fails that lane on a harness-only diff. The tools commit-guards needs are in [commit-guards CHECKS.md § py-names](../commit-guards/CHECKS.md#py-names) and [§ secrets](../commit-guards/CHECKS.md#secrets).
 
 ## Fail-closed
