@@ -4,14 +4,18 @@ Code-writing rules for AI coding agents. Repository owners use this skill to sup
 
 ## Features
 
-- Define how agents handle errors and remove unused code.
-- Set structure rules for resource ownership and exports, abstraction rules for shared decisions, and a rule to build on another system through its own interface.
-- Keep fixture interfaces out of shipped APIs while permitting private test access.
-- Judge tests by their protection against run time and upkeep. Prove a new or changed instrument can fail once.
-- Set test rules for defect controls, typed results, progress evidence and checks selected from what a change affects.
-- Load Rust, Bash and TypeScript rules only for the stack being changed, and the UI polish bar and screenshot set only for a changed view.
-- Give each practice or design finding one evaluation line: whether this guidance misled the decision, missed the case or was not followed, and which guidance or route owns the cause.
-- Direct markdown work to the docs-writing skill.
+- Agents report a failure instead of hiding it.
+- Agents remove unused code.
+- Each resource and each decision has one owner.
+- Agents build on another system through its documented interface.
+- Test-only access adds nothing to the API or commands you ship.
+- Agents keep a test only for a failure that matters, weighed against its run time and upkeep.
+- Agents show once that a new or changed check can fail.
+- Tests check results, not wording.
+- Where a repository runs tests by what a change affects, the existing entry point selects them.
+- Agents load the Rust, Bash and TypeScript rules only for the language being changed.
+- Agents load the UI rules only for a changed view or its text.
+- Each review finding on practice or design says whether this guidance misled the agent, missed the case or was not followed, and which guidance or route owns the cause.
 
 ## Install
 
@@ -21,7 +25,11 @@ kendex add vanillagreencom/kendex --skill code-quality
 
 ## How it works
 
-The agent loads [SKILL.md](SKILL.md) before it changes code. It reads the shared rules together with your project instructions. It applies those rules while implementing the change and validating the result. The test rules are [SKILL.md § Prove Your Guards](SKILL.md#prove-your-guards) and [§ Tests](SKILL.md#tests).
+1. The agent loads [SKILL.md](SKILL.md) before it changes code.
+2. It reads the shared rules together with your project instructions.
+3. It applies those rules while implementing the change and validating the result.
+
+The test rules are [SKILL.md § Prove Your Guards](SKILL.md#prove-your-guards) and [§ Tests](SKILL.md#tests).
 
 ## Setup
 
