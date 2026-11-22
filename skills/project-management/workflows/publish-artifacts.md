@@ -1,6 +1,6 @@
 # Publish Planning Artifacts
 
-Run after a run's planned tracker mutations, to publish its planning artifacts. [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) selects each artifact's source issue, resolves its readable path and states the missing and unpublished cases.
+Run after a run's planned tracker mutations, to publish its planning artifacts. [references/planning-artifacts.md](../references/planning-artifacts.md) selects each artifact's source issue, resolves its readable path and states the missing and unpublished cases.
 
 ## Linear
 

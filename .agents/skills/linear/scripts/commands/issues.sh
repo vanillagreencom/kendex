@@ -158,7 +158,8 @@ Create Options:
   Reach guard: unless LINEAR_REQUIRE_REACH is set empty in kendex.settings.toml
   [env], create refuses a description with no `Reached by:` line, and a
   `--review-born --priority 2` one with no `Symptom:`; a placeholder or null
-  token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
+  token (TBD, n/a, none, -) counts as no line. Rule: project-management
+  references/filing.md, § Name what reaches it.
   It also refuses a description with no `Supersession:` record: each matched
   open item as `superseded`, `duplicate` or `re-scoped` with its identifier,
   entries separated by `;`, or `none found; searched: <terms>`. Template:

@@ -4,7 +4,7 @@ Analyze issues and projects for relations, labels, hierarchy, placement, duplica
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). An observation that clears it is a `create`; everything else is `skip` with a one-line reason. Every run that reads an issue backlog also completes the § 6 cancellation sweep. A `single` run reads open titles, not the backlog, and does not sweep (§ 14).
+**Hold the creation bar** ([filing.md](../references/filing.md) § Creation bar). An observation that clears it is a `create`; everything else is `skip` with a one-line reason. Every run that reads an issue backlog also completes the § 6 cancellation sweep. A `single` run reads open titles, not the backlog, and does not sweep (§ 14).
 
 ## Inputs
 
@@ -42,14 +42,14 @@ For an existing-issue entry in `INPUT_ITEMS`, use its `identifier` as the reques
 
 ### 1.1.1 Resolve Team Scope
 
-**Skip if** TRACKER=github — a repository is one scope. Otherwise resolve the scope ([SKILL.md](../SKILL.md) § Execution Rules) before any Linear read:
+**Skip if** TRACKER=github — a repository is one scope. Otherwise resolve the scope ([tracker-reads.md](../references/tracker-reads.md) § Team scope) before any Linear read:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh auth-check
 .agents/skills/linear/scripts/linear.sh teams get [TEAM]
 ```
 
-`TEAM` is `auth-check`'s `team`, a name; `TEAM_PREFIX` is that team's `key`. `teams get` looks up by name and needs no issue, so a team with none yet resolves and the audit proceeds. Halt when `auth-check` reports no team and when `teams get` resolves none — an audit that cannot resolve its own scope must not run unscoped. With the scope resolved, a row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode. Which path resolves and filters: [SKILL.md](../SKILL.md) § Scope by Path.
+`TEAM` is `auth-check`'s `team`, a name; `TEAM_PREFIX` is that team's `key`. `teams get` looks up by name and needs no issue, so a team with none yet resolves and the audit proceeds. Halt when `auth-check` reports no team and when `teams get` resolves none — an audit that cannot resolve its own scope must not run unscoped. With the scope resolved, a row whose `id` does not start with `TEAM_PREFIX-`, and a project row whose `teams[]` omits `TEAM`, is out of scope in every mode. Which path resolves and filters: [tracker-reads.md](../references/tracker-reads.md) § Scope by Path.
 
 ### 1.1.2 Read the Pass Inventory
 
@@ -309,7 +309,7 @@ Items outside `child_indexes` — `origin: "discovered"` refactors, for instance
 
 `parent_issue` and `blocked_issues` are hints the analysis may override; `hierarchy_contract` is binding per § 7.0. A research issue never appears in `parent_issue`.
 
-Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); and a parent candidate only where items are the parts of one deliverable accepted as one thing, [SKILL.md § Disposition](../SKILL.md#disposition)'s grouping rule. A shared outcome, mechanism or subject makes no parent.
+Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); and a parent candidate only where items are the parts of one deliverable accepted as one thing, the grouping rule of [filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent). A shared outcome, mechanism or subject makes no parent.
 
 This run is itself an audit and files no parent for its subject. Each create is `hierarchy.action: none` in the project its route names, with a `related` relation to the input's `parent_issue` when one exists, except in these cases:
 
@@ -324,7 +324,7 @@ Parent and child must share a project. If they cannot, record `wrong_project[]` 
 
 ### 7.2 Evaluate Coherence
 
-Ask: **would these ship together in one PR?** Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8). No means separate items with blocking relations for ordering. They are children of one container only when they are the parts of one deliverable accepted as one thing ([SKILL.md § Disposition](../SKILL.md#disposition)), under § 7.1's existing-deliverable or new-deliverable case; otherwise each stands alone in its project.
+Ask: **would these ship together in one PR?** Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8). No means separate items with blocking relations for ordering. They are children of one container only when they are the parts of one deliverable accepted as one thing ([filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent)), under § 7.1's existing-deliverable or new-deliverable case; otherwise each stands alone in its project.
 
 Lean sub-issue for tests of the feature being implemented, hardening for the component being built, and platform work under a same-platform parent. Lean independent for platform-specific work under a cross-platform parent, tooling or methodology under a feature parent, and anything that could ship before or after the parent. When uncertain, prefer independent with a blocking relation.
 
@@ -376,7 +376,7 @@ Recommend a new project in `project_recommendations[]` for architecture gaps onl
 
 ### 10.1 Apply the Creation Bar
 
-For every source, including `oversee`, proposal-sweep, and audits, apply reviewer/references/finding-disposition.md § Decision flow Step 0 before the creation bar. Each proposed item then passes only if it clears all three tests in [SKILL.md](../SKILL.md) § Disposition and has clear scope, testable criteria, and defined deliverables. Preserve that section's security, data-loss, critical-harm and financial-loss exceptions. A reproducible anomaly with evidence attached passes as an investigation issue whose deliverable is the diagnosis. A failure is `skip` with a one-line reason naming the test it failed: `"refactor with no behaviour change or user-visible work unblocked"`, `"size or ceiling warning"`, `"hypothetical no run reached"`, `"no user-visible effect"`, `"covered by [ISSUE_ID]"`, `"no evidence to start from"`, or `"too vague — [missing criterion]"`. Carry that reason into the report; a no-behaviour-change refactor filed through `--single` returns `skip`, not `create`.
+For every source, including `oversee`, proposal-sweep, and audits, apply reviewer/references/finding-disposition.md § Decision flow Step 0 before the creation bar. Each proposed item then passes only if it clears all three tests in [filing.md](../references/filing.md) § Creation bar and has clear scope, testable criteria, and defined deliverables. Preserve that section's security, data-loss, critical-harm and financial-loss exceptions. A reproducible anomaly with evidence attached passes as an investigation issue whose deliverable is the diagnosis. A failure is `skip` with a one-line reason naming the test it failed: `"refactor with no behaviour change or user-visible work unblocked"`, `"size or ceiling warning"`, `"hypothetical no run reached"`, `"no user-visible effect"`, `"covered by [ISSUE_ID]"`, `"no evidence to start from"`, or `"too vague — [missing criterion]"`. Carry that reason into the report; a no-behaviour-change refactor filed through `--single` returns `skip`, not `create`.
 
 Hierarchy-contract items (§ 7.0) are never `skip`: keep `action: "create"` and flag any actionability gap in `reason` for the caller.
 

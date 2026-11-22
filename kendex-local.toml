@@ -75,10 +75,10 @@ After merge, the item's lane runs `.pi/prompts/npm-deploy.md` § Publish, tag, r
 project-management = '''
 ### Intake
 
-File a kendex issue only when its body names one of these two, in addition to the Creation bar in § Disposition:
+File a kendex issue only when its body names one of these two, in addition to the Creation bar in `references/filing.md`:
 
 - **A failure that happened**: a `**Symptom**:` header that names where it broke, when, and what broke.
-- **An owner request**: an `**Owner**:` header, placed right after `**Reached by**:`, that names the owner's note or ask. That `**Reached by**:` line names the same ask, as § Disposition says of an owner-directed item.
+- **An owner request**: an `**Owner**:` header, placed right after `**Reached by**:`, that names the owner's note or ask. That `**Reached by**:` line names the same ask, as `references/filing.md` § Name what reaches it says of an owner-directed item.
 
 For kendex, `templates/issue-description-template.md` keeps the `**Symptom**:` header at every priority and from every source where a failure happened. Its rule that drops the line outside a review-born priority-2 filing does not apply here.
 

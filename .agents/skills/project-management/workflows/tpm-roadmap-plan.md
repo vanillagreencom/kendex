@@ -4,7 +4,7 @@ Analyze proposed issues for cross-project conflicts, architecture coverage, and 
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([SKILL.md](../SKILL.md) § Disposition). A proposed issue survives only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and it is finishable as written. Everything else gets `action: "skip"` with a one-line reason.
+**Hold the creation bar** ([filing.md](../references/filing.md) § Creation bar). A proposed issue survives only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and it is finishable as written. Everything else gets `action: "skip"` with a one-line reason.
 
 ## Input
 
@@ -74,7 +74,7 @@ Before § 2, select candidate duplicate, relation, and supersession rows from th
 
 ### 1.6 Research
 
-**Skip if** `RESEARCH_PATH` is null. Read `RESEARCH_READ_PATH` and extract the technical findings, recommendations, and constraints; in spec mode, also its phases and per-phase deliverables, which bound § 3 and § 4. Keep `RESEARCH_PATH` and `RESEARCH_SOURCE_ISSUE` for output under [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
+**Skip if** `RESEARCH_PATH` is null. Read `RESEARCH_READ_PATH` and extract the technical findings, recommendations, and constraints; in spec mode, also its phases and per-phase deliverables, which bound § 3 and § 4. Keep `RESEARCH_PATH` and `RESEARCH_SOURCE_ISSUE` for output under [planning-artifacts.md](../references/planning-artifacts.md).
 
 ---
 
@@ -112,7 +112,7 @@ Record uncovered components in `architecture_gaps[]`: `include` when the gap blo
 
 1. **Dependencies.** Map `depends_on_proposed` title references to concrete issues, identify chains, and error on a cycle.
 
-2. **Bundles.** Related items share the roadmap's project, or one label where no project says what they share, under [SKILL.md § Disposition](../SKILL.md#disposition)'s grouping rule. Give a bundle a parent only when its items are the parts of one deliverable accepted as one thing, titled for that deliverable and built from [parent-issue-template.md](../templates/parent-issue-template.md). Work that would naturally be one PR/CI run is one leaf item with an internal checklist, not a parent. The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
+2. **Bundles.** Related items share the roadmap's project, or one label where no project says what they share, under the grouping rule of [filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent). Give a bundle a parent only when its items are the parts of one deliverable accepted as one thing, titled for that deliverable and built from [parent-issue-template.md](../templates/parent-issue-template.md). Work that would naturally be one PR/CI run is one leaf item with an internal checklist, not a parent. The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
 
 3. **Relation level.** Keep each valid relation under linear SKILL.md § Blocked Label vs Issue Relations. Repair only a relation that rule refuses; see [dependencies.md](../references/dependencies.md).
 

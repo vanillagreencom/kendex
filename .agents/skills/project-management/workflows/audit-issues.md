@@ -149,7 +149,7 @@ Then ask "Continue to full audit of [PROJECT]?" — yes sets MODE=project, TARGE
 
 **Skip if** MODE is `issue` or `team` — team audits the whole team and resolves no target. Linear only.
 
-With `TARGET` set, use it. Otherwise take the first `session-status.projects` entry with `has_active_work` that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project, reading the map first as that section says, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)) — `session-status` selects projects workspace-wide and reports no team, so confirm the chosen project belongs to the configured team before using it ([SKILL.md](../SKILL.md) § Scope by Path). With no such project, take the first entry that counts as active, since it holds every other project from activation. With none, present the ready projects with their blockers and ask which to activate (`Skip` ends the workflow); activate the chosen one, then → § 4.
+With `TARGET` set, use it. Otherwise take the first `session-status.projects` entry with `has_active_work` that [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as the active project, reading the map first as that section says, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)) — `session-status` selects projects workspace-wide and reports no team, so confirm the chosen project belongs to the configured team before using it ([tracker-reads.md](../references/tracker-reads.md) § Scope by Path). With no such project, take the first entry that counts as active, since it holds every other project from activation. With none, present the ready projects with their blockers and ask which to activate (`Skip` ends the workflow); activate the chosen one, then → § 4.
 
 ---
 
@@ -157,7 +157,7 @@ With `TARGET` set, use it. Otherwise take the first `session-status.projects` en
 
 ### 4.1 Delegate
 
-**Authorized single filing.** A `single` item the owner or their delegate asked for, with its outcome, Done-when and `Reached by:` written and one landing ([SKILL.md § Disposition](../SKILL.md#disposition), **One landing per subsystem**), is judged in this session. Run [tpm-audit § 14](tpm-audit.md#14-single-item-mode) here, with no subagent, and carry its one row to § 5; § 4.2 does not apply. Every later section still holds it: the creation bar and the title duplicate check in § 14, § 7.0's label preflight, the tracker's label, project and team refusals at create, and § 7.5's read-back. § 7 publishes no audit JSON for it. Every other `single` item, and every other mode, delegates as below.
+**Authorized single filing.** A `single` item the owner or their delegate asked for, with its outcome, Done-when and `Reached by:` written and one landing ([filing.md § One landing per subsystem](../references/filing.md#one-landing-per-subsystem)), is judged in this session. Run [tpm-audit § 14](tpm-audit.md#14-single-item-mode) here, with no subagent, and carry its one row to § 5; § 4.2 does not apply. Every later section still holds it: the creation bar and the title duplicate check in § 14, § 7.0's label preflight, the tracker's label, project and team refusals at create, and § 7.5's read-back. § 7 publishes no audit JSON for it. Every other `single` item, and every other mode, delegates as below.
 
 Spawn a one-shot `[TPM]` sub-agent (not a teammate).
 
@@ -229,7 +229,7 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 .agents/skills/orch/scripts/orch-env PM_CREATE_AUTONOMY ask
 ```
 
-Accept `ask`, the caller default, or `auto`, which `ORCH_USER_MODE=ceo` composes when the settings ladder names neither; stop on any other value. The guardrails remain [SKILL.md § Disposition](../SKILL.md#disposition)'s creation bar, the `Reached by:`, `Supersession:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
+Accept `ask`, the caller default, or `auto`, which `ORCH_USER_MODE=ceo` composes when the settings ladder names neither; stop on any other value. The guardrails remain the creation bar of [filing.md § Creation bar](../references/filing.md#creation-bar), the `Reached by:`, `Supersession:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
 
 The accepted creation set contains every bar-passing proposed creation in § 5, including architecture gaps. **Auto.** Authorize that set and every row in the displayed Cancel section without a question. Cancel covers issue-mode `cancel`, `supersede`, `combine` and `supersedes[]`, plus project/team `obsolete[]`, `duplicates[]` and `combine[]` as defined in [audit-output.md](../schemas/audit-output.md). Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8. **Ask.** Offer the same accepted creation set. Apply the rest of this section only in this mode.
 

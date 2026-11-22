@@ -325,7 +325,7 @@ Once the pull request exists, this run is a continuing action. Before you enter 
 
 Under `ORCH_DELIVERY=push-base`, `orch-runtime pr order` answers `review-first`, so no early pull request exists.
 
-**Open post-merge boxes.** **Skip if** `TRACKER=none` ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)): a directed change has no item to read. Before any other step here, read the root item live. For a single bundle, also read each non-canceled child the commit implements. Use `.agents/skills/linear/scripts/linear.sh issues get [ID]` for Linear and `gh issue view [N] --repo [OWNER/REPO] --json body` for GitHub. An item whose Done-when holds an open post-merge box, in the form the project-management skill's SKILL.md § Disposition states, takes the PR route:
+**Open post-merge boxes.** **Skip if** `TRACKER=none` ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)): a directed change has no item to read. Before any other step here, read the root item live. For a single bundle, also read each non-canceled child the commit implements. Use `.agents/skills/linear/scripts/linear.sh issues get [ID]` for Linear and `gh issue view [N] --repo [OWNER/REPO] --json body` for GitHub. An item whose Done-when holds an open post-merge box, in the form the project-management skill's references/filing.md § Done when states, takes the PR route:
 
 1. Write `[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md` with one `delivery-post-merge: issue=[ID] route=pr` line per such item, and print it.
 2. Send it: `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md"`.

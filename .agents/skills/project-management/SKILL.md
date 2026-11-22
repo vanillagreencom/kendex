@@ -19,10 +19,10 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ### Intake
 
-File a kendex issue only when its body names one of these two, in addition to the Creation bar in § Disposition:
+File a kendex issue only when its body names one of these two, in addition to the Creation bar in `references/filing.md`:
 
 - **A failure that happened**: a `**Symptom**:` header that names where it broke, when, and what broke.
-- **An owner request**: an `**Owner**:` header, placed right after `**Reached by**:`, that names the owner's note or ask. That `**Reached by**:` line names the same ask, as § Disposition says of an owner-directed item.
+- **An owner request**: an `**Owner**:` header, placed right after `**Reached by**:`, that names the owner's note or ask. That `**Reached by**:` line names the same ask, as `references/filing.md` § Name what reaches it says of an owner-directed item.
 
 For kendex, `templates/issue-description-template.md` keeps the `**Symptom**:` header at every priority and from every source where a failure happened. Its rule that drops the line outside a review-born priority-2 filing does not apply here.
 
@@ -91,54 +91,22 @@ Every kendex issue lives in one project below; the project-management skill's `r
 
 # Project Management
 
-Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker. The fleet [proposal sweep](workflows/proposal-sweep.md) runs in a subagent the overseer launches and returns its analyzed JSON to the overseer.
+This skill plans tracker work: cycles, issue audits, roadmaps and research decomposition. An agent that loads it has one of two roles:
+
+- **Primary session.** It runs a wrapper command from § Commands. A wrapper owns the user dialog and every tracker write.
+- **Analysis agent.** The `tpm` agent running a TPM workflow, or the [proposal sweep](workflows/proposal-sweep.md) subagent the overseer launches. It analyzes and returns JSON inline: a TPM workflow to its wrapper, the sweep to the overseer. It never writes to the tracker.
+
+## Goals
+
+These goals decide a case that no workflow step covers:
+
+1. The tracker holds only items that pass the creation bar, and containers that group the parts of one deliverable.
+2. A lane can pick up, land and prove each item alone.
+3. The user decides what work exists, once per decision. The workflow decides the mechanics.
 
 ## Disposition
 
-- **Judge the approach.** At every filing and launch read, judge the approach against the item's own outcome sentence:
-  1. Why does this approach produce the stated outcome, and what source evidence will show it? An outcome sentence plus a measurement does not show the work helps.
-  2. Can we remove or simplify something instead of adding this? Name the existing owner or the simpler alternative and why it meets or fails the same need. Naming an owner alone is no answer. A new requirement is not forced into a removal.
-  3. Is this a workaround of a limit, a rule or a tool? If yes, does the limit or rule still have a reason? Correct or remove a stale rule in its owning place. Fix the cause. Escalate only a boundary the owner reserves. Apply [orch SKILL.md § Skill Rules](../orch/SKILL.md#skill-rules) and code-quality SKILL.md § Correctness and § Over-Engineering.
-  - Decide go, change or drop. Put the short cause-and-effect answer in the item's existing outcome, evidence or ruling text.
-  - Repair an item with a valid need and weak text on the same item from its source request. Keep its date. Drop it only when the need is absent, duplicated, satisfied or superseded.
-
-- **Creation bar.** File an issue only when all three hold:
-  - it changes what a user or operator experiences, or blocks work that does;
-  - no open issue, active branch, or one-line fix already covers it;
-  - someone could pick it up and finish it without a new investigation.
-
-  A reproducible anomaly with evidence in hand passes all three as an investigation issue. A container, a parent with children in the tracker or named by identifier in its body, has no work of its own, so the three tests do not apply to it; the grouping rule below says when one is filed. Children sharing its subject are no duplicate; each child faces the bar itself. A parent with no child and none named is a work item. Everything else is declined with one line in the report: no issue, no placeholder, no tracking artifact. Failing the bar: a severe-sounding edge case no real input reaches, a coverage ask for a path that has not regressed, a refactor that neither changes behavior nor unblocks user-visible work, and the classes in [`../reviewer/references/finding-disposition.md`](../reviewer/references/finding-disposition.md) § Decision flow Step 0, whatever source the candidate arrived from.
-
-- **Group by project or label, never by parent.** Related items share their project ([project-map](references/project-map.md)), or one existing label where no project says what they share; the grouping adds no label or field. An audit, holistic pass, redesign or other pass files no parent for its subject: it files each item it produces in the project its route names, with a blocking relation only where one item needs another's change. Items that share an outcome, a mechanism or a subject the owner reads in one place form no parent either. A parent exists only when its children are the parts of one deliverable accepted as one thing, such as a design and its build of one feature, the domain parts research-complete splits from one implementation issue, or the review audit's in-PR bundle. It carries no requirements, no pull request and one Done-when box, "Every child Done or cancelled"; an outcome to read is its own child ([parent-issue-template](<templates/parent-issue-template.md>)). Audits place children per [tpm-audit § 7.1](<workflows/tpm-audit.md#71-identify-candidates>).
-- **Name what reaches it.** Every issue carries a `Reached by:` line giving the user action, run, check, or shipped producer that arrives at the defect; an owner-directed item names the ask.
-  - The thread a finding came from, a shape ("a name containing a quote"), or something true in theory is not a reach, and an item with nothing to name is a decline, not an issue. The judgement is the author's: `issues create` under `LINEAR_REQUIRE_REACH` refuses only a body with no `Reached by:` line, an unsubstituted placeholder and a null token (`TBD`, `n/a`, `none`, `-`) counting as absent.
-  - A filing whose source is a review round carries, at priority 2, a `Symptom:` line naming the run, the user, or the red check that already showed the defect (`--review-born`). Priority 2 from any other source is structural, reports no symptom, and is not checked for one. Where a review-born finding files at all is [`../reviewer/references/finding-disposition.md`](../reviewer/references/finding-disposition.md) § Filing bar.
-- **A requirement asks for what code-quality admits.** A requirement, Done-when or test plan is written against the code-quality skill's SKILL.md § Tests, § Over-Engineering and the repository's compatibility policy under § Cleanup. A wording test, a fixed count of growing data, a compatibility or migration clause the policy does not require, or a gate with no named failure is cut from the item before filing; the cited section states each rule.
-- **An estimate is a relative size.** The numeric estimate is a size class within the team, 1 for its smallest work through 5 for its largest, never a unit of time. An estimate already set stays valid. State time beside the item, not in the field: one approximate number of nonstop hours from a lane starting the work through merge, review rounds included. The communication skill's references/messages.md § Evidence and costs says how to derive and label it.
-- **Done-when separates branch proof from live proof.** Prove every box the branch can prove before merge. Admit a post-merge box on the same item only when all three conditions hold. It needs something the branch cannot give: a deployment or installation (a release, consumer refresh or host), live use over time, or a person's screen or hands. Name that class in `Why after merge:`. Its `Where:` names the evidence location and its reader under [orch communication-modes.md § Owner-only verification](../orch/references/communication-modes.md#owner-only-verification). For owner-side account, browser and home steps, write "Jarvis, the owner's delegate" in `Where:` only where the jarvis skill is installed. The repository's normal traffic produces its sample inside the window. A release trigger names a release the repository publishes within 72 hours of merge. A count names its sample size. Otherwise make it a pre-merge test or drop it. Write each such box on one line as `- [ ] Post-merge: <check>; Where: <location or command>; Why after merge: <why the branch cannot prove it>; Trigger: <trigger>; Deadline: <deadline>`. The `Post-merge:` check states its pass condition. Trigger is `merge`, a UTC time at or after merge, or `release OWNER/REPO TAG-GLOB`, the first matching GitHub release published after merge. When OWNER/REPO is a repository where the item merged, the release must contain the item's latest merge commit in that repository. A missing Trigger means `merge`. Deadline is `+Nh`, with N from 1 through 72, counted from the trigger: the merge, the stated time, or the release publication. Write a merge trigger's deadline as `+Nh`, because the merge time is unknown when the box is written. A merge or time trigger also takes a real UTC deadline after its trigger and at most 72 hours later; a release trigger takes only `+Nh`. The Linear completion command validates this form. Admit a count or rare-event check only when an existing query or counter answers it inside this window. Otherwise make it a pre-merge test or drop it. Absence of an event passes only when the check states absence as its pass condition. An open post-merge box keeps the merged item in Verifying. The verification pass records evidence and ticks a passing box, then completes the same item after its last box. A failed check follows [orch § The Cycle](../orch/SKILL.md#the-cycle). Unreadable evidence and deadline moves follow [orch verify](../orch/workflows/verify.md#2-resolve-missing-evidence). A merged item never returns to In Progress. Do not create a separate item to carry the verification check.
-- **One item per batch.** A body that lists batches each able to land alone is filed as one item per batch, with a blocking relation only where a batch needs another's change.
-- **One landing per subsystem.** An item whose work changes more than one subsystem, as the orch skill's [small.md](../orch/workflows/small.md) opening defines one, is filed as one item per subsystem, each able to land and be reviewed alone, with a blocking relation only where one needs another's change. An item that cannot land in parts says why in its body. The orch launch read, [oversee.md](../orch/workflows/oversee.md) § 3 Lane directive step 2, sends back an item that still spans several.
-- **Ask about work, never about mechanics.** Creation and cancellation follow [audit-issues § 6](workflows/audit-issues.md#6-approve-creations-and-cancellations); the user decides activation. Labels, priorities, relations, hierarchy, sort order, and project moves are corrections the workflow applies on its own authority.
-- **Research is part of planning, not a work item.** Gather prior art, vendor docs, and approach comparisons inline during planning. Store the artifacts in the tracker under § Planning artifacts; research that is the evidence behind a constraint still in force stays attached to that constraint's issue, and the rest is not kept. A tracker research issue exists only when the research is delegated as standalone work: run by the researcher agent, or prepared for later pickup (`research-spike`).
-- **One approval per decision.** Ask the user to approve a body of work once, at the roadmap plan gate. Creation re-asks only what changed after that answer.
-
-## Planning artifacts
-
-To publish artifacts after a run's planned tracker mutations, follow [workflows/publish-artifacts.md](workflows/publish-artifacts.md).
-
-Planning, research, roadmap and audit files are not repository content. A plan or report with no caller-supplied path lives at `tmp/plans/<slug>.md` (a research report at `tmp/plans/<slug>-research.md`, a roadmap at `tmp/roadmaps/roadmap-<feature>.md`), never under a tracked `docs/` path; the full rule is `agents/planner.md` § Plan Artifacts. `[RESEARCH_DOCS_PATH]`, the directory the research workflows name, is `tmp/plans/research`: a research issue's assets and findings live under `tmp/plans/research/<ISSUE_ID>/`. Temporary review output belongs under `tmp/reviews/`.
-
-**Where a plan lives and how a reader finds it.** An artifact's durable home is its source issue: the issue it already sits on, else the issue it serves, else, when it serves several, the first issue the run creates, or the first open issue it updates in a run that creates none. The local file is a working copy. A reader given a cited path reads that file when it exists in its checkout; otherwise it finds the artifact by the tracker:
-
-- **Linear**: the link in the read issue's `**Artifacts**` list, which names the current copy, else an attachment on the source issue, both read through [linear SKILL.md § Resolve a cited artifact](../linear/SKILL.md#resolve-a-cited-artifact).
-- **GitHub Issues**: the text in the source issue's body or a comment, read with `gh issue view [N] --repo [OWNER/REPO] --json body,comments`.
-- **No tracker**: the caller's named path, else `tmp/`. Nothing makes the file durable, and a missing one is reported missing.
-
-An artifact this route does not find is missing, and the calling workflow's missing-file behavior applies. A brief cites an artifact by its repository path, which on Linear is the attachment name and the `**Artifacts**` link label; a brief whose own issue neither holds nor links the artifact also names its source issue.
-
-Carry each planning artifact's repository reference, readable path, and source issue separately. A same-checkout delegation receives the readable path for analysis and the reference for its output. A handoff to another checkout carries the reference and the source issue; the receiver resolves its own readable path through the route above. Saved plans and tracker text contain references and source issues, never a machine's local paths. A source issue identifies storage, not the roadmap's hierarchy origin. With no published source issue, keep the existing local-until-creation flow.
-
-**Unpublished artifacts.** On Linear, a run with no issue writes keeps its files locally until creation; it creates no issue only to hold files. A run whose writes leave no open issue to hold them, such as one that only cancels, keeps its files locally and reports them as unpublished. On GitHub, report binary inputs that have no tracker upload route as incomplete; never claim a local-only file is available to another lane. A run without artifacts retains its existing tracker behavior.
+The rules for an item are in [references/filing.md](references/filing.md): Judge the approach, Creation bar, Group by project or label, never by parent, Name what reaches it, Requirements, Estimate, Done when with the post-merge box form, One landing per subsystem, and Research. Read that file before you judge, write, split or file a tracked item, and at a launch read.
 
 ## Commands
 
@@ -153,48 +121,35 @@ Carry each planning artifact's repository reference, readable path, and source i
 | `research-issue` | none | [research-issue](workflows/research-issue.md), internal, invoked by `research-spike` |
 | `proposal-sweep` | fleet brief | [proposal-sweep](workflows/proposal-sweep.md), internal, invoked by `oversee` |
 
-`audit-issues` is **primary-session only** ([audit-issues](workflows/audit-issues.md) preamble): the roadmap-plan § 5 answer that roadmap-create carries in is validated and admitted at § 6, never around it.
+`audit-issues` runs in the primary session only ([audit-issues](workflows/audit-issues.md) preamble). The roadmap-plan § 5 answer that roadmap-create carries in is validated and admitted at audit-issues § 6, never around it.
 
-The `@[path]` given to `roadmap plan` may be research findings or a **finished plan** (a design the user has reviewed). A finished plan is the spec: derive issues from it instead of re-planning, and every issue cites it.
+The `@[path]` given to `roadmap plan` is research findings or a **finished plan**, a design the user has reviewed. A finished plan is the spec: derive issues from it instead of planning again, and every issue cites it.
 
-TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](workflows/tpm-cycle-plan.md), [tpm-audit](workflows/tpm-audit.md) (project / team / issue / single / project-order modes), [tpm-roadmap-plan](workflows/tpm-roadmap-plan.md).
+The TPM analysis workflows each return JSON per their schema: [tpm-cycle-plan](workflows/tpm-cycle-plan.md), [tpm-audit](workflows/tpm-audit.md) in its `project`, `team`, `issue`, `single` and `project-order` modes, and [tpm-roadmap-plan](workflows/tpm-roadmap-plan.md).
 
 ## Execution Rules
 
-- Run workflow sections in order. Skip only on an explicit **Skip if** condition, never on your own scope assessment.
-- `<delegation_format>` and `<output_format>` are literal templates: fill `[PLACEHOLDERS]`, drop lines whose placeholders are empty, add nothing.
-- Send a user-visible `<output_format>` report as a normal assistant message first, then invoke the question tool separately with only the question and short option labels. Never paste the report into question text or options.
-- A Linear list read with no `--team` returns the whole workspace, except `cycles list` and `statuses`, which default to `LINEAR_TEAM`, and `issues list` returns no team through its `safe`, `compact`, `ids` or `table` formatter, so a row read through those cannot be checked against `--team X` (only `--format=raw` carries `.team.name`). Team scope per path: § Scope by Path.
-- A failed Linear read halts the workflow with its diagnostic, never a partial result: a `--max` read reads every page or fails, and a bounded list read prints a `linear-list: truncated` notice on stderr when it left rows unread. A team or issue audit's pass inventory: [tpm-audit § 1.1.2](workflows/tpm-audit.md#112-read-the-pass-inventory).
-- Resolve tracker context once per run (audit-issues § 1.2) and route every preflight, fetch, and mutation through it. A GitHub-tracked run must not require Linear installation or authentication; where GitHub lacks a Linear concept, degrade in a documented note, never silently.
-- Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and project taxonomy; any § Validation failure there halts before mutation.
+- **Ask about work, never about mechanics.** Creation and cancellation follow [audit-issues § 6](workflows/audit-issues.md#6-approve-creations-and-cancellations), and the user decides activation. Labels, priorities, relations, hierarchy, sort order and project moves are corrections the workflow applies on its own authority.
+- **One approval per decision.** Ask the user to approve a body of work once, at the roadmap plan gate. A create asks again only about what changed after that answer.
+- Run the sections of a workflow in order. Skip a section only on its explicit **Skip if** condition, never on your own judgement of scope.
+- `<delegation_format>` and `<output_format>` are literal templates. Fill each `[PLACEHOLDER]`, remove the lines whose placeholders are empty, and add nothing.
+- Send a user-visible `<output_format>` report as a normal assistant message first. Then invoke the question tool separately, with only the question and short option labels. Never paste the report into the question or its options.
+- A failed Linear read halts the workflow with its diagnostic, never a partial result. A `--max` read reads every page or fails, and a bounded list read prints a `linear-list: truncated` notice on stderr when it left rows unread. A team or issue audit reads its pass inventory by [tpm-audit § 1.1.2](workflows/tpm-audit.md#112-read-the-pass-inventory).
+- Resolve the tracker context once per run (audit-issues § 1.2), and route every preflight, fetch and write through it. A GitHub-tracked run never requires a Linear installation or authentication. Where GitHub lacks a Linear concept, degrade in a documented note, never silently.
+- Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and the project taxonomy. Any § Validation failure there halts before the write.
 - A project declares its taxonomy where [references/labels.md § Project Taxonomy Contract](references/labels.md#project-taxonomy-contract) states. A project that declares none has no required categories to enforce.
-- In multi-issue analysis, keep verification context per issue. One issue's PR, branch, or resolved path set never scopes another's checks.
+- In a multi-issue analysis, keep the verification context per issue. One issue's PR, branch or resolved path set never scopes another issue's checks.
+- A tracker comment carries one update. A run of time stamps is one line and a link. Completion and verification comment producers keep their own forms.
 
-## Scope by Path
+## Read when
 
-A Linear list read is workspace-wide unless it passes `--team`, so each path states whether it resolves the team scope (tpm-audit § 1.1.1) and what it filters. TPM comparison `issues list` reads pass `--team` on the server. Closed comparison rows come only from per-input `--state "Done,Canceled" --search` reads without `--max`; tpm-audit § 1.5 owns the comparison and truncation rules. Silence is not inheritance: a new mode adds its row.
-
-| Path | Resolves | Filters |
-|------|----------|---------|
-| tpm-audit `project`, `team` | yes | § 1.3 projects; § 1.4 input and § 1.5 active/closed issue lists pass `--team`; § 1.4.1 comments cover inputs and candidates |
-| tpm-audit `issues`, Linear | yes | § 1.5 active/closed issue lists pass `--team`; § 1.4.1 comments cover inputs and candidates; a § 1.4 input issue outside scope halts |
-| tpm-audit `issues`, GitHub | n/a, reads nothing from Linear | n/a |
-| tpm-audit `single`, Linear | yes | § 1.3 projects; § 14 title list passes `--team` |
-| tpm-audit `single`, GitHub | n/a, reads nothing from Linear | n/a |
-| tpm-audit `project-order` | yes | § 11 initiatives and projects; per-project issue lists pass `--team` |
-| tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects; § 1.5 active/closed issue lists pass `--team` and comments cover inputs and candidates |
-| tpm-cycle-plan | **no** | **no**. § 1 picks the active project from `session-status`'s workspace-wide started projects, and every issue read is scoped to that pick. The § 1 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](references/project-map.md#audit)) |
-| audit-issues §§ 7.2-7.5 | n/a, executes an artifact tpm-audit produced under its scope | reads rooted at an in-scope project or an issue this run mutated |
-| audit-issues § 1.2.1, § 3 | **no** | **no**. `session-status` selects projects workspace-wide. The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](references/project-map.md#audit)) |
-| cycle-plan, roadmap-plan, roadmap-create | **no** | **no**. Project, initiative, and label reads span the workspace. roadmap-create's map read is scoped to the team it creates in |
-| research-spike | **no** | **no**. Project and label reads span the workspace. The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](references/project-map.md#audit)) |
-| research-complete | n/a | reads are rooted at the caller's issue identifier |
-| research-issue | n/a | reads rooted at the caller's identifiers; the project it creates into is the caller's pick |
+- When a run writes, cites, hands over or cannot find a plan, research, roadmap or audit file: [references/planning-artifacts.md](references/planning-artifacts.md).
+- Before you add or change a mode, a tracker read or a tracker route in a workflow of this package, and when a step resolves or checks the team scope: [references/tracker-reads.md](references/tracker-reads.md).
+- When you decide what an initiative, a project or a label holds, which project kind applies, or which project an item goes in: [references/project-map.md](references/project-map.md).
 
 ## Hierarchy
 
-`Initiative → Project → Milestone → Issue → Sub-Issue`. Parent and child must share a project; under a project map, the parent's route sets it ([references/project-map.md § Routing](references/project-map.md#routing)). Blocking relations may cross projects freely. See [references/dependencies.md](references/dependencies.md). What an initiative, a project and a label each hold, the two project kinds, and which project an item goes in: [references/project-map.md](references/project-map.md).
+`Initiative → Project → Milestone → Issue → Sub-Issue`. Parent and child share a project; under a project map, the parent's route sets it ([references/project-map.md § Routing](references/project-map.md#routing)). Blocking relations may cross projects freely ([references/dependencies.md](references/dependencies.md)).
 
 ## Contracts
 
@@ -202,19 +157,5 @@ A Linear list read is workspace-wide unless it passes `--team`, so each path sta
 |------|-------|
 | Schemas | [audit-issues-input](schemas/audit-issues-input.md), [audit-output](schemas/audit-output.md), [roadmap-plan-input](schemas/roadmap-plan-input.md), [roadmap-plan-output](schemas/roadmap-plan-output.md), [cycle-plan-output](schemas/cycle-plan-output.md) |
 | Templates | [issue-description-template](templates/issue-description-template.md), [parent-issue-template](templates/parent-issue-template.md), [initiative-project-template](templates/initiative-project-template.md) |
-| References | [labels](references/labels.md), [dependencies](references/dependencies.md), [project-map](references/project-map.md) |
+| References | [filing](references/filing.md), [planning-artifacts](references/planning-artifacts.md), [tracker-reads](references/tracker-reads.md), [labels](references/labels.md), [dependencies](references/dependencies.md), [project-map](references/project-map.md) |
 | Tracker CLI | Linear: `.agents/skills/linear/scripts/linear.sh`; GitHub: `gh` + `.agents/skills/github/scripts/github.sh` |
-
-## Where each rule lives
-
-| Rule | Home | Reason and callers |
-|---|---|---|
-| Issue body and field mapping | Package: [issue-description-template](templates/issue-description-template.md) and [parent-issue-template](templates/parent-issue-template.md) | The audit maps structured fields into its own body. Linear's [IssueCreateInput.templateId](https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts) lets supplied values override template values. A Linear copy would be a second body no create reads. audit-issues, orch's start-new and plan-issues, and linear's patterns/workflow-actions.md cite these templates. |
-| Reached by and Symptom lines | Tool: `linear.sh issues create`; meaning: § Disposition | The tool refuses missing values. The package says what each value names. audit-issues passes the template body and review-born flag. |
-| Supersession record | Tool: `linear.sh issues create`; form: [audit-output.md](schemas/audit-output.md) § ISSUE Mode | tpm-audit § 6.1 and § 14 write it; audit-issues § 7.2 writes it into the body. |
-| Required issue labels | Tool and project taxonomy: [labels](references/labels.md) | The tool checks the project's declared labels. The audit's label preflight builds the complete set. |
-| Project placement | Tool and project map: [project-map](references/project-map.md) | The tool refuses a project the map does not list, and `projects audit` reports every item outside it. tpm-audit routes, and audit-issues applies the moves. |
-| Initiative and project body | Package: [initiative-project-template](templates/initiative-project-template.md) | Linear documents [issue templates](https://linear.app/docs/issue-templates) and [project templates](https://linear.app/docs/project-templates). [InitiativeCreateInput](https://github.com/linear/linear/blob/master/packages/sdk/src/_generated_documents.ts) has no template id. roadmap-create uses this shared template. |
-| Initiative owner, lead team, labels, links and status updates; project lead, labels and links | Linear fields, set by the Linear CLI flags | Linear stores these values. roadmap-create sets the creation fields by flag. A Linear project template can prefill fields for a person in the app; the agent path needs no second template or consumer setup. Status updates use Linear's update fields when a workflow calls for them. |
-| GitHub issue and pull request templates | Repository: `.github/ISSUE_TEMPLATE` and `pull_request_template.md` | The repository owns its GitHub forms. This package ships none; kendex tracks work in Linear. |
-| Comments | Package: this section | A comment carries one update. A run of time stamps is one line and a link. Completion and verification comment producers keep their own forms. |
