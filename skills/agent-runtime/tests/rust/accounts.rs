@@ -3927,6 +3927,7 @@ fn a_cold_429_is_asked_once_more_by_the_first_cold_account_of_a_listing_alone() 
     let refused = row("bclaude");
     assert_eq!(refused["status"], json!("rate_limited"), "{refused}");
     assert_eq!(refused["headroom_pct"], Value::Null, "{refused}");
+    assert_eq!(refused["refused_endpoint"], json!("usage"), "{refused}");
     assert_eq!(
         world.curl_log(),
         vec![
