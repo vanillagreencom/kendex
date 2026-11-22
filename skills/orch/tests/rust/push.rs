@@ -97,6 +97,13 @@ impl Repo {
         // directory, and an untracked link would dirty the checkout.
         fs::write(main.join(".gitignore"), "tmp/\n.agents\n").unwrap();
         fs::write(main.join("base"), "base\n").unwrap();
+        // The classifier the micro tier check reads measures a range only
+        // over a base that holds the generated-file inventory.
+        fs::write(
+            main.join(".kendex-generated.json"),
+            "[\".kendex-generated.json\"]\n",
+        )
+        .unwrap();
         git(&main, &["add", "."]);
         git(&main, &["commit", "-qm", "base"]);
         git(
