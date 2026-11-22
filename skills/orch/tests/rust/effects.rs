@@ -7713,7 +7713,8 @@ fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_its_viewer_window_untyp
 /// The provider's `viewer-prefix` answers as the released launcher read
 /// them, after the harness is confirmed: exit 2 is a provider with no
 /// viewer, the window opened with no option; any other status fails the
-/// launch `host-viewer-failed`, and an empty answer or one of two lines
+/// launch `host-viewer-failed` with the provider's refusal line, the last
+/// stderr line carrying `fix=`, and an empty answer or one of two lines
 /// fails it `host-viewer-invalid`, each through the provider's stop with no
 /// window left. A window whose `new-window` printed it and then failed (an
 /// `after-new-window` hook that fails) is closed before the stop, and the
@@ -7725,9 +7726,11 @@ fn a_pane_verb_viewer_prefix_answers_as_the_release_did() {
         ("no viewer verb", json!({"exit": 2}), None, None),
         (
             "refused",
-            json!({"exit": 1}),
+            json!({"exit": 1, "stderr": "lane-host-fixture: viewer-window-pending item=KEN-H\nlane-host-fixture: viewer-refused item=KEN-H fix=retry-viewer\n"}),
             None,
-            Some("host-viewer-failed item=KEN-H exit=1"),
+            Some(
+                "host-viewer-failed item=KEN-H exit=1 lane-host-fixture: viewer-refused item=KEN-H fix=retry-viewer",
+            ),
         ),
         (
             "empty",
@@ -8624,14 +8627,13 @@ fn a_relaunch_after_a_no_landing_close_starts_the_standing_sandbox_before_its_cr
 
 /// A failed host call's cause is the provider's refusal: the last stderr
 /// line carrying `fix=`, else its first line, never a notice printed before
-/// a `fix=` refusal nor one printed after a keyed refusal, and
-/// `stderr=empty` where the provider printed nothing.
+/// or after a `fix=` refusal, and `stderr=empty` where the provider printed
+/// nothing.
 #[test]
 fn a_failed_host_create_records_the_provider_s_refusal_line() {
     let notices = "lane-host-fixture: gh-token-rotated lane=lane-ken-h source=app\n\
                    lane-host-fixture: credit-low balance=3\n";
     let refusal = "lane-host-fixture: create-preparation-failed item=KEN-H fix=retry-create";
-    let keyed = "lane-host-ssh: marker-script-missing path=/srv/clone/.lane-marker";
     for (case, stderr, line) in [
         ("refusal last", format!("{notices}{refusal}\n"), refusal),
         (
@@ -8643,14 +8645,6 @@ fn a_failed_host_create_records_the_provider_s_refusal_line() {
             "no fix= line",
             notices.to_owned(),
             "lane-host-fixture: gh-token-rotated lane=lane-ken-h source=app",
-        ),
-        (
-            "keyed refusal leading its stderr, prose, trailing notice",
-            format!(
-                "{keyed}\nThe marker script is not on the host.\n\
-                 lane-host-ssh: remote-failed target=lane@host exit=1\n"
-            ),
-            keyed,
         ),
         ("stderr empty", String::new(), "stderr=empty"),
     ] {
@@ -8672,6 +8666,57 @@ fn a_failed_host_create_records_the_provider_s_refusal_line() {
             format!("host-create-failed create exit=1 {line}"),
             "{case}: {report}"
         );
+    }
+}
+
+/// The refusal of the shipped ssh provider's failed step after its sync-base
+/// step is the cause a failed relaunch records, not the sync output printed
+/// before it: a clone whose lane-marker is not executable fails the relaunch
+/// `host-create-failed` naming the provider's own `marker-script-missing`
+/// and the marker's path, and one whose agent-runtime setup refuses with its
+/// keyed line, which carries no `fix=`, names that line.
+#[test]
+fn a_shipped_ssh_relaunch_records_the_failed_step_s_refusal_over_its_sync_output() {
+    use std::os::unix::fs::PermissionsExt;
+    let marker = ".agents/skills/orch/scripts/lane-marker";
+    let setup = ".agents/skills/agent-runtime/scripts/setup";
+    for case in ["marker", "setup"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let world = HostedLaunch::ssh(&server, dir.path());
+        world.launched_and_retired();
+        let clone = world.clone();
+        // The sync-base step refuses a tracked change, so the clone reads
+        // past each planted one.
+        let refusal = if case == "marker" {
+            git(&clone, &["config", "core.fileMode", "false"]);
+            std::fs::set_permissions(clone.join(marker), std::fs::Permissions::from_mode(0o644))
+                .unwrap();
+            format!(
+                "lane-host-ssh: marker-script-missing path={}",
+                clone.join(marker).display()
+            )
+        } else {
+            git(&clone, &["update-index", "--skip-worktree", setup]);
+            std::fs::write(
+                clone.join(setup),
+                "#!/bin/sh\nprintf 'agent-runtime-setup: build-failed status=101 key=k\\n' >&2\nexit 1\n",
+            )
+            .unwrap();
+            "agent-runtime-setup: build-failed status=101 key=k".to_owned()
+        };
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        let cause = format!(
+            "host-create-failed create exit=1 lane-host-ssh: remote-failed target=lane.example exit=1 cause={refusal} fix="
+        );
+        assert!(
+            report["intent"]["observation"]["cause"]
+                .as_str()
+                .is_some_and(|recorded| recorded.starts_with(&cause)),
+            "{case}: {report}"
+        );
+        effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
     }
 }
 

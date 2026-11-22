@@ -29,6 +29,24 @@ def item_record(state_dir, item="TEST-1"):
     return Path(state_dir) / "items" / item / f"workflow-state-{item}.json"
 
 
+def refusals(stderr, key):
+    """The fields of each `lane-host-ssh: KEY` line before the `fix=` field
+    that ends it. A line without that field has no entry, so a refusal the
+    runtime would not record fails its caller's assertion."""
+    prefix = b"lane-host-ssh: " + key.encode() + b" "
+    return [line.partition(b" fix=")[0].split() for line in stderr.splitlines()
+            if line.startswith(prefix) and b" fix=" in line]
+
+
+def recorded_cause(stderr):
+    """The line the runtime records as a failed call's cause, by the protocol
+    it reads providers through (schemas/lane-host.md § Provider protocol): the
+    last line carrying a fix= field, else the first non-blank line."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    fixed = [line for line in lines if any(field.startswith(b"fix=") for field in line.split())]
+    return fixed[-1] if fixed else (lines or [b"stderr=empty"])[0]
+
+
 def plant_record(state_dir, text, item="TEST-1"):
     """Write the item's state file under a state directory, its folder made."""
     record = item_record(state_dir, item)
@@ -80,7 +98,12 @@ class SshHostTests(unittest.TestCase):
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SSH_TEST_LOG"
-[[ "${SSH_TEST_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_FAIL"
+# SSH_TEST_FAIL=N refuses every connection with N, as ssh does, after the
+# refusal line SSH_TEST_FAIL_LINE names.
+if [[ "${SSH_TEST_FAIL:-0}" != 0 ]]; then
+  [[ -z "${SSH_TEST_FAIL_LINE:-}" ]] || printf '%s\n' "$SSH_TEST_FAIL_LINE" >&2
+  exit "$SSH_TEST_FAIL"
+fi
 tty_off=false
 for arg in "$@"; do
   if [[ "$arg" == -T ]]; then tty_off=true; fi
@@ -138,6 +161,12 @@ fi
 set -euo pipefail
 printf 'worktree %s\\n' "$*" >> "$SSH_TEST_LOG"
 path="$PWD-worktree"
+# SSH_TEST_WORKTREE_REFUSAL=VERB:KEY refuses VERB as the real command does:
+# keyed lines of its own, none carrying fix=, a notice before the refusal.
+if [[ "${SSH_TEST_WORKTREE_REFUSAL:-}" == "$1:"* ]]; then
+  printf 'worktree-github-auth: fallback=none\\nworktree-%s: %s\\n  Error: refused\\n' "${SSH_TEST_WORKTREE_REFUSAL#*:}" "$PWD" >&2
+  exit 1
+fi
 case "$1" in
 create)
   if [[ -d "$path" ]]; then
@@ -158,7 +187,17 @@ remove)
     printf 'before-delete:%s\\n' "$(cat -- "$SSH_TEST_CLOSE_STDOUT")" >> "$SSH_TEST_LOG"
   fi
   git worktree remove --force "$path"
-  rm -f -- "$path.item" ;;
+  rm -f -- "$path.item"
+  # SSH_TEST_WORKTREE_MAIL_KEPT=DIR answers as the real remove does when a
+  # lane mailbox cannot join the main checkout's: the tree removed, the
+  # mailbox kept at DIR, then the merged branch deleted, and exit 1.
+  if [[ -n "${SSH_TEST_WORKTREE_MAIL_KEPT:-}" ]]; then
+    . "${BASH_SOURCE[0]%/*}/lib/messages.sh"
+    worktree_message lane-mail-kept "$SSH_TEST_WORKTREE_MAIL_KEPT" \\
+      "Error: a lane mailbox could not join $PWD/tmp/lane-mail; its mail is kept at $SSH_TEST_WORKTREE_MAIL_KEPT" >&2
+    worktree_message branch-deleted test-1 "Deleted branch 'test-1' — merged into origin/main." >&2
+    exit 1
+  fi ;;
 esac
 ''')
         # create reads the clone's settings through the worktree command's own loader.
@@ -702,7 +741,7 @@ signal.sigwait({signal.SIGTERM})
         (Path(self.row["clone"]) / ".git/lane-mail/test-1").unlink()
         refused = self.create("--reuse")
         self.assertEqual(refused.returncode, 1, refused.stderr)
-        self.assertIn(f"lane-host-ssh: marker-script-missing path={marker}\n".encode(), refused.stderr)
+        self.assertIn(f"lane-host-ssh: marker-script-missing path={marker} fix=".encode(), refused.stderr)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
 
     def test_create_names_a_clone_without_the_agent_runtime_setup(self):
@@ -714,13 +753,107 @@ signal.sigwait({signal.SIGTERM})
         setup.chmod(0o644)
         refused = self.create("--reuse")
         self.assertEqual((refused.returncode, refused.stdout,
-                          f"lane-host-ssh: agent-runtime-setup-missing path={setup}\n".encode() in refused.stderr),
+                          f"lane-host-ssh: agent-runtime-setup-missing path={setup} fix=".encode() in refused.stderr),
                          (1, b"", True), refused.stderr)
         original = self.script.read_text()
         step = 'lead = built(row, "agent-runtime", "agent-runtime")'
         self.assertEqual(original.count(step), 1)
         self.script.write_text(original.replace(step, 'lead = "agent-runtime"'))
         self.assertEqual(self.create("--reuse").returncode, 0)
+
+    def failed_steps(self, *names):
+        """Each way a create or close step fails after the sync-base step's
+        output: the recorded cause is the provider's line naming that step's
+        own refusal, never that output or a fix= line an earlier step printed.
+        Each row plants its failure in a clone of its own, then calls; its
+        cause is compared up to the fix= field."""
+        clone = lambda: Path(self.row["clone"])
+        git = lambda *args: subprocess.run([self.env["REAL_GIT"], "-C", str(clone()), *args], check=True)
+
+        def plant(relative, text):
+            # The sync-base step refuses a tracked change, so the clone is
+            # told the planted file is unchanged.
+            git("update-index", "--skip-worktree", relative)
+            (clone() / relative).write_text(text)
+
+        def marker_unrunnable():
+            git("config", "core.fileMode", "false")
+            (clone() / ".agents/skills/orch/scripts/lane-marker").chmod(0o644)
+            return {}
+
+        def setup_refuses():
+            # orch's setup prints its readiness, fix= on each unready duty,
+            # even when it succeeds, as the real one does.
+            orch = ".agents/skills/orch/scripts/setup"
+            plant(orch, (clone() / orch).read_text()
+                  + "printf 'unready duty=job program=gh cause=absent fix=install gh\\n' >&2\n")
+            plant(".agents/skills/agent-runtime/scripts/setup",
+                  "#!/bin/sh\nprintf 'error: could not compile `runtime`\\n' >&2\n"
+                  "printf 'agent-runtime-setup: build-failed status=101 key=k\\n' >&2\nexit 1\n")
+            return {}
+
+        def lane_record():
+            (Path(self.row["clone"] + "-worktree") / "tmp").mkdir(exist_ok=True)
+            (Path(self.row["clone"] + "-worktree") / "tmp/return.json").write_text("keep")
+            return {"ORCH_ARCHIVE_ROOT": "relative"}
+
+        def tar_silent():
+            tools = self.root / "silent-tar"
+            self.executable(tools / "tar", "#!/usr/bin/env bash\nexit 23\n")
+            return {"PATH": f"{tools}{os.pathsep}{self.env['PATH']}"}
+
+        create = lambda **env: self.create("--reuse", **env)
+        close = lambda **env: self.call("close", "--item", "TEST-1", **env)
+        failed = "lane-host-ssh: remote-failed target=lane.example exit=1 cause="
+        rows = (
+            ("own-fix", marker_unrunnable, create,
+             lambda: f"{failed}lane-host-ssh: marker-script-missing path={clone()}/.agents/skills/orch/scripts/lane-marker"),
+            ("setup", setup_refuses, create, lambda: f"{failed}agent-runtime-setup: build-failed status=101 key=k"),
+            ("worktree-create", lambda: {"SSH_TEST_WORKTREE_REFUSAL": "create:create-blocked"}, create,
+             lambda: f"{failed}worktree-create-blocked: {clone()}"),
+            ("worktree-remove", lambda: {"SSH_TEST_WORKTREE_MAIL_KEPT": f"{clone()}/tmp/lane-mail/test-1"}, close,
+             lambda: f"{failed}worktree-lane-mail-kept: {clone()}/tmp/lane-mail/test-1"),
+            ("archive-root", lane_record, close,
+             lambda: "lane-host-ssh: archive-root-failed item=TEST-1 exit=1 "
+                     "cause=orch-runtime: setting-invalid key=ORCH_ARCHIVE_ROOT value=relative"),
+            ("silent", tar_silent, close, lambda: "lane-host-ssh: remote-failed target=lane.example exit=23 cause=none"),
+            # The lock session is each lifecycle verb's first connection.
+            ("ssh-refused",
+             lambda: {"SSH_TEST_FAIL": "255", "SSH_TEST_FAIL_LINE": "lane@lane.example: Permission denied (publickey)."},
+             close, lambda: f"lane-host-ssh: ownership-lock-failed target=lane.example clone={clone()} exit=255 "
+                            "cause=lane@lane.example: Permission denied (publickey)."),
+        )
+        base = self.row["clone"]
+        for name, prepare, call, cause in rows:
+            if names and name not in names:
+                continue
+            self.row["clone"] = f"{base}-{name}"
+            self.inventory.write_text(json.dumps([self.row]))
+            self.assertEqual(self.create().returncode, 0)
+            refused = call(**prepare())
+            self.assertEqual((refused.returncode != 0, recorded_cause(refused.stderr).partition(b" fix=")[0]),
+                             (True, cause().encode()), (name, refused.stderr))
+
+    def test_a_failed_step_s_own_refusal_is_the_recorded_cause(self):
+        self.failed_steps()
+
+    def test_control_failed_step_refusals_unrecorded(self):
+        """The refusal stays on stderr in each control: one drops the
+        provider line's fix=, so the runtime no longer records it, one reads
+        the report without the worktree command's Error: mark, and one
+        leaves the lock session's stderr uncaptured."""
+        original = self.script.read_text()
+        controls = (("setup", "    notice(key, **values, cause=refusal, fix=own or fix)\n",
+                     "    notice(key, **values, cause=refusal)\n"),
+                    ("worktree-remove", '    re.compile(rb"^(worktree-[a-z0-9-]+: [^\\n]*)\\n  Error: ", re.M),\n', ""),
+                    ("ssh-refused", "stdout=subprocess.PIPE, stderr=self.errors,", "stdout=subprocess.PIPE,"))
+        for name, rule, mutant in controls:
+            self.assertEqual(original.count(rule), 1, rule)
+            with self.subTest(row=name), tempfile.TemporaryDirectory() as control:
+                self.script = Path(control) / "orch/scripts/lane-host-ssh"
+                self.executable(self.script, original.replace(rule, mutant))
+                with self.assertRaises(AssertionError):
+                    self.failed_steps(name)
 
     def test_create_names_a_clone_whose_agent_runtime_setup_names_no_binary(self):
         # A setup that answers without a binary leaves the prefix nothing to
@@ -734,7 +867,7 @@ signal.sigwait({signal.SIGTERM})
         (Path(self.row["clone"]) / relative).write_text("#!/bin/sh\nprintf 'agent-runtime-setup: held\\n'\n")
         refused = self.create("--reuse")
         self.assertEqual((refused.returncode, refused.stdout,
-                          b"lane-host-ssh: agent-runtime-unbuilt output=agent-runtime-setup: held\n" in refused.stderr),
+                          b"lane-host-ssh: agent-runtime-unbuilt output=agent-runtime-setup: held fix=" in refused.stderr),
                          (1, b"", True), refused.stderr)
 
     def test_prefix_names_a_record_it_could_not_write(self):
@@ -998,7 +1131,7 @@ rc=0
         longer = b"a much longer second answer\n"
         cut = self.call("put", "--item", "TEST-1", "--", str(target), data=longer, SSH_TEST_CUT="5")
         self.assertEqual(cut.returncode, 1, cut.stderr)
-        self.assertIn(f"lane-host-ssh: put-short expected={len(longer)} arrived=5".encode(), cut.stderr)
+        self.assertIn(f"lane-host-ssh: put-short expected={len(longer)} arrived=5 fix=".encode(), cut.stderr)
         self.assertEqual(target.read_bytes(), b"first answer\n")
         self.assertEqual(list(target.parent.glob("mailbox-file.kendex-put.*")), [])
         # put's control: a provider that renames whatever arrived. The staged
@@ -1040,7 +1173,7 @@ rc=0
         longer = b'{"id":"a much longer line"}\n'
         cut = self.call("append", "--item", "TEST-1", "--", str(target), data=longer, SSH_TEST_CUT="5")
         self.assertEqual(cut.returncode, 1, cut.stderr)
-        self.assertIn(f"lane-host-ssh: append-short expected={len(longer)} arrived=5".encode(), cut.stderr)
+        self.assertIn(f"lane-host-ssh: append-short expected={len(longer)} arrived=5 fix=".encode(), cut.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
         self.assertEqual(list(target.parent.glob("to-lane.jsonl.kendex-append.*")), [])
         # append's control: without the count check a cut stream lands.
@@ -1227,7 +1360,7 @@ exec "$REAL_CAT" "$@"
             with self.subTest(verb=verb, where=where):
                 refused = write(verb, where)
                 self.assertEqual(refused.returncode, 1, refused.stderr)
-                self.assertIn(f"lane-host-ssh: {verb}-failed path={target} reason=no-space\n".encode(),
+                self.assertIn(f"lane-host-ssh: {verb}-failed path={target} reason=no-space fix=".encode(),
                               refused.stderr)
                 self.assertIn(b"No space left on device", refused.stderr)
                 self.assertEqual(target.read_bytes(), b'{"id":"kept"}\n')
@@ -1244,8 +1377,7 @@ exec "$REAL_CAT" "$@"
         self.addCleanup(library.write_bytes, kept)
         refused = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
         self.assertNotEqual(refused.returncode, 0)
-        self.assertIn(f"lane-host-ssh: append-library-missing path={library}\n".encode(), refused.stderr)
-        self.assertIn(b"predates the append verb", refused.stderr)
+        self.assertIn(f"lane-host-ssh: append-library-missing path={library} fix=".encode(), refused.stderr)
         self.assertFalse(target.exists())
         self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
 
@@ -1756,8 +1888,7 @@ touch node_modules/dep
             self.last_copy_support_result = result
             self.assertEqual(result.returncode, 1, result.stderr)
             remote_library = Path(self.row["clone"]) / support / name
-            fields = [line.split() for line in result.stderr.splitlines()
-                      if line.startswith(b"lane-host-ssh: copy-support-unavailable ")]
+            fields = refusals(result.stderr, "copy-support-unavailable")
             # The control plane consumes this support diagnostic.
             expected = [b"lane-host-ssh:", b"copy-support-unavailable", *f"path={remote_library}".encode().split(),
                         f"cause={cause}".encode()]
@@ -1829,8 +1960,7 @@ touch node_modules/dep
         mark = len(self.log_since(0))
         result = self.create("--reuse")
         self.assertEqual(result.returncode, 1, result.stderr)
-        fields = [line.split() for line in result.stderr.splitlines()
-                  if line.startswith(b"lane-host-ssh: private-protection-unsafe ")]
+        fields = refusals(result.stderr, "private-protection-unsafe")
         self.assertEqual(fields, [[b"lane-host-ssh:", b"private-protection-unsafe",
                                   f"path={outside}".encode(), b"cause=outside-roots"]])
         self.assertTrue(selected.is_symlink())
@@ -1869,13 +1999,12 @@ touch node_modules/dep
                     default.symlink_to(target)
                 result = self.create("--reuse")
                 self.assertEqual(result.returncode, 1, result.stderr)
-                fields = [line.split() for line in result.stderr.splitlines()
-                          if line.startswith(b"lane-host-ssh: private-protection-unsafe ")]
+                fields = refusals(result.stderr, "private-protection-unsafe")
                 refused_path = tree / target if cause == "unresolved-link" else default
                 self.assertEqual(fields, [[b"lane-host-ssh:", b"private-protection-unsafe",
                                           *f"path={refused_path}".encode().split(), f"cause={cause}".encode()]])
-                indent = "      " if cause == "not-file" else "        "
-                fragment = f"cause={cause}\\\\n' \"$path\" >&2\n{indent}return 1"
+                start = original.index(f"cause={cause} fix=")
+                fragment = original[start:original.index("return 1", start) + len("return 1")]
                 self.assertEqual(original.count(fragment), 1)
                 with tempfile.TemporaryDirectory() as control:
                     mutant = Path(control) / "orch/scripts/lane-host-ssh"
@@ -1969,8 +2098,7 @@ touch node_modules/dep
                                  **{"BASH_FUNC_kendex_project_env_supports%%": "() { return 0; }"})
             self.assertEqual(result.returncode, 1, result.stderr)
             remote_loader = Path(self.row["clone"]) / loader.relative_to(self.source)
-            fields = [line.split() for line in result.stderr.splitlines()
-                      if line.startswith(b"lane-host-ssh: loader-private-path-missing ")]
+            fields = refusals(result.stderr, "loader-private-path-missing")
             # The control plane consumes this stable capability diagnostic.
             self.assertEqual(fields, [[b"lane-host-ssh:", b"loader-private-path-missing",
                                       *f"path={remote_loader}".encode().split(), b"output=selected-private-path"]])
@@ -2307,8 +2435,10 @@ exit 9
                         # What the retired bootstrap's refresh left behind.
                         shutil.copytree(render, Path(self.row["clone"], ".agents"), symlinks=True)
                     result = self.create()
-                    line = f"lane-host-ssh: {key} path={self.row['clone']}/.agents/skills/{named}".encode()
-                    self.assertIn(line, result.stderr.splitlines(), result.stderr)
+                    self.assertEqual(refusals(result.stderr, key),
+                                     [[b"lane-host-ssh:", key.encode(),
+                                       *f"path={self.row['clone']}/.agents/skills/{named}".encode().split()]],
+                                     result.stderr)
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
             subprocess.run([*git, "checkout", "-q", "HEAD~1", "--", relative], check=True)
@@ -2523,7 +2653,8 @@ exit 9
         record.write_text("4242 Tue Nov 11 09:00:00 2026\n")
         refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
         self.assertEqual((refused.returncode, refused.stdout, b"agent-runtime: record-shape" in refused.stderr,
-                          b"lane-host-ssh: stop-failed item=TEST-1 outcome=refused exit=1\n" in refused.stderr),
+                          recorded_cause(refused.stderr).startswith(
+                              b"lane-host-ssh: stop-failed item=TEST-1 outcome=refused exit=1 cause=agent-runtime: record-shape ")),
                          (1, b"", True, True), refused.stderr)
         original = self.script.read_text()
         for control in (False, True):
@@ -2693,7 +2824,8 @@ exec {runtime} "$@"
         (path / ".env.local").mkdir()
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual((closed.returncode, closed.stdout, path.is_dir(),
-                          b"lane-host-ssh: close-validations-failed item=TEST-1 exit=2\n" in closed.stderr,
+                          recorded_cause(closed.stderr).startswith(
+                              b"lane-host-ssh: close-validations-failed item=TEST-1 exit=2 cause=validate: settings-invalid "),
                           b"settings-invalid" in closed.stderr), (1, b"", True, True, True), closed.stderr)
         subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(path)],
                        check=True, capture_output=True)
@@ -2702,7 +2834,7 @@ exec {runtime} "$@"
         clone_env.mkdir()
         closed = self.call("close", "--item", "TEST-1")
         self.assertNotEqual(closed.returncode, 0, closed.stderr)
-        self.assertIn(b"lane-host-ssh: state-unresolved item=TEST-1", closed.stderr)
+        self.assertIn(b"lane-host-ssh: state-unresolved item=TEST-1 fix=", closed.stderr)
         self.assertEqual((closed.stdout, clone_env.is_dir(), (Path(self.row["clone"]) / ".git/lane-host-item").exists()),
                          (b"", True, True))
 
@@ -3215,6 +3347,7 @@ fi'''))
             output, error = child.communicate(timeout=deadline)
             self.assertTrue(entered.exists(), "transport never acknowledged remote EOF")
             self.assertEqual(child.returncode, 1, error)
+            self.assertTrue(recorded_cause(error).startswith(b"lane-host-ssh: ownership-lock-failed "), error)
             if verb != "close":
                 self.assertEqual(output, b"")
         finally:

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -46,16 +47,73 @@ def remote_command(row, script, *args):
             "--", row["target"], command]
 
 
+# The line a failed step's report keys as its refusal, read by what each
+# program the provider runs marks a refusal with, never by where it falls: a
+# step can print a notice after its refusal, and a report a notice before it.
+# The first row that matches decides, its last match the refusal. A report no
+# row matches, an unkeyed tool's (ssh, git, gh, npm, tar, mktemp), stands on
+# its last line.
+REFUSALS = (
+    # The protocol's own shape: this provider's refusals and a setup's
+    # toolchain-missing carry fix= last on the line.
+    re.compile(rb"^(.*?) fix=(.*)$", re.M),
+    # The worktree command keys every line and writes Error: prose under a
+    # refusal alone, so the branch-deleted notice remove prints after
+    # lane-mail-kept, or the github-auth one before a refusal, is never taken.
+    re.compile(rb"^(worktree-[a-z0-9-]+: [^\n]*)\n  Error: ", re.M),
+    # The keyed line that leads each refusal of the clone's lane-marker and
+    # sync-base, of either runtime, and a setup's one failure line.
+    re.compile(rb"^((?:worktree-[a-z0-9-]+|lane-marker|sync-base|[a-z-]+-setup|orch-runtime|agent-runtime): [^\n]*)$",
+               re.M),
+)
+
+
+def refusal_of(report):
+    """The refusal REPORT names and the repair its own fix= field states, if any."""
+    for shape in REFUSALS:
+        found = shape.findall(report)
+        if found:
+            line = found[-1]
+            refusal, fix = line if isinstance(line, tuple) else (line, None)
+            return refusal.decode("utf-8", errors="replace").strip(), fix and fix.decode("utf-8", errors="replace")
+    lines = [line.strip() for line in report.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    return (lines[-1] if lines else "none"), None
+
+
+def step_failed(key, report, fix, **values):
+    """End a failed step's stderr with the line the runtime records as the
+    call's cause (the last one carrying fix=): KEY and VALUES, the step's
+    refusal as cause=, and the refusal's own fix=, else FIX. A fix= line an
+    earlier step printed, or the routine output that preceded the refusal,
+    is therefore never what the runtime records."""
+    refusal, own = refusal_of(report)
+    notice(key, **values, cause=refusal, fix=own or fix)
+
+
+def relay(report):
+    """Pass a step's whole report to this provider's stderr, in step order."""
+    sys.stderr.flush()
+    sys.stderr.buffer.write(report)
+    sys.stderr.buffer.flush()
+
+
 def remote(row, script, *args, data=None, accept=(), capture_error=False):
-    """Run Bash through SSH; accept=None returns every transport status."""
+    """Run Bash through SSH; accept=None returns every transport status.
+
+    Each step's stderr is read whole, so a status outside ACCEPT names the
+    step's own refusal. It is relayed unless capture_error hands it to the
+    caller."""
     if "session" in row:
         result = row["session"].request(script, args, data or b"")
     else:
         result = subprocess.run(remote_command(row, script, *args),
                                 input=data if data is not None else b"", stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE if capture_error else None)
+                                stderr=subprocess.PIPE)
+    if not capture_error:
+        relay(result.stderr)
     if accept is not None and result.returncode != 0 and result.returncode not in accept:
-        notice("remote-failed", target=row["target"], exit=result.returncode)
+        step_failed("remote-failed", result.stderr, "repair what cause= names on the host, then retry",
+                    target=row["target"], exit=result.returncode)
         raise SystemExit(result.returncode if result.returncode > 0 else 1)
     return result
 
@@ -92,14 +150,20 @@ while read -r command_size input_size; do
   test "$((arrived + 0))" -eq "$input_size" || exit 1
   code=0
   # The command is exclusively shlex.join output from this provider.
-  bash "$session/command" < "$session/input" > "$session/output" || code=$?
+  bash "$session/command" < "$session/input" > "$session/output" 2> "$session/error" || code=$?
   size=$(wc -c < "$session/output")
-  printf '%s %s\\n' "$code" "$((size + 0))"
-  cat -- "$session/output"
+  errors=$(wc -c < "$session/error")
+  printf '%s %s %s\\n' "$code" "$((size + 0))" "$((errors + 0))"
+  cat -- "$session/output" "$session/error"
 done
 '''
+        # The session's own stderr, SSH's and the lock script's, held in a
+        # file rather than a pipe nobody drains while steps run; close reads
+        # it so a failed lock names that refusal.
+        self.errors = tempfile.TemporaryFile()
+        self.report = b""
         self.process = subprocess.Popen(remote_command(row, script, row["clone"] + ".lane-host.lock"),
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors,
                                         env=dict(os.environ))
 
     def request(self, script, args, data):
@@ -108,16 +172,18 @@ done
             self.process.stdin.write(f"{len(command)} {len(data)}\n".encode() + command + data)
             self.process.stdin.flush()
             header = self.process.stdout.readline().split()
-            if len(header) != 2 or not all(word.isdigit() for word in header):
+            if len(header) != 3 or not all(word.isdigit() for word in header):
                 raise EOFError
-            code, size = map(int, header)
+            code, size, error_size = map(int, header)
             output = self.process.stdout.read(size)
-            if len(output) != size:
+            error = self.process.stdout.read(error_size)
+            if len(output) != size or len(error) != error_size:
                 raise EOFError
         except (BrokenPipeError, EOFError):
-            notice("ownership-channel-failed", target=self.row["target"], clone=self.row["clone"])
+            notice("ownership-channel-failed", target=self.row["target"], clone=self.row["clone"],
+                   fix="retry once SSH to the target holds the connection")
             raise SystemExit(1) from None
-        return subprocess.CompletedProcess(command, code, output)
+        return subprocess.CompletedProcess(command, code, output, error)
 
     def close(self):
         """Bound an SSH client stalled in the remote EOF exchange."""
@@ -145,6 +211,9 @@ done
             return 1
         finally:
             self.process.stdout.close()
+            self.errors.seek(0)
+            self.report = self.errors.read()
+            self.errors.close()
 
 
 @contextmanager
@@ -162,10 +231,20 @@ def ownership_lock(row):
         code = session.close()
         if not ready and code == 0:
             code = 1
-        if code:
-            notice("ownership-busy" if code == 75 else "ownership-lock-failed",
-                   target=row["target"], clone=row["clone"], exit=code)
-        if error is None or isinstance(error, SystemExit) and error.code == 0:
+        relay(session.report)
+        decides = error is None or isinstance(error, SystemExit) and error.code == 0
+        if code == 75:
+            notice("ownership-busy", target=row["target"], clone=row["clone"], exit=code)
+        elif code and decides:
+            # The lock's exit decides the call, so its line is the recorded
+            # cause, naming SSH's or the lock script's own refusal.
+            step_failed("ownership-lock-failed", session.report,
+                        "retry once SSH to the target holds the connection",
+                        target=row["target"], clone=row["clone"], exit=code)
+        elif code:
+            # After a failed step that step's refusal stays the cause.
+            notice("ownership-lock-failed", target=row["target"], clone=row["clone"], exit=code)
+        if decides:
             if code:
                 raise SystemExit(code if code > 0 else 1)
             sys.stdout.buffer.write(session.output)
@@ -225,7 +304,7 @@ write_cause() { # REPORT
   case "$1" in *'No space left on device'*) printf no-space ;; *) printf write-failed ;; esac
 }
 failed() { # VERB PATH REASON REPORT
-  printf 'lane-host-ssh: %s-failed path=%s reason=%s\\n' "$1" "$2" "$3" >&2
+  printf 'lane-host-ssh: %s-failed path=%s reason=%s fix=free disk space on the host for no-space, else repair the write the report below names\\n' "$1" "$2" "$3" >&2
   if [ -n "$4" ]; then printf '%s\\n' "$4" >&2; fi
   exit 1
 }
@@ -237,7 +316,7 @@ report=$(cat 2>&1 > "$staged") || staging=$?
 if [ "$staging" -ne 0 ]; then failed "$5" "$1" "$(write_cause "$report")" "$report"; fi
 arrived=$(wc -c < "$staged")
 if [ "$((arrived + 0))" -ne "$2" ]; then
-  printf 'lane-host-ssh: %s-short expected=%s arrived=%s\\n' "$5" "$2" "$((arrived + 0))" >&2
+  printf 'lane-host-ssh: %s-short expected=%s arrived=%s fix=retry the call, its input ended before the declared count\\n' "$5" "$2" "$((arrived + 0))" >&2
   exit 1
 fi
 '''
@@ -255,8 +334,7 @@ fi
 APPEND_LIBRARIES = '''lib="$3/.agents/skills/mailbox/scripts/lib"
 for library in file-lock.sh mailbox-append.sh; do
   if [ ! -r "$lib/$library" ]; then
-    printf 'lane-host-ssh: append-library-missing path=%s\\n' "$lib/$library" >&2
-    printf 'the host clone predates the append verb; refresh it to a build carrying that library\\n' >&2
+    printf 'lane-host-ssh: append-library-missing path=%s fix=refresh the host clone, which predates the append verb, to a build carrying that library\\n' "$lib/$library" >&2
     exit 1
   fi
   . "$lib/$library"
@@ -407,6 +485,8 @@ def worktree(row, *args, preliminary=False):
 # The worktree command's exit for a reuse that handed the tree back, set up, on
 # a head that does not contain the base.
 REUSE_UNREBASED = 76
+PATH_FIX = "run worktree path ITEM in the clone on the host and repair what it reports"
+RUNTIME_FIX = "repair what the clone's runtime reports in cause= on the host, then retry"
 # A standing tree is reused with the item's work kept: a tree the reuse cannot
 # rebase stays as it stands rather than failing the create.
 REUSE_KEEPING = ["--reuse", "--keep-on-conflict"]
@@ -462,7 +542,7 @@ def owned_worktree(row, item, verb):
     owned(row, item, verb)
     path = worktree(row, "path", item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
-        notice("worktree-path-invalid", item=item)
+        notice("worktree-path-invalid", item=item, fix=PATH_FIX)
         raise SystemExit(1)
     return path
 
@@ -472,7 +552,7 @@ def worktree_exists(row, item):
     present = worktree(row, "exists", item).stdout
     if present in (b"true\n", b"false\n"):
         return present == b"true\n"
-    notice("worktree-exists-invalid", item=item)
+    notice("worktree-exists-invalid", item=item, fix="run worktree exists ITEM in the clone on the host and repair what it reports")
     raise SystemExit(1)
 
 
@@ -505,14 +585,12 @@ def require_render(row):
     """
     remote(row, '''for script in orch/scripts/sync-base worktree/scripts/worktree; do
   if ! test -x "$1/.agents/skills/$script"; then
-    printf 'lane-host-ssh: render-missing path=%s\\n' "$1/.agents/skills/$script" >&2
-    printf 'create renders nothing; fast-forward this checkout past the commit that added the render (git -C CLONE pull --ff-only), or remove the clone so create clones it afresh\\n' >&2
+    printf 'lane-host-ssh: render-missing path=%s fix=fast-forward the clone past the commit that added the render (git -C CLONE pull --ff-only), or remove the clone so create clones it afresh\\n' "$1/.agents/skills/$script" >&2
     exit 1
   fi
   committed=$(git -C "$1" ls-tree --name-only HEAD -- ".agents/skills/$script") || exit 1
   if test -z "$committed"; then
-    printf 'lane-host-ssh: render-untracked path=%s\\n' "$1/.agents/skills/$script" >&2
-    printf 'this render is not committed at HEAD and git never updates it; remove the clone, or delete its untracked .agents render, before create runs again\\n' >&2
+    printf 'lane-host-ssh: render-untracked path=%s fix=remove the clone, or delete its untracked .agents render, which git never updates, before create runs again\\n' "$1/.agents/skills/$script" >&2
     exit 1
   fi
 done''', row["clone"])
@@ -543,7 +621,7 @@ load_copy_support() {
   unset -f worktree_message strip_trailing_slashes normalize_worktree_config_path split_worktree_config_words || return 1
   for library in "$support/messages.sh" "$support/links.sh"; do
     if ! test -r "$library"; then
-      printf 'lane-host-ssh: copy-support-unavailable path=%s cause=unreadable\\n' "$library" >&2
+      printf 'lane-host-ssh: copy-support-unavailable path=%s cause=unreadable fix=refresh the host clone to a build carrying the worktree support libraries\\n' "$library" >&2
       return 1
     fi
     . "$library" || return 1
@@ -554,7 +632,7 @@ load_copy_support() {
         worktree_message) library="$support/messages.sh" ;;
         *) library="$support/links.sh" ;;
       esac
-      printf 'lane-host-ssh: copy-support-unavailable path=%s cause=missing-helper helper=%s\\n' "$library" "$helper" >&2
+      printf 'lane-host-ssh: copy-support-unavailable path=%s cause=missing-helper helper=%s fix=refresh the host clone to a build carrying the worktree support libraries\\n' "$library" "$helper" >&2
       return 1
     fi
   done
@@ -566,7 +644,7 @@ load_install_settings() {
   . "$loader" || return 1
   if ! declare -F kendex_project_env_supports >/dev/null ||
      ! kendex_project_env_supports selected-private-path; then
-    printf 'lane-host-ssh: loader-private-path-missing path=%s output=selected-private-path\\n' "$loader" >&2
+    printf 'lane-host-ssh: loader-private-path-missing path=%s output=selected-private-path fix=refresh the host clone to a build whose settings loader reports selected-private-path\\n' "$loader" >&2
     return 1
   fi
   kendex_load_project_env "$1" selected_private -- WORKTREE_SYMLINKS WORKTREE_COPIES >&2 || return 1
@@ -618,7 +696,7 @@ protect_private_path() {
       esac
     done
     if test "$contained" != true; then
-      printf 'lane-host-ssh: private-protection-unsafe path=%s cause=outside-roots\\n' "$path" >&2
+      printf 'lane-host-ssh: private-protection-unsafe path=%s cause=outside-roots fix=make the private path a regular file inside the clone or the item worktree\\n' "$path" >&2
       return 1
     fi
     # WORKTREE_COPIES can reach the same source through a directory alias.
@@ -639,7 +717,7 @@ protect_private_path() {
     done
     for prior in ${chain[@]+"${chain[@]}"}; do
       if test "$prior" = "$path"; then
-        printf 'lane-host-ssh: private-protection-unsafe path=%s cause=link-cycle\\n' "$path" >&2
+        printf 'lane-host-ssh: private-protection-unsafe path=%s cause=link-cycle fix=make the private path a regular file inside the clone or the item worktree\\n' "$path" >&2
         return 1
       fi
     done
@@ -653,13 +731,13 @@ protect_private_path() {
       target=$(readlink -- "$path") || return 1
       case "$target" in /*) path="$target" ;; *) path="${path%/*}/$target" ;; esac
       if ! test -e "$path" && ! test -L "$path"; then
-        printf 'lane-host-ssh: private-protection-unsafe path=%s cause=unresolved-link\\n' "$path" >&2
+        printf 'lane-host-ssh: private-protection-unsafe path=%s cause=unresolved-link fix=make the private path a regular file inside the clone or the item worktree\\n' "$path" >&2
         return 1
       fi
     elif test -f "$path"; then
       return 0
     else
-      printf 'lane-host-ssh: private-protection-unsafe path=%s cause=not-file\\n' "$path" >&2
+      printf 'lane-host-ssh: private-protection-unsafe path=%s cause=not-file fix=make the private path a regular file inside the clone or the item worktree\\n' "$path" >&2
       return 1
     fi
   done
@@ -746,13 +824,13 @@ def built(row, package, refusal):
     setup, or a setup that names no binary, refuses before any window."""
     return remote(row, '''setup="$1/.agents/skills/$2/scripts/setup"
 if [ ! -x "$setup" ]; then
-  printf 'lane-host-ssh: %s-setup-missing path=%s\\n' "$3" "$setup" >&2
+  printf 'lane-host-ssh: %s-setup-missing path=%s fix=refresh the host clone to a build carrying that setup\\n' "$3" "$setup" >&2
   exit 1
 fi
 line=$("$setup") || exit 1
 case "$line" in
   *" binary=/"*) printf '%s\\n' "${line##* binary=}" ;;
-  *) printf 'lane-host-ssh: %s-unbuilt output=%s\\n' "$3" "$line" >&2; exit 1 ;;
+  *) printf 'lane-host-ssh: %s-unbuilt output=%s fix=run that setup on the host and repair the build it reports\\n' "$3" "$line" >&2; exit 1 ;;
 esac''', row["clone"], package, refusal).stdout.decode().strip()
 
 
@@ -826,7 +904,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     unrebased = create_worktree(row, args.item, flags)
     path = worktree(row, "path", args.item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
-        notice("worktree-path-invalid", item=args.item)
+        notice("worktree-path-invalid", item=args.item, fix=PATH_FIX)
         raise SystemExit(1)
     # The orch runtime the lane's own workflow runs on this host, its path in
     # the launch record for the launcher to read before it opens a window.
@@ -850,8 +928,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     # lane with nothing naming what is missing.
     remote(row, '''marker="$1/.agents/skills/orch/scripts/lane-marker"
 if [ ! -x "$marker" ]; then
-  printf 'lane-host-ssh: marker-script-missing path=%s\\n' "$marker" >&2
-  printf 'the host clone predates the launch record writer; refresh it to a build carrying that script\\n' >&2
+  printf 'lane-host-ssh: marker-script-missing path=%s fix=refresh the host clone, which predates the launch record writer, to a build carrying that script\\n' "$marker" >&2
   exit 1
 fi
 exec "$marker" --launch-record "$4" "$2" "$3"''', row["clone"], path, args.item,
@@ -896,7 +973,7 @@ if state=$(cd -- "$from" && ORCH_STATE_DIR="$2/tmp" "$1$4" state path --item "$3
     esac
   fi
 else
-  printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
+  printf 'lane-host-ssh: state-unresolved item=%s fix=repair the clone settings its orch runtime reads, then close again\\n' "$3" >&2
   exit 1
 fi
 if test "${#paths[@]}" -eq 0; then exit 0; fi
@@ -919,8 +996,12 @@ tar -chzf - -C "$manifest" "${names[@]}" -C / "${paths[@]}"''', row["clone"], wo
         raise FileNotFoundError(2, "Bash is required to read archive settings", "bash")
     suffix = row["repo"].rsplit("/", 1)[-1] + "/" + item
     root = subprocess.run([bash, str(Path(__file__).resolve().parent / "orch-runtime"),
-                           "archive", "root", "--suffix", suffix], stdout=subprocess.PIPE)
+                           "archive", "root", "--suffix", suffix], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    relay(root.stderr)
     if root.returncode != 0:
+        step_failed("archive-root-failed", root.stderr,
+                    "set ORCH_ARCHIVE_ROOT on this machine to what cause= asks, then close again",
+                    item=item, exit=root.returncode)
         raise SystemExit(root.returncode if root.returncode > 0 else 1)
     placed = json.loads(root.stdout)["result"]["root"]
     if placed is None:
@@ -934,7 +1015,8 @@ tar -chzf - -C "$manifest" "${names[@]}" -C / "${paths[@]}"''', row["clone"], wo
             os.fsync(archive.fileno())
             kept = archive.name
     except OSError as error:
-        notice("archive-write-failed", path=directory, cause=type(error).__name__)
+        notice("archive-write-failed", path=directory, cause=type(error).__name__,
+               fix="make the archive root writable and give it free space, then close again")
         raise SystemExit(1) from None
     print(f"kept={kept}", flush=True)
 
@@ -958,7 +1040,7 @@ def status(row, item):
                     accept=None)
     word = {"live": "running", "gone": "exited"}.get(runtime_result(answer).get("reading"))
     if answer.returncode != 0 or word is None:
-        notice("status-read-failed", item=item, exit=answer.returncode)
+        step_failed("status-read-failed", answer.stderr, RUNTIME_FIX, item=item, exit=answer.returncode)
         raise SystemExit(1)
     lifecycle_output(row, (word + "\n").encode())
 
@@ -976,14 +1058,16 @@ cd -- "$2"
 ORCH_STATE_DIR="$2/tmp" exec "$1$3" validate entry --stop --worktree "$2"''',
                          row["clone"], path, ORCH_RUNTIME, accept=None)
     if validations.returncode != 0:
-        notice(verb + "-validations-failed", item=item, exit=validations.returncode)
+        step_failed(verb + "-validations-failed", validations.stderr, RUNTIME_FIX,
+                    item=item, exit=validations.returncode)
         raise SystemExit(1)
     answer = remote(row, 'exec "$1$2" process stop --file "$1$3"', row["clone"], AGENT_RUNTIME, IDENTITY_FILE,
                     accept=None)
     stopped = runtime_result(answer).get("stop") or {}
     if answer.returncode == 0 and stopped.get("outcome") in ("stopped", "already-gone"):
         return stopped.get("signaled", 0)
-    notice(failed, item=item, outcome=stopped.get("outcome", "refused"), exit=answer.returncode)
+    step_failed(failed, answer.stderr, RUNTIME_FIX,
+                item=item, outcome=stopped.get("outcome", "refused"), exit=answer.returncode)
     raise SystemExit(1)
 
 
@@ -1117,6 +1201,21 @@ and no workflow state outside it means no archive and no kept line. Archives con
 follow symlinks, so linked records remain in the archive after their target is gone.
 close --merged, the caller's word that the item's pull request merged, is
 accepted and changes nothing: a static host keeps the whole archive.
+Each remote step's stderr arrives whole when the step ends. A step that fails
+ends the call's stderr with remote-failed target=TARGET exit=N cause=REFUSAL
+fix=REPAIR below the step's report, so the runtime, which records the last line
+carrying fix=, records the step's own refusal, never an earlier step's output
+or fix= line. REFUSAL is the report's last line carrying fix=, cut before that
+field, whose repair REPAIR repeats; else the worktree command's last keyed line
+with Error: prose under it; else the last line keyed by the clone's worktree
+command, lane-marker, sync-base, a setup or a runtime; else the report's last
+line; none for an empty report. The same cause= and fix= end a failed runtime
+call's status-read-failed, stop-validations-failed, close-validations-failed,
+stop-failed and close-stop-failed, and close's archive-root-failed item=ID
+exit=N when this machine's orch-runtime archive root refuses. They also end an
+ownership-lock-failed that decides the exit, its REFUSAL read from the lock
+session's own stderr (SSH's or the lock script's), which arrives when that
+session closes.
 list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
 static hosts. touch probes SSH; static hosts have no idle expiry.
 capabilities prints the static ssh host kind's one capability line
@@ -1299,5 +1398,6 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError, tarfile.TarError) as error:
-        notice("operation-failed", cause=type(error).__name__, path=getattr(error, "filename", None))
+        notice("operation-failed", cause=type(error).__name__, path=getattr(error, "filename", None),
+               fix="repair the input the path names, or the reply that failed to parse where it names none")
         raise SystemExit(1) from None

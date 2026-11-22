@@ -379,11 +379,17 @@ fn lane_host(_scripts: &Path, host: &str, args: &[&str]) -> Result<std::process:
     crate::provider::call(host, args, None, READ_BOUND, TAG).map_err(|f| f.to_string())
 }
 
-/// The cause word of a call that answered non-zero: the verb, the status
-/// and its refusal line ([`crate::provider::cause_line`]).
+/// The cause word of a call that answered non-zero: the verb, then its
+/// [`status_cause`].
 fn cause_of(verb: &str, out: &std::process::Output) -> String {
+    format!("{verb} {}", status_cause(out))
+}
+
+/// The status of a call that answered non-zero and its refusal line
+/// ([`crate::provider::cause_line`]).
+fn status_cause(out: &std::process::Output) -> String {
     format!(
-        "{verb} exit={} {}",
+        "exit={} {}",
         exit_code(out),
         crate::provider::cause_line(&host::stderr_text(out))
     )
@@ -503,8 +509,9 @@ pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String>
 /// `viewer-prefix --item ITEM`: the command a viewer of the lane's window
 /// on this machine runs, the one nonempty line of exit 0, its trailing line
 /// breaks dropped; `None` on exit 2, a provider with no such verb. Any
-/// other status, or a call that never ran, is `host-viewer-failed`; an
-/// empty answer, or one holding a line break, is `host-viewer-invalid`.
+/// other status, or a call that never ran, is `host-viewer-failed`, a status
+/// with its refusal line ([`crate::provider::cause_line`]); an empty answer,
+/// or one holding a line break, is `host-viewer-invalid`.
 pub fn viewer_prefix(scripts: &Path, host: &str, item: &str) -> Result<Option<String>, String> {
     let out = lane_host(scripts, host, &["viewer-prefix", "--item", item])
         .map_err(|cause| format!("host-viewer-failed item={item} {cause}"))?;
@@ -513,8 +520,8 @@ pub fn viewer_prefix(scripts: &Path, host: &str, item: &str) -> Result<Option<St
         Some(2) => return Ok(None),
         Some(_) | None => {
             return Err(format!(
-                "host-viewer-failed item={item} exit={}",
-                exit_code(&out)
+                "host-viewer-failed item={item} {}",
+                status_cause(&out)
             ));
         }
     }
@@ -529,18 +536,21 @@ pub fn viewer_prefix(scripts: &Path, host: &str, item: &str) -> Result<Option<St
 /// `stop --item ITEM --harness H` before a hosted relaunch and after a
 /// `pane=verb` launch that failed past its exec,
 /// confirmed by exit 0 and the one line `stopped item=ITEM
-/// processes=N`, read by `call`'s three values: `Failed` a refusal or an
-/// unconfirmed answer (`stop-failed exit=N`), `Unknown` a stop that may
+/// processes=N`, read by `call`'s three values: `Failed` a refusal
+/// (`stop-failed exit=N` and its [`HostStopped`] cause) or an unconfirmed
+/// answer (`stop-failed cause=answer-unparsed`), `Unknown` a stop that may
 /// have signalled the harness or not (`stop-unanswered`).
 pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(), Asked> {
-    let code = match stop_answer(scripts, host, item, harness)? {
-        HostStopped::Stopped { .. } => return Ok(()),
-        HostStopped::WorktreeRemoved => WORKTREE_REMOVED,
-        HostStopped::Unowned => UNOWNED,
-        HostStopped::Refused { status } => status,
-        HostStopped::Unparsed => 0,
-    };
-    Err(Asked::Failed(format!("stop-failed exit={code}")))
+    let failed = |cause: String| Err(Asked::Failed(format!("stop-failed {cause}")));
+    match stop_answer(scripts, host, item, harness)? {
+        HostStopped::Stopped { .. } => Ok(()),
+        HostStopped::WorktreeRemoved => failed(format!(
+            "exit={WORKTREE_REMOVED} stop-worktree-removed item={item}"
+        )),
+        HostStopped::Unowned => failed(format!("exit={UNOWNED} stop-unowned item={item}")),
+        HostStopped::Refused { status, cause } => failed(format!("exit={status} {cause}")),
+        HostStopped::Unparsed => failed("cause=answer-unparsed".to_owned()),
+    }
 }
 
 /// What the provider's stop answered: the harness stopped, the count of
@@ -550,14 +560,15 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
 /// answers, a status 4 without the line being the provider's own 4; no
 /// lane of the item on the host (status 75 beside `stop-unowned item=ITEM`,
 /// which a provider whose clone is gone answers), a status 75 without the
-/// line being another refusal; any other non-zero status; or exit 0 without
-/// the confirming line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// line being another refusal; any other non-zero status, with its refusal
+/// line ([`crate::provider::cause_line`]); or exit 0 without the confirming
+/// line.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostStopped {
     Stopped { processes: u32 },
     WorktreeRemoved,
     Unowned,
-    Refused { status: i32 },
+    Refused { status: i32, cause: String },
     Unparsed,
 }
 
@@ -603,24 +614,27 @@ pub fn stop_answer(
     )?;
     let code = exit_code(&out);
     let stderr = host::stderr_text(&out);
-    if code == WORKTREE_REMOVED && names(&stderr, "stop-worktree-removed", item) {
-        return Ok(HostStopped::WorktreeRemoved);
-    }
-    if code == UNOWNED && names(&stderr, "stop-unowned", item) {
-        return Ok(HostStopped::Unowned);
-    }
-    if code != 0 {
-        return Ok(HostStopped::Refused { status: code });
-    }
-    let text = host::stdout_text(&out);
-    let processes = text
-        .strip_prefix(&format!("stopped item={item} processes="))
-        .filter(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|count| count.parse().ok());
-    match processes {
-        Some(processes) => Ok(HostStopped::Stopped { processes }),
-        None => Ok(HostStopped::Unparsed),
-    }
+    let answer = if code == WORKTREE_REMOVED && names(&stderr, "stop-worktree-removed", item) {
+        HostStopped::WorktreeRemoved
+    } else if code == UNOWNED && names(&stderr, "stop-unowned", item) {
+        HostStopped::Unowned
+    } else if code != 0 {
+        HostStopped::Refused {
+            status: code,
+            cause: crate::provider::cause_line(&stderr).to_owned(),
+        }
+    } else {
+        let text = host::stdout_text(&out);
+        let processes = text
+            .strip_prefix(&format!("stopped item={item} processes="))
+            .filter(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|count| count.parse().ok());
+        match processes {
+            Some(processes) => HostStopped::Stopped { processes },
+            None => HostStopped::Unparsed,
+        }
+    };
+    Ok(answer)
 }
 
 /// `send --item ITEM --key KEY`: one key, `C-c` among them, as the
@@ -674,11 +688,7 @@ pub fn send_text(
     if out.status.success() {
         return Ok(());
     }
-    Err(Asked::Failed(format!(
-        "send-failed exit={} {}",
-        exit_code(&out),
-        crate::provider::cause_line(&host::stderr_text(&out))
-    )))
+    Err(Asked::Failed(cause_of("send-failed", &out)))
 }
 
 /// What the provider's close answered: the archive line its close printed
@@ -732,7 +742,8 @@ pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<Hos
 /// `stop-sandbox [--check] --item ITEM`: the check confirmed by
 /// `sandbox-stoppable item=ITEM`, the stop by `sandbox-stopped item=ITEM`.
 /// A refusal is `Asked::Failed` with `exit=N` (2 the absent-verb status of a
-/// provider without the pair), `cause=answer-unparsed` or [`BUSY`].
+/// provider without the pair) and its refusal line
+/// ([`crate::provider::cause_line`]), `cause=answer-unparsed` or [`BUSY`].
 pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Result<(), Asked> {
     let mut args = vec!["stop-sandbox"];
     if check {
@@ -745,9 +756,8 @@ pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Resu
         ("stop-sandbox", "sandbox-stopped")
     };
     let out = call(scripts, host, "stop-sandbox", &args, READ_BOUND, step)?;
-    match exit_code(&out) {
-        0 => {}
-        code => return Err(Asked::Failed(format!("exit={code}"))),
+    if !out.status.success() {
+        return Err(Asked::Failed(status_cause(&out)));
     }
     if host::stdout_text(&out) == format!("{word} item={item}") {
         Ok(())
@@ -1176,14 +1186,16 @@ fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> (Closed, Optio
 /// follow its act.
 fn ended(out: &std::process::Output) -> Closed {
     let Ok(reply) = serde_json::from_slice::<Value>(&out.stdout) else {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let line = crate::provider::cause_line(&stderr);
         return match out.status.code() {
-            Some(rc @ (1 | 2)) => Closed::Failed {
-                cause: format!("exit={rc} {line}"),
+            Some(1 | 2) => Closed::Failed {
+                cause: status_cause(out),
             },
             Some(_) | None => Closed::Unanswered {
-                cause: format!("{} {line}", out.status),
+                cause: format!(
+                    "{} {}",
+                    out.status,
+                    crate::provider::cause_line(&host::stderr_text(out))
+                ),
             },
         };
     };

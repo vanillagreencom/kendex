@@ -106,6 +106,7 @@ pub(super) enum StopRead {
 /// its close-out removed, or of which the host holds no lane, skips the stop
 /// on a full close, which the provider's close ends; a keep or a park
 /// (`keep`) refuses it, since the sandbox it keeps may still run the harness.
+/// Any other refusal carries the provider's refusal line as `detail`.
 pub(super) fn read_stop(answer: std::result::Result<HostStopped, Asked>, keep: bool) -> StopRead {
     let provider = |status: &str| {
         vec![
@@ -122,8 +123,10 @@ pub(super) fn read_stop(answer: std::result::Result<HostStopped, Asked>, keep: b
         Err(Asked::Failed(cause)) if cause.starts_with(hosted::BUSY) => {
             StopRead::Refused(hosted::BUSY, vec![("step", "stop".to_owned())])
         }
-        Ok(HostStopped::Refused { status }) => {
-            StopRead::Refused("stop-failed", provider(&status.to_string()))
+        Ok(HostStopped::Refused { status, cause }) => {
+            let mut fields = provider(&status.to_string());
+            fields.push(("detail", cause));
+            StopRead::Refused("stop-failed", fields)
         }
         Ok(HostStopped::Unparsed) => {
             StopRead::Refused("stop-failed", vec![("cause", "answer-unparsed".to_owned())])

@@ -4704,7 +4704,8 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
 /// through the real close verb each pass, with the wait the record kept,
 /// over the provider's sandbox stop and GitHub's reading of the pull
 /// request it waits on; each result unlike the last one told is told once,
-/// the same failure again tells nothing, and a parked answer is told once,
+/// a failed stop with the provider's refusal line, the same failure again
+/// tells nothing, and a parked answer is told once,
 /// the record parked, and its row leaves with the owed park. A sandbox kept
 /// with no park owed, and a relaunch in flight over an owed park, are never
 /// asked.
@@ -4759,9 +4760,10 @@ fn a_stopped_record_owing_a_park_is_asked_it_each_pass_and_each_new_result_told_
             "state": state, "headRefOid": "h2", "headRefName": "ken-1", "autoMergeRequest": null,
             "mergeStateStatus": "CLEAN", "isInMergeQueue": false, "mergeQueueEntry": null}}}}}})
     };
+    let refused = json!({"exit": 3, "stderr": "lane-host-fixture: sandbox-stopping item=KEN-1\nlane-host-fixture: sandbox-stop-refused item=KEN-1 fix=retry-park\n"});
     world.plant_host(&[
-        ("stop-sandbox --item KEN-1#1", answer(3, "")),
-        ("stop-sandbox --item KEN-1#2", answer(3, "")),
+        ("stop-sandbox --item KEN-1#1", refused.clone()),
+        ("stop-sandbox --item KEN-1#2", refused),
         (
             "stop-sandbox --item KEN-1#3",
             ok("sandbox-stopped item=KEN-1\n"),
@@ -4771,7 +4773,9 @@ fn a_stopped_record_owing_a_park_is_asked_it_each_pass_and_each_new_result_told_
     let first = driver.pass(&state);
     assert_eq!(
         told(&first),
-        vec!["EVENT park-owed KEN-1 result=park-failed cause=exit=3"],
+        vec![
+            "EVENT park-owed KEN-1 result=park-failed cause=exit=3 lane-host-fixture: sandbox-stop-refused item=KEN-1 fix=retry-park"
+        ],
         "{:?}",
         first.failed
     );
@@ -6013,11 +6017,12 @@ fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() 
 /// A walled hosted lane's harness must not run on beside the successor the
 /// relaunch opens: a walled lane whose kind declares a local pane has its
 /// harness stopped through the provider's `stop --item --harness` under the
-/// record's host before the relaunch starts; a stop the provider refuses,
-/// or answers with exit 0 and a line that is not `stopped item=ITEM
-/// processes=N`, leaves the wall to the overseer with
-/// `wall-relaunch-refused reason=stop-failed` and the status under the
-/// line, and nothing starts. So does a stop that gave no answer, a status
+/// record's host before the relaunch starts. A stop the provider refuses
+/// leaves the wall to the overseer with `wall-relaunch-refused
+/// reason=stop-failed`, its status and its refusal line under the line, and
+/// nothing starts; one that answers exit 0 with a line other than `stopped
+/// item=ITEM processes=N` does the same with `cause=answer-unparsed` alone
+/// (`hosted::stop` states both). So does a stop that gave no answer, a status
 /// of 128 and above (a signal, the ssh provider's 255), said
 /// `reason=stop-unanswered`, since the harness may still run.
 #[test]
@@ -6025,10 +6030,17 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
     for (stop, refused) in [
         (ok("stopped item=KEN-4 processes=1\n"), None),
         (
-            json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
-            Some("stop-failed exit=4"),
+            json!({"exit": 1, "stderr": "lane-host-fixture: stopping item=KEN-4\nlane-host-fixture: stop-refused item=KEN-4 fix=retry-stop\n"}),
+            Some("stop-failed exit=1 lane-host-fixture: stop-refused item=KEN-4 fix=retry-stop"),
         ),
-        (ok("stopped item=KEN-4\n"), Some("stop-failed exit=0")),
+        (
+            json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
+            Some("stop-failed exit=4 stop-worktree-removed item=KEN-4"),
+        ),
+        (
+            json!({"exit": 0, "stdout": "stopped item=KEN-4\n", "stderr": "lane-host-fixture: stopping item=KEN-4\n"}),
+            Some("stop-failed cause=answer-unparsed"),
+        ),
         (
             json!({"exit": 137}),
             Some("stop-unanswered stop exit=137 stderr=empty"),
@@ -6143,7 +6155,7 @@ fn a_walled_pane_verb_lane_is_stopped_through_its_provider_before_its_relaunch()
         (ok("stopped item=KEN-4 processes=1\n"), None),
         (
             json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
-            Some("stop-failed exit=4"),
+            Some("stop-failed exit=4 stop-worktree-removed item=KEN-4"),
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();
