@@ -27,8 +27,19 @@ skills="$(cd "$here/../../.." && pwd)"
 root="$(mktemp -d "${TMPDIR:-/tmp}/privacy-cases.XXXXXX")"
 trap 'rm -rf -- "$root"' EXIT
 
+# A runtime folder without its target/: a cargo test run beside this harness
+# writes there, and the copy's own builds never read it.
+copy_runtime() { # SRC DEST
+  mkdir -p "$2"
+  for entry in "$1"/* "$1"/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    [ "${entry##*/}" != target ] || continue
+    cp -R "$entry" "$2/"
+  done
+}
+
 mkdir -p "$root/skills/agent-runtime/tests" "$root/case/src"
-cp -R "$skills/agent-runtime/runtime" "$root/skills/agent-runtime/runtime"
+copy_runtime "$skills/agent-runtime/runtime" "$root/skills/agent-runtime/runtime"
 cp -R "$skills/agent-runtime/tests/rust" "$root/skills/agent-runtime/tests/rust"
 manifest="$root/skills/agent-runtime/runtime/Cargo.toml"
 target="${CARGO_TARGET_DIR:-$root/target}"

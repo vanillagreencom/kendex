@@ -78,5 +78,15 @@ done
 for i in "${!argv[@]}"; do argv[i]="${argv[i]//\$\$/\$}"; done
 mkdir -p "$d/units"
 env -i ${assigns[@]+"${assigns[@]}"} setsid "${argv[@]}" </dev/null >/dev/null 2>&1 &
-printf '%s\n' "$!" > "$d/units/$unit"
+pid=$!
+# The manager answers once the unit's process runs, so a caller that
+# signals the unit's group on the answer reaches it: the child leads its
+# own group only once setsid has run in it, which a loaded host can delay
+# past this fake's exit. A child that ends first, or the bound, stops the wait.
+for _ in $(seq 500); do
+  ! kill -0 -- "-$pid" 2>/dev/null || break
+  kill -0 "$pid" 2>/dev/null || break
+  sleep 0.01
+done
+printf '%s\n' "$pid" > "$d/units/$unit"
 exit 0

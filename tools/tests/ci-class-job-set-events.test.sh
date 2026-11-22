@@ -304,7 +304,7 @@ while IFS='|' read -r world expected; do
 done <<ROWS
 kept-subset|shards=["guards-tools","guards-tools-tail"] queue_macos_shards=["guards-tools"] rust_targets=[] skips=$((U - 1))/$((M - 1)) main-proof=read warned=no
 replacement-split|shards=["rest"] queue_macos_shards=["rest"] rust_targets=[] skips=$((U - 1))/$((M - 2)) main-proof=read warned=no
-red-leg|shards=["guards-hooks","guards-tools","guards-tools-tail","rest","jarvis"] queue_macos_shards=[] rust_targets=[] skips=$((U - N_TOOLS - N_JARVIS))/$M main-proof=read warned=no
+red-leg|shards=["orch-state","guards-hooks","guards-tools","guards-tools-tail","rest","jarvis"] queue_macos_shards=[] rust_targets=[] skips=$((U - N_TOOLS - N_JARVIS))/$M main-proof=read warned=no
 linux-only|shards=[] queue_macos_shards=$QUEUE_ALL rust_targets=[] skips=$U/0 main-proof=read warned=no
 no-shard-selected|$WHOLE main-proof=read warned=no
 in-progress|shards=["guards-scans"] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no
