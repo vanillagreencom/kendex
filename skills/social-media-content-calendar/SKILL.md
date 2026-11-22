@@ -14,15 +14,17 @@ tags: [planning]
 
 # Social media content calendar
 
-Plan campaigns as plain files in the consumer's workspace. The calendar holds post drafts for the publicist's approval gate. This skill stops at draft handoff. It sends no post, upload, comment or message, and creates no scheduled job.
+The campaign calendar holds post drafts for the publicist's approval gate. This skill stops at draft handoff. It sends no post, upload, comment or message, and creates no scheduled job.
 
 ## Use
 
 - Build a calendar for a launch, an event or a date range.
 - Adapt articles, videos or product material into drafts for selected social platforms.
 - Follow [Plan a campaign](workflows/plan-campaign.md) for campaign planning and draft handoff.
-- Use the harness's native file and research tools. Keep the calendar, claim inventory, copy and asset briefs as Markdown or CSV files. Use the consumer's existing working-file location.
-- Keep accounts, channel identifiers, brand voice and product facts in consumer files. Reference those files from the campaign brief.
+- Keep the calendar, claim inventory, copy and asset briefs as Markdown or CSV files.
+- Use the consumer's existing working-file location.
+- Keep accounts, channel identifiers, brand voice and product facts in consumer files.
+- Reference those files from the campaign brief.
 
 ## Draft states
 
@@ -30,9 +32,12 @@ Plan campaigns as plain files in the consumer's workspace. The calendar holds po
 |---|---|
 | `draft` | Copy or assets remain incomplete. |
 | `needs review` | A complete draft awaits review or recorded approval. |
-| `approved` | The user approved this exact piece on its tracker item. The calendar links to that record. |
+| `approved` | The user approved this exact piece on its tracker item. |
 
-An editorial review does not supply user approval. A changed piece returns to `needs review`. The publicist's approval gate owns any later sending action. A planned date and an approved draft do not prove that a post was scheduled or published.
+- The calendar links an `approved` piece to its approval record.
+- An editorial review does not supply user approval.
+- A changed piece returns to `needs review`.
+- The publicist's approval gate owns any later sending action.
 
 ## Source and licence
 
