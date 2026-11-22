@@ -388,6 +388,9 @@ case "$1" in
     : >"$TEST_STATE/refreshed"
     [ -z "${TEST_REFRESH_SAID:-}" ] || printf '%s\n' "$TEST_REFRESH_SAID"
     printf '%s\n' "$TEST_CONTENT" >rendered.txt
+    # A landing row's render that moves a file the base holds to a new
+    # name, which git's default rename detection pairs.
+    if [ -f .fixture-render-removes ]; then mv .fixture-render-removes .fixture-render-renamed; fi
     if [ -f "$TEST_STATE/classifier-proof" ]; then
       mkdir -p .agents/skills/probe
       printf 'a gained render\n' >.agents/skills/probe/SKILL.md
@@ -1122,9 +1125,9 @@ cp "$TMP/arm-helper" "$arm_helper"
 # A render this run committed goes to the default branch from the run
 # itself, with no pull request and with the landing token alone, where its
 # merge queue holds no entry, and lands where GitHub takes the push. No
-# token, another class, other sources, a busy or unread queue and GitHub's
-# refusal keep the pull request route, and a default branch that moved
-# defers to the next run. A retained head never lands, and a landed run
+# token, another class, a render that removes a path, other sources, a busy
+# or unread queue and GitHub's refusal keep the pull request route, and a
+# default branch that moved defers to the next run. A retained head never lands, and a landed run
 # closes the open rolling pull request only while GitHub still holds it
 # open. SAID is the one refresh-land line the run prints, or none: every
 # precondition that keeps the pull request names itself, once a landing
@@ -1278,6 +1281,8 @@ edits = {
     'token-exported': (runner, 'unset KENDEX_LAND_TOKEN\n', ''),
     'token-unchecked': (runner, '  if [ -z "$land_token" ]; then\n', '  if false; then\n'),
     'token-unsaid': (runner, 'if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi', 'land_check=unconfigured'),
+    'removal-ignored': (runner, '  if [ -n "$removed" ]; then land_check=skipped:path-removed; return 0; fi\n', ''),
+    'renames-paired': (runner, 'git diff --no-renames --diff-filter=D --name-only "$base" "$head"', 'git diff --diff-filter=D --name-only "$base" "$head"'),
     'precondition-unsaid': (runner, 'if [ "$class" != render ]; then land_check=skipped:class; return 0; fi', 'if [ "$class" != render ]; then return 0; fi'),
     'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
     'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
@@ -1333,8 +1338,8 @@ arm_runs=0
 # CONFIGURED is KENDEX_LAND_CONFIGURED, which the shared workflow sets true
 # where either landing name is set; the half-pair row holds a name and no
 # token. The third-party row's project also subscribes to a catalog other
-# than kendex's, and the sources-unread row's engine fails its subscription
-# list.
+# than kendex's, the sources-unread row's engine fails its subscription
+# list, and the render-removes row's render renames a file its base holds.
 for row in \
   'landed|render|true||landed|token-exported|0|land-token|close|true|' \
   'merged-since-start|render|true||landed|close-merged|0|land-token|merged|true|' \
@@ -1342,6 +1347,7 @@ for row in \
   'half-pair|render|true||unasked|token-unsaid|0|||true|unavailable value=token' \
   'small-class|small|true||unasked|precondition-unsaid|0|land-token||true|skipped value=class' \
   'unmeasured|standard|false||unasked||0|land-token||true|skipped value=class' \
+  'render-removes|render|true||unasked|removal-ignored renames-paired|0|land-token||true|skipped value=path-removed' \
   'base-moved|render|true|moved|base-moved|moved-unread|0|land-token||true|' \
   'push-refused|render|true|rejected|refused|refusal-deferred remote-moved|0|land-token||true|refused value=1' \
   'third-party|render|true||unasked|coverage-ignored|0|land-token||true|skipped value=sources-uncovered' \
@@ -1367,6 +1373,7 @@ for row in \
     case "$name" in
       third-party) printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"},{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/.fixture-sources" ;;
       sources-unread) : >"$repo/.fixture-source-unread" ;;
+      render-removes) printf 'one\ntwo\nthree\nfour\n' >"$repo/.fixture-render-removes" ;;
     esac
     commit "$repo"
     git -C "$repo" push -q origin main
@@ -1401,9 +1408,9 @@ for row in \
     else bad "$name $mutation landing control" "$OUT"; fi
     git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
     case "$name" in
-      third-party | sources-unread)
+      third-party | sources-unread | render-removes)
         reset_default
-        git -C "$repo" rm -q .fixture-sources .fixture-source-unread --ignore-unmatch
+        git -C "$repo" rm -q .fixture-sources .fixture-source-unread .fixture-render-removes --ignore-unmatch
         commit "$repo" ;;
     esac
   done
@@ -1433,9 +1440,9 @@ for close in close merged; do
   else bad "current route close=$close" "$OUT"; fi
   rm -f -- "${TMP:?}/state/prepush-state.json"
 done
-# A revert on kendex main reaches the consumer as one more render, which
-# lands by the same route: a render back to the bytes the landed one
-# replaced lands on top of it.
+# A revert on kendex main that changes files back reaches the consumer as
+# one more render, which lands by the same route: a render back to the
+# bytes the landed one replaced lands on top of it.
 reset_default
 cp "$TMP/land-runner" "$runner"
 printf '0\n' >"$TMP/state/queue-entries"

@@ -1,0 +1,1 @@
+- A consumer refresh whose render removes or renames a file no longer lands on the default branch directly. It keeps the rolling pull request instead, which merges under the consumer's own rules. The run prints `refresh-land=skipped value=path-removed`.

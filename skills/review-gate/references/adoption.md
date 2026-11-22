@@ -182,13 +182,16 @@ What the run lands:
 - The proof shows that the commit holds what kendex renders. It does not judge package content. kendex's own merge queue proves the content of the kendex catalog before `main` holds it, and the consumer runs no second proof of it. No such proof covers another source.
 - The run therefore lands only where every selected project has the source coverage that [§ Schedule and input check](#schedule-and-input-check) requires of a current record: each enabled source is the kendex catalog, `vanillagreencom/kendex`, with no `path` and no `rev`, and no manifest holds a revision override.
 - An update in a project with a third-party catalog, a local path, a declared revision or unknown source evidence keeps the rolling pull request, where the consumer reviews it.
+- A commit that removes or renames a path against the base the run judged keeps the rolling pull request, which merges under the consumer's own rules, as [§ Publication](#publication) states.
 - A landed commit has no pull request and enters no merge group, so no approval, review thread, pull-request check or merge-group check judges it in the consumer.
 
 After a landing:
 
 - The landed commit is an ordinary push to the default branch. A consumer workflow with a `push` trigger still starts for it.
 - With no pull request and no merge group, a landed render skips the lanes that claim a path it changes. The harness-ci package's references/wiring.md § Consumer refresh CI names the run that first executes them.
-- To undo a bad package, revert it on kendex `main`. Each consumer's next refresh renders the reverted content and lands it by the same route.
+- To undo a bad package, revert it on kendex `main`. Each consumer's next refresh renders the reverted content.
+  - A revert whose render removes and renames no path lands by the same route.
+  - A revert that removes a file the bad package added keeps the rolling pull request, and reaches the consumer only when that pull request merges.
 - A landed run writes to its run summary what the pull request body carries on the other route: the landed commit, the engine version, the class and classifier line, and the catalog, settings and retired-item reports.
 
 GitHub's rulesets judge the landing push, and the run reads no ruleset first. A ruleset that refuses the push leaves the update on the rolling pull request.
@@ -207,13 +210,14 @@ A run that committed a new head and kept the pull request route prints one landi
 
 - The shared workflow passes the script the boolean `KENDEX_LAND_CONFIGURED`: true where the run received either name of the pair, and never a secret value.
 - A run that received neither name prints no landing line.
-- The run checks the token, the verify, the class, the sources and the merge queue in that order. The line names the first check the run does not meet.
+- The run checks the token, the verify, the class, the removed paths, the sources and the merge queue in that order. The line names the first check the run does not meet.
 
 | Line | Cause |
 | --- | --- |
 | `refresh-land=unavailable value=token` | The run received one name of the pair alone, or the `Mint the landing token` step failed. |
 | `refresh-land=skipped value=verify` | The run is held: its verify failed only on declarations a project's own manifest withholds. |
 | `refresh-land=skipped value=class` | The classifier answered a class other than `render`. |
+| `refresh-land=skipped value=path-removed` | The commit removes or renames a path against the base the run judged. |
 | `refresh-land=skipped value=sources-uncovered` | A selected project does not have the source coverage above. |
 | `refresh-land=unavailable value=sources-read` | The run could not read a project's source evidence: the engine's subscription list or a project manifest. |
 | `refresh-land=unavailable value=queue-read` | The read of the default branch's merge queue failed. |
