@@ -34,6 +34,7 @@
 - Open only the tabs needed for the delegated task.
 - Close them when the work ends.
 - After a vendor CLI's browser sign-in, remove query strings from every URL in a tab list, including URLs used as titles, before logging or reporting it.
+  - Sanitize the list before any raw tool output reaches a log.
 - Apply [computer-use.md:Desktop and terminal](computer-use.md#desktop-and-terminal) if browser work needs the user's input devices.
 
 ## Forms and captures
