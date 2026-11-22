@@ -64,6 +64,7 @@ pub mod pr_watch;
 pub mod program;
 pub mod report;
 pub mod retention;
+mod scratch;
 pub mod security;
 pub mod tracker;
 pub mod verifying;

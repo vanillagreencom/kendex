@@ -557,7 +557,7 @@ fn stands(path: &Path) -> Result<bool> {
 
 /// Whether `name` carries `item` as a whole token, `(^|[-_.])ITEM([-_.]|$)`,
 /// so no file of an item whose key extends it.
-fn names_item(name: &str, item: &str) -> bool {
+pub(crate) fn names_item(name: &str, item: &str) -> bool {
     let boundary = |c: Option<char>| c.is_none_or(|c| matches!(c, '-' | '_' | '.'));
     name.match_indices(item).any(|(at, _)| {
         boundary(name[..at].chars().next_back()) && boundary(name[at + item.len()..].chars().next())
@@ -588,14 +588,7 @@ fn items_record(name: &str, item: &str, directory: bool) -> bool {
 fn lane_paths(paths: &Paths, item: &str) -> Result<Vec<PathBuf>> {
     let fleet_name = name_of(&paths.state);
     let fleet_lock = format!("{fleet_name}.lock");
-    let runner = format!(
-        "{}.",
-        paths
-            .log
-            .file_stem()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    );
+    let runner = paths.runner_prefix();
     let mut out = read_dir(&state::item_dir(&paths.dir, item))?;
     for entry in read_dir(&paths.dir)? {
         let name = name_of(&entry);

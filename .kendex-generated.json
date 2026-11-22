@@ -867,6 +867,7 @@
   ".agents/skills/orch/runtime/src/watch/report.rs",
   ".agents/skills/orch/runtime/src/watch/report/escapes.rs",
   ".agents/skills/orch/runtime/src/watch/retention.rs",
+  ".agents/skills/orch/runtime/src/watch/scratch.rs",
   ".agents/skills/orch/runtime/src/watch/security.rs",
   ".agents/skills/orch/runtime/src/watch/tracker.rs",
   ".agents/skills/orch/runtime/src/watch/tracker/reconcile_items.rs",

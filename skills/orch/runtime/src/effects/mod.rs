@@ -716,7 +716,7 @@ fn supersede_launch(
 /// The launcher's record of the fleet watch's start, beside the fleet state.
 const WATCH_RUNNER_FILE: &str = "oversee-watch.runner";
 /// The watch's stderr file beside the fleet state, appended on every start.
-const WATCH_ERR_FILE: &str = "oversee-watch.err";
+pub(crate) const WATCH_ERR_FILE: &str = "oversee-watch.err";
 
 /// The fleet watch's files as a controller start's companion keeps them,
 /// beside the fleet state at `path`, its claim the watch's own record there.
