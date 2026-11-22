@@ -257,7 +257,9 @@ assert_eq "$(cat "$TMP_ROOT/out")" "agent-runtime-setup: key=$KEY binary=$TMP_RO
 
 # --- after a build, setup removes the keys nothing uses ---------------------
 # One cache holding a key of each kind setup tells apart, then a build of the
-# package's key. The registered checkouts: a repository and its linked
+# package's key from a registered copy of the package, since a build from a
+# checkout no record names removes nothing. The registered checkouts beside
+# it: a repository and its linked
 # worktree, a folder in no repository (a source catalog's skills/ layout),
 # beside the home directory. The unregistered ones: a runtime a cargo is
 # building now, and a hosted lane's clone for the row after. Each holds the
@@ -293,6 +295,7 @@ until_args() { # PID PREFIX — until ps shows the process's arguments opening w
 REPO="$TMP_ROOT/checkouts/repo"
 LANE="$TMP_ROOT/checkouts/lane"
 PLAIN="$TMP_ROOT/checkouts/plain"
+PACKAGE="$TMP_ROOT/checkouts/package/skills/agent-runtime/runtime"
 CLONE="$TMP_ROOT/lane host/clone/.agents/skills/agent-runtime/runtime"
 BUILDING="$TMP_ROOT/building/.agents/skills/agent-runtime/runtime"
 mkdir -p "$REPO"
@@ -307,12 +310,16 @@ printf '// lane\n' >>"$LANE/.agents/skills/agent-runtime/runtime/src/lib.rs"
 # A copy delivery: the tool's own directory holds a copy, not a link.
 runtime_copy "$REPO/.claude/skills/agent-runtime/runtime" copy
 runtime_copy "$PLAIN/skills/agent-runtime/runtime" plain
+mkdir -p "$PACKAGE"
+cp -p "$PKG/runtime/Cargo.toml" "$PKG/runtime/Cargo.lock" "$PACKAGE/"
+cp -R "$PKG/runtime/src" "$PACKAGE/src"
 runtime_copy "$HOME/.agents/skills/agent-runtime/runtime" home
 runtime_copy "$HOME/.pi/agent/skills/agent-runtime/runtime" pi
 runtime_copy "$CLONE" clone
 runtime_copy "$BUILDING" building
-printf '[{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"folder-not-found","worktree":null}]\n' \
-  "$REPO" "$PLAIN" "$TMP_ROOT/gone" >"$FAKE_KENDEX_REGISTRY"
+printf '[{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"folder-not-found","worktree":null}]\n' \
+  "$REPO" "$PLAIN" "$TMP_ROOT/checkouts/package" "$TMP_ROOT/gone" >"$FAKE_KENDEX_REGISTRY"
+assert_eq "$(key_at "$PACKAGE")" "$KEY" 'premise: the registered copy of the package resolves to its key'
 REPO_KEY="$(key_at "$REPO/.agents/skills/agent-runtime/runtime")"
 LANE_KEY="$(key_at "$LANE/.agents/skills/agent-runtime/runtime")"
 COPY_KEY="$(key_at "$REPO/.claude/skills/agent-runtime/runtime")"
@@ -375,7 +382,7 @@ mkdir -p "$PB/$FLIGHT/release"
 
 # A narrow COLUMNS, as a terminal or harness exports it, ends a cut ps line
 # well inside the running program's key.
-COLUMNS=40 run "$PC" "$SETUP"
+COLUMNS=40 run "$PC" "$SETUP" --runtime "$PACKAGE"
 assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|" 'prune: the build passes with its one line and no diagnostic'
 expected_bin=""
 for k in "$KEY" $CHECKOUT_KEYS "$UNRECORDED" "$LOCKED" "$RUNNING" "$FLEET"; do
@@ -415,9 +422,19 @@ mkdir -p "$PB" "$PC/bin"
 built "$CLONE_KEY"
 built_from "$CLONE_KEY" "$CLONE"
 built "$UNUSED"
+run "$PC" "$SETUP" --runtime "$PACKAGE"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=checkout-unrecorded runtime=$CLONE" 'prune: a binary built in an unrecorded checkout passes the build and names the skip'
+assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$CLONE_KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$CLONE_KEY" "$CLONE_KEY.log" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: a binary built in an unrecorded checkout removes nothing'
+
+# A build from a checkout no record names, as a hosted lane's clone builds,
+# shows the same: nothing goes.
+PC="$TMP_ROOT/cache-prune-unrecorded"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+built "$UNUSED"
 run "$PC" "$SETUP"
-assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=checkout-unrecorded runtime=$CLONE" 'prune: a build from an unrecorded checkout passes the build and names the skip'
-assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$CLONE_KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$CLONE_KEY" "$CLONE_KEY.log" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: a build from an unrecorded checkout removes nothing'
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=checkout-unrecorded runtime=$PKG/runtime" 'prune: a build from an unrecorded checkout passes and names the skip'
+assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: a build from an unrecorded checkout removes nothing'
 
 # A project list that does not read proves nothing unused: nothing goes.
 PC="$TMP_ROOT/cache-prune-unread"

@@ -74,11 +74,11 @@ every worktree of its repository, each read through its skills/*/runtime,
 also keeps a key whose build holds its claim, a binary whose dep-info names
 no source it was built from, a build folder with neither a binary nor a
 .failed record (a build in flight), and a binary with no build folder
-(installed from elsewhere). Where a binary's dep-info (cargo's record of the
-sources it was built from) names a checkout that still stands outside the
-recorded ones, such as a hosted lane's clone, the host holds checkouts its
-record does not cover, and setup removes nothing (cause
-checkout-unrecorded). Where it cannot read the processes, the project list,
+(installed from elsewhere). Where the build's own runtime, or a checkout a
+binary's dep-info (cargo's record of the sources it was built from) names
+that still stands, lies outside the recorded ones, such as a hosted lane's
+clone, the host holds checkouts its record does not cover, and setup removes
+nothing (cause checkout-unrecorded). Where it cannot read the processes, the project list,
 a repository's worktrees or a source's key, it also removes nothing. Either
 way it prints on stderr:
   <name>-setup: prune-skipped cause=<cause> [field=value ...]
@@ -235,6 +235,9 @@ EOF
 $roots
 EOF
   recorded="$sources"
+  # A build from a checkout outside the recorded ones, as a hosted lane's
+  # clone is, shows the same: checkouts the record misses use this cache.
+  in_list "$recorded" "$runtime" || skip checkout-unrecorded "runtime=$runtime"
 
   # A build that holds no claim, a setup without --detach, is a cargo whose
   # arguments name the runtime's manifest.
