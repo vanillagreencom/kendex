@@ -1,10 +1,8 @@
 # Home contract
 
-Read when starting a session, adding or changing a personal customization, finding a memory note or updating its index row.
+Read by section, only for the step that needs it: [Session start](#session-start) when starting a session, [Personal additions](#personal-additions) when adding or changing a personal customization, [Read a note](#read-a-note) when finding a memory note, and [Memory store and index](#memory-store-and-index) when updating an index row.
 
 ## Personal additions
-
-Read this section for a request to add something to a Jarvis home.
 
 - Use the existing owner in the table before acting.
 - Put text in a section read at every Start only when every Start acts on it.
@@ -36,13 +34,10 @@ Read this section for a request to add something to a Jarvis home.
   - Read `kendex fork`'s help first.
   - Never edit a rendered agent to personalize it.
 - **Add an event duty**: put its work and checks in their homes under [Homes](long-session.md#homes).
-- **Keep a result**: use [Notes](memory.md#notes) for a durable fact, ruling, preference or lesson.
 - **Establish a workstream**:
   - The subject holds intent, scope, owner and tracker references.
   - Read [Long sessions: Homes](long-session.md#homes) and [Task reconciliation](../workflows/tasks.md) for active tasks, acceptance and waiting conditions.
-  - The note is no live queue; the handoff holds only session state.
 - **Add a hook or schedule**:
-  - Read [Verification](verification.md).
   - Inspect the existing supported event, hook or native scheduling mechanism first.
   - Universal lifecycle and delivery retain their existing runtime and mailbox owners.
   - Add no parallel watcher.
@@ -71,7 +66,7 @@ An app-managed home's file tools can be limited to `state/`; that access grants 
 
 ## Memory store and index
 
-- The home has one memory store. Notes hold the content under subject headings, following [Notes](memory.md#notes).
+- The home has one memory store.
 - The home has one memory index at `memory/MEMORY.md`. Once committed, this recovery entry point remains present in the candidate commit; an initial empty home may omit it.
 - Each index row names a note and when to read it.
   - Its location is the note's file and subject heading only.

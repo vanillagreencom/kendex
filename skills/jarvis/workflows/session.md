@@ -65,7 +65,6 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
    - Select one absolute home path for every start and recovery command.
 2. From the native session's own pane, run `.agents/skills/orch/scripts/orch-runtime register --fleet`.
    - The session's next native hook establishes its session binding.
-   - Registration alone cannot renew presence.
    - A satellite registers only in its own home, and its loop runs as a satellite under [Control-host events: Satellite](../references/control-host-events.md#satellite).
 3. Set the existing orch keys `ORCH_WAKE_PROCESS` and `ORCH_WAKE_START` in the home's settings.
    - The process pattern matches `watch-loop --home HOME` for this home. Escape regular-expression characters in HOME.
@@ -116,18 +115,15 @@ Load each named section with `jarvis-section` before the step that acts on it.
 - **Merge**: load the target repository's merge instructions before its merge step.
 - **Lane launch**: for an independent work-item session, follow orch's [handoff workflow](../../orch/workflows/handoff.md).
 
-To add a consumer's own rule or its action route, start at [Personal additions](../references/home-contract.md#personal-additions).
-
 ## Event loop
 
 1. Read each delivered event.
    - Connect it to an open item or create that item.
-2. On `EVENT report-due`, follow [Progress checkpoint](#progress-checkpoint). The producer schedules this event.
+2. On `EVENT report-due`, follow [Progress checkpoint](#progress-checkpoint).
    - Set no model timer.
    - Store no due row.
 3. Load the action's sections under [Action routes](#action-routes) before acting.
 4. Handle user decisions through [decisions.md:Authority](../references/decisions.md#authority).
-   - Use [communication.md:Message types](../references/communication.md#message-types) for replies, notices and scheduled reports.
 5. Update the item's state after each action.
    - Keep an unresolved obligation open until its acceptance check passes.
 6. Run the verify pass after handling events and before waiting again.
@@ -183,7 +179,7 @@ To add a consumer's own rule or its action route, start at [Personal additions](
 1. Judge whether the remaining context permits continued work.
    - Use the user's succession trigger when they set one.
 2. Wait for attached agents under the [Handoff](../references/long-session.md#handoff) contract before calling the session command.
-   - Keep reconciliation and retention in this workflow; the command cannot read every harness's attached-agent state.
+   - Keep reconciliation and retention in this workflow.
 3. Follow [Handoff replacement](#handoff-replacement) and the reconciliation and update rules in the [Handoff](../references/long-session.md#handoff) contract, read through `jarvis-section`.
 4. Before running `succeed`, run `.agents/skills/jarvis/scripts/owner-unanswered --root HOME`.
    - Send each open voice request a progress notice on its ref: this session hands over, and the next session continues the request.
@@ -194,8 +190,6 @@ To add a consumer's own rule or its action route, start at [Personal additions](
    - The command selects a successor through agent-runtime's controller preference walk and account pick, from the first `AGENT_RUNTIME_CONTROLLER_PREFERENCE` entry to the recorded account and its choice. The home and saved handoff stay with the successor.
    - Where no account has room, the walk takes one account nothing measured: the recorded account where the mark leaves it in, else a signed-in account whose usage query was refused with HTTP 429. The successor's record then carries `scope: unmeasured`.
    - When neither exists, or an entry's account reading fails, succession refuses before the predecessor ends.
-   - The walk does not read `JARVIS_UNATTENDED_HARNESSES`. A successor carries its harness's bypass words only when the setting names that harness.
-   - To keep every successor unattended, name every harness the overseer preference can reach. Per-account setup, such as Claude Code bypass consent, applies to every account the preference's harnesses can pick.
    - A missing orch dependency refuses succession before the predecessor ends; report the returned account and failure to the owner.
    - The command saves the handoff, then selects a successor, leaving out a Claude Code account that has not finished first-run setup. agent-runtime opens the successor in a new window of the same tmux session. It ends the predecessor only after the successor confirms its native identity and takes the Start brief.
 7. Read `jarvis-session status --home HOME` for the transfer.

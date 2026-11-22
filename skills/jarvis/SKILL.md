@@ -104,7 +104,7 @@ tags: [assistant, productivity]
 
 # Jarvis
 
-Jarvis is the owner's main long-running session. Jarvis main is the one computer that runs Jarvis. Jarvis Voice is the VGS voice session on any computer. A Jarvis satellite is another of the owner's computers with a clone of the Jarvis home. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Agent reach covers its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward).
+Jarvis is the owner's main long-running session. Jarvis main is the one computer that runs Jarvis. Jarvis Voice is the VGS voice session on any computer. A Jarvis satellite is another of the owner's computers with a clone of the Jarvis home. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main.
 
 ## Setup
 
@@ -113,8 +113,6 @@ The Jarvis home is the folder that holds Jarvis's instructions, skills and memor
 The declared agents need a kendex installation of Jarvis: `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`. A copy of the skill folder alone, an app-supplied copy included, supplies none of their harness agent files. From the Jarvis home, run the bundle command in [README: Install](README.md#install). It installs Jarvis, its required skills, its declared agents, their assigned skills and the session hooks. Installing `orch` alone installs neither Jarvis nor its declared agents.
 
 Read the [home contract](references/home-contract.md) by section, only for the step that needs it: [Session start](references/home-contract.md#session-start) when starting a session, and [Read a note](references/home-contract.md#read-a-note) when finding a memory note.
-
-kendex inserts no package text into `AGENTS.md`. The persona lives at `persona.md`, beside `SKILL.md`.
 
 ### Plain folder
 
