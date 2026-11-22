@@ -289,7 +289,7 @@ A gap a lane finds in a package or a workflow is a proposal through lane mail an
 
 The project-management skill's proposal-sweep workflow owns the tracker-specific fleet analysis. It runs in a subagent the overseer launches, returns issue-mode audit JSON and files nothing. The overseer checks that output against live fleet work. It then invokes that skill's audit-issues workflow with `--analyzed`, and project-order resumes at its § 2.2. The overseer records the created issue ID or a one-line decline against the source comment through the same tracker.
 
-A non-delegated primary session routes creation through TPM, except `plan-issues`, `start-new` and the `merge-pr` rebundle, which it runs directly with their workflow's label sets.
+A non-delegated primary session routes creation through TPM, except `plan-issues` and `start-new`, which it runs directly with their workflow's label sets.
 
 ### Verifier returns
 

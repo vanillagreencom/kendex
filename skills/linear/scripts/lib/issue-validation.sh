@@ -260,8 +260,8 @@ issue_marked_value() {
 #
 # The symptom check is bound to REVIEW_BORN ("1" from `--review-born`). A
 # review finding files as priority 2 only with a reported symptom; priority 2
-# minted structurally — a TPM planner, a roadmap layer, the merge-pr rebundle,
-# a research spike — reports no symptom by construction and creates unchecked.
+# minted structurally — a TPM planner, a roadmap layer, a research spike —
+# reports no symptom by construction and creates unchecked.
 require_issue_reach() {
 	local description="$1" priority="$2" review_born="${3:-}"
 	[ -n "${LINEAR_REQUIRE_REACH-1}" ] || return 0

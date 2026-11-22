@@ -82,7 +82,7 @@ The audit pipeline applies [project-management's creation bar](../../project-man
 
 Everything else follows the Done-when test in Steps 3 and 4. P4 polish never files: absorb it only when it is est-1, related, and work the Done-when needs; otherwise decline it with its reason. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?"), which [communication-modes.md](../../orch/references/communication-modes.md) § Ask set keeps out of the set whatever the mode.
 
-When a same-surface bundle or umbrella parent already exists, residue attaches to it as a child or related issue; a standalone filing needs a stated reason.
+Residue files in the project its surface routes to, with a `related` relation to an open issue on the same surface where one exists. It becomes a child only of a parent whose one deliverable it is a part of, per [project-management's grouping rule](../../project-management/SKILL.md#disposition).
 
 ## Review pipeline
 

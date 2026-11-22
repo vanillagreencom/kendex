@@ -288,7 +288,7 @@ Order per issue: relations first, then priority and labels, then project/state, 
 
 ### 7.2 Execute Approved Creations and Cancellations
 
-Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. A run's rework parent ([SKILL.md § Disposition](../SKILL.md#disposition)) is therefore created first, and each produced item under it. The route comes from `TRACKER`. Never mix routes within one audit.
+Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. A bundle parent (`create_fields.is_bundle_parent: true`) is therefore created before its children. The route comes from `TRACKER`. Never mix routes within one audit.
 
 **Contract-parent scope transfer.** With a `hierarchy_contract`, exclude its `parent_issue` from every supersession disposition, including carried or analyzed `supersedes[]` entries. Apply [tpm-audit § 7.0](tpm-audit.md#70-hierarchy-contract-binding)'s `related` scope-transfer representation instead. Never cancel or re-scope the contract parent here, or write it into a Completion block. The caller owns its coordination-only conversion after the audit.
 
