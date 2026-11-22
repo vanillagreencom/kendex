@@ -219,7 +219,9 @@ config_reads() { # START
 # operand, or empty for none, and config_operand is that operand's index.
 # Git's parser stops at the first operand, so a later --get or -l is a
 # value, and an option that takes an argument, such as --comment, takes the
-# next word whatever it reads. Git takes a unique prefix of a long option,
+# next word whatever it reads, where that word stays one field. A word whose
+# field count the tokenizer cannot prove, such as $F, can split, and its
+# later fields stand where an option or the key stands. Git takes a unique prefix of a long option,
 # so an unlisted one can be --edit or --rename-section. Option list: git
 # config -h and git config set -h of Git 2.56.1.
 config_words() { # START
@@ -238,7 +240,9 @@ config_words() { # START
       -e | --edit) config_action=edit; break ;;
       --rename-section) config_action=rename ;;
       --add | --replace-all | --unset | --unset-all | --remove-section) config_action=write ;;
-      -f | --file | --blob | -t | --type | --default | --comment | --value) cursor=$((cursor + 1)) ;;
+      -f | --file | --blob | -t | --type | --default | --comment | --value)
+        cursor=$((cursor + 1))
+        [[ ${arg_unquoted[$cursor]:-} != *:fields ]] || { config_action=unknown; break; } ;;
       -f?* | -t?* | --file=* | --blob=* | --type=* | --default=* | --comment=* | --value=*) ;;
       --no-file | --no-blob | --no-type | --no-default | --no-comment | --no-value | --all | --no-all) ;;
       --global | --system | --local | --worktree | --no-global | --no-system | --no-local | --no-worktree) ;;
