@@ -1,13 +1,12 @@
 # doc-limits
 
-A byte-size check for the Markdown documents a coding harness loads at every turn. It reports each document that exceeds its path class.
+A byte-size check for the Markdown documents a coding harness loads at every turn. It reports each document over the limit its path class sets.
 
 ## Features
 
-- Check document sizes against byte limits.
 - Apply project limits by path pattern.
-- Exclude generated files through the render inventory and other exceptions through reasoned rows.
-- Check staged documents with staged policy.
+- Skip the files kendex generates, and exclude other documents only with a written reason.
+- Check staged documents against the staged settings and exclusions.
 - Fail the check for a document over its limit.
 
 ## Install
@@ -22,7 +21,7 @@ The checker measures every tracked `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SK
 
 ## Path classes
 
-Set `DOC_LIMITS_CLASSES` to override the limit of a measured file. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) defines class selection and reasoned exclusions.
+Set `DOC_LIMITS_CLASSES` to override the limit of a measured file. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) says how a file's class is chosen and how to exclude a document with a written reason.
 
 ## Setup
 

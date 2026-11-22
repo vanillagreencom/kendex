@@ -8,24 +8,12 @@
 - Patterns match the full repository-relative path. `*` crosses directory separators.
 - `SHIPPED_CLASSES` in [scripts/doc-limits](../scripts/doc-limits) declares the shipped classes and their limits.
 - An empty `DOC_LIMITS_DEFAULT_CLASSES` removes the shipped list. A measured file with no matching class has no limit.
-- A document over its limit fails the check, whichever class set that limit.
 
 ## Exclusion list
 
-- Generated files are excluded by exact path from the render writer's `.kendex-generated.json`. Adopted in-place source remains governed because the writer leaves it out of that inventory. Adoption needs no ownership row in the exclusions file.
-- An absent inventory is an empty one: nothing is excluded and every file in the measured set is measured. A project whose items are all in-place, or one installed below the Git root, writes no repository inventory and needs none. An unreadable or malformed inventory fails with exit `2`; install or refresh kendex at the Git repository root in the main checkout and stage the inventory with the renders. A malformed inventory's refusal then carries the shared reader's status, jq version, cause and fix. With no jq on PATH the inventory cannot be read, and the refusal starts `host-error=jq-missing`; install jq.
+- Generated files are excluded by exact path from the render writer's `.kendex-generated.json`. Adopted in-place source remains governed because the writer leaves it out of that inventory. Adoption needs no ownership row in the excludes file.
+- An absent inventory is an empty one: nothing is excluded and every file in the measured set is measured. A project whose items are all in-place, or one installed below the Git root, writes no repository inventory and needs none.
 - The default mode reads the worktree inventory, falling back to its index copy when absent. Staged mode reads the tracked index copy; an inventory staged for deletion is absent. An untracked inventory reads from the worktree.
-- `DOC_LIMITS_EXCLUDES` selects the repository-relative file. Its default is `tools/doc-limits-excludes`. `--excludes FILE` overrides it.
-- Each row is `pattern<TAB>reason`. A missing pattern or reason is a configuration error. Blank lines and lines starting with `#` are ignored.
+- Each row of the excludes file is `pattern<TAB>reason`. `doc-limits --help` names the setting and the flag that select the file. Blank lines and lines starting with `#` are ignored.
 - A leading `!` restores matching documents to the measured set. It takes priority over every exclusion, including inventory entries. `\!` matches a literal leading exclamation mark.
-- Exclusions are the exception path for documents that cannot fit their class. The checker has no per-file allowance.
-
-## Check result
-
-| Exit | Meaning |
-| --- | --- |
-| `0` | No measured document exceeds its class limit. |
-| `1` | At least one document exceeds its class limit. The output names each with `notice=document-over-limit`, its size and limit. |
-| `2` | The check could not judge. The first line's level names who owns the fix: `error=` the caller's arguments, policy or tracked state; `package-error=` a defect in doc-limits; `host-error=` a host read that failed or a missing jq. A settings-library refusal starts `doc-limits-error=` whatever its cause, so that level names no owner. |
-
-- `--against REF` is retired: it has no effect, prints `notice=argument-retired argument=--against`, and a later release removes it.
+- Exclusions are the exception path for documents that cannot fit their class.
