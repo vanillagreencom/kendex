@@ -27,6 +27,8 @@ GitHub: `gh issue view [N] --repo [OWNER/REPO] --json number,title,body,comments
 
 Evaluate each item in `Review items:` independently.
 
+Before the first edit, read each page that the repository's `AGENTS.md`, and the `AGENTS.md` nearest each path a fix touches, routes for those paths.
+
 An optional `Adds:` line is the complete blank-separated list of protected additions this round may make; a blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. One path is `Adds: tools/one-helper.sh`; multiple paths are `Adds: tools/one-helper.sh skills/x/scripts/check`. [`../../orch/schemas/dev-round.md` § Protected additions](../../orch/schemas/dev-round.md#protected-additions) is the sole scope definition. With no line, add none in that scope. If the fix needs another protected file, report that requirement instead of creating it; the orchestrator must authorize the exact path in a fresh round.
 
 An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` record the previous round produced: the path, its bytes, the ceiling in bytes and the percent reached. Plan or perform a move to Git LFS, an asset store or generation before the blob grows further. If that remedy cannot be applied here, state why in the return. With no line, no binary blob is known to be within reach of the ceiling.
@@ -43,6 +45,8 @@ An item asking for a test takes the fix-round rule there.
 Update a principle doc or a decision record when a fix makes a claim in it false; the `docs-writing` skill says what each holds. For **UI lifecycle or cache fixes**, cached or mirrored UI state, changed window or event handling, trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
 
 Before a fix returns, name the finding's defect class: the assumption that failed, not the cited line. Grep for the verb or pattern to find every other site, input form or copy that makes that assumption. Fix each one, or close the class at its generator. Also grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one. Name the class and the sites swept in the item reasoning. A fix at one site with its sibling untouched comes back as the next round.
+
+Before the round returns, hold every line it wrote to [code-quality § Tests](../../code-quality/SKILL.md#tests) and [§ Comments and Prose](../../code-quality/SKILL.md#comments-and-prose): each new or changed instrument carries its must-fail control, and each new comment claims only what the adjacent code establishes.
 
 Note anything a fix revealed about deeper problems, and cite the decision ID or rule behind every skip.
 
