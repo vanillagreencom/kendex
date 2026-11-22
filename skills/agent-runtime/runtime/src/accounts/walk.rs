@@ -85,9 +85,9 @@ pub struct WalkRequest {
     /// takes one account nothing measured, the caller's own lane where the
     /// request leaves it in and the judge still reads it unmeasured, else
     /// an account an entry's choice kept as its fallback, one whose usage
-    /// query was refused with a 429 and whose stored login reads held. A
-    /// certain wall is the alternative, and a failed attempt leaves
-    /// the predecessor in control.
+    /// query was refused with a 429, whose stored login reads held and
+    /// whose 5-hour window is not spent. A certain wall is the alternative,
+    /// and a failed attempt leaves the predecessor in control.
     pub keep_unmeasured: bool,
 }
 
@@ -933,6 +933,44 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
         let mut pick = |pr: &PickRequest| judge(pr, Some(&judge_host));
         let answer = pick(&request(None, named.clone(), req.exclude.clone()));
+        // The caller's own account, asked by name where its entry's choice
+        // found no room: none of room, or a grant pool nothing measured (a
+        // Pi caller's `github-copilot/` or `anthropic/` pool). The running
+        // session is the proof it serves, so a reading nothing took keeps
+        // it, unless the request leaves it out.
+        if keep_unmeasured
+            && let Step::Caller(c) = &step
+            && let Some(lane) = &c.lane
+            && matches!(
+                answer,
+                PickAnswer::None { .. } | PickAnswer::ProviderUnmeasured { .. }
+            )
+        {
+            match pick(&request(None, Some(lane.clone()), req.exclude.clone())) {
+                PickAnswer::Unmeasured(j) => {
+                    own = Some(chosen(
+                        launch,
+                        Some(j.row.config_dir.clone()),
+                        Some(unmeasured_record(&j)),
+                        true,
+                    ));
+                    judged = true;
+                }
+                PickAnswer::Unjudged { cause } => {
+                    return Err(unjudged(&text, "kept-lane", &cause));
+                }
+                PickAnswer::Lane(_)
+                | PickAnswer::None { .. }
+                | PickAnswer::Walled(_)
+                | PickAnswer::Reserved(_)
+                | PickAnswer::Retired { .. }
+                | PickAnswer::Excluded(_)
+                | PickAnswer::ProviderUnmeasured { .. }
+                | PickAnswer::Unbilled { .. }
+                | PickAnswer::NoRecord
+                | PickAnswer::CloudRepoUnset(_) => {}
+            }
+        }
         let picked = match &answer {
             PickAnswer::Lane(j) => Some((j.row.config_dir.clone(), j.record(), false)),
             PickAnswer::Unjudged { cause } => return Err(unjudged(&text, "pick", cause)),
@@ -969,48 +1007,16 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 for (lane, reason) in exclusions {
                     walked.skipped.push(skip(&text, reason, Some(lane)));
                 }
-                if keep_unmeasured {
-                    if let (Some(c), Step::Caller(_)) = (req.caller.as_ref(), &step)
-                        && let Some(lane) = &c.lane
-                    {
-                        // The caller's own account, asked by name: the
-                        // running session is the proof it serves, so a
-                        // reading nothing took keeps it, unless the
-                        // request leaves it out.
-                        match pick(&request(None, Some(lane.clone()), req.exclude.clone())) {
-                            PickAnswer::Unmeasured(j) => {
-                                own = Some(chosen(
-                                    launch,
-                                    Some(j.row.config_dir.clone()),
-                                    Some(unmeasured_record(&j)),
-                                    true,
-                                ));
-                            }
-                            PickAnswer::Unjudged { cause } => {
-                                return Err(unjudged(&text, "kept-lane", &cause));
-                            }
-                            PickAnswer::Lane(_)
-                            | PickAnswer::None { .. }
-                            | PickAnswer::Walled(_)
-                            | PickAnswer::Reserved(_)
-                            | PickAnswer::Retired { .. }
-                            | PickAnswer::Excluded(_)
-                            | PickAnswer::ProviderUnmeasured { .. }
-                            | PickAnswer::Unbilled { .. }
-                            | PickAnswer::NoRecord
-                            | PickAnswer::CloudRepoUnset(_) => {}
-                        }
-                    }
-                    if refused_unmeasured.is_none()
-                        && let Some(j) = fallback
-                    {
-                        refused_unmeasured = Some(chosen(
-                            launch,
-                            Some(j.row.config_dir.clone()),
-                            Some(unmeasured_record(j)),
-                            true,
-                        ));
-                    }
+                if keep_unmeasured
+                    && refused_unmeasured.is_none()
+                    && let Some(j) = fallback
+                {
+                    refused_unmeasured = Some(chosen(
+                        launch,
+                        Some(j.row.config_dir.clone()),
+                        Some(unmeasured_record(j)),
+                        true,
+                    ));
                 }
                 None
             }

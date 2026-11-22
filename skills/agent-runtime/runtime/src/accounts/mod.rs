@@ -2034,13 +2034,16 @@ pub fn pick(
 }
 
 /// An overseer's choice with no account of room: the account whose usage
-/// query was refused with a 429 and kept no figure, and whose stored login
-/// on this machine reads held ([`usage::stored_login`]), the fewest claims
-/// first, then listing order. A 429 from the usage endpoint shows the token
-/// was accepted and the plan answered; the token endpoint's 429 posted no
+/// query was refused with a 429 and kept no figure, whose stored login on
+/// this machine reads held ([`usage::stored_login`]), and whose 5-hour
+/// window no session-limit report holds spent, the fewest claims first,
+/// then listing order. A 429 from the usage endpoint shows the token was
+/// accepted and the plan answered; the token endpoint's 429 posted no
 /// usage query, and an unreachable endpoint, a 401 or 403 and a reading
-/// with no data show neither, so they are never taken. Nothing measured
-/// it, so the walk names it unmeasured.
+/// with no data show neither, so they are never taken. A spent window
+/// admits no start until its reset, and with no figure the judge reads it
+/// unmeasured rather than walled, so it is refused here. Nothing measured
+/// the account taken, so the walk names it unmeasured.
 fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
     if !req.for_overseer || req.lane.is_some() {
         return None;
@@ -2051,6 +2054,7 @@ fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
             j.verdict == "unmeasured"
                 && j.row.usage_refused_429()
                 && j.row.headroom_pct.is_none()
+                && j.row.session_spent_until(now).is_none()
                 && usage::stored_login(j.row.harness, &j.row.config_dir, now)
                     == usage::StoredLogin::Held
         })

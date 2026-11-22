@@ -310,6 +310,14 @@ fn token_429(alias: &str) -> Value {
     row
 }
 
+/// A 429 row whose 5-hour window the harness's own session-limit report
+/// holds spent for two more hours.
+fn spent_429(alias: &str) -> Value {
+    let mut row = refused_429(alias);
+    row["session_spent_until"] = json!(stamp(now() + 2 * 3600));
+    row
+}
+
 /// A local row whose usage query was refused with a 401 or 403 that no
 /// profile read confirmed as an ended plan.
 fn refused_401(alias: &str) -> Value {
@@ -633,15 +641,16 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
 /// nothing measured has room: one account nothing measured, the caller's
 /// own where the mark leaves it in (the session running there is the
 /// proof, whatever its harness or its stated end), else an account whose
-/// usage query was refused with a 429 and kept no figure, and whose stored
-/// login this machine reads held. Measured room wins over either; a
-/// caller's account the mark leaves out is never kept, and a 429 account
-/// whose stored login nothing here reads (a Copilot one), the token
+/// usage query was refused with a 429 and kept no figure, whose stored
+/// login this machine reads held, and whose 5-hour window is not spent.
+/// Measured room wins over either; a caller's account the mark leaves out
+/// is never kept, and a 429 account whose stored login nothing here reads
+/// (a Copilot one), a 429 account with a spent 5-hour window, the token
 /// endpoint's 429, a 401 or 403, an unreachable endpoint and a walk
 /// without the keep take none. Each row: the case, the preference, the
-/// listing, the caller's harness and account, whether the mark leaves the
-/// caller's account out, the retirement setting, the keep, and the account
-/// and entry chosen with whether nothing measured it.
+/// listing, the caller's harness, pick model and account, whether the mark
+/// leaves the caller's account out, the retirement setting, the keep, and
+/// the account and entry chosen with whether nothing measured it.
 #[test]
 fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
     let mut copilot = unreachable("acopilot");
@@ -652,14 +661,14 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
         &'static str,
         &'static str,
         Vec<Value>,
-        (&'static str, &'static str),
+        (&'static str, &'static str, &'static str),
         bool,
         Option<&'static str>,
         bool,
         Option<(&'static str, &'static str, bool)>,
     );
     let entry = "claude:standard:high";
-    let claude = ("claude", "aclaude");
+    let claude = ("claude", "fable", "aclaude");
     let rows: Vec<Row> = vec![
         (
             "a 429 account at a headroom mark",
@@ -689,7 +698,17 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             "a Copilot 429 account no stored login here reads",
             "",
             vec![copilot.clone(), copilot_429.clone()],
-            ("copilot", "acopilot"),
+            ("copilot", "", "acopilot"),
+            true,
+            None,
+            true,
+            None,
+        ),
+        (
+            "a 429 account whose 5-hour window is spent",
+            entry,
+            vec![measured("aclaude", 96, 5), spent_429("bclaude")],
+            claude,
             true,
             None,
             true,
@@ -759,11 +778,31 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             "a Copilot caller's own account",
             "",
             vec![copilot],
-            ("copilot", "acopilot"),
+            ("copilot", "", "acopilot"),
             false,
             None,
             true,
             Some(("acopilot", "caller", true)),
+        ),
+        (
+            "a Pi caller's own account on a Copilot pool nothing measured",
+            "",
+            Vec::new(),
+            ("pi", "github-copilot/gpt-6.1-sol", "api"),
+            false,
+            None,
+            true,
+            Some(("api", "caller", true)),
+        ),
+        (
+            "a Pi caller's own account on an API-credit pool nothing measured",
+            "",
+            Vec::new(),
+            ("pi", "anthropic/claude-fable-5-1", "api"),
+            false,
+            None,
+            true,
+            Some(("api", "caller", true)),
         ),
         (
             "the caller's own account past its stated end",
@@ -776,7 +815,9 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             Some(("aclaude", "caller", true)),
         ),
     ];
-    for (case, preference, listing, (harness, own), at_headroom, retire, keep, chosen) in rows {
+    for (case, preference, listing, (harness, model, own), at_headroom, retire, keep, chosen) in
+        rows
+    {
         let mut world = World::new(&[]);
         world.plant_listing(&listing);
         if let Some(retire) = retire {
@@ -796,8 +837,8 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             "--caller-account",
             lane.as_str(),
         ];
-        if harness == "claude" {
-            args.extend(["--caller-pick-model", "fable"]);
+        if !model.is_empty() {
+            args.extend(["--caller-pick-model", model]);
         }
         if at_headroom {
             args.extend(["--exclude-account", lane.as_str()]);

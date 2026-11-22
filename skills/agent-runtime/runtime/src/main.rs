@@ -723,7 +723,8 @@ enum AccountsOp {
         /// An overseer's walk at a mark: where no entry finds room, take the
         /// caller's own account where it is left in and still reads
         /// unmeasured, else an account whose usage query was refused with a
-        /// 429 and whose stored login reads held.
+        /// 429, whose stored login reads held and whose 5-hour window is not
+        /// spent.
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
     },
