@@ -133,6 +133,10 @@ pub fn list(
         let mut row = measure(&mut ctx, account);
         row["configured"] = json!(account.configured);
         finish(&ctx, &mut row, &pool);
+        // Read on every listing, never kept with the usage reading: a
+        // login signed in or out since the last sample is the one a
+        // launch meets.
+        row["sign_in"] = sign_in(settings, account, now).record();
         rows.push(row);
     }
     let provider_failure = match provider {
@@ -168,6 +172,22 @@ pub fn list(
         provider_failure,
         notes: ctx.notes,
     })
+}
+
+/// The sign-in a session opened on `account` starts with
+/// ([`usage::sign_in`]), its declared token file read from the settings;
+/// a declaration that cannot be read judges nothing.
+fn sign_in(settings: &Env, account: &Found, now: u64) -> usage::StoredLogin {
+    let declared = settings
+        .account_tokens
+        .get()
+        .and_then(|pairs| usage::declared_token_file(account.harness, &pairs, &account.dir));
+    match declared {
+        Ok(file) => usage::sign_in(account.harness, &account.dir, file.as_deref(), now),
+        Err(_) => usage::StoredLogin::Unjudged {
+            cause: "setting-invalid",
+        },
+    }
 }
 
 /// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: by its alias, or by its
@@ -1451,12 +1471,14 @@ mod tests {
     fn a_tie_binds_the_longer_window_and_the_rate_reads_the_same_window_alone() {
         let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
         let state = Judged::of("state", Ok(PathBuf::new()));
+        let tokens = Judged::of("account-tokens", Ok(Vec::new()));
         let env = Env {
             accounts: &accounts,
             account_state: &state,
             home: None,
             copilot_home: None,
             controller_preference: "",
+            account_tokens: &tokens,
         };
         let read = accounts.get().unwrap();
         let ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();
@@ -1509,12 +1531,14 @@ mod tests {
     fn a_copilot_pair_with_an_unlimited_side_leaves_the_rate_unread() {
         let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
         let state = Judged::of("state", Ok(PathBuf::new()));
+        let tokens = Judged::of("account-tokens", Ok(Vec::new()));
         let env = Env {
             accounts: &accounts,
             account_state: &state,
             home: None,
             copilot_home: None,
             controller_preference: "",
+            account_tokens: &tokens,
         };
         let read = accounts.get().unwrap();
         let ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();

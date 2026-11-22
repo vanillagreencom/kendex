@@ -150,6 +150,24 @@ class SuccessionContract(SessionContract):
         self.assertEqual((status["state"], status["account"]), ("running", str(self.account)))
         self.assertEqual(self.controller()["pane"], before["pane"])
 
+    def test_an_older_unproved_entry_on_the_attempted_account_does_not_retry_it(self):
+        # The failure it stops: a mark from an earlier attempt, which the
+        # walk let expire, read as this attempt's, so a failure that marks
+        # nothing relaunches onto the same account without end.
+        before = self.running()
+        fleet = json.loads(self.fleet.read_text())
+        fleet["controller"]["unproved"] = [{"account": str(self.account), "note": "successor-not-ready",
+                                            "cause": None, "at": "2026-01-01T00:00:00Z"}]
+        self.fleet.write_text(json.dumps(fleet))
+        self.fixture["asking"].append(str(self.account))
+        self.write_fixture()
+        answer, code = self.succeed()
+        self.assertEqual((answer["state"], answer["reason"], code), ("failed", "handover-failed", 1), self.stderr)
+        self.assertIn("successor-asking", answer["detail"])
+        self.assertNotIn("successor-unproved", self.stderr)
+        self.assertEqual([row["account"] for row in self.started()], [str(self.account)] * 2)
+        self.assertEqual(self.controller()["pane"], before["pane"])
+
     def test_an_adopted_session_is_handed_to_a_managed_successor_on_the_private_server(self):
         # A session a person runs by hand becomes the home's controller: its
         # pane is bound, the managed successor opens on the home's own

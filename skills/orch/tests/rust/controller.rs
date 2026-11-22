@@ -456,6 +456,24 @@ fn a_succession_types_the_brief_before_retirement_and_retires_on_the_runner_s_tu
     assert_eq!(intent["phase"]["phase"], "identity-read");
 }
 
+/// The record's `unproved` entries with each one's `at` stamp read as a
+/// stamp and taken off, for a row that compares the rest.
+fn unstamped(unproved: Option<Value>) -> Option<Value> {
+    unproved.map(|mut marked| {
+        for entry in marked.as_array_mut().unwrap() {
+            let at = entry.as_object_mut().unwrap().remove("at");
+            assert!(
+                at.as_ref()
+                    .and_then(Value::as_str)
+                    .and_then(agent_runtime::clock::epoch_secs)
+                    .is_some(),
+                "{entry} {at:?}"
+            );
+        }
+        marked
+    })
+}
+
 /// A successor whose first turn meets a login wall is refused before
 /// retirement with its cause and the account it ran on: the predecessor
 /// keeps running, the runner's window is closed, the record stands as it
@@ -487,16 +505,17 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
         !server.panes().contains(&runner_pane),
         "the runner's window is closed"
     );
-    let mut unproved = before.clone();
-    unproved["unproved"] = json!([{
-        "account": runner.state_dir().display().to_string(),
-        "note": "successor-not-signed-in",
-        "cause": "auth-wall",
-    }]);
+    let mut record = runner.fleet()["controller"].clone();
+    let unproved = record.as_object_mut().unwrap().remove("unproved");
+    assert_eq!(record, before, "the record as it stood");
     assert_eq!(
-        runner.fleet()["controller"],
-        unproved,
-        "the record as it stood, the attempt's account unproved"
+        unstamped(unproved),
+        Some(json!([{
+            "account": runner.state_dir().display().to_string(),
+            "note": "successor-not-signed-in",
+            "cause": "auth-wall",
+        }])),
+        "the attempt's account unproved"
     );
     assert_eq!(intent["notice"]["key"], "successor-not-signed-in");
     assert_eq!(intent["notice"]["owner"], "sent");
@@ -506,9 +525,9 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
 
 /// A named account holding no credential its harness signs in with is no
 /// successor: refused `successor-not-signed-in` before any window opens or
-/// any trust record is written into it, the predecessor running. The same
-/// account under a launch environment that carries a token is left to the
-/// first turn, which signs it in, and the outcome names the token.
+/// any trust record is written into it, the predecessor running, whatever
+/// token the launch environment carries, since that token bills its own
+/// account and not the one the launch names.
 #[test]
 fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file() {
     for token in [false, true] {
@@ -544,16 +563,7 @@ fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file(
         request["successor"] = unsigned;
         runner.transfer_started(&request);
         let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-        if token {
-            assert_eq!(intent["outcome"], "confirmed", "{intent}");
-            assert_eq!(
-                intent["observation"]["sign_in"],
-                json!({"token": "CLAUDE_CODE_OAUTH_TOKEN"}),
-                "{intent}"
-            );
-            continue;
-        }
-        assert_eq!(intent["outcome"], "failed", "{intent}");
+        assert_eq!(intent["outcome"], "failed", "{token}: {intent}");
         let observation = &intent["observation"];
         assert_eq!(observation["note"], "successor-not-signed-in", "{intent}");
         assert_eq!(
@@ -668,6 +678,157 @@ fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
         !String::from_utf8_lossy(&screen.stdout).contains("planted-token"),
         "the pane's screen never shows the token"
     );
+}
+
+/// The roster, the overseer walk and the transfer read an account's
+/// sign-in one way: its declared token file alone where it declares one,
+/// else its stored login. For each account the roster's `sign_in=`, the
+/// walk's answer and a hand-composed transfer's note agree: an account the
+/// roster reads held is never refused `successor-not-signed-in` and never
+/// left out `signed-out`, and one it reads missing is refused by both. A
+/// provider's reading beside the local one leaves the local sign-in
+/// standing; the transfer reads no provider row, so that arm's transfer is
+/// the arm before it.
+#[test]
+fn an_account_the_roster_reads_signed_in_is_never_refused_successor_not_signed_in() {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Store {
+        DeclaredOnly,
+        CredentialOnly,
+        DeclaredMissingBesideCredential,
+    }
+    // case, the account's store, a provider row beside it, the sign-in
+    let arms = [
+        ("declared token only", Store::DeclaredOnly, false, "held"),
+        ("credential only", Store::CredentialOnly, false, "held"),
+        (
+            "declared file missing beside a credential",
+            Store::DeclaredMissingBesideCredential,
+            false,
+            "missing:declared-token-absent",
+        ),
+        (
+            "the same with a provider row",
+            Store::DeclaredMissingBesideCredential,
+            true,
+            "missing:declared-token-absent",
+        ),
+    ];
+    for (case, store, provider, sign_in) in arms {
+        let held = sign_in == "held";
+        let mut world = MarksWorld::new();
+        let mut row = measured_account("bclaude", 10);
+        if store == Store::DeclaredOnly {
+            row["status"] = json!("no_credentials");
+        }
+        let home = world.dir("bclaude");
+        let mut rows = vec![measured_account("eclaude", 97), row];
+        if provider {
+            let mut beside = measured_account("bclaude", 10);
+            beside["config_dir"] = json!(home);
+            beside["measured_through"] = json!("host");
+            rows.push(beside);
+        }
+        world.plant(provider.then_some("vm"), &rows);
+        world.write_fleet(&world.dir("eclaude"));
+        let token = world.path().join("bclaude.token");
+        if store == Store::DeclaredOnly {
+            std::fs::write(&token, "planted-token\n").unwrap();
+        }
+        let declared = match store {
+            Store::CredentialOnly => String::new(),
+            Store::DeclaredOnly | Store::DeclaredMissingBesideCredential => {
+                format!("{home}={}", token.display())
+            }
+        };
+        let env = [("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", declared.as_str())];
+        let roster = reply(&world.run(&["lane", "roster"], &env))["result"].clone();
+        let line = roster["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|l| l.contains(&format!("config_dir={home} ")) && l.contains("through=local"))
+            .unwrap_or_else(|| panic!("{case}: {roster}"))
+            .to_owned();
+        assert!(
+            line.contains(&format!(" sign_in={sign_in}")),
+            "{case}: {line}"
+        );
+        let cwd = world.path().display().to_string();
+        let walked = reply(&world.run(
+            &[
+                "successor",
+                "--fleet",
+                "--cwd",
+                &cwd,
+                "--predecessor",
+                "%1",
+                "--mark",
+                "headroom",
+            ],
+            &env,
+        ))["result"]
+            .clone();
+        let signed_out = walked["walk"]["skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["lane"] == json!(home) && s["reason"] == json!("signed-out"));
+        assert_eq!(signed_out, !held, "{case}: {walked}");
+        if held && store == Store::CredentialOnly {
+            assert_eq!(
+                walked["successor"]["account"],
+                json!(home),
+                "{case}: {walked}"
+            );
+        }
+        if provider {
+            continue;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let account = runner.state_dir().join("bclaude");
+        std::fs::create_dir_all(&account).unwrap();
+        if store != Store::DeclaredOnly {
+            let far = (now_secs() + 365 * 86_400) * 1000;
+            std::fs::write(
+                account.join(".credentials.json"),
+                json!({"claudeAiOauth": {"accessToken": "token-b", "refreshToken": "refresh-b",
+                       "expiresAt": far, "refreshTokenExpiresAt": far}})
+                .to_string(),
+            )
+            .unwrap();
+        }
+        let transfer_token = runner.state_dir().join("bclaude.token");
+        if store == Store::DeclaredOnly {
+            std::fs::write(&transfer_token, "planted-token\n").unwrap();
+        }
+        let setting = match store {
+            Store::CredentialOnly => String::new(),
+            Store::DeclaredOnly | Store::DeclaredMissingBesideCredential => {
+                format!("{}={}", account.display(), transfer_token.display())
+            }
+        };
+        let (intent, _, _predecessor) = transfer_to_account(
+            &server,
+            &runner,
+            &account,
+            &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
+            &[],
+        );
+        let refused = intent["observation"]["note"] == json!("successor-not-signed-in");
+        assert_eq!(refused, !held, "{case}: {intent}");
+        if !held {
+            assert_eq!(
+                intent["observation"]["fields"]["cause"],
+                json!("declared-token-absent"),
+                "{case}: {intent}"
+            );
+        }
+    }
 }
 
 /// An account whose declared token file holds no token is no successor,
@@ -8871,6 +9032,74 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
     assert_eq!(refused_field(&unstamped, "found"), "none", "{unstamped}");
 }
 
+/// A controller's own account with room gets no headroom mark whatever end
+/// is stated for it: a provider's plan end or the machine's own stated end
+/// ahead, and the machine's stated end passed while the account's
+/// credential still answers, read `below-mark` with the account's figures;
+/// a walled account reads `mark-reached kind=headroom` at a value inside
+/// the mark.
+#[test]
+fn a_controller_with_room_gets_no_headroom_mark_whatever_its_stated_end() {
+    let ahead = agent_runtime::accounts::today(now_secs() + 30 * 86_400);
+    let passed = agent_runtime::accounts::today(now_secs() - 86_400);
+    let (ahead_setting, passed_setting) = (format!("eclaude={ahead}"), format!("eclaude={passed}"));
+    // case, the provider's host and its plan end, the owner's setting,
+    // percent used, the key
+    let cases = [
+        (
+            "provider end ahead",
+            Some(ahead.as_str()),
+            None,
+            20,
+            "below-mark",
+        ),
+        (
+            "setting ahead",
+            None,
+            Some(ahead_setting.as_str()),
+            20,
+            "below-mark",
+        ),
+        (
+            "setting passed",
+            None,
+            Some(passed_setting.as_str()),
+            20,
+            "below-mark",
+        ),
+        ("walled", None, None, 97, "mark-reached"),
+    ];
+    for (case, plan_end, setting, used, key) in cases {
+        let mut world = MarksWorld::new();
+        let home = world.dir("eclaude");
+        let mut measured = measured_account("eclaude", used);
+        measured["model_buckets"] =
+            json!([{"label": null, "pct": used, "resets_at": measured["binding_resets_at"]}]);
+        let mut rows = vec![measured];
+        if let Some(end) = plan_end {
+            rows.push(json!({
+                "harness": "claude", "config_dir": home, "measured_through": "host", "plan_ends": end
+            }));
+        }
+        world.plant(plan_end.map(|_| "vm"), &rows);
+        world.write_fleet(&home);
+        let env: Vec<(&str, &str)> = setting
+            .map(|value| ("AGENT_RUNTIME_ACCOUNT_RETIRE", value))
+            .into_iter()
+            .collect();
+        let marks = world.marks(&["--context", "100000:1000000"], &env);
+        assert_eq!(marks["key"], json!(key), "{case}: {marks}");
+        match key {
+            "below-mark" => assert_eq!(marks["headroom"], json!("80"), "{case}: {marks}"),
+            _ => {
+                assert_eq!(marks["kind"], json!("headroom"), "{case}: {marks}");
+                let figure = |field: &str| marks[field].as_str().unwrap().parse::<u64>().unwrap();
+                assert!(figure("value") <= figure("mark"), "{case}: {marks}");
+            }
+        }
+    }
+}
+
 /// An account kept from workers, by the owner's
 /// `AGENT_RUNTIME_ACCOUNT_EXCLUDE` or by a provider's `reserved=1` on a row
 /// with no reading, is kept from every lane, never from the controller
@@ -10049,13 +10278,74 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     let unproved = record.as_object_mut().unwrap().remove("unproved");
     assert_eq!(record, before, "the record as it stood");
     assert_eq!(
-        unproved,
+        unstamped(unproved),
         Some(json!([{
             "account": out.chosen()["result"]["successor"]["account"],
             "note": "successor-not-ready",
             "cause": null,
         }])),
         "the attempt's account unproved"
+    );
+}
+
+/// A successor whose harness stands on a first-run question at the end of
+/// the launch's bound fails before retirement naming the step a person
+/// takes, `successor-asking` with `step` and the account, not
+/// `successor-not-ready`: the predecessor keeps running, the runner's
+/// window is closed and the record stands as it was, the account marked
+/// nowhere, since the question is a step in it and not its failure.
+#[test]
+fn a_successor_on_a_first_run_question_ends_the_wait_naming_the_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+    let state = runner
+        .state_dir()
+        .join(agent_runtime::record::FLEET_FILE_NAME);
+    let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
+    let before = recorded_on(
+        &runner,
+        &server,
+        running.pid(),
+        "bclaude",
+        &work,
+        "bypass",
+        &[],
+    );
+    let out = workflow_launch(
+        &runner,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-first-run"),
+    )
+    .predecessor("%99")
+    .wait_secs(1)
+    .run();
+    let op = out.op();
+    assert_eq!(op.status.code(), Some(3), "{}", stderr(op));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    let observation = &intent["observation"];
+    assert_eq!(observation["note"], "successor-asking", "{intent}");
+    assert_eq!(observation["step"], "folder-trust", "{intent}");
+    assert_eq!(
+        observation["account"],
+        out.chosen()["result"]["successor"]["account"],
+        "{intent}"
+    );
+    assert_eq!(observation["retired"], false, "{intent}");
+    assert!(live(running.pid()), "the predecessor keeps running");
+    assert_eq!(server.panes().len(), 1, "the runner's window is closed");
+    assert_eq!(
+        runner.fleet()["controller"],
+        before,
+        "the record as it stood, no account unproved"
     );
 }
 
@@ -10325,7 +10615,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
     let unproved = record.as_object_mut().unwrap().remove("unproved");
     assert_eq!(record, before, "the record as it stood");
     assert_eq!(
-        unproved,
+        unstamped(unproved),
         Some(json!([{
             "account": successor["account"],
             "note": "launch-gate-refused",
@@ -10864,7 +11154,7 @@ fn measured_codex(alias: &str, used: u64) -> Value {
 /// stored login of its home: a home holding no credential here, which the
 /// provider measures with room through its own token, is judged on this
 /// machine's row, so the real `successor` verb passes it over as
-/// `unmeasured` and opens on the next entry's credentialed home.
+/// `signed-out` and opens on the next entry's credentialed home.
 #[test]
 fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
     let dir = tempfile::tempdir().unwrap();
@@ -10888,7 +11178,7 @@ fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
     );
     let skipped = &result["walk"]["skipped"][0];
     assert_eq!(skipped["entry"], "claude:fable:high", "{result}");
-    assert_eq!(skipped["reason"], "unmeasured", "{result}");
+    assert_eq!(skipped["reason"], "signed-out", "{result}");
     assert_eq!(skipped["lane"], signed_out, "{result}");
 }
 
@@ -11436,13 +11726,15 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
     }
 }
 
-/// An account a failed attempt left unproved is no successor until the next
-/// confirmed hand-over. At a context mark the caller's own account with room
-/// is kept, and once it is unproved the walk passes it; at a headroom mark
-/// the walk's best account is chosen, and once that one is unproved too the
-/// walk names the next.
+/// An account a failed attempt left unproved is no successor while its
+/// mark holds. At a context mark the caller's own account with room is
+/// kept, and once it is unproved the walk passes it; at a headroom mark the
+/// walk's best account is chosen, and once that one is unproved too the
+/// walk names the next. A mark past its hold, one with no stamp and one
+/// whose stamp does not read as one hold nothing: the best account is
+/// walked again.
 #[test]
-fn an_account_a_failed_attempt_left_unproved_is_passed_by_the_next_choice() {
+fn an_unproved_mark_holds_its_account_out_of_the_walk_until_it_expires() {
     let mut world = MarksWorld::new();
     world.plant(
         None,
@@ -11473,34 +11765,48 @@ fn an_account_a_failed_attempt_left_unproved_is_passed_by_the_next_choice() {
         answer["result"]["successor"]["account"].clone()
     };
     let state = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
-    let unprove = |aliases: &[&str]| {
+    let fresh = json!(agent_runtime::clock::iso_utc(now_secs()));
+    let unprove = |aliases: &[&str], at: &Value| {
         let mut fleet: Value = serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
         fleet["controller"]["unproved"] = aliases
             .iter()
             .map(|alias| {
-                json!({
+                let mut entry = json!({
                     "account": world.dir(alias),
-                    "note": "successor-not-signed-in",
-                    "cause": "auth-wall",
-                })
+                    "note": "successor-not-ready",
+                    "cause": null,
+                });
+                if !at.is_null() {
+                    entry["at"] = at.clone();
+                }
+                entry
             })
             .collect();
         std::fs::write(&state, serde_json::to_vec(&fleet).unwrap()).unwrap();
     };
     assert_eq!(chosen("context"), json!(world.dir("eclaude")), "kept");
     assert_eq!(chosen("headroom"), json!(world.dir("bclaude")), "the best");
-    unprove(&["eclaude"]);
+    unprove(&["eclaude"], &fresh);
     assert_eq!(
         chosen("context"),
         json!(world.dir("bclaude")),
         "the caller's own unproved account is not kept"
     );
-    unprove(&["eclaude", "bclaude"]);
+    unprove(&["eclaude", "bclaude"], &fresh);
     assert_eq!(
         chosen("headroom"),
         json!(world.dir("aclaude")),
         "the unproved best account passed"
     );
+    let expired = json!(agent_runtime::clock::iso_utc(now_secs() - 1801));
+    for (case, at) in [
+        ("past its hold", expired),
+        ("unstamped", Value::Null),
+        ("unreadable stamp", json!("yesterday")),
+    ] {
+        unprove(&["eclaude", "bclaude"], &at);
+        assert_eq!(chosen("headroom"), json!(world.dir("bclaude")), "{case}");
+    }
 }
 
 /// The launch starts with no fleet state, which its first step makes, and

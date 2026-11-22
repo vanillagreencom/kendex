@@ -443,19 +443,19 @@ impl Successor {
         sign_in: &dyn Fn(Harness, &Path, Option<&Path>) -> SignIn,
     ) -> std::result::Result<(Successor, Option<Value>), Unready> {
         let (harness, cwd) = Self::checked(pending)?;
-        let token_file = match (harness, pending.account.as_deref()) {
-            (Harness::Claude, Some(account)) => crate::accounts::usage::declared_token_file(
+        let token_file = match pending.account.as_deref() {
+            Some(account) => crate::accounts::usage::declared_token_file(
+                harness,
                 &settings.controller.account_tokens.get()?,
                 account,
             )?,
-            (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => None,
+            None => None,
         };
         let file = token_file.as_deref().map(|f| f.display().to_string());
         let note = match (harness, pending.account.as_deref()) {
             (Harness::Claude | Harness::Codex, Some(account)) => {
                 match sign_in(harness, Path::new(account), token_file.as_deref()) {
                     SignIn::Held => None,
-                    SignIn::Token(var) => Some(json!({"token": var})),
                     SignIn::File => Some(json!({"token_file": file})),
                     SignIn::Unjudged { cause } => Some(json!({"unjudged": cause})),
                     SignIn::Missing { cause } => {
@@ -1010,7 +1010,7 @@ fn succeed(
         Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
     };
     let sign_in = |harness: Harness, account: &Path, declared: Option<&Path>| {
-        operation.sign_in(&server, &session, harness, account, declared)
+        operation.sign_in(harness, account, declared)
     };
     let (successor, sign_in_note) =
         match Successor::from_pending(run.settings, &pending, served.as_deref(), &sign_in) {
@@ -1191,6 +1191,25 @@ fn succeed(
                 "pane-gone",
             );
         }
+        // A first-run question on screen is a step someone takes in the
+        // account, named so the request can wait for it; it marks nothing
+        // unproved, since the account itself is not in question.
+        Polled::Pending {
+            state: State::Asking { dialog },
+            ..
+        } => {
+            let mut outcome = abandoned_before_retirement(
+                operation,
+                &opened,
+                None,
+                &pane,
+                Some(&successor.target),
+                "successor-asking",
+            )?;
+            outcome.annotate("step", json!(dialog.word()));
+            outcome.annotate("account", json!(successor.named_account().1));
+            return Ok(outcome);
+        }
         Polled::Pending { .. } => {
             return abandoned_before_retirement(
                 operation,
@@ -1306,7 +1325,7 @@ fn succeed(
         }
         State::Idle
         | State::Working
-        | State::Asking
+        | State::Asking { .. }
         | State::RateLimitSwitch
         | State::Walled {
             kind: WallKind::Usage,

@@ -627,7 +627,7 @@ fn record_controller_outcome(
 ) -> Result<()> {
     match intent.op {
         EffectOp::RequestTransfer | EffectOp::StartController => {
-            record_transfer_outcome(path, doc, intent, r, recorded)
+            record_transfer_outcome(path, doc, intent, r, at, recorded)
         }
         EffectOp::StopController => {
             let generation = overseer(path, doc)?.generation.unwrap_or(0);
@@ -662,12 +662,18 @@ pub const UNPROVED_NOTES: &[&str] = &[
     crate::effects::prepare::GATE_REFUSED,
 ];
 
-/// Add the attempted pending's account to the record's `unproved`, with the
-/// attempt's note and cause, where the note is one of [`UNPROVED_NOTES`] and
-/// the pending names an account. The controller walk leaves those accounts
-/// out, and the next confirmed hand-over drops the member, so the mark
-/// lasts one generation.
-fn mark_unproved(record: &mut Document, observation: Option<&Value>) {
+/// Stamp the attempted pending's account in the record's `unproved` at
+/// `at`, with the attempt's note and cause, where the note is one of
+/// [`UNPROVED_NOTES`] and the pending names an account: one entry per
+/// account, a later failure replacing it. The controller walk leaves an
+/// account out while its stamp is within the hold
+/// (`successor::UNPROVED_HOLD_SECS`), and the next confirmed hand-over
+/// drops the member. A refusal of the sign-in read before any window
+/// opened (`successor-not-signed-in` with no first-turn `auth-wall`)
+/// marks nothing: the walk reads that sign-in itself and admits the
+/// account once it is signed in, so a hold would only keep a repaired
+/// account out.
+fn mark_unproved(record: &mut Document, observation: Option<&Value>, at: &str) {
     let field = |key: &str| observation.and_then(|o| o.get(key));
     let Some(note) = field("note")
         .and_then(Value::as_str)
@@ -675,10 +681,16 @@ fn mark_unproved(record: &mut Document, observation: Option<&Value>) {
     else {
         return;
     };
+    if note == "successor-not-signed-in"
+        && field("cause").and_then(Value::as_str) != Some("auth-wall")
+    {
+        return;
+    }
     let Some(account) = record
         .get("pending")
         .and_then(|pending| pending.get("account"))
         .and_then(Value::as_str)
+        .map(str::to_owned)
     else {
         return;
     };
@@ -686,12 +698,17 @@ fn mark_unproved(record: &mut Document, observation: Option<&Value>) {
         "account": account,
         "note": note,
         "cause": field("cause").cloned().unwrap_or(Value::Null),
+        "at": at,
     });
     match record.get_mut("unproved") {
         Some(Value::Array(marked)) => {
-            if !marked.contains(&entry) {
-                marked.push(entry);
-            }
+            let same = |e: &Value| {
+                e.get("account")
+                    .and_then(Value::as_str)
+                    .is_some_and(|marked| canon(marked) == canon(&account))
+            };
+            marked.retain(|e| !same(e));
+            marked.push(entry);
         }
         _ => record::set(record, "unproved", json!([entry])),
     }
@@ -706,6 +723,7 @@ fn record_transfer_outcome(
     doc: &mut Document,
     intent: &Intent,
     r: &RecordOutcome,
+    at: &str,
     recorded: &mut Option<u64>,
 ) -> Result<()> {
     match r.outcome {
@@ -822,7 +840,7 @@ fn record_transfer_outcome(
             // intent's stored one, which a reconcile overwrites.
             if !retired(r.observation.as_ref()) {
                 let record = record::object_mut(path, doc, MEMBER)?;
-                mark_unproved(record, r.observation.as_ref());
+                mark_unproved(record, r.observation.as_ref(), at);
                 match &intent.original_pending {
                     Some(original) => record::set(record, "pending", original.clone()),
                     None => {
@@ -2405,6 +2423,54 @@ mod tests {
         assert_eq!(fleet(&path).fleet_log.len(), rows_before + 1);
         assert_eq!(fleet(&path).fleet_log.last().unwrap()["text"], text);
         assert_eq!(fleet(&path).intents[0].notice, Some(owed));
+    }
+
+    /// A failed attempt's mark on its account: a refusal of the sign-in
+    /// read before any window opened leaves none, a first-turn login wall
+    /// stamps one, a later failure on the account replaces it rather than
+    /// adding a second, and a confirmed hand-over drops the member.
+    #[test]
+    fn a_failed_attempt_stamps_its_account_once_and_a_confirmed_hand_over_drops_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let attempt = |result: Outcome, observation: Value| {
+            let id = intend(&path, &transfer(expected()));
+            let Request::RecordOutcome(mut r) = outcome(&id, result) else {
+                panic!()
+            };
+            r.observation = Some(observation);
+            run(&path, &Request::RecordOutcome(r)).unwrap();
+            object(&path)[MEMBER].get("unproved").cloned()
+        };
+        let account = successor().account.unwrap();
+        let read_refusal = json!({"retired": false, "note": "successor-not-signed-in",
+                                  "fields": {"account": account, "cause": "no-credential"}});
+        assert_eq!(attempt(Outcome::Failed, read_refusal), None, "nothing held");
+        let marks = |observation: Value| {
+            let marked = attempt(Outcome::Failed, observation).unwrap();
+            let entries = marked.as_array().unwrap();
+            assert_eq!(entries.len(), 1, "{marked}");
+            assert!(
+                entries[0]["at"]
+                    .as_str()
+                    .and_then(crate::clock::epoch_secs)
+                    .is_some(),
+                "{marked}"
+            );
+            (entries[0]["account"].clone(), entries[0]["note"].clone())
+        };
+        assert_eq!(
+            marks(
+                json!({"retired": false, "note": "successor-not-signed-in", "cause": "auth-wall"})
+            ),
+            (json!(account), json!("successor-not-signed-in"))
+        );
+        assert_eq!(
+            marks(json!({"retired": false, "note": "brief-unconfirmed"})),
+            (json!(account), json!("brief-unconfirmed")),
+            "replaced"
+        );
+        assert_eq!(attempt(Outcome::Confirmed, json!({"retired": true})), None);
     }
 
     /// An outcome that changes nothing of the record

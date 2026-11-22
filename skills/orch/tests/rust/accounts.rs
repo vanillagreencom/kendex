@@ -2866,7 +2866,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "the provider's seat is refused to an overseer that sits on no account, `seated` whatever its room, where the retained pick judged it as an ordinary account",
+            name: "the provider's seat is charged to an overseer that sits on no account, never refused by the mark alone: judged on the provider's reading it is walled",
             usage: usage_body((0, now() + 1800), (0, now() + 7 * 86_400), &[]),
             provider: Some(claude_row("\tsession-5h-pct=99\tweekly-pct=99\tseat=1")),
             env: vec![],
@@ -2875,7 +2875,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                 "claude:claude-opus-5-5:high".to_owned(),
                 "none",
                 Some(3),
-                [walked(0, 0), vec![("/skipped/0/reason", json!("seated"))]].concat(),
+                [walked(1, 0), vec![("/skipped/0/reason", json!("walled"))]].concat(),
             )],
         },
         Arm {

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::Recorded;
+use crate::accounts::wall::canon;
 use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted, MEMBER, Overseer};
 use crate::error::{Error, Result};
 use crate::journal::{self, intents};
@@ -106,6 +107,18 @@ fn adopt_controller(
         for key in ["pending", "exit", "off"] {
             record::delete(record, key);
         }
+        // A controller now runs on the adopted account, which proves it:
+        // a failed attempt's mark on it no longer stands.
+        if let (Some(account), Some(Value::Array(marked))) =
+            (&r.account, record.get_mut("unproved"))
+        {
+            marked.retain(|entry| {
+                entry
+                    .get("account")
+                    .and_then(Value::as_str)
+                    .is_none_or(|marked| canon(marked) != canon(account))
+            });
+        }
         return Ok(ControllerAdopted {
             generation,
             healed: true,
@@ -174,6 +187,54 @@ mod tests {
             Value::Object(map) => map,
             other => panic!("not an object: {other}"),
         }
+    }
+
+    /// A healing adoption proves the account it names: the record's
+    /// `unproved` mark on that account goes, in any spelling of its
+    /// directory, and a mark on another account stays.
+    #[test]
+    fn a_healing_adoption_drops_the_unproved_mark_on_the_account_it_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(record::FLEET_FILE_NAME);
+        let mut fleet: Value = serde_json::from_str(super::super::testing::FLEET).unwrap();
+        let mark = |account: &str| {
+            json!({"account": account, "note": "successor-not-ready", "cause": null,
+                   "at": "2026-01-29T15:20:00Z"})
+        };
+        fleet[MEMBER]["unproved"] = json!([mark("/a/x/"), mark("/a/y")]);
+        fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
+        let request = AdoptController {
+            pane: "%7".into(),
+            socket: None,
+            harness: "claude".into(),
+            session_id: None,
+            account: Some("/a/x".into()),
+            home: None,
+            model: None,
+            effort: None,
+            cwd: None,
+            session_rows: None,
+            permission: None,
+            extra_args: None,
+        };
+        let read = Recorded::planted(AdoptionRead {
+            identity: Identity {
+                pid: 5151,
+                start: "ticks:5151".into(),
+            },
+            server: 41020,
+            server_start: 1_769_590_000,
+            socket: "/tmp/tmux-1000/default".into(),
+            window: "@3".into(),
+            same: true,
+        });
+        let seats = Judged::of("account-state", Ok(dir.path().join("accounts")));
+        assert!(
+            apply_adoption(&path, &request, &read, &seats, LOCK)
+                .unwrap()
+                .healed
+        );
+        assert_eq!(object(&path)[MEMBER]["unproved"], json!([mark("/a/y")]));
     }
 
     /// The adoption transition on the identity the effects read: the same

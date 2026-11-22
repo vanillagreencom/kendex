@@ -430,24 +430,6 @@ fn chosen(reply: &Value) -> Option<String> {
         .then(|| reply["record"]["config_dir"].as_str().unwrap().to_owned())
 }
 
-/// A `none` reply's exclusions, `(config_dir, reason)` each.
-fn left_out(reply: &Value) -> Vec<(String, String)> {
-    if reply["answer"] != json!("none") {
-        return Vec::new();
-    }
-    reply["record"]["exclusions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|e| {
-            (
-                e["config_dir"].as_str().unwrap().to_owned(),
-                e["reason"].as_str().unwrap().to_owned(),
-            )
-        })
-        .collect()
-}
-
 /// The chooser's request for a Claude launch with `model`.
 fn claude(model: Option<&str>) -> PickRequest {
     PickRequest {
@@ -504,7 +486,7 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
     assert_eq!(
         roster.lines(&accounts::today(now()))[0],
         format!(
-            "account 5claude config_dir=/home/me/.5claude harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={} word=reserve",
+            "account 5claude config_dir=/home/me/.5claude harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={} sign_in=- word=reserve",
             stamp(now() + 60 * 3600)
         )
     );
@@ -559,13 +541,13 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
         roster["lines"],
         json!([
             format!(
-                "account 4claude config_dir={d4} harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} word=retired:{today}"
+                "account 4claude config_dir={d4} harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} sign_in=held word=retired:{today}"
             ),
             format!(
-                "account 6claude config_dir={d6} harness=claude through=local status=ok verdict=room headroom_pct=70 binding_bucket=weekly binding_resets_at={weekly} word=retired:{tomorrow}"
+                "account 6claude config_dir={d6} harness=claude through=local status=ok verdict=room headroom_pct=70 binding_bucket=weekly binding_resets_at={weekly} sign_in=held word=retired:{tomorrow}"
             ),
             format!(
-                "account 7claude config_dir={d7} harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly}"
+                "account 7claude config_dir={d7} harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly} sign_in=held"
             ),
             format!(
                 "account-end-contradicted 4claude config_dir={d4} ends={today} source=AGENT_RUNTIME_ACCOUNT_RETIRE status=ok"
@@ -1121,16 +1103,53 @@ fn a_held_rate_reads_none_once_a_flat_spell_outlasts_twice_its_time_to_rise_a_st
     }
 }
 
-/// An overseer's choice among accounts refuses one another controller on
-/// this machine sits on, `seated`, whatever its room, while that
-/// controller's harness runs, and keeps the account its own seat names
-/// usable, a provider's mark on it included: with another record's
-/// controller seated on the account at 10 used, the choice is this fleet's
-/// own seat at 50 used; with its own left out the answer is `none` naming
-/// the other `seated`; once the other's harness is gone its account is the
-/// choice.
+/// An overseer's choice charges each other controller seated on an
+/// account to its reset as it charges its own candidate, so an account
+/// takes one more controller only where the controllers there leave it
+/// room: with none or one other on it the account is chosen; with four the
+/// charge spends its headroom and it is left out `walled`. Each controller
+/// is charged the weekly window's burn, 10 points of five hours scaled to
+/// 168, for the 60 hours to its reset.
 #[test]
-fn an_overseers_choice_refuses_an_account_another_controller_sits_on() {
+fn an_overseers_choice_takes_an_account_another_controller_sits_on_where_it_has_room() {
+    let world = World::new(&[("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "10")]);
+    let settings = world.settings.accounts.get().unwrap();
+    let rows = rows(&[measured("other", 10, 5)], &world.settings);
+    let (dir, canon) = (rows[0].config_dir.clone(), rows[0].canon.clone());
+    let controller = 10.0 * 5.0 / 168.0 * 60.0;
+    let req = PickRequest {
+        for_overseer: true,
+        ..claude(None)
+    };
+    for (others, verdict) in [(0u32, "room"), (1, "room"), (4, "walled")] {
+        let facts = FleetFacts {
+            seats: [(canon.clone(), others)].into_iter().collect(),
+            others: [(canon.clone(), others)].into_iter().collect(),
+            ..FleetFacts::default()
+        };
+        let judged = accounts::judge_one(&rows[0], &req, &facts, &settings, now());
+        assert_eq!(judged.verdict, verdict, "{others}");
+        let headroom = judged.projection.as_ref().unwrap().headroom;
+        let expected = 90.0 - f64::from(1 + others) * controller;
+        assert!((headroom - expected).abs() < 1e-9, "{others}: {headroom}");
+        let answer = accounts::pick(&rows, &req, &facts, &settings, now());
+        match verdict {
+            "room" => assert_eq!(picked(&answer), Some(dir.clone()), "{answer:?}"),
+            _ => assert_eq!(
+                exclusions(&answer),
+                vec![(dir.clone(), "walled".to_owned())],
+                "{answer:?}"
+            ),
+        }
+    }
+}
+
+/// The other controllers an overseer's choice charges: each another seat
+/// record holds while its harness runs, and one a provider's mark names on
+/// an account no seat here holds, but never the mark on the account the
+/// caller's own seat names, which is the caller.
+#[test]
+fn the_controllers_an_overseers_choice_charges_are_the_other_seats_and_marks() {
     let mut world = World::new(&[]);
     world.plant_listing(&[measured("other", 10, 5), measured("own", 50, 5)]);
     let (other, own) = (world.dir("other"), world.dir("own"));
@@ -1151,52 +1170,31 @@ fn an_overseers_choice_refuses_an_account_another_controller_sits_on() {
         &other,
     )
     .unwrap();
-    let choice = |exclude: Vec<String>| {
-        world.pick(&PickRequest {
-            for_overseer: true,
-            exclude,
-            ..claude(None)
-        })
-    };
-    let kept = choice(Vec::new());
-    assert_eq!(chosen(&kept).as_deref(), Some(own.as_str()), "{kept}");
-    let refused = choice(vec![own.clone()]);
-    assert_eq!(
-        left_out(&refused),
-        vec![(other.clone(), "seated".to_owned())],
-        "{refused}"
-    );
+    let seats = group::seats(
+        &world.settings.account_state.get().unwrap(),
+        Some(&world.fleet_path()),
+        &process::still_runs,
+    )
+    .unwrap();
     harness.kill().unwrap();
     harness.wait().unwrap();
-    let freed = choice(Vec::new());
-    assert_eq!(chosen(&freed).as_deref(), Some(other.as_str()), "{freed}");
-    // The provider's mark on the account the caller's own seat names.
-    let mut marked = measured("own", 50, 5);
-    marked["seat"] = json!(1);
-    let rows = rows(&[marked], &world.settings);
+    assert_eq!(seats.others.len(), 1, "the other record's seat: {seats:?}");
+    let own_seat = seats
+        .own
+        .as_ref()
+        .map(|(account, _)| account.clone())
+        .unwrap();
+    let mut marked_own = measured("own", 50, 5);
+    marked_own["config_dir"] = json!(own_seat);
+    marked_own["seat"] = json!(1);
+    let mut marked_free = measured("free", 20, 5);
+    marked_free["seat"] = json!(1);
+    let rows = rows(&[marked_own, marked_free], &world.settings);
     let mut facts = FleetFacts::default();
-    facts.seat(
-        &rows,
-        &group::Seats {
-            own: Some(("/home/me/.own".to_owned(), true)),
-            ..group::Seats::default()
-        },
-    );
-    let own_choice = accounts::pick(
-        &rows,
-        &PickRequest {
-            for_overseer: true,
-            ..claude(None)
-        },
-        &facts,
-        &world.settings.accounts.get().unwrap(),
-        now(),
-    );
-    assert_eq!(
-        picked(&own_choice).as_deref(),
-        Some("/home/me/.own"),
-        "{own_choice:?}"
-    );
+    facts.seat(&rows, &seats);
+    let mut expected = seats.others.clone();
+    expected.insert(rows[1].canon.clone(), 1);
+    assert_eq!(facts.others, expected, "{seats:?}");
 }
 
 /// The account a Pi lane spends follows its model's provider, and
@@ -1785,10 +1783,10 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
         roster.lines(&accounts::today(now())),
         vec![
             format!(
-                "account v config_dir=/home/me/.v harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} word=plan-end-invalid"
+                "account v config_dir=/home/me/.v harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} sign_in=- word=plan-end-invalid"
             ),
             format!(
-                "account w config_dir=/home/me/.w harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly}"
+                "account w config_dir=/home/me/.w harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly} sign_in=-"
             ),
             "account-plan-end-invalid alias=v value=2026-10-21T00:00:00Z".to_owned(),
         ]
@@ -2723,15 +2721,17 @@ fn a_supplied_batch_is_judged_line_by_line_by_the_one_judge() {
     let own = world.judge(&lines, &["--for-controller"], false);
     assert_eq!(own["rows"][5]["verdict"], json!("room"), "{own}");
 
+    // A controller's question about its own account reads neither the
+    // reservation nor a stated end that has come: its windows alone answer.
     let future = accounts::today(now() + 2 * 86400);
     for (provider_end, setting_end, verdict) in [
         (future.as_str(), "", "room"),
-        (today.as_str(), "", "retired"),
+        (today.as_str(), "", "room"),
         ("not-a-date", "", "plan-end-invalid"),
         ("", future.as_str(), "room"),
-        ("", today.as_str(), "retired"),
+        ("", today.as_str(), "room"),
         (future.as_str(), today.as_str(), "room"),
-        (today.as_str(), future.as_str(), "retired"),
+        (today.as_str(), future.as_str(), "room"),
     ] {
         let retirement = if setting_end.is_empty() {
             String::new()

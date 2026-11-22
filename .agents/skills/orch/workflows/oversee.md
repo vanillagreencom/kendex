@@ -689,7 +689,10 @@ At an overseer trigger under [oversee-events.md § The overseer's own marks](../
    - Exit 3 is a closed failure, its note in `.result.settled.observation.note`.
    - Exit 75 leaves the intent open: read it before anything else.
    - The predecessor retires only once the successor reads ready.
-   - A readiness refusal stops the successor, leaves the predecessor in control and tells the owner once. Sign in the account it names, or exclude it, then request the transfer again.
+   - A readiness refusal stops the successor, leaves the predecessor in control and tells the owner once.
+   - A `successor-not-signed-in` refused before the window opened holds nothing: sign in the account it names, or exclude it, then request the transfer again.
+   - Any other readiness refusal holds its account out of the walk for 30 minutes, until a confirmed hand-over, or until `register --fleet` on that account.
+   - A `successor-asking` holds nothing: its `step` names the first-run question on the successor's screen (`folder-trust`, `bypass-consent` or `other`). Answer that step in the account's config dir before requesting the transfer again; each request before then opens the same question.
    - The successor follows the watch under [takeover § 2](oversee-takeover.md#watch-reader) and starts no second watch.
 7. Handle a refusal by its key:
    - `succession-off`, under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`: tell the user, under [communication-modes.md § Status report](../references/communication-modes.md#status-report), that the handoff is written and a fresh overseer session must start. At an account trigger, keep running ([oversee-events.md § Hand off a lane before it runs out](../references/oversee-events.md#hand-off-a-lane-before-it-runs-out)). At the context mark, record the handoff as the next item says.

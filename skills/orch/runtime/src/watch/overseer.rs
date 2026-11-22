@@ -910,7 +910,7 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
         }
         | State::Idle
         | State::Working
-        | State::Asking
+        | State::Asking { .. }
         | State::RateLimitSwitch
         | State::Unjudged { .. } => Verdict::Live,
     }

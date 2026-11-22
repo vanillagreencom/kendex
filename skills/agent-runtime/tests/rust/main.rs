@@ -282,6 +282,36 @@ fn a_pi_foot_with_an_extension_s_status_line_under_the_footer_reads_idle_at_rest
     }
 }
 
+/// Each first-run question a Claude launch can open on reads asking, with
+/// the step a person takes named, as Claude Code 2.1.330 drew it under a
+/// fresh config dir on 2026-11-22; any other dialog reads asking `other`.
+#[test]
+fn a_first_run_dialog_reads_asking_with_its_step() {
+    use agent_runtime::Harness;
+    use agent_runtime::observe::{Dialog, ProcessReading, State, judge};
+    let rows = [
+        (
+            include_str!("fixtures/claude-folder-trust.txt"),
+            Dialog::FolderTrust,
+        ),
+        (
+            include_str!("fixtures/claude-bypass-consent.txt"),
+            Dialog::BypassConsent,
+        ),
+        (
+            "❯ fix the build\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel",
+            Dialog::Other,
+        ),
+    ];
+    for (screen, dialog) in rows {
+        assert_eq!(
+            judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
+            State::Asking { dialog },
+            "{screen}"
+        );
+    }
+}
+
 /// The three marker-drawing harnesses at rest, as the native probe's
 /// `inspect` captured them after the first turn: each reads
 /// idle under its own composer rule. Codex's `›` line is no other

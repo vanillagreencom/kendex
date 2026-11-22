@@ -1,0 +1,9 @@
+#!/bin/bash
+# A stub that stands on Claude Code's folder-trust question and never
+# draws its composer, the question's lines as Claude Code 2.1.330 drew them
+# (agent-runtime's tests/rust/fixtures/claude-folder-trust.txt). It proves
+# only its own text. Named `claude` and run by bash directly so the kernel
+# records the harness's process name for it.
+printf ' Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n'
+printf ' \xe2\x9d\xaf No, exit\n   Yes, I trust this folder\n\n Enter to confirm \xc2\xb7 Esc to cancel\n'
+while IFS= read -r _line; do :; done

@@ -644,8 +644,9 @@ fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_
             format!("caller unmeasured {lane}")
         ]
     );
-    // The caller's account retired: the judge's word refuses it, and no
-    // unmeasured record admits it.
+    // The caller's account past its stated end: the walk's own entries
+    // refuse it by that word, but the caller's own question reads no
+    // stated end, so the account its session runs on is kept as before.
     let mut retired = World::new(&[
         (
             "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
@@ -658,14 +659,9 @@ fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_
     let mut args = args.to_vec();
     args[6] = lane.as_str();
     let result = retired.answered(&args);
-    assert_eq!(result["answer"], json!("none"), "{result}");
-    assert_eq!(
-        skipped(&result),
-        [
-            format!("claude:standard:high retired {lane}"),
-            format!("caller retired {lane}")
-        ]
-    );
+    assert_eq!(result["answer"], json!("lane"), "{result}");
+    assert_eq!(result["chosen"]["account"], json!(lane), "{result}");
+    assert_eq!(result["chosen"]["kept_unmeasured"], json!(true), "{result}");
 }
 
 #[test]

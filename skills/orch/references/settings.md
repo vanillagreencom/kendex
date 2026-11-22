@@ -262,7 +262,7 @@ The keys' rules, in the table's order:
 | `ORCH_OVERSEER_MEMORY_PCT` | The percent of its cgroup's memory cap at which the overseer's harness hands off. | unset: no memory mark |
 | `AGENT_RUNTIME_CONTROLLER_SUCCESSION` | `on` or `off`: whether a controller may ask for its own succession. | `on` |
 | `AGENT_RUNTIME_CONTROLLER_PREFERENCE` | The `harness:model:effort` entries a succession walks for the successor. | `claude:standard:high,codex:standard:high` |
-| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | `<account dir>=<token file>` pairs, both absolute: the file each Claude account's successor signs in with. | unset |
+| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | `<account dir>=<token file>` pairs, both absolute: the file each Claude account's successor signs in with. The roster's `sign_in=` and the overseer walk read that account's sign-in from it. A missing or empty file refuses `successor-not-signed-in` with `cause=declared-token-absent`. | unset |
 | `ORCH_WAKE_PROCESS`, `ORCH_WAKE_START` | For a controller with no live watch claim: a regular expression over each process's command line that names the process that wakes the controller, and the start command its turn end prints where none runs. | unset |
 
 The keys' rules, in the table's order:

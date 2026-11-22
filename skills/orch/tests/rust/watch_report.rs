@@ -1040,13 +1040,18 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     // The recording ran the recorded watch with `--max-loops 1 --interval 0`;
     // its first line is the flags', every line under it the body's.
     let mut want = vec!["EVENT heartbeat loops=25 interval=240s since=none".to_owned()];
-    // The accounts stand where the world planted them.
+    // The accounts stand where the world planted them, each signed in;
+    // the recording predates the roster's `sign_in=` field.
     let home = format!("{}/home/", world.path().display());
     want.extend(
         recorded_lines("heartbeat.out")
             .into_iter()
             .skip(1)
-            .map(|line| line.replace("config_dir=/home/u/", &format!("config_dir={home}"))),
+            .map(|line| line.replace("config_dir=/home/u/", &format!("config_dir={home}")))
+            .map(|line| match line.starts_with("account ") {
+                true => format!("{line} sign_in=held"),
+                false => line,
+            }),
     );
     want.extend([
         "tracker-quota status=future reset=2026-10-01T00:10:00Z limit=requests".to_owned(),
@@ -1229,7 +1234,7 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
                         eclaude("ok room 40 2026-10-02T00:00:00Z"),
                     ],
                     vec![
-                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=status,headroom was=expired/unmeasured",
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=- change=status,headroom was=expired/unmeasured",
                     ],
                 ),
                 (
@@ -1250,14 +1255,14 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
                     ANY,
                     vec![claude("ok walled 3 2026-10-01T00:00:00Z")],
                     vec![
-                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=3 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room",
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=3 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=- change=headroom was=ok/room",
                     ],
                 ),
                 (
                     ANY,
                     vec![claude("ok room 30 2026-10-01T00:00:00Z")],
                     vec![
-                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=- change=headroom was=ok/walled",
                     ],
                 ),
                 (ANY, vec![claude("ok room 50 2026-10-01T00:00:00Z")], vec![]),
@@ -1285,14 +1290,14 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
                     AFTER,
                     vec![claude("ok room 20 2026-09-24T12:30:00Z")],
                     vec![
-                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-09-24T12:30:00Z change=headroom was=ok/walled",
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-09-24T12:30:00Z sign_in=- change=headroom was=ok/walled",
                     ],
                 ),
                 (
                     AFTER,
                     vec![claude("ok room 20 2026-10-01T12:00:00Z")],
                     vec![
-                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z change=reset was=ok/room",
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=20 binding_bucket=weekly binding_resets_at=2026-10-01T12:00:00Z sign_in=- change=reset was=ok/room",
                     ],
                 ),
             ],
@@ -1314,7 +1319,7 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
                     ANY,
                     vec![claude("ok room 30 2026-10-01T00:00:00Z")],
                     vec![
-                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=- change=headroom was=ok/walled",
                     ],
                 ),
             ],
@@ -1327,7 +1332,7 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
                     ANY,
                     vec![claude("ok room 30 2026-10-01T00:00:00Z")],
                     vec![
-                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+                        "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=- change=headroom was=ok/walled",
                     ],
                 ),
             ],
@@ -1350,7 +1355,7 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
                         srv("ok walled 2 2026-10-01T00:00:00Z"),
                     ],
                     vec![
-                        "EVENT account claude config_dir=/srv/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/room",
+                        "EVENT account claude config_dir=/srv/u/.claude harness=claude through=local status=ok verdict=walled headroom_pct=2 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=- change=headroom was=ok/room",
                     ],
                 ),
             ],
@@ -1631,7 +1636,7 @@ fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() 
     assert_eq!(
         account_events(&produced),
         vec![format!(
-            "EVENT account claude config_dir={} harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+            "EVENT account claude config_dir={} harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=held change=headroom was=ok/walled",
             world.home_dir("claude")
         )],
         "the change is said against the reading before the unreadable pass"
@@ -1839,7 +1844,7 @@ fn an_owed_hosted_item_under_a_failed_accounts_read_is_unjudged() {
         ];
         expected.push(if local {
             format!(
-                "account claude config_dir={} harness=claude through=local status=ok verdict=room headroom_pct=60 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z",
+                "account claude config_dir={} harness=claude through=local status=ok verdict=room headroom_pct=60 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z sign_in=held",
                 world.home_dir("claude")
             )
         } else {

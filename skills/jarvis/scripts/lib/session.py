@@ -805,6 +805,10 @@ class Session:
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
                     raise Refusal("handover-failed", short("No account is left to take over"
                                                            + (": " + named if named else "") + ". Jarvis keeps running."), "failed")
+                # The marks as they stood before this attempt: a failure
+                # retries only where it stamped the account it tried, never on
+                # an older mark, which the walk may have let expire.
+                stamped = {entry.get("account"): entry.get("at") for entry in recorded.get("unproved") or []}
                 successor = dict(choice["successor"], window=SESSION_NAME, seat=SEAT)
                 request.write_text(json.dumps({"expected": choice["expected"], "successor": successor,
                                                "brief_file": str(brief), "session": SESSION_NAME,
@@ -824,10 +828,10 @@ class Session:
                     return self.answer(record, state="handing-over", reason="succession"), 0
                 attempted = successor.get("account")
                 unproved = (self.status(reconcile=False).get("recorded") or {}).get("unproved") or []
-                marked = {entry.get("account"): entry.get("note") for entry in unproved}
-                if attempted and attempted in marked:
+                marked = {entry.get("account"): entry for entry in unproved}
+                if attempted and attempted in marked and marked[attempted].get("at") != stamped.get(attempted):
                     print("jarvis-session: successor-unproved account=" + attempted
-                          + " note=" + str(marked[attempted]), file=sys.stderr)
+                          + " note=" + str(marked[attempted].get("note")), file=sys.stderr)
                     continue
                 note = ((((result or {}).get("settled") or {}).get("observation")) or {}).get("note") or refusal
                 raise Refusal("handover-failed", short("The successor on " + str(attempted) + " failed"

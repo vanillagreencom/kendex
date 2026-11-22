@@ -195,10 +195,10 @@ pub fn successor(
             keep_unmeasured: false,
         },
     };
-    // An account a failed attempt left unproved is no successor until the
-    // next confirmed hand-over, the caller's own among them: its entry is
-    // then walked, never kept.
-    let unproved = unproved(path)?;
+    // An account a failed attempt left unproved is no successor while its
+    // mark holds, the caller's own among them: its entry is then walked,
+    // never kept.
+    let unproved = unproved(path, now)?;
     if let Some(entry) = request.caller.as_mut()
         && entry
             .lane
@@ -237,11 +237,29 @@ pub fn successor(
     }))
 }
 
-/// The accounts the record at `path` holds unproved: each a failed attempt's
-/// successor since the last confirmed hand-over. No record names none.
-fn unproved(path: &Path) -> Result<Vec<String>> {
+/// How long a failed attempt holds its account out of the walk. A mark
+/// repeats every watch pass, so an account that just failed would be
+/// relaunched at once with no hold; a hold with no end would keep it out
+/// after its cause was repaired, with nothing that clears it short of a
+/// confirmed hand-over. Half an hour spans several mark repeats and ends
+/// well inside an account's weekly window.
+pub const UNPROVED_HOLD_SECS: u64 = 1800;
+
+/// The accounts the record at `path` holds unproved at `now`: each a failed
+/// attempt's successor since the last confirmed hand-over whose stamp is
+/// within [`UNPROVED_HOLD_SECS`]. An entry with no stamp, or one that does
+/// not parse, is expired, since nothing says when its hold began. No
+/// record names none.
+fn unproved(path: &Path, now: u64) -> Result<Vec<String>> {
     let Some(doc) = record::read_document(path)? else {
         return Ok(Vec::new());
+    };
+    let holds = |entry: &Value| {
+        entry
+            .get("at")
+            .and_then(Value::as_str)
+            .and_then(crate::clock::epoch_secs)
+            .is_some_and(|at| now < at.saturating_add(UNPROVED_HOLD_SECS))
     };
     Ok(doc
         .get(MEMBER)
@@ -250,6 +268,7 @@ fn unproved(path: &Path) -> Result<Vec<String>> {
         .map(|marked| {
             marked
                 .iter()
+                .filter(|entry| holds(entry))
                 .filter_map(|entry| entry.get("account").and_then(Value::as_str))
                 .map(str::to_owned)
                 .collect()
@@ -422,6 +441,7 @@ mod tests {
                 home: None,
                 copilot_home: None,
                 controller_preference: "",
+                account_tokens: &controller.account_tokens,
             },
             launch: &launch,
             controller: &controller,
