@@ -496,7 +496,10 @@ pub fn fleet_facts(
     host: &Host,
     now: u64,
 ) -> std::result::Result<FleetFacts, String> {
-    let mut facts = FleetFacts::default();
+    let mut facts = FleetFacts {
+        relaunch: replaces.is_some(),
+        ..FleetFacts::default()
+    };
     let seats = agent_runtime::group::seats(account_state, Some(path), host.still_runs)
         .map_err(|e| e.to_string())?;
     facts.seat(rows, &seats);

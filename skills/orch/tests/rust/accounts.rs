@@ -519,6 +519,44 @@ fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
     drop(child);
 }
 
+/// A relaunch's successor never lands back on an account whose usage read
+/// is refused with a 429: its turn end would hold on that reading again.
+/// The refused account's kept figure (10 percent used) is the fresh pick's
+/// lane over an account at 50, a relaunch takes the account at 50, and a
+/// relaunch with the refused account alone, or naming it, finds it
+/// `unmeasured`.
+#[test]
+fn a_relaunch_takes_no_account_whose_usage_read_is_refused() {
+    let mut world = World::new(&[]);
+    let mut refused = measured("aclaude", 10, 0);
+    refused["status"] = json!("rate_limited");
+    refused["usage_age_s"] = json!(600);
+    world.plant_listing(&[refused.clone(), measured("bclaude", 50, 0)]);
+    let (refused_dir, open) = (world.dir("aclaude"), world.dir("bclaude"));
+    let fresh = world.pick(&claude(None));
+    assert_eq!(
+        chosen(&fresh).as_deref(),
+        Some(refused_dir.as_str()),
+        "{fresh}"
+    );
+    assert_eq!(fresh["record"]["status"], json!("rate_limited"), "{fresh}");
+    let relaunch = world.pick_replacing(&claude(None), Some("KEN-1"));
+    assert_eq!(chosen(&relaunch).as_deref(), Some(open.as_str()), "{relaunch}");
+    world.plant_listing(&[refused]);
+    let alone = world.pick_replacing(&claude(None), Some("KEN-1"));
+    assert_eq!(
+        left_out(&alone),
+        vec![(refused_dir.clone(), "unmeasured".to_owned())],
+        "{alone}"
+    );
+    let named = world.pick_replacing(&named(&refused_dir, claude(None)), Some("KEN-1"));
+    assert_eq!(
+        (&named["answer"], &named["record"]["verdict"]),
+        (&json!("unmeasured"), &json!("unmeasured")),
+        "{named}"
+    );
+}
+
 /// A lane is charged one hour of the window's burn, never the hours to its
 /// reset, which only a controller spends. The weekly window at 90 percent
 /// with 144 hours to its reset and one live lane: the live lane and the
