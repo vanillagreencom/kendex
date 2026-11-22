@@ -84,8 +84,8 @@ Renders each enabled review bot's instruction files from the doctrine below and 
 - The effective manifest holds `[bot-instructions]`: bots, repo context, cadence, exclusions, path instructions and doctrine overrides.
 - Keys, manifest selection and refusals: [schemas/repo-toml.md](schemas/repo-toml.md).
 - Validators: [schemas/validators.md](schemas/validators.md).
-- `[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`.
-- The same flag makes the `AGENTS.md` § Code Review Rules region one directive line naming that file.
+- In full mode, `[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`.
+- In full mode, the same flag makes the `AGENTS.md` § Code Review Rules region one directive line naming that file.
 - The generator owns only that region of `AGENTS.md` and never creates the file or the heading.
 - A repo without the heading:
   1. Adds the heading.
@@ -93,7 +93,7 @@ Renders each enabled review bot's instruction files from the doctrine below and 
   3. Runs `adopt`.
   4. Runs `render`.
 - Region body and bounds: [schemas/renders.md](schemas/renders.md) § `AGENTS.md` § Code Review Rules.
-- A repo enabling `codex` renders a canary, a line of its own `[bot-instructions.doctrine.append]`, to check whether the bots follow the pointer.
+- In full mode, a repo enabling `codex` renders a canary, a line of its own `[bot-instructions.doctrine.append]`, to check whether the bots follow the pointer.
 - No script adds one.
 - Before choosing that rule or interpreting a comment, read [references/limits.md § GitHub Copilot code review](references/limits.md#github-copilot-code-review).
 
