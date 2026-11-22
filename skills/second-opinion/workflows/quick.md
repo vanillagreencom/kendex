@@ -4,7 +4,9 @@ Lightweight question to the other model. No structured output format.
 
 ## 1. Build Prompt
 
-Gather the user's question. Optionally read relevant files for context, then write a prompt file to `tmp/second-opinion-prompt.md`:
+1. Gather the user's question.
+2. Optionally read relevant files for context.
+3. Then write a prompt file to `tmp/second-opinion-prompt.md`:
 
 <prompt_template>
 [QUESTION]
@@ -36,8 +38,10 @@ Either pass the prompt file or the question inline:
   --foreground
 ```
 
-Execute the exact command printed after `wait:` and follow its exit handling in `second-opinion --help` until terminal. On success, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
+1. Execute the exact command printed after `wait:`.
+2. Follow its exit handling in `second-opinion --help` until terminal.
+3. On success, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
 
 ## 3. Present Results
 
-Present the artifact contents directly — no additional framing.
+Present the artifact contents directly. Add no additional framing.

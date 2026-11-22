@@ -21,7 +21,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Second Opinion
 
-Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPINION_MODELS` roster in priority order and takes the first target that is available, runs a different model and, where it has a room check, has room on its account. The default roster is `claude codex`: Codex from a Claude Code session, Claude from a Codex session; when nothing eligible remains the run refuses and says why. A project that names `pi-copilot` or `pi-copilot-gpt` in its roster gets those Pi-on-Copilot entries. Full contract: `second-opinion --help`.
+Cross-model second opinion via external AI CLI. Full contract: `second-opinion --help`.
 
 ```bash
 .agents/skills/second-opinion/scripts/second-opinion <mode> [options]
@@ -39,33 +39,36 @@ Cross-model second opinion via external AI CLI. Every mode walks the `SECOND_OPI
 
 ## Execution Rules
 
-- Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions. Never skip based on your own scope assessment.
-- `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
-- **Pass `--target`** when the user explicitly requests a specific model/CLI (e.g., "use Claude", "ask Codex"). Otherwise omit it. The script selects from the roster and the current session's model. A forced target that runs this session's model is refused; report the refusal, do not work around it.
-- **Do not pass `--timeout`** unless the user explicitly asks for a different value for this specific call. The script reads the default from project config.
+- `<output_format>` tags are literal templates:
+  - Fill `[PLACEHOLDERS]`.
+  - Omit empty lines.
+  - Add nothing else.
+  - Do not paraphrase.
+- **Pass `--target`** only when the user explicitly requests a specific model or CLI, such as "use Claude" or "ask Codex". Otherwise omit it. The script selects from the roster and the current session's model.
+- A forced target that runs this session's model is refused. Report the refusal. Do not work around it.
+- **Do not pass `--timeout`** unless the user explicitly asks for a different value for this specific call.
 - **Always pass `--cwd`** with the absolute project root path. Never use `--cwd .`.
-- Pass `--foreground` when the call can outlast the harness foreground cap. This detaches the run and prints its artifact, deadline, and wait command.
-- Execute the exact printed wait command and follow its exit handling in `second-opinion --help` until terminal.
-- For `quick` mode, you can pass the question inline: `.agents/skills/second-opinion/scripts/second-opinion quick "your question here" --cwd /path --foreground`.
+- Pass `--foreground` when the call can outlast the harness foreground cap. The script then detaches and prints its artifact, deadline and wait command.
 
 ## Session identity
 
-Cross-model is enforced in every mode: a run with no eligible target exits 1 naming every candidate and its reason, writing nothing and invoking nothing. In a multi-model front end (Pi, OpenCode, Cursor, Copilot) or an undetected harness, export `SECOND_OPINION_CURRENT_MODEL` in that session's own environment (`none` when there is no session model), never in a project settings file. Identity resolution, normalization, and the refusal rules: `second-opinion --help`.
+- In a multi-model front end (Pi, OpenCode, Cursor, Copilot) or an undetected harness, export `SECOND_OPINION_CURRENT_MODEL` in that session's own environment.
+- Set it to `none` when the session has no model.
+- Never set it in a project settings file.
+
+Identity resolution, normalization and the refusal rules: `second-opinion --help`.
 
 ## Multi-lane review
 
-The `SECOND_OPINION_MODELS` order is the fallback order at both the room check and execution. A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on stderr advances to the next name. The stderr refusal counts only on a zero exit whose stdout holds no usable review answer. Each attempt records its name, cause and seconds. A failed attempt does not exclude another entry running that model. Forced targets do not fall through.
-
-`SECOND_OPINION_COUNT` of 2 or more makes `review` collect that many distinct eligible opinions in order on one pinned scope and write a single union artifact. Collection stops when the count is met or the list ends. Lane resolution, merge rules, artifact placement and permissions, scratch durability, and the failure taxonomy: [references/multi-lane.md](references/multi-lane.md).
+With `SECOND_OPINION_COUNT` of 2 or more, `review` collects that many distinct opinions on one scope and writes one union artifact. Lane resolution, the union's fields, artifact placement and the failure classes: [references/multi-lane.md](references/multi-lane.md).
 
 ## Configuration
 
-Set non-sensitive defaults in `kendex.settings.toml` under `[env]`; `.env.local` wins over it, and a `.env` file is never read. `SECOND_OPINION_FOREGROUND_CAP` is session-only; a project-file foreground-cap declaration is refused, and shipped workflows pass `--foreground` directly. This skill marks no key `# required`, so an arrival writes nothing into `kendex.settings.toml`; assign a key there only to change a default the scripts already read (`SECOND_OPINION_TARGET` has none). Keys, defaults, and the built-in `claude`, `codex`, `pi-copilot` and `pi-copilot-gpt` commands: `second-opinion --help`. The two Pi-on-Copilot entries run only when the roster names them, and also carry their model, inline diff and a room check through `agent-runtime accounts pick --env`, where agent-runtime is installed in the project this skill is installed in; without it, in a global install, or without pi, they are skipped for the next entry. A target named for a harness that fronts a selectable model, `copilot` among them, runs only once its `SECOND_OPINION_<NAME>_MODEL` is set. `SECOND_OPINION_<NAME>_ROOM_CMD` gives a target a room check, such as `agent-runtime accounts pick --env` for the seat it spends: a target whose check refuses is skipped for the next roster entry, and one with room runs under the account prefix the check printed. `SECOND_OPINION_<NAME>_INLINE_DIFF` set to `1` sends a target that cannot run git, such as Pi on read-only file tools, the review diff inside its prompt.
+- Set non-sensitive defaults in `kendex.settings.toml` under `[env]`. `.env.local` wins over it, and a `.env` file is never read.
+- Set a key there only to change a default the scripts already read. `SECOND_OPINION_TARGET` has no default.
+
+Keys, defaults and the built-in commands: `second-opinion --help`.
 
 ## Error Handling
 
-On script failure, stderr carries a JSON error object (`{"error": "description", "target": "codex"}`) or a plain `Error:` line for pre-flight configuration errors; exit codes, preserved-response paths, and the output-clearing/ownership rules are in `second-opinion --help`. Report the stated reason. A CLI-failure record (`<output>.failed.json`, exit 5 or 6) holds the reason, the cause with its source, the partial output and each attempt. The cause is the first of these that has text: a Claude result envelope's fields, the CLI's stderr, its partial stdout; a timeout's cause is what the CLI wrote before it was stopped, and can be empty. When any command's stdout is a Claude result envelope with no result text or flagged `is_error`, on any exit and on a target's first call or its format retry, the cause is the envelope's fields (subtype, is_error, num_turns, stop_reason, terminal_reason, api_error_status, each `errors[]` entry, and the result text when `is_error`) and the source is `claude result`; on a zero exit the reason is `ended without a review on a zero exit`. An ineligible-target refusal is fixed by installing the CLI or adjusting `SECOND_OPINION_<NAME>_CMD`, `SECOND_OPINION_MODELS`, or `SECOND_OPINION_CURRENT_MODEL`, never by forcing the same model; a roster target skipped as `model undeclared` is fixed by setting that target's `SECOND_OPINION_<NAME>_MODEL` to the model id it runs. A `room check refused` candidate names the check's setting and its exit, and for a stock Copilot entry quotes the default command; the check's own stderr, passed through above it, holds the cause. Run that command and read its keyed line: a wall to wait out, or a setting or read to fix (for the stock check, `agent-runtime accounts pick --help`). A `room check printed a line that is no NAME=value assignment` candidate quotes that line: the check must print only the `NAME=value` env prefix of the account it judged, so fix that `SECOND_OPINION_<NAME>_ROOM_CMD` command, e.g. drop a `--json` flag. A `room check unavailable` candidate quotes the check's command: install its program, agent-runtime in the project this skill is installed in for a stock Copilot entry (a global install has no project, so there its check is always unavailable); or set that entry's `SECOND_OPINION_<NAME>_ROOM_CMD` or `_CMD`, or leave the entry out of `SECOND_OPINION_MODELS`. The next roster entry reviews meanwhile; never remove the room check to get past it. For a timeout, suggest a larger `--timeout` or a narrower `--range`.
-
-If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue**. External review is advisory.
-
-The stock `pi-copilot-gpt` target runs `github-copilot/gpt-6.2-sol`.
+On a failed run or a refused target, read [references/error-handling.md](references/error-handling.md).
