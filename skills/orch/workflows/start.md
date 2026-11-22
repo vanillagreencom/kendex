@@ -91,7 +91,7 @@ Apply the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to this li
 gh issue view [N] --repo [OWNER/REPO] --json number,title,body,url,labels,state
 ```
 
-An issue that is not open stops: ask for another item. An issue in verification ([verify.md § GitHub items](verify.md#github-items)) stops development preparation the same way.
+An issue that is not open stops: ask for another item. Judge an open issue by [verify.md § GitHub items](verify.md#github-items) steps 2 and 3 on this body. An issue in verification, or one those reads leave unread, stops development preparation the same way.
 
 ## 4. Prepare Worktree
 

@@ -220,9 +220,10 @@ Then:
 
 - Resolve once per workflow into `TRACKER` and `ISSUE_REF`: `#N` for GitHub, the Linear identifier otherwise.
 - A `Closes` line renders only that form.
-- A GitHub item whose Done-when holds an open post-merge box, in the form the project-management skill's references/filing.md § Done when states, takes `Refs [ISSUE_REF]` in place of `Closes`. `Refs` is no GitHub closing keyword, so the issue stays open at merge until [verify.md § GitHub items](workflows/verify.md#github-items) closes it.
+- A GitHub item takes `Refs [ISSUE_REF]` in place of `Closes` where `linear.sh done-when parse --description-file [BODY_FILE]` on its live body answers an open post-merge box, a `boxes` row with `post_merge` true and `checked` false, or any `errors`. `Refs` is no GitHub closing keyword, so the issue stays open at merge until [verify.md § GitHub items](workflows/verify.md#github-items) closes it or reports its invalid checklist.
+- Where the linear package is not installed, no pass can judge a GitHub item's boxes: the item takes `Closes`, and the body build reports its post-merge classification unavailable.
 - Run **Linear only** and **GitHub only** steps only for that tracker.
-- Never run `linear.sh` against a GitHub item.
+- Never run a `linear.sh` tracker read or write against a GitHub item. `linear.sh done-when parse` reads no tracker, credential or network, so it classifies a GitHub body too.
 
 ### State Management
 

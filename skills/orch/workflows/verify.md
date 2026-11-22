@@ -51,11 +51,15 @@ For every item:
 
 ### GitHub items
 
-`reconcile-items` and the watch read no GitHub item, so every pass reads them here. A GitHub item is in verification while all three hold:
+`reconcile-items` and the watch's verification duty judge no GitHub item's post-merge boxes, so every pass judges them here.
+
+`linear.sh done-when parse` classifies each body, as [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution) states. Where the linear package is not installed, report the pass's GitHub items unread.
+
+A GitHub item is in verification while all three hold:
 
 - The issue is open.
-- Its Done-when holds an open post-merge box, in the form the project-management skill's references/filing.md § Done when states.
-- A pull request from its branch `issue-[N]` merged.
+- A pull request from its branch `issue-[N]`, not from a fork, merged.
+- Its Done-when holds a post-merge box, open, ticked or waived: a `boxes` row with `post_merge` true in the parser's answer, or a `- Waived: Post-merge:` line under `## Done when`.
 
 `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` answers from the base checkout.
 
@@ -67,29 +71,65 @@ For every item:
 
    A failed read leaves the pass's GitHub items unread: report it, never as none.
 
-2. For each issue whose body holds an open post-merge box, read its merges:
+2. Save each body under `tmp/` and classify it:
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --repo [OWNER/REPO] --state merged --head issue-[N] --json number,mergedAt
+   .agents/skills/linear/scripts/linear.sh done-when parse --description-file [BODY_FILE]
    ```
 
-   - An empty list is a development item: leave it.
-   - The latest `mergedAt` is `[MERGED_AT]`, the merge a box's trigger and deadline count from.
+   - If the body holds no post-merge box, open, ticked or waived, the issue is not in verification: leave it.
+   - If the parser exits nonzero, that issue is unread: report it with the parser's stderr.
 
-3. Judge each open post-merge box's trigger and deadline against `[MERGED_AT]` under filing.md § Done when. Read each due or overdue box under § 1's acceptance, and keep a box whose trigger has not come open.
-4. For each proved box:
+3. For each issue with a post-merge box, read its merges:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --repo [OWNER/REPO] --state merged --head issue-[N] --json number,mergedAt,mergeCommit,isCrossRepository
+   ```
+
+   - Drop each row whose `isCrossRepository` is true: a fork's branch of the same name is not the item's merge, as `reconcile-items` reads it.
+   - If the read fails or does not decode, that issue is unread: report it with the cause.
+   - If no row is left, the issue is a development item: leave it.
+   - The row with the latest `mergedAt` gives `[MERGED_AT]` and `[MERGE_SHA]`, its `mergeCommit.oid`. Each box's trigger is judged after that merge.
+
+4. Classify the body again with `--merged-at [MERGED_AT]`.
+
+   - If the answer's `errors` is nonempty, the checklist is invalid. Report the issue with its errors and keep it open. Judge none of its boxes.
+   - Judge each open post-merge box, `post_merge` true and `checked` false, by its `trigger_kind`:
+     - `merge` or `time`: the trigger fires at `[MERGED_AT]` or at the box's `trigger` time. The deadline end is `deadline_end`.
+     - `release`: the trigger is the first release of `release_repo` published after `[MERGED_AT]` whose tag matches the Bash pattern `release_glob` and, where `release_repo` is `[OWNER/REPO]`, contains `[MERGE_SHA]`. The deadline end is that release's `published_at` plus `deadline_hours`.
+   - A box is `overdue` once its deadline end has passed, `waiting` before a `time` or `release` trigger fires, and `due` otherwise.
+   - Read each due or overdue box under § 1's acceptance. Keep waiting boxes open.
+
+   For a release trigger, read the published releases, then check each candidate tag in publication order:
+
+   ```bash
+   gh api --paginate "repos/[RELEASE_REPO]/releases?per_page=100" --jq '.[] | select(.draft == false) | {tag_name, published_at}'
+   gh api "repos/[OWNER/REPO]/compare/[MERGE_SHA]...[TAG]" --jq .status
+   ```
+
+   - `[TAG]` is percent-encoded as one path segment.
+   - A status of `ahead` or `identical` contains the merge. A status of `behind` or `diverged` does not: take the next tag.
+   - If either read fails, or the status is any other value, the box is unread: report it.
+   - If no release qualifies, the box is waiting.
+
+5. For each proved box:
    1. Post the evidence comment with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`.
-   2. Tick the box in the body, with an indented `Evidence:` line under it citing that comment.
+   2. Tick the box and put the indented `Evidence:` line citing that comment under it, in the form `linear.sh issues complete --done-when-met` writes.
    3. Save the full body under `tmp/` and write it with `gh issue edit [N] --repo [OWNER/REPO] --body-file [FILE]`.
-5. Once no open post-merge box remains, close the issue:
+6. Classify the body as last written. If it holds no open post-merge box and no `errors`, close the issue, whatever route retired its last box:
 
    ```bash
    gh issue close [N] --repo [OWNER/REPO] --reason completed
    ```
 
-§ 2 and § 3 write a GitHub item through the same commands: the body through `gh issue edit`, comments through `gh issue comment`.
+A GitHub item takes § 2 and § 3 through these writes:
 
-- A drop keeps the box in the body as `- Waived: …` with its `Reason:` line.
+- § 2's box rewrite and a drop save the full body under `tmp/` and write it with `gh issue edit [N] --repo [OWNER/REPO] --body-file [FILE]`.
+- § 2's rewrite comment and decision record go through `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`.
+- A drop keeps the box in the body as `- Waived: …` with its `Reason:` line, in the form `linear.sh issues complete --done-when-waived` writes.
+- An accepted reading under § 3 ticks its box through step 5.
+- After a drop or an accepted reading, run step 6 on that issue.
+- § 2's wait for an event has no GitHub form: report the box as a blocked ask in § 4.
 - With no overseer, report an owner-only box on a GitHub item as a blocked ask in § 4: § 3's tracker route is Linear's.
 
 ## 2. Resolve missing evidence
