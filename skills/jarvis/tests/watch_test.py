@@ -1806,8 +1806,19 @@ with open(sys.argv[1], "ab") as out:
                     case.doCleanups()
 
     def test_hold_paths_and_failed_renewal_reset(self):
-        with patch.dict(os.environ, self.env, clear=True):
+        # The loop runs in its home and each settings reader in the root it
+        # reads, so a module planted in either checkout must never start.
+        marker = self.root / "executed-presence-checkout"
+        for root in (self.home, self.peer):
+            root.joinpath("json.py").write_text("from pathlib import Path\nPath(" + repr(str(marker)) +
+                                                ").touch()\nraise SystemExit(91)\n")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.chdir(self.home):
             settings = self.home / "kendex.settings.toml"
+            settings.write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "planted-hold"\n')
+            self.assertEqual(self.module.presence_roots(lambda: True),
+                             [(str(root), "ok", None) for root in (self.home, self.peer)])
+            self.assertTrue((self.home / "planted-hold").is_file())
+            self.assertFalse(marker.exists())
             cases = ((str(self.root / "absolute"), self.root / "absolute"),
                      ("~/user-hold", self.root / "user-hold"), ("relative", self.home / "relative"))
             for value, expected in cases:
@@ -2268,7 +2279,8 @@ with open(sys.argv[1], "ab") as out:
         satellite = "roots = [home] if satellite else project_roots()"
         shared = "reader[common][1] if isinstance(common, Path) else root) for"
         nested = "test_nested_project_reads_its_outer_mailbox_once"
-        for name, old, new in (
+        # A row naming a file mutates that producer file, else watch.py.
+        for name, old, new, *where in (
                 # Each root sharing a mailbox reads it separately.
                 (nested, shared, "root) for"),
                 # The first listed root reads a shared mailbox, not its own checkout.
@@ -2305,12 +2317,18 @@ with open(sys.argv[1], "ab") as out:
                 ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()"),
                 # The control host's presence pass runs as JARVIS_CONTROL_USER.
                 ("test_control_user_passes", 'subprocess.Popen(host_args(destination, "bash -s"),',
-                 'subprocess.Popen(["ssh", destination.host, "bash -s"],')):
+                 'subprocess.Popen(["ssh", destination.host, "bash -s"],'),
+                # The local hold's interpreter imports from the home it runs in.
+                ("test_hold_paths_and_failed_renewal_reset", '[sys.executable, "-I", "-B", "-c"',
+                 '[sys.executable, "-B", "-c"'),
+                # Each root's settings reader imports from the root it reads.
+                ("test_hold_paths_and_failed_renewal_reset", 'exec "$reader" -I -c', 'exec "$reader" -c',
+                 "slack/scripts/lib/settings.py")):
             with self.subTest(row=name, planted=new):
                 case = Producer(methodName=name)
                 case.setUp()
                 try:
-                    path = case.packages / "jarvis/scripts/lib/watch.py"
+                    path = case.packages / (where[0] if where else "jarvis/scripts/lib/watch.py")
                     source = path.read_text()
                     self.assertEqual(source.count(old), 1)
                     mutant = source.replace(old, new)
