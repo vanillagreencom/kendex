@@ -2759,6 +2759,12 @@ impl Fleet {
     /// open Done-when box past the lane's own completion, so a close owes
     /// its boxes nothing.
     fn plant_tracker(&self, item: &str, state: &str) {
+        self.plant_item(item, state, "");
+    }
+
+    /// The tracker's answer for `item`: its state type, Done where it is
+    /// completed and Verifying otherwise, and its description.
+    fn plant_item(&self, item: &str, state: &str, description: &str) {
         let name = if state == "completed" {
             "Done"
         } else {
@@ -2766,9 +2772,9 @@ impl Fleet {
         };
         let reply = json!({
             "issues bulk-get": {"body": {"issues": {"nodes": [
-                {"identifier": item, "state": {"type": state}, "description": "", "children": {"nodes": []}}
+                {"identifier": item, "state": {"type": state}, "description": description, "children": {"nodes": []}}
             ]}}},
-            "graphql BoxItem": {"body": {"issue": {"description": "", "state": {"name": name, "type": state}}}},
+            "graphql BoxItem": {"body": {"issue": {"description": description, "state": {"name": name, "type": state}}}},
         });
         std::fs::write(self.state_dir().join("linear.json"), reply.to_string()).unwrap();
     }
@@ -3240,7 +3246,8 @@ fn a_hosted_lane_whose_merge_landed_and_worktree_left_ends_with_its_items_files_
 /// A merged hosted lane whose worktree stands is done once its item's
 /// close-out removed the item's live record from the clone the worktree's
 /// `.git` names, both read on the provider's disk: with the record
-/// standing the close refuses `pane-missing` and stops nothing; with it
+/// standing, its tracker holding a branch-provable box open, the close
+/// refuses `pane-missing` and stops nothing; with it
 /// removed the lane ends on the merge, its harness stopped and the
 /// provider's close asked; a record the host cannot read refuses
 /// `worktree-read-failed` with the provider's cause, and a read refused at
@@ -3294,7 +3301,10 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
             None => {}
         }
         fleet.write_lanes(vec![hosted_lane("KEN-1")]);
-        fleet.plant_tracker("KEN-1", "started");
+        // A standing record over a branch box open is a lane resumed on
+        // the merged item; a removed one follows the lane's own completion.
+        let description = if standing { BRANCH_BOX_OPEN } else { "" };
+        fleet.plant_item("KEN-1", "started", description);
         let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
         let calls = fleet.provider_calls();
         if cat_status == Some("held") {
@@ -3332,6 +3342,89 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
                 assert_eq!(fleet.lane("KEN-1")["status"], "done", "{case}");
             }
         }
+    }
+}
+
+/// A merged item's Done-when with its branch-provable box ticked with its
+/// evidence and its post-merge box open: merge-pr's completion has run.
+const POST_MERGE_ONLY: &str = "## Done when\n- [x] branch proof\n  Evidence: branch tests\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: 2026-10-02T00:00:00Z";
+
+/// The same Done-when with its branch-provable box open, as a lane resumed
+/// on the merged item holds it.
+const BRANCH_BOX_OPEN: &str = "## Done when\n- [ ] branch proof\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: 2026-10-02T00:00:00Z";
+
+/// A merged hosted lane at its idle composer whose item's live record still
+/// stands in the clone: with its item Verifying and only its post-merge box
+/// open, the lane ends on its merge, its harness stopped through the
+/// provider and its sandbox closed, the post-merge box left open for the
+/// verification duty and the open item's files kept; with a
+/// branch-provable box open, as a lane resumed on the merged item holds
+/// it, the close refuses `lane-live state=idle` and stops nothing.
+#[test]
+fn a_merged_hosted_lane_whose_item_waits_only_on_post_merge_checks_closes_at_its_idle_screen() {
+    const RECORD: &str = "/w/clone/tmp/items/KEN-1/workflow-state-KEN-1.json";
+    let idle = "❯ do the thing\n● Done.\n\n❯\u{a0}\n  ? for shortcuts\n";
+    for (case, description, closes) in [
+        ("only its post-merge box open", POST_MERGE_ONLY, true),
+        ("a branch box open", BRANCH_BOX_OPEN, false),
+    ] {
+        let mut fleet = Fleet::verb_pane(idle);
+        let disk = fleet.state_dir().join("provider-disk");
+        let worktree = disk.join(REMOTE_ROOT.trim_start_matches('/'));
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            "gitdir: /w/clone/.git/worktrees/ken-1\n",
+        )
+        .unwrap();
+        let record = disk.join(RECORD.trim_start_matches('/'));
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        std::fs::write(&record, "{}").unwrap();
+        fleet.answer("STOP_ENDS", "1");
+        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+        fleet.plant_item("KEN-1", "started", description);
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        let calls = fleet.provider_calls();
+        if !closes {
+            assert_eq!(answer["refusal"]["key"], "lane-live", "{case}: {answer}");
+            assert_eq!(refusal_fields(&answer)["state"], "idle", "{case}");
+            assert!(
+                !calls.iter().any(|l| l.starts_with("stop ")),
+                "{case}: {calls:?}"
+            );
+            assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
+            continue;
+        }
+        let result = &answer["result"];
+        assert_eq!(result["word"], "closed", "{case}: {answer}");
+        assert!(
+            calls.contains(&"stop --item KEN-1 --harness claude".to_owned()),
+            "{case}: {calls:?}"
+        );
+        assert!(
+            calls.contains(&"close --item KEN-1".to_owned()),
+            "{case}: {calls:?}"
+        );
+        assert_eq!(fleet.lane("KEN-1")["status"], "done", "{case}");
+        let notes: Vec<&str> = result["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(notes.contains(&"item-files-kept cause=open"), "{notes:?}");
+        let log = fleet.fleet()["fleet_log"].as_array().unwrap().clone();
+        let row = log.iter().rev().find(|r| r["kind"] == "close").unwrap();
+        assert_eq!(
+            (&row["disposition"], &row["source"]),
+            (&json!("ended"), &json!("merged")),
+            "{case}: {row}"
+        );
+        let tracker = fleet.lines("linear.log");
+        assert!(
+            !tracker.iter().any(|l| l.starts_with("issues complete")),
+            "{case}: the post-merge box is left to the verification duty: {tracker:?}"
+        );
     }
 }
 

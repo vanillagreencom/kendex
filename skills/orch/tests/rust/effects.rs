@@ -5077,26 +5077,31 @@ fn a_close_releases_a_worktree_of_the_repository_its_row_records() {
 }
 
 /// An idle local lane whose merge landed, its item still open on its
-/// tracker and its worktree standing: while the item's live state record
-/// stands the lane may be at work on it, so `close-lane` refuses
-/// `lane-live state=idle` and touches neither the harness nor the
-/// worktree. Once the item's close-out removed that record the close ends
-/// the lane on its merge, its harness stopped before the worktree is
-/// released, so the session never runs on in a removed directory.
+/// tracker, its live state record and its worktree standing: while the
+/// tracker holds a branch-provable box open the lane may be at work on the
+/// merged item, so `close-lane` refuses `lane-live state=idle` and touches
+/// neither the harness nor the worktree. Once the tracker reads the item
+/// Verifying with only its post-merge box open, the close ends the lane on
+/// its merge with the record still standing, its harness stopped before
+/// the worktree is released, so the session never runs on in a removed
+/// directory; the post-merge box stays open for the verification duty and
+/// the open item's record stays.
 #[test]
-fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_released() {
+fn a_merged_lane_waiting_on_post_merge_checks_is_stopped_before_its_worktree_is_released() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = Runner::new(&server, "stub-confirm");
     let replies = runner.state_dir().join("linear.json");
-    // The lane completed its boxes: the item reads Verifying with none open.
-    let open = json!({
-        "issues bulk-get": {"body": {"issues": {"nodes": [
-            {"identifier": "KEN-W", "state": {"type": "started"}, "description": "", "children": {"nodes": []}}
-        ]}}},
-        "graphql BoxItem": {"body": {"issue": {"description": "", "state": {"name": "Verifying", "type": "started"}}}},
-    });
-    std::fs::write(&replies, open.to_string()).unwrap();
+    let plant = |description: &str| {
+        let item = json!({
+            "issues bulk-get": {"body": {"issues": {"nodes": [
+                {"identifier": "KEN-W", "state": {"type": "started"}, "description": description, "children": {"nodes": []}}
+            ]}}},
+            "graphql BoxItem": {"body": {"issue": {"description": description, "state": {"name": "Verifying", "type": "started"}}}},
+        });
+        std::fs::write(&replies, item.to_string()).unwrap();
+    };
+    plant(BRANCH_BOX_OPEN);
     runner.env = vec![
         (
             "OVERSEE_WATCH_TRACKER".to_owned(),
@@ -5152,7 +5157,7 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
     assert!(live(pid), "a refused close stops nothing");
     assert!(wt.exists(), "a refused close removes nothing");
 
-    std::fs::remove_file(&record).unwrap();
+    plant(POST_MERGE_ONLY);
     let answer = reply(&runner.op_fleet_in(&repo, &close, &worktree));
     let result = &answer["result"];
     assert_eq!(result["word"], "closed", "{answer}");
@@ -5163,7 +5168,21 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
         "gone",
         "the harness is stopped before the worktree's release: {answer}"
     );
+    assert!(record.exists(), "the open item's record stays");
+    let tracker = std::fs::read_to_string(runner.state_dir().join("linear.log")).unwrap();
+    assert!(
+        !tracker.lines().any(|l| l.starts_with("issues complete")),
+        "the post-merge box is left to the verification duty: {tracker}"
+    );
 }
+
+/// A merged item's Done-when with its branch-provable box ticked with its
+/// evidence and its post-merge box open: merge-pr's completion has run.
+const POST_MERGE_ONLY: &str = "## Done when\n- [x] branch proof\n  Evidence: branch tests\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: 2026-10-02T00:00:00Z";
+
+/// The same Done-when with its branch-provable box open, as a lane resumed
+/// on the merged item holds it.
+const BRANCH_BOX_OPEN: &str = "## Done when\n- [ ] branch proof\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: 2026-10-02T00:00:00Z";
 
 /// The value of the refusal's field `name`.
 fn refusal_field(answer: &Value, name: &str) -> Option<String> {

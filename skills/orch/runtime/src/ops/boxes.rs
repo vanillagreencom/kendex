@@ -228,14 +228,26 @@ enum Outcome {
     Unsettled(String),
 }
 
-fn settle(
-    settings: &Settings,
-    gh: &Path,
-    item: &str,
-    merged: &Merged<'_>,
-    cause: Cause,
-) -> Option<Outcome> {
-    let unsettled = |note: &str| Some(Outcome::Unsettled(note.to_owned()));
+/// The item as the completion reads it: the branch-provable boxes
+/// `issues complete` refuses on while they stand, and whether its state
+/// holds the lane's completion, Verifying or a completed type.
+struct ItemBoxes {
+    open: Vec<u64>,
+    completed: bool,
+}
+
+impl ItemBoxes {
+    /// Whether the lane's completion stands: nothing is left for the close
+    /// to complete, and only post-merge boxes, which the verification duty
+    /// reads, can stay open.
+    fn settled(&self) -> bool {
+        self.open.is_empty() && self.completed
+    }
+}
+
+/// `item`'s boxes read live; `Err` is the cause word of a read that did
+/// not answer (`item-unread`) or a checklist its parser refused.
+fn read_item(settings: &Settings, item: &str) -> std::result::Result<ItemBoxes, String> {
     let variables = serde_json::json!({ "id": item }).to_string();
     let read = [
         "graphql",
@@ -249,17 +261,41 @@ fn settle(
         Ok(_) | Err(_) => None,
     };
     let Some(Got { issue }) = got else {
-        return unsettled("boxes-unticked cause=item-unread");
+        return Err("item-unread".to_owned());
     };
     let description = issue.description.unwrap_or_default();
-    let open = match crate::watch::verifying::open_branch_boxes(settings, &description) {
-        Ok(open) => open,
+    let open = crate::watch::verifying::open_branch_boxes(settings, &description)
+        .map_err(str::to_owned)?;
+    Ok(ItemBoxes {
+        open,
+        completed: issue.state.name == "Verifying" || issue.state.kind == "completed",
+    })
+}
+
+/// Whether `item`'s lane completion stands on its tracker: its state
+/// Verifying or Done with no branch-provable box open, so a merged lane
+/// has no work left on it. `Err` is the cause word of a read that did not
+/// answer.
+pub fn lane_completed(settings: &Settings, item: &str) -> std::result::Result<bool, String> {
+    read_item(settings, item).map(|read| read.settled())
+}
+
+fn settle(
+    settings: &Settings,
+    gh: &Path,
+    item: &str,
+    merged: &Merged<'_>,
+    cause: Cause,
+) -> Option<Outcome> {
+    let unsettled = |note: &str| Some(Outcome::Unsettled(note.to_owned()));
+    let read = match read_item(settings, item) {
+        Ok(read) => read,
         Err(cause) => return unsettled(&format!("boxes-unticked cause={cause}")),
     };
-    let completed = issue.state.name == "Verifying" || issue.state.kind == "completed";
-    if open.is_empty() && completed {
+    if read.settled() {
         return None;
     }
+    let open = read.open;
     let path = format!("repos/{}/pulls/{}", merged.repo, merged.pr);
     let pull = match crate::watch::github::handle(gh).object::<Pull>(TAG, &path) {
         Ok(Some(pull)) => pull,
