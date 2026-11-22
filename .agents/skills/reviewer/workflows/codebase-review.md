@@ -1,24 +1,28 @@
 # Codebase Review Lifecycle
 
-Whole-codebase review for ad-hoc early-stage audits: no PR, no issue, no diff. You review and return a verdict; the orchestrator owns fanout, collection, and presentation.
+Whole-codebase review for ad-hoc early-stage audits: no PR, no issue, no diff.
 
 ## 1. Scope
 
-The delegation message provides `Worktree`, optional `Scope`, optional `Exclusions`. Default scope: all tracked, non-generated project code plus the tests, configs, and docs your domain needs — enumerated with `git -C [WORKTREE_PATH] ls-files`, never sampled or restricted to changed files. Default exclusions: harness mirrors (`.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `.cursor/`), vendor/dependency dirs, build outputs, generated artifacts, binaries, lockfiles.
+- The delegation message provides `Worktree`, optional `Scope`, optional `Exclusions`.
+- Default scope: all tracked, non-generated project code plus the tests, configs, and docs your domain needs.
+- Enumerate the scope with `git -C [WORKTREE_PATH] ls-files`.
+- Never sample it or restrict it to changed files.
+- Default exclusions: harness mirrors (`.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `.cursor/`), vendor/dependency dirs, build outputs, generated artifacts, binaries, lockfiles.
 
 If the scope is too large to review honestly within context/tool limits, return `action_required` with a blocker naming the coverage gap and the smallest useful split.
 
 ## 2. Review
 
-Review per your agent file and the reviewer skill's Ethos; read the relevant code before writing any finding — never from filenames or search hits alone. Report only what is actionable and material.
+- Review per your agent file and the reviewer skill's Ethos.
+- Read the relevant code before writing any finding, never from filenames or search hits alone.
+- Report only what is actionable and material.
 
 ## 3. Artifact, Validate, Return
 
-Write the JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md) to `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` (`mkdir -p [WORKTREE_PATH]/tmp` first if needed). Verdict: `action_required` when `blockers[]` is non-empty, else `pass`. Self-validate until `"ok": true` per the skill's § Output Contract:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime review-artifact --text check --file [ARTIFACT_PATH] --worktree [WORKTREE_PATH]
-```
+- Write the JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md) to `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json`.
+- Run `mkdir -p [WORKTREE_PATH]/tmp` first if needed.
+- Self-validate until `"ok": true` per the skill's § Output Contract.
 
 Send exactly one agent-to-agent message, then go idle:
 

@@ -1,16 +1,25 @@
 # Performance QA Reference
 
-Benchmark execution, regression classification, and recording rules for the performance QA agent. Loaded on demand from `workflows/qa-review.md` § 2. Thresholds and hot/cold-path definitions come from the project's docs.
+Read when the performance QA agent runs `workflows/qa-review.md` § 2. Thresholds and hot/cold-path definitions come from the project's docs.
 
 ## Regression Classification
 
-- When the project benchmarking skill's regression check exits non-zero, classify **every** regressed operation using that skill's rules. Populate `blockers[]` and `qa_metadata.perf_qa.regressions[]`.
+- When the project benchmarking skill's regression check exits non-zero, classify **every** regressed operation using that skill's rules.
+  - Populate `blockers[]` and `qa_metadata.perf_qa.regressions[]`.
 - If a targeted regression command reports numeric regressions but an aggregate validation command passes, classify and report the targeted regressions; the aggregate result is not a substitute.
 
 ## Benchmark Execution and Recording
 
-- Use the project benchmarking skill's direct runner or recorder commands only when documented as standalone commands. Follow [orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell) when capturing or recording benchmark output. If the only documented recording path requires shell plumbing, stop and report the harness gap. If manual entry is supported, pass data only via a documented direct argument or body-file option.
+- Use the project benchmarking skill's direct runner or recorder commands only when documented as standalone commands.
+- Follow [orch SKILL.md § Harness-Safe Shell](../../orch/SKILL.md#harness-safe-shell) when capturing or recording benchmark output.
+- If the only documented recording path requires shell plumbing, stop and report the harness gap.
+- If manual entry is supported, pass data only via a documented direct argument or body-file option.
 - A bare `cargo bench` is not a "full benchmark" run when the project's benchmarks require cargo features.
-- If the parser records zero results, stop and report the harness gap; do not count the run as coverage. Common causes: missing required features, parser prefix drift, tool output format changes.
-- If the benchmark recorder fails closed on all-zero counters, report a benchmark environment/tooling failure with command, commit, and error evidence; set `benchmark_commit` to `"none"`; never bypass with manual data.
+- If the parser records zero results, stop and report the harness gap.
+  - Do not count the run as coverage.
+  - Common causes: missing required features, parser prefix drift, tool output format changes.
+- If the benchmark recorder fails closed on all-zero counters:
+  - Report a benchmark environment/tooling failure with command, commit, and error evidence.
+  - Set `benchmark_commit` to `"none"`.
+  - Never bypass with manual data.
 - Record the worktree branch's latest commit SHA as `benchmark_commit`.

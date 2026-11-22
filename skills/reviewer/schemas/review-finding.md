@@ -1,8 +1,13 @@
 # Review Finding Schema
 
-Write and self-validate each review or QA artifact under [reviewer SKILL.md § Output Contract](../SKILL.md#output-contract). Use the path in [codebase-review.md § 3](../workflows/codebase-review.md#3-artifact-validate-return) for a codebase review.
+Read when writing a review or QA artifact.
 
-Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`. Store paths as an array without status prefixes; retain Git's quoted and rename spelling. Write these values unchanged in the completed artifact. A failed read is a review failure. The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`.
+- Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`.
+- Store paths as an array without status prefixes.
+- Retain Git's quoted and rename spelling.
+- Write these values unchanged in the completed artifact.
+- A failed read is a review failure.
+- The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`.
 
 ## Schema
 
@@ -59,10 +64,12 @@ Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PA
 
 ## Arrays
 
-- `blockers[]`: block PR merge — dev must fix (may escalate to issues if unfixable)
-- `suggestions[]`: non-blocking improvements, categorized by the review agent
-- `questions[]`: PR-comment triage only — questions needing a response
-- `tests[]`: optional; one entry per test the review judges, with `test`, a `verdict` of `keep`, `add` or `remove`, and for `keep` or `add` a non-blank `cost`, what each run of it costs. `orch-runtime review-artifact check` refuses any other verdict and a kept or added entry with no cost (`test_cost`); an artifact with no `tests[]` is not judged
+- `blockers[]`: block PR merge. The dev must fix them; they may escalate to issues if unfixable.
+- `suggestions[]`: non-blocking improvements, categorized by the review agent.
+- `questions[]`: PR-comment triage only, questions needing a response.
+- `tests[]`: optional; one entry per test the review judges, with `test`, a `verdict` of `keep`, `add` or `remove`, and for `keep` or `add` a non-blank `cost`, what each run of it costs.
+  - `orch-runtime review-artifact check` refuses any other verdict and a kept or added entry with no cost (`test_cost`).
+  - An artifact with no `tests[]` is not judged.
 
 ## Item Fields (blockers/suggestions)
 
@@ -71,16 +78,27 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 | Field | Required | Description |
 |-------|----------|-------------|
 | `id` | Yes | Sequential number within its array |
-| `title` | Yes | Concise title (5-10 words) — used if the item becomes a tracked issue |
-| `location` | Yes | One string: stable path plus symbol, no line numbers — line/hunk evidence belongs in `description` |
-| `owner` | No | One string in the `location` form naming the symbol that should hold the broken rule. Set it when another site can break that rule; omit it otherwise |
-| `description` | Yes | Problem statement. A finding in the classes [code-quality § Finding Evaluation](../../code-quality/SKILL.md#finding-evaluation) names ends it with that section's evaluation line |
+| `title` | Yes | Concise title (5-10 words), used if the item becomes a tracked issue |
+| `location` | Yes | One string: stable path plus symbol, no line numbers |
+| `owner` | No | One string in the `location` form naming the symbol that should hold the broken rule |
+| `description` | Yes | Problem statement |
 | `recommendation` | Yes | Actionable fix/improvement steps |
-| `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low). There is no P5 — a finding below P4 is not worth reporting |
+| `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low) |
 | `estimate` | Yes | 1-5 points, a relative size class from 1, smallest, through 5, largest ([project-management references/filing.md § Estimate](../../project-management/references/filing.md#estimate)) |
-| `category` | Suggestions only | `fix` (this PR's concern) or `issue` (track separately) — the orchestrator routes on this field; orch [review-pr.md § 4](../../orch/workflows/review-pr.md#4-handle-review-items) says what reaches a fix round |
+| `category` | Suggestions only | `fix` (this PR's concern) or `issue` (track separately) |
 
-`category: "issue"` items become tracked issue candidates: `description` 2-3 sentences, before any evaluation line; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. Apply [finding-disposition.md § Filing bar](../references/finding-disposition.md#filing-bar) to the impact.
+- Line or hunk evidence belongs in `description`.
+- Set `owner` when another site can break the rule it names; omit it otherwise.
+- A finding in the classes [code-quality § Finding Evaluation](../../code-quality/SKILL.md#finding-evaluation) names ends its `description` with that section's evaluation line.
+- There is no P5: a finding below P4 is not worth reporting.
+- The orchestrator routes on `category`; orch [review-pr.md § 4](../../orch/workflows/review-pr.md#4-handle-review-items) says what reaches a fix round.
+
+`category: "issue"` items become tracked issue candidates:
+
+- `description`: 2-3 sentences, before any evaluation line.
+- `recommendation`: bullet-list requirements.
+- `impact` (required): one line naming who hits this on what real path.
+- Apply [finding-disposition.md § Filing bar](../references/finding-disposition.md#filing-bar) to the impact.
 
 ## Question Fields (PR comment triage only)
 
@@ -96,13 +114,36 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 
 ## qa_metadata
 
-Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — `orch-runtime review-artifact check` rejects such artifacts (`no_review`) regardless of verdict.
+- Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none.
+- A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass.
+- `orch-runtime review-artifact check` rejects such artifacts (`no_review`) regardless of verdict.
+
+Example per-agent payloads:
+
+| Agent | qa_metadata key | Required fields |
+|-------|-----------------|-----------------|
+| safety audit | `safety` | `tool_results`, `unsafe_block_count`, `violations[]` |
+| performance QA | `perf_qa` | `percentiles`, `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
+| architecture review | `arch_review` | `dimension_scores`, `overall_score`, `pass` |
+
+In `perf_qa`, one of these stands in place of `percentiles`: `metric_kind: "instruction_count"` with `instruction_counts`, `metric_kind: "process_count"` with `process_counts`, or `metric_kind: "measure"` with `name`, `unit`, `values`, `samples`.
 
 ## Measurement Claims
 
-`.summary` and `.qa_metadata` state your OWN measurements; only those two are scanned. Copy each call's printed `mutation: … stability: …; seconds: …` line into `.summary`; the same numbers written only into a blocker or suggestion are not checked. `orch-runtime review-artifact check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT — the denominator, or the thread count — is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`. An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure. A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
+- `.summary` and `.qa_metadata` state your OWN measurements.
+- Only those two are scanned.
+- Copy each call's printed `mutation: … stability: …; seconds: …` line into `.summary`.
+- The same numbers written only into a blocker or suggestion are not checked.
+- `orch-runtime review-artifact check` rejects the artifact (`zero_sample`) when a mutation/stability citation's SAMPLE COUNT, the denominator or the thread count, is zero, or when `qa_metadata.perf_qa` carries no value above zero in its metric's evidence: `percentiles` for a latency metric (`metric_kind` absent or `"latency"`), `instruction_counts` for `"instruction_count"`, `process_counts` for `"process_count"`.
+- An instruction-count or process-count run measures no latency distribution: leave its `percentiles` empty and declare no failure.
+- A zero RESULT is not a zero sample: `stability: 0/10` is ten measured runs and stays valid.
 
-Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`, `values` (an object of numbers) and `samples` (how many samples produced them). It is refused when `name` or `unit` is missing or blank, `samples` is not above zero, or `values` holds no number; a zero value is a result and stays valid. Record it under its true name and unit, never outside `perf_qa` or as a failed measurement:
+Other figures:
+
+- Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`, `values` (an object of numbers) and `samples` (how many samples produced them).
+- It is refused when `name` or `unit` is missing or blank, `samples` is not above zero, or `values` holds no number.
+- A zero value is a result and stays valid.
+- Record it under its true name and unit, never outside `perf_qa` or as a failed measurement:
 
 ```json
 {"metric_kind": "measure", "name": "tui_emitted_bytes", "unit": "bytes/min",
@@ -114,21 +155,16 @@ Any other real figure is a `metric_kind: "measure"`: `name`, a free-text `unit`,
  "values": {"baseline": 412.7, "changed": 398.1}, "samples": 10000}
 ```
 
-Numbers you are QUOTING — a fixture, a log line, another tool's zeroed run — belong in the `blockers[]`/`suggestions[]` item they are evidence for; those arrays are never scanned.
+Numbers you are QUOTING, such as a fixture, a log line or another tool's zeroed run, belong in the `blockers[]`/`suggestions[]` item they are evidence for; those arrays are never scanned.
 
-When your own instrument yields zero samples or its measuring pipeline exits nonzero, keep the failure evidence and set the **top-level** `measurement_failed` to a string naming the instrument and what it did. Omit measurement numbers for that failed run:
+- When your own instrument yields zero samples or its measuring pipeline exits nonzero, keep the failure evidence and set the **top-level** `measurement_failed` to a string naming the instrument and what it did.
+- Omit measurement numbers for that failed run:
 
 ```json
 {"agent": "reviewer-test", "verdict": "action_required",
  "measurement_failed": "cargo-mutants selected 0 mutants for the changed file"}
 ```
 
-It must be substantive: at least 20 characters and 3 words, and never a null token (`n/a`, `none`, `unknown`, ...) or bare punctuation — those are rejected as `invalid_declaration`. The declaration replaces the gate for that artifact, turns the check's reason into `valid_undermeasured`, and is echoed back on the result. Omitting the numbers is never the way past this gate.
-
-Example per-agent payloads:
-
-| Agent | qa_metadata key | Required fields |
-|-------|-----------------|-----------------|
-| safety audit | `safety` | `tool_results`, `unsafe_block_count`, `violations[]` |
-| performance QA | `perf_qa` | `percentiles` (or `metric_kind: "instruction_count"` with `instruction_counts`, or `metric_kind: "process_count"` with `process_counts`, or `metric_kind: "measure"` with `name`, `unit`, `values`, `samples`), `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
-| architecture review | `arch_review` | `dimension_scores`, `overall_score`, `pass` |
+- `measurement_failed` must be substantive: at least 20 characters and 3 words, and never a null token (`n/a`, `none`, `unknown`, ...) or bare punctuation. The check rejects those as `invalid_declaration`.
+- The declaration replaces the gate for that artifact, turns the check's reason into `valid_undermeasured`, and is echoed back on the result.
+- Omitting the numbers is never the way past this gate.

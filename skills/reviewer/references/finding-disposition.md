@@ -2,56 +2,149 @@
 
 Read before classifying a review finding.
 
-How a review finding is dispositioned: applied in this PR, filed as a tracked issue, or declined. Bias toward reliability when uncertain.
+How a review finding is dispositioned: applied in this PR, filed as a tracked issue, or declined.
 
-**Verification prerequisite.** Before classifying anything as noise, stale, or not actionable, read the files it references. A comment is stale only when the code proves it so. No file read, no dismissal.
+**Verification prerequisite.**
 
-**Class before instance.** A finding is classified by its class first: the rule the code broke. An instance of a class an earlier finding in the same change named joins that finding: one finding reports the class, lists every site, and takes the higher tier of its instances. A fix round that fixes an instance and leaves the class is a blocker.
+- Before classifying anything as noise, stale, or not actionable, read the files it references.
+- A comment is stale only when the code proves it so.
+- No file read, no dismissal.
+
+**Class before instance.**
+
+- A finding is classified by its class first: the rule the code broke.
+- An instance of a class an earlier finding in the same change named joins that finding: one finding reports the class, lists every site, and takes the higher tier of its instances.
+- A fix round that fixes an instance and leaves the class is a blocker.
 
 ## Decision flow
 
 One pass, in order. The first verdict stands.
 
-0. **Is it one of the excluded classes?** → `decline` naming the class and the fact that puts the finding in it, before the claim's truth is examined and whatever this diff introduced or armed. The classes: a race that no run has produced; a failure that two or more named runs have produced is not excluded by this race class and goes to Step 1, whatever process pair races; a crash between two writes; an input no shipped producer emits; a finding whose premise is a lexical shape, the characters a word or token scanner matches rather than the behavior it gates, which is declined and never patched however the input reached the scanner, but a guard, hook or gate that refuses a real command or input a shipped producer emits is outside this lexical-shape class and is judged on that refusal; a finding that is hypothetical and low severity, no run having produced it and the harm if one did being minor, which is declined here and so is not fixed either, not merely kept off the filing bar; a mechanism needing a second writer who already holds the user's privileges (retargeting a link between the check and the use, swapping an ancestor mid-apply), since that writer reaches the same end directly and the finding names no capability it lacked. Two exceptions to the other classes go to Step 1: a security, data-loss or data-corruption defect a shipped path reaches, and a fail-open defect in gate, guard or CI code. Who raised a finding never changes this step: an external reviewer's thread proposing a mechanism for an input no shipped producer emits takes the same decline as an internal finding, and the reply names the input and the absence of a producer for it.
+0. **Is it one of the excluded classes?** → `decline` naming the class and the fact that puts the finding in it, before the claim's truth is examined and whatever this diff introduced or armed. The classes:
+   - a race that no run has produced. A failure that two or more named runs have produced is not excluded by this race class and goes to Step 1, whatever process pair races;
+   - a crash between two writes;
+   - an input no shipped producer emits;
+   - a finding whose premise is a lexical shape, the characters a word or token scanner matches rather than the behavior it gates. It is declined and never patched, however the input reached the scanner. A guard, hook or gate that refuses a real command or input a shipped producer emits is outside this lexical-shape class and is judged on that refusal;
+   - a finding that is hypothetical and low severity, no run having produced it and the harm if one did being minor. It is declined here, and so is not fixed either, not merely kept off the filing bar;
+   - a mechanism needing a second writer who already holds the user's privileges (retargeting a link between the check and the use, swapping an ancestor mid-apply), since that writer reaches the same end directly and the finding names no capability it lacked.
+
+   Two exceptions to the other classes go to Step 1:
+
+   - a security, data-loss or data-corruption defect a shipped path reaches;
+   - a fail-open defect in gate, guard or CI code.
+
+   Who raises a finding:
+
+   - Who raised a finding never changes this step.
+   - An external reviewer's thread proposing a mechanism for an input no shipped producer emits takes the same decline as an internal finding.
+   - The reply names the input and the absence of a producer for it.
+
 1. **Does it claim a defect** (a failing state, broken path, wrong output)? Verify the mechanism yourself:
    - **Establish age.** Before deciding to fix a finding in a file the branch did not create, use `git blame` only to establish the age of the finding's lines and inspect the current diff to decide whether the branch arms the defect.
-   - **False** → `decline`, naming the passing state or the false premise. Scope, age, and "pre-existing" never answer a defect claim.
-   - **True, and this diff introduces or arms it** → is the defective code required by the issue's Done-when? Not required (the Done-when holds without it) → `fix` by deleting that code, never by hardening it and never by a second mechanism guarding the first; when a prior fix round added the code, revert that addition instead of patching it; the reply is the deleting sha. Required → `fix` in place, in scope by definition. Pre-existing caps, thresholds, or code the diff newly composes into a failing path count as armed.
-   - **True, pre-existing, unarmed by this diff** → `issue` if it clears the filing bar below (create it first, reply `Tracked: <ID>`), else `decline` naming the bar it misses; `fix` here only when it blocks this change from working.
-2. **Actionable?** It needs a specific deliverable, an observable impact, and bounded scope. Vague items ("add logging", "consider X") and informational notes are omitted. Automated regression detection is never informational.
-3. Doc or reference updates for code this diff changes are work the Done-when needs → `fix`. A review with no work item (`review.md` run without an issue ID) takes the reviewed change as its Done-when. **Does the Done-when need this work?** If not → `issue` where it clears § Filing bar, else `decline` with its reason. If yes, test relatedness by the problem or the change, not file membership. Unrelated → `issue` where it clears § Filing bar, else `decline` with its reason.
-4. **Size?** Only work the Done-when needs can be `fix` here. Small enough to apply here → `fix`. Needs delegation, tracking, history, or new files → `issue` where it clears § Filing bar, else `decline` with its reason.
+   - **False** → `decline`, naming the passing state or the false premise.
+     - Scope, age, and "pre-existing" never answer a defect claim.
+   - **True, and this diff introduces or arms it** → is the defective code required by the issue's Done-when?
+     - Not required (the Done-when holds without it) → `fix` by deleting that code, never by hardening it and never by a second mechanism guarding the first.
+       - When a prior fix round added the code, revert that addition instead of patching it.
+       - The reply is the deleting sha.
+     - Required → `fix` in place, in scope by definition.
+     - Pre-existing caps, thresholds, or code the diff newly composes into a failing path count as armed.
+   - **True, pre-existing, unarmed by this diff** → `issue` if it clears the filing bar below (create it first, reply `Tracked: <ID>`), else `decline` naming the bar it misses.
+     - `fix` here only when it blocks this change from working.
+2. **Actionable?**
+   - It needs a specific deliverable, an observable impact, and bounded scope.
+   - Vague items ("add logging", "consider X") and informational notes are omitted.
+   - Automated regression detection is never informational.
+3. **Done-when.**
+   - Doc or reference updates for code this diff changes are work the Done-when needs → `fix`.
+   - A review with no work item (`review.md` run without an issue ID) takes the reviewed change as its Done-when.
+   - **Does the Done-when need this work?**
+     - If not → `issue` where it clears § Filing bar, else `decline` with its reason.
+     - If yes, test relatedness by the problem or the change, not file membership.
+     - Unrelated → `issue` where it clears § Filing bar, else `decline` with its reason.
+4. **Size?**
+   - Only work the Done-when needs can be `fix` here.
+   - Small enough to apply here → `fix`.
+   - Needs delegation, tracking, history, or new files → `issue` where it clears § Filing bar, else `decline` with its reason.
 
-A reviewer or the orchestrator can choose a cut when it serves the Done-when. Record that choice with `orch-runtime round --text stamp --cut`; [dev-round.md § Declared cuts](../../orch/schemas/dev-round.md#declared-cuts) owns its acceptance rule. Close each thread on cut code with the deleting sha.
+Cuts:
 
-Round cap: `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4) bounds the external review rounds on an open PR, counted in `pr_comment_review.iterations`. Past it every finding gets a disposition — `Declined: <reason>` or `Tracked: <ID>` — and no fix push. The filing bar below decides which of the two, exactly as it does under the cap: a finding that misses the bar is declined at the cap as well. One exception: a defect this diff itself introduces or arms, and Step 0 does not exclude, is fixed whatever the round count. Step 1's other `fix` verdict — a pre-existing defect that blocks this change from working — is a fix below the cap and a disposition above it, like anything else.
+- A reviewer or the orchestrator can choose a cut when it serves the Done-when.
+- Record that choice with `orch-runtime round --text stamp --cut`.
+- [dev-round.md § Declared cuts](../../orch/schemas/dev-round.md#declared-cuts) owns the cut's acceptance rule.
+- Close each thread on cut code with the deleting sha.
 
-Uncertain about category, prefer `fix` only for related work the Done-when needs; otherwise prefer `issue` where it clears § Filing bar, else `decline` with its reason. Uncertain about relevance, apply the same filing bar. A finding that lives in a PR review thread ends as exactly one reply — `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>`; local and pre-PR reviews record the same verdicts in the review artifact instead. A finding in a review body has no thread: answer it in a pull-request comment opening `Dispositions at <sha>`, bound to the current head. Each line opens with the finding's `file:line` token, or `review:<ID>` for a Copilot overview verdict that recommends changes, where `<ID>` is the REST review id, followed by the same reply. GitHub owns the live reply API: `github.sh post-reply` and `github.sh post-comment`. Its read-only `github.sh check-review-replies` checks the current replies and body dispositions. `check-review-replies --help` owns this grammar. `<reason>` states the mechanism the decline disproves, in one of three forms: the passing state, the false premise the finding rests on, or the Step 0 class the finding falls in, named with the fact that puts it in that class rather than the class alone, which would be a label. A label is not a reason — `frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately` — and neither is a test count, since a passing suite says nothing about a path no test runs.
+Round cap:
+
+- `REVIEW_MAX_EXTERNAL_ROUNDS` (default 4) bounds the external review rounds on an open PR, counted in `pr_comment_review.iterations`.
+- Past it every finding gets a disposition, `Declined: <reason>` or `Tracked: <ID>`, and no fix push.
+- The filing bar below decides which of the two, exactly as it does under the cap: a finding that misses the bar is declined at the cap as well.
+- One exception: a defect this diff itself introduces or arms, and Step 0 does not exclude, is fixed whatever the round count.
+- Step 1's other `fix` verdict, a pre-existing defect that blocks this change from working, is a fix below the cap and a disposition above it, like anything else.
+
+Uncertainty and replies:
+
+- Uncertain about category, prefer `fix` only for related work the Done-when needs; otherwise prefer `issue` where it clears § Filing bar, else `decline` with its reason.
+- Uncertain about relevance, apply the same filing bar.
+- A finding that lives in a PR review thread ends as exactly one reply: `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>`.
+- Local and pre-PR reviews record the same verdicts in the review artifact instead.
+- A finding in a review body has no thread: answer it in a pull-request comment opening `Dispositions at <sha>`, bound to the current head.
+- Each line opens with the finding's `file:line` token, or `review:<ID>` for a Copilot overview verdict that recommends changes, where `<ID>` is the REST review id, followed by the same reply.
+- GitHub owns the live reply API: `github.sh post-reply` and `github.sh post-comment`.
+- GitHub's read-only `github.sh check-review-replies` checks the current replies and body dispositions.
+- `check-review-replies --help` owns the grammar of the replies and the body-disposition lines.
+- `<reason>` states the mechanism the decline disproves, in one of three forms: the passing state, the false premise the finding rests on, or the Step 0 class the finding falls in, named with the fact that puts it in that class rather than the class alone, which would be a label.
+- A label is not a reason (`frozen`, `at the cap`, `out of scope`, `pre-existing`, `flagged separately`), and neither is a test count, since a passing suite says nothing about a path no test runs.
 
 | Signal | Category |
 |--------|----------|
 | Small, quick to apply | `fix` |
 | Doc or reference updates for changed code | `fix`, always, regardless of size |
-| Test protection added to an existing test | `fix` when the protection justifies its cost under code-quality § Tests; otherwise `decline` |
-| Test protection needing a new file, suite, or scenarios | `issue` when a named reachable failure needs protection that justifies its cost under code-quality § Tests and clears § Filing bar; otherwise `decline` |
 | A test with no protection | `fix` suggestion to remove it |
 | Weak evidence where protection matters | Repair the needed evidence under code-quality § Tests |
 | Protection a cheaper form keeps, such as injected time or a read of published state in place of a real-clock wait or a real device effect | `fix` suggestion naming that form |
-| An omitted test the pull request body justifies | Accept the omission; `decline` a request that the judgement already answers |
 | Performance fix inside touched code | `fix` |
 | Performance work needing benchmarks | `issue` |
 | Architectural or cross-component change | `issue` |
 | Error-handling gaps | `issue` |
-| Security vulnerability | `fix` if quick, else `issue` — never skipped |
-| Data validation gaps | `fix` if quick, else `issue` |
-| A finding about wording, naming or an index that claims no defect, in any tier | `decline`, replying `Declined:` with what the current text already states; it never starts a fix push. A fix that rides a push another finding starts replies `Fixed in <sha>` instead. Text that changed code left stale takes the doc-update row above |
-| A finding sharing a root cause with one a prior round patched, at any site (a drifting claim, a re-derived enumeration, a second copy) | § Recurrence, which allows `structural-close` or `freeze` and no further patch |
+
+Signals with conditions:
+
+- Test protection added to an existing test: `fix` when the protection justifies its cost under code-quality § Tests; otherwise `decline`.
+- Test protection needing a new file, suite, or scenarios: `issue` when a named reachable failure needs protection that justifies its cost under code-quality § Tests and clears § Filing bar; otherwise `decline`.
+- An omitted test the pull request body justifies: accept the omission, and `decline` a request that the judgement already answers.
+- Security vulnerability: `fix` if quick, else `issue`, never skipped.
+- Data validation gaps: `fix` if quick, else `issue`.
+- A finding about wording, naming or an index that claims no defect, in any tier: `decline`, replying `Declined:` with what the current text already states.
+  - It never starts a fix push.
+  - A fix that rides a push another finding starts replies `Fixed in <sha>` instead.
+  - Text that changed code left stale takes the doc-update row above.
+- A finding sharing a root cause with one a prior round patched, at any site (a drifting claim, a re-derived enumeration, a second copy): § Recurrence, which allows `structural-close` or `freeze` and no further patch.
 
 ## Recurrence
 
-**Checked before every round's dispositions, ahead of any round cap and behind Step 0**, a class the project excludes being no cause worth closing structurally. A finding sharing a root cause with one a prior round fixed, the record `patched_causes` keeps, ends the patch sequence for that cause, at whatever site it appears. A recorded `cause` names the rule every site of the defect class breaks, never the site or the element; a later finding that breaks that rule at another element shares that cause. A cause `patched_causes` does not name was never patched, and stays with the decision flow: a decline or a filing is not a fix. Two dispositions remain and neither is another patch: `structural-close`, which makes the class unrepresentable, where cutting surface the Done-when does not require counts as the close; or `freeze`, which lands the narrow symptom fix already made and replies `Tracked: <ID>` against a class issue created first. A close gives one owner to the invariant that keeps the class unreachable today. `freeze` is available in the comment loop where a thread reply or a counted, head-bound review-body disposition comment can name a class issue filed first, and only for a cause this diff neither introduces nor arms. That class issue is review-born, so it exists only where it clears the filing bar; a cause whose class misses the bar takes `structural-close`, or `decline` naming the bar the class misses, and never a class issue filed to make the reply legal. An introduced or armed cause takes `structural-close`. A cause the pre-PR loop meets that this diff neither introduces nor arms takes neither disposition, that loop having no PR reply path: it rides to that workflow's issue audit as an escalated item. A close needing adoption per surface is not structural, and new sites that keep qualifying for it are recurrence taking whichever branch this diff's authorship leaves open. Once a cause is frozen its class issue is filed once: every later finding on that cause is `decline`d with its reason, never a second filing.
+**Checked before every round's dispositions, ahead of any round cap and behind Step 0**, a class the project excludes being no cause worth closing structurally.
 
-A finding at a location `patched_causes` records, or sharing an `owner` with a recorded entry at any site, is a recurrence candidate. A `structural-close` fixes the rule at that owner, which the item's `Owner:` line names.
+- A finding sharing a root cause with one a prior round fixed, the record `patched_causes` keeps, ends the patch sequence for that cause, at whatever site it appears.
+- A recorded `cause` names the rule every site of the defect class breaks, never the site or the element.
+- A later finding that breaks that rule at another element shares that cause.
+- A cause `patched_causes` does not name was never patched, and stays with the decision flow: a decline or a filing is not a fix.
+- Two dispositions remain and neither is another patch:
+  - `structural-close`, which makes the class unrepresentable, where cutting surface the Done-when does not require counts as the close;
+  - `freeze`, which lands the narrow symptom fix already made and replies `Tracked: <ID>` against a class issue created first.
+- A close gives one owner to the invariant that keeps the class unreachable today.
+- `freeze` is available in the comment loop where a thread reply or a counted, head-bound review-body disposition comment can name a class issue filed first, and only for a cause this diff neither introduces nor arms.
+- That class issue is review-born, so it exists only where it clears the filing bar.
+- A cause whose class misses the bar takes `structural-close`, or `decline` naming the bar the class misses, and never a class issue filed to make the reply legal.
+- An introduced or armed cause takes `structural-close`.
+- A cause the pre-PR loop meets that this diff neither introduces nor arms takes neither disposition, that loop having no PR reply path: it rides to that workflow's issue audit as an escalated item.
+- A close needing adoption per surface is not structural, and new sites that keep qualifying for it are recurrence taking whichever branch this diff's authorship leaves open.
+- Once a cause is frozen its class issue is filed once: every later finding on that cause is `decline`d with its reason, never a second filing.
+
+Recurrence candidates:
+
+- A finding at a location `patched_causes` records, or sharing an `owner` with a recorded entry at any site, is a recurrence candidate.
+- A `structural-close` fixes the rule at that owner, which the item's `Owner:` line names.
 
 Every loop that dispositions findings reads both records before its first disposition, with this command and no restatement of it:
 
@@ -61,35 +154,75 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
 ## Filing bar
 
-Before filing, read every open pull request that touches the same file, treat matching work as a duplicate while its pull request remains open, and cancel an existing issue as superseded only after the pull request that deletes its surface reaches the default branch.
+Before filing:
 
-An `issue` signal is necessary but not sufficient. Every candidate carries its schema `impact` line — who hits this, on what real path; an impact that needs "could", "might", or "in theory" is a decline. File only for:
+- Read every open pull request that touches the same file.
+- Treat matching work as a duplicate while its pull request remains open.
+- Cancel an existing issue as superseded only after the pull request that deletes its surface reaches the default branch.
 
-- **Behavioral defects outside this PR's scope** — wrong behavior a user or caller can hit.
-- **est≥2 refactors** — restructuring too large to absorb here that unblocks or protects user-visible work.
-- **Decision revisits** — a recorded decision the finding argues should change.
-- **Unexplained anomalies with evidence** — observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
+An `issue` candidate:
 
-A review-born finding clears the bar only where what reaches it is a user or a shipped run, and files at priority 2 carrying the symptom that showed it (project-management references/filing.md § Name what reaches it, which every filing goes through). Below that, a pre-existing defect this diff neither introduces nor arms is declined with its reason; a review-born P3 does not file. Step 1 keeps its exception for a defect that blocks this change from working.
+- An `issue` signal is necessary but not sufficient.
+- Every candidate carries its schema `impact` line: who hits this, on what real path.
+- An impact that needs "could", "might", or "in theory" is a decline.
 
-Never for a finding that asks for a product decision the issue does not carry — a new command, a parity feature, a behavior nobody specified: that is declined. A product question that does reach the user is one [communication-modes.md](../../orch/references/communication-modes.md) § Ask set names, asked through that section's wording route and nowhere else. Every candidate runs through Step 0 before the bar judges it, whichever door it arrived by — a `category: "issue"` suggestion, an item escalated at a cap, a Discovered Work or deliberately-left-out bullet from a dev return — and one Step 0 excludes is declined there. Step 0 is the only place the classes are written.
+File only for:
 
-A finding that does reach a fix round names, per delegated item, the shipped producer, user action, or fixture that reaches it — the `reach` field of [`../schemas/dev-round.md`](../../orch/schemas/dev-round.md). Step 0 runs first, and a reach never overrides it; a class Step 0 excludes is declined whether or not the finding can name one.
+- **Behavioral defects outside this PR's scope**: wrong behavior a user or caller can hit.
+- **est≥2 refactors**: restructuring too large to absorb here that unblocks or protects user-visible work.
+- **Decision revisits**: a recorded decision the finding argues should change.
+- **Unexplained anomalies with evidence**: observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
 
-A recurring finding class the diff introduces or arms never files: § Recurrence closes its generator in this PR. A recurring class the diff neither introduces nor arms files once where it clears this bar — as the class issue a `freeze` reply names (§ Recurrence says what a `freeze` becomes when it does not), or through the pre-PR loop's issue audit.
+Review-born findings:
 
-The audit pipeline applies [project-management's creation bar](../../project-management/references/filing.md#creation-bar) to what reaches it, which is what Step 0 and this bar have already passed; a candidate Step 0 or this bar refused is never filed on that bar's say-so.
+- A review-born finding clears the bar only where what reaches it is a user or a shipped run.
+- It files at priority 2 carrying the symptom that showed it (project-management references/filing.md § Name what reaches it, which every filing goes through).
+- Below that, a pre-existing defect this diff neither introduces nor arms is declined with its reason.
+- A review-born P3 does not file.
+- Step 1 keeps its exception for a defect that blocks this change from working.
 
-Everything else follows the Done-when test in Steps 3 and 4. P4 polish never files: absorb it only when it is est-1, related, and work the Done-when needs; otherwise decline it with its reason. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?"), which [communication-modes.md](../../orch/references/communication-modes.md) § Ask set keeps out of the set whatever the mode.
+Never for a finding that asks for a product decision the issue does not carry, such as a new command, a parity feature or a behavior nobody specified: that is declined.
 
-Residue files in the project its surface routes to, with a `related` relation to an open issue on the same surface where one exists. It becomes a child only of a parent whose one deliverable it is a part of, per [project-management's grouping rule](../../project-management/references/filing.md#group-by-project-or-label-never-by-parent).
+- A product question that does reach the user is one [communication-modes.md](../../orch/references/communication-modes.md) § Ask set names, asked through that section's wording route and nowhere else.
+
+Step 0 first:
+
+- Every candidate runs through Step 0 before the bar judges it, whichever door it arrived by: a `category: "issue"` suggestion, an item escalated at a cap, a Discovered Work or deliberately-left-out bullet from a dev return.
+- A candidate Step 0 excludes is declined there.
+- Step 0 is the only place the classes are written.
+
+Fix-round reach:
+
+- A finding that does reach a fix round names, per delegated item, the shipped producer, user action, or fixture that reaches it: the `reach` field of [`../schemas/dev-round.md`](../../orch/schemas/dev-round.md).
+- Step 0 runs first, and a reach never overrides it.
+- A class Step 0 excludes is declined whether or not the finding can name one.
+
+Recurring finding classes:
+
+- A recurring finding class the diff introduces or arms never files: § Recurrence closes its generator in this PR.
+- A recurring class the diff neither introduces nor arms files once where it clears this bar, as the class issue a `freeze` reply names (§ Recurrence says what a `freeze` becomes when it does not), or through the pre-PR loop's issue audit.
+
+The creation bar:
+
+- The audit pipeline applies [project-management's creation bar](../../project-management/references/filing.md#creation-bar) to what reaches it, which is what Step 0 and this bar have already passed.
+- A candidate Step 0 or this bar refused is never filed on that bar's say-so.
+
+Everything else follows the Done-when test in Steps 3 and 4.
+
+- P4 polish never files: absorb it only when it is est-1, related, and work the Done-when needs; otherwise decline it with its reason.
+- A finding that cannot affect real usage is declined with a one-line reason, neither fixed nor filed.
+- A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?"), which [communication-modes.md](../../orch/references/communication-modes.md) § Ask set keeps out of the set whatever the mode.
+
+Residue placement:
+
+- Residue files in the project its surface routes to, with a `related` relation to an open issue on the same surface where one exists.
+- Residue becomes a child only of a parent whose one deliverable it is a part of, per [project-management's grouping rule](../../project-management/references/filing.md#group-by-project-or-label-never-by-parent).
 
 ## Review pipeline
 
 Use the [finding schema](../schemas/review-finding.md) and [decision flow](#decision-flow).
 
-**Issue audit pipeline.** Collect every follow-up that clears the filing bar (`category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, gaps noticed) into audit input (schema in `project-management/schemas/`), with dependency fields populated when order is known. Apply [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination) before issue creation or the TPM audit.
+**Issue audit pipeline.**
 
-## Priority
-
-Use the [finding schema's `priority` field](../schemas/review-finding.md#item-fields-blockerssuggestions).
+- Collect every follow-up that clears the filing bar (`category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, gaps noticed) into audit input (schema in `project-management/schemas/`), with dependency fields populated when order is known.
+- Apply [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination) before issue creation or the TPM audit.

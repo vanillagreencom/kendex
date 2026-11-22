@@ -1,6 +1,6 @@
 # Code Review Lifecycle
 
-Review agents run in parallel, each reviewing the same changes from their own domain. You review and return a verdict; the orchestrator owns tracker state, fix routing, and presentation.
+Review agents run in parallel, each reviewing the same changes from their own domain.
 
 ## 1. Diff
 
@@ -23,15 +23,18 @@ Either case beside a re-review block declares the pass unscoped: open § 3's art
 
 ## 2. Review
 
-Review the changed code and directly affected call paths per your agent file and the reviewer skill's Ethos, reading from the worktree as needed (a deleted path is inspected via the diff or git history; research documents are excluded). Findings respect the delegation's listed decisions, each read in full with its status; one marked superseded binds only what its status leaves active, and a retired one binds nothing. If a listed decision file does not exist, do not hunt for it; note the broken reference in your report and review without it.
-
-Mutation-validating a test as evidence commits you to the skill's Mutation-Stability Pairing.
-
-**Re-review round?** Apply the skill's Re-Review Rounds rule.
+- Review the changed code and directly affected call paths per your agent file and the reviewer skill's Ethos.
+- Read from the worktree as needed.
+- Inspect a deleted path through the diff or git history.
+- Exclude research documents from what you read.
+- Findings respect the delegation's listed decisions, each read in full with its status.
+- A decision marked superseded binds only what its status leaves active, and a retired one binds nothing.
+- If a listed decision file does not exist, do not hunt for it.
+- Note the broken reference in your report and review without it.
 
 ## 3. Artifact, Validate, Return
 
-Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `orch-runtime review-artifact check` the pre-return check. Verdict: `action_required` when `blockers[]` is non-empty, else `pass`.
+Write and self-validate per the skill's § Output Contract: [`../schemas/review-finding.md`](../schemas/review-finding.md) is the field authority and `orch-runtime review-artifact check` the pre-return check.
 
 Send exactly one agent-to-agent message, then go idle:
 
