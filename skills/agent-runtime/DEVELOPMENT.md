@@ -38,4 +38,6 @@ cargo clippy --all-targets -- -D warnings
 
 ## Effect boundary
 
-`clippy.toml` lists the acting primitives as `disallowed-methods`. A call of one outside `effects` needs `#[allow(clippy::disallowed_methods, reason = "...")]` on the module, function, trait impl's method or test module that makes it. Review reads those attributes as the inventory.
+`clippy.toml` lists this crate's own acting functions as `disallowed-methods`. A call of one outside `effects` needs `#[allow(clippy::disallowed_methods, reason = "...")]` on the module, function, trait impl's method or test module that makes it. Review reads those attributes as the inventory.
+
+The list names no `std::process` call, so clippy passes a raw `std::process::Command` outside `effects`. Review catches that call, not clippy.
