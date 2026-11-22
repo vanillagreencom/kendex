@@ -41,13 +41,24 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 | Field | Required | Description |
 |-------|----------|-------------|
 | `feature` | Yes | Feature name from the command |
-| `research_path` | No | Repository reference, null when research was skipped. When the input is a SPEC this is the spec reference |
-| `research_read_path` | When `research_path` is set | Readable file in the delegated checkout, resolved by the caller under [planning-artifacts.md](../references/planning-artifacts.md); null when research was skipped |
-| `research_source_issue` | No | Issue holding the research/spec attachment; null for an unpublished local input |
-| `spec_path` | No | Set exactly when the artifact in hand — the `@[path]` input or the roadmap-plan § 1 disk match — classified as a finished, reviewed plan (roadmap-plan § Inputs): its approach and workstreams are binding on the TPM. Null otherwise |
-| `origin_issue` | No | The issue that triggered this roadmap — context for the hierarchy decision, not a directive |
-| `planner_handoff` | No | Technical context from a scout → planner chain. Informs placement, grouping, and ordering; bypasses no gate, approval, or creation step |
+| `research_path` | No | Repository reference of the research input |
+| `research_read_path` | When `research_path` is set | Readable file in the delegated checkout |
+| `research_source_issue` | No | Issue holding the research/spec attachment |
+| `spec_path` | No | Reference of a finished, reviewed plan |
+| `origin_issue` | No | The issue that triggered this roadmap |
+| `planner_handoff` | No | Technical context from a scout → planner chain |
 | `proposed_issues[]` | Yes | Issues collected from the specialist agents |
+
+- `research_path`: null when research was skipped. When the input is a SPEC this is the spec reference.
+- `research_read_path`: resolved by the caller under [planning-artifacts.md](../references/planning-artifacts.md). Null when research was skipped.
+- `research_source_issue`: null for an unpublished local input.
+- `spec_path`:
+  - Set exactly when the artifact in hand — the `@[path]` input or the roadmap-plan § 1 disk match — classified as a finished, reviewed plan (roadmap-plan § Inputs). Null otherwise.
+  - Its approach and workstreams are binding on the TPM.
+- `origin_issue`: context for the hierarchy decision, not a directive.
+- `planner_handoff`:
+  - Informs placement, grouping, and ordering.
+  - Bypasses no gate, approval, or creation step.
 
 ### Proposed Issue Fields
 
@@ -56,11 +67,13 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 | `title` | Yes | `Verb: outcome` |
 | `estimate` | Yes | 1-5 points per PR unit |
 | `agent` | Yes | Source agent type |
-| `labels` | No | Full issue-label set when the specialist knows the taxonomy; completed and validated before creation either way |
+| `labels` | No | Full issue-label set when the specialist knows the taxonomy |
 | `depends_on_proposed` | No | Title references to other proposed issues |
 | `depends_on_existing` | No | Existing issue IDs |
 | `conflicts_with` | No | Existing code or patterns this replaces |
 | `breaking_changes` | No | APIs or contracts affected |
 | `doc_updates` | No | Files needing documentation updates |
+
+`labels` is completed and validated before creation either way.
 
 Each row of a specialist's response table maps to one entry: Title, Estimate, the source agent, Labels, "Depends on (proposed)", "Depends on (existing)", "Conflicts with", "Breaking changes", and "Skills/docs updates" → `doc_updates`.

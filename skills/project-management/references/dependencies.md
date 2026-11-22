@@ -2,7 +2,10 @@
 
 ## Blocking Relations
 
-A `blocks`/`blocked-by` relation records a real dependency between two issues. Record it directly whatever projects the two issues sit in. Use `related` only for an informational link with no dependency.
+A `blocks`/`blocked-by` relation records a real dependency between two issues.
+
+- Record it directly whatever projects the two issues sit in.
+- Use `related` only for an informational link with no dependency.
 
 **Never derive a project relation from issue relations.** Project `blocked-by` comes from project-order scope analysis (`tpm-audit` project-order mode), not bottom-up from one or two issue crossings.
 
@@ -16,7 +19,11 @@ A `blocks`/`blocked-by` relation records a real dependency between two issues. R
 
 Select each relation under linear SKILL.md § Blocked Label vs Issue Relations.
 
-When an audit finds a relation at the wrong level, **lift it, never delete it**: add the parent-level relation, remove the child-level one with `issues remove-relation --peer-rule-violation` (linear SKILL.md § Blocked Label vs Issue Relations), and add `related` between the original children.
+When an audit finds a relation at the wrong level, **lift it, never delete it**:
+
+1. Add the parent-level relation.
+2. Remove the child-level one with `issues remove-relation --peer-rule-violation` (linear SKILL.md § Blocked Label vs Issue Relations).
+3. Add `related` between the original children.
 
 The Linear CLI enforces that rule at mutation time.
 
@@ -24,17 +31,25 @@ The Linear CLI enforces that rule at mutation time.
 
 A blocking relation pointing at a Done or Canceled issue is **auto-satisfied**: the relation stays as provenance.
 
-- Never remove or "fix" a relation whose blocker is Done/Canceled, except by the § Level lift, and never list one under a stale-metadata heading.
+- Never remove or "fix" a relation whose blocker is Done/Canceled, except by the § Level lift.
+- Never list such a relation under a stale-metadata heading.
 - The only legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` where the audit reports findings per project, or "gates cleared, ready to schedule" in the issue's `reason` where it reports per issue.
 
 ### Reading a Full Subtree
 
 `issues get [ISSUE_ID]` returns three levels, flattened, every row carrying its own `depth`. A deeper tree is not truncated to one branch: every row at the maximum depth returned is a frontier, and a branching tree has as many frontier rows as it has branches.
 
-Repeat the call rooted at **every** frontier row, deduplicate identifiers across calls, and stop when a round returns nothing new. Continuing from one frontier row drops every subtree under the rest.
+1. Repeat the call rooted at **every** frontier row. Continuing from one frontier row drops every subtree under the rest.
+2. Deduplicate identifiers across calls.
+3. Stop when a round returns nothing new.
 
 ## Parent-Child Placement
 
 **A sub-issue must be in the same project as its parent.**
 
-When an audit finds a cross-project parent-child: detach the child (`--remove-parent`), then either move it into the parent's project or leave it standalone with a `blocks`/`related` relation. Do not relocate an issue merely to record a dependency.
+When an audit finds a cross-project parent-child:
+
+1. Detach the child (`--remove-parent`).
+2. Then either move it into the parent's project or leave it standalone with a `blocks`/`related` relation.
+
+Do not relocate an issue merely to record a dependency.

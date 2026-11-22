@@ -36,9 +36,15 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
 }
 ```
 
-`context.plan_path` is filled by the caller when it saves the plan (null in the initial output). `declined[]` lists proposals that failed the creation bar, one line each.
+- `context.plan_path` is filled by the caller when it saves the plan (null in the initial output).
+- `declined[]` lists proposals that failed the creation bar, one line each.
 
-`context.research_source_issue` carries the input's attachment source issue, or null. At save time, the caller keeps a set value, since the input already sits on that issue, and sets a null one to the issue the input is uploaded to with the plan, per roadmap-plan § 6. All output path fields keep repository references. The input's `research_read_path` is local analysis context and is not copied into this output, per [planning-artifacts.md](../references/planning-artifacts.md).
+`context.research_source_issue` carries the input's attachment source issue, or null. At save time, the caller:
+
+- Keeps a set value, since the input already sits on that issue.
+- Sets a null one to the issue the input is uploaded to with the plan, per roadmap-plan § 6.
+
+All output path fields keep repository references. The input's `research_read_path` is local analysis context and is not copied into this output, per [planning-artifacts.md](../references/planning-artifacts.md).
 
 ## hierarchy_recommendation
 
@@ -65,13 +71,20 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
 ]
 ```
 
-`match_type`: `exact` (same title and scope — skip the proposal), `partial` (overlapping — expand the existing or descope the proposal), `supersedes` (the proposal replaces the existing entirely — cancel it). `recommendation` is `skip`, `expand`, `descope`, or `cancel`.
+`match_type` is one of:
+
+- `exact`: same title and scope. Skip the proposal.
+- `partial`: overlapping. Expand the existing or descope the proposal.
+- `supersedes`: the proposal replaces the existing entirely. Cancel it.
+
+`recommendation` is `skip`, `expand`, `descope`, or `cancel`.
 
 `conflict_type`: `breaks_existing`, `concurrent_work`, or `incompatible_approach`.
 
 ## project_placement
 
-`recommendation` is `new` (create the project) or `existing` (`project_name` names it). Relations carry `type` (`blocked-by` / `blocks`), `project`, and `reason`.
+- `recommendation` is `new` (create the project) or `existing` (`project_name` names it).
+- Relations carry `type` (`blocked-by` / `blocks`), `project`, and `reason`.
 
 ## architecture_gaps
 
@@ -81,7 +94,9 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
  "reason": "Required for API response caching"}
 ```
 
-`include` when the gap blocks proposed work or the feature needs it (also appears in `organized_issues[]`); `defer` for nice-to-have (in `organized_issues[]` with `project: "Deferred"`); `out_of_scope` when it is unrelated or fails the creation bar — recorded here only.
+- `include` when the gap blocks proposed work or the feature needs it. The gap also appears in `organized_issues[]`.
+- `defer` for nice-to-have. The gap appears in `organized_issues[]` with `project: "Deferred"`.
+- `out_of_scope` when it is unrelated or fails the creation bar. The gap is recorded here only.
 
 ## organized_issues
 
@@ -110,21 +125,49 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
 }
 ```
 
-Sorted by ascending `position`. `layer` and `priority` are assigned, and `position` computed, per [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 4; consumers never recompute them. `critical_path: true` when the issue blocks 2+ others.
+- Sorted by ascending `position`.
+- `layer` and `priority` are assigned, and `position` computed, per [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 4. Consumers never recompute them.
+- `critical_path: true` when the issue blocks 2+ others.
+- `action` is `create`, `skip`, `expand`, `supersede`, or `cancel`.
+- `target` names the existing issue for `expand`/`supersede` or an exact-duplicate `skip`.
+- `reason` explains the choice.
+- `obsolete` carries `{evidence: {completed_by[], files_verified[]}, confidence}` or null.
 
-`action` is `create`, `skip`, `expand`, `supersede`, or `cancel`, with `target` naming the existing issue for `expand`/`supersede` or an exact-duplicate `skip`, and `reason` explaining the choice. `obsolete` carries `{evidence: {completed_by[], files_verified[]}, confidence}` or null.
+Every entry retains `supersession` from the planning comparison, including generated parents and architecture gaps. It uses [audit-output.md § ISSUE Mode](audit-output.md#issue-mode)'s record form.
 
-Every entry retains `supersession` from the planning comparison, including generated parents and architecture gaps. It uses [audit-output.md § ISSUE Mode](audit-output.md#issue-mode)'s record form. Planning records proposed dispositions; roadmap-create's authorization outcomes and audit-issues' execution make them actual. Save the field with the plan JSON unchanged; roadmap-create consumes it without reconstructing search terms.
+- Planning records proposed dispositions. roadmap-create's authorization outcomes and audit-issues' execution make them actual.
+- Save the field with the plan JSON unchanged. roadmap-create consumes it without reconstructing search terms.
 
 | Comparison outcome | Saved record |
 |---|---|
-| No matched open item needs a disposition, including an obsolete proposal supported only by closed work | `none found; searched: [TERMS]`, naming the actual title, target and component terms compared against the already-read rows and searches |
-| Exact duplicate, proposal skipped | `duplicate [ISSUE_ID]`, with that covering issue as `target` |
-| Existing scope expanded or descoped | `re-scoped [ISSUE_ID]`, naming the scope change |
-| Existing work replaced | `superseded [ISSUE_ID]`, with the replacement's `target` identifying it |
+| No matched open item needs a disposition, including an obsolete proposal supported only by closed work | `none found; searched: [TERMS]` |
+| Exact duplicate, proposal skipped | `duplicate [ISSUE_ID]` |
+| Existing scope expanded or descoped | `re-scoped [ISSUE_ID]` |
+| Existing work replaced | `superseded [ISSUE_ID]` |
 
-Closed rows are evidence and take no disposition. Multiple proposed actions retain their separate entries; a match kept only as related has no action entry. A later consumer preserves executed entries, carries pending authorized actions through the existing audit writer, and omits withheld actions with the affected replacement. It never turns refusal into `none found`. Older saved output without this field must return to roadmap planning before any tracker write; the conversion cannot invent its provenance.
+- `none found` names the actual title, target and component terms compared against the already-read rows and searches.
+- A `duplicate` entry has that covering issue as `target`.
+- A `re-scoped` entry names the scope change.
+- A `superseded` entry has the replacement's `target` identifying it.
 
-A bundle parent sets `is_bundle_parent: true` with `estimate: null`; its children set `parent_title` to the parent's title. Keep each blocking relation on the issue that waits under linear SKILL.md § Blocked Label vs Issue Relations. A valid leaf wait on another bundle stays on that leaf. A parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents.
+How the record holds across consumers:
 
-`labels[]` is the full issue-label set: issue labels only, all project-required categories present, no parent/group labels. `agent`/`agent_label` are derived fields and never sufficient. When a required category cannot be determined, flag it in `reason` rather than inventing a label.
+- Closed rows are evidence and take no disposition.
+- Multiple proposed actions retain their separate entries.
+- A match kept only as related has no action entry.
+- A later consumer preserves executed entries, carries pending authorized actions through the existing audit writer, and omits withheld actions with the affected replacement. It never turns refusal into `none found`.
+- Older saved output without this field must return to roadmap planning before any tracker write. The conversion cannot invent its provenance.
+
+Bundles:
+
+- A bundle parent sets `is_bundle_parent: true` with `estimate: null`.
+- A bundle parent's children set `parent_title` to the parent's title.
+- Keep each blocking relation on the issue that waits under linear SKILL.md § Blocked Label vs Issue Relations.
+- A valid leaf wait on another bundle stays on that leaf.
+- A parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents.
+
+Labels:
+
+- `labels[]` is the full issue-label set: issue labels only, all project-required categories present, no parent/group labels.
+- `agent`/`agent_label` are derived fields and never sufficient.
+- When a required category cannot be determined, flag it in `reason` rather than inventing a label.

@@ -12,7 +12,16 @@ This workflow updates labels, descriptions, and issue state; read the issue live
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
-`[RESEARCH_DOCS_PATH]` is the research directory [planning-artifacts.md](../references/planning-artifacts.md) defines. Bind `RESEARCH_SOURCE_ISSUE` to `[ISSUE_ID]`, `FINDINGS_REF` to `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, and `METADATA_REF` to `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/raw-exa.json`. Resolve both references with that source issue through that section before reading either; bind their readable files as `FINDINGS_READ_PATH` and `METADATA_READ_PATH`. If a required input has no local copy or attachment, route back to `research-issue.md § 2. Prepare Assets`. Read `FINDINGS_READ_PATH` and summarize the findings. Capture `.metadata` from `METADATA_READ_PATH`: `researchMode`, `type`, `queryCount`, `sourceCount`, `uniqueSourceCount`, `elapsedMs`, `rawOutputPath`. Treat `agent:researcher` as the producer unless the issue history says otherwise. Apply [publish-artifacts.md](publish-artifacts.md) to the research issue, including the bound files and cited research inputs.
+`[RESEARCH_DOCS_PATH]` is the research directory [planning-artifacts.md](../references/planning-artifacts.md) defines.
+
+1. Bind `RESEARCH_SOURCE_ISSUE` to `[ISSUE_ID]`, `FINDINGS_REF` to `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, and `METADATA_REF` to `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/raw-exa.json`.
+2. Resolve both references with that source issue through that section before reading either.
+3. Bind their readable files as `FINDINGS_READ_PATH` and `METADATA_READ_PATH`.
+4. If a required input has no local copy or attachment, route back to `research-issue.md § 2. Prepare Assets`.
+5. Read `FINDINGS_READ_PATH` and summarize the findings.
+6. Capture `.metadata` from `METADATA_READ_PATH`: `researchMode`, `type`, `queryCount`, `sourceCount`, `uniqueSourceCount`, `elapsedMs`, `rawOutputPath`.
+7. Treat `agent:researcher` as the producer unless the issue history says otherwise.
+8. Apply [publish-artifacts.md](publish-artifacts.md) to the research issue, including the bound files and cited research inputs.
 
 ## 2. Domain Labels
 
@@ -20,19 +29,35 @@ This workflow updates labels, descriptions, and issue state; read the issue live
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Issue labels only, validated per [labels.md](../references/labels.md) § Validation; any failure there halts before mutation.
+- Issue labels only, validated per [labels.md](../references/labels.md) § Validation.
+- Any failure there halts before mutation.
 
-**Skip if** the issue already carries domain labels. Otherwise infer them from `findings.md` by matching component paths, compute `FINAL_LABELS = EXISTING + INFERRED` preserving unrelated labels, preflight, then `issues update [ISSUE_ID] --labels "[FINAL_LABELS]"`. When the domain is unclear or spans several, add every likely one.
+**Skip if** the issue already carries domain labels. Otherwise:
+
+1. Infer them from `findings.md` by matching component paths. When the domain is unclear or spans several, add every likely one.
+2. Compute `FINAL_LABELS = EXISTING + INFERRED`, preserving unrelated labels.
+3. Preflight.
+4. Run `issues update [ISSUE_ID] --labels "[FINAL_LABELS]"`.
 
 ## 3. Type
 
-`## Creates Roadmap` in the description → Strategic (§ 5.3); 2+ domain labels → Pervasive (§ 5.2); 1 domain label → Targeted (§ 5.1). Routing uses the label count, not the description section.
+- `## Creates Roadmap` in the description → Strategic (§ 5.3).
+- 2+ domain labels → Pervasive (§ 5.2).
+- 1 domain label → Targeted (§ 5.1).
+
+Routing uses the label count, not the description section.
 
 ## 4. Link to Blocked Issues
 
 **Skip if** the `.blocks` array is empty (self-initiated spike).
 
-For each blocked issue and, recursively, its children (`issues get [BLOCKED_ISSUE_ID] | jq -r '.children[].id'`): read the current description and add `[FINDINGS_REF]` when absent. Use [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules for the Research header in Filing record, including multiple references and longer evidence. Apply [publish-artifacts.md](publish-artifacts.md) even when the reference already exists. `issues get` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
+For each blocked issue and, recursively, its children (`issues get [BLOCKED_ISSUE_ID] | jq -r '.children[].id'`):
+
+1. Read the current description.
+2. Add `[FINDINGS_REF]` when absent. Use [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules for the Research header in Filing record, including multiple references and longer evidence.
+3. Apply [publish-artifacts.md](publish-artifacts.md) even when the reference already exists.
+
+`issues get` returns three levels. Walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 ## 5. Analyze Impact
 
@@ -62,13 +87,26 @@ Report with tables:
 
 List a technical change only when it changes what a user or operator experiences, or blocks work that does. Say so plainly when the finding needs no work. </delegation_format>
 
-**Cross-domain impact reported** → add the new domain labels (compute the final set, preflight, update), append `## Affected Domains` to the description, and switch to § 5.2. Do not assess severity yourself.
+**Cross-domain impact reported** →
 
-**Initiative-level scope** (10+ issues, needs phasing) → ask the user "Research scope suggests a new initiative. Escalate to a roadmap?" On yes, append `## Creates Roadmap` and switch to § 5.3.
+1. Add the new domain labels:
+   1. Compute the final set.
+   2. Preflight.
+   3. Update.
+2. Append `## Affected Domains` to the description.
+3. Switch to § 5.2.
+
+Do not assess severity yourself.
+
+**Initiative-level scope** (10+ issues, needs phasing) →
+
+1. Ask the user "Research scope suggests a new initiative. Escalate to a roadmap?"
+2. On yes, append `## Creates Roadmap` and switch to § 5.3.
 
 ### 5.2 Pervasive
 
-Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent.
+1. Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions.
+2. Then delegate the synthesis to the architecture review agent.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 
@@ -96,31 +134,63 @@ Initiative-level scope escalates to § 5.3 the same way as § 5.1.
 
 `$FEATURE_NAME` is the issue title without the `Research:` prefix. `$ORIGIN_ISSUE` is the single entry in `.blocks` (fetch its id, title, and project); with zero or several blocked issues it is null.
 
-Run `⤵ workflows/roadmap-plan.md $FEATURE_NAME @[FINDINGS_REF] --source-issue [RESEARCH_SOURCE_ISSUE] --origin-issue $ORIGIN_ISSUE`, then execute its returned `CREATE_COMMAND` unchanged. § 6 then handles only the decision record and the doc updates.
+1. Run `⤵ workflows/roadmap-plan.md $FEATURE_NAME @[FINDINGS_REF] --source-issue [RESEARCH_SOURCE_ISSUE] --origin-issue $ORIGIN_ISSUE`.
+2. Then execute its returned `CREATE_COMMAND` unchanged.
+
+§ 6 then handles only the decision record and the doc updates.
 
 ## 6. Complete
 
 ### 6.1 Record the Decision
 
-Record a decision only under the decider skill's admission and approval rules. Follow its create-decision workflow and current schema, including the INDEX.md row. Keep the detailed analysis and implementation impact on the source issue.
+- Record a decision only under the decider skill's admission and approval rules.
+- Follow its create-decision workflow and current schema, including the INDEX.md row.
+- Keep the detailed analysis and implementation impact on the source issue.
 
 When the new decision replaces specific components of an active decision without superseding it wholesale, update that decision's status to `Active ([COMPONENTS] → [NEW_DECISION_ID])` in both its file and its INDEX row.
 
-If no decision is recorded, skip section 6.2 and decision-only updates. Use the research findings for requirements and scope, omit the decision suffix from child titles, set decision_ref to null, and use the Key Findings and Outcome output below.
+If no decision is recorded:
+
+- Skip section 6.2 and decision-only updates.
+- Use the research findings for requirements and scope.
+- Omit the decision suffix from child titles.
+- Set decision_ref to null.
+- Use the Key Findings and Outcome output below.
 
 ### 6.2 Append the Decision to Blocked Issues
 
-**Skip if** `.blocks` is empty. For each blocked issue and its recursive children, skip when `**Decision [DECISION_ID]**:` is already present. Otherwise add the decision reference through [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules in Filing record. Use the decider-owned reference format that template cites.
+**Skip if** `.blocks` is empty. For each blocked issue and its recursive children:
+
+- Skip it when `**Decision [DECISION_ID]**:` is already present.
+- Otherwise add the decision reference through [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules in Filing record.
+- Use the decider-owned reference format that template cites.
 
 ### 6.3 Apply Doc and Config Updates
 
-Implement the doc changes the agents reported: update the architecture docs, add decision references to affected files, and combine every domain's updates for a Pervasive flow. Reusable rules and project-specific insights go into the managing project's kendex config — `[skill-instructions]` for skill-level context, `[agent-additional-instructions]` for persistent agent rules, `[agent-launch-instructions]` for launch instructions. A config edit takes effect only once it is rendered: run `kendex refresh` from a checkout that permits it, which a worktree does not, so a worktree run leaves the edit in place and the rendered copies stale.
+Implement the doc changes the agents reported:
+
+- Update the architecture docs.
+- Add decision references to affected files.
+- Combine every domain's updates for a Pervasive flow.
+
+Reusable rules and project-specific insights go into the managing project's kendex config:
+
+- `[skill-instructions]` for skill-level context.
+- `[agent-additional-instructions]` for persistent agent rules.
+- `[agent-launch-instructions]` for launch instructions.
+
+A config edit takes effect only once it is rendered: run `kendex refresh` from a checkout that permits it. A worktree does not, so a worktree run leaves the edit in place and the rendered copies stale.
 
 ### 6.4 Decompose the Blocked Work
 
 **Skip if** Strategic — roadmap-create already created the issues.
 
-For each blocked issue, merge its existing `## Requirements`, the new requirements from the decision and agent reports, and drop the requirements the decision explicitly replaces. Each requirement is one bullet with a description, a domain, and an estimate. Apply the creation bar to every one: a requirement that changes nothing a user or operator experiences is dropped with a one-line note.
+For each blocked issue:
+
+1. Merge its existing `## Requirements` and the new requirements from the decision and agent reports.
+2. Drop the requirements the decision explicitly replaces.
+3. Write each requirement as one bullet with a description, a domain, and an estimate.
+4. Apply the creation bar to every one: a requirement that changes nothing a user or operator experiences is dropped with a one-line note.
 
 Agent-reported refactors go into the audit input as standalone items in step 7 below, not as blocked-issue requirements.
 
@@ -128,27 +198,57 @@ Agent-reported refactors go into the audit input as standalone items in step 7 b
 
 **2+ domains** → decompose every requirement, existing and new, into one sub-issue per domain, leaving the parent coordination-only: its domain children are the parts of its one deliverable, the parent [filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent) admits:
 
-0. **Place the parent.** **Skip if** `.blocks` holds more than one issue. Read the map as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, `[TEAM]` being the blocked issue's identifier prefix: § Routing reads each project's `admits` and `ends_when` from the `### Project map` block; a non-zero exit halts with its error output, and `map-absent` leaves nothing to place. A finding whose `issue` is the blocked issue puts it outside the map: route it per [project-map.md § Routing](../references/project-map.md#routing), then move it with `issues update [BLOCKED_ISSUE_ID] --project "[ROUTE]"`. When the route is `project_needed`, hold the whole decomposition, the step 7 refactors included: build no audit input, leave the blocked issue as it is in § 6.5, and report the project it needs in § 6.6, with the fields [project-map.md § Routing](../references/project-map.md#routing) names. Run this section again once the map lists that project.
+0. **Place the parent.** **Skip if** `.blocks` holds more than one issue.
+   1. Read the map as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, `[TEAM]` being the blocked issue's identifier prefix. § Routing reads each project's `admits` and `ends_when` from the `### Project map` block.
+      - A non-zero exit halts with its error output.
+      - `map-absent` leaves nothing to place.
+   2. A finding whose `issue` is the blocked issue puts it outside the map. Route it per [project-map.md § Routing](../references/project-map.md#routing), then move it with `issues update [BLOCKED_ISSUE_ID] --project "[ROUTE]"`.
+   3. When the route is `project_needed`, hold the whole decomposition, the step 7 refactors included:
+      - Build no audit input.
+      - Leave the blocked issue as it is in § 6.5.
+      - Report the project it needs in § 6.6, with the fields [project-map.md § Routing](../references/project-map.md#routing) names.
+      - Run this section again once the map lists that project.
 1. One sub-issue per domain, in the parent's project, titled `[Domain verb]: [scope] for [DECISION_ID]`.
 2. Full validated `labels[]` per sub-issue — `agent:[TYPE]` for the domain plus the required domain, stack, workflow, and classification labels, validated against the § 2 inventory before the file is written.
 3. Blocking order between the sub-issues, recorded as `blocks_items`/`blocked_by_items`.
 4. Supplementary findings fold into the sub-issue for their domain — never a separate issue for a small item in the same domain.
 5. Build the audit input per [audit-issues-input.md](../schemas/audit-issues-input.md) with `source: "research-complete"`, `parent_issue` (the single blocked issue, else null), `worktree`, `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and:
 
-   `hierarchy_contract` (required when `parent_issue` is non-null): `mode: "decompose-under-parent"`, `parent_issue` = the blocked implementation issue, `child_indexes` = the `index` of every domain sub-issue from step 1 (exclude step 7 `origin: "discovered"` refactor items), `sequencing` = the order from step 3. The TPM MUST create every listed item as a same-project child of `parent_issue` and MUST NOT fold any domain back into the parent as its implementation leaf or spin it off standalone. Omit only when `parent_issue` is null — then `blocked_issues` acts as a hint.
+   `hierarchy_contract` (required when `parent_issue` is non-null):
+
+   - `mode: "decompose-under-parent"`.
+   - `parent_issue` = the blocked implementation issue.
+   - `child_indexes` = the `index` of every domain sub-issue from step 1. Exclude step 7 `origin: "discovered"` refactor items.
+   - `sequencing` = the order from step 3.
+   - The TPM MUST create every listed item as a same-project child of `parent_issue`.
+   - The TPM MUST NOT fold any domain back into the parent as its implementation leaf or spin it off standalone.
+   - Omit the contract only when `parent_issue` is null. Then `blocked_issues` acts as a hint.
 
 6. Every `items[]` entry carries its full validated `labels[]`.
 7. Add the agent-reported refactors as extra items with `origin: "discovered"`, no `blocks_items`/`blocked_by_items`, and NOT listed in `hierarchy_contract.child_indexes`.
-8. Write `tmp/audit-research-YYYYMMDD-HHMMSS.json`, then run `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.5`.
+8. Write `tmp/audit-research-YYYYMMDD-HHMMSS.json`.
+9. Then run `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.5`.
 
 ### 6.5 Update the Blocked Issues
 
 For each blocked issue, keeping the Research, Artifacts, and Decision references, the effort rollup, and the dependency lines:
 
-- **Children were created** → apply [parent-issue-template.md](../templates/parent-issue-template.md): replace `## Requirements` with `## Sub-Issues` and `## Context`, and remove every implementation-level requirement. Set the parent's agent label to the project's multi-agent label when the children span 2+ agent domains (compute the final set, replace only the agent category, preflight, update), and clear the parent's estimate.
-- **No children** → replace the vague summary with the concrete scope from the decision (1-2 sentences), add `## Requirements` with one bullet per deliverable, and add `## Context` with the key constraints and cross-references.
+- **Children were created** → apply [parent-issue-template.md](../templates/parent-issue-template.md):
+  1. Replace `## Requirements` with `## Sub-Issues` and `## Context`.
+  2. Remove every implementation-level requirement.
+  3. When the children span 2+ agent domains, set the parent's agent label to the project's multi-agent label:
+     1. Compute the final set.
+     2. Replace only the agent category.
+     3. Preflight.
+     4. Update.
+  4. Clear the parent's estimate.
+- **No children** →
+  1. Replace the vague summary with the concrete scope from the decision (1-2 sentences).
+  2. Add `## Requirements` with one bullet per deliverable.
+  3. Add `## Context` with the key constraints and cross-references.
 
-Adjust the estimate when the research materially changed the size of the work, and add domain labels for any cross-domain work it revealed.
+- For an issue with no children, adjust the estimate when the research materially changed the size of the work.
+- Add domain labels for any cross-domain work it revealed.
 
 ### 6.6 Close Out
 
@@ -185,4 +285,5 @@ For informational research that produced no decision, replace the Decision secti
 
 ## 7. Return State
 
-**If managed**: return to the parent workflow's next section. **If standalone**: session complete.
+- **If managed**: return to the parent workflow's next section.
+- **If standalone**: session complete.

@@ -2,33 +2,58 @@
 
 User-initiated research: scope the question, gather prior work, then hand off to `research-issue`.
 
-Use this only when the research is **delegated** — standalone tracked work the researcher agent runs, or with `auto_execute: false` prepares for later pickup. Research a planning session can do now is done there (roadmap-plan § 1's inline option) and never becomes an issue.
+- Use this only when the research is **delegated**: standalone tracked work the researcher agent runs, or with `auto_execute: false` prepares for later pickup.
+- Research a planning session can do now is done there (roadmap-plan § 1's inline option) and never becomes an issue.
 
 ## 1. Scope the Question
 
 Ask in plain text: **"What research are you conducting?"** Expect a 1-2 sentence description.
 
-Then ask the 2-3 most relevant clarifying questions, worded for this topic — what prompted it (bug, feature, vendor change, curiosity), whether it is a "should we?" or a "how do we?", the current baseline (version, pattern, existing approach), and what would make it a no-go. Ask follow-ups only when the answers leave the scope ambiguous.
+Then:
+
+1. Ask the 2-3 most relevant clarifying questions, worded for this topic: what prompted it (bug, feature, vendor change, curiosity), whether it is a "should we?" or a "how do we?", the current baseline (version, pattern, existing approach), and what would make it a no-go.
+2. Ask follow-ups only when the answers leave the scope ambiguous.
 
 Infer the research type from the description and answers.
 
 ## 2. Domains and Prior Work
 
-Infer the affected domains from the topic and answers by matching component paths (project-configurable); do not ask the user to confirm them. State each domain and why in the § 4 report.
+- Infer the affected domains from the topic and answers by matching component paths (project-configurable).
+- Do not ask the user to confirm them.
+- State each domain and why in the § 4 report.
 
-Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --max --format=safe`), then search it. Without an unambiguous assignable label, skip the prior-research lookup — do not query a hard-coded fallback label — and run the same search without `--label` for the record below only.
+Look for prior research:
+
+1. Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --max --format=safe`).
+2. Then search it.
+3. Without an unambiguous assignable label:
+   - Skip the prior-research lookup. Do not query a hard-coded fallback label.
+   - Run the same search without `--label` for the record below only.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
 ```
 
-On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_PATH]` being the research directory [planning-artifacts.md](../references/planning-artifacts.md) defines, and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [planning-artifacts.md](../references/planning-artifacts.md).
+On a match:
 
-Carry this search's rows, actual search terms and proposed dispositions as `prior_work` to research-issue § 1.2. Include each matched identifier, title, scope evidence and reason. A proposal to replace or transfer scope carries the existing [audit-output.md](../schemas/audit-output.md) `supersedes[]` shape and its `when`; a covering match carries its identifier as `target`. These are recommendations until that writer obtains authorization and applies them; this search performs no disposition.
+1. Read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_PATH]` being the research directory [planning-artifacts.md](../references/planning-artifacts.md) defines.
+2. Extract its full findings (summary, bullets, go/no-go) as `PRIOR_RESEARCH` for the handoff.
+3. Resolve an absent file through [planning-artifacts.md](../references/planning-artifacts.md).
+
+Carry this search's rows, actual search terms and proposed dispositions as `prior_work` to research-issue § 1.2:
+
+- Include each matched identifier, title, scope evidence and reason.
+- A proposal to replace or transfer scope carries the existing [audit-output.md](../schemas/audit-output.md) `supersedes[]` shape and its `when`.
+- A covering match carries its identifier as `target`.
+- The proposed dispositions are recommendations until that writer obtains authorization and applies them. This search performs no disposition.
 
 ## 3. Hand Off
 
-The research issue's project comes from the project map, read as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)). In a map repository, place it by [project-map.md § Routing](../references/project-map.md#routing) from the topic and domains; a route to none stops the spike before the handoff, creates no issue, and reports § 4's held variant with the `project_needed` fields that section names. Under `map-absent`, take the first started project, which [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as active:
+The research issue's project comes from the project map, read as [tpm-audit § 1.6](./tpm-audit.md#16-extract-project-definitions) does, with its team from `LINEAR_TEAM` ([project-map.md § Audit](../references/project-map.md#audit)).
+
+- In a map repository, place it by [project-map.md § Routing](../references/project-map.md#routing) from the topic and domains.
+- A route to none stops the spike before the handoff, creates no issue, and reports § 4's held variant with the `project_needed` fields that section names.
+- Under `map-absent`, take the first started project, which [project-map.md § Project kinds](../references/project-map.md#project-kinds) counts as active:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects list --state started --first
@@ -40,7 +65,8 @@ Run `⤵ workflows/research-issue.md § 1-4 → § 4` with `topic` (§ 1), `ques
 
 ## 4. Report
 
-When research-issue returns covering work or a held filing, report that outcome and stop; use the delegated block only when it created the research issue and prepared its assets.
+- When research-issue returns covering work or a held filing, report that outcome and stop.
+- Use the delegated block only when it created the research issue and prepared its assets.
 
 <output_format>
 

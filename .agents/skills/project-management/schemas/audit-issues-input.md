@@ -49,40 +49,82 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `source` | Yes | Calling workflow name, one of the values above. Which are review-born, and what that sets, is [tpm-audit](../workflows/tpm-audit.md) § 10 |
-| `parent_issue` | Yes | The issue being worked on, as a hierarchy hint; null for an existing-issue batch |
-| `in_pr_bundle` | No | `true` only where the caller marks `parent_issue` its in-PR bundle root and works the `make_child` items filed under it in that issue's own PR; orch review-pr § 8 on Linear is one caller, and single mode is another ([tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) step 5). Absent is `false`. What it changes is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates) |
+| `source` | Yes | Calling workflow name, one of the values above |
+| `parent_issue` | Yes | The issue being worked on, as a hierarchy hint |
+| `in_pr_bundle` | No | Whether `parent_issue` is the caller's in-PR bundle root |
 | `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Worktree path for code analysis |
 | `blocked_issues` | No | Issue IDs the research unblocks |
-| `research_issue` | No | The research issue itself — every `create` gets a `related` relation back to it |
+| `research_issue` | No | The research issue itself |
 | `research_ref`, `decision_ref` | No | Findings path and decision reference |
 | `hierarchy_contract` | No | Binding decomposition directive — see § Hierarchy Contract |
 | `items[]` | Yes | Items to audit |
 
+- `source`: which sources are review-born, and what that sets, is [tpm-audit](../workflows/tpm-audit.md) § 10.
+- `parent_issue`: null for an existing-issue batch.
+- `in_pr_bundle`:
+  - `true` only where the caller marks `parent_issue` its in-PR bundle root and works the `make_child` items filed under it in that issue's own PR.
+  - orch review-pr § 8 on Linear is one caller, and single mode is another ([tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) step 5).
+  - Absent is `false`.
+  - What it changes is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
+- `research_issue`: every `create` gets a `related` relation back to it.
+
 ### Item Fields
 
-An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N` for GitHub). Its index is sequential and 1-based. The TPM resolves the identifier through [tpm-audit § 1.4](../workflows/tpm-audit.md#14-fetch-input-issues), retaining the index and identifier in its output. The proposed-item fields below do not apply to that entry; `--single` accepts proposed items only.
+An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N` for GitHub).
+
+- Its index is sequential and 1-based.
+- The TPM resolves the identifier through [tpm-audit § 1.4](../workflows/tpm-audit.md#14-fetch-input-issues), retaining the index and identifier in its output.
+- The proposed-item fields below do not apply to that entry.
+- `--single` accepts proposed items only.
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `index` | Yes | Sequential, 1-based |
 | `title` | Yes | Concise title |
-| `location` | Yes | File path — **never line numbers**; name the function or struct |
-| `description` | Yes | 2-3 sentences: what and why. Becomes the issue body. For an owner directive, add `## Owner directive (verbatim)` and copy the owner's text byte for byte below it, to the next `##` heading or the end. Fence literal text containing `##` lines so they remain content, not the next heading |
-| `impact` | Before create | Who hits this, on what real path. The reviewer skill's `review-finding` field on a `category: "issue"` suggestion; on a blocker, an escalated item, or a Discovered Work bullet no artifact carries it and the caller writes it from the finding |
-| `symptom` | P2 review items | The run, user, or red check that already showed it. No artifact carries it, so the caller writes it from the finding. Required where a review-born source files at priority 2 |
-| `regressed_by` | No | Numbers of the pull requests that caused the defect, known from a revert, a bisect or the run that showed it. Renders the template's `**Regressed-by**` line. Empty on a review-born item that cites its source PR: a source is not a cause |
-| `recommendation` | Yes | Bullet-list requirements. Becomes the requirements section |
+| `location` | Yes | File path |
+| `description` | Yes | 2-3 sentences: what and why |
+| `impact` | Before create | Who hits this, on what real path |
+| `symptom` | P2 review items | The run, user, or red check that already showed it |
+| `regressed_by` | No | Numbers of the pull requests that caused the defect |
+| `recommendation` | Yes | Bullet-list requirements |
 | `priority` | Yes | 1-4 |
 | `estimate` | Yes | 1-5 points |
-| `labels` | Before create | Full issue-label set, validated against live inventory and project taxonomy before creation |
-| `category` | Yes | Always `issue` — fix items never reach the audit |
+| `labels` | Before create | Full issue-label set |
+| `category` | Yes | Always `issue` |
 | `found_by` | Yes | Agent that identified it |
-| `origin` | Yes | `suggestion`, `escalated` (items no dev round resolved: blockers dev could not fix, plus items outstanding at the review cycle cap), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |
+| `origin` | Yes | `suggestion`, `escalated`, `skipped`, `planned`, or `discovered` |
 | `blocks_items` / `blocked_by_items` | No | Indexes of other items in this batch |
-| `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs. Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode |
-| `supersedes` | No | Structured form of the filer's `Supersedes:` line: entries carry `identifier`, `reason`, and `when` (`now`, `partial`, or `at-completion`). `now` cancels after creation; `partial` re-scopes the named item to its remainder; `at-completion` records the strict description block below for the completion close and an ordinary related link for readers. Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode. `Related:` prose acts on nothing |
+| `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs |
+| `supersedes` | No | Structured form of the filer's `Supersedes:` line |
+
+- `location`: **never line numbers**. Name the function or struct.
+- `description`:
+  - It becomes the issue body.
+  - For an owner directive, add `## Owner directive (verbatim)` and copy the owner's text byte for byte below it, to the next `##` heading or the end.
+  - Fence literal text containing `##` lines so they remain content, not the next heading.
+- `impact`: the reviewer skill's `review-finding` field on a `category: "issue"` suggestion. On a blocker, an escalated item, or a Discovered Work bullet no artifact carries it, and the caller writes it from the finding.
+- `symptom`:
+  - No artifact carries it, so the caller writes it from the finding.
+  - Required where a review-born source files at priority 2.
+- `regressed_by`:
+  - Known from a revert, a bisect or the run that showed it.
+  - Renders the template's `**Regressed-by**` line.
+  - Empty on a review-born item that cites its source PR: a source is not a cause.
+- `recommendation`: becomes the requirements section.
+- `labels`: validated against live inventory and project taxonomy before creation.
+- `category`: fix items never reach the audit.
+- `origin`:
+  - `escalated` is an item no dev round resolved: a blocker dev could not fix, or an item outstanding at the review cycle cap.
+  - `skipped` is an item dev deliberately skipped.
+- `blocks_issues` / `blocked_by_issues`: confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode.
+- `supersedes`:
+  - Entries carry `identifier`, `reason`, and `when` (`now`, `partial`, or `at-completion`).
+  - `now` cancels after creation.
+  - `partial` re-scopes the named item to its remainder.
+  - `at-completion` records the strict description block below for the completion close, and an ordinary related link for readers.
+  - Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode.
+  - `Related:` prose acts on nothing.
 
 ### Completion block
 
@@ -94,7 +136,15 @@ The filing renders only confirmed `when: at-completion` entries into the replace
 - PROJ-240 (at-completion): Replacement covers the old scope
 ```
 
-`issues complete` reads this block from its existing description read. An exact entry names an issue identifier and a nonblank one-line reason. On Done, it reads each open named item's pending children before commenting and cancelling it. Open children require an explicit disposition: the command reports their identifiers and leaves the parent uncancelled. Required-effect failures stay nonzero after the replacement reaches Done, preserving the transition result and a structured retry without summary flags; repeating completion on that Done replacement resumes the same effects. A malformed line is reported and skipped. Neither `Related:` prose nor an ordinary related relation grants cancellation authority.
+`issues complete` reads this block from its existing description read.
+
+- An exact entry names an issue identifier and a nonblank one-line reason.
+- On Done, it reads each open named item's pending children before commenting and cancelling it.
+- Open children require an explicit disposition: the command reports their identifiers and leaves the parent uncancelled.
+- Required-effect failures stay nonzero after the replacement reaches Done, preserving the transition result and a structured retry without summary flags.
+- Repeating completion on that Done replacement resumes the same effects.
+- A malformed line is reported and skipped.
+- Neither `Related:` prose nor an ordinary related relation grants cancellation authority.
 
 ## Tracker
 
@@ -105,7 +155,9 @@ The filing renders only confirmed `when: at-completion` entries into the replace
 | `type` | Yes when the block is present | `linear` or `github` |
 | `repository` | github only | `owner/repo` |
 
-An existing-issue batch must set `tracker` explicitly. It has no parent hint. Without the block for proposed items, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID means `github` (repository resolved with `gh repo view` in the worktree), otherwise `linear`. GitHub mode must not require Linear reads, session status, project inventory, or Linear mutation commands.
+- An existing-issue batch must set `tracker` explicitly. It has no parent hint.
+- Without the block for proposed items, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID means `github` (repository resolved with `gh repo view` in the worktree), otherwise `linear`.
+- GitHub mode must not require Linear reads, session status, project inventory, or Linear mutation commands.
 
 ## Hierarchy Contract
 
@@ -114,9 +166,13 @@ An existing-issue batch must set `tracker` explicitly. It has no parent hint. Wi
 | Field | Required | Description |
 |-------|----------|-------------|
 | `mode` | Yes | Only `"decompose-under-parent"` is defined |
-| `parent_issue` | Yes | The blocked implementation issue that becomes the coordination-only parent. Never a research issue |
-| `child_indexes` | Yes | The `items[].index` values covered — one per domain sub-issue. Unlisted items (`origin: "discovered"` refactors) are audited normally |
-| `sequencing` | No | `{blocker, blocked, reason}` between covered items, by index. Emitted as `blocks` relations between the created children |
+| `parent_issue` | Yes | The blocked implementation issue that becomes the coordination-only parent |
+| `child_indexes` | Yes | The `items[].index` values covered — one per domain sub-issue |
+| `sequencing` | No | `{blocker, blocked, reason}` between covered items, by index |
+
+- `parent_issue` is never a research issue.
+- Items `child_indexes` does not list (`origin: "discovered"` refactors) are audited normally.
+- `sequencing` is emitted as `blocks` relations between the created children.
 
 In `decompose-under-parent` mode, `parent_issue` is the blocked implementation issue (also listed in `blocked_issues`), converted into the coordination-only parent of the new domain children. For every item in `child_indexes`:
 
@@ -130,7 +186,12 @@ What the analysis must do to satisfy these: [tpm-audit.md](../workflows/tpm-audi
 
 Set top-level `tracker` from the caller's resolved tracker (plus `repository` for GitHub).
 
-**Suggestions** (`category=issue`) map field for field: `title`, `location`, `description`, `recommendation`, `priority`, `estimate`, and `labels` when provided (otherwise completed through the taxonomy before create). `found_by` is the reporting agent; `origin` is `"suggestion"`.
+**Suggestions** (`category=issue`):
+
+- Map field for field: `title`, `location`, `description`, `recommendation`, `priority`, `estimate`, and `labels` when provided.
+- Labels not provided are completed through the taxonomy before create.
+- `found_by` is the reporting agent.
+- `origin` is `"suggestion"`.
 
 **Escalated and skipped items** from the orchestrator's workflow state use the same mapping, with the entry's `outcome` field deciding the origin:
 
@@ -140,7 +201,13 @@ Set top-level `tracker` from the caller's resolved tracker (plus `repository` fo
 | absent | `"escalated"` |
 | `"skipped"` | `"skipped"` |
 
-**Discovered work** from dev completion summaries maps the bullet text to `title` and `description`, `estimate: N` to `estimate` (default 2), and infers `priority` from the type (bug 2, tech-debt 3, enhancement 4) and `labels` from the taxonomy and source context. Set `origin: "discovered"`.
+**Discovered work** from dev completion summaries:
+
+- Map the bullet text to `title` and `description`.
+- Map `estimate: N` to `estimate` (default 2).
+- Infer `priority` from the type (bug 2, tech-debt 3, enhancement 4).
+- Infer `labels` from the taxonomy and source context.
+- Set `origin: "discovered"`.
 
 **Drop handoff markers first.** A Discovered Work bullet matching `^-\s+(handoff_to_submit_pr|handoff_to_merge_pr|current_workflow_action):\s` belongs to a later step of the current PR workflow; never map one into an item.
 

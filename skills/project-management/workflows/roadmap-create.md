@@ -4,17 +4,41 @@ Execute an approved roadmap plan: resolve existing work, create the project, cre
 
 ## 1. Load the Plan
 
-`roadmap create @[plan-file] [--source-issue [ISSUE_ID]]`. Read the optional source issue from the invocation before opening the plan. Without a plan file, error: "Requires a plan file from `workflows/roadmap-plan.md`."
+`roadmap create @[plan-file] [--source-issue [ISSUE_ID]]`.
 
-Resolve the plan through [planning-artifacts.md](../references/planning-artifacts.md), using the invocation's source issue when the local file is absent. Keep its repository reference as `PLAN_PATH` and its readable file as `PLAN_READ_PATH`. Read that markdown for `FEATURE` and its `**Plan data**` reference, then resolve the companion JSON with the same source issue and read it as `TPM_OUTPUT`. A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`. With no source issue, a local plan still loads as before.
+- Read the optional source issue from the invocation before opening the plan.
+- Without a plan file, error: "Requires a plan file from `workflows/roadmap-plan.md`."
+
+1. Resolve the plan through [planning-artifacts.md](../references/planning-artifacts.md), using the invocation's source issue when the local file is absent.
+2. Keep its repository reference as `PLAN_PATH` and its readable file as `PLAN_READ_PATH`.
+3. Read that markdown for `FEATURE` and its `**Plan data**` reference.
+4. Resolve the companion JSON with the same source issue and read it as `TPM_OUTPUT`.
+   - A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`.
+   - With no source issue, a local plan still loads as before.
 
 From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
 
-For a cited research/spec input, use `context.research_path` as the reference and `context.research_source_issue` as its source under the shared Planning artifacts rule. Keep resolved files for this checkout's reads and uploads; keep the reference fields unchanged for § 4 issue text.
+For a cited research/spec input:
 
-Before any tracker write, require the saved `organized_issues[].supersession` contract from [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues. A legacy plan missing the record returns to roadmap planning; do not infer its searched terms or search again in this consumer.
+- Use `context.research_path` as the reference and `context.research_source_issue` as its source under the shared Planning artifacts rule.
+- Keep resolved files for this checkout's reads and uploads.
+- Keep the reference fields unchanged for § 4 issue text.
 
-**Project map.** Before § 2 writes anything, read the map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM_KEY_OR_NAME]"`. A non-zero exit halts with its error output, and `map-absent` leaves § 3 as written. When `project_placement.project_name` is a map project, keep its `projects[].id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing. Otherwise halt before any tracker write and report the project as `project_needed`, with the fields [project-map.md § Routing](../references/project-map.md#routing) names; run `roadmap create` again on the same plan once the map lists it.
+Before any tracker write, require the saved `organized_issues[].supersession` contract from [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues.
+
+- A legacy plan missing the record returns to roadmap planning.
+- Do not infer its searched terms or search again in this consumer.
+
+**Project map.**
+
+1. Before § 2 writes anything, read the map: `.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM_KEY_OR_NAME]"`.
+   - A non-zero exit halts with its error output.
+   - `map-absent` leaves § 3 as written.
+2. When `project_placement.project_name` is a map project, keep its `projects[].id` as `PROJECT_ID`: § 3.1 and § 3.2 create nothing.
+3. When a declared map does not list it:
+   1. Halt before any tracker write.
+   2. Report the project as `project_needed`, with the fields [project-map.md § Routing](../references/project-map.md#routing) names.
+   3. Run `roadmap create` again on the same plan once the map lists it.
 
 ---
 
@@ -22,7 +46,9 @@ Before any tracker write, require the saved `organized_issues[].supersession` co
 
 **Skip if** `cross_project_findings` has no `cancel`, `expand`, `descope`, or conflict entries.
 
-Actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking — only under the same provenance as `approved_at_plan_gate` (this wrapper collected that answer in this session on this identical presented set). A plan loaded in a later session, or edited since, presents every action. Otherwise present only what changed since that gate or was not shown there, then ask once: `Execute all` | `Review each` | `Skip`.
+- Actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` execute as presented without re-asking, only under the same provenance as `approved_at_plan_gate`: this wrapper collected that answer in this session on this identical presented set.
+- A plan loaded in a later session, or edited since, presents every action.
+- Otherwise present only what changed since that gate or was not shown there, then ask once: `Execute all` | `Review each` | `Skip`.
 
 <output_format>
 
@@ -38,9 +64,13 @@ Actions and conflict resolutions unchanged since roadmap-plan § 5 `Approve` exe
 |---|-----------|----------------|------------|
 </output_format>
 
-`Review each` asks per action (`Execute` | `Skip` | `Modify` with free text). Execute cancellations per the Linear CLI's workflow-actions § State Transitions (cancel/absorb) with the plan's reason named in the comment, and modifications per § Descriptions.
+- `Review each` asks per action (`Execute` | `Skip` | `Modify` with free text).
+- Execute cancellations per the Linear CLI's workflow-actions § State Transitions (cancel/absorb), with the plan's reason named in the comment.
+- Execute modifications per § Descriptions.
 
-For each conflict whose resolution changed since the plan gate or was not presented there, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation); a resolution carried under the provenance rule above executes as presented.
+For each conflict whose resolution changed since the plan gate or was not presented there, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation).
+
+A resolution carried under the provenance rule above executes as presented.
 
 ---
 
@@ -56,7 +86,10 @@ List the active initiatives and ask: `Link to [INITIATIVE]` (one option each) | 
 .agents/skills/linear/scripts/linear.sh initiatives list --status Active --max
 ```
 
-For a new initiative, complete [initiative-project-template.md](../templates/initiative-project-template.md) § Required inputs before create. Fill `[INITIATIVE_DESC]` and `[INITIATIVE_CONTENT]` from the template.
+For a new initiative:
+
+1. Complete [initiative-project-template.md](../templates/initiative-project-template.md) § Required inputs before create.
+2. Fill `[INITIATIVE_DESC]` and `[INITIATIVE_CONTENT]` from the template.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh initiatives create --name "[NAME]" --description "[INITIATIVE_DESC]" --content "[INITIATIVE_CONTENT]" --owner "[OWNER_EMAIL_OR_ID]" --lead-team "[TEAM_KEY_OR_NAME]" --labels "[INITIATIVE_LABELS]" --link "[RESOURCE_LABEL]=[RESOURCE_URL]"
@@ -66,14 +99,18 @@ For a new initiative, complete [initiative-project-template.md](../templates/ini
 
 **Skip if** § 1 kept a map project as `PROJECT_ID`.
 
-Complete [initiative-project-template.md](../templates/initiative-project-template.md) § Required inputs if § 3.1 did not collect them. Use the plan's project outcome for `[PROJECT_DESC]` and its deliverables and acceptance for `[PROJECT_CONTENT]`, following that template. Add `--link "[RESOURCE_LABEL]=[RESOURCE_URL]"` when the project has research or design.
+1. Complete [initiative-project-template.md](../templates/initiative-project-template.md) § Required inputs if § 3.1 did not collect them.
+2. Following that template, use the plan's project outcome for `[PROJECT_DESC]`.
+3. Following that template, use the plan's deliverables and acceptance for `[PROJECT_CONTENT]`.
+4. Add `--link "[RESOURCE_LABEL]=[RESOURCE_URL]"` when the project has research or design.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects create --name "[PROJECT_NAME]" --team "[TEAM_KEY_OR_NAME]" --description "[PROJECT_DESC]" --content "[PROJECT_CONTENT]" --state "planned" --lead "[LEAD_EMAIL_OR_ID]" --labels "[PROJECT_LABELS]"
 .agents/skills/linear/scripts/linear.sh initiatives add-project [INITIATIVE_ID] --project [PROJECT_ID]
 ```
 
-Skip the second command when no initiative was chosen. Keep `PROJECT_ID`.
+- Skip the second command when no initiative was chosen.
+- Keep `PROJECT_ID`.
 
 ### 3.3 Project Relations
 
@@ -96,37 +133,90 @@ Position within the backlog is not set here; `audit-issues project-order` owns p
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). When only `agent`/`agent_label` is present, complete the set per [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set). Validate every issue's `labels[]` per [labels.md § Validation](../references/labels.md#validation) before writing the audit file. Any failure there halts before mutation.
+1. Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)).
+2. When only `agent`/`agent_label` is present, complete the set per [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set).
+3. Validate every issue's `labels[]` per [labels.md § Validation](../references/labels.md#validation) before writing the audit file.
+4. Any failure there halts before mutation.
 
 ### 4.2 Convert to Audit Input
 
-Deterministic mapping only — do NOT re-analyze, and do NOT re-type: generate the file with a script (`jq` over `TPM_OUTPUT`) for every conversion. Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]` — skipping entries whose `project` is `Deferred`, which the § 5 report lists as deferred:
+Deterministic mapping only:
+
+- Do NOT re-analyze, and do NOT re-type.
+- Generate the file with a script (`jq` over `TPM_OUTPUT`) for every conversion.
+- Convert `TPM_OUTPUT` to the issue-mode format of [audit-output.md](../schemas/audit-output.md), one `issues[]` entry per `organized_issues[i]`.
+- Skip entries whose `project` is `Deferred`. The § 5 report lists them as deferred.
 
 | Field | Source |
 |-------|--------|
 | `index` | Sequential, 1-based |
 | `identifier` | null — all proposed |
 | `title`, `action`, `target`, `reason` | Same fields on `organized_issues[i]` |
-| `project.recommended` | `project_placement.project_name`; `recommended_id` = `PROJECT_ID` from § 1 or § 3.2 |
-| `add_relations` | `depends_on_proposed` titles → `blocked_by: ["#N"]` by index; `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`. Preserve each relation on the issue named in the plan under linear SKILL.md § Blocked Label vs Issue Relations. Keep valid leaf waits on their leaves. A reference to an entry § 2 omitted follows step 1 below |
-| `hierarchy` | Bundle children are `make_child` of their bundle parent per step 1 below. Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping |
+| `project.recommended` | `project_placement.project_name` |
+| `project.recommended_id` | `PROJECT_ID` from § 1 or § 3.2 |
+| `add_relations` | `depends_on_proposed` and `depends_on_existing` |
+| `hierarchy` | The bundle and `hierarchy_recommendation` |
 | `supersedes` | Supersession entries in `cross_project_findings` — only those § 2 neither executed nor skipped |
-| `cross_project_findings.conflicts[]` | Each resolution is applied before conversion: a wait/sequence resolution becomes `blocked_by: ["[ISSUE_ID]"]` on the affected entry; a `Modify approach` text lands in that entry's `create_fields` and marks it `"reapprove": true`; `Skip this issue` omits it. A resolution with no representable effect halts naming the conflict |
+| `cross_project_findings.conflicts[]` | Each resolution, applied before conversion |
 | `obsolete` | `organized_issues[i].obsolete` |
 | `priority_misalignment`, `agent_mismatch` | null — already correct |
 
-The two rules the rows above defer to:
+- `add_relations`:
+  - `depends_on_proposed` titles → `blocked_by: ["#N"]` by index.
+  - `depends_on_existing` → `blocked_by: ["[ISSUE_ID]"]`.
+  - Preserve each relation on the issue named in the plan under linear SKILL.md § Blocked Label vs Issue Relations.
+  - Keep valid leaf waits on their leaves.
+  - A reference to an entry § 2 omitted follows step 1 below.
+- `hierarchy`:
+  - Bundle children are `make_child` of their bundle parent per step 1 below.
+  - Parents and standalone issues follow `hierarchy_recommendation`: `children_of_origin` → `make_child` of the origin ID, anything else → `none`, `mixed` → per the TPM grouping.
+- `cross_project_findings.conflicts[]`:
+  - A wait/sequence resolution becomes `blocked_by: ["[ISSUE_ID]"]` on the affected entry.
+  - A `Modify approach` text lands in that entry's `create_fields` and marks it `"reapprove": true`.
+  - `Skip this issue` omits it.
+  - A resolution with no representable effect halts naming the conflict.
 
-1. **Retargeting.** A reference to any entry § 2 omitted — a relation or a `hierarchy.parent` — retargets to that entry's existing `target` issue id when the action executed; when the action was skipped, the reference is removed and the dependent re-enters § 5 marked `"reapprove": true` — never a dangling `#N`. A bundle child is `make_child` of `#[parent_index]` or, when that parent was omitted at § 2, of its existing `target` id.
-2. **Omission.** An action § 2 executed (cancel/expand/descope) is OMITTED from `issues[]` (never `skip`); a `supersede` whose cancellation § 2 executed enters as a plain `create` with `supersedes` cleared; an action § 2 skipped — globally or per action — is omitted as well, a skipped supersession dropping its replacement too; the § 5 report lists every omission with its § 2 outcome. Nothing § 6 or § 7 sees can override a § 2 answer.
+The two rules the entries above defer to:
 
-Each entry's `create_fields` carries `description` (synthesized from title, feature context, and breaking changes), `recommendation` (requirement bullets, plus doc updates and migration steps), `reach` = `this roadmap layer, from the plan at [SOURCE_PATH]` (structural for the same reason `review_born` below is: a roadmap entry has no defect of its own, so its reach is the run that produced it, and `source_path` already carries that plan — supplying `[REACH]`), `supersession` (copied from `organized_issues[i].supersession`; preserve records for § 2 actions already executed and pending `supersedes` actions, applying only the authorized omissions above; never infer terms, re-search or replace a withheld action with a no-match record), `review_born: false` (a roadmap layer is structural), `location`, `estimate`, `priority`, `labels[]` (authoritative, validated in § 4.1), `agent_label`, `is_bundle_parent`, and `source_path` = the plan markdown path. A bundle parent sets `is_bundle_parent: true` with no description or recommendation; generate [parent-issue-template.md](../templates/parent-issue-template.md) content after the children exist, via workflow-actions § Descriptions (parent rebuild).
+1. **Retargeting.** A reference to any entry § 2 omitted — a relation or a `hierarchy.parent`:
+   - Retargets to that entry's existing `target` issue id when the action executed.
+   - When the action was skipped, the reference is removed and the dependent re-enters § 5 marked `"reapprove": true`. Never a dangling `#N`.
+   - A bundle child is `make_child` of `#[parent_index]` or, when that parent was omitted at § 2, of its existing `target` id.
+2. **Omission.**
+   - An action § 2 executed (cancel/expand/descope) is OMITTED from `issues[]` (never `skip`).
+   - A `supersede` whose cancellation § 2 executed enters as a plain `create` with `supersedes` cleared.
+   - An action § 2 skipped, globally or per action, is omitted as well, a skipped supersession dropping its replacement too.
+   - The § 5 report lists every omission with its § 2 outcome.
+   - Nothing § 6 or § 7 sees can override a § 2 answer.
+
+Each entry's `create_fields` carries:
+
+- `description`, synthesized from title, feature context, and breaking changes.
+- `recommendation`: requirement bullets, plus doc updates and migration steps.
+- `reach` = `this roadmap layer, from the plan at [SOURCE_PATH]`. It is structural for the same reason `review_born` below is: a roadmap entry has no defect of its own, so its reach is the run that produced it, and `source_path` already carries that plan, supplying `[REACH]`.
+- `supersession`, copied from `organized_issues[i].supersession`:
+  - Preserve records for § 2 actions already executed and pending `supersedes` actions, applying only the authorized omissions above.
+  - Never infer terms, re-search or replace a withheld action with a no-match record.
+- `review_born: false`: a roadmap layer is structural.
+- `location`, `estimate`, `priority`.
+- `labels[]`: authoritative, validated in § 4.1.
+- `agent_label`, `is_bundle_parent`.
+- `source_path` = the plan markdown path.
+
+- A bundle parent sets `is_bundle_parent: true` with no description or recommendation.
+- Generate its [parent-issue-template.md](../templates/parent-issue-template.md) content after the children exist, via workflow-actions § Descriptions (parent rebuild).
 
 Top-level: `{"mode": "issue", "source": "roadmap-create", "parent_issue": [from hierarchy_recommendation.origin_issue or null], "research_ref": [context.research_path], "plan_path": [context.plan_path], "approved_at_plan_gate": [true|false]}`.
 
-`approved_at_plan_gate` is true exactly when this wrapper, in this session, collected `Approve` at roadmap-plan § 5 for this plan — provenance, not set equality. `reapprove` is `true` on each entry changed since that answer (a § 2 conflict resolution, any post-approval edit, a reference removed by a § 2 skip), absent on the unchanged survivors. `Deferred`-project entries were never part of it; entries § 2 omitted were decided at that gate, so their absence never voids the flag for the unchanged survivors; the flag is false only when provenance fails (a later session, or a plan edited since approval). `research_ref` — the SPEC path when planning from one — renders as the template's `**Research**` line on every created issue, unconditionally; the § 6 research question is a separate offer to pre-existing issues.
+- `approved_at_plan_gate` is true exactly when this wrapper, in this session, collected `Approve` at roadmap-plan § 5 for this plan: provenance, not set equality.
+- `reapprove` is `true` on each entry changed since that answer (a § 2 conflict resolution, any post-approval edit, a reference removed by a § 2 skip), and absent on the unchanged survivors.
+- `Deferred`-project entries were never part of it.
+- Entries § 2 omitted were decided at that gate, so their absence never voids the flag for the unchanged survivors.
+- The flag is false only when provenance fails: a later session, or a plan edited since approval.
+- `research_ref`, the SPEC path when planning from one, renders as the template's `**Research**` line on every created issue, unconditionally.
+- The § 6 research question is a separate offer to pre-existing issues.
 
-Write it to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`, then run:
+Write it to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`. Then run:
 
 `⤵ workflows/audit-issues.md --analyzed tmp/audit-roadmap-YYYYMMDD-HHMMSS.json § 5-9 → § 4.3`
 
@@ -139,7 +229,9 @@ Write it to `tmp/audit-roadmap-YYYYMMDD-HHMMSS.json`, then run:
 .agents/skills/linear/scripts/linear.sh issues add-relation [ISSUE_ID] --related [EXTERNAL_ISSUE_ID]
 ```
 
-Use `blocked_by` for a real dependency and `related` for an informational link. Never relocate an issue to record a dependency.
+- Use `blocked_by` for a real dependency.
+- Use `related` for an informational link.
+- Never relocate an issue to record a dependency.
 
 ---
 
@@ -151,9 +243,19 @@ Use `blocked_by` for a real dependency and `related` for an informational link. 
 .agents/skills/linear/scripts/linear.sh issues list --project "[PROJECT_NAME]" --max
 ```
 
-Confirm every issue landed in the project, the parent/child structure matches the plan, dependencies are set, and project relations exist. Report discrepancies; do not auto-fix them.
+1. Confirm every issue landed in the project, the parent/child structure matches the plan, dependencies are set, and project relations exist.
+2. Report discrepancies. Do not auto-fix them.
 
-This section is the run's one publisher under [publish-artifacts.md](publish-artifacts.md); audit-issues § 7 skips publication for a `roadmap-create` input. The plan's source issue is the one [planning-artifacts.md](../references/planning-artifacts.md) selects; an invocation `--source-issue` already holds the plan markdown and its JSON from roadmap-plan § 6, and any other source issue receives both now. A research/spec input whose `context.research_source_issue` is set already sits on that issue and is uploaded nowhere; its link takes the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on `[RESEARCH_SOURCE_ISSUE]`. An input with a null `context.research_source_issue`, an inline or local-only file, is uploaded to the plan's source issue with the plan: set the field to that source issue and rewrite the plan JSON before attaching it, as [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) requires. Every issue this workflow created or updated, § 2 actions included, carries an `**Artifacts**` link to each of these files. Verify the attachments on each source issue and the links on every other issue.
+This section is the run's one publisher under [publish-artifacts.md](publish-artifacts.md). audit-issues § 7 skips publication for a `roadmap-create` input.
+
+- The plan's source issue is the one [planning-artifacts.md](../references/planning-artifacts.md) selects.
+- An invocation `--source-issue` already holds the plan markdown and its JSON from roadmap-plan § 6. Any other source issue receives both now.
+- A research/spec input whose `context.research_source_issue` is set already sits on that issue and is uploaded nowhere. Its link takes the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on `[RESEARCH_SOURCE_ISSUE]`.
+- An input with a null `context.research_source_issue`, an inline or local-only file, is uploaded to the plan's source issue with the plan:
+  1. Set the field to that source issue.
+  2. Rewrite the plan JSON before attaching it, as [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) requires.
+- Every issue this workflow created or updated, § 2 actions included, carries an `**Artifacts**` link to each of these files.
+- Verify the attachments on each source issue and the links on every other issue.
 
 <output_format>
 
@@ -178,4 +280,5 @@ This section is the run's one publisher under [publish-artifacts.md](publish-art
 
 ## 6. Return State
 
-**If managed**: return to the parent workflow's next section. **If standalone**: session complete.
+- **If managed**: return to the parent workflow's next section.
+- **If standalone**: session complete.

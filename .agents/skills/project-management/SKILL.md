@@ -118,14 +118,24 @@ The rules for an item are in [references/filing.md](references/filing.md). Read 
 | `roadmap create` | `@[plan-file]` | [roadmap-create](workflows/roadmap-create.md) |
 | `research-spike` | none | [research-spike](workflows/research-spike.md) |
 | `research-complete` | `[ISSUE_ID]` | [research-complete](workflows/research-complete.md) |
-| `research-issue` | none | [research-issue](workflows/research-issue.md), internal, invoked by `research-spike` |
-| `proposal-sweep` | fleet brief | [proposal-sweep](workflows/proposal-sweep.md), internal, invoked by `oversee` |
+| `research-issue` | none | [research-issue](workflows/research-issue.md) |
+| `proposal-sweep` | fleet brief | [proposal-sweep](workflows/proposal-sweep.md) |
+
+- `research-issue` is internal: `research-spike` invokes it.
+- `proposal-sweep` is internal: `oversee` invokes it.
 
 ## Execution Rules
 
-- Run the sections of a workflow in order. Skip a section only on its explicit **Skip if** condition, never on your own judgement of scope.
-- `<delegation_format>` and `<output_format>` are literal templates. Fill each `[PLACEHOLDER]`, remove the lines whose placeholders are empty, and add nothing.
-- Send a user-visible `<output_format>` report as a normal assistant message first. Then invoke the question tool separately, with only the question and short option labels. Never paste the report into the question or its options.
+- Run the sections of a workflow in order.
+- Skip a section only on its explicit **Skip if** condition, never on your own judgement of scope.
+- `<delegation_format>` and `<output_format>` are literal templates:
+  - Fill each `[PLACEHOLDER]`.
+  - Remove the lines whose placeholders are empty.
+  - Add nothing.
+- For a user-visible `<output_format>` report:
+  1. Send the report as a normal assistant message first.
+  2. Then invoke the question tool separately, with only the question and short option labels.
+  3. Never paste the report into the question or its options.
 - A failed Linear read halts the workflow with its diagnostic, never a partial result.
 
 ## Read when

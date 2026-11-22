@@ -19,7 +19,12 @@ The active project has no open item left, read by its recorded id as [project-ma
 }
 ```
 
-`actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1), and when `completed_project` is null; its `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `blocked_by_active` is the started project that holds activation by [§ Project kinds](../references/project-map.md#project-kinds) once this result is applied: `completed_project` when held open, otherwise another started project that counts as active; null when none does. `ready: true` means every dependency is satisfied; `sort_order` is the manual ordering from the tracker UI; `recommended` is the first project with `ready: true`.
+- `actions.mark_complete` is null when the project map holds the project open (tpm-cycle-plan § 1), and when `completed_project` is null.
+- `actions.mark_complete.ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`.
+- `blocked_by_active` is the started project that holds activation by [§ Project kinds](../references/project-map.md#project-kinds) once this result is applied: `completed_project` when held open, otherwise another started project that counts as active. It is null when none does.
+- `ready: true` means every dependency is satisfied.
+- `sort_order` is the manual ordering from the tracker UI.
+- `recommended` is the first project with `ready: true`.
 
 ## Status: plan_ready
 
@@ -65,13 +70,21 @@ The active project has no open item left, read by its recorded id as [project-ma
 
 ### planned_work
 
-Ordered by architecture analysis: unblocked before blocked, then layer (L0 foundation → L4 testing), then enabling value, then priority. `rationale` explains the position; `enables[]` lists what completing it unblocks; `blocked_by` is null unless the blocker is in this same cycle.
+- Ordered by architecture analysis: unblocked before blocked, then layer (L0 foundation → L4 testing), then enabling value, then priority.
+- `rationale` explains the position.
+- `enables[]` lists what completing it unblocks.
+- `blocked_by` is null unless the blocker is in this same cycle.
 
 `not_included[].reason` is one of: `"Blocked by [ID] (not in cycle)"`, `"Blocked by [ID] (included, will unblock)"`, `"Over capacity"`, `"Lower priority deferred"`.
 
 ### set_labels
 
-The caller fetches the issue's current labels, computes the full final set, preserves unrelated labels unless `mode` is `replace_all`, preflights, and only then calls `issues update --labels`.
+The caller:
+
+1. Fetches the issue's current labels.
+2. Computes the full final set, preserving unrelated labels unless `mode` is `replace_all`.
+3. Preflights.
+4. Only then calls `issues update --labels`.
 
 | Field | Required | Description |
 |-------|----------|-------------|

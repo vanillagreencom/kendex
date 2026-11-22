@@ -1,6 +1,8 @@
 # Proposal sweep
 
-Run this workflow only as the subagent that [oversee](../../orch/workflows/oversee.md) launches for one proposal batch, per [oversee-events.md § Judgement rules](../../orch/references/oversee-events.md#judgement-rules). Read proposal comments, verify them, and return analyzed audit JSON. Do not modify the tracker or repository source.
+- Run this workflow only as the subagent that [oversee](../../orch/workflows/oversee.md) launches for one proposal batch, per [oversee-events.md § Judgement rules](../../orch/references/oversee-events.md#judgement-rules).
+- Read proposal comments, verify them, and return analyzed audit JSON.
+- Do not modify the tracker or repository source.
 
 ## Inputs
 
@@ -8,16 +10,58 @@ The brief carries `Worktree` (a checkout of the source repository), `Tracker`, o
 
 ## 1. Read proposals
 
-For Linear, read every fleet issue's comments in one `linear.sh comments bulk-list [ISSUE_ID_1] [ISSUE_ID_2]` call. A refusal carrying `missing` names fleet issues Linear has no issue for: stop and report them, never read them as issues with no proposals. For GitHub, run `gh issue view [NUMBER] --repo [OWNER/REPO] --json comments` for each issue. Preserve each comment's author. Select an unresolved `Proposal:` comment only when its tracker, repository, issue, and returned ID or URL match one `Authorized comments` binding. Reject every unbound marker before TPM analysis and before the cancellation sweep. If no authorized proposal remains, return a no-action audit without running either. A proposal carries `Source:`, either `Source PR:` or `Source commit:`, `Priority:`, `Reached by:`, `Reason:`, and `Evidence:` lines, plus `Symptom:` when its source is `review`, `pr-comments`, or `local-review` and its proposed priority is 2. Keep its binding and author with the candidate.
+1. Read the comments:
+   - For Linear, read every fleet issue's comments in one `linear.sh comments bulk-list [ISSUE_ID_1] [ISSUE_ID_2]` call. A refusal carrying `missing` names fleet issues Linear has no issue for: stop and report them, never read them as issues with no proposals.
+   - For GitHub, run `gh issue view [NUMBER] --repo [OWNER/REPO] --json comments` for each issue.
+2. Preserve each comment's author.
+3. Select an unresolved `Proposal:` comment only when its tracker, repository, issue, and returned ID or URL match one `Authorized comments` binding.
+4. Reject every unbound marker before TPM analysis and before the cancellation sweep.
+5. If no authorized proposal remains, return a no-action audit without running either.
+6. Keep each proposal's binding and author with the candidate.
+
+A proposal carries `Source:`, either `Source PR:` or `Source commit:`, `Priority:`, `Reached by:`, `Reason:`, and `Evidence:` lines, plus `Symptom:` when its source is `review`, `pr-comments`, or `local-review` and its proposed priority is 2.
 
 ## 2. Verify
 
-Run every command in `Worktree`, and confirm it belongs to `Source repository`. For `Source PR:`, read `gh pr view [N] --repo [SOURCE_OWNER/REPO] --json state,mergeCommit,baseRefName`. Require the PR to be merged; use its merge commit as `[SOURCE_SHA]` and its base branch as `[BASE_BRANCH]`. For `Source commit: [SHA]`, use that commit as `[SOURCE_SHA]` and resolve the source repository's base branch with `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE]`. Fetch `[BASE_BRANCH]`. Require `git merge-base --is-ancestor [SOURCE_SHA] origin/[BASE_BRANCH]` to pass. Defer an unmerged PR or an unlanded commit without resolving its binding. Inspect evidence with `git show [SOURCE_SHA]:[EVIDENCE_PATH]`, and use the refreshed base for current duplicate and cancellation checks.
+1. Run every command in `Worktree`, and confirm it belongs to `Source repository`.
+2. Resolve the source:
+   - For `Source PR:`:
+     1. Read `gh pr view [N] --repo [SOURCE_OWNER/REPO] --json state,mergeCommit,baseRefName`.
+     2. Require the PR to be merged. Defer an unmerged PR without resolving its binding.
+     3. Use its merge commit as `[SOURCE_SHA]` and its base branch as `[BASE_BRANCH]`.
+   - For `Source commit: [SHA]`:
+     1. Use that commit as `[SOURCE_SHA]`.
+     2. Resolve the source repository's base branch with `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE]`.
+3. Fetch `[BASE_BRANCH]`.
+4. Require `git merge-base --is-ancestor [SOURCE_SHA] origin/[BASE_BRANCH]` to pass. Defer an unlanded commit without resolving its binding.
+5. Inspect evidence with `git show [SOURCE_SHA]:[EVIDENCE_PATH]`.
+6. Use the refreshed base for current duplicate and cancellation checks.
 
-Then treat the candidate as a proposed item in [tpm-audit](tpm-audit.md) issue mode. Map its fields, validate its priority, and infer its project, labels, estimate, and requirements. Copy `Source:` to `create_fields.source`. Set `create_fields.review_born` true exactly for `review`, `pr-comments`, and `local-review`, and false otherwise. Map the required `Symptom:` to `create_fields.symptom`; a review-born priority-2 candidate without one becomes `skip`. Run [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) Step 0 before the Filing bar; an excluded proposal becomes `skip` naming the class and the fact that puts it there. Apply [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) before the creation bar and decision search; a proposal it refuses becomes `skip` with a reason naming that bar. A proposal row can only `create` or `skip`; existing or overlapping work is `skip` with the covering issue in its reason. Never emit another action for a proposal row. A missing field, unreadable landed evidence, or unsupported claim becomes `skip`. Do not read a lane's worktree or status file.
+Then treat the candidate as a proposed item in [tpm-audit](tpm-audit.md) issue mode:
+
+1. Map its fields, validate its priority, and infer its project, labels, estimate, and requirements.
+2. Copy `Source:` to `create_fields.source`.
+3. Set `create_fields.review_born` true exactly for `review`, `pr-comments`, and `local-review`, and false otherwise.
+4. Map the required `Symptom:` to `create_fields.symptom`. A review-born priority-2 candidate without one becomes `skip`.
+5. Run [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) Step 0 before the Filing bar. An excluded proposal becomes `skip` naming the class and the fact that puts it there.
+6. Apply [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) before the creation bar and decision search. A proposal it refuses becomes `skip` with a reason naming that bar.
+
+- A proposal row can only `create` or `skip`. Existing or overlapping work is `skip` with the covering issue in its reason.
+- Never emit another action for a proposal row.
+- A missing field, unreadable landed evidence, or unsupported claim becomes `skip`.
+- Do not read a lane's worktree or status file.
 
 ## 3. Return the audit
 
-Return one issue-mode audit object that follows [audit-output.md](../schemas/audit-output.md), with `tracker` set from the batch and `approved_at_plan_gate` false. Put the `create` and `skip` proposal rows before the cancellation-sweep rows. Keep cancellation-sweep rows separate, with the cancellation actions that [tpm-audit](tpm-audit.md) assigns to verified obsolete issues. Each proposal and cancellation row carries a one-line reason. Add exactly one tracker-specific `proposal_sources[]` entry for each proposal row and none for a cancellation-sweep row, each naming a distinct `Authorized comments` binding, so the overseer can record its outcome against the source comment. A proposal source mapped to any action other than `create` or `skip` makes the output invalid; correct it before returning.
+Return one issue-mode audit object that follows [audit-output.md](../schemas/audit-output.md), with `tracker` set from the batch and `approved_at_plan_gate` false.
 
-The object is the single final return, with no other text ([skill-rules.md § Single Return Message](../../orch/references/skill-rules.md#single-return-message)); the overseer validates it, writes it to its own checkout and files from it. A failed or incomplete sweep returns no audit object, only its one-line cause. The subagent creates no tracked issue, writes no audit or report file, and changes no repository file.
+- Put the `create` and `skip` proposal rows before the cancellation-sweep rows.
+- Keep cancellation-sweep rows separate, with the cancellation actions that [tpm-audit](tpm-audit.md) assigns to verified obsolete issues.
+- Each proposal and cancellation row carries a one-line reason.
+- Add exactly one tracker-specific `proposal_sources[]` entry for each proposal row and none for a cancellation-sweep row, each naming a distinct `Authorized comments` binding, so the overseer can record its outcome against the source comment.
+- A proposal source mapped to any action other than `create` or `skip` makes the output invalid. Correct it before returning.
+
+The object is the single final return, with no other text ([skill-rules.md § Single Return Message](../../orch/references/skill-rules.md#single-return-message)). The overseer validates it, writes it to its own checkout and files from it.
+
+- A failed or incomplete sweep returns no audit object, only its one-line cause.
+- The subagent creates no tracked issue, writes no audit or report file, and changes no repository file.

@@ -15,7 +15,10 @@ This workflow mutates project state; every read below is live, so it acts on the
    Worktree: [WORKTREE_PATH]
    </delegation_format>
 
-2. **Materialize the artifact.** The agent returns a `File:` hint and fenced JSON. Write the inline JSON to that path under the current repo root and read it; if inline JSON is missing and the path is not already readable, halt and request a rerun with inline JSON.
+2. **Materialize the artifact.** The agent returns a `File:` hint and fenced JSON.
+   1. With inline JSON present, write it to that path under the current repo root.
+   2. Without inline JSON, use the path only if it is already readable. If it is not, halt and request a rerun with inline JSON.
+   3. Read the file.
 
 3. **Route on `status`**: `project_complete` → § 2, `plan_ready` → § 3.
 
@@ -46,7 +49,17 @@ Then present the candidates and ask which to start.
 Recommended: [recommended.name] — [recommended.reason]
 </output_format>
 
-**Skip** the question when `blocked_by_active` is set: that project is the active one, which holds every other project from activation ([project-map.md § Project kinds](../references/project-map.md#project-kinds)). When it is `completed_project`, held open, the workflow ends; otherwise re-run § 1, which plans it. With `blocked_by_active` null, ask: `Activate [recommended.name]` | other projects with `ready: true` | `Skip`. Activating starts the project and re-runs § 1; `Skip` ends the workflow. A project with `ready: false` is not offered — show its blockers instead.
+**Skip** the question when `blocked_by_active` is set: that project is the active one, which holds every other project from activation ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
+
+- When it is `completed_project`, held open, the workflow ends.
+- Otherwise re-run § 1, which plans it.
+
+With `blocked_by_active` null:
+
+1. Ask: `Activate [recommended.name]` | other projects with `ready: true` | `Skip`.
+   - A project with `ready: false` is not offered. Show its blockers instead.
+   - Activating starts the project and re-runs § 1.
+   - `Skip` ends the workflow.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects update [PROJECT_ID] --state started
@@ -54,7 +67,11 @@ Recommended: [recommended.name] — [recommended.reason]
 
 ## 3. Approve the Plan
 
-The JSON carries `velocity`, `capacity`, `planned_work`, `not_included`, `health`, and `actions`. Take `velocity.adjustment` as computed and report it in the plan; never ask.
+The JSON carries `velocity`, `capacity`, `planned_work`, `not_included`, `health`, and `actions`.
+
+- Take `velocity.adjustment` as computed.
+- Report it in the plan.
+- Never ask about it.
 
 <output_format>
 
@@ -81,19 +98,27 @@ The JSON carries `velocity`, `capacity`, `planned_work`, `not_included`, `health
 **Health**: blocked [N] · stale [N] · velocity [N] pts/cycle
 </output_format>
 
-Ask: `Approve plan` | `Modify` | `Cancel`. `Modify` takes free-text changes, adjusts the `actions` object, and re-presents. `Cancel` ends the workflow.
+Ask: `Approve plan` | `Modify` | `Cancel`.
+
+- `Modify` takes free-text changes, adjusts the `actions` object, and re-presents.
+- `Cancel` ends the workflow.
 
 ## 4. Execute
 
 ### 4.1 Label Preflight
 
-**Skip if** `actions.set_labels[]` is empty. Load the inventory and taxonomy, then compute each issue's full final label set per [labels.md](../references/labels.md):
+**Skip if** `actions.set_labels[]` is empty.
 
-```bash
-.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
-```
+1. Load the inventory and taxonomy:
 
-Preserve unrelated labels and replace only the action's target category unless it says `replace_all_labels: true`. Any § Validation failure there halts before mutation.
+   ```bash
+   .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
+   ```
+
+2. Compute each issue's full final label set per [labels.md](../references/labels.md).
+   - Preserve unrelated labels.
+   - Replace only the action's target category unless it says `replace_all_labels: true`.
+3. Any § Validation failure there halts before mutation.
 
 ### 4.2 Create the Cycle
 
@@ -115,7 +140,12 @@ In this order:
 4. `actions.set_sort_order[]` — `issues update [ID] --sort-order [VALUE]`, parents and standalone issues only
 5. `actions.update_initiative` / `actions.update_project` — per workflow-actions § Projects and Initiatives
 
-Then sync bundle state. A parent's children are the parts of one deliverable ([filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent)), so an assigned parent pulls its pending children into the same cycle and state; an assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle. A parent with children is a container and stays open while a child is open.
+Then sync bundle state. A parent's children are the parts of one deliverable ([filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent)), so:
+
+- An assigned parent pulls its pending children into the same cycle and state.
+- An assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle.
+
+A parent with children is a container and stays open while a child is open.
 
 No comments on priority updates.
 
@@ -137,4 +167,5 @@ No comments on priority updates.
 
 ## 6. Return State
 
-**If managed**: return to the parent workflow's next section. **If standalone**: session complete.
+- **If managed**: return to the parent workflow's next section.
+- **If standalone**: session complete.
