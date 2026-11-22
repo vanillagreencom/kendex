@@ -16,7 +16,7 @@ A Copilot account is a directory the CLI runs under as `COPILOT_HOME`, such as `
 - **The login's token.** The account listing reads the login's token for GitHub's usage endpoint: from `config.json`, or from the Linux Secret Service through `secret-tool` where the CLI keeps the token in a keyring. It reads no other platform's store, such as the macOS Keychain.
 - **The status line.** Set `"statusLine": {"type": "command", "command": "<repo>/.agents/skills/orch/scripts/copilot-statusline", "refreshInterval": 30}`. The command is an executable file, and the interval a whole number of seconds under 120.
 - **The session record.** The status-line command writes the session record the turn end reads where the context extension recorded no reading. That record is also the one that carries `allow_all_enabled` (§ Allow-all blocked by policy). The header of `scripts/copilot-statusline` states the record.
-- **The context extension.** The launch preparation installs it and sets the flag true where the flag is absent, for every local or hosted lane and controller.
+- **The context extension.** The launch preparation installs it and sets `enabledFeatureFlags.EXTENSIONS` true where the flag is absent, for every local or hosted lane and controller.
 
 A Copilot lane uses the `copilot-home` the provider's `create` supplies. The default `.copilot` is available on a provider that supports home-relative transfers, and a confined provider needs a usable named home. See [Launch on a provider](../schemas/lane-host.md#launch-on-a-provider). The launch installs the context reader there through the provider's files (agent-runtime `trust.rs` `hosted_copilot_reader`), then reads the three lane-mail hooks on the host. It judges no settings layer on the host.
 

@@ -26,8 +26,6 @@ Under `off`, the call answers one of:
 
 Record the gate not applicable only on `off`.
 
-What holds in both modes:
-
 - Under the `off` gate mode, open review threads still stop the merge. Submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists.
 - Required CI checks, commit guards, exact-head checks and conflict refusal hold in both modes.
 - The merge path still refuses a `CHANGES_REQUESTED` review at its readiness check.
@@ -67,7 +65,7 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] --arg base "[REVIEW_BA
 
 The call reads the pull request and reads or records the gate mode.
 
-- Under the `off` gate mode, it answers as [§ Gate-mode routing](#gate-mode-routing)'s table says.
+- Under the `off` gate mode, it answers as [§ Gate-mode routing](#gate-mode-routing) says.
 - Under `approval`, it counts the head's open threads, reads its reviews, then settles the head's Copilot request ([§ Copilot requests](#copilot-requests)). A head with no verdict after those reads takes its review period.
 - A step that needs only the mode or the request runs the call once and reads that field.
 

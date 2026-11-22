@@ -123,12 +123,12 @@ Launch the one watchdog through [waiter-launch.md § Launch](waiter-launch.md#la
 .agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- .agents/skills/orch/scripts/orch-runtime dev-return --text check --wait 600 --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] < /dev/null
 ```
 
-1. A fix round appends `--expect-items-from-round`.
-2. Launch one watchdog per round; it replaces any background watchdog.
-3. A lane then ends its turn, and the `job-end` mail reaches it through the wake ([waiter-launch.md § Completion](waiter-launch.md#completion)). A session that is no lane holds the completion inside the turn with `exec_command` and empty `write_stdin` polls, as § Validation wait does.
-4. An agent's return message does not release the wait.
-5. Once `wait.exit` is nonempty, read it and `wait.log`.
-6. Where the watchdog returned no verdict, apply Round Closure's refusal and replacement rules. Otherwise, run the delegating workflow's acceptance table on the artifact verdict or the deadline result.
+- A fix round appends `--expect-items-from-round`.
+- Launch one watchdog per round; it replaces any background watchdog.
+- A lane then ends its turn, and the `job-end` mail reaches it through the wake ([waiter-launch.md § Completion](waiter-launch.md#completion)). A session that is no lane holds the completion inside the turn with `exec_command` and empty `write_stdin` polls, as § Validation wait does.
+- An agent's return message does not release the wait.
+- Once `wait.exit` is nonempty, read it and `wait.log`.
+- Where the watchdog returned no verdict, apply Round Closure's refusal and replacement rules. Otherwise, run the delegating workflow's acceptance table on the artifact verdict or the deadline result.
 
 ## Reviewer round wait
 
@@ -138,12 +138,12 @@ For each incomplete reviewer, launch its one watchdog through [waiter-launch.md 
 .agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- .agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID] < /dev/null
 ```
 
-1. Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog).
-2. Each watchdog replaces a background one.
-3. A lane ends its turn and handles each `job-end` mail as it arrives. A session that is no lane holds every completion inside the turn as § Delegated round wait does.
-4. After each completion, sweep all run directories for nonempty `wait.exit` files, and run § 3.2's filesystem sweep and due actions.
-5. Read each completed run's `wait.exit` and `wait.log`.
-6. § 3.2 owns refusal replacement, and § 3.1 owns artifact acceptance. An agent message alone never releases a watchdog wait.
+- Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog).
+- Each watchdog replaces a background one.
+- A lane ends its turn and handles each `job-end` mail as it arrives. A session that is no lane holds every completion inside the turn as § Delegated round wait does.
+- After each completion, sweep all run directories for nonempty `wait.exit` files, and run § 3.2's filesystem sweep and due actions.
+- Read each completed run's `wait.exit` and `wait.log`.
+- § 3.2 owns refusal replacement, and § 3.1 owns artifact acceptance. An agent message alone never releases a watchdog wait.
 
 ## Process-owned reviewers
 

@@ -628,8 +628,10 @@ A Copilot thread posted after this read routes as § 1 states.
    - Number lists `1.` `2.` `3.`, never `#N`.
 5. **Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise:
    - tag the bot with the reason and a re-review request;
-   - dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[REASON]"`, and resolve the thread;
-   - tag a human reviewer the same way, and never dismiss a human's review.
+   - dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[REASON]"`, and resolve the thread.
+
+   Tag a human reviewer the same way, and never dismiss a human's review.
+
 6. Resolve every thread a reply was posted to. Keep open only the threads awaiting a human answer.
 
 ### 7.2 Copilot Head Route

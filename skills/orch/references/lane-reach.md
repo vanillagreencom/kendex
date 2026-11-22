@@ -162,7 +162,7 @@ On the surfaces of [oversee.md § 1](../workflows/oversee.md#1-resolve-the-launc
 
 ## Per harness
 
-Launching, resuming and the harness's own dialogs stay per harness. Every lane launches through the runtime's `launch-lane` into a tmux window ([oversee.md § 3](../workflows/oversee.md#3-launch)), and [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads) reads its state. The keys the list below names reach a dialog one key per call:
+Launching, resuming and the harness's own dialogs stay per harness. Every lane launches through the runtime's `launch-lane` into a tmux window ([oversee.md § 3](../workflows/oversee.md#3-launch)), and [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads) reads its state. The keys the launch and dialog answers below name reach a dialog one key per call:
 
 - A hosted lane whose host declares `pane=verb` takes each key through its provider:
 

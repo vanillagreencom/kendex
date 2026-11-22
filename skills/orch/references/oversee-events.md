@@ -473,7 +473,7 @@ A handoff does not confirm that its session stopped: a relaunch refuses `lane-li
 - Codex's current failed-turn marker below its last prompt and above its idle composer can end a Working row.
 - Hosted Pi lanes use their own Stop rows; other hosted lanes keep their provider's screen reading.
 
-Read the closing lines under it.
+Read the closing lines under the `idle-after-return` line.
 
 - `cause=length`: the model's output limit cut the turn, and the lane has not finished. Send it a one-line continuation directive.
 - `cause=api-error` is a turn its provider's API ended. The watch resumes a lane the wake reaches once, with no line. So this line is a second such end, a resume the wake could not type, or a lane the wake does not reach: wake the lane with a continuation directive.
@@ -960,7 +960,7 @@ For each proved box:
    2. Hold a `held [ITEM] [RESET]` answer per the linear skill's `patterns/workflow-actions.md` § Quota Holds.
    3. On a refusal, keep its stderr, and run the same close again once the named cause is resolved.
 5. A container `box=[N] trigger="outcome"` line names an outcome the parent still holds.
-   1. Move it into its own child item: a leaf blocked by the siblings it measures.
-   2. Its holder completes it with `linear.sh issues complete [CHILD] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
-   3. Remove the box from the parent. The open child keeps the parent open.
+   - Move it into its own child item: a leaf blocked by the siblings it measures.
+   - Its holder completes it with `linear.sh issues complete [CHILD] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
+   - Remove the box from the parent. The open child keeps the parent open.
 6. After either route sets the item Done, close its parent through [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 2, and repeat for container ancestors. Record the closures and diagnostics in the evidence comment.

@@ -163,7 +163,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-local-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json --foreground
 ```
 
-Capture the launch's status, stdout and stderr. A nonzero launch, or stdout with no line beginning `wait:`, has no wait protocol. Then:
+Capture the launch's status, stdout and stderr. A nonzero launch, or stdout with no line beginning `wait:`, has no wait protocol. On a launch with no wait protocol:
 
 - Report `local external review failed — [SECOND-OPINION STDERR]`.
 - Run neither the wait nor the check below.
@@ -473,11 +473,11 @@ A refused review check publishes nothing:
 1. Bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`.
 2. Write `[WORKTREE_PATH]/tmp/base-prepare-[ISSUE_ID].json` with the harness file tool as `{"op": "record-push", "mode": "prepare", "worktree": "[WORKTREE_PATH]"}`, then run it:
 
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/base-prepare-[ISSUE_ID].json
-```
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/base-prepare-[ISSUE_ID].json
+   ```
 
-The request runs the worktree skill's preparation, its normal commit hooks and SHA reconciliation. It returns before validation and transport.
+   The request runs the worktree skill's preparation, its normal commit hooks and SHA reconciliation. It returns before validation and transport.
 
 3. Bind `[BASE]`, `[PREPARED_BASE]` and `[PREPARED_HEAD]` from the reply's `prepared` receipt: its `base`, `before` and `commit`.
 4. Apply [SKILL.md § The Cycle](../SKILL.md#the-cycle)'s rules reload after a rebase at once, against `[BOUND_HEAD]`.
@@ -975,7 +975,7 @@ Output: [skill-rules.md § Lane Output](../references/skill-rules.md#lane-output
 
 </output_format>
 
-**Merge.** **Skip if** `MERGE_READY` is false. § 6.1 unarmed any pull request § 2 step 5 armed.
+**Merge.** **Skip if** `MERGE_READY` is false. On such a run, § 6.1 unarmed any pull request § 2 step 5 armed.
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto

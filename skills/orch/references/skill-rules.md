@@ -163,10 +163,11 @@ The orchestrator owns round closure. Every dev or QA delegation runs these steps
    - It then runs `orch-runtime round --text stamp`. That writes the round's immutable record of HEAD, items and optional `Adds:` paths at `[WORKTREE]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`.
    - A chosen cut adds `--cut`; [dev-round.md § Declared cuts](../schemas/dev-round.md#declared-cuts) owns its acceptance.
    - A missing or mismatched record requires a fresh round. Never recreate one after delegation.
-3. **Prune, where selected.** Only where the project's orch instructions select Cargo round cleanup; without that selection, skip this step.
+3. **Prune, where selected.** Run this step only where the project's orch instructions select Cargo round cleanup.
    - Send the `prune-round` request, `{"op": "prune-round", "field": "dev"}`, through `orch-runtime op --item [ISSUE_ID] --request [REQUEST_FILE]`. A CI round names `"field": "ci"`.
    - The request prunes the item worktree's Cargo profiles when the volume holding them is at or past `ORCH_ROUND_PRUNE_DISK_PCT` ([settings.md](settings.md)).
    - A non-zero exit stops the delegation: report the reply.
+   - Without that selection, skip this step.
 4. **Record the delegation time** with the `record-round` request, step `delegated`, after any prune. The escalation's 10-minute quiet window runs from it.
 5. **Arm a single-shot watchdog** at the delegation: `orch-runtime dev-return --text check --wait 600 --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]`, with `--expect-items-from-round` on a fix round.
    - Start it as one waiter through [waiter-launch.md](waiter-launch.md). In a lane its `orch-runtime launch-job` carries `--owner [ISSUE_ID]`, so the job's end reaches the lane as a `job-end` directive.
@@ -225,7 +226,7 @@ A round is stalled when the watchdog returned `wait`, the harness reports the ag
 - Finish recovery before choosing a thread under [Codex thread reuse](#codex-thread-reuse).
 - Run `orch-runtime round --text recover --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id] --transcript [PATH]`, with the transcript path from [agent-transcripts.md](agent-transcripts.md).
 - Act on its line, which opens `round:` and names the state.
-- A bundled round's report carries no `Commit:` line, so a bundled round always takes the `redelegate` row.
+- A bundled round's report carries no `Commit:` line, so a bundled round always takes the `redelegate` steps.
 
 | Line | State |
 |---|---|
@@ -264,7 +265,7 @@ A lane never steers a running dev or fix round by message alone. A harness send 
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE]/tmp/orch-op-[ISSUE_ID].json
    ```
 
-5. Take the `redelegate` row. It keeps the uncommitted tree and delegates the updated brief under the fresh round id.
+5. Take the `redelegate` steps. It keeps the uncommitted tree and delegates the updated brief under the fresh round id.
    - On a fix round one thing differs: the fresh round's record holds the updated scope, never the `from` round's authorization.
    - Write its items file and run `orch-runtime round --text stamp` for the fresh id as [dev-fix.md § 2](../workflows/dev-fix.md#2-delegate) step 4 does for a new delegation, with the items, `--source`, `--adds` and `--cut` the updated brief names.
 
@@ -405,8 +406,7 @@ The overseer's side:
 
 Every lane command the runtime's launch builds carries the words below for its harness. They take the question tool away (agent-runtime's `Harness::question_off_words`).
 
-- A lane started through a harness's own session launcher ([oversee.md](../workflows/oversee.md) § 1) is outside the runtime's launch and keeps its tool.
-- It still never uses it.
+- A lane started through a harness's own session launcher ([oversee.md](../workflows/oversee.md) § 1) is outside the runtime's launch and keeps its tool. It still never uses it.
 
 | Harness | Question tool | Words that take it away |
 |---------|---------------|-------------------------|
@@ -426,7 +426,8 @@ Where the harness runs hooks:
 
 - The `lane-mail-halt` hook refuses the question tools above in a launched lane, naming the `lane-mail ask` and `lane-mail wait` route.
 - The `lane-mail-check` hook holds, or reports to the overseer, a launched lane's turn end that sent no `lane-mail` ask or notice and made no update to its lane status file since the last judgement.
-- A lane that ends its turn to wait on a dispatched agent or an armed wake follows [§ Lane mail](#lane-mail).
+
+A lane that ends its turn to wait on a dispatched agent or an armed wake follows [§ Lane mail](#lane-mail).
 
 Every lane brief also closes on the unattended words, `runtime/src/watch/unattended.txt`.
 

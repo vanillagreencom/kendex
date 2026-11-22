@@ -295,7 +295,7 @@ A round that meets the [Stalled round](../references/skill-rules.md#stalled-roun
    1. Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}`.
    2. Run it with the `op --request` command of [Close The Round's Stages](#close-the-rounds-stages).
 2. Run the recovery per [Stalled round](../references/skill-rules.md#stalled-round).
-3. On a `redelegate` line, the printed round id is already `dev_round_id`. Apply the cleanup condition to that round's prune with § 2 step 5's request file, then take the rest of the `redelegate` row:
+3. On a `redelegate` line, the printed round id is already `dev_round_id`. Apply the cleanup condition to that round's prune with § 2 step 5's request file, then take the rest of the `redelegate` steps:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json

@@ -18,8 +18,7 @@ Read when launching a waiter for a review wait, a `verify-pr` call (`orch-runtim
    - 0: the waiter started, and the JSON reply carries its runner line and record.
    - 75: it may have started; keep `[RUN_DIR]`, wait on its completion by § Completion, and launch no second waiter for it.
    - 1: `job-launch-failed` with its `cause`; nothing started, so report the cause and launch nothing on it.
-4. Record `[RUN_DIR]/wait.exit` and `[RUN_DIR]/wait.log` in the lane's status.
-5. Launch once: a shell-tool return or timeout authorizes no other waiter.
+4. Record `[RUN_DIR]/wait.exit` and `[RUN_DIR]/wait.log` in the lane's status. Launch once: a shell-tool return or timeout authorizes no other waiter.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- [WAITER_COMMAND_AND_ARGS] < /dev/null
@@ -37,9 +36,7 @@ A lane launched with `--owner` ends its turn after the launch. When the waiter e
 
 A session with no owner holds the wait inside its turn with the bounded foreground poll of [reviewer mutation-stability.md § 3. Await completion](../../reviewer/workflows/mutation-stability.md#3-await-completion), run again while it exits 124. On Codex it takes the `exec_command` and `write_stdin` calls of [codex-runtime.md § Validation wait](codex-runtime.md#validation-wait).
 
-A missing or empty `wait.exit` means the waiter has no recorded exit: keep waiting. Never read that state as a verdict or start a duplicate waiter.
-
-Once it is nonempty, read it and the log:
+A missing or empty `wait.exit` means the waiter has no recorded exit: keep waiting. Never read that state as a verdict or start a duplicate waiter. Once it is nonempty, read it and the log:
 
 ```bash
 cat "[RUN_DIR]/wait.exit"

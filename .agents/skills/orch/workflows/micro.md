@@ -26,8 +26,8 @@ The cost of the check decides whether the overseer or a lane makes a change, nev
 
 - A change the commit chain checks in its diff-scoped pass is this tier's.
 - A change whose check needs a build or a test run takes a lane in its own sandbox. A lane is keyed by a tracker item, so `directive-[ID]` never runs as a lane.
-- The overseer files the change as a tracker item from the directive, as it files an item an `owner-note` asks for ([oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone)).
-- That item launches under its own key, at the tier [oversee.md](oversee.md) § Item Tier assigns it, with neither the directive's branch nor its pull request. Its lane makes the change again from the item.
+  - The overseer files the change as a tracker item from the directive, as it files an item an `owner-note` asks for ([oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone)).
+  - That item launches under its own key, at the tier [oversee.md](oversee.md) § Item Tier assigns it, with neither the directive's branch nor its pull request. Its lane makes the change again from the item.
 
 The admission that launched the run reads the tier once, and the tier floors the run. The admission judges a later edit by the paths it touches. § 4 reads the class of the pushed range, its production lines included.
 

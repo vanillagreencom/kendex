@@ -246,30 +246,30 @@ A launch on the tmux surface takes these steps in order, locally or on a remote 
 
 2. **Model.** Read the item's body once.
    - Judge the approach under the project-management skill's `references/filing.md` § Judge the approach.
-   - Record go, change or drop, with the short cause-and-effect answer, in the launch `ruling` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
+     - Record go, change or drop, with the short cause-and-effect answer, in the launch `ruling` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
    - Judge whether the design choice is consequential or the approach uncertain, and record it in the same ruling.
-   - When either holds, the brief tells the lane to run one one-shot `reviewer-arch` review at launch, before implementing, through [design-review.md § Patch-chain actions](../references/design-review.md#patch-chain-actions), row **Second opinion**.
+     - When either holds, the brief tells the lane to run one one-shot `reviewer-arch` review at launch, before implementing, through [design-review.md § Patch-chain actions](../references/design-review.md#patch-chain-actions), step **Second opinion**.
    - Judge the span. An item goes back to filing under the project-management skill's `references/filing.md` § One landing per subsystem, when its Location names more than one subsystem, as the `small` class of [change-scope § Classes](../../change-scope/SKILL.md#classes) defines one, or when its body names no Location.
-   - A body that says why the item cannot land in parts keeps it; record that reason in the same ruling.
+     - A body that says why the item cannot land in parts keeps it; record that reason in the same ruling.
    - Select the model class and effort through [Model class](../references/skill-rules.md#model-class), and keep a model the brief names.
-   - Read `orch-env ORCH_LANE_PREFERENCE ""` as the program's default.
-   - Select the model before the account: an account with plan-wide room can have none left for one model.
-   - Never pick a weaker model because an account is near its wall: pick another account.
+     - Read `orch-env ORCH_LANE_PREFERENCE ""` as the program's default.
+     - Select the model before the account: an account with plan-wide room can have none left for one model.
+     - Never pick a weaker model because an account is near its wall: pick another account.
 3. **Choose.** The account judge decides.
    - Where `ORCH_LANE_PREFERENCE` is set and the brief names no model, run the preference walk with your own harness and permission words.
-   - Take `.result.chosen` as [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference) reads it:
+     - Take `.result.chosen` as [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference) reads it:
 
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime lane walk --fleet --source-harness [HARNESS] --source-flags [WORDS]
-   ```
+       ```bash
+       .agents/skills/orch/scripts/orch-runtime lane walk --fleet --source-harness [HARNESS] --source-flags [WORDS]
+       ```
 
    - Otherwise judge the account for the lane's model.
-   - Add `--lane [CONFIG_DIR] --projected` for an account named by hand.
-   - Take `.result.record.config_dir` where `.result.exit` is 0:
+     - Add `--lane [CONFIG_DIR] --projected` for an account named by hand.
+     - Take `.result.record.config_dir` where `.result.exit` is 0:
 
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]
-   ```
+       ```bash
+       .agents/skills/orch/scripts/orch-runtime lane pick --fleet --harness [HARNESS] --native-model [MODEL]
+       ```
 
    At exit 3 nothing launches: [lane-directive.md § No lane has room](../references/lane-directive.md#no-lane-has-room) says what to read, wait on and report.
 

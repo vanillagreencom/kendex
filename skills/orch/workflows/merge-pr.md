@@ -460,10 +460,10 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    **Entry-ahead wait.**
 
-   1. Save `queue_ahead_pr` as `[AHEAD_PR]`.
-   2. Repeat the same `queue-watch` command through Waiter launch.
-   3. Route `merged`, `closed`, `dequeued` and `status: error` at once by the table.
-   4. For every other result, read whether the saved entry is still queued:
+   - Save `queue_ahead_pr` as `[AHEAD_PR]`.
+   - Repeat the same `queue-watch` command through Waiter launch.
+   - Route `merged`, `closed`, `dequeued` and `status: error` at once by the table.
+   - For every other result, read whether the saved entry is still queued:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { mergeQueueEntry { position } } } }' -F owner=[MERGE_REPO_OWNER] -F repo=[MERGE_REPO_NAME] -F number=[AHEAD_PR]
@@ -588,12 +588,12 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    **Complete the in-PR bundle's children.** This step alone selects each child's proved boxes and completes the child at merge.
 
-   1. The `issues get [ISSUE]` read above lists the children as `.children` rows, each with its `.id` and `.state_type`. Include children the GitHub integration already set Done.
-   2. Take each non-canceled child that this PR's child `Closes` lines name.
-   3. Repeat the live read and the `issues complete` command for it, with its id, its own box selection and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent, and keep post-merge boxes on each child.
-   4. The call moves a qualified started child to Verifying while post-merge boxes remain open, and to Done otherwise. Record each child still Verifying in § 6 for the overseer.
-   5. A child read or completion failure is a tracker-completion failure.
-   6. Reconciliation's key search finds a child closed on its parent's `Closes` line. It can report `verifying-merge-unread` for a shared child's release-triggered or `+Nh` merge box. Then `orch-runtime reconcile-items --merged [CHILD]=[OWNER/REPO]#[PR_NUMBER]` judges the box from this merge ([verify.md § 1](verify.md#1-read-open-checks)). Name that command in the child handoff.
+   - The `issues get [ISSUE]` read above lists the children as `.children` rows, each with its `.id` and `.state_type`. Include children the GitHub integration already set Done.
+   - Take each non-canceled child that this PR's child `Closes` lines name.
+   - Repeat the live read and the `issues complete` command for it, with its id, its own box selection and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent, and keep post-merge boxes on each child.
+   - The call moves a qualified started child to Verifying while post-merge boxes remain open, and to Done otherwise. Record each child still Verifying in § 6 for the overseer.
+   - A child read or completion failure is a tracker-completion failure.
+   - Reconciliation's key search finds a child closed on its parent's `Closes` line. It can report `verifying-merge-unread` for a shared child's release-triggered or `+Nh` merge box. Then `orch-runtime reconcile-items --merged [CHILD]=[OWNER/REPO]#[PR_NUMBER]` judges the box from this merge ([verify.md § 1](verify.md#1-read-open-checks)). Name that command in the child handoff.
 
    **The container closes when its last child closes.**
 
@@ -731,11 +731,11 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    **The close-out elsewhere.** In an unconfined lane, save the item's record for the overseer's cycle row before the close-out:
 
-   1. Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`.
-   2. Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed.
-   3. Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is.
-   4. Where an earlier close-out already removed the record, keep the saved copy.
-   5. Where neither reads as a JSON object, report the failure and keep the worktree.
+   - Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`.
+   - Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed.
+   - Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is.
+   - Where an earlier close-out already removed the record, keep the saved copy.
+   - Where neither reads as a JSON object, report the failure and keep the worktree.
 
    Close the item out before any worktree removal, whatever the item's tracker state: Done, Verifying, or In Review with a box still open.
 

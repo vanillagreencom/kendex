@@ -439,12 +439,11 @@ Run it on every return message and every watchdog sweep.
 
 - **Attached.**
   1. `ok == false` after a return, `moving_tree` included, makes the return incomplete, whatever its `File:` path or message says.
-  2. Send that agent exactly one re-delegation. A continuation keeps an already spent re-delegation, and names its exact assigned path in place of a new timestamped path.
-  3. A `moving_tree` refusal needs a new review from a new starting snapshot once development finishes:
+  2. Send that agent exactly one re-delegation. A continuation keeps an already spent re-delegation, and names its exact assigned path in place of a new timestamped path. A `moving_tree` refusal needs a new review from a new starting snapshot once development finishes:
 
      > Your review return is incomplete: `orch-runtime review-artifact check` reports `[reason]`[ — `[detail]`] for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), following every required field of `review-finding.md`, then return `Verdict:` and `File:` again.
 
-  4. Still `ok == false` after that, or the § 3.2 deadline reached: mark the agent `unresponsive`. Never re-delegate a second time.
+  3. Still `ok == false` after that, or the § 3.2 deadline reached: mark the agent `unresponsive`. Never re-delegate a second time.
 
 - **Process-owned.**
   1. A terminal failure or a rejected artifact is incomplete.

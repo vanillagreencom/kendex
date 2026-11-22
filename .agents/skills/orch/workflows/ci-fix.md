@@ -249,9 +249,9 @@ The pull-request wait proves nothing about a merge-group fix. The caller re-arms
 
 The wait is the runtime's `verify-pr` operation over the pull request's current head.
 
-1. Run it as [submit-pr.md § 5](submit-pr.md#5-verify-ci) does: merge-state read first, through [Waiter launch](../references/waiter-launch.md), repeated while `result.status` is `pending` or `unreadable`.
-2. `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` prints from the checkout.
-3. Write the request to `[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json` with the harness file tool as `{"op": "verify-pr", "repo": "[OWNER/REPO]", "pr": [PR_NUMBER], "required_only": true}`, then run it:
+- Run it as [submit-pr.md § 5](submit-pr.md#5-verify-ci) does: merge-state read first, through [Waiter launch](../references/waiter-launch.md), repeated while `result.status` is `pending` or `unreadable`.
+- `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` prints from the checkout.
+- Write the request to `[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json` with the harness file tool as `{"op": "verify-pr", "repo": "[OWNER/REPO]", "pr": [PR_NUMBER], "required_only": true}`, then run it:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"

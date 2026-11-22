@@ -43,12 +43,12 @@ Get the issue → dev implements → publication, review and fixes in the order 
   - In a lane every ask gate is `lane-mail`, never the harness question tool: [skill-rules](references/skill-rules.md) § Coordination.
 - **Post-PR autonomy.**
   - After a PR exists, `ORCH_DECISION_MODE=auto-recommended` takes and logs the continuing option while a bounded wait, retry or triage round remains. `ask` presents the listed choice.
-  - Initialize the item's state before these transitions.
-  - `orch-runtime state head-budget take` spends one automatic retry. `--kind review-wait` restarts its count on a new head; `--kind ci-fix` counts across heads. `head-budget reset` starts the count over.
-  - At a cap, `orch-runtime state post-pr-stop record` persists the named stop with its rendered Markdown comment. The workflow posts that file to the PR and returns the stored stop.
-  - A nested caller uses `post-pr-stop record-if-empty`, so a precise upstream stop stands.
-  - Every continuing action lifts the stop with `post-pr-stop clear`.
-  - `ORCH_MERGE_AUTONOMY` controls merge consent only.
+  - Initialize the item's state before the transitions below:
+    - `orch-runtime state head-budget take` spends one automatic retry. `--kind review-wait` restarts its count on a new head; `--kind ci-fix` counts across heads. `head-budget reset` starts the count over.
+    - At a cap, `orch-runtime state post-pr-stop record` persists the named stop with its rendered Markdown comment. The workflow posts that file to the PR and returns the stored stop.
+    - A nested caller uses `post-pr-stop record-if-empty`, so a precise upstream stop stands.
+    - Every continuing action lifts the stop with `post-pr-stop clear`.
+    - `ORCH_MERGE_AUTONOMY` controls merge consent only.
 - **The overseer reads results.**
   - It accepts green lane checks and CI without reruns.
   - It grants no prepare, commit, push or merge, and no shared validation slot.
@@ -140,8 +140,7 @@ The mailbox skill's `lane-mail` is the lane-to-overseer mailbox and the owner ch
 
 - A lane runs `ask`, `notice`, `wait`, `inbox` and its mailbox monitor `watch`.
 - The overseer runs `send`, `drain`, `pending` and `events`, adding `--root` and `--host` for a lane on another host.
-- On its own mailbox the overseer asks and reports to the owner with `--to owner`.
-- The overseer closes an owner ask once with `resolve`.
+- On its own mailbox the overseer asks and reports to the owner with `--to owner`, and closes an owner ask once with `resolve`.
 
 Every script and every verb takes `--help`. The exceptions are `resolve-base-branch`, whose one argument is a path, and `copilot-statusline`, which reads the CLI's JSON on stdin.
 

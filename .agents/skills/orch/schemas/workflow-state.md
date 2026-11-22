@@ -361,7 +361,7 @@ The members' rules, in the table's order:
 - `checkout_common`: the close removes a clean, merged worktree only from the main checkout of this folder, else of the overseer's own.
 - `surface`: a record a harness's own launcher runs carries another, which `record-surface-lane` steps `create` and `merge` write.
 - `allow_all`: whether a Copilot lane's line grants the full allow-all mode; it is null on every other harness.
-- `class_missed`: `{class, cause, at}`, stands after a `no_landing` close retired an attempt below `standard`. While it stands, no launch below `standard` runs the item.
+- `class_missed`, `{class, cause, at}`, stands after a `no_landing` close retired an attempt below `standard`. While it stands, no launch below `standard` runs the item.
 - `launched_at`: the first record's `launched_at` is the fleet start the watch's `--since` takes.
 - `reservation`: `reserve-lane` or `park-lane` writes it; a relaunch, `release-lane` and a confirmed close drop it.
 - `touched`, `in_scope`, `carried`: [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) and [§ Caps](../references/lane-directive.md#caps) state the judgement.
@@ -382,10 +382,9 @@ The members' rules, in the table's order:
 - `kept`, `kept_mail`: the close writes both.
 - `cycle`: later launches keep it. [`ops/cycle.rs`](../runtime/src/ops/cycle.rs) owns its fields, among them `obligation`, `stages` and `rounds`.
 
-A lane this runtime did not launch, surface 2 or 3, has its record written whole by `record-surface-lane` step `create` and changed by step `merge`:
+A lane this runtime did not launch, surface 2 or 3, has its record written whole by `record-surface-lane` step `create` and changed by step `merge`. Neither step applies to a tmux lane.
 
-- Neither step applies to a tmux lane.
-- `orch-runtime state merge --fleet --lane [ITEM] [FILE]` replaces the members the file names and binds `obligation` as the launch does.
+`orch-runtime state merge --fleet --lane [ITEM] [FILE]` replaces the members the file names and binds `obligation` as the launch does.
 
 A cloud launch's confirmed outcome carries `cloud_repo_access`, `{repositories, url}`: the repositories to check by hand, and the session URL where the overseer answers repository-access cards.
 
@@ -453,13 +452,12 @@ The watch's retention duty prunes the fleet record and its state directory on it
 
 The duty removes only these:
 
-- An item's record, once every lane record of the item has left, as the Lane records row states.
+- An item's record, once every lane record of the item has left, as the Lane records rules state.
 - An item's record no lane record names, last written past the retention. It stays while it names a linked worktree that stands, by its `worktree` or by its `branch` checked out there.
 - A closed intent's `intents/[ID].pane`, `intents/[ID].request` and `intents/[ID].job`, once the intent's end and the file's own last write are past the retention. An open intent's files and a `.notice` stay.
 - An owner progress report last written past the retention and sent. `report write` keeps its delivery attempt, `MM-DD-HH-MM.notice.json`, beside the report until the owner's notice is sent or none is owed; a report with its attempt standing stays.
 - At the watch's duty only, a scratch entry nothing uses, as [§ Scratch](#scratch) states.
-- A session rows file whose pane is gone: the tmux server answering at the ambient socket is that pid and holds no such pane.
-- A session rows file stays where `controller.session_rows`, `controller.pending.session_rows` or `pending.session_rows` names it, and so do a link and a file whose server does not answer.
+- A session rows file whose pane is gone: the tmux server answering at the ambient socket is that pid and holds no such pane. A file that `controller.session_rows`, `controller.pending.session_rows` or `pending.session_rows` names stays, as do a link and a file whose server does not answer.
 - Lane records and fleet-log rows past the retention.
 
 Every other entry stays, whatever its age: an item's files while it has a record, every file under `handoffs/`, the mailboxes, the claim store, the watch's own records and every lock file. An entry [§ Item close-out](#item-close-out) names leaves at the item's close-out.

@@ -135,7 +135,7 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
 
    `[PR_OPEN]` is `true` for `OPEN`, and `false` for `status: no_pr`, `CLOSED` or `MERGED`. An unknown state or a failed read stops delegation.
 
-   Stamp the round as [dev-start.md § 2](dev-start.md#2-delegate) steps 3 to 8 do:
+   Stamp the round as [dev-start.md § 2](dev-start.md#2-delegate) steps 3 to 8 do.
 
    - Arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure).
    - Where step 2 made more than one group, the `begin-round` request carries `"group": {"n": [N], "of": [GROUPS]}`.
@@ -280,9 +280,9 @@ Each row's steps:
     1. Close The Round's Stages with `fail`, then Store Proposed Rules and Store Near-Ceiling Lines.
     2. Then end the workflow and report, without another validation round.
   - An identity or schema failure gets the `wait` row's report-only nudge where the receipt's `validate` is not `FAILING`.
-  - Over a `FAILING` receipt the writer refuses `receipt-exists`:
-    - Under a run's name, the nudge asks for the round's next admitted attempt under dev-implement.md § 5, whose receipt lands under its own run id.
-    - Under the round's no-run name the receipt is final, and the round closes as a failing `validate` does.
+    - Over a `FAILING` receipt the writer refuses `receipt-exists`:
+      - Under a run's name, the nudge asks for the round's next admitted attempt under dev-implement.md § 5, whose receipt lands under its own run id.
+      - Under the round's no-run name the receipt is final, and the round closes as a failing `validate` does.
 
 **Retry reasons** with their own action:
 

@@ -141,17 +141,17 @@ A provider step that gave no answer holds the launch open, with a `note` ending 
 
 A cloud launch held as `cloud-create-unknown`, `worktree-create-unknown` or `worktree-push-unknown` has no process left to answer it, and its intent stays open.
 
-1. Read it with `orch-runtime state inspect --fleet`.
-2. Where its observation or `CloudCreate` phase carries `answer_by`, wait until that time, then check claude.ai/code for a session on the item's branch.
-3. Check again immediately before relaunching the item.
-4. A close that answers `intent-open` leaves the launch standing: wait for its owner to end and reconcile it, and do not launch beside it.
-5. Settle the lane with the runtime close, which supersedes the held launch:
+- Read it with `orch-runtime state inspect --fleet`.
+- Where its observation or `CloudCreate` phase carries `answer_by`, wait until that time, then check claude.ai/code for a session on the item's branch.
+- Check again immediately before relaunching the item.
+- A close that answers `intent-open` leaves the launch standing: wait for its owner to end and reconcile it, and do not launch beside it.
+- Settle the lane with the runtime close, which supersedes the held launch:
 
-   ```json
-   {"op": "close-owned-resources", "item": "[ITEM_KEY]", "terminal": {"verdict": "[completed|canceled]", "source": "[SOURCE]"}}
-   ```
+  ```json
+  {"op": "close-owned-resources", "item": "[ITEM_KEY]", "terminal": {"verdict": "[completed|canceled]", "source": "[SOURCE]"}}
+  ```
 
-   Use `terminal` where the item is finished. To relaunch it, use the `no_landing` ground of § Recovery relaunch.
+  Use `terminal` where the item is finished. To relaunch it, use the `no_landing` ground of § Recovery relaunch.
 
 ## Brief file
 
@@ -178,21 +178,11 @@ The root launch or continuity directive supplies the item's original obligation 
 - A record with no accepted mapping stays unknown. Never reconstruct one from a title, a current parent or the checkout's repository.
 - A surface-2 record carries the binding as [oversee.md § Lane record](../workflows/oversee.md#lane-record) writes it.
 
-- Keep the binding through same-item launches, retries, relaunches, park and resume, account or model recovery, and context handoff.
-- Reparenting does not rewrite the original parent.
-- A replacement item names its predecessor's complete object as its launch request's `obligation`, or in its surface-2 record; its own item key stays separate.
-- A cross-fleet transfer carries its accepted mapping where no retained record reaches the successor.
-- Report a contradiction to root; never rewrite a known binding.
-- A separate obligation needs a new tracker item or an explicit root disposition.
+Keep the binding through same-item launches, retries, relaunches, park and resume, account or model recovery, and context handoff. Reparenting does not rewrite the original parent. A replacement item names its predecessor's complete object as its launch request's `obligation`, or in its surface-2 record; its own item key stays separate. A cross-fleet transfer carries its accepted mapping where no retained record reaches the successor. Report a contradiction to root; never rewrite a known binding. A separate obligation needs a new tracker item or an explicit root disposition.
 
 ## Caps
 
-The transition counts its cap before it writes anything.
-
-- A `claude-cloud` request counts against `ORCH_OVERSEER_CLOUD_LANES`; every other kind, a cloud session's landing lane included, counts against `ORCH_OVERSEER_LANES`.
-- No cap bounds the lanes on one account.
-- The reply's `admission` lists each charge with its `reason`.
-- A relaunch leaves its own record's charge out, so it replaces the lane it holds.
+The transition counts its cap before it writes anything. A `claude-cloud` request counts against `ORCH_OVERSEER_CLOUD_LANES`; every other kind, a cloud session's landing lane included, counts against `ORCH_OVERSEER_LANES`. No cap bounds the lanes on one account. The reply's `admission` lists each charge with its `reason`. A relaunch leaves its own record's charge out, so it replaces the lane it holds.
 
 - `cap-reached`: send the request again once a lane that cap counts closes. Write no counting loop.
 - `cap-unreadable`: fix the source it names; never launch around it.
@@ -258,10 +248,7 @@ Outside § Parked record, a host whose capability line declares `park=none` ([la
 - Standing, as the `no_landing` close of § Recovery relaunch step 2 keeps it: the launch asks the provider's `start`, then `create --relaunch`.
 - Gone: the launch asks no `start` and goes straight to `create --relaunch`.
 
-For every hosted relaunch:
-
-- A list that fails refuses the launch `host-list-failed`.
-- A hosted relaunch whose provider's `start` answers it holds no sandbox for the item gets a fresh sandbox, with no kept worktree, session or mailbox: its observation reads `host_start: item-unknown` and `route_cause` `sandbox-absent`.
+A list that fails refuses the launch `host-list-failed`. A hosted relaunch whose provider's `start` answers it holds no sandbox for the item gets a fresh sandbox, with no kept worktree, session or mailbox: its observation reads `host_start: item-unknown` and `route_cause` `sandbox-absent`.
 
 A fresh start continues through the handoff record:
 

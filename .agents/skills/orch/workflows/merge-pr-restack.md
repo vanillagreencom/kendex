@@ -122,9 +122,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    - Never skip this step, and never replace it with another push: this request alone reconciles the SHAs the item recorded before the restack, and records the run as the item's restack `validate` stage.
    - Exit 0 is a confirmed push. Every non-zero exit hands back.
 
-   - A `ci` record needs no head comparison after the push.
-   - After a local range run, compare the pushed head with the `head=` value of that run's record.
-   - After a skip, compare it with the `head=` value of the skip line:
+   A `ci` record needs no head comparison after the push. After a local range run, compare the pushed head with the `head=` value of that run's record. After a skip, compare it with the `head=` value of the skip line:
 
    ```bash
    git -C [WT_PATH] rev-parse HEAD

@@ -62,7 +62,8 @@ A failed sandbox stop leaves the record `stopped` with the park owed, which hold
 
 - The watch asks for an owed park each pass and reports `park-owed [ITEM] result=` once per distinct result ([oversee-events.md § `park-owed`](oversee-events.md#park-owed)).
 - A confirmed park, relaunch or close clears it.
-- The `result` reads:
+
+The `result` reads:
 
 | `result` | Meaning |
 |---|---|
