@@ -5,6 +5,7 @@ The claim/release/status contract and exit codes live in `worktree-session-guard
 The `worktree-prompt-claim` companion uses the session hook's claim decision before each Claude prompt:
 
 - A required claim failure blocks the prompt.
+- An established session's refresh failure (exit 6) is advisory: the prompt goes on and the lease stands.
 - A successful prompt claim refreshes the lease.
 
 Claiming is the caller's job:
