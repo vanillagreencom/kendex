@@ -20,13 +20,13 @@
 
 - Group a coherent contract or state machine in a test module. Private helpers and native assertion macros belong there; do not split every function into a file or export helpers to meet a shared-library rule.
 - Prefer private unit tests and `cfg(test)` fixtures for access within a crate. An integration test compiles the library without `cfg(test)`. Cross-crate support belongs in a dev-only support crate or a test-support feature absent from the product's dependency graph. Keep real serialization shared; put fake inputs and measurements behind that test boundary.
-- Use a dedicated test executable for process protocols.
+- Use a dedicated test executable for process protocols. Tests run in the release profile must not depend on debug-only commands in the product executable.
 - When changing a crate-private readback with no production effect, use `cfg(test)` instead of suppressing dead-code warnings.
 - Add a test-only mutator or readback to production code only when the test cannot establish its guarantee through the public interface. Keep it behind the test boundary above; a mutator preserves production invariants and creates only states production can reach. Otherwise test through the public interface.
 - When a lint fires only under some `cfg` settings, condition its expectation with `#[cfg_attr(predicate, expect(lint, reason = "..."))]`, for example `#[cfg_attr(not(feature = "trace"), expect(unused_variables, reason = "read only by tracing"))]`. Match the predicate to the builds that emit the lint, including feature and target conditions. An active expectation with no matching lint emits `unfulfilled_lint_expectations`; do not suppress that lint to cover a mismatched predicate.
 - A test never calls `std::env::set_var` or `std::env::remove_var`. A fixture mutex does not protect other environment readers. Pass configuration as input; test environment parsing in a child with an explicit environment.
 - Bind a temporary directory's canonical root at creation before passing it to code that resolves symlinks. Gate platform-only test APIs with `cfg`; give a portable property a portable test too.
 
-## Selection and measurement
+## Test selection
 
-- Where the validation entry point derives affected workspace consumers from `cargo metadata`, account for resolved dependencies, features, target platforms and build settings when mapping that graph to suites. Include excluded packages through their own manifests when the requested area contains them; workspace metadata cannot select tests it does not describe.
+- Where the suite entry point derives affected workspace consumers from `cargo metadata`, account for resolved dependencies, features, target platforms and build settings when mapping that graph to suites. Include excluded packages through their own manifests when the requested area contains them; workspace metadata cannot select tests it does not describe.

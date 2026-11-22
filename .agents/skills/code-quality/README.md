@@ -6,11 +6,11 @@ Code-writing rules for AI coding agents. Repository owners use this skill to sup
 
 - Agents report a failure instead of hiding it, and remove unused code.
 - Each resource and each decision has one owner, and agents build on another system through its documented interface.
-- Test-only access stays out of the code you ship.
-- Agents keep a test only for a failure that matters, weighed against its run time and upkeep, and show once that a new check can fail.
-- Tests check results, not wording, and run by what a change affects.
-- Rust, Bash and TypeScript rules load only for the language being changed, and the UI rules only for a changed view or its text.
-- Each review finding on practice or design says whether this guidance misled the agent, missed the case or was not followed, and who owns the fix.
+- Test-only access adds nothing to the API or commands you ship.
+- Agents keep a test only for a failure that matters, weighed against its run time and upkeep, and show once that a new or changed check can fail.
+- Tests check results, not wording. Where a repository runs tests by what a change affects, the existing entry point selects them.
+- Agents load the Rust, Bash and TypeScript rules only for the language being changed, and the UI rules only for a changed view or its text.
+- Each review finding on practice or design says whether this guidance misled the agent, missed the case or was not followed, and which guidance or route owns the cause.
 
 ## Install
 
