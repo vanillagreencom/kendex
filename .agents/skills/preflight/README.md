@@ -22,7 +22,9 @@ The checker selects changed files from Git. Each check reads the file types it s
 
 ## Wiring
 
-Run preflight ahead of the project's own build, lint and test command, at commit time and in CI. [references/wiring.md](references/wiring.md) gives the command for a commit hook and for CI.
+- Validation: run it ahead of the project's own build, lint and test command.
+- Commit time: [references/wiring.md](references/wiring.md) gives the command for a commit hook.
+- CI: [references/wiring.md](references/wiring.md) gives the command for CI.
 
 ## Setup
 

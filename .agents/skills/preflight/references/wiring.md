@@ -8,4 +8,5 @@ Where `commit-guards` is installed, its pre-commit chain runs `preflight --stage
 
 ## CI
 
-Run `preflight --base origin/<default-branch>` on the PR head. Commit the installed skill: a CI checkout sees tracked files only, never a machine-local `.agents` symlink.
+- Run `preflight --base origin/<default-branch>` on the PR head.
+- Commit the installed skill: a CI checkout sees tracked files only, never a machine-local `.agents` symlink.

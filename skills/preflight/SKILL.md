@@ -26,5 +26,5 @@ Fix what a finding reports. Never widen a lane's exclusions to clear it.
 
 `preflight --help` gives the lanes, scopes, settings, output and exit codes.
 
-- When a finding or a glob setting turns on how the diff is taken, how `unwired-suite` reads a runner, or how a glob setting matches a path, read [references/lanes.md](references/lanes.md).
+- When setting a `PREFLIGHT_*_GLOBS` value, or when a finding turns on how the diff is taken or how `unwired-suite` reads a runner, read [references/lanes.md](references/lanes.md).
 - When wiring preflight into a Git hook or CI, read [references/wiring.md](references/wiring.md).

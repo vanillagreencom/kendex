@@ -1,6 +1,6 @@
 # Lane details
 
-Read when a finding or a glob setting turns on how the diff is taken, how `unwired-suite` reads a runner, or how a glob setting matches a path.
+Read when setting a `PREFLIGHT_*_GLOBS` value, or when a finding turns on how the diff is taken or how `unwired-suite` reads a runner.
 
 ## Diff construction
 
@@ -20,6 +20,8 @@ A runner wires a suite in any of these ways:
 - It is a manifest below the repo root whose subtree holds the suite.
 - It sits beside the suite and globs its own directory.
 - It invokes `vitest`, `jest` or `bun test` over the whole of that runner's default include. That include covers `*.test.ts`, `*.test.js` and `*.test.mjs` under the directory the runner runs from.
+
+The rules from here to the end of this section apply only to the sixth form, the `vitest`, `jest` or `bun test` invocation. preflight reads that invocation by tokenizing the runner line.
 
 Only a field that carries a command is read as one:
 
@@ -49,7 +51,7 @@ preflight does not evaluate a pinned explicit `include` or `testMatch`.
 
 ## Glob semantics
 
-A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Every glob setting reads this grammar.
+A glob setting's value lists its globs separated by spaces. A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Every glob setting reads this grammar.
 
 ## `data-syntax` JSONC paths
 
@@ -59,7 +61,7 @@ A leading `**/` matches at any depth and is the only depth crossing, so a `*` ne
 
 `PREFLIGHT_SOURCED_LIB_GLOBS` names directories, not files. A path is in a sourced-library tree when one of its parent directories matches a glob, so the glob covers the tree's whole depth.
 
-`SOURCED_LIB_GLOBS` in `scripts/preflight` declares the shipped set. A project that keeps its libraries elsewhere, such as `tools/sh`, lists that directory and retains any shipped trees it still needs.
+`SOURCED_LIB_GLOBS` in `scripts/preflight` declares the shipped set. A project that keeps its libraries elsewhere, such as `tools/sh`, lists that directory. That project also retains any shipped trees it still needs.
 
 For a non-executable file in these trees:
 
