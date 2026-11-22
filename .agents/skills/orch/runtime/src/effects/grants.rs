@@ -292,8 +292,8 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 /// read-only seat's session folders, or a seat whole with its settings file
 /// and the code entries that stand, or that it writes empty, read-only; the
 /// folders `ORCH_LANE_WRITABLE` names, kendex's folder under the cache
-/// folder and the shared runtime cache read-only wherever they would hold
-/// it; the user's runtime folder hidden; the display where the record holds
+/// folder and the shared runtime cache read-only wherever they meet a
+/// writable grant; the user's runtime folder hidden; the display where the record holds
 /// `desktop`. A confined launch also takes the `gh` token the operator's
 /// login answers now, handed through the lane's private folder, and a
 /// runtime cache and tool caches of its own in its tree, never the
@@ -468,15 +468,16 @@ pub(super) fn of(
     // `registry_cache_dir`, the app update) and, where
     // `AGENT_RUNTIME_CACHE` names none, the shared runtime cache, whose
     // binaries the overseer, the hooks and every other lane run. Each is
-    // read-only wherever a writable grant would hold it, an
-    // `ORCH_LANE_WRITABLE` cache folder among them, and made where absent
-    // so a lane cannot plant it.
+    // read-only wherever it meets a writable grant, one holding it (an
+    // `ORCH_LANE_WRITABLE` cache folder) or one inside it (its `sources`
+    // or the shared cache's `bin`), since the carve-outs follow the
+    // writable binds, and made where absent so a lane cannot plant it.
     let shared_cache = shared_runtime_cache(home.as_deref());
     for protected in kendex_cache(home.as_deref()).iter().chain(&shared_cache) {
         if writable
             .iter()
             .chain(&seat_paths)
-            .any(|grant| protected.starts_with(grant))
+            .any(|grant| protected.starts_with(grant) || grant.starts_with(protected))
         {
             read_only.push(protected.clone());
             kept.push(protected.clone());
@@ -676,17 +677,20 @@ fn cache_folder(home: Option<&Path>) -> Option<PathBuf> {
 /// The shared runtime cache the launcher's own runtime calls build into, as
 /// `skills/agent-runtime/scripts/lib/key.sh` `agent_runtime_cache` names it:
 /// `AGENT_RUNTIME_CACHE`, else `kendex/agent-runtime` under the cache folder.
+/// Resolved as [`kendex_cache`] is.
 fn shared_runtime_cache(home: Option<&Path>) -> Option<PathBuf> {
     let dir = env_dir(RUNTIME_CACHE_VAR).or_else(|| {
         cache_folder(home).map(|cache| cache.join(KENDEX_CACHE).join(RUNTIME_CACHE_DEFAULT))
     })?;
-    Some(resolved(&dir).unwrap_or(dir))
+    Some(crate::archive::resolve(&dir))
 }
 
-/// kendex's folder under the cache folder, where it stands.
+/// kendex's folder under the cache folder, resolved through its standing
+/// part whether or not it stands itself: the grants it is compared with are
+/// resolved, so a cache folder that is a link names the folder it leads to.
 fn kendex_cache(home: Option<&Path>) -> Option<PathBuf> {
     let dir = cache_folder(home)?.join(KENDEX_CACHE);
-    Some(resolved(&dir).unwrap_or(dir))
+    Some(crate::archive::resolve(&dir))
 }
 
 /// `ORCH_LANE_WRITABLE`'s folders, as the overseer's settings name them
