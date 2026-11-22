@@ -66,11 +66,7 @@ A lane waiting at a permission prompt reaches no turn end, so the hook reports n
 
 The owner remedies the block. Tell the owner the account and the cause: an enterprise administrator lifts an account block, and the machine's administrator lifts a machine block. To move the item meanwhile:
 
-1. Where a lane of another Copilot account, launched with allow-all, runs on this machine, read that session's fresh record under its `<account>/lane-status/`.
-   - A record for that session and account with `allow_all_enabled: false` shows a block on both accounts, from this machine or from an enterprise that licenses both. Another account does not help then.
-   - A missing, stale or mismatched record settles nothing about the machine.
-   - Tell the owner both accounts and both possible administrators, and stop.
-   - A relaunched lane that reports the same cause shows the same: stop it and wait for the owner.
+1. Where a lane of another Copilot account, launched with allow-all, runs on this machine, read that session's fresh record under its `<account>/lane-status/`. A record for that session and account with `allow_all_enabled: false` shows a block on both accounts, from this machine or from an enterprise that licenses both. Another account does not help then. A missing, stale or mismatched record settles nothing about the machine. Tell the owner both accounts and both possible administrators, and stop. A relaunched lane that reports the same cause shows the same: stop it and wait for the owner.
 2. Stop the blocked lane first, by [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver) step 1, so two sessions never run in one worktree.
 3. Relaunch the item with a `launch-lane` request whose `account` names the other account ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A relaunch on another account starts fresh on the item's branch as `account-switched`, and does not resume the blocked session.
 
