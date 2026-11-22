@@ -6035,11 +6035,11 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
         ),
         (
             json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
-            Some("stop-failed exit=4 lane-host: stop-worktree-removed item=KEN-4"),
+            Some("stop-failed exit=4 stop-worktree-removed item=KEN-4"),
         ),
         (
-            ok("stopped item=KEN-4\n"),
-            Some("stop-failed exit=0 stderr=empty"),
+            json!({"exit": 0, "stdout": "stopped item=KEN-4\n", "stderr": "lane-host-fixture: stopping item=KEN-4\n"}),
+            Some("stop-failed cause=answer-unparsed"),
         ),
         (
             json!({"exit": 137}),
@@ -6155,7 +6155,7 @@ fn a_walled_pane_verb_lane_is_stopped_through_its_provider_before_its_relaunch()
         (ok("stopped item=KEN-4 processes=1\n"), None),
         (
             json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
-            Some("stop-failed exit=4"),
+            Some("stop-failed exit=4 stop-worktree-removed item=KEN-4"),
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();

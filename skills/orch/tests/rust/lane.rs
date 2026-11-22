@@ -4365,7 +4365,14 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
         (
             CloseCase2::new("provider stop refused", vec![hosted_lane("KEN-1")]),
             "stop-failed",
-            vec![("cause", "provider"), ("status", "1")],
+            vec![
+                ("cause", "provider"),
+                ("status", "1"),
+                (
+                    "detail",
+                    "lane-host-fixture: stop-refused item=KEN-1 fix=retry-stop",
+                ),
+            ],
         ),
         (
             CloseCase2::new("provider stop busy", vec![hosted_lane("KEN-1")]),
@@ -4449,7 +4456,14 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
                 case.slots = Some(Slots::Held);
                 case.tracker = Some("started");
             }
-            "provider stop refused" => case.answers.push(("STOP_STATUS", "1")),
+            // A notice, then the keyed refusal the cause line selects.
+            "provider stop refused" => {
+                case.answers.push(("STOP_STATUS", "1"));
+                case.answers.push((
+                    "STOP_ERROR",
+                    "lane-host-fixture: stopping item=KEN-1\nlane-host-fixture: stop-refused item=KEN-1 fix=retry-stop",
+                ));
+            }
             // Status 75 is no lane of the item only beside its own line.
             "provider stop busy" => {
                 case.answers.push(("STOP_STATUS", "75"));
