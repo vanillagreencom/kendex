@@ -27,7 +27,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 .agents/skills/change-scope/scripts/harness-only --event pull_request --base "$BASE" --head "$HEAD" --repo "$DIR"
 ```
 
-`change-scope` answers one class for an explicit repository, base and head. `change-scope launch` answers the class a work item launches at, before its branch exists. `harness-only` reads the changed paths and answers whether a diff may skip a family of CI checks. `change-scope --help` and `harness-only --help` state every flag, setting and cause.
+`change-scope` answers one class for an explicit repository, base and head. `change-scope launch` answers the class a work item launches at, before its branch exists. `harness-only` reads the changed paths and answers whether a diff may skip a family of CI checks. `change-scope --help` states every flag, every setting and the rule behind each class. `harness-only --help` states every flag. The `class:` line on `change-scope`'s stderr names the cause of its answer.
 
 ## Classes
 
@@ -36,7 +36,7 @@ The classes, narrowest first, are `render`, `trivial`, `micro`, `small` and `sta
 - `render`: a passing row of `kendex verify --scope project --json`, run in a private checkout of the head, owns every surviving changed path. The caller proof in § Shared refresh caller ownership can own a path instead.
 - `trivial`: every changed path is in the docs set, and the diff is within `HARNESS_CI_TRIVIAL_MAX_LINES`. Where `HARNESS_CI_TRIVIAL_PATHS` is set, the repository's own globs replace the docs set. A changed `kendex.settings.toml` or `.kendex/settings.toml` that the settings admission in `change-scope --help` admits joins the set. A diff of admitted settings files alone has no line ceiling.
 - `micro`: production additions within `micro_max_production` in `references/narrow-change.conf`.
-- `small`: one subsystem, production additions within `small_max_production`. A path's subsystem is its first directory past a render root. Test, fixture and docs-set paths belong to no subsystem.
+- `small`: one subsystem, production additions within `small_max_production`. A path's subsystem is its first directory, after a leading render root is removed. The render roots are `ORCH_SIZE_RENDER_ROOTS`, by default `.agents`, `.claude`, `.codex` and `.pi`. So `skills/orch/SKILL.md`, `.agents/skills/orch/SKILL.md` and `skills/reviewer/scripts/review-depth` are all subsystem `skills`. Test, fixture and docs-set paths belong to no subsystem.
 - `standard`: everything else, and every diff the classifier cannot read.
 
 `scripts/lib/branch-growth.sh` measures production, test and render-mirror lines over the range. It sets test paths aside by its built-in rule and `ORCH_SIZE_TEST_PATHS`. `references/narrow-change.conf` holds the path rules that refuse the narrow classes, the `instruction` globs, the protection markers and the two ceilings. `HARNESS_CI_STANDARD_PATHS` adds the repository's own exclusions.
@@ -59,7 +59,7 @@ Every setting comes from the caller's environment or the commit `--base` names, 
 
 ## Launch arm
 
-`change-scope launch` classifies a work item from the inputs that name a class: a production estimate, the item body's `Expected delta` line, a class the item already holds, the paths it names and a range. The widest class wins. The first input that names it is the cause. `change-scope --help` states what each flag reads.
+`change-scope launch` classifies a work item from the inputs that name a class: a production estimate, the item body's `Expected delta` line, the paths it names, a class the item already holds and a range. It reads them in that order. The widest class wins. The first input that names it is the cause.
 
 `HARNESS_CI_STANDARD_PATHS` comes from the main checkout of `--repo`, never from a linked worktree's own settings. stdout is `change_class=micro|small|standard`. The arm prints no `quick-proof:` line.
 

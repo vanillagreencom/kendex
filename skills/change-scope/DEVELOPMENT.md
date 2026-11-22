@@ -10,7 +10,9 @@ bash skills/change-scope/tests/narrow-change.test.sh   # one suite; every suite 
 
 kendex's `.github/workflows/skill-tests.yml` runs the suites a change selects, in the merge group. It runs `wiring-errors` alone after the pooled suites, because that suite bounds each call with `timeout 30`.
 
-The change-scope suite installs and refreshes a real consumer with the `kendex` on PATH, and skips those rows when none is there. `HARNESS_CI_REQUIRE_KENDEX` makes it fail instead. CI sets it on every Linux leg, with the checkout's own `kendex-cli` built; the macOS legs skip. harness-ci's `change-class` suite judges its wrapper against this classifier over the same diffs.
+With a `kendex` on PATH, the change-scope suite builds `kendex-cli` from this tree and installs and refreshes a real consumer with it. With none, it skips those rows. `HARNESS_CI_REQUIRE_KENDEX` makes it fail instead. CI sets it on every Linux leg; the macOS legs skip.
+
+After a classifier change, also run harness-ci's `change-class` suite, `skills/harness-ci/tests/change-class.test.sh`. It judges harness-ci's wrapper against this classifier.
 
 No shipped kendex exits 0 with failing rows. So `renders_match` never reaches `cause=verify-not-clean` under a real verifier, and a mutant that removes that refusal survives the suites. The refusal guards a later kendex.
 

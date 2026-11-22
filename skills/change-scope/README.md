@@ -8,7 +8,7 @@ The shared change classifier for kendex-managed repositories. It names a change'
 - Classifies a work item before its branch exists, from its size estimate, the classes it holds and the paths it names.
 - Reads repository policy from the base commit, not from the change.
 - Counts a branch's production, test and generated lines the same way for every caller.
-- Checks a change to generated install files by running `kendex verify` over a private checkout of the head.
+- Checks that each changed generated install file matches a fresh generation of it.
 - Keeps an agent instruction change or a removed test at `small` or wider.
 - Treats anything it cannot prove as `standard`, and says whether it measured the change.
 
