@@ -12,4 +12,6 @@ Run after a run's planned tracker mutations, to publish its planning artifacts. 
 
 ## GitHub
 
-For a GitHub audit, put the produced text artifact in the created or updated issue body, and include the text of any cited planning input needed for pickup.
+Put each produced text artifact, and the text of each cited planning input needed for pickup, on its source issue. A GitHub audit writes it into the body of the issue it creates or updates. Any other run, such as one that hands a fresh plan to another checkout, posts one comment per file on the source issue. Write a body file whose first line is the artifact's repository path and whose rest is its text, then run `gh issue comment [N] --repo [OWNER/REPO] --body-file [BODY_FILE]`.
+
+Verify every body and comment write before reporting completion.

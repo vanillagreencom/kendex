@@ -45,6 +45,6 @@ Take initiative-label names from the approved plan or the user's answers. The in
 
 ## Fields and links
 
-- Keep mailbox ids, Slack ids, file paths and log lines out of both fields. Put research or design in a resource link with `--link LABEL=URL`. Put detail in a comment under [SKILL.md](../SKILL.md) § Execution Rules.
+- Keep mailbox ids, Slack ids, file paths and log lines out of both fields. Put research or design in a resource link with `--link LABEL=URL`. Put detail in a comment, written under the communication skill's references/reports.md § Work-item descriptions and comments.
 - An initiative sets `--owner EMAIL|ID`, `--lead-team KEY|NAME`, `--labels A,B` and a resource `--link LABEL=URL`.
 - A project sets `--lead EMAIL|ID` and `--labels A,B`. Use `--link LABEL=URL` for its research or design.

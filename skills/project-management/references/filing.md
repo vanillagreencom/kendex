@@ -39,32 +39,29 @@ Decline every other candidate with one line in the report: no issue, no placehol
 
 Related items share their project ([project-map.md](project-map.md)). Where no project says what they share, they share one existing label. The grouping adds no label and no field.
 
-An audit, a holistic pass, a redesign or any other pass files no parent for its subject. It files each item it produces in the project its route names, with a blocking relation only where one item needs another's change. Items that share an outcome, a mechanism or a subject the owner reads in one place form no parent either.
+An audit, a holistic pass, a redesign or any other pass files no parent for its subject. It files each item it produces in the project its route names. Items that share an outcome, a mechanism or a subject the owner reads in one place form no parent either.
 
-A parent exists only when its children are the parts of one deliverable accepted as one thing. Examples: a design and its build of one feature, the domain parts research-complete splits from one implementation issue, and the review audit's in-PR bundle. A parent carries no requirements, no pull request and one Done-when box, "Every child Done or cancelled". An outcome to read is its own child ([templates/parent-issue-template.md](../templates/parent-issue-template.md)). An audit places children by [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
+A parent exists only when its children are the parts of one deliverable accepted as one thing. Examples: a design and its build of one feature, the domain parts research-complete splits from one implementation issue, and the review audit's in-PR bundle.
 
 ## Name what reaches it
 
 Every issue carries a `Reached by:` line. It names the user action, run, check or shipped producer that arrives at the defect. An owner-directed item names the ask.
 
 - These are not a reach: the thread a finding came from, a shape such as "a name containing a quote", and something true only in theory. An item with nothing to name is a decline, not an issue.
-- The author judges the reach. Under `LINEAR_REQUIRE_REACH`, `issues create` refuses only a body with no `Reached by:` line. An unsubstituted placeholder and a null token (`TBD`, `n/a`, `none`, `-`) count as no line.
-- A filing whose source is a review round carries, at priority 2, a `Symptom:` line. It names the run, the user or the red check that already showed the defect. A Linear `issues create` for it passes `--review-born`; the GitHub route is [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations). Priority 2 from any other source is structural: it reports no symptom, and no check asks for one.
-- [reviewer finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) decides whether a review-born finding files at all.
+- The author judges the reach. Linear `issues create` refuses only a body with no `Reached by:` line, and counts a placeholder or a null token as no line, unless `LINEAR_REQUIRE_REACH` is set empty. The GitHub route checks nothing.
+- A filing whose source is a review round carries, at priority 2, a `Symptom:` line. It names the run, the user or the red check that already showed the defect. A Linear `issues create` for it passes `--review-born`; the GitHub route is [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations).
 
 ## Requirements
 
-Write each requirement, Done-when box and test plan against the code-quality skill's SKILL.md § Tests and § Over-Engineering, and against the repository's compatibility policy under § Cleanup. Before filing, cut what those sections do not admit: a wording test, a fixed count of growing data, a compatibility or migration clause the policy does not require, and a gate with no named failure. The cited section states each rule.
+Write each requirement, Done-when box and test plan against the code-quality skill's SKILL.md § Tests and § Over-Engineering, and against the repository's compatibility policy under § Cleanup. Before filing, cut what those sections do not admit.
 
 ## Estimate
 
-The numeric estimate is a size class within the team: 1 for its smallest work, through 5 for its largest. It is never a unit of time. An estimate already set stays valid.
-
-State time beside the item, not in the field: one approximate number of nonstop hours from a lane starting the work through merge, review rounds included. The communication skill's references/messages.md § Evidence and costs says how to derive and label it.
+The numeric estimate is a size class within the team: 1 for its smallest work, through 5 for its largest. It is never a unit of time. An estimate already set stays valid: replace it only when the item's scope changes.
 
 ## Done when
 
-Prove every box the branch can prove before merge.
+Prove every box the branch can prove before the change is published, by a merge or by a push to the base branch.
 
 Add a post-merge box on the same item only when all three conditions hold:
 
@@ -81,13 +78,11 @@ Write each post-merge box on one line:
 ```
 
 - `Post-merge:` states the check's pass condition. The absence of an event passes only when the check states absence as its pass condition.
-- `Trigger:` is one of three forms. `merge`. A UTC time at or after merge. `release OWNER/REPO TAG-GLOB`: the first matching GitHub release published after merge; where OWNER/REPO is a repository the item merged in, that release must contain the item's latest merge commit there. A box with no `Trigger:` means `merge`.
+- `Trigger:` takes one of three forms: `merge`, a UTC time at or after merge, or `release OWNER/REPO TAG-GLOB`, the first matching GitHub release published after merge whose tag contains the item's latest merge commit, where the item merged in OWNER/REPO.
 - `Deadline:` is `+Nh`, with N from 1 through 72, counted from the trigger: the merge, the stated time, or the release publication. Write a merge trigger's deadline as `+Nh`, because the merge time is unknown when the box is written. A merge or time trigger also takes a real UTC deadline after its trigger and at most 72 hours later. A release trigger takes only `+Nh`.
 - Example: `Trigger: release example/widget v*; Deadline: +24h`.
 
-The Linear completion command validates this form.
-
-An open post-merge box keeps the merged item in Verifying. The verification pass records the evidence and ticks a passing box, then completes the same item after its last box. A failed check follows [orch SKILL.md § The Cycle](../../orch/SKILL.md#the-cycle). Unreadable evidence and deadline moves follow [orch verify.md § 2](../../orch/workflows/verify.md#2-resolve-missing-evidence). Do not create a separate item to carry the verification check.
+Do not create a separate item to carry the verification check.
 
 ## One landing per subsystem
 
@@ -95,8 +90,4 @@ A body that lists batches, each able to land alone, is filed as one item per bat
 
 An item whose work changes more than one subsystem is filed as one item per subsystem, each able to land and take review alone. The change-scope skill's SKILL.md § Classes defines a subsystem, under the `small` class.
 
-Between the items, add a blocking relation only where one item needs another's change. An item that cannot land in parts says why in its body. The orch launch read, [oversee.md § Lane directive](../../orch/workflows/oversee.md#lane-directive) step 2, sends back an item that still spans several.
-
-## Research
-
-Research is part of planning, not a work item. Gather prior art, vendor docs and approach comparisons inline during planning, and keep the artifacts as [planning-artifacts.md](planning-artifacts.md) says. A tracker research issue exists only when the research is delegated as standalone work: the researcher agent runs it, or `research-spike` prepares it for later pickup.
+Between the items, add a blocking relation only where one item needs another's change. An item that cannot land in parts says why in its body.
