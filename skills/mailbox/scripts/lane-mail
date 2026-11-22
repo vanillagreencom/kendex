@@ -138,11 +138,11 @@ Overseer side:
               the caller's environment, refused as host-route-missing where
               it names none. A recorded hosted mailbox refuses a local send
               as host-root-required. An unreadable fleet route refuses as
-              state-unreadable. A send to a lane whose worktree is not
-              there yet, a local --root that does not exist or a hosted
-              --root holding no `.git`, refuses as `worktree-absent=<item>
-              root=<root>` before it writes anything: send again after the
-              launch completes. With --session ID --account DIR, a Claude cloud
+              state-unreadable. A hosted send to a lane whose worktree is
+              not there yet, a --root holding no `.git`, refuses as
+              `worktree-absent=<item> root=<root>` before it writes
+              anything: send again after the launch completes. With
+              --session ID --account DIR, a Claude cloud
               session. A session route refuses as lane-foreign where --root
               is no checkout of this repository, and queues a --directive
               into the session through `claude -p --cloud SESSION
@@ -578,8 +578,7 @@ and refuses with its id. A mailbox read failure refuses the write as
 `write-failed` locally or `host-append` on a provider, never as an empty mailbox.
 
 A local --root used to append mailbox envelopes must be a checkout's physical
-top-level directory; another value refuses as `root-not-checkout`, but a
-lane send's root that does not exist is `worktree-absent`. Reads,
+top-level directory; another value refuses as `root-not-checkout`. Reads,
 including their cursor and watcher records, keep their existing root behavior.
 A send writes a mailbox of the caller's own repository alone, its own lanes
 and its own overseer mailbox: a checkout whose common root is not the caller's
@@ -1608,15 +1607,6 @@ lm_root_own() { # ROOT own|checkout
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
 }
-# A lane's mailbox sits in its worktree, and the launch's `worktree create`
-# refuses an item path that stands and is not a registered worktree, so a send
-# that made the mailbox first would keep the lane from starting. A local root
-# that is not there is refused here; one that stands must be a checkout, which
-# lm_root_own judges. The hosted root is judged in the send verb, on its host.
-if [ "$VERB" = send ] && [ "$ITEM" != overseer ] && [ "$HOST" -eq 0 ] && [ "$SESSION_GIVEN" -eq 0 ] &&
-   [ ! -e "$ROOT" ] && [ ! -L "$ROOT" ]; then
-  REFUSE_EXTRA="root=$ROOT" refuse worktree-absent "$ITEM"
-fi
 if [ "$HOST" -eq 0 ]; then
   if [ "$VERB" = peer ] || { [[ "$OPTS_GIVEN" == *"--root$NL"* ]] && [ "$SESSION_GIVEN" -eq 0 ]; }; then
     lm_root_own "$ROOT" checkout
