@@ -394,6 +394,8 @@ class OwnerAsksContract(unittest.TestCase):
                 ("jarvis/scripts/lib/owner_asks.py", 'common="$(mailbox_common_root "$root" && printf .)"',
                  'common="$(mailbox_common_root "$root")"',
                  "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='trailing\\n')"),
+                ("jarvis/scripts/lib/owner_asks.py", 'or link is not None and not http(link["url"]))', 'or False)',
+                 "OwnerAsksContract.test_mailbox_ask_links_are_its_tracker_mirror_or_null", "(link='not-http')"),
                 ("slack/scripts/lib/settings.py", 'exec "$reader" -I -c', 'exec "$reader" -c',
                  "PublicOwnerAsks.test_carried_presence_preserves_root_settings_and_permission", "(name='renew')"),
             ]

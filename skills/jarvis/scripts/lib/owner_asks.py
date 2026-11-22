@@ -40,9 +40,8 @@ for root in "$@"; do
   # metadata with no work tree, a bare or .git directory. Outside every
   # repository it dies with 128, git's status for every fatal error, so that
   # outcome is known only by the first line of its untranslated die text.
-  # Running inside the folder keeps the folder's path out of that line.
   status=0
-  inside="$( { cd -- "$root" && LC_ALL=C git rev-parse --is-inside-work-tree; } 2>"$work/probe")" || status=$?
+  inside="$(LC_ALL=C git -C "$root" rev-parse --is-inside-work-tree 2>"$work/probe")" || status=$?
   first=
   IFS= read -r first <"$work/probe" || true
   case "$status:$inside:$first" in
