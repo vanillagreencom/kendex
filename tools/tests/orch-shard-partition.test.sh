@@ -1118,7 +1118,7 @@ owner_selection() { # <ci-job-set> <repository> <field> <shard> <path> <out> ; m
   : > "$out"
   ( cd "$repository" && CHANGE_CLASS=micro DOCS_ONLY=false CHANGED_PATHS="$path" EVENT=pull_request \
     GITHUB_OUTPUT="$out" "$job_set" --event-parity ) 2>/dev/null ||
-    { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; return 0; }
+    { printf '%s\t%s\tci-job-set-failed\n' "$shard" "$path"; return; }
   selected="$(cat "$out")" || return 1
   [[ -z "$field" ]] || selected="$(sed -n "s/^$field=//p" "$out")" || return 1
   grep -qF "\"$shard\"" <<< "$selected" || printf '%s\t%s\n' "$shard" "$path"
@@ -1149,7 +1149,7 @@ unselected_owners() { # <ci-job-set> <owners file> [repository] [field] ; missed
   for oldest in $pending; do wait "$oldest" || true; done
   for ((i = 0; i < n; i++)); do
     if [[ -f "$dir/$i.answer" ]]; then
-      cat "$dir/$i.answer"
+      cat "$dir/$i.answer" || printf '%s\towner-row-unread\n' "$(cat "$dir/$i.row")"
     else
       printf '%s\towner-row-unread\n' "$(cat "$dir/$i.row")"
     fi
@@ -1221,6 +1221,15 @@ chmod +x "$TMP/outputless-job-set"
 check "must-fail: a row whose selection left no output is named unread" \
   "$(sed 's/$/	owner-row-unread/' "$TMP/github-selection-owner")" \
   "$(unselected_owners "$TMP/outputless-job-set" "$TMP/github-selection-owner" "$GITHUB_SELECT" 2>/dev/null)"
+# A failed selector's line that cannot be written must fail the row's query,
+# so the row commits no answer and reads as unread, never as selected.
+printf '#!/usr/bin/env bash\nexit 3\n' > "$TMP/failing-job-set"
+chmod +x "$TMP/failing-job-set"
+lost_status=0
+owner_selection "$TMP/failing-job-set" "$GITHUB_SELECT" "" rest skills/github/tests/pr-view.test.sh \
+  "$TMP/failing-job-set.out" >&- 2>/dev/null || lost_status=$?
+check "must-fail: a failed selection whose line is lost fails its query" \
+  failed "$([[ "$lost_status" -ne 0 ]] && echo failed || echo "status=$lost_status")"
 
 # Must-fail: removing a dedicated package's row sends its diffs to `rest`
 # alone, leaving its own shard standing down, and the suite its selection
