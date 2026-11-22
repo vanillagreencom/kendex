@@ -1779,6 +1779,35 @@ read_claude_hook_field() { # FIELD OUT_VAR
   printf -v "$2" '%s' "$_hook_value"
 }
 
+# Claude Code takes a worktree name of "/"-separated segments of letters,
+# digits, '.', '_' and '-' (its "Invalid worktree name" refusal), a wider
+# alphabet than the one path segment create derives a tree and a branch from.
+# The hook maps the name onto that segment, the same on create and reopen:
+# each '/' and each '..' becomes '-', and the leading '.', '_' and '-' go. Git
+# refuses a branch that ends in '.' or '.lock' (git check-ref-format), and the
+# branch is the segment in lower case, so a trailing '.' goes and a trailing
+# '.lock' in any case becomes '-lock'. A name already in the segment alphabet
+# that git takes as a branch maps to itself, so a tree made before the mapping
+# still reopens. Distinct names can map to one tree, as names differing only
+# in case already do.
+claude_worktree_issue() { # NAME OUT_VAR
+  local _claude_issue="${1//\//-}"
+  _claude_issue="${_claude_issue//../-}"
+  while [[ "$_claude_issue" == [._-]* ]]; do _claude_issue="${_claude_issue:1}"; done
+  while :; do
+    case "$_claude_issue" in
+      *.) _claude_issue="${_claude_issue%.}" ;;
+      *.[Ll][Oo][Cc][Kk]) _claude_issue="${_claude_issue%.*}-${_claude_issue##*.}" ;;
+      *) break ;;
+    esac
+  done
+  if [[ -z "$_claude_issue" ]]; then
+    worktree_message claude-name-unmappable "$1" "Error: Claude Code's worktree name '$1' holds no letter or digit, so no worktree name maps from it; pass a name with one." >&2
+    return 1
+  fi
+  printf -v "$2" '%s' "$_claude_issue"
+}
+
 run_worktree_setup_command() {
   local wt="$1" bounded="$SCRIPT_DIR/../../github/scripts/lib/bounded.sh" status=0
   [[ -n "${WORKTREE_SETUP_CMD:-}" ]] || return 0
@@ -4909,10 +4938,11 @@ case "${1:-}" in
     ARG="${2:-}"
     if [[ -z "$ARG" ]]; then
       read_claude_hook_field name CLAUDE_WORKTREE_NAME || exit 1
-      WT_PATH="$(worktree_path_for_issue "$CLAUDE_WORKTREE_NAME")" || exit 1
+      claude_worktree_issue "$CLAUDE_WORKTREE_NAME" CLAUDE_WORKTREE_ISSUE || exit 1
+      WT_PATH="$(worktree_path_for_issue "$CLAUDE_WORKTREE_ISSUE")" || exit 1
       if [[ ! -e "$WT_PATH" && ! -L "$WT_PATH" ]]; then
         # create prints the tree it made as its only stdout line.
-        CLAUDE_CREATED="$("$0" create "$CLAUDE_WORKTREE_NAME")" || exit $?
+        CLAUDE_CREATED="$("$0" create "$CLAUDE_WORKTREE_ISSUE")" || exit $?
         WT_PATH="${CLAUDE_CREATED##*$'\n'}"
         CLAUDE_REOPEN=false
       else

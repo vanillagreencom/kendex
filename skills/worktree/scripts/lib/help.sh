@@ -1024,9 +1024,13 @@ removed the worktree can leave it dirty.
 
 With no PATH, claude-setup and claude-cleanup are Claude Code's
 WorktreeCreate and WorktreeRemove command hooks and read the hook's JSON
-input on stdin (jq required). claude-setup creates the worktree for the
-input's name as 'create <name>' does, or reopens the one that name already
-has, and prints its physical path as the last stdout line. A reopen
+input on stdin (jq required). claude-setup maps the input's name onto an
+issue ID, each '/' and '..' as '-', the leading '.', '_' and '-' and a
+trailing '.' dropped, and a trailing '.lock' as '-lock' (git refuses a branch
+that ends in either), creates the worktree for it as 'create <ID>' does, or
+reopens the one it
+already has, and prints its physical path as the last stdout line. A name
+with no letter or digit is refused (worktree-claude-name-unmappable). A reopen
 reapplies the setup, WORKTREE_SETUP_CMD included. claude-cleanup runs
 'remove' on the input's worktree_path: the tree goes with any uncommitted
 work, as the removal Claude Code asked for, and a branch remove cannot
