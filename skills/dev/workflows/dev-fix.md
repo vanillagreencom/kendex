@@ -1,7 +1,5 @@
 # Fix Lifecycle
 
-The caller applies [orch § Delegation](../../orch/references/skill-rules.md#delegation) before selecting an agent for each round.
-
 Read [code-quality](../../code-quality/SKILL.md) before writing or modifying code, including for ad-hoc requests.
 
 The workflow for a dev agent receiving a review-fix delegation. Run it first line to last for one round. Every path is worktree-scoped.
@@ -29,24 +27,52 @@ Evaluate each item in `Review items:` independently.
 
 Before the first edit, read each page that the repository's `AGENTS.md`, and the `AGENTS.md` nearest each path a fix touches, routes for those paths.
 
-An optional `Adds:` line is the complete blank-separated list of protected additions this round may make; a blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. One path is `Adds: tools/one-helper.sh`; multiple paths are `Adds: tools/one-helper.sh skills/x/scripts/check`. [`../../orch/schemas/dev-round.md` § Protected additions](../../orch/schemas/dev-round.md#protected-additions) is the sole scope definition. With no line, add none in that scope. If the fix needs another protected file, report that requirement instead of creating it; the orchestrator must authorize the exact path in a fresh round.
+An optional `Adds:` line is the complete blank-separated list of protected additions this round may make.
 
-An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` record the previous round produced: the path, its bytes, the ceiling in bytes and the percent reached. Plan or perform a move to Git LFS, an asset store or generation before the blob grows further. If that remedy cannot be applied here, state why in the return. With no line, no binary blob is known to be within reach of the ceiling.
+- A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one.
+- One path is `Adds: tools/one-helper.sh`; multiple paths are `Adds: tools/one-helper.sh skills/x/scripts/check`.
+- [`../../orch/schemas/dev-round.md` § Protected additions](../../orch/schemas/dev-round.md#protected-additions) is the sole scope definition.
+- With no line, add none in that scope.
+- If the fix needs another protected file, report that requirement instead of creating it; the orchestrator must authorize the exact path in a fresh round.
+
+An optional `Near-ceiling:` line, one per binary blob, is a `byte-ceiling` record the previous round produced: the path, its bytes, the ceiling in bytes and the percent reached.
+
+- Plan or perform a move to Git LFS, an asset store or generation before the blob grows further.
+- If that remedy cannot be applied here, state why in the return.
+
+With no line, no binary blob is known to be within reach of the ceiling.
+
+Decide each item:
 
 - **Apply** when the item relates to the parent issue and adds no new risk. Unrelated changes are Skipped with the reason; the orchestrator files.
-- **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions. Before applying anything, search the decisions governing the affected area, `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue, and read the full file for any match. An item contradicting an active decision is skipped citing it, e.g. "Skipped — contradicts [DECISION_ID]".
-- **Decline** an item that cannot affect real usage, with one line of reasoning, and do not file it. Disposition rules are reviewer's [references/finding-disposition.md](../../reviewer/references/finding-disposition.md).
+- **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions.
+  - Before applying anything, search the decisions governing the affected area, `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue.
+  - Read the full file for any match.
+  - An item contradicting an active decision is skipped citing it, e.g. "Skipped — contradicts [DECISION_ID]".
+- **Decline** an item that cannot affect real usage, with one line of reasoning, and do not file it.
+  - Disposition rules are reviewer's [references/finding-disposition.md](../../reviewer/references/finding-disposition.md).
 - **Blocked** when the same fix fails three times: report rather than loop.
 
 Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
 An item asking for a test takes the fix-round rule there.
 
-Update a principle doc or a decision record when a fix makes a claim in it false; the `docs-writing` skill says what each holds. For **UI lifecycle or cache fixes**, cached or mirrored UI state, changed window or event handling, trace every invalidation and event-entry path before returning, prefer extending an existing listener over a parallel subscription for the same event family, and add regression coverage for the non-obvious paths you touched.
+Update a principle doc or a decision record when a fix makes a claim in it false; the `docs-writing` skill says what each holds.
 
-Before a fix returns, name the finding's defect class: the assumption that failed, not the cited line. Grep for the verb or pattern to find every other site, input form or copy that makes that assumption. Fix each one, or close the class at its generator. Also grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one. Name the class and the sites swept in the item reasoning. A fix at one site with its sibling untouched comes back as the next round.
+For **UI lifecycle or cache fixes**, cached or mirrored UI state, changed window or event handling:
 
-Before the round returns, hold every line it wrote to [code-quality § Tests](../../code-quality/SKILL.md#tests) and [§ Comments and Prose](../../code-quality/SKILL.md#comments-and-prose): each new or changed instrument carries its must-fail control, and each new comment claims only what the adjacent code establishes.
+- Trace every invalidation and event-entry path before returning.
+- Prefer extending an existing listener over a parallel subscription for the same event family.
+- Add regression coverage for the non-obvious paths you touched.
+
+Before a fix returns:
+
+1. Name the finding's defect class: the assumption that failed, not the cited line.
+2. Grep for the verb or pattern to find every other site, input form or copy that makes that assumption. Fix each one, or close the class at its generator.
+3. Also grep for every other reader of the field, caller of the helper, or surface stating the rule the fix changed, and fix each one.
+4. Name the class and the sites swept in the item reasoning.
+
+A fix at one site with its sibling untouched comes back as the next round.
 
 Note anything a fix revealed about deeper problems, and cite the decision ID or rule behind every skip.
 
@@ -62,9 +88,15 @@ The round must pass [orch's base-freshness gate](../../orch/workflows/dev-fix.md
 
 Read `[ROUND_BASE]` from the `base_sha` of `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json` before entering [dev-implement.md § 5. Validate](./dev-implement.md#5-validate).
 
-Follow that section from the worktree root, with two changes. Its `DEV_VALIDATE_CMD` item validates this round's changes only: start it as `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --base [BASE_SHA] --run-id [RUN_ID]`, `[RUN_ID]` from the reply of the admission that section's admission step runs before every start; `orch-runtime validate start` resolves the mode from the project's declaration for a start that names a base, and records it on the round's admitted `validate` entry, so the start names no `--validate-mode`. A delegation that carries no `Validation admission:` line starts `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --validate-mode range --base [BASE_SHA]` instead, and the entry resolves that request as `orch-runtime validate entry --help` states. Use `[ROUND_BASE]` as `[BASE_SHA]`, and poll it the same way. The runner decides whether CI covers the change and whether local validation must run. A project whose policy forbids orch's validation runner takes that section's foreground route instead, with the record's line `validate-mode=range` where the project sets `DEV_VALIDATE_RANGE_CMD` and `validate-mode=full` where it does not. That route's commit is the commit command below, with its review label, run before the record's `head=` line; skip that command after validation. Use the Visual QA rule below.
+Follow that section from the worktree root, with two changes:
 
-The run records the mode that ran, on the round's admitted `validate` entry where the runtime started it and in the run directory on either route, from which § 5's `orch-runtime dev-return --text write` reads it: `docs` for a docs-only tree with declared text checks, `range`, `full` in a project that sets no `DEV_VALIDATE_RANGE_CMD`, or `ci`, a run that records required CI on the published head as pending. A scoped `docs` pass proves the docs-only snapshot for submission. Where the project sets `DEV_VALIDATE_SELECTION_CMD`, a `ci` run first runs that selector's changed-file suites once, scoped, and a red scoped run fails the round, as [dev-implement.md § 5. Validate](./dev-implement.md#5-validate) states; with no selector it runs no command. The receipt accepts those edits before the combined push. Submit's existing exact-head wait supplies CI proof. A `ci` request that ran its command locally instead names the cause on the run's `ci-fallback=` line, which orch's [artifact-checks.md § Validation entry answers](../../orch/references/artifact-checks.md#validation-entry-answers) lists; what the runner hands the command is [dev-implement.md § 5. Validate](./dev-implement.md#5-validate)'s.
+1. Its `DEV_VALIDATE_CMD` item validates this round's changes only.
+   - Start it as `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --base [BASE_SHA] --run-id [RUN_ID]`, `[RUN_ID]` from the reply of the admission that section's admission step runs before every start. `orch-runtime validate start` resolves the mode from the project's declaration for a start that names a base, and records it on the round's admitted `validate` entry, so the start names no `--validate-mode`.
+   - A delegation that carries no `Validation admission:` line starts `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --validate-mode range --base [BASE_SHA]` instead, and the entry resolves that request as `orch-runtime validate entry --help` states.
+   - Use `[ROUND_BASE]` as `[BASE_SHA]`, and poll it with the `--wait --run-dir` poll [long-running-validation.md](./long-running-validation.md) gives that section's start.
+   - The runner decides whether CI covers the change and whether local validation must run.
+   - A project whose policy forbids orch's validation runner takes that section's foreground route instead, with the record's line `validate-mode=range` where the project sets `DEV_VALIDATE_RANGE_CMD` and `validate-mode=full` where it does not. That route's commit is the commit command below, with its review label, run before the record's `head=` line; skip that command after validation.
+2. Use the Visual QA rule below.
 
 **Visual QA**, **skip if** the issue has no `design` label or the fix touches no UI code. Otherwise confirm what the fix changes renders correctly, not the full checklist.
 
@@ -98,7 +130,11 @@ Reflection is complete in § 2.1. Make no repository edit here.
 
 Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round-contract):
 
-Write `tmp/fix-summary-[ISSUE_ID].md` with this round's `### Validation Routes` section per [dev-implement.md § 9.1](./dev-implement.md#91-completion-summary-file), for the orchestrator's existing session and merge comments. When a fix changed a view the [dev-implement.md § 8](./dev-implement.md#8-record-qa-signals) screenshot rule covers, list that view's screenshot set under a `### Screenshots` heading by [reviewer references/ui-screenshots.md § Screenshots](../../reviewer/references/ui-screenshots.md#screenshots), which says what a later round recaptures and what it carries. If the validation list misses a rule, add a `### Proposed Rules` heading with the proposal as one bullet. Always append `--summary-file tmp/fix-summary-[ISSUE_ID].md` to the command below; retain each round's section in its artifact before a later fix uses the same filename.
+- Write `tmp/fix-summary-[ISSUE_ID].md` with this round's `### Validation Routes` section per [dev-implement.md § 9.1](./dev-implement.md#91-completion-summary-file), for the orchestrator's existing session and merge comments.
+- When a fix changed a view the [dev-implement.md § 8](./dev-implement.md#8-record-qa-signals) screenshot rule covers, list that view's screenshot set under a `### Screenshots` heading by [reviewer references/ui-screenshots.md § Screenshots](../../reviewer/references/ui-screenshots.md#screenshots), which says what a later round recaptures and what it carries.
+- If the validation list misses a rule, add a `### Proposed Rules` heading with the proposal as one bullet.
+- Always append `--summary-file tmp/fix-summary-[ISSUE_ID].md` to the command below.
+- Retain each round's section in its artifact before a later fix uses the same filename.
 
 `[BASE_BRANCH]` is what `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` reports; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because the local branch may sit behind the remote, and in a fresh clone may not exist at all.
 
@@ -108,9 +144,21 @@ Write `tmp/fix-summary-[ISSUE_ID].md` with this round's `### Validation Routes` 
 
 One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`; the Apple gate in `orch-runtime dev-return --text write --help` reads them, and [dev-implement.md § 5. Validate](./dev-implement.md#5-validate) names the `mac run test` it holds an Apple item to.
 
-One `--item N DECISION REASONING` per **delegated** item, Applied, Skipped, and Blocked alike; the artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `orch-runtime dev-return --text write --help`; keep `REASONING` free of backticks). `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed. `[RUN_DIR]` is the `run-dir=` value the validation entry printed in this round's § 3. The writer binds the run to the round by its tree, whenever and for whichever round it ran: it refuses `run-off-round` a run that did not validate the `--commit` tree, FAILING included, or whose HEAD does not contain the round's `base_sha`, unless the run records that base as the one it compared from, the base has the run's tree, or the rebase map carries the base into the run's HEAD. A run directory whose start record has no `tree=` line proves its recorded HEAD's tree only while that HEAD is the worktree's HEAD and `git status --porcelain` reports nothing. A `pass` needs that run to have passed, a `no-verdict` a run that recorded that result; omit the flag when validation failed before any run started or when § 3's foreground route has no completed record after interruption. A project whose own policy forbids orch's validation runner and runs its validation entry point in the foreground passes `--validate-record [FILE]` in place of `--validate-run-dir`, `[FILE]` being the record § 3's foreground route wrote. `--validate handed-over`, with no run flag, passes a group's committed work to the group after it, which validates: the writer takes it only where the round began with a group that is not the last and the commit moved past the round's base. `--exception-file [FILE]` cites, beside a `FAILING` run, the exception `{by, id, excused}` the round began with; the receipt keeps its `FAILING` line.
+- One `--item N DECISION REASONING` per **delegated** item, Applied, Skipped, and Blocked alike. The artifact must cover exactly the delegated set, `N` being the item's `#[N]` number (value shapes: `orch-runtime dev-return --text write --help`). Keep `REASONING` free of backticks.
+- `--commit` is HEAD after the commit, or the prior HEAD when no commit was needed.
+- `[RUN_DIR]` is the `run-dir=` value the validation entry printed in this round's § 3.
+- The writer binds the run to the round by its tree, whenever and for whichever round it ran: it refuses `run-off-round` a run that did not validate the `--commit` tree, FAILING included, or whose HEAD does not contain the round's `base_sha`, unless the run records that base as the one it compared from, the base has the run's tree, or the rebase map carries the base into the run's HEAD.
+- A run directory whose start record has no `tree=` line proves its recorded HEAD's tree only while that HEAD is the worktree's HEAD and `git status --porcelain` reports nothing.
+- A `pass` needs that run to have passed, a `no-verdict` a run that recorded that result. Omit the flag when validation failed before any run started or when § 3's foreground route has no completed record after interruption.
+- A project whose own policy forbids orch's validation runner and runs its validation entry point in the foreground passes `--validate-record [FILE]` in place of `--validate-run-dir`, `[FILE]` being the record § 3's foreground route wrote.
+- `--validate handed-over`, with no run flag, passes a group's committed work to the group after it, which validates: the writer takes it only where the round began with a group that is not the last and the commit moved past the round's base.
+- `--exception-file [FILE]` cites, beside a `FAILING` run, the exception `{by, id, excused}` the round began with; the receipt keeps its `FAILING` line.
 
-**Respawned mid-round without the `Review items:` list?** Do not reconstruct it from the raw review JSONs and do not guess. Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n`, the item's full text, and the `reach` the orchestrator recorded, and write one `--item` per entry. If that file is missing too, report the gap and write no artifact.
+**Respawned mid-round without the `Review items:` list?**
+
+- Do not reconstruct it from the raw review JSONs and do not guess.
+- Read `[WORKTREE_PATH]/tmp/dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json`, whose `items[]` entries each carry the delegated number `n`, the item's full text, and the `reach` the orchestrator recorded, and write one `--item` per entry.
+- If that file is missing too, report the gap and write no artifact.
 
 **Return exactly**:
 
