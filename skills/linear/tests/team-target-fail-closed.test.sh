@@ -236,15 +236,15 @@ ROWS='
 issues create is refused|none|-|err|issues create --title "Cross-workspace write"|refused
 issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|inactive update GetIssue(),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),GetLabel(name="backend",teamName="IssueTeam",inline-team),UpdateIssue()
 issues update resolves under the issue team, not the configured spelling of it|TEAM|-|err|issues update TEAM-1 --state Done --labels backend|ok IssueTeam(),GetTeam(name="TEAM"),GetIssue(),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),GetLabel(name="backend",teamName="IssueTeam",inline-team),UpdateIssue()
-comments create reaches the API with no configured team|none|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
+comments create reaches the API with no configured team|none|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\nhello\n")
 projects create is refused|none|-|err|projects create --name "New project"|refused
 cycles create is refused|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15|refused
 labels create is refused|none|-|err|labels create --name backend|refused
 milestones create is refused|none|-|err|milestones create --project P --name Alpha|refused
 initiatives create is refused|none|-|err|initiatives create --name "Phase 1"|refused
-a --team=CC comment body is free text, not a target|none|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="--team=CC\n")
-a bare --team comment body is free text|none|-|err|comments create TEAM-1 --body "--team"|ok CreateComment(input.body="--team\n")
---team inside comment prose is free text|none|-|err|comments create TEAM-1 --body "see --team CC for context"|ok CreateComment(input.body="see --team CC for context\n")
+a --team=CC comment body is free text, not a target|none|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\n--team=CC\n")
+a bare --team comment body is free text|none|-|err|comments create TEAM-1 --body "--team"|ok CreateComment(input.body="> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\n--team\n")
+--team inside comment prose is free text|none|-|err|comments create TEAM-1 --body "see --team CC for context"|ok CreateComment(input.body="> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\nsee --team CC for context\n")
 a bare --team title on update is free text|none|-|err|issues update TEAM-1 --title "--team"|inactive update GetIssue(),UpdateIssue(input.title="--team")
 a --team=CC title on update is free text|none|-|err|issues update TEAM-1 --title "--team=CC"|inactive update GetIssue(),UpdateIssue(input.title="--team=CC")
 a --team=CC title on create is free text|none|-|err|issues create --title "--team=CC"|refused
@@ -255,8 +255,8 @@ issues --help needs no team, whatever the action (issues answers it before the g
 the --help of a guarded action passes the dispatcher gate to its own parser|none|-|err|cycles update --help|ok-parse
 an explicit --team resolves that team and creates under it|none|-|err|issues create --title "Explicit target" --team Explicit|inactive create GetTeam(name="Explicit"),CreateIssue(input.title="Explicit target",input.teamId="team-uuid")
 a configured LINEAR_TEAM is the team resolved|Configured|-|err|issues create --title "Configured target"|ok GetTeam(name="Configured"),CreateIssue(input.title="Configured target",input.teamId="team-uuid")
-comments create reaches the API with a configured team|Configured|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="hello\n")
-a --team-shaped body is written verbatim under a configured team|Configured|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="--team=CC\n")
+comments create reaches the API with a configured team|Configured|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\nhello\n")
+a --team-shaped body is written verbatim under a configured team|Configured|-|err|comments create TEAM-1 --body "--team=CC"|ok CreateComment(input.body="> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\n--team=CC\n")
 projects create --team resolves its target after parsing|none|-|err|projects create --name P --team Explicit|ok GetTeam(name="Explicit"),CreateProject(input.teamIds.0="team-uuid")
 cycles create --team resolves its target after parsing|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15 --team Explicit|ok GetTeam(name="Explicit"),CreateCycle(input.teamId="team-uuid")
 labels create --team resolves its target after parsing|none|-|err|labels create --name backend --team Explicit|ok GetTeam(name="Explicit"),CreateLabel(input.teamId="team-uuid")

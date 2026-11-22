@@ -4,6 +4,8 @@ description: "Load for any Linear read or write: issues, projects, cycles, miles
 summary: "Bash CLI over Linear's GraphQL API: read, search, create, or update issues, projects, cycles, milestones, initiatives, and labels."
 license: MIT
 user-invocable: true
+dependencies:
+  optional: [orch]
 metadata:
   author: vanillagreen
   source: kendex
@@ -61,6 +63,7 @@ tags: [integration]
 - Safe `issues get` and `issues list` rows carry `in_pr_bundle`. It is true when the description holds `**In-PR bundle**: yes`.
 - Look up several issues with one `issues bulk-get <ID1> <ID2> ...`. It is also the route to verify a write.
 - Read the comments of several issues with one `comments bulk-list <ID1> <ID2> ...` call, never a loop or parallel `comments list` readers. `--stdin` takes one identifier per line.
+- `comments create` opens every new comment with `> Posted by Agent: NAME, Model: MODEL, Effort: EFFORT`, read through the orch skill's `orch-runtime session`, with `unknown` for each value it does not read. A safe read returns the body without that line, and `--format=raw` keeps it (`comments --help`).
 
 Schema reference over ctx7: `/websites/studio_apollographql_public_linear-api_variant_current` (API), `/linear/linear` (SDK), `/websites/linear_app_developers` (guides).
 

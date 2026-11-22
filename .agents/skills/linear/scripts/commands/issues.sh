@@ -3389,22 +3389,8 @@ block_issue() {
     local comment_body="BLOCKED: Waiting for $blocker."
     [ -n "$reason" ] && comment_body="BLOCKED: Waiting for $blocker. $reason"
 
-    local comment_mutation='
-    mutation CreateComment($input: CommentCreateInput!) {
-        commentCreate(input: $input) {
-            success
-            comment { id }
-        }
-    }'
-
-    local escaped_body
-    escaped_body=$(echo "$comment_body" | jq -Rs '.')
-    local comment_input="{\"issueId\": \"$issue_id\", \"body\": $escaped_body}"
-
     # Comment is secondary - don't fail the whole operation if it fails
-    set +e
-    graphql_query "$comment_mutation" "{\"input\": $comment_input}" >/dev/null 2>&1
-    set -e
+    "$BASH" "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$comment_body" >/dev/null 2>&1 || true
 
     # Return combined result
     local identifier
@@ -3444,22 +3430,8 @@ unblock_issue() {
     # Post unblocked comment
     local comment_body="Unblocked. Resuming work."
 
-    local comment_mutation='
-    mutation CreateComment($input: CommentCreateInput!) {
-        commentCreate(input: $input) {
-            success
-            comment { id }
-        }
-    }'
-
-    local escaped_body
-    escaped_body=$(echo "$comment_body" | jq -Rs '.')
-    local comment_input="{\"issueId\": \"$issue_id\", \"body\": $escaped_body}"
-
     # Comment is secondary - don't fail the whole operation if it fails
-    set +e
-    graphql_query "$comment_mutation" "{\"input\": $comment_input}" >/dev/null 2>&1
-    set -e
+    "$BASH" "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$comment_body" >/dev/null 2>&1 || true
 
     # Return combined result
     local identifier
@@ -3490,7 +3462,7 @@ complete_superseded_issues() {
                 '{error: "supersession-children", issue: $issue, children: ($children | split("\n")), remedy: "Disposition the open children before retrying completion."}' >&2
             return 1
         fi
-        disposition_result=$("$SCRIPT_DIR/comments.sh" create "$superseded_id" --body "Superseded by $replacement.") || return 1
+        disposition_result=$("$BASH" "$SCRIPT_DIR/comments.sh" create "$superseded_id" --body "Superseded by $replacement.") || return 1
         if ! jq -e '.success == true' <<<"$disposition_result" >/dev/null; then
             jq -cn --arg issue "$superseded_id" '{error: "supersession-comment", issue: $issue}' >&2
             return 1
@@ -3810,7 +3782,7 @@ complete_issue() {
         local comment_result=""
         local comment_rc=0
         set +e
-        comment_result=$("$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$summary")
+        comment_result=$("$BASH" "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$summary")
         comment_rc=$?
         set -e
         if [ "$comment_rc" -ne 0 ] || [ "$(echo "$comment_result" | jq -r '.success // false')" != "true" ]; then

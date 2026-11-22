@@ -23,7 +23,10 @@ Actions:
 List:
   comments.sh list <issue-id>
                         Every comment of the issue: a list past one page
-                        takes further requests.
+                        takes further requests. In the safe format (and
+                        bulk-list's) a body reads without the attribution
+                        line create opens it with: the body its caller
+                        posted. --format=raw keeps the stored body.
 
 Bulk List:
   comments.sh bulk-list <ID1> <ID2> ... [--stdin] [--format=safe|raw]
@@ -55,6 +58,12 @@ Create Options:
                         files append a [name](assetUrl) markdown link. Composes
                         with --body/--body-file; missing/unreadable paths
                         refuse before any API call.
+  Every created body opens with the line
+    > Posted by Agent: NAME, Model: MODEL, Effort: EFFORT
+  and a blank line. Each value is what orch's `orch-runtime session` reads
+  for the lane session bound at the caller: the agent from its launch, the
+  model and effort from the session's own record. A value it does not read
+  is unknown. A body that already opens with such a line has it replaced.
 
 Update Options:
   --body <text>         New comment body (required unless --body-file is set)
@@ -238,6 +247,35 @@ owner_requests() {
       <<<"$owner"$'\n'"$workspace"$'\n'"$items"$'\n'"$comments"
 }
 
+# The line a new comment opens with, naming who posts it, read once per post
+# through orch's `orch-runtime session`: the model and effort of the session
+# bound at the caller's lane pane, and the name its launch gave that session,
+# in the lines `agent-runtime session model --help` documents. A member stands
+# only as that reading names it. A model the launch requested (`source=launch`)
+# is no reading of the one the session runs, so it stays unknown; so does
+# every member where orch is not installed beside this package, its runtime is
+# not built, or no lane session is bound at the caller (an overseer, Jarvis, a
+# plain shell). A Claude Code subagent shares its lane's pane and session, so
+# its comment names the lane session's model.
+comment_attribution() {
+    local reader="$SCRIPT_DIR/../../../orch/scripts/orch-runtime" lines="" line
+    local agent=unknown model=unknown effort=unknown
+    if [[ -x "$reader" ]]; then
+        # Exit 1 (a member unrecorded) and 2 (no session bound, a read failed)
+        # still print the lines that answer.
+        lines=$("$reader" session 2>/dev/null) || true
+    fi
+    while IFS= read -r line; do
+        [[ "$line" =~ ^(agent|model|effort)=([^[:space:]]+)\ source=(session|launch)$ ]] || continue
+        case "${BASH_REMATCH[1]}:${BASH_REMATCH[3]}" in
+            agent:launch) agent="${BASH_REMATCH[2]}" ;;
+            model:session) model="${BASH_REMATCH[2]}" ;;
+            effort:session) effort="${BASH_REMATCH[2]}" ;;
+        esac
+    done <<<"$lines"
+    printf '> Posted by Agent: %s, Model: %s, Effort: %s' "$agent" "$model" "$effort"
+}
+
 create_comment() {
     local issue_id="$1"
     shift
@@ -293,6 +331,9 @@ create_comment() {
         return 1
     fi
 
+    local attribution
+    attribution=$(comment_attribution)
+
     # Upload --attach files and reference them from the comment body: images
     # embed as markdown, other files get a markdown link (comments have no
     # attachmentCreate surface, so the link IS the attachment). An upload
@@ -313,9 +354,11 @@ create_comment() {
         fi
     done
 
-    # Escape body for JSON (handle newlines and quotes)
+    # Escape body for JSON (handle newlines and quotes), under the one
+    # attribution line, which replaces any copy the caller wrote.
     local escaped_body
-    escaped_body=$(echo "$body" | jq -Rs '.')
+    escaped_body=$(echo "$body" | jq -Rs --arg line "$attribution" \
+        "$COMMENT_ATTRIBUTION_JQ"'$line + "\n\n" + unattributed')
 
     local input_parts=("\"issueId\": \"$comment_issue_id\"" "\"body\": $escaped_body")
 
