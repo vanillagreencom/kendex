@@ -21,7 +21,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Deep Research
 
-- In Pi with the `web_research` tool active, use that tool. Pass `outputPath` when creating a report.
+- In Pi with the `web_research` tool active, use that tool.
+  - Pass `outputPath` when creating a report.
 - In every other harness, run `scripts/deep-research` with `EXA_API_KEY` set.
 
 ## Rules
@@ -32,7 +33,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 - The report reaches other sessions as an attachment on its tracker issue.
 - Research on building against another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
 - Cite sources for material claims.
-- Provider payloads go in the sidecar JSON (`findings.raw.json` beside the report by default), never inline.
+- Provider payloads go in the sidecar JSON, never inline. By default the sidecar sits beside the report, named as the report with `.raw.json` in place of its extension: `findings.raw.json` for `findings.md`.
 - Sanitize evidence excerpts: source-page headings must not render as headings.
 - Once the report and its sidecar exist, run `validate` and stop.
 - Do no local reproduction, benchmarks, tests, code inspection or implementation unless the caller asked for it.
@@ -48,6 +49,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 ```
 
 `deep-research help` lists the flags and mode settings.
+
+The flags can override a mode's settings.
 
 - Use `lite` for an evidence brief.
 - `standard` and `full` request synthesized findings.
@@ -76,3 +79,4 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 - `templates/findings.md` carries exactly the sections `validate` requires, in order.
 - `Key Findings` holds distinct claims, not a restatement of the summary.
+- Record mode and source counts in `## Research Metadata`.

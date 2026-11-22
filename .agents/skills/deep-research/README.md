@@ -24,8 +24,10 @@ You give the CLI a question and a research mode. It sends the request to Exa. It
 Requires Node 18 or newer and `EXA_API_KEY`, the only setting.
 
 - Set the key in the kendex app, on this package's Customize tab. The app writes it to the project's private env file: `.env.local`, unless `KENDEX_ENV_FILE` names another.
-- Or set the key by hand in that file. Keep it out of committed configuration.
-- Check the setup with `scripts/deep-research doctor`.
+- Or set the key by hand in that file.
+- Keep the key out of committed configuration.
+- The value may be a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
+- Check the setup with `scripts/deep-research doctor`, run from the project root.
 
 Domain, date, result-count and context flags are per call. `scripts/deep-research help` lists them.
 
