@@ -131,7 +131,7 @@ Its sites, and which answer each takes:
 
 - The routing table's rows and the doctrine source's `###` headings are two hand-kept copies of one set.
 - A heading with no row renders into nothing; a row naming a heading that does not exist renders a hole. Both render clean.
-- In the CI lane this package prescribes, the spec copy comes from the tree under judgment, so a pull request adding a doctrine block changes the routing in the same copy.
+- In the CI lane this package prescribes, the spec copy comes from the tree under judgment while the code runs from the trusted default-branch checkout, so a pull request adding a doctrine block changes the routing in the same copy.
 - `--spec` names both files from one copy.
 
 **Rejects, the set.**

@@ -56,7 +56,7 @@ Renders each enabled review bot's instruction files from the doctrine below and 
 - Before choosing `--output local`, read [schemas/renders.md § Local output](schemas/renders.md#local-output).
 - Exit codes: 0 clean, 1 findings, 2 could not complete.
 - A manifest with no `[bot-instructions]` table follows [schemas/validators.md](schemas/validators.md) § `orphan`.
-- Where commit-guards is installed, its pre-commit chain runs `check --staged`.
+- The `commit-guards` chain runs `check --staged` itself where this package is installed.
 - Elsewhere, wire `check --staged` into the repository's own guards. This package ships no hook.
 - `render` replaces only a file or region that carries its marker.
 - A hand-written file or region at a generated path is taken over by `adopt`, never overwritten: [schemas/renders.md](schemas/renders.md) § Common rules.
