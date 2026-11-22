@@ -1591,11 +1591,15 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         private_env: !cli.no_private_env,
     };
     let value = match cli.verb {
-        Verb::Version => serde_json::json!({
-            "protocol": protocol::PROTOCOL,
-            "crate": env!("CARGO_PKG_VERSION"),
-            "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
-        }),
+        Verb::Version => {
+            let mut answer = serde_json::json!({
+                "protocol": protocol::PROTOCOL,
+                "crate": env!("CARGO_PKG_VERSION"),
+                "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
+            });
+            answer[watch::program::RESUMES] = serde_json::Value::Bool(true);
+            answer
+        }
         Verb::Ready { duties } => ready_verb(&duties, &flags)?,
         Verb::Host { host, args } => {
             load_settings(&flags)?; // Mailbox reads the first stderr line.

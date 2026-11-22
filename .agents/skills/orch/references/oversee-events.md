@@ -210,13 +210,14 @@ A lane whose mail, clone or state read fails draws no other line; this one names
 
 ### `watch-stale`
 
-`EVENT watch-stale program=[KEY] checkout=[KEY] cause=[CAUSE]`: the checkout's orch-runtime sources have a new key, and the watch cannot switch to the program for that key, so it keeps running its old program. The line prints once per checkout key and cause.
+`EVENT watch-stale program=[KEY] checkout=[KEY] cause=[CAUSE]`: the checkout's orch-runtime sources have a new key, and the watch cannot switch to the program for that key, so it keeps running its old program. The line prints again only when the checkout key or the cause changes.
 
 | Cause | Meaning and action |
 |---|---|
 | `absent` | Setup has not built that program yet. The watch switches at the first long pass after the build. Run `.agents/skills/orch/scripts/setup` where no build is running. |
 | `not-executable` | The program's file is not executable. Run setup, which builds over it. |
 | `unanswered` | The program did not answer `version`, such as a build for another host. Setup keeps an executable file, so remove `bin/orch-runtime-[CHECKOUT_KEY]` from the runtime cache first, then run setup. The cache is the one agent-runtime's `scripts/lib/key.sh` names. |
+| `unresumable` | The program is built from sources older than in-place replacement, such as a reverted install, and would refuse the watch's own claim. Restart the watch with `watch stop` and `watch start` to run that program. |
 | `exec-failed` | The program answered and then did not start. The cause is in `oversee-watch.err` beside the fleet state. The watch tries again only after the key changes, so restart it with `watch stop` and `watch start` once the cause is fixed. |
 
 ### `reconcile-refused`

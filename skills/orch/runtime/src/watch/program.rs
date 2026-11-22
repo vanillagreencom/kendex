@@ -19,6 +19,12 @@ use agent_runtime::host;
 /// What every placed program's file name holds before its key.
 const PREFIX: &str = "orch-runtime-";
 
+/// The field a program's `version` result carries, `true`, where it
+/// resumes a claim naming its own identity. A program built from sources
+/// without it reads the inherited claim live and refuses, ending the watch,
+/// so the watch never becomes one.
+pub const RESUMES: &str = "watch_resumes_claim";
+
 /// The shell line that prints the cache root and the key of the sources
 /// at `$2` through the key reader at `$1`, the wrapper's own two reads. The
 /// reader's refusals print their line on stderr.
@@ -55,7 +61,8 @@ pub enum Current {
     Placed { key: String, binary: PathBuf },
     /// Another key, whose program cannot take over: `absent` or
     /// `not-executable` where it is no program to run, `unanswered` where
-    /// it did not answer `version` (a build for another host).
+    /// it did not answer `version` (a build for another host),
+    /// `unresumable` where its answer does not declare [`RESUMES`].
     Unready { key: String, cause: &'static str },
     /// The key did not read; `cause` names the step and what said so.
     Unread { cause: String },
@@ -134,7 +141,7 @@ impl Program {
         if let Some(cause) = crate::ready::executable(&binary) {
             return Current::Unready { key, cause };
         }
-        match host::run_tagged(
+        let answer = match host::run_tagged(
             "watch",
             "orch-runtime",
             &binary,
@@ -142,12 +149,19 @@ impl Program {
             &["version"],
             self.bound,
         ) {
-            Ok(out) if out.status.success() => Current::Placed { key, binary },
-            Ok(_) | Err(_) => Current::Unready {
-                key,
-                cause: "unanswered",
-            },
-        }
+            Ok(out) if out.status.success() => {
+                serde_json::from_slice::<serde_json::Value>(&out.stdout).ok()
+            }
+            Ok(_) | Err(_) => None,
+        };
+        let cause = match answer {
+            None => "unanswered",
+            Some(answer) if answer["result"][RESUMES] == true => {
+                return Current::Placed { key, binary };
+            }
+            Some(_) => "unresumable",
+        };
+        Current::Unready { key, cause }
     }
 }
 
@@ -155,15 +169,9 @@ impl Program {
 /// environment: the pid and the process start stay, so the claim still
 /// names the runner, and the arguments carry the credential the start
 /// selected. Returns only where the exec failed, with its cause.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the watch's one replacement of itself in place by the program its checkout's key names"
-)]
 pub fn replace(binary: &Path) -> std::io::Error {
-    use std::os::unix::process::CommandExt;
-    std::process::Command::new(binary)
-        .args(std::env::args_os().skip(1))
-        .exec()
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    host::exec(binary.as_os_str(), &args, false)
 }
 
 #[cfg(test)]

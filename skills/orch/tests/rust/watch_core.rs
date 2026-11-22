@@ -3069,7 +3069,9 @@ fn await_lines(
 /// again) and one `watch-replaced` line. Sources moved on to a key no
 /// program is placed for leave it on its own program with one
 /// `watch-stale` line, however many passes follow, and so does a key
-/// whose placed program does not answer, the pass's duties running on.
+/// whose placed program does not answer or does not declare that it
+/// resumes its own claim (a build from older sources), the pass's duties
+/// running on.
 #[test]
 fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_cannot() {
     let dir = tempfile::tempdir().unwrap();
@@ -3094,6 +3096,7 @@ fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_ca
     let second = key_for(&scratch, "// second\n");
     let third = key_for(&scratch, "// third\n");
     let fourth = key_for(&scratch, "// fourth\n");
+    let fifth = key_for(&scratch, "// fifth\n");
     write_sources(&sources, "// first\n");
     let started_as = place_as(&cache, &first);
     let replaced_by = place_as(&cache, &second);
@@ -3152,10 +3155,15 @@ fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_ca
         "the claim names the same process under its new program"
     );
 
-    write_sources(&sources, "// third\n");
-    // A program placed under the fourth key that no kernel runs.
+    // A program placed under the fourth key that no kernel runs, and one
+    // under the fifth that answers `version` as a program built before
+    // in-place replacement does.
     let unstartable = cache.join("bin").join(format!("orch-runtime-{fourth}"));
     write_executable(&unstartable, "not a program\n");
+    write_executable(
+        &cache.join("bin").join(format!("orch-runtime-{fifth}")),
+        "#!/bin/sh\nprintf '%s\\n' '{\"protocol\":\"orch-runtime-v1\",\"ok\":true,\"result\":{\"protocol\":\"orch-runtime-v1\"}}'\n",
+    );
     let mut stale_lines = 0;
     for (source, line) in [
         (
@@ -3165,6 +3173,10 @@ fn a_placed_watch_replaces_itself_when_its_sources_move_and_says_once_when_it_ca
         (
             "// fourth\n",
             format!("EVENT watch-stale program={second} checkout={fourth} cause=unanswered"),
+        ),
+        (
+            "// fifth\n",
+            format!("EVENT watch-stale program={second} checkout={fifth} cause=unresumable"),
         ),
     ] {
         write_sources(&sources, source);
