@@ -26,10 +26,11 @@ The overseer reads counts and identifiers only. The TPM reads bodies, comments a
 
 ## Full audit
 
-1. Run `.agents/skills/orch/scripts/orch-runtime reconcile-items` as audit-issues § 1.2.1 says.
-   - A successful reply supplies findings in `result.findings` and `result.lines`.
-   - A refused reply stops the audit.
+1. Bind one fresh `[INVENTORY_FILE]` for this audit, as audit-issues § 1.2.1 binds one. Both step 2 runs keep it.
 2. Run `audit-issues team` over Backlog, Todo, In Progress and In Review. Then run `audit-issues issue [TRIAGE_IDS]` over every aged Triage item; an empty Triage set needs no issue-mode run.
+   - The first run's § 1.2.1 `orch-runtime reconcile-items --inventory [INVENTORY_FILE]` collects the team into the file. Its successful reply supplies findings in `result.findings` and `result.lines`.
+   - A refused reply stops the audit.
+   - The second run's reconciliation and step 3's TPM reads take their rows from the same file.
 3. Combine the two wrappers' § 4.1 analysis briefs into one fresh canonical `tpm` task.
    - Launch and capture it as [oversee-events.md § Lane proposals](oversee-events.md#lane-proposals) launches its `tpm`.
    - The TPM follows the project-management skill's `workflows/tpm-audit.md` with `--team`, then with `--issues [FILE_PATH]`, the existing-issue file audit-issues § 4.1 prepares from the Triage IDs.

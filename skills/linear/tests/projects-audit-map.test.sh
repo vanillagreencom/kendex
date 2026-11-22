@@ -4,8 +4,9 @@
 # the Audit section of project-management references/project-map.md lists,
 # one planted defect per row in a copy of a clean team that yields none, and
 # its refusal of a map project Linear lacks or has twice live. Then the audit
-# pass's team inventory its readers share (`issues list`, `labels audit` and
-# `projects audit` given --inventory): each answers what its live read does,
+# pass's team inventory its readers share (`issues list`, as orch's
+# reconciliation and the project-management workflows run it, `labels audit`
+# and `projects audit` given --inventory): each answers what its live read does,
 # the pass lists the team once, and a file a reader cannot use refuses.
 
 set -euo pipefail
@@ -232,9 +233,14 @@ ambiguous^.projects += [.projects[] | select(.name == "Fixture Area") | .id = "p
 ROWS
 
 # --- one audit pass's team inventory -----------------------------------------
-# The batch is the full audit's team reads in the command forms the
-# project-management workflows run: the team-mode and all-open-states lists,
-# then the label and project audits. Its world adds an undeclared label on an
+# The batch is the heartbeat full audit's team reads (orch
+# references/heartbeat-audit.md), in order and in their command forms: the
+# team and issue runs' orch-runtime reconcile-items every-state lists (the form
+# skills/orch/tests/rust/reconcile_items.rs pins), then the TPM's team-mode
+# reads (label audit, team-mode list, all-open-states comparison, project
+# audit) and its issue-mode reads (the same less the team-mode list). The
+# issue run's targeted bulk-get and closed-row searches take no inventory and
+# stay out. Its world adds an undeclared label on an
 # open, a completed and a duplicate issue, In Review and Verifying issues, an
 # open item off the map and one in a completed map project.
 BATCH="$TMP_ROOT/batch.json"
@@ -247,14 +253,19 @@ jq '.map.projects += [{name: "Fixture Done", kind: "deliverable", ends_when: "Fi
       {identifier: "KEN-8", team: "team-kendex", state: "started", project: "Fixture Off Map"},
       {identifier: "KEN-9", team: "team-kendex", state: "started", project: "Fixture Done"}]' "$CLEAN" >"$BATCH"
 render "$BATCH"
-mkdir -p "$TMP_ROOT/pass" "$TMP_ROOT/failed"
+mkdir -p "$TMP_ROOT/pass" "$TMP_ROOT/split" "$TMP_ROOT/failed"
 INVENTORY="$TMP_ROOT/pass/inventory.json"
 
 # Each step: its name, then its arguments separated by `|`.
-STEPS='team-mode^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review|--max
-open-states^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review,Verifying|--max
+STEPS='reconcile^issues|list|--max|--team|kendex|--format=safe
+issue-reconcile^issues|list|--max|--team|kendex|--format=safe
 labels-audit^labels|audit
-projects-audit^projects|audit|--team|kendex'
+team-mode^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review|--max
+open-states^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review,Verifying|--max
+projects-audit^projects|audit|--team|kendex
+issue-labels-audit^labels|audit
+issue-open-states^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review,Verifying|--max
+issue-projects-audit^projects|audit|--team|kendex'
 
 # The request kinds the count separates: whole-team issue-list collections
 # (a listing's first page), every page of them, the continuation reads of one
@@ -269,7 +280,10 @@ request_counts() {
        listings: (map(select(.op | IN($listings[])) | .op) | unique)}' "$@"
 }
 
-live_logs=() pass_logs=()
+# Each step runs live, then given the one pass inventory, then as the
+# heartbeat ran it with a separate reconciliation and an inventory per run:
+# the first reconciliation live, each run's reads given its own file.
+live_logs=() pass_logs=() split_logs=()
 while IFS='^' read -r name argv; do
   IFS='|' read -r -a args <<<"$argv"
   run_status rc linear "live-$name" "$BATCH" "${args[@]}"
@@ -280,17 +294,28 @@ while IFS='^' read -r name argv; do
     cmp -s "$TMP_ROOT/live-$name.out" "$TMP_ROOT/pass-$name.out"
   live_logs+=("$TMP_ROOT/live-$name.jsonl")
   pass_logs+=("$TMP_ROOT/pass-$name.jsonl")
+  case "$name" in
+  reconcile) split_logs+=("$TMP_ROOT/live-$name.jsonl") split=team ;;
+  issue-*) split=issue ;;
+  *) split=team ;;
+  esac
+  run_status rc linear "split-$name" "$BATCH" "${args[@]}" --inventory "$TMP_ROOT/split/$split.json"
+  assert_eq "split: $name succeeds" "$rc" 0
+  split_logs+=("$TMP_ROOT/split-$name.jsonl")
 done <<<"$STEPS"
 
-assert "inventory: the team-mode read collects the inventory once" \
-  jq -e '.collections == 1 and .listings == ["InventoryIssues"]' <(request_counts "$TMP_ROOT/pass-team-mode.jsonl")
-assert "inventory: the team-mode read publishes the file" test -s "$INVENTORY"
-for name in open-states labels-audit projects-audit; do
+assert "inventory: the reconciliation read collects the inventory once" \
+  jq -e '.collections == 1 and .listings == ["InventoryIssues"]' <(request_counts "$TMP_ROOT/pass-reconcile.jsonl")
+assert "inventory: the reconciliation read publishes the file" test -s "$INVENTORY"
+while IFS='^' read -r name _; do
+  [[ "$name" == reconcile ]] && continue
   assert "inventory: $name lists no issues" \
     jq -e '.pages == 0' <(request_counts "$TMP_ROOT/pass-$name.jsonl")
-done
+done <<<"$STEPS"
 assert "inventory: holds the team's every state and no other team" \
   jq -e '[.nodes[].identifier] | sort == ["KEN-1", "KEN-2", "KEN-3", "KEN-4", "KEN-5", "KEN-6", "KEN-7", "KEN-8", "KEN-9"]' "$INVENTORY"
+assert "inventory: reconciliation keeps every state" \
+  jq -e '[.[].id] | sort == ["KEN-1", "KEN-2", "KEN-3", "KEN-4", "KEN-5", "KEN-6", "KEN-7", "KEN-8", "KEN-9"]' "$TMP_ROOT/pass-reconcile.out"
 assert "inventory: team-mode keeps its state filter" \
   jq -e '[.[].id] == ["KEN-1", "KEN-2", "KEN-4", "KEN-6", "KEN-8", "KEN-9"]' "$TMP_ROOT/pass-team-mode.out"
 assert "inventory: labels audit keeps duplicate-state issues" \
@@ -300,10 +325,13 @@ assert "inventory: projects audit leaves out closed and duplicate issues" \
     {kind: "outside-map", issue: "KEN-8", project: "Fixture Off Map"}]' "$TMP_ROOT/pass-projects-audit.out"
 
 before=$(request_counts "${live_logs[@]}")
+split=$(request_counts "${split_logs[@]}")
 after=$(request_counts "${pass_logs[@]}")
-printf 'projects-audit-map: listing-counts before=%s after=%s\n' "$before" "$after"
+printf 'projects-audit-map: listing-counts before=%s split=%s after=%s\n' "$before" "$split" "$after"
 assert "batch: each live step lists the team once" \
   jq -e --argjson steps "${#live_logs[@]}" '.collections == $steps' <<<"$before"
+assert "batch: a separate reconciliation and an inventory per run list the team three times" \
+  jq -e '.collections == 3' <<<"$split"
 assert "batch: the inventory pass makes one issue-list collection" jq -e '.collections == 1' <<<"$after"
 assert "batch: the inventory pass keeps every other read" \
   jq -e --argjson before "$before" '.metadata == $before.metadata and .targeted == $before.targeted' <<<"$after"

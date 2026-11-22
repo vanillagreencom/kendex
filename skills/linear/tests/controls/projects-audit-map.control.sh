@@ -19,7 +19,7 @@ control_replace scripts/commands/issues.sh 2 \
     '    if false; then'
 
 # The collection never publishes its file.
-control_expect "inventory: the team-mode read publishes the file"
+control_expect "inventory: the reconciliation read publishes the file"
 control_replace scripts/lib/pages.sh 1 \
     '    mv -f -- "$staged" "$file" || return 1' \
     '    :'

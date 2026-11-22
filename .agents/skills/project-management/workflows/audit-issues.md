@@ -56,24 +56,27 @@ Only MODE `project` runs this read for § 3 fallback target resolution:
 .agents/skills/linear/scripts/linear.sh session-status
 ```
 
+MODE `team` and `issue` first bind the pass inventory:
+
+- A caller that bound `[INVENTORY_FILE]` for its pass keeps that path for each run of the pass, as [Heartbeat audit](../../orch/references/heartbeat-audit.md) § Full audit binds one for its team and issue runs.
+- Otherwise:
+  1. Bind `[INVENTORY_FILE]` to `[WORKTREE_PATH]/tmp/inventory-[MODE]-YYYYMMDD-HHMMSS.json`, `[WORKTREE_PATH]` being the § 4.1 `Worktree:`.
+  2. Create that `tmp/` if it is missing.
+  3. Bind a path no earlier run wrote: a path another run wrote serves that run's older reading.
+
 Every mode runs:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
-.agents/skills/orch/scripts/orch-runtime reconcile-items
+.agents/skills/orch/scripts/orch-runtime reconcile-items --inventory [INVENTORY_FILE]
 ```
 
 - Run `orch-runtime reconcile-items` only where the orch skill is installed.
+- Drop `--inventory [INVENTORY_FILE]` where it is unbound.
 - Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts.
-- A refused reply stops the audit until the failed read is fixed.
+- A refused reply stops the audit until the failed read is fixed. Never rerun it without `--inventory`: the live listing would be a second reading.
 
-MODE `team` and `issue`:
-
-1. Bind `[INVENTORY_FILE]` to `[WORKTREE_PATH]/tmp/inventory-[MODE]-YYYYMMDD-HHMMSS.json`, `[WORKTREE_PATH]` being the § 4.1 `Worktree:`.
-2. Create that `tmp/` if it is missing.
-3. Bind a path no earlier run wrote: a path another run wrote serves that run's older reading.
-
-§ 4.1 hands the path to the TPM, whose first read given it collects the team ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
+The first read given `[INVENTORY_FILE]` collects the team into it: the pass's first reconciliation, or the TPM's first read where the orch skill is not installed. Every later read of the pass takes its rows from that file. § 4.1 hands the same path to the TPM, whose reads take their rows from that file ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
 
 #### 1.2.2 Preflight — GitHub (TRACKER=github)
 
