@@ -21,5 +21,3 @@ Skeleton for `[DECISION_ID]-[DESCRIPTOR].md`. Constraints: `../schemas/decision-
 
 **Revisit when**: [the condition that re-opens the choice]
 ```
-
-Code blocks name their language; cross-references are markdown links.
