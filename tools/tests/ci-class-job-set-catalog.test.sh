@@ -34,12 +34,15 @@ jarvis_only="$(SELECT_EVENT=merge_group selection micro false skills/jarvis/scri
 check "Jarvis-only merge group builds runtimes before the catalog release suites" \
   "true ready" "$(field catalog <<<"$jarvis_only") $(catalog_runtime_setup && printf ready)"
 
+# CLASS|PATHS|CATALOG[|SMOKE], SMOKE CATALOG where absent: skill Markdown
+# with no compiled include runs no smoke, whose catalog is its own sample,
+# and a settings file beside it keeps the measured row's.
 catalog_rows() { # SCRIPT — every row must agree on both events
-  local class path selected event
-  while IFS='|' read -r class path selected; do
+  local class path selected smoke event
+  while IFS='|' read -r class path selected smoke; do
     for event in pull_request merge_group; do
       check "catalog inputs: $event $class $path" "catalog=$selected
-smoke=$selected" "$(catalog_bits "$(SELECT_IN="$READ_WORLD" SELECT_WITH="$1" SELECT_EVENT="$event" selection "$class" false "$path")")"
+smoke=${smoke:-$selected}" "$(catalog_bits "$(SELECT_IN="$READ_WORLD" SELECT_WITH="$1" SELECT_EVENT="$event" selection "$class" false "$(printf '%s\n' $path)")")"
     done
   done <<ROWS
 trivial|README.md|false
@@ -50,9 +53,10 @@ micro|crates/app/src/editor.rs|false
 micro|crates/app/tests/integration.rs|false
 micro|crates/core/tests/integration.rs|false
 micro|crates/cli/tests/integration.rs|false
-trivial|skills/orch/SKILL.md|true
-render|skills/orch/SKILL.md|true
-micro|agents/runtime.md|true
+trivial|skills/orch/SKILL.md|true|false
+render|skills/orch/SKILL.md|true|false
+micro|agents/runtime.md|true|false
+standard|skills/orch/SKILL.md kendex-local.toml|true
 micro|hooks/guard.sh|true
 micro|commands/run.md|true
 micro|mcp/docs.toml|true

@@ -20,7 +20,8 @@ queue_table() {
   cat <<ROWS
 tree|micro|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|false
 tree|micro|skills/orch/scripts/resolve-base-branch|true
-tree|standard|skills/orch/SKILL.md|true
+tree|standard|.github/instructions/code-review.md|true
+tree|standard|skills/orch/SKILL.md|false
 tree|render|.agents/skills/orch/SKILL.md|false
 fixture|micro|skills/price-handling/scripts/x|true
 fixture|micro|$PI|false

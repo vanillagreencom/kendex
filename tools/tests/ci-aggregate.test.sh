@@ -384,7 +384,7 @@ pull_request|$VERIFY_ROW|
 merge_group|$VERIFY_ROW|bot-instructions
 pull_request|$ALL_ON|
 merge_group|$ALL_ON|$EVERY_GROUP_LANE
-merge_group|$one_skill|bot-instructions cargo-linux catalog skill-suites-shard smoke
+merge_group|$one_skill|bot-instructions cargo-linux catalog skill-suites-shard
 pull_request|$CODE_ROW|
 merge_group|$CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows
 merge_group|$ORCH_CODE_ROW|bot-instructions cargo-linux cargo-macos cargo-tests-windows catalog $MACOS_QUEUE_JOB skill-suites-shard smoke
@@ -1039,7 +1039,7 @@ ROWS
       "$(aggregate "$AGGREGATE" --lane "$value:$job")"
   done <<ROWS
 merge_group|success|README.md|false|0
-merge_group|success|skills/orch/SKILL.md|true|1
+merge_group|success|commands/run.md|true|1
 merge_group|success|crates/core/src/render/agent.rs|true|1
 merge_group|failure|README.md||1
 ROWS

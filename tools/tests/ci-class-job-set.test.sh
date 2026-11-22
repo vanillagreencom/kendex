@@ -25,6 +25,10 @@ standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
 micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
+standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md .claude/agents/reviewer.md agents/reviewer.md hooks/AGENTS.md .kendex-generated.json|$SHARD_PROSE|+orch-rest
+standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|+orch-rest
+standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md $LOCAL_TOML|$SHARD_CODE|+orch-rest
+standard|false|.kendex-generated.json|$SHARD_CODE|*
 micro|false|skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
 micro|false|skills/agent-runtime/runtime/src/lib.rs|$SHARD_CODE|$ORCH_ALL +rest
 micro|false|tools/tests/example.test.sh|$(lanes linux false true false)|+guards-scans -guards-tools -guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
@@ -190,7 +194,7 @@ mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\] rust_targets=\[\]"$/'
+RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$smoke shards=\[\] skipped_suites=\[\] rust_targets=\[\]"$/'
 [ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 # LANE|WORD dropped from the render row
