@@ -2158,6 +2158,73 @@ touch node_modules/dep
         self.assertEqual(second.stdout, first.stdout)
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
 
+    def relaunch_across_a_runtime_change(self):
+        """A first launch, then the base moving the orch runtime's sources,
+        then a relaunch whose sync-base carries the clone across that move.
+        The clone runs the real orch-runtime wrapper and key library, so its
+        reuse meets setup-required unless setup placed a program for the
+        sources the move left; the fixture setup places one, keyed the same
+        way, that runs this checkout's runtime. Returns the relaunch."""
+        self.real_worktree_source(".env.local")
+        orch = self.source / ".agents/skills/orch"
+        self.copy_file(PACKAGE / "scripts/orch-runtime", orch / "scripts/orch-runtime")
+        self.copy_file(PACKAGE.parent / "agent-runtime/scripts/lib/key.sh",
+                       self.source / ".agents/skills/agent-runtime/scripts/lib/key.sh")
+        for relative, text in (("Cargo.toml", '[package]\nname = "orch-runtime"\n'), ("Cargo.lock", ""),
+                               ("src/main.rs", "fn main() {}\n")):
+            (orch / "runtime" / relative).parent.mkdir(parents=True, exist_ok=True)
+            (orch / "runtime" / relative).write_text(text)
+        self.executable(orch / "scripts/setup", f'''#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd -- "${{BASH_SOURCE[0]%/*}}" && pwd -P)"
+refuse() {{ printf 'orch-runtime-setup: %s\\n' "$*" >&2; exit 1; }}
+. "$here/../../agent-runtime/scripts/lib/key.sh"
+key="$(agent_runtime_key "$here/../runtime")"
+bin="$(agent_runtime_cache)/bin"
+mkdir -p -- "$bin"
+ln -sfn -- {shlex.quote(str(self.runtime_binary()))} "$bin/orch-runtime-$key"
+printf 'agent-runtime-setup: key=fixture binary=%s\\n' {shlex.quote(str(self.agent_runtime_binary()))}
+printf 'orch-runtime-setup: key=%s binary=%s\\n' "$key" "$bin/orch-runtime-$key"
+''')
+        self.git(self.source, "add", ".")
+        self.git(self.source, "commit", "-qm", "keyed runtime")
+        # A host that can build: sync-base then moves across a runtime change
+        # and leaves the build to setup. The worktree's live reader is the
+        # clone's wrapper, never a runtime the suite itself runs under.
+        self.executable(self.bin / "cargo", "#!/bin/sh\nexit 1\n")
+        env = {"AGENT_RUNTIME_CACHE": str(self.root / "runtime-cache"), "ORCH_RUNTIME_BINARY": ""}
+        first = self.create(**env)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.seed_source(".agents/skills/orch/runtime/src/main.rs", "fn main() { moved() }\n")
+        return first, self.create("--relaunch", **env)
+
+    def test_relaunch_across_a_runtime_change_builds_before_the_reuse(self):
+        """A relaunch whose update crosses a runtime change reuses the
+        item's tree with no setup run by hand."""
+        first, relaunch = self.relaunch_across_a_runtime_change()
+        self.assertEqual(relaunch.returncode, 0, relaunch.stderr)
+        self.assertEqual(self.fields(relaunch.stdout)["path"], self.fields(first.stdout)["path"])
+        self.assertEqual((Path(self.row["clone"]) / ".agents/skills/orch/runtime/src/main.rs").read_text(),
+                         "fn main() { moved() }\n")
+
+    def test_control_relaunch_building_after_the_reuse_is_refused(self):
+        """With the builds back after the worktree steps, the reuse reads
+        the clone's unbuilt runtime and refuses."""
+        original = self.script.read_text()
+        steps = ('    runtime = built(row, "orch", "runtime")\n',
+                 '    lead = built(row, "agent-runtime", "agent-runtime")\n')
+        anchor = '    prefix = "exec env "'
+        for text in (*steps, anchor):
+            self.assertEqual(original.count(text), 1, text)
+        late = original.replace(steps[0], "").replace(steps[1], "").replace(anchor, "".join(steps) + anchor)
+        self.assertNotEqual(late, original)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
+            self.executable(self.script, late)
+            _, relaunch = self.relaunch_across_a_runtime_change()
+            self.assertEqual((relaunch.returncode != 0, b"cause=activity-unreadable" in relaunch.stderr),
+                             (True, True), relaunch.stderr)
+
     def git(self, path, *args):
         """Git in a fixture checkout, committing as the fixture's author."""
         return subprocess.run([self.env["REAL_GIT"], "-C", str(path), "-c", "user.name=Test",
