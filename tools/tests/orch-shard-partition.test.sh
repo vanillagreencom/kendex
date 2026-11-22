@@ -1690,8 +1690,90 @@ targets_runs() { # WORKFLOW SHARD OS RUST_TARGETS ; whether the targets step run
 check "the runtimes' targets run on the orch-rest Linux leg where a target is listed, and where no classifier ran" \
   "true true false false false" \
   "$(targets_runs "$WORKFLOW" orch-rest Linux '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux '[]') $(targets_runs "$WORKFLOW" orch-rest macOS '["orch/lib"]') $(targets_runs "$WORKFLOW" orch-state Linux '["orch/lib"]')"
-check "one step runs the listed runtime targets" "1" \
-  "$(grep -c 'cargo test --no-fail-fast --locked --manifest-path "$manifest" ${args\[@\]+"${args\[@\]}"}' "$WORKFLOW")"
+# The targets step's own body, run over a stub cargo and privacy harness:
+# which units it hands cargo test and the privacy harness, and whether the
+# step ends red, for each failure it must not hide. The stub answers the
+# build with cargo's JSON artifact lines, as the real build does in the
+# step's log; flock and nproc are stubbed for a host without them.
+targets_step() { # WORKFLOW RUST_TARGETS FAILING ; `green|red: unit,...` with the units run, sorted
+  local run cond block="" f package
+  run="$(mktemp -d "$TMP/targets-step.XXXXXX")" || exit 1
+  cond="\${{$(step_if "$1" "$TARGETS_STEP")}}"
+  split_run_blocks "$1" "$run/blocks"
+  for f in "$run"/blocks/*.cond; do
+    [[ "$(cat "$f")" != "$cond" ]] || { [[ -z "$block" ]] || { printf 'two-steps\n'; return 0; }; block="${f%.cond}.sh"; }
+  done
+  [[ -n "$block" ]] || { printf 'no-step\n'; return 0; }
+  mkdir -p "$run/bin" "$run/runner"
+  # A call fails where FAILING holds `<package> <what>`, the step's own
+  # spelling of the unit.
+  cat > "$run/bin/cargo" <<'STUB'
+#!/usr/bin/env bash
+verb="$1"
+shift
+manifest="" args=() build=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --manifest-path) manifest="$2"; shift ;;
+    --no-run) build=true ;;
+    --locked | --no-fail-fast | --check | --all-targets | --message-format=*) ;;
+    --) break ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+package="${manifest#skills/}"
+package="${package%%/*}"
+what="${args[*]-}"
+[[ "$verb" != test ]] || ! $build || what=build
+[[ "$verb" == test ]] || what="$verb"
+[[ "$verb" != test || "$what" == build ]] || printf '%s\n' "$package $what" >> "$STUB_RAN"
+case ",$STUB_FAILING," in *",$package $what,"*) exit 101 ;; esac
+if [[ "$what" == build ]]; then
+  artifact() { printf '{"reason":"compiler-artifact","profile":{"test":true},"executable":"/stub","target":{"kind":["%s"],"name":"%s"}}\n' "$1" "$2"; }
+  printf '{"reason":"build-finished","success":true}\n'
+  [[ ${#args[@]} -gt 0 ]] || { artifact lib "$package"; artifact bin "$package"; artifact test one; artifact test two; exit 0; }
+  set -- "${args[@]}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --lib) artifact lib "$package" ;; --test) artifact test "$2"; shift ;; esac
+    shift
+  done
+fi
+exit 0
+STUB
+  printf '#!/usr/bin/env bash\n:\n' > "$run/bin/flock"
+  printf '#!/usr/bin/env bash\necho 2\n' > "$run/bin/nproc"
+  chmod +x "$run/bin/cargo" "$run/bin/flock" "$run/bin/nproc"
+  for package in agent-runtime orch; do
+    mkdir -p "$run/work/skills/$package/tests/privacy"
+    printf 'printf "%%s\\n" "%s privacy" >> "$STUB_RAN"\ncase ",$STUB_FAILING," in *",%s privacy,"*) exit 1 ;; esac\n' \
+      "$package" "$package" > "$run/work/skills/$package/tests/privacy/privacy-cases.sh"
+  done
+  : > "$run/ran"
+  if (cd "$run/work" && PATH="$run/bin:$PATH" RUNNER_TEMP="$run/runner" RUST_TARGETS="$2" \
+    STUB_FAILING="$3" STUB_RAN="$run/ran" "$BASH" "$block") >"$run/log" 2>&1; then
+    printf 'green: '
+  else
+    printf 'red: '
+  fi
+  sort "$run/ran" | paste -sd, -
+}
+LISTED='agent-runtime --test controller,agent-runtime privacy,orch --doc,orch --lib,orch privacy'
+while IFS='|' read -r label targets failing expected; do
+  check "the targets step: $label" "$expected" "$(targets_step "$WORKFLOW" "$targets" "$failing")"
+done <<TARGETS
+every listed unit passes|["agent-runtime/controller","orch/lib"]||green: $LISTED
+a whole manifest runs every test executable its build lists, and its doctests|["orch/*"]||green: orch --bin orch,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
+no classifier ran, so both whole manifests run|||green: agent-runtime --bin agent-runtime,agent-runtime --doc,agent-runtime --lib,agent-runtime --test one,agent-runtime --test two,agent-runtime privacy,orch --bin orch,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
+a failed target in the first package reds the step and stops no other unit|["agent-runtime/controller","orch/lib"]|agent-runtime --test controller|red: $LISTED
+a failed privacy harness reds the step|["agent-runtime/controller","orch/lib"]|orch privacy|red: $LISTED
+a failed fmt or clippy reds the step and stops no unit|["agent-runtime/controller","orch/lib"]|agent-runtime fmt,orch clippy|red: $LISTED
+a failed build reds the step and runs that package's privacy harness|["agent-runtime/controller","orch/lib"]|orch build|red: agent-runtime --test controller,agent-runtime privacy,orch privacy
+TARGETS
+plant "$WORKFLOW" "            exit 1" "            :" "$TMP/targets-unfailed.yml" \
+  "skill-suites-shard/$TARGETS_STEP" line
+check "must-fail: a failed list that ends without exit 1 leaves a failed target's step green" "green: $LISTED" \
+  "$(targets_step "$TMP/targets-unfailed.yml" '["agent-runtime/controller","orch/lib"]' 'agent-runtime --test controller')"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.

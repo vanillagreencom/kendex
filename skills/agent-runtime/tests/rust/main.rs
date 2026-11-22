@@ -2777,11 +2777,9 @@ fn a_launch_under_a_waiting_shell_records_the_harness_itself() {
     assert_eq!(reply["ok"], true, "{reply}");
     let recorded: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
-    let harness_pid: u32 = std::fs::read_to_string(&own_pid)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    // The launch answers once it has typed its line, which the pane's shell
+    // may not have run yet, so the row waits for the harness's own write.
+    let harness_pid = pids_at(&own_pid)[0];
     let lane = recorded["pane"]["id"].as_str().expect("the record's pane");
     let pane_pid: u32 = pane
         .tmux(&["display-message", "-p", "-t", lane, "#{pane_pid}"])
