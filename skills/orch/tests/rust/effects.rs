@@ -8280,7 +8280,10 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
             &std::fs::read_to_string(world.scripts.join("lane-host.json")).unwrap(),
         )
         .unwrap();
-        let line = answers["capabilities"]["stdout"].as_str().unwrap().to_owned();
+        let line = answers["capabilities"]["stdout"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         answers["capabilities"]["stdout"] = json!(line.replace("park=none", "park=verb"));
         answers["start --item KEN-H"] = start;
         answers[format!(
