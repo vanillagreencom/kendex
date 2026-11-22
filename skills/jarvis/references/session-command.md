@@ -1,10 +1,8 @@
 # Jarvis session and task commands
 
-Read when starting, stopping, attaching to or handing over the managed Jarvis session, or launching a Jarvis task, and when a `jarvis-session` or `task` answer needs its meaning.
+Read by section, only for the step that needs it: [Session command](#session-command) when starting, stopping, attaching to or handing over the managed Jarvis session, or when a `jarvis-session` answer needs its meaning, and [Task command](#task-command) when launching a Jarvis task, or when a `task` answer needs its meaning.
 
 ## Session command
-
-Use [Owner asks](owner-asks.md) for the shared list and its Later operation. These operations need no running controller session.
 
 - Start, resume and succession read published policy from the systemd user manager on Linux, and from launchd's caller context on macOS.
   - Shell-only exports do not reach a managed session.
@@ -16,11 +14,13 @@ Use [Owner asks](owner-asks.md) for the shared list and its Later operation. The
 - `JARVIS_UNATTENDED_HARNESSES`, in the home's `kendex.settings.toml` `[env]`, lists comma-separated the start harnesses whose managed session runs with nobody at its pane.
   - Start, resume and succession launch each named harness with the full-bypass permission words orch writes for overseers: `--dangerously-skip-permissions` on Claude Code, `--dangerously-bypass-approvals-and-sandbox` on Codex and `--allow-all` on Copilot CLI.
   - Pi has no such word.
+  - Succession's walk over `AGENT_RUNTIME_CONTROLLER_PREFERENCE` does not read the setting.
+  - To keep every successor unattended, name every harness that preference can reach.
+  - Per-account setup, such as Claude Code bypass consent, applies to every account that preference's harnesses can pick.
   - The [settings example](../kendex.settings.toml.example) states its empty default.
 - Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`.
   - Use the Jarvis package installed in HOME.
   - Supply the account directory for the selected app.
-  - Both modes follow [Start](../workflows/session.md#start).
 - Append `--model MODEL --effort LEVEL`, both or neither, to launch a stated model.
   - `MODEL` accepts the model class or native model spelling the task command takes.
   - The session records the pair as its choice.
@@ -53,7 +53,7 @@ Use [Owner asks](owner-asks.md) for the shared list and its Later operation. The
   - When adopting the [progress checkpoint](../workflows/session.md#progress-checkpoint) in an already running session, repeat its Start command once to establish the start floor.
 - On a satellite, `jarvis-session forward --home HOME --record PATH` forwards a confirmed owner request to the main, under [Agent reach: Forward](agent-reach.md#forward).
 - Use `jarvis-session forward-drain --home HOME` under [Agent reach: Status](agent-reach.md#status).
-- Read `jarvis-session status --home HOME --main` for forwarding status; its output names its fields, states and causes.
+- Read `jarvis-session status --home HOME --main` for forwarding status.
 - Follow [Agent reach: Status](agent-reach.md#status) for kept answers.
 - While the main session is unregistered, a request whose receipt was lost reads `queued` with `overseer-absent`, though the main already holds it. The next delivery or the answer settles it.
 - Stop through `.agents/skills/jarvis/scripts/jarvis-session stop --home HOME`.
@@ -72,7 +72,6 @@ Use [Owner asks](owner-asks.md) for the shared list and its Later operation. The
 - Add `--short` for a task of a few minutes when every account of the harness is past the launch limit.
   - The selector then accepts an account with room left up to its wall (`agent-runtime accounts pick --max-pct 100`).
   - The projected wall still applies.
-  - Full workers launch without it.
 - Put the private brief in the task file.
   - Add one `--input PATH` for each other input.
   - The task reads that brief directly and writes its Output to the result file.
@@ -88,21 +87,15 @@ Use [Owner asks](owner-asks.md) for the shared list and its Later operation. The
   - Each launch creates its own absolute scratch directory and browser profile beneath it.
   - The child receives `JARVIS_TASK_SCRATCH`, `JARVIS_BROWSER_PROFILE` and `JARVIS_BROWSER_PORT=0`, so Chromium allocates the profile's debugging endpoint; `jarvis-browser --port` reports the live port.
   - Use that profile with the [browser guide](browser.md#profile-and-tabs).
-  - Keep the result outside scratch so cleanup retains it.
 - Retain the returned task id.
-  1. Read its record with `task status --home HOME --id ID`; it names the task, inputs, selected model and account, result path and terminal window.
+  1. Read its record with `task status --home HOME --id ID`.
   2. Record the outcome with `task complete --home HOME --id ID --outcome succeeded|failed`. A succeeded task requires its result file.
   3. Check the result.
   4. Close task-owned browser work.
   5. Run `task cleanup --home HOME --id ID`. Cleanup closes that task's window, stops the browser running on its profile, and removes its scratch.
 
-  Completion and cleanup remain on the same task record.
-
 - A launch records a running task only once the harness can take its brief.
-  - When the account's harness cannot take it yet, the launch refuses `harness-setup-pending` or `harness-not-ready` and prints a `fix=` line naming the account.
-  - Open the harness once on that account.
-  - Finish its first-run setup or the screen shown.
-  - Then launch the task again.
+  - When the account's harness cannot take it yet, the launch refuses `harness-setup-pending` or `harness-not-ready` and prints a `fix=` line naming the account and the steps to finish its setup.
 - A launch refused after task allocation prints its task id and keeps the failure cause.
   - Read that record with `task status`.
   - If cleanup is pending:

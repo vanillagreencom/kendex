@@ -1,6 +1,6 @@
 # Owner asks
 
-Read when a console lists owner asks or sends Later through `jarvis-session`.
+Read when a console lists owner asks or sends Later through `jarvis-session`. These operations need no running controller session.
 
 ```bash
 .agents/skills/jarvis/scripts/jarvis-session owner-asks list --home HOME --view active|snoozed [--cursor CURSOR]
