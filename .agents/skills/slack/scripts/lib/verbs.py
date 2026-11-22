@@ -186,7 +186,17 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
                 f"{channel} error={err.error} owners={','.join(ids)}"
                 f" fix=invite the owners to #{channel_name} in Slack, then run setup again",
             ) from err
-    bound_before = read_binding(root) if journal_exists(root) else None
+    try:
+        bound_before = read_binding(root) if journal_exists(root) else None
+    except Refusal as err:
+        # --take restores a binding lost beside its journal from the relay's
+        # status record, which names the journal's channel and lifetime start.
+        if err.key != "root-unbound" or not take:
+            raise
+        # A record without both names no identity, so the take is refused.
+        record = read_status(root) or {}
+        before = str(record["channel"]) if "channel" in record and "bound_at" in record else "unknown"
+        bound_before = Binding(before, channel_name, str(record.get("bound_at")), [], {})
     if bound_before is not None and bound_before.channel != channel:
         raise Refusal(
             "channel-changed",

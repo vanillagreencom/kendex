@@ -3,7 +3,8 @@
 # by name or adopted by id, the invite, the binding it writes, and the
 # refusals a partial configuration, an unknown owner, a public channel, a
 # channel the bot is not in, a dead token, an app-level token in
-# SLACK_BOT_TOKEN, a refused invite and a rebind over a standing journal get.
+# SLACK_BOT_TOKEN, a refused invite and a rebind over a standing journal get,
+# and the restore --take makes of a binding lost beside its journal.
 # The token-type rule's control is socket.test.sh's `token-type`. The controls at the end plant one mutant per rule:
 # the owner lookup no longer mapping users_not_found, the public channel
 # taken, the invite refusal tolerated, and the rebind rule gone.
@@ -91,6 +92,23 @@ sk_run -- setup --root "$IOTA" --take C900
 assert_eq "$RC=$ERR1" "2=slack: channel-changed=$IOTA channel=$IOTA_CH new=C900 fix=stop the relay and move tmp/slack/journal.jsonl aside, then run setup again" \
   "a rebind to another channel while a journal stands is refused with the remedy"
 assert_eq "$(sk_channel "$IOTA")" "$IOTA_CH" "the binding keeps its channel"
+IOTA_BOUND="$(jq -r .bound_at "$IOTA/tmp/slack/binding.json")"
+IOTA_STATUS="$IOTA/tmp/slack/status.json"
+cp "$IOTA_STATUS" "$SK_TMP/iota-status.json"
+rm "$IOTA/tmp/slack/binding.json"
+sk_run -- setup --root "$IOTA"
+assert_eq "$RC=$ERR1" "2=slack: root-unbound=$IOTA" "a lost binding beside its journal is refused without --take"
+sk_run -- setup --root "$IOTA" --take C900
+assert_eq "$RC=$ERR1" "2=slack: channel-changed=$IOTA channel=$IOTA_CH new=C900 fix=stop the relay and move tmp/slack/journal.jsonl aside, then run setup again" \
+  "--take of a channel the status record does not name is refused with the journal-reset remedy"
+jq 'del(.bound_at)' "$SK_TMP/iota-status.json" >"$IOTA_STATUS"
+sk_run -- setup --root "$IOTA" --take "$IOTA_CH"
+assert_eq "$RC=${ERR1%% new=*}" "2=slack: channel-changed=$IOTA channel=unknown" \
+  "a status record with no bound_at names no identity, so --take is refused"
+cp "$SK_TMP/iota-status.json" "$IOTA_STATUS"
+sk_run -- setup --root "$IOTA" --take "$IOTA_CH"
+assert_eq "$RC=$(jq -r '[.channel, .bound_at] | join(" ")' "$IOTA/tmp/slack/binding.json")" "0=$IOTA_CH $IOTA_BOUND" \
+  "--take restores a lost binding beside its journal with the channel and bound_at the status record names"
 KAPPA="$(sk_new_root kappa)"
 sk_ctl /_test/fault '{"method": "conversations.invite", "error": "cant_invite", "times": 1}' >/dev/null
 sk_run -- setup --root "$KAPPA"

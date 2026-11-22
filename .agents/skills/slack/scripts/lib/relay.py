@@ -1397,6 +1397,7 @@ class RootRelay:
                 "code": code,
                 "compacted_day": self.compacted_day,
                 "channel": self.channel,
+                "bound_at": self.binding.bound_at,
                 "poll_seconds": self.settings.poll_seconds,
                 "inbound": self.settings.inbound,
                 "last_poll": self.clock(),
