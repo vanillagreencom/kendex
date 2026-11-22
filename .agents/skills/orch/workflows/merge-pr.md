@@ -385,7 +385,7 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
    The lane owns completion after merge. Where its sandbox is gone, or its item reads Done with the lane ended, the runtime's close completes the item from the PR body's `## Done-when evidence` section. The overseer owns the remaining post-merge checks on the same item.
 
-   Before completion, give every development remainder from a cut its own issue in the item's project. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's `SKILL.md` § Disposition states. Each box names its reading, its location, why the branch cannot prove it, and a deadline in that section's form.
+   Before completion, give every development remainder from a cut its own issue. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's `SKILL.md` § Disposition states. Each box names its reading, its location, why the branch cannot prove it, and a deadline in that section's form.
 
    Linear's GitHub integration can set `[ISSUE]` Done when the PR merges. Read the item live and complete it with the command below, even where the integration already set Done. The merge lane never writes In Review or In Progress. Box acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results. For a failed post-merge check, follow [oversee-events.md](../references/oversee-events.md) § Verification.
 

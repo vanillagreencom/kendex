@@ -316,6 +316,7 @@ This run is itself an audit and files no parent for its subject. Each create is 
 - **A part of an existing deliverable.** When the input's `parent_issue` is a container whose one deliverable the create is a part of, the create is a `make_child` with `parent: null`.
 - **The review audit's in-PR bundle.** With the input's `in_pr_bundle` true, each child candidate of its `parent_issue`, the issue being worked, is a `make_child` with `parent: null`: the caller marks that issue its in-PR bundle root and works the child in that issue's own PR.
 - **A hierarchy contract.** With `hierarchy_contract`, each `child_indexes` item is a child of its parent per § 7.0.
+- **A new deliverable's parts.** When two or more creates are the parts of one deliverable accepted as one thing and no existing container holds it, file its parent first: a create with `create_fields.is_bundle_parent: true`, built from [parent-issue-template.md](../templates/parent-issue-template.md), and `hierarchy.action: none`. Each part is a `make_child` whose `parent` is that row's `#N`.
 
 Outside these cases no create is a `make_child` under the input's `parent_issue`, whatever the `source`: an issue being worked that gains a child becomes a container. A child candidate of it is `hierarchy.action: none` with a `related` relation to it.
 
@@ -323,7 +324,7 @@ Parent and child must share a project. If they cannot, record `wrong_project[]` 
 
 ### 7.2 Evaluate Coherence
 
-Ask: **would these ship together in one PR?** Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8). No means separate items with blocking relations for ordering. They are children of one container only when they are the parts of one deliverable accepted as one thing ([SKILL.md § Disposition](../SKILL.md#disposition)); otherwise each stands alone in its project.
+Ask: **would these ship together in one PR?** Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8). No means separate items with blocking relations for ordering. They are children of one container only when they are the parts of one deliverable accepted as one thing ([SKILL.md § Disposition](../SKILL.md#disposition)), under § 7.1's existing-deliverable or new-deliverable case; otherwise each stands alone in its project.
 
 Lean sub-issue for tests of the feature being implemented, hardening for the component being built, and platform work under a same-platform parent. Lean independent for platform-specific work under a cross-platform parent, tooling or methodology under a feature parent, and anything that could ship before or after the parent. When uncertain, prefer independent with a blocking relation.
 
