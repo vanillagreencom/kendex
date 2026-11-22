@@ -26,6 +26,8 @@ source = "kendex"
 - Restart Pi after installation.
 - Use `kendex update-pi --check` to preview the installation.
 - Persistent agent panes require tmux; where no tmux server answers, a pane agent runs in the background instead.
+- Waiting for a pane agent to go idle needs `@vanillagreen/pi-session-bridge` installed.
+- Without it, steering a pane agent queues a note the agent reads when idle.
 
 ## How it works
 
