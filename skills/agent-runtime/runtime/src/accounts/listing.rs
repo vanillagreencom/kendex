@@ -178,10 +178,8 @@ pub fn list(
 /// ([`usage::sign_in`]), its declared token file read from the settings;
 /// a declaration that cannot be read judges nothing.
 fn sign_in(settings: &Env, account: &Found, now: u64) -> usage::StoredLogin {
-    let declared = settings
-        .account_tokens
-        .get()
-        .and_then(|pairs| usage::declared_token_file(account.harness, &pairs, &account.dir));
+    let declared =
+        usage::declared_token_file(account.harness, settings.account_tokens, &account.dir);
     match declared {
         Ok(file) => usage::sign_in(account.harness, &account.dir, file.as_deref(), now),
         Err(_) => usage::StoredLogin::Unjudged {

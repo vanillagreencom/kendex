@@ -73,8 +73,10 @@ pub fn source(caller: &Caller, harness: Harness) -> Source {
 /// account nothing measures where no other account of its harness has room
 /// (the walk's `keep_unmeasured`), and walks the caller's own entry alone
 /// where the setting names no preference, since a context handoff replaces
-/// the session and not its harness or model. Every succession walks the
-/// caller's own entry last.
+/// the session and not its harness or model. An account whose successor's
+/// sign-in reads signed out is kept neither way: the transfer would refuse
+/// it, and the walk's choice among accounts leaves it out `signed-out`.
+/// Every succession walks the caller's own entry last.
 fn walk_request(
     choosing: &Choosing,
     pick: &mut dyn FnMut(&PickRequest) -> PickAnswer,
@@ -83,19 +85,23 @@ fn walk_request(
     mark: MarkKind,
     now: u64,
 ) -> Result<WalkRequest> {
-    let (state, reached) = match mark {
+    let (own, reached) = match mark {
         MarkKind::Headroom | MarkKind::Rate => (None, None),
         MarkKind::Context | MarkKind::Memory => {
             let wall_minutes = choosing.wall_minutes.get()?;
             let trigger = choosing.accounts.accounts.get()?.controller_headroom_pct;
-            let (state, reached) =
+            let (read, reached) =
                 caller.account_departure(harness, wall_minutes, trigger, pick, now);
-            (Some(state), reached)
+            (Some(read), reached)
         }
     };
     let mark = reached.unwrap_or(mark);
+    let signed_out = own.as_ref().is_some_and(|read| read.signed_out);
     let mut entry = caller.walk_entry(harness);
-    entry.keep = state == Some(AccountState::HasRoom)
+    entry.keep = !signed_out
+        && own
+            .as_ref()
+            .is_some_and(|read| read.state == AccountState::HasRoom)
         && matches!(mark, MarkKind::Context | MarkKind::Memory);
     let (exclude, preference) = match mark {
         MarkKind::Headroom | MarkKind::Rate => (caller.account.iter().cloned().collect(), None),
@@ -114,7 +120,7 @@ fn walk_request(
         min_headroom_pct: None,
         source: Some(source(caller, harness)),
         caller: Some(entry),
-        keep_unmeasured: mark == MarkKind::Context,
+        keep_unmeasured: mark == MarkKind::Context && !signed_out,
     })
 }
 
@@ -413,12 +419,22 @@ mod tests {
         }
     }
 
+    /// The caller's own account judged as `judged` reads it, its
+    /// successor's sign-in read signed out.
+    fn signed_out(mut judged: Judged) -> Judged {
+        judged.row.signed_in = Some(false);
+        judged
+    }
+
     /// Row 250: for one caller and one answer of the pick over its own
     /// account, the walk a context mark's succession takes keeps or leaves
     /// that account as `own_account` reads it: an account with room is kept
     /// unpicked and excluded from nothing; a walled one sends the walk as
     /// the headroom mark's, the account left out of every pick and not
-    /// kept; one nothing measures is not kept and is left in the pick.
+    /// kept; one nothing measures is not kept, is left in the pick and is
+    /// kept unmeasured where no other account has room. An account whose
+    /// successor's sign-in reads signed out is kept neither way, with room
+    /// or unmeasured, and stays in the pick, whose choice reads its sign-in.
     #[test]
     fn a_marks_walk_keeps_or_leaves_the_callers_account_as_its_own_read_says() {
         let accounts = Setting::of("accounts", Ok(account_settings()));
@@ -453,18 +469,22 @@ mod tests {
             model: Some("claude-opus-5-5".to_owned()),
             ..Caller::default()
         };
+        // case, the pick's answer, the state read, kept, kept unmeasured,
+        // the accounts excluded
         type Row = (
             &'static str,
             fn() -> PickAnswer,
             AccountState,
             bool,
+            bool,
             &'static [&'static str],
         );
-        let rows: [Row; 3] = [
+        let rows: [Row; 5] = [
             (
                 "room",
                 || PickAnswer::Lane(judged("room", 40.0)),
                 AccountState::HasRoom,
+                true,
                 true,
                 &[],
             ),
@@ -473,6 +493,7 @@ mod tests {
                 || PickAnswer::Walled(judged("walled", 95.0)),
                 AccountState::AtTrigger,
                 false,
+                false,
                 &["/a/a1"],
             ),
             (
@@ -480,10 +501,27 @@ mod tests {
                 || PickAnswer::NoRecord,
                 AccountState::Unmeasured,
                 false,
+                true,
+                &[],
+            ),
+            (
+                "room, signed out",
+                || PickAnswer::Lane(signed_out(judged("room", 40.0))),
+                AccountState::HasRoom,
+                false,
+                false,
+                &[],
+            ),
+            (
+                "unmeasured, signed out",
+                || PickAnswer::Unmeasured(signed_out(judged("unmeasured", 40.0))),
+                AccountState::Unmeasured,
+                false,
+                false,
                 &[],
             ),
         ];
-        for (case, answer, state, keep, exclude) in rows {
+        for (case, answer, state, keep, keep_unmeasured, exclude) in rows {
             let mut pick = |_: &PickRequest| answer();
             let read = caller.own_account(Harness::Claude, &mut pick, 20, 1_800_000_000);
             assert_eq!(read.state, state, "{case}");
@@ -498,6 +536,7 @@ mod tests {
             .unwrap();
             let entry = request.caller.as_ref().unwrap();
             assert_eq!(entry.keep, keep, "{case}");
+            assert_eq!(request.keep_unmeasured, keep_unmeasured, "{case}");
             assert_eq!(request.exclude, exclude, "{case}");
         }
     }

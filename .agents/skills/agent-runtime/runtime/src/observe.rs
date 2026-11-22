@@ -49,7 +49,7 @@ pub enum State {
 /// The first-run question an asking screen holds: the step a person takes
 /// in the account before a launch onto it can come up unattended. Each
 /// named question is a drawing recorded from the harness ([`DIALOGS`]);
-/// any other dialog is `other`.
+/// any other dialog is `other`, which names no step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Dialog {
@@ -60,12 +60,14 @@ pub enum Dialog {
 }
 
 impl Dialog {
-    /// The step's word, as a refusal's `step=` names it.
-    pub fn word(self) -> &'static str {
+    /// The step a person takes in the account, as a refusal's `step=` names
+    /// it; a dialog no recorded drawing names gives the person no step, so
+    /// it is the launch's failure, never a step to wait for.
+    pub fn step(self) -> Option<&'static str> {
         match self {
-            Dialog::FolderTrust => "folder-trust",
-            Dialog::BypassConsent => "bypass-consent",
-            Dialog::Other => "other",
+            Dialog::FolderTrust => Some("folder-trust"),
+            Dialog::BypassConsent => Some("bypass-consent"),
+            Dialog::Other => None,
         }
     }
 }

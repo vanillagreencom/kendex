@@ -242,6 +242,7 @@ The keys' rules, in the table's order:
 - `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`: each live lane, and the lane a launch adds, is charged one hour of it.
 - `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`: a controller is charged over the hours left to the window's reset, at least one and at most the window's length.
 - `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`: an overseer's launch is charged one hour where no reset is known.
+- `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`: in an overseer's choice among accounts, each other controller seated on an account is charged to the reset as the candidate is.
 - `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`: a rate the account measured on that window, shared among the spenders at the sample, replaces this key.
 - `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`: where no lane was live at the sample, a lane is charged no less than this key.
 - `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT`: it holds nothing back from a worker: a worker's pick holds an account a controller sits on to `AGENT_RUNTIME_ACCOUNT_MAX_PCT`, as it holds any account.

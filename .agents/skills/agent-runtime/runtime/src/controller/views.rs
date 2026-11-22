@@ -151,9 +151,9 @@ impl Caller {
         }
     }
 
-    /// This session's own account as [`judge_marks`] reads it: its state,
-    /// and the account mark it reaches, which a succession leaves the
-    /// account by whatever mark sent it.
+    /// This session's own account as [`judge_marks`] reads it, and the
+    /// account mark it reaches, which a succession leaves the account by
+    /// whatever mark sent it.
     pub fn account_departure(
         &self,
         harness: Harness,
@@ -161,10 +161,10 @@ impl Caller {
         trigger: u32,
         pick: &mut dyn FnMut(&PickRequest) -> PickAnswer,
         now: u64,
-    ) -> (AccountState, Option<MarkKind>) {
+    ) -> (AccountRead, Option<MarkKind>) {
         let read = self.own_account(harness, pick, trigger, now);
         let reached = read.reached(wall_minutes);
-        (read.state, reached)
+        (read, reached)
     }
 
     /// The pending the walk's choice opens: its harness, account, model,
@@ -233,6 +233,11 @@ pub struct AccountRead {
     /// The minutes to the wall at the measured rate, counted from the
     /// sample's instant.
     pub projected: Option<u64>,
+    /// Whether the sign-in a successor opened on the account starts with
+    /// reads signed out (the row's `signed_in`), which says nothing of the
+    /// running session's room: a succession walks such an account, never
+    /// keeps it, since the transfer refuses it.
+    pub signed_out: bool,
 }
 
 impl AccountRead {
@@ -313,6 +318,7 @@ fn read_account(
         reserve_only: at_trigger && crate::accounts::credit_room(&judged.row, 0.0),
         rate_state: record_text(&record, "usage_rate_state"),
         projected,
+        signed_out: judged.row.signed_in == Some(false),
     }
 }
 
@@ -326,6 +332,7 @@ fn unmeasured_account() -> AccountRead {
         reserve_only: false,
         rate_state: String::new(),
         projected: None,
+        signed_out: false,
     }
 }
 

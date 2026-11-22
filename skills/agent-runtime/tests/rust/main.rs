@@ -283,8 +283,9 @@ fn a_pi_foot_with_an_extension_s_status_line_under_the_footer_reads_idle_at_rest
 }
 
 /// Each first-run question a Claude launch can open on reads asking, with
-/// the step a person takes named, as Claude Code 2.1.330 drew it under a
-/// fresh config dir on 2026-11-22; any other dialog reads asking `other`.
+/// the step a person takes named (a refusal's `step=`, which the overseer
+/// acts on), as Claude Code 2.1.330 drew it under a fresh config dir on
+/// 2026-11-22; any other dialog reads asking `other`, which names no step.
 #[test]
 fn a_first_run_dialog_reads_asking_with_its_step() {
     use agent_runtime::Harness;
@@ -293,22 +294,26 @@ fn a_first_run_dialog_reads_asking_with_its_step() {
         (
             include_str!("fixtures/claude-folder-trust.txt"),
             Dialog::FolderTrust,
+            Some("folder-trust"),
         ),
         (
             include_str!("fixtures/claude-bypass-consent.txt"),
             Dialog::BypassConsent,
+            Some("bypass-consent"),
         ),
         (
             "❯ fix the build\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel",
             Dialog::Other,
+            None,
         ),
     ];
-    for (screen, dialog) in rows {
+    for (screen, dialog, step) in rows {
         assert_eq!(
             judge(screen, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Asking { dialog },
             "{screen}"
         );
+        assert_eq!(dialog.step(), step, "{screen}");
     }
 }
 

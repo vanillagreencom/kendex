@@ -16,8 +16,13 @@ DEFECTS = (
     ("spent account", SESSION, '**({"exclude_account": recorded["account"]} if mark == "headroom" else {})',
      '**({} if mark == "headroom" else {})', "test_successor_setup_readiness"),
     # Without the repeat, an unproved first successor ends the hand-over.
-    ("repeat", SESSION, "if attempted and attempted in marked:", "if False:",
-     "test_a_successor_that_cannot_sign_in_is_passed_for_the_next_account"),
+    ("repeat", SESSION,
+     'if attempted and attempted in marked and marked[attempted].get("at") != stamped.get(attempted):',
+     "if False:", "test_a_successor_that_cannot_sign_in_is_passed_for_the_next_account"),
+    # Without the per-call bound, an account the walk offers again is
+    # relaunched onto without end.
+    ("tried bound", SESSION, ' or choice["successor"].get("account") in tried:', ":",
+     "HandOverBound.test_an_account_already_tried_in_the_call_ends_it"),
     # Without the wait on the job, a failed attempt reads as a hand-over.
     ("outcome", SESSION, 'code = self.settled_transfer(recorded.get("generation"))', "code = 0",
      "test_a_successor_that_cannot_sign_in_is_passed_for_the_next_account"),
@@ -66,7 +71,7 @@ def main():
             path.write_text(original.replace(old, new))
             try:
                 result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(skills / "jarvis/tests/succession.test.sh"),
-                                         "--failfast", "SuccessionContract." + case],
+                                         "--failfast", case if "." in case else "SuccessionContract." + case],
                                         env=env, capture_output=True, text=True, timeout=600)
             finally:
                 path.write_text(original)

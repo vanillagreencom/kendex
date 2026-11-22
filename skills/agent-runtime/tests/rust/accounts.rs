@@ -1147,7 +1147,9 @@ fn an_overseers_choice_takes_an_account_another_controller_sits_on_where_it_has_
 /// The other controllers an overseer's choice charges: each another seat
 /// record holds while its harness runs, and one a provider's mark names on
 /// an account no seat here holds, but never the mark on the account the
-/// caller's own seat names, which is the caller.
+/// caller's own seat names, which is the caller. Once the other record's
+/// harness is gone its seat charges nothing, and the provider's mark on
+/// the free account is the one controller charged.
 #[test]
 fn the_controllers_an_overseers_choice_charges_are_the_other_seats_and_marks() {
     let mut world = World::new(&[]);
@@ -1195,6 +1197,99 @@ fn the_controllers_an_overseers_choice_charges_are_the_other_seats_and_marks() {
     let mut expected = seats.others.clone();
     expected.insert(rows[1].canon.clone(), 1);
     assert_eq!(facts.others, expected, "{seats:?}");
+    let gone = group::seats(
+        &world.settings.account_state.get().unwrap(),
+        Some(&world.fleet_path()),
+        &|_| Reading::Gone,
+    )
+    .unwrap();
+    assert!(
+        gone.others.is_empty(),
+        "a gone leader holds no seat: {gone:?}"
+    );
+    let mut facts = FleetFacts::default();
+    facts.seat(&rows, &gone);
+    assert_eq!(
+        facts.others,
+        [(rows[1].canon.clone(), 1)].into_iter().collect(),
+        "{gone:?}"
+    );
+}
+
+/// A session opened on this machine is judged on the provider's reading of
+/// its account only where the sign-in its own launch starts with reads
+/// held: a controller's successor exports the account's declared token
+/// file, which the listing's `sign_in` reads, and a lane's window exports
+/// none and signs in with the stored login. Here the local reading is
+/// walled and the provider's has room, so the account is picked exactly
+/// where the provider's reading stands; an overseer's choice also leaves a
+/// signed-out account out. Claude's stored login is read on Linux alone,
+/// so elsewhere a lane never stands on the provider's reading.
+#[test]
+fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
+    let world = World::new(&[]);
+    let settings = world.settings.accounts.get().unwrap();
+    let lane = PickRequest {
+        opens_here: true,
+        ..claude(None)
+    };
+    let overseer = PickRequest {
+        for_overseer: true,
+        opens_here: true,
+        ..claude(None)
+    };
+    let stored = cfg!(target_os = "linux");
+    // case, the listing's sign-in (the declared file), a stored login on
+    // disk, picked for a lane's window, picked for an overseer's choice
+    let arms = [
+        (
+            "declared file held, no stored login",
+            "held",
+            false,
+            false,
+            true,
+        ),
+        (
+            "declared file absent, stored login held",
+            "missing",
+            true,
+            stored,
+            false,
+        ),
+    ];
+    for (case, sign_in, login, for_lane, for_overseer) in arms {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().display().to_string();
+        if login {
+            let far = (now() + 365 * 86_400) * 1000;
+            std::fs::write(
+                home.path().join(".credentials.json"),
+                json!({"claudeAiOauth": {"accessToken": "token-b", "refreshToken": "refresh-b",
+                       "expiresAt": far, "refreshTokenExpiresAt": far}})
+                .to_string(),
+            )
+            .unwrap();
+        }
+        let mut local = measured("b", 96, 5);
+        local["config_dir"] = json!(dir);
+        local["sign_in"] = json!({"state": sign_in, "cause": null});
+        let mut provider = measured("b", 10, 5);
+        provider["config_dir"] = json!(dir);
+        provider["measured_through"] = json!("host");
+        let rows = rows(&[local, provider], &world.settings);
+        let facts = FleetFacts::default();
+        for (who, req, expected) in [
+            ("lane", &lane, for_lane),
+            ("overseer", &overseer, for_overseer),
+        ] {
+            let answer = accounts::pick(&rows, req, &facts, &settings, now());
+            assert_eq!(
+                picked(&answer),
+                expected.then(|| dir.clone()),
+                "{case}, {who}: {answer:?}"
+            );
+        }
+    }
 }
 
 /// The account a Pi lane spends follows its model's provider, and

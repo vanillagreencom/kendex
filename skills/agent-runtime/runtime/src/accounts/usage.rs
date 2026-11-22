@@ -669,19 +669,21 @@ fn stored_login(harness: Harness, dir: &str, now: u64) -> StoredLogin {
     }
 }
 
-/// The token file `pairs` (`AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`) declares
+/// The token file `tokens` (`AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`) declares
 /// for the home `dir` of `harness`, the two sides matched by their one
-/// spelling ([`canon`]): only a Claude launch exports one, so any other
-/// harness's home has none. Two declarations matching one home refuse
-/// `setting-invalid`, since either file could be its.
+/// spelling ([`canon`]). Only a Claude launch exports one, so any other
+/// harness's home has none and reads nothing of the setting: a malformed
+/// one refuses a Claude home alone. Two declarations matching one home
+/// refuse `setting-invalid`, since either file could be its.
 pub fn declared_token_file(
     harness: Harness,
-    pairs: &[(String, PathBuf)],
+    tokens: &settings::Judged<Vec<(String, PathBuf)>>,
     dir: &str,
 ) -> crate::error::Result<Option<PathBuf>> {
     if harness != Harness::Claude {
         return Ok(None);
     }
+    let pairs = tokens.get()?;
     let dir = canon(dir);
     let matched: Vec<&(String, PathBuf)> = pairs
         .iter()
@@ -958,6 +960,33 @@ mod tests {
         ];
         for (name, expected) in rows {
             assert_eq!(declared_token(&path(name)), expected, "{name}");
+        }
+    }
+
+    /// The token setting is read for a Claude home alone: a malformed one
+    /// refuses a Claude home, and leaves any other harness's home with no
+    /// declared file, since no launch of that harness exports one.
+    #[test]
+    fn a_malformed_token_setting_refuses_a_claude_home_alone() {
+        let malformed = settings::Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Err("run/t6"));
+        for harness in [
+            Harness::Claude,
+            Harness::Codex,
+            Harness::Copilot,
+            Harness::Pi,
+        ] {
+            let read = declared_token_file(harness, &malformed, "/home/o/.6claude");
+            match (harness, read) {
+                (
+                    Harness::Claude,
+                    Err(crate::Error::Refused {
+                        key: "setting-invalid",
+                        ..
+                    }),
+                ) => {}
+                (Harness::Codex | Harness::Copilot | Harness::Pi, Ok(None)) => {}
+                (harness, read) => panic!("{harness:?}: {read:?}"),
+            }
         }
     }
 

@@ -198,7 +198,8 @@ To add a consumer's own rule or its action route, start at [Personal additions](
    - The command saves the handoff, then selects a successor, leaving out a Claude Code account that has not finished first-run setup. agent-runtime opens the successor in a new window of the same tmux session. It ends the predecessor only after the successor confirms its native identity and takes the Start brief.
 7. Read `jarvis-session status --home HOME` for the transfer.
    - An open transfer answers `handing-over`; read its status before retrying `succeed`.
-   - A failed attempt leaves its account recorded `unproved`, and `succeed` does not retry it while that attempt's mark stands.
+   - A failed attempt whose note holds its account, such as `successor-not-ready` or a login wall at the successor's first turn, records that account `unproved`, and `succeed` goes on to the next account, never to one it already tried.
+   - Any other failure, such as `successor-asking` with its `step`, ends `handover-failed` naming its note.
    - With no successor left, status reports `handover-failed`. Keep the handoff and the recorded failure cause.
    - An unfinished wall transfer keeps its spent-account exclusion on every retry, retries without the flag included; a completed transfer ends it, and a new explicit wall binds the current controller's account.
    - Boot and Start do not resume the retired predecessor.

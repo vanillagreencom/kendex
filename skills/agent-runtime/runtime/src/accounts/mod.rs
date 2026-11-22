@@ -208,9 +208,10 @@ pub struct AccountRow {
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
-    /// The account's sign-in as this machine's listing read it
-    /// ([`usage::sign_in`]): held, missing, or `None` where nothing here
-    /// judged it, a provider's row among them.
+    /// The sign-in a controller's successor opened on the account here
+    /// starts with, as this machine's listing read it ([`usage::sign_in`]
+    /// with its declared token file): held, missing, or `None` where nothing
+    /// here judged it, a provider's row among them.
     pub signed_in: Option<bool>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
@@ -690,16 +691,20 @@ fn provider_reading(row: &AccountRow) -> bool {
 ///
 /// A session that opens on this machine (`opens_here`) signs in with this
 /// machine's sign-in of the home, never with the token a provider measured
-/// it through: the provider's reading stands for it only where that
-/// sign-in reads held ([`usage::sign_in`], the listing's `sign_in`), else
-/// the account is judged on this machine's own row, and a provider's row
-/// with no home listed here is no candidate for it. This machine's sign-in
-/// reading stands on whichever row stands, as the provider's words do.
+/// it through: the provider's reading stands for it only where the sign-in
+/// its launch starts with reads held ([`usage::sign_in`]), else the account
+/// is judged on this machine's own row, and a provider's row with no home
+/// listed here is no candidate for it. A controller's successor exports
+/// the account's declared token file, which the listing's `sign_in` reads;
+/// a lane's launch exports none and signs in with the stored login, read
+/// here. The listing's sign-in stands on whichever row stands, as the
+/// provider's words do.
 fn resolve(
     rows: &[AccountRow],
     billed: Harness,
     model: &str,
     req: &PickRequest,
+    now: u64,
 ) -> Vec<AccountRow> {
     let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
@@ -715,15 +720,21 @@ fn resolve(
                 } else {
                     (row.clone(), out[i].clone())
                 };
-                let read = own.signed_in;
-                let signed_in = !req.opens_here || read == Some(true);
+                let signed_in = !req.opens_here
+                    || if req.for_overseer {
+                        own.signed_in == Some(true)
+                    } else {
+                        usage::sign_in(own.harness, &own.config_dir, None, now)
+                            == usage::StoredLogin::Held
+                    };
                 let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
+                let own_signed_in = own.signed_in;
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
                 } else {
                     own
                 };
-                stands.signed_in = read;
+                stands.signed_in = own_signed_in;
                 stands.reserved |= reserved;
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
@@ -922,9 +933,10 @@ pub struct PickRequest {
     /// unread window. Otherwise that account is unmeasured for the model.
     pub admit_unread_scope: bool,
     /// The session the pick places opens on this machine (an overseer, a
-    /// lane in a local window), so it signs in with this machine's stored
-    /// login of the account and never with the token a provider measured
-    /// the account through.
+    /// lane in a local window), so it signs in with this machine's sign-in
+    /// of the account, an overseer's from its declared token file where it
+    /// names one, and never with the token a provider measured the account
+    /// through.
     pub opens_here: bool,
 }
 
@@ -1964,7 +1976,7 @@ pub fn pick(
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    let rows = &resolve(rows, billed, model, req);
+    let rows = &resolve(rows, billed, model, req, now);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {

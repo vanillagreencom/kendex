@@ -10288,65 +10288,95 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     );
 }
 
-/// A successor whose harness stands on a first-run question at the end of
-/// the launch's bound fails before retirement naming the step a person
-/// takes, `successor-asking` with `step` and the account, not
-/// `successor-not-ready`: the predecessor keeps running, the runner's
-/// window is closed and the record stands as it was, the account marked
-/// nowhere, since the question is a step in it and not its failure.
+/// A successor whose harness stands on a dialog at the end of the launch's
+/// bound fails before retirement: the predecessor keeps running and the
+/// runner's window is closed. A named first-run question fails
+/// `successor-asking` with its `step` and the account, the record standing
+/// as it was, since the question is a step in the account and not its
+/// failure. A dialog no recorded drawing names gives no step: it fails
+/// `successor-not-ready` with the screen it read and marks the account
+/// unproved, so the next walk moves on.
 #[test]
-fn a_successor_on_a_first_run_question_ends_the_wait_naming_the_step() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
-    let state = runner
-        .state_dir()
-        .join(agent_runtime::record::FLEET_FILE_NAME);
-    let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
-    let before = recorded_on(
-        &runner,
-        &server,
-        running.pid(),
-        "bclaude",
-        &work,
-        "bypass",
-        &[],
-    );
-    let out = workflow_launch(
-        &runner,
-        &scripts,
-        &bin,
-        &env,
-        &work,
-        "claude",
-        "fable",
-        &stub("stub-first-run"),
-    )
-    .predecessor("%99")
-    .wait_secs(1)
-    .run();
-    let op = out.op();
-    assert_eq!(op.status.code(), Some(3), "{}", stderr(op));
-    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-    assert_eq!(intent["outcome"], "failed", "{intent}");
-    let observation = &intent["observation"];
-    assert_eq!(observation["note"], "successor-asking", "{intent}");
-    assert_eq!(observation["step"], "folder-trust", "{intent}");
-    assert_eq!(
-        observation["account"],
-        out.chosen()["result"]["successor"]["account"],
-        "{intent}"
-    );
-    assert_eq!(observation["retired"], false, "{intent}");
-    assert!(live(running.pid()), "the predecessor keeps running");
-    assert_eq!(server.panes().len(), 1, "the runner's window is closed");
-    assert_eq!(
-        runner.fleet()["controller"],
-        before,
-        "the record as it stood, no account unproved"
-    );
+fn a_successor_on_a_dialog_ends_the_wait_naming_its_first_run_step_or_marking_the_account() {
+    // the stub's screen, the note, the step it names
+    let rows = [
+        ("stub-first-run", "successor-asking", Some("folder-trust")),
+        ("stub-unnamed-dialog", "successor-not-ready", None),
+    ];
+    for (screen, note, step) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+        let state = runner
+            .state_dir()
+            .join(agent_runtime::record::FLEET_FILE_NAME);
+        let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
+        let before = recorded_on(
+            &runner,
+            &server,
+            running.pid(),
+            "bclaude",
+            &work,
+            "bypass",
+            &[],
+        );
+        let out = workflow_launch(
+            &runner,
+            &scripts,
+            &bin,
+            &env,
+            &work,
+            "claude",
+            "fable",
+            &stub(screen),
+        )
+        .predecessor("%99")
+        .wait_secs(1)
+        .run();
+        let op = out.op();
+        assert_eq!(op.status.code(), Some(3), "{screen}: {}", stderr(op));
+        let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+        assert_eq!(intent["outcome"], "failed", "{screen}: {intent}");
+        let observation = &intent["observation"];
+        assert_eq!(observation["note"], note, "{screen}: {intent}");
+        assert_eq!(observation["retired"], false, "{screen}: {intent}");
+        assert!(
+            live(running.pid()),
+            "{screen}: the predecessor keeps running"
+        );
+        assert_eq!(
+            server.panes().len(),
+            1,
+            "{screen}: the runner's window is closed"
+        );
+        let account = &out.chosen()["result"]["successor"]["account"];
+        let controller = runner.fleet()["controller"].clone();
+        match step {
+            Some(step) => {
+                assert_eq!(observation["step"], step, "{screen}: {intent}");
+                assert_eq!(&observation["account"], account, "{screen}: {intent}");
+                assert_eq!(
+                    controller, before,
+                    "{screen}: the record as it stood, no account unproved"
+                );
+            }
+            None => {
+                assert_eq!(observation["step"], Value::Null, "{screen}: {intent}");
+                assert_eq!(
+                    observation["state"],
+                    json!({"state": "asking", "dialog": "other"}),
+                    "{screen}: {intent}"
+                );
+                let marked: Vec<&Value> = controller["unproved"]
+                    .as_array()
+                    .map(|entries| entries.iter().map(|e| &e["account"]).collect())
+                    .unwrap_or_default();
+                assert_eq!(marked, vec![account], "{screen}: {controller}");
+            }
+        }
+    }
 }
 
 /// The fleet's session the server does not hold fails the start

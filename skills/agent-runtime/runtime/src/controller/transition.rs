@@ -670,9 +670,9 @@ pub const UNPROVED_NOTES: &[&str] = &[
 /// (`successor::UNPROVED_HOLD_SECS`), and the next confirmed hand-over
 /// drops the member. A refusal of the sign-in read before any window
 /// opened (`successor-not-signed-in` with no first-turn `auth-wall`)
-/// marks nothing: the walk reads that sign-in itself and admits the
-/// account once it is signed in, so a hold would only keep a repaired
-/// account out.
+/// marks nothing: the walk reads that sign-in itself, in its choice among
+/// accounts and before it keeps the caller's own, and admits the account
+/// once it is signed in, so a hold would only keep a repaired account out.
 fn mark_unproved(record: &mut Document, observation: Option<&Value>, at: &str) {
     let field = |key: &str| observation.and_then(|o| o.get(key));
     let Some(note) = field("note")
