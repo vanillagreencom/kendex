@@ -182,7 +182,7 @@ What the run lands:
 - The proof shows that the commit holds what kendex renders. It does not judge package content. kendex's own merge queue proves the content of the kendex catalog before `main` holds it, and the consumer runs no second proof of it. No such proof covers another source.
 - The run therefore lands only where every selected project has the source coverage that [§ Schedule and input check](#schedule-and-input-check) requires of a current record: each enabled source is the kendex catalog, `vanillagreencom/kendex`, with no `path` and no `rev`, and no manifest holds a revision override.
 - An update in a project with a third-party catalog, a local path, a declared revision or unknown source evidence keeps the rolling pull request, where the consumer reviews it.
-- A commit that removes or renames a path against the base the run judged keeps the rolling pull request. There it waits for the pull request's review and approval, and the consumer's lanes that claim the removed or renamed path and the guard jobs the render waiver does not skip run before it lands, under the harness-ci package's references/wiring.md § Consumer refresh CI.
+- A commit that removes or renames a path against the base the run judged keeps the rolling pull request, which merges under the consumer's own rules, as [§ Publication](#publication) states.
 - A landed commit has no pull request and enters no merge group, so no approval, review thread, pull-request check or merge-group check judges it in the consumer.
 
 After a landing:
@@ -191,7 +191,7 @@ After a landing:
 - With no pull request and no merge group, a landed render skips the lanes that claim a path it changes. The harness-ci package's references/wiring.md § Consumer refresh CI names the run that first executes them.
 - To undo a bad package, revert it on kendex `main`. Each consumer's next refresh renders the reverted content.
   - A revert whose render removes and renames no path lands by the same route.
-  - A revert that removes a file the bad package added keeps the rolling pull request, and reaches the consumer only when that pull request merges, after the approval and merge queue the consumer's rules require.
+  - A revert that removes a file the bad package added keeps the rolling pull request, and reaches the consumer only when that pull request merges.
 - A landed run writes to its run summary what the pull request body carries on the other route: the landed commit, the engine version, the class and classifier line, and the catalog, settings and retired-item reports.
 
 GitHub's rulesets judge the landing push, and the run reads no ruleset first. A ruleset that refuses the push leaves the update on the rolling pull request.

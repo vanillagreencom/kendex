@@ -688,8 +688,7 @@ fi
 # project that takes packages from any other catalog or revision keeps the
 # pull request, where the consumer reviews them. A render that removes or
 # renames a path can break a file the consumer still cites, which the render
-# proof does not read, so it keeps the pull request too, where the
-# consumer's approval and the lanes that claim that path come first. No token, a
+# proof does not read, so it keeps the pull request too. No token, a
 # class other than render, a removed path, that coverage, and a merge queue
 # that holds an entry or could not be read keep the pull request route.
 # Sets land_check to try, to unconfigured where the caller set neither
