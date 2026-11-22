@@ -30,7 +30,9 @@ kendex add vanillagreencom/kendex --skill agent-runtime
 .agents/skills/agent-runtime/scripts/agent-runtime --help
 ```
 
-Rust 1.96 or later. The build lands in the user cache `setup --help` names, never in the installed files. Offline, run `setup --offline` with a populated cargo cache, or reuse a runtime already built from the same sources.
+- Rust 1.96 or later.
+- The build lands in the user cache `setup --help` names, never in the installed files.
+- Offline, run `setup --offline` with a populated cargo cache, or reuse a runtime already built from the same sources.
 
 ## How it works
 
@@ -51,21 +53,31 @@ Each version was tested on Linux on 2026-10-26. The runtime refuses a harness na
 
 | Platform | Support |
 |---|---|
-| Linux | Supported, with the sandbox. |
-| macOS | Supported. Every session runs outside the sandbox. |
-| Windows | Sessions are unsupported; only the library's logic builds and is tested. |
+| Linux | Sessions run in the sandbox. |
+| macOS | Sessions run outside the sandbox. |
+| Windows | Sessions are unsupported. |
+
+On Windows, only the library's logic builds and is tested.
 
 ## Setup
 
-Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`. A personal value goes in `.env.local`. `agent-runtime <verb> --help` names the settings each command reads. orch's `references/settings.md` holds each default.
+- Settings live under `[env]` in `kendex.settings.toml` or `.kendex/settings.toml`.
+- A personal value goes in `.env.local`.
+- `agent-runtime <verb> --help` names the settings each command reads.
+- orch's `references/settings.md` holds each default.
 
 | Setting | What it changes |
 | --- | --- |
 | `AGENT_RUNTIME_ACCOUNT_DIRS` | The account folders a launch may pick from, separated by `:`. |
-| `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended. `native` keeps the harness's own prompts. |
+| `AGENT_RUNTIME_LAUNCH_PERMISSION` | Whether a launch runs unattended or keeps the harness's own prompts. |
 | `AGENT_RUNTIME_HARNESS_BINARIES` | Where a harness is installed when it is not on `PATH`, as `harness=/absolute/path` pairs. |
 | `AGENT_RUNTIME_ACCOUNT_STATE_DIR` | Where account usage and limit records live: an absolute or `~/` path. |
-| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | When a running session hands over to a new session on a Claude account, the token file the new session signs in with, as `<account dir>=<token file>` pairs. The value names paths, never a token. Declare it in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every new session inherits. |
+| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | When a running session hands over to a new session on a Claude account, the token file the new session signs in with, as `<account dir>=<token file>` pairs. |
+
+- `AGENT_RUNTIME_LAUNCH_PERMISSION=bypass` runs every launch unattended.
+- `AGENT_RUNTIME_LAUNCH_PERMISSION=native` keeps the harness's own prompts.
+- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` names paths, never a token.
+- Declare `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every new session inherits.
 
 ## Licence
 
