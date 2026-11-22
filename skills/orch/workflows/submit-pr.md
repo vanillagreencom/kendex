@@ -337,6 +337,7 @@ Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto
    - Take decision paths only from `decisions search --issue [ISSUE_ID]`.
    - Check each decision path with `test -f [DECISION_FILE_PATH]`, one command per path. Omit a path that fails.
    - Include qualified started bundle children in the child `Closes` lines: this pull request carries their implementation.
+   - For a GitHub item, save its live body from `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body` under `tmp/` on every body build. Its classification under [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution) picks `Refs` or `Closes`. A failed read stops the body build.
 
 4. **Create or update the pull request.**
 
@@ -437,13 +438,13 @@ Under `ORCH_DELIVERY=push-base`, `orch-runtime pr order` answers `review-first`,
 - For a single bundle, also read each non-canceled child the commit implements.
 - Use `.agents/skills/linear/scripts/linear.sh issues get [ID]` for Linear and `gh issue view [N] --repo [OWNER/REPO] --json body` for GitHub.
 
-An item whose Done-when holds an open post-merge box, in the form the project-management skill's references/filing.md § Done when states, takes the PR route:
+Save each read body or description under `tmp/` and classify it with `linear.sh done-when parse --description-file [FILE]`, as [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution) reads its answer. An item answered with an open post-merge box or any `errors` takes the PR route:
 
 1. Write `[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md` with one `delivery-post-merge: issue=[ID] route=pr` line per such item, and print it.
 2. Send it: `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md"`.
 3. Stop. The stop prepares, pushes and completes nothing. The overseer relaunches the item with `ORCH_DELIVERY=pr`.
 
-A failed read stops publication.
+A failed read or classification stops publication. An absent linear package is neither: [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution) states its outcome.
 
 **Review check.** Apply § 6.1 gate 1 before preparation.
 
@@ -938,7 +939,7 @@ Post a summary comment when the run made fixes or created issues:
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
 ```
 
-A Linear item also gets it on the issue. The PR body's `Closes` line links a GitHub item:
+A Linear item also gets it on the issue. The PR body's `Closes` or `Refs` line names a GitHub item:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
