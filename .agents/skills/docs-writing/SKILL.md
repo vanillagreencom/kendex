@@ -48,6 +48,12 @@ Do not hand-copy code-owned inventories or defaults. A reference may define a co
 | One place your whole setup finally lives, in harmony across every tool. | kendex installs packages into the directories each tool reads. |
 | It is generally recommended that callers should probably check the result. | Check the result. |
 
+## Agent-read files
+
+An agent reads every Markdown file except the files people read: `README.md`, `CHANGELOG.md` and `changelog.d/` fragments, a package's `documentation/` pages, `THIRD_PARTY_NOTICES.md`, and the product content directory a repository names in its `AGENTS.md`, such as a help site or legal pages. A file whose type section names a person and an agent as its readers, such as `DEVELOPMENT.md`, is agent-read. A template is agent-read; the text it produces follows the rules for that text's reader. A file people read follows its type's section.
+
+A passage stays in an agent-read file only if the agent that reads the file needs it for its task. A rule is needed only when the mistake it prevents is real and costly, and nothing else already prevents it: a command that refuses the wrong input, a rule the same agent already loads, a step of the workflow it runs, or ordinary competence. Move a passage that another reader needs to that reader's file under § Layout, and delete the rest.
+
 ## Layout
 
 This is the default layout for a repository with no established structure. A repository's existing structure wins: a rewrite keeps the locations and names it finds and does not move established documents onto this layout.
