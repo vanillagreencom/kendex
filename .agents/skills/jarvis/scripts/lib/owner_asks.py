@@ -33,10 +33,8 @@ mail=$1
 shift
 . "${mail%/*}/lib/common-root.sh"
 work="$(mktemp -d)"
-# A read still running on any exit path ends before its scratch goes.
-trap 'wait; rm -rf -- "${work:?}"' EXIT
+trap 'rm -rf -- "${work:?}"' EXIT
 seen=()
-reads=()
 for root in "$@"; do
   # Only a work tree holds an overseer mailbox; lane-mail refuses
   # root-unresolved elsewhere. rev-parse answers true there and false in git
@@ -65,23 +63,10 @@ for root in "$@"; do
     [ "$known" != "$common" ] || continue 2
   done
   seen+=("$common")
-  # One job per mailbox: the reads share the caller's deadline side by side,
-  # and their records print below in registration order.
-  n=${#seen[@]}
-  (cd -- "$common" &&
-    "$BASH" "$mail" pending --item overseer --root "$common" --to owner >"$work/$n.pending" &&
-    "$BASH" "$mail" events --item overseer --root "$common" --box to-overseer >"$work/$n.outward") &
-  reads+=("$!")
-done
-status=0
-for pid in ${reads[@]+"${reads[@]}"}; do
-  wait "$pid" || status=$?
-done
-[ "$status" -eq 0 ] || exit "$status"
-n=0
-for common in ${seen[@]+"${seen[@]}"}; do
-  n=$((n + 1))
-  jq -cn --arg root "$common" --rawfile pending "$work/$n.pending" --rawfile outward "$work/$n.outward" \
+  cd -- "$common"
+  "$BASH" "$mail" pending --item overseer --root "$common" --to owner >"$work/pending"
+  "$BASH" "$mail" events --item overseer --root "$common" --box to-overseer >"$work/outward"
+  jq -cn --arg root "$common" --rawfile pending "$work/pending" --rawfile outward "$work/outward" \
     '{root: $root, pending: $pending, outward: $outward}'
 done
 """

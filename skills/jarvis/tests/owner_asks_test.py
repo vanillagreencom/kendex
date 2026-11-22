@@ -50,9 +50,10 @@ def mailbox_projection(home):
 # Linear's GraphQL endpoint for the readers the list uses, over the issues
 # in TRACKER_DATABASE: {"issues": {IDENTIFIER: [comment rows]}, "assigned":
 # [the owner's labelled view]}. A .mode file beside it fails, truncates or
-# omits the assigned view; TRACKER_DELAY is each request's latency.
+# omits the assigned view. Each request appends its operation to a .log file
+# beside it; past TRACKER_REQUEST_LIMIT requests, the tracker refuses.
 TRACKER_API = r'''
-import json, os, sys, time
+import json, os, sys
 from pathlib import Path
 config = sys.stdin.read()
 payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if line.startswith('data = '))))
@@ -61,7 +62,15 @@ path = Path(os.environ['TRACKER_DATABASE'])
 database = json.loads(path.read_text())
 mode_path = path.with_suffix('.mode')
 mode = mode_path.read_text() if mode_path.exists() else 'present'
-time.sleep(float(os.environ.get('TRACKER_DELAY', '0')))
+operation = next(name for name in ('GetUserByEmail', 'TeamKeys', 'ListIssues', 'GetIssueWithBundle', 'ListComments',
+                                   'IssueRefs') if name in query)
+if operation == 'IssueRefs':
+    operation += ' ' + variables['filter']['id']['in'][0].split('-')[0]
+with path.with_suffix('.log').open('a') as log:
+    log.write(operation + '\n')
+if len(path.with_suffix('.log').read_text().splitlines()) > int(os.environ.get('TRACKER_REQUEST_LIMIT', '1000000')):
+    print('___HTTP_CODE___403', end='')
+    sys.exit(0)
 def connection(nodes):
     return {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}
 def comment(row):
@@ -363,6 +372,33 @@ class OwnerAsksContract(unittest.TestCase):
                     self.assertEqual(argv[0], BASH)
                     self.assertIn(str(packages / "mailbox/scripts/lane-mail"), argv)
 
+    def test_tracker_and_destinations_are_read_side_by_side(self):
+        # Each chain's first read waits, bounded, for the other chain to
+        # start. Read in turn, the first chain waits out its bound.
+        session = self.owner.session
+        session.deadline = owner_asks.time.monotonic() + 60
+        sources = owner_asks.Sources(session, {"JARVIS_MAIN_HOST": ""})
+        started = {"tracker": threading.Event(), "local": threading.Event()}
+        waited = []
+
+        def meet(own, other):
+            started[own].set()
+            if not started[other].wait(5):
+                waited.append(own)
+
+        def settings(package, script, args=()):
+            meet("tracker", "local")
+            return {"configured": False, "cause": "settings-unset"}
+
+        def registered(target):
+            meet("local", "tracker")
+            return []
+
+        with patch.object(sources, "caller", side_effect=settings), patch.object(sources, "registered", side_effect=registered):
+            with patch.object(sources, "mailboxes", return_value=[]):
+                self.assertEqual(sources.collect()["mailboxes"], [])
+        self.assertEqual(waited, [])
+
     def test_controls_reject_each_guarded_regression(self):
         # Keep the mutant outside the worktree and acquire only its own
         # scratch directory. The original suite supplies all test fixtures.
@@ -412,6 +448,9 @@ class OwnerAsksContract(unittest.TestCase):
                  'read = {issue.upper(): self.caller("linear", "linear.sh", ["comments", "list", issue, "--format=safe"])'
                  ' for issue in issues}',
                  "PublicOwnerAsks.test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget", "(view='active')"),
+                # The tracker and destination chains read in turn.
+                ("jarvis/scripts/lib/owner_asks.py", "max_workers=1 + len(targets)", "max_workers=1",
+                 "OwnerAsksContract.test_tracker_and_destinations_are_read_side_by_side", None),
                 ("slack/scripts/lib/settings.py", 'exec "$reader" -I -c', 'exec "$reader" -c',
                  "PublicOwnerAsks.test_carried_presence_preserves_root_settings_and_permission", "(name='renew')"),
             ]
@@ -725,19 +764,21 @@ print(json.dumps(owner._presence('ssh:fixture')))
     def test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget(self):
         # The main home's tracker as read on 2026-11-22: posted owner asks on
         # 171 issues in the 30 days before and 22 open owner-gated items, here
-        # through four overseer mailboxes. Each request waits 0.3 s, under the
-        # 0.42 s a whole `linear.sh issues get` took on that home. The
-        # command's own deadline turns a late read into kind=unavailable, so
-        # a page proves every read fit inside CALL_SECONDS.
+        # through four overseer mailboxes. A whole `linear.sh issues get` took
+        # 0.42 s on that home, so this tracker answers the requests 14 s holds
+        # at that cost and refuses the next one. The list runs with a deadline
+        # no CPU load reaches: the request count, not this runner's clock,
+        # decides the claim.
         posted, assigned, mailboxes = 171, 22, 4
+        limit = int(owner_asks.CALL_SECONDS / 0.42)
         (self.home / "kendex.settings.toml").write_text(
             '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
         requests = {"OWN-%d" % n: [request_comment("waiting-%d" % n, "https://linear.app/example/profiles/owner Waiting %d" % n)]
                     for n in range(assigned)}
         issues = ["ASK-%d" % n for n in range(posted)]
         mirrors = {issue: [request_comment("mirror-" + issue, "Posted ask on " + issue)] for issue in issues}
-        self.tracker_api([], dict(requests, **mirrors), assigned=list(requests))
-        self.env.update(TRACKER_DELAY="0.3")
+        log = self.tracker_api([], dict(requests, **mirrors), assigned=list(requests)).with_suffix(".log")
+        self.env.update(TRACKER_REQUEST_LIMIT=str(limit))
         roots = [make_project(self.root / ("mailbox-%d" % n)) for n in range(mailboxes)]
         for number, root in enumerate(roots):
             template = self.mail(root, "ask", "Template", "--to", "owner", "--options", "a,b", "--reserved")
@@ -755,10 +796,24 @@ print(json.dumps(owner._presence('ssh:fixture')))
                                "tracker_comment": "mirror-" + issue, "text": ""}]
             path.write_text("".join(json.dumps(record) + "\n" for record in rows))
         self.register(self.registry, self.home, *roots)
+        pages = -(-posted // 50) + -(-assigned // 50)
         for view in ("active", "snoozed"):
-            with self.subTest(view=view):
-                result, page = self.run_cli(view=view)
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            with self.subTest(view=view), patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True):
+                log.write_text("")
+                session = Session(str(self.home))
+                session.path = session.path.with_name("owner-asks.json")
+                session.deadline = owner_asks.time.monotonic() + 600
+                owner = owner_asks.OwnerAsks(session, owner_asks.Sources(session, owner_asks.watch.config(BASH, str(self.home))))
+                try:
+                    with session.locked():
+                        page = owner.page(owner.read(), view, None)
+                except owner_asks.Unavailable as error:
+                    self.fail("unavailable after %d tracker requests: %s" % (len(log.read_text().splitlines()), error))
+                operations = log.read_text().splitlines()
+                # Two collects, each one bulk read per 50 issues and no read per issue.
+                self.assertLessEqual(len(operations), limit)
+                self.assertEqual(sum(operation.startswith("IssueRefs") for operation in operations), 2 * pages)
+                self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
                 self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
                 self.assertEqual(bool(page["rows"]), view == "active")
                 # Each ask links the mirror comment on its own issue.
