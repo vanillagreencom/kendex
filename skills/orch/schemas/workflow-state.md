@@ -255,7 +255,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --fleet /fleet_
 
 ### Prune
 
-The watch's retention duty prunes the fleet record and its state directory on its cadence; no step prunes by hand. Where no fleet record stands, `state remove` runs the same pass after its close-out.
+The watch's retention duty prunes the fleet record and its state directory on its cadence; no step prunes by hand. Where no fleet record stands, `state remove` runs the same pass after its close-out, less the scratch: only the watch's duty judges [§ Scratch](#scratch).
 
 The duty removes only these:
 
@@ -263,7 +263,7 @@ The duty removes only these:
 - An item's record no lane record names, last written past the retention. It stays while it names a linked worktree that stands, by its `worktree` or by its `branch` checked out there.
 - A closed intent's `intents/[ID].pane`, `intents/[ID].request` and `intents/[ID].job`, once the intent's end and the file's own last write are past the retention. An open intent's files and a `.notice` stay.
 - An owner progress report last written past the retention and sent. `report write` keeps its delivery attempt, `MM-DD-HH-MM.notice.json`, beside the report until the owner's notice is sent or none is owed; a report with its attempt standing stays.
-- A scratch entry nothing uses, as [§ Scratch](#scratch) states.
+- At the watch's duty only, a scratch entry nothing uses, as [§ Scratch](#scratch) states.
 - A session rows file whose pane is gone: the tmux server answering at the ambient socket is that pid and holds no such pane. A file that `controller.session_rows`, `controller.pending.session_rows` or `pending.session_rows` names stays, as do a link and a file whose server does not answer.
 - Lane records and fleet-log rows past the retention.
 
@@ -273,16 +273,25 @@ The duty archives each unit before it goes, into `ORCH_ARCHIVE_ROOT/[REPO]/overs
 
 ### Scratch
 
-Scratch is each direct entry of the main checkout's `tmp/` and of `ORCH_PROGRESS_REPORT_DIR`: the files the workflows tell the overseer to write, briefs, audit inventories `tmp/inventory-*.json`, report summaries, and the reader and waiter folders `tmp/waiter.*`. The retention duty removes an entry once all of these hold:
+Scratch is each direct entry of the main checkout's `tmp/`: the files the workflows tell the overseer to write, briefs, audit inventories `tmp/inventory-*.json`, and the reader and waiter folders `tmp/waiter.*`. The watch's retention duty removes an entry once all of these hold:
 
-- No citing text names it. The citing texts are the fleet record, its fleet-log and `standing[]` rows among it, each item record, each file under `handoffs/`, the settings files and `.env.local` of the main checkout, and every scratch entry that stays, such as a lane brief. A text names an entry where it spells the entry's name whole, as `tmp/[NAME]` or an absolute path does. A script that `DEV_VALIDATE_CMD` names stays this way.
+- No citing text names it. The citing texts are:
+  - the fleet record, its fleet-log and `standing[]` rows among it;
+  - each item record;
+  - each file under `handoffs/` of the state directory and of the main checkout's `tmp/`, and the handoff the controller's launch named with `--handoff`, which the fleet record keeps;
+  - the main checkout's settings files, and the private env file the settings read, `KENDEX_ENV_FILE` else `.env.local`;
+  - the first 256 KiB of every scratch file the duty judges and keeps, such as a lane brief.
+
+  A text names an entry where it spells the entry's name whole, as `tmp/[NAME]` or an absolute path does. A script that `DEV_VALIDATE_CMD` names stays this way.
 - No running process's command line names it. A follow names its reader folder, and a waiter's job names its run folder.
-- Its name carries the key of no item with a lane record or an item record; [§ Item close-out](#item-close-out) removes such an entry.
+- Its name carries the key of no item with a lane record or a standing item record. Once the item's record has left, such an entry is judged like any other.
 - Its last write is past the retention. A folder's is the newest write of the folder and of each file directly in it.
 
 The live follow's reader folder stays: the newest `tmp/waiter.*` whose `watch.log` is the watch's log. An audit reads its inventory within its pass, so an inventory past the retention has served its audit.
 
 The duty never judges the state store's own entries (the records, the watch's files `oversee-watch.*`), a lock file, a dotfile, a name with a character outside `[A-Za-z0-9._-]`, the progress reports and their attempts, or a folder other than `tmp/waiter.*`. A folder's own write time says nothing of what it holds, and the other folders are stores with their own owner: the item records, the intents, the handoffs, the mailboxes and an item's run folders. A process table the duty cannot read keeps every scratch entry and fails the pass with `scratch=unjudged`.
+
+`ORCH_PROGRESS_REPORT_DIR` is no scratch: only its sent stamped reports leave it ([§ Prune](#prune)), and every other file there stays.
 
 The duty cuts `oversee-watch.err` to its newest 512 KiB, from its first whole line, once it passes 1 MiB. `oversee-watch.log` stays whole: every follow numbers its lines from the log's first, a successor's handoff names its cursor by that number, and `tail -F` reads a cut or replaced file again from its start. A fleet's first start empties it.
 

@@ -1,8 +1,10 @@
 //! The retention duty: each lane record judged by its own recorded end, and
 //! the state directory pruned of a closed list of kinds ([`Unit`]), each
 //! serialized by a lock the commit holds through its removal or written by
-//! nothing once selected; the checkout's scratch goes once nothing uses it
-//! ([`super::scratch`]). Every other entry stays, whatever its age or name:
+//! nothing once selected. The watch's duty alone judges the main checkout's
+//! scratch too, the overseer's own, which goes once nothing uses it
+//! ([`super::scratch`]); the pass a fleetless close-out runs judges none.
+//! Every other entry stays, whatever its age or name:
 //! a lane's files, handoffs, mailboxes, receipts and notices leave only
 //! through an item's close-out (`archive::close_out`).
 //!
@@ -580,8 +582,16 @@ struct Places {
     progress: PathBuf,
     overseer: PathBuf,
     server: Option<PathBuf>,
-    /// The main checkout, whose `tmp/` holds the scratch.
-    checkout: PathBuf,
+    /// The main checkout whose scratch the pass judges, `None` for a pass
+    /// that judges none.
+    scratch: Option<Checkout>,
+}
+
+/// The main checkout, whose `tmp/` holds the scratch, and the private env
+/// file the settings read, which cites.
+struct Checkout {
+    root: PathBuf,
+    private_env: Option<PathBuf>,
 }
 
 /// The judgement: the records at `fleet`, the directory beside it and the
@@ -631,20 +641,29 @@ fn plan(
     units.extend(laneless_records(paths, project, &judged, cutoff)?);
     units.extend(intent_files(&paths.dir, intents, cutoff)?);
     units.extend(progress_reports(&places.progress, cutoff)?);
-    let mut items: BTreeSet<String> = judged.iter().map(|i| (*i).to_owned()).collect();
-    items.extend(
-        read_dir(&state::items_dir(&paths.dir))?
-            .iter()
-            .map(|folder| name_of(folder)),
-    );
-    let scratch = super::scratch::unused(&super::scratch::Inputs {
-        folders: &[places.checkout.join("tmp"), places.progress.clone()],
-        paths,
-        checkout: &places.checkout,
-        record,
-        items: &items,
-        cutoff,
-    })?;
+    let scratch = match &places.scratch {
+        Some(checkout) => {
+            // An item's folder outlives its record, since every locked
+            // write leaves the lock there: only a standing record keeps the
+            // item's entries.
+            let mut items: BTreeSet<String> = judged.iter().map(|i| (*i).to_owned()).collect();
+            for folder in read_dir(&state::items_dir(&paths.dir))? {
+                let item = name_of(&folder);
+                if stamp(&state::item_path(&paths.dir, &item))?.is_some() {
+                    items.insert(item);
+                }
+            }
+            super::scratch::unused(&super::scratch::Inputs {
+                paths,
+                checkout: &checkout.root,
+                private_env: checkout.private_env.as_deref(),
+                record,
+                items: &items,
+                cutoff,
+            })?
+        }
+        None => super::scratch::Judged::default(),
+    };
     units.extend(scratch.paths.into_iter().map(Unit::Scratch));
     units.extend(
         dead_session_rows(&places.overseer, places.server.as_deref(), record)?
@@ -776,13 +795,15 @@ fn going(plan: &Plan, abandoned: &BTreeSet<String>) -> Vec<PathBuf> {
 /// of each item record it removes: a record that moved since the judgement
 /// abandons its item, the archive is written, `commit` drops the rows of
 /// the items left while they equal the plan's and names those confirmed,
-/// and only their records and the units naming no item go.
+/// and only their records and the units naming no item go. `scratch` is
+/// the main checkout whose scratch the pass judges, or `None`.
 fn judged_pass(
     fleet: &Path,
     paths: &Paths,
     settings: &Settings,
     locking: Locking,
     now: u64,
+    scratch: Option<&Path>,
     commit: impl FnOnce(&[PlannedRows], u64) -> Result<Confirmed>,
 ) -> Result<Pruned> {
     let reach = crate::effects::fleet_reach(settings)?;
@@ -794,7 +815,10 @@ fn judged_pass(
             progress: settings.store.progress_report_dir.clone(),
             overseer: crate::watch::mail::overseer_dir(&reach.mail_root),
             server: reach.socket,
-            checkout: settings.roots.common.clone(),
+            scratch: scratch.map(|root| Checkout {
+                root: root.to_path_buf(),
+                private_env: settings.private_env_file.clone(),
+            }),
         },
         settings.retention_days.get()?,
         now,
@@ -848,7 +872,8 @@ fn judged_pass(
 /// One pass with no record transition: the judgement, the archive, then the
 /// units go. The duty applies the transition between the archive and the
 /// removal; a checkout with no fleet state has no transition to apply, and
-/// every planned item stands confirmed.
+/// every planned item stands confirmed. It judges no scratch: a checkout
+/// with no fleet has no overseer whose files the scratch would be.
 pub fn pass(
     fleet: &Path,
     paths: &Paths,
@@ -856,7 +881,7 @@ pub fn pass(
     locking: Locking,
     now: u64,
 ) -> Result<Pruned> {
-    judged_pass(fleet, paths, settings, locking, now, |rows, _| {
+    judged_pass(fleet, paths, settings, locking, now, None, |rows, _| {
         Ok(Confirmed {
             items: rows.iter().map(|r| r.item.clone()).collect(),
             dropped: rows
@@ -885,6 +910,7 @@ fn prune(ctx: &Context, tick: &Tick) -> Result<Pruned> {
         &ctx.settings,
         ctx.locking,
         tick.wall,
+        Some(&ctx.settings.roots.common),
         |rows, cutoff| {
             let request = Request::PruneRecords(PruneRecords {
                 lanes: rows.to_vec(),
@@ -964,26 +990,42 @@ fn bound_stderr(path: &Path) -> Result<()> {
 }
 
 /// One pass of the duty: the overseer mailbox's compaction, the prune, then
-/// the stderr's bound. A prune that fails fails the pass; a refused
+/// the stderr's bound, which runs whatever the prune's outcome, since a
+/// prune that fails on every pass writes its cause to that file each time.
+/// A prune that fails fails the pass, its cause first; a refused
 /// compaction, each record left for want of its lock, unjudged scratch and
 /// a stderr that could not be cut are the causes of a pass that otherwise
-/// ran.
+/// ran, and follow a failed prune's cause.
 fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     let refused = compact(&ctx.settings);
-    let pruned = prune(ctx, tick)?;
+    let pruned = prune(ctx, tick);
     let bounded = bound_stderr(&ctx.paths.dir.join(crate::effects::WATCH_ERR_FILE))
         .err()
         .map(|e| format!("stderr=uncut {e}"));
+    let (pruned, failed) = match pruned {
+        Ok(pruned) => (pruned, None),
+        Err(e) => (Pruned::default(), Some(e)),
+    };
     let causes: Vec<String> = refused
         .into_iter()
         .chain(pruned.unlocked)
         .chain(pruned.unjudged)
         .chain(bounded)
         .collect();
-    Ok(Produced {
-        failed: (!causes.is_empty()).then(|| causes.join("\n")),
-        ..Produced::default()
-    })
+    match failed {
+        None => Ok(Produced {
+            failed: (!causes.is_empty()).then(|| causes.join("\n")),
+            ..Produced::default()
+        }),
+        Some(e) if causes.is_empty() => Err(e),
+        Some(e) => Err(crate::error::Error::Artifact {
+            key: e.key(),
+            cause: std::iter::once(e.to_string())
+                .chain(causes)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -1038,7 +1080,7 @@ mod tests {
             &environment,
             &crate::settings::Flags {
                 state_dir: Some(state_dir.to_path_buf()),
-                private_env: false,
+                private_env: true,
             },
         )
         .unwrap()
@@ -1103,6 +1145,7 @@ mod tests {
             &settings(&root),
             Locking::FLOCK,
             NOW,
+            None,
             |rows, cutoff| {
                 let confirmed = prune_records(&fleet, rows, cutoff)?;
                 std::fs::write(&late, "{}\n").unwrap();
@@ -1179,6 +1222,7 @@ mod tests {
                 &settings,
                 Locking::FLOCK,
                 NOW,
+                None,
                 |rows, cutoff| {
                     let confirmed = prune_records(&fleet, rows, cutoff)?;
                     sender = Some(scope.spawn(|| {
@@ -1211,38 +1255,57 @@ mod tests {
     }
 
     /// The checkout's scratch, in the default layout where `tmp/` is the
-    /// state directory, past the retention: an entry goes only once no
-    /// citing text names it, no running process names it, its name carries
-    /// no open item and it is not the live follow's reader folder.
+    /// state directory, past the retention: the watch's duty removes an
+    /// entry only once no citing text names it, no running process names
+    /// it, its name carries no item with a standing record and it is not the
+    /// live follow's reader folder. The pass a fleetless close-out runs
+    /// judges no scratch, and the progress folder, here outside the
+    /// checkout, loses only its sent stamped reports.
     #[test]
     fn scratch_goes_once_nothing_cites_holds_or_names_it() {
         let world = tempfile::tempdir().unwrap();
-        let root = world.path().canonicalize().unwrap();
+        let top = world.path().canonicalize().unwrap();
+        let root = top.join("checkout");
         let tmp = root.join("tmp");
         let fleet = tmp.join(record::FLEET_FILE_NAME);
-        let progress = tmp.join("progress-reports");
+        let progress = top.join("reports");
         // A name a running process names is held, so each entry that goes,
         // and the one the test's own follow holds, carries this run's own
         // tag, which no other process spells.
-        let tag = name_of(&root).replace('.', "");
+        let tag = name_of(&top).replace('.', "");
         plant(
             &fleet,
             &json!({
                 "issue_id": "oversee", "lanes": [], "launch_queue": [], "fleet_log": [],
-                "intents": [], "standing": [{"text": "keep tmp/cited.md for the owner"}]
+                "intents": [], "standing": [{"text": "keep tmp/cited.md for the owner"}],
+                "controller": {"handoff": "ops/overseer.md"}
             })
             .to_string(),
         );
         let item = state::item_path(&tmp, "KEN-7");
         std::fs::create_dir_all(item.parent().unwrap()).unwrap();
-        std::fs::write(&item, "{\"notes\": \"tmp/item-cited.json\"}\n").unwrap();
+        // A JSON string escapes the line break before a name it opens.
+        std::fs::write(&item, "{\"notes\": \"Keep:\\nitem-cited.json\"}\n").unwrap();
+        // A closed item: its folder keeps only its record's lock.
+        plant(
+            &agent_runtime::record::lock_path(&state::item_path(&tmp, "KEN-8")),
+            "",
+        );
         plant(
             &tmp.join("handoffs").join("OVERSEER-HANDOFF.md"),
             "Read tmp/handed.md.\n",
         );
         plant(
+            &root.join("ops").join("overseer.md"),
+            "Read tmp/recovery.md\n",
+        );
+        plant(
             &root.join("kendex.settings.toml"),
-            "[env]\nDEV_VALIDATE_CMD = \"bash tmp/nested-slot.sh\"\n",
+            "[env]\nDEV_VALIDATE_CMD = \"bash tmp/nested-slot.sh\"\nKENDEX_ENV_FILE = \"config/private.env\"\n",
+        );
+        plant(
+            &root.join("config").join("private.env"),
+            "DEV_VALIDATE_RANGE_CMD=\"bash tmp/private-slot.sh\"\n",
         );
         plant(&tmp.join("oversee-watch.log"), "1\n");
         let young = tmp.join("young-brief.md");
@@ -1265,12 +1328,20 @@ mod tests {
         aged(&tmp.join("lane-mail"));
         let held = tmp.join(format!("follow-{tag}.log"));
         plant(&held, "a follow reads this\n");
+        // An entry nothing keeps cites nothing: the brief goes, and the note
+        // only it names goes with it.
+        let brief = tmp.join(format!("brief-{tag}.md"));
+        plant(&brief, &format!("Read tmp/note-{tag}.md\n"));
         let unsent = progress.join("01-01-00-01.md");
+        let sent = progress.join("01-01-00-00.md");
         let rows: Vec<(PathBuf, bool)> = vec![
+            (fleet.clone(), true),
             (tmp.join("cited.md"), true),
             (tmp.join("item-cited.json"), true),
             (tmp.join("handed.md"), true),
+            (tmp.join("recovery.md"), true),
             (tmp.join("nested-slot.sh"), true),
+            (tmp.join("private-slot.sh"), true),
             (tmp.join("chain.md"), true),
             (held.clone(), true),
             (tmp.join("lane-status-KEN-7.md"), true),
@@ -1279,16 +1350,27 @@ mod tests {
             (tmp.join("other.lock"), true),
             (unsent.clone(), true),
             (unsent.with_extension("notice.json"), true),
+            (progress.join(format!("summary-{tag}.md")), true),
+            (tmp.join(format!("KEN-8-{tag}.md")), false),
             (tmp.join(format!("inventory-{tag}.json")), false),
-            (progress.join("01-01-00-00.md"), false),
-            (progress.join(format!("summary-{tag}.md")), false),
+            (brief.clone(), false),
+            (tmp.join(format!("note-{tag}.md")), false),
+            (sent.clone(), false),
         ];
         for (path, _) in &rows {
-            if path != &held {
+            if ![&fleet, &held, &brief].contains(&path) {
                 plant(path, "scratch\n");
             }
         }
         aged(&progress);
+        let settings = settings_at(
+            &root,
+            &tmp,
+            &[("ORCH_PROGRESS_REPORT_DIR", progress.to_str().unwrap())],
+        );
+        let paths = Paths::of(&fleet).unwrap();
+        let closed_out = pass(&fleet, &paths, &settings, Locking::FLOCK, NOW).unwrap();
+        assert_eq!(closed_out.paths, vec![sent.clone()]);
         let mut follow = std::process::Command::new("tail")
             .arg("-f")
             .arg(&held)
@@ -1296,12 +1378,14 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let pruned = pass(
+        let pruned = judged_pass(
             &fleet,
-            &Paths::of(&fleet).unwrap(),
-            &settings_at(&root, &tmp, &[]),
+            &paths,
+            &settings,
             Locking::FLOCK,
             NOW,
+            Some(&root),
+            |rows, cutoff| prune_records(&fleet, rows, cutoff),
         );
         follow.kill().unwrap();
         follow.wait().unwrap();
@@ -1322,6 +1406,47 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    /// A prune that fails, here on a retention of none, still bounds the
+    /// watch's stderr it writes its cause to, and the pass fails with that
+    /// cause first and the compaction's after it.
+    #[test]
+    fn a_failed_prune_still_bounds_the_watch_stderr() {
+        let world = tempfile::tempdir().unwrap();
+        let root = world.path().canonicalize().unwrap();
+        let fleet = root.join(record::FLEET_FILE_NAME);
+        let err = root.join(crate::effects::WATCH_ERR_FILE);
+        std::fs::write(&err, vec![b'x'; ERR_BYTES as usize + 1]).unwrap();
+        let mut settings = settings_with(&root, &[("ORCH_RECORD_RETENTION_DAYS", "0")]);
+        settings.lane_mail_cli = root.join("lane-mail-absent");
+        let ctx = Context {
+            paths: Paths::of(&fleet).unwrap(),
+            fleet,
+            settings,
+            locking: Locking::FLOCK,
+        };
+        let baseline = crate::watch::baseline::Baseline::default();
+        let failed = run(
+            &ctx,
+            &Tick {
+                duty: crate::schedule::Duty::Retention,
+                now: Instant::now(),
+                wall: NOW,
+                baseline: &baseline,
+                clock: &agent_runtime::clock::SystemClock,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(failed.key(), "setting-invalid", "{failed}");
+        let causes: Vec<String> = failed.to_string().lines().map(str::to_owned).collect();
+        assert!(
+            causes[1..]
+                .iter()
+                .any(|line| line.starts_with("lane-mail compact item=overseer")),
+            "{causes:?}"
+        );
+        assert!(std::fs::metadata(&err).unwrap().len() <= ERR_KEPT);
     }
 
     /// Past its bound the watch's stderr keeps its newest whole lines, and

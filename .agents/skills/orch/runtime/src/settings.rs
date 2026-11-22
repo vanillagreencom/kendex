@@ -668,6 +668,10 @@ pub struct Settings {
     /// `--no-private-env` turns it off for every reader, the base
     /// checkout's policy among them.
     pub private_env: bool,
+    /// The private env file this load read, `KENDEX_ENV_FILE` else
+    /// `.env.local`; `None` under `--no-private-env`. The retention duty
+    /// reads it as a text that cites a scratch file.
+    pub private_env_file: Option<PathBuf>,
     /// The notice of each private env file line this load passed over,
     /// `settings-skipped path=… key=… reason=shell-form`, for the caller
     /// to say where its own answer puts it.
@@ -833,6 +837,7 @@ pub fn load(
         .map(|(_, keys)| keys.clone())
         .unwrap_or_default();
     let skipped = values.skipped();
+    let private_env_file = values.passed_over.as_ref().map(|(path, _)| path.clone());
     let get = |key: &str| values.get(key);
 
     let state_dir = match &flags.state_dir {
@@ -1183,6 +1188,7 @@ pub fn load(
         lane_mail_cli,
         reach: None,
         private_env: flags.private_env,
+        private_env_file,
         skipped,
         apple_workflow: values
             .raw("ORCH_APPLE_WORKFLOW")

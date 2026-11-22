@@ -452,9 +452,9 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # The recording policy: the most bytes one fleet log row's text may carry,
 # the fleet log rows a successor overseer reads at takeover, the days past a
-# record's recorded end before the watch's retention duty archives and
-# removes it, and the directory the owner progress reports go to
-# (schemas/workflow-state.md, Recording policy).
+# record's recorded end, or a scratch entry's last write, before the watch's
+# retention duty archives and removes it, and the directory the owner
+# progress reports go to (schemas/workflow-state.md, Recording policy).
 # ORCH_FLEET_LOG_ROW_BYTES = "600"
 # ORCH_TAKEOVER_ROWS = "10"
 # ORCH_RECORD_RETENTION_DAYS = "5"

@@ -1,12 +1,16 @@
-//! The checkout's scratch for the retention duty: each direct entry of the
-//! main checkout's `tmp/` and of the progress report folder that nothing
-//! uses.
+//! The checkout's scratch for the watch's retention duty: each direct entry
+//! of the main checkout's `tmp/` that nothing uses. The progress report
+//! folder is not scratch: a setting places it anywhere, a folder of the
+//! owner's own among them, so only its stamped reports leave it, by the
+//! duty's own rule.
 //!
 //! An entry is used while a citing text names it, a running process's
-//! command line names it, its name carries an open item's key, or it was
-//! written within the retention. The citing texts are the fleet record, the
-//! item records, the handoffs, the settings files, and every scratch file
-//! that stays, read as it joins, so a brief keeps the files it names.
+//! command line names it, its name carries the key of an item with a lane
+//! record or a standing item record, or it was written within the
+//! retention. The citing texts are the fleet record, the item records, the
+//! handoffs, the settings files and the private env file the settings read,
+//! and every scratch file the duty judges and keeps, read as it joins, so a
+//! brief keeps the files it names.
 //!
 //! Never judged: the state store's own entries (the records and their
 //! locks, the watch's files beside its log), every lock file, a folder other
@@ -24,6 +28,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::record::Document;
+use serde_json::Value;
 
 use crate::archive::{name_of, read_dir};
 use crate::error::Result;
@@ -40,8 +45,11 @@ const WAITER: &str = "waiter.";
 
 /// Every name a text spells: each run of `[A-Za-z0-9._-]` and each of its
 /// prefixes up to a `.`, so `tmp/brief.md.` at a sentence's end names
-/// `brief.md`. A longer name keeps a shorter one only where it extends it at
-/// a `.`, which keeps more, never less.
+/// `brief.md`. A run after a `\` is read with and without its first
+/// letter: a JSON or TOML string escapes a line break as `\n`, so a name
+/// opening a line of one is spelled after that letter. A longer name keeps
+/// a shorter one only where it extends it at a `.`, and a run read twice
+/// keeps one more, never less.
 #[derive(Debug, Default)]
 struct Names(HashSet<String>);
 
@@ -51,27 +59,56 @@ fn name_char(c: char) -> bool {
 
 impl Names {
     fn read(&mut self, text: &str) {
-        for run in text
-            .split(|c: char| !name_char(c))
-            .filter(|r| !r.is_empty())
-        {
-            for (at, _) in run.match_indices('.').filter(|(at, _)| *at > 0) {
-                self.0.insert(run[..at].to_owned());
+        let mut start = None;
+        for (at, c) in text.char_indices().chain([(text.len(), ' ')]) {
+            match (name_char(c), start) {
+                (true, None) => start = Some(at),
+                (false, Some(from)) => {
+                    let run = &text[from..at];
+                    self.run(run);
+                    // A run is ASCII, so its first letter is one byte.
+                    if text[..from].ends_with('\\') {
+                        self.run(&run[1..]);
+                    }
+                    start = None;
+                }
+                (true, Some(_)) | (false, None) => {}
             }
-            self.0.insert(run.to_owned());
+        }
+    }
+
+    fn run(&mut self, run: &str) {
+        if run.is_empty() {
+            return;
+        }
+        for (at, _) in run.match_indices('.').filter(|(at, _)| *at > 0) {
+            self.0.insert(run[..at].to_owned());
+        }
+        self.0.insert(run.to_owned());
+    }
+
+    /// Each string a record holds, read as the text it is.
+    fn read_value(&mut self, value: &Value) {
+        match value {
+            Value::String(text) => self.read(text),
+            Value::Array(values) => values.iter().for_each(|v| self.read_value(v)),
+            Value::Object(fields) => fields.values().for_each(|v| self.read_value(v)),
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
         }
     }
 }
 
 /// What the duty judges the scratch by.
 pub(super) struct Inputs<'a> {
-    /// The folders whose direct entries are judged.
-    pub folders: &'a [PathBuf],
     pub paths: &'a Paths,
-    /// The main checkout, whose settings files cite.
+    /// The main checkout, whose `tmp/` is judged and whose settings files
+    /// cite.
     pub checkout: &'a Path,
+    /// The private env file the settings read, `None` under
+    /// `--no-private-env`.
+    pub private_env: Option<&'a Path>,
     pub record: &'a Document,
-    /// The items with a lane record or an item record.
+    /// The items with a lane record or a standing item record.
     pub items: &'a BTreeSet<String>,
     pub cutoff: u64,
 }
@@ -155,25 +192,54 @@ fn head(path: &Path) -> Result<Option<String>> {
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
 
+/// The fleet record's pointers to the overseer handoff a controller's
+/// launch named (`--handoff`), which its successor and a recovery keep.
+const HANDOFF_POINTERS: [&str; 3] = [
+    "/controller/handoff",
+    "/controller/pending/handoff",
+    "/pending/handoff",
+];
+
 /// The texts that cite before any scratch does: the fleet record, each
-/// item record, each handoff and each settings file.
+/// item record, each handoff, each settings file and the private env file.
+/// A handoff is each file under `handoffs/` of the state directory and of
+/// the main checkout's `tmp/`, where the overseer's `handoff --fleet`
+/// writes by default whatever the state directory, and the file the record
+/// names, a relative one under the main checkout, the overseer's cwd.
 fn seeds(input: &Inputs) -> Result<Names> {
+    let record = Value::Object(input.record.clone());
     let mut names = Names::default();
-    names.read(&serde_json::Value::Object(input.record.clone()).to_string());
+    names.read_value(&record);
     let mut files: Vec<PathBuf> = input
         .items
         .iter()
         .map(|item| state::item_path(&input.paths.dir, item))
         .collect();
-    files.extend(read_dir(&input.paths.dir.join("handoffs"))?);
+    let mut handoffs = BTreeSet::new();
+    for dir in [
+        input.paths.dir.join("handoffs"),
+        input.checkout.join("tmp").join("handoffs"),
+    ] {
+        if handoffs.insert(crate::archive::resolve(&dir)) {
+            files.extend(read_dir(&dir)?);
+        }
+    }
+    files.extend(
+        HANDOFF_POINTERS
+            .iter()
+            .filter_map(|pointer| record.pointer(pointer).and_then(Value::as_str))
+            .map(|named| input.checkout.join(named)),
+    );
     files.extend(
         agent_runtime::settings::SETTINGS_FILES
             .iter()
-            .chain([&agent_runtime::settings::DEFAULT_ENV_FILE])
             .map(|file| input.checkout.join(file)),
     );
+    files.extend(input.private_env.map(Path::to_path_buf));
     for file in files {
-        if std::fs::symlink_metadata(&file).is_ok_and(|m| m.is_file())
+        // A link is read through: a worktree's `.env.local` links to its
+        // main checkout's, and a citer read keeps more, never less.
+        if std::fs::metadata(&file).is_ok_and(|m| m.is_file())
             && let Some(text) = head(&file)?
         {
             names.read(&text);
@@ -182,40 +248,34 @@ fn seeds(input: &Inputs) -> Result<Names> {
     Ok(names)
 }
 
-/// The entries of `input.folders` nothing uses.
+/// The entries of the main checkout's `tmp/` nothing uses.
 pub(super) fn unused(input: &Inputs) -> Result<Judged> {
     let mut candidates = Vec::new();
     let mut readers: Vec<(u64, PathBuf)> = Vec::new();
-    let mut seen = BTreeSet::new();
-    for folder in input.folders {
-        if !seen.insert(crate::archive::resolve(folder)) {
+    for path in read_dir(&input.checkout.join("tmp"))? {
+        let name = name_of(&path);
+        if kept_by_name(&name, input.paths) {
             continue;
         }
-        for path in read_dir(folder)? {
-            let name = name_of(&path);
-            if kept_by_name(&name, input.paths) {
-                continue;
-            }
-            let meta = match std::fs::symlink_metadata(&path) {
-                Ok(meta) => meta,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(agent_runtime::Error::io("read", &path, e).into()),
-            };
-            let folder = meta.is_dir();
-            if folder && !name.starts_with(WAITER) {
-                continue;
-            }
-            let written = newest_write(&path, &meta)?;
-            if folder && super::claim::same_file(&path.join("watch.log"), &input.paths.log) {
-                readers.push((written, path.clone()));
-            }
-            candidates.push(Candidate {
-                path,
-                name,
-                folder,
-                written,
-            });
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(agent_runtime::Error::io("read", &path, e).into()),
+        };
+        let folder = meta.is_dir();
+        if folder && !name.starts_with(WAITER) {
+            continue;
         }
+        let written = newest_write(&path, &meta)?;
+        if folder && super::claim::same_file(&path.join("watch.log"), &input.paths.log) {
+            readers.push((written, path.clone()));
+        }
+        candidates.push(Candidate {
+            path,
+            name,
+            folder,
+            written,
+        });
     }
     if let Some((_, live)) = readers.iter().max() {
         candidates.retain(|c| &c.path != live);
@@ -283,6 +343,7 @@ mod tests {
                 "inventory-1.json",
                 true,
             ),
+            ("\"Keep:\\nbrief.md\"", "brief.md", true),
             ("tmp/old-brief.md", "brief.md", false),
             ("tmp/brief.mdx", "brief.md", false),
             ("", "brief.md", false),

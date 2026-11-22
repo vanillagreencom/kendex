@@ -3078,7 +3078,6 @@ fn remove_item(
             "paths": pruned.paths,
             "kept": pruned.archive,
             "unlocked": pruned.unlocked,
-            "unjudged": pruned.unjudged,
         })
     };
     Ok(serde_json::json!({
