@@ -771,15 +771,15 @@ pub(crate) fn landings(
     Ok(out)
 }
 
-/// The repositories the lane inventories read: the caller's, the lanes'
-/// and the connected ones, lowercased, in that order, once each.
-fn repositories(inputs: &Inputs) -> Vec<String> {
-    let named = inputs
-        .repos
+/// The repositories the lane inventories and the report's open read read:
+/// the caller's, the lanes' and the connected ones, lowercased, in that
+/// order, once each.
+pub(super) fn repositories(repos: &[String], lanes: &[Lane], settings: &Settings) -> Vec<String> {
+    let named = repos
         .iter()
         .map(String::as_str)
-        .chain(inputs.lanes.iter().filter_map(|l| l.repo.as_deref()));
-    let mut out = inputs.settings.reads.watched(named);
+        .chain(lanes.iter().filter_map(|l| l.repo.as_deref()));
+    let mut out = settings.reads.watched(named);
     out.retain(|repo| repo.contains('/'));
     out
 }
@@ -1023,7 +1023,7 @@ fn pass_reads(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
 pub(crate) fn read(gh: &Gh, inputs: &Inputs, baseline: &Baseline) -> Result<Read> {
     let mut produced = Produced::default();
     let mut inventory = Inventory::default();
-    let repos = repositories(inputs);
+    let repos = repositories(inputs.repos, inputs.lanes, inputs.settings);
     merged(gh, inputs, &repos, baseline, &mut produced, &mut inventory)?;
     refresh(gh, inputs, &repos, baseline, &mut produced, &mut inventory)?;
     let budget_absent = main_push(gh, inputs, &repos, baseline, &mut produced, &mut inventory)?;
@@ -1211,7 +1211,7 @@ pub(super) fn merged_keys(
         since_iso,
         now,
     };
-    let repos = repositories(&inputs);
+    let repos = repositories(inputs.repos, inputs.lanes, inputs.settings);
     let mut keys = Vec::new();
     for entry in merge_items(inputs.lanes) {
         for (number, repo, _) in own_merges(gh, &entry, &repos, &inputs)? {
@@ -1517,6 +1517,47 @@ pub(super) fn report_merges(
     }
     rows.sort_by_key(|row| row.at);
     Ok(rows)
+}
+
+/// Each lane item's own open pull requests as `<repo>#<n>` keys, in
+/// repository order then number order: every repository's open list read
+/// whole and each member judged by the lane-own rule, since a running
+/// lane's record names no pull request until its park. The repository is
+/// kept because one number names a different pull request in each.
+pub(super) fn report_open(
+    gh: &Gh,
+    repos: &[String],
+    lanes: &[Lane],
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let mut own: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for repo in repos {
+        let owner = repo.split('/').next().unwrap_or(repo);
+        let path = format!("repos/{repo}/pulls?state=open");
+        let Some(mut pulls) = gh.list::<Pull>("report-open", &path)? else {
+            return Err(refused(
+                "github-read-failed",
+                &[("read", "report-open"), ("path", &path)],
+            ));
+        };
+        pulls.sort_unstable_by_key(|pull| pull.number);
+        for pull in &pulls {
+            for lane in lanes {
+                let pr = recorded(lane)
+                    .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
+                    .map(|(_, number)| number);
+                if !lane_own(pull, &lane.item, owner, pr) {
+                    continue;
+                }
+                // An item relaunched has a record per launch.
+                let key = format!("{repo}#{}", pull.number);
+                let keys = own.entry(lane.item.clone()).or_default();
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+    }
+    Ok(own)
 }
 
 /// Whether `workflow` is absent from `repo`, proved by a complete,

@@ -256,7 +256,7 @@ The fleet record `workflow-state-oversee.json` holds the init object and the mem
 | `launch_queue` | string[] | `record-overseer-ledger` entry `launch-queue` | The items the last selection chose and has not launched, in launch order, replaced whole. |
 | `triaged` | object[] | `record-overseer-ledger` entry `triage` | `{issue, reason, verdict}` per issue the triage verifier judged, `verdict` being `kept` or `canceled`. |
 | `alerts_triaged` | object[] | `record-overseer-ledger` entry `alert-verdict` | `{repo, kind, number, verdict, item, reason}` per security alert judged. |
-| `standing` | object[] | `state standing add`, `state standing lift` | The owner's standing instructions, `{at, id, scope, end, text}`. |
+| `standing` | object[] | `state standing add`, `state standing lift` | The owner's standing instructions, `{at, id, scope, end, text, holds_launches?}`. |
 | `fleet_log` | object[] | `state log append`, and the writers named below | One `{at, kind, item, text}` row per entry ([§ Recording policy](#recording-policy)). |
 
 The members' rules, in the table's order:
@@ -395,7 +395,7 @@ The retention is `ORCH_RECORD_RETENTION_DAYS` days past a record's stamp. [setti
 | Record | Readers | Retention |
 |---|---|---|
 | Fleet log rows, `fleet_log[]` | The successor overseer, audits and `orch-runtime report render`. | A row whose `at` is past the retention moves into the prune archive. |
-| Standing instructions, `standing[]` | The successor overseer, through `orch-runtime state get --fleet /standing`. | None: a row leaves when the overseer lifts it. |
+| Standing instructions, `standing[]` | The successor overseer, through `orch-runtime state get --fleet /standing`, and `orch-runtime report render`. | None: a row leaves when the overseer lifts it. |
 | Overseer handoff file, `handoffs/OVERSEER-HANDOFF.md` | The successor overseer, at [oversee-takeover.md § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff). | None. |
 | Lane records, `lanes[]` | The watch, the close, the overseer, and every rollup of a lane's times. | Judged by the record's recorded end. |
 | Lane status file, `tmp/lane-status-[ISSUE_ID].md` under the lane's `mail_root` | The overseer, through [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads), and the watch. | Leaves with the lane's worktree. |
@@ -413,6 +413,7 @@ The records' rules, in the table's order:
 - Fleet log rows: audits read the `proposal` and `ruling` rows through `state log audit --fleet`.
 - Fleet log rows: `orch-runtime report render` reads the `use1` and `cycle` rows.
 - Fleet log rows: a row with no ISO 8601 UTC `at` stays.
+- Standing instructions: `orch-runtime report render` reads the rows whose `holds_launches` is set ([communication-modes.md § Recording](../references/communication-modes.md#recording)).
 - Overseer handoff file: its shape is [communication-modes.md § Handoff](../references/communication-modes.md#handoff).
 - Overseer handoff file: a file under `handoffs/` named for an item leaves at the item's close-out.
 - Lane records: the recorded end is the latest confirmed close of the record's session, else its item's latest `close` row, else its `launched_at`.
