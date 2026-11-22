@@ -2,9 +2,7 @@
 
 Audit tracked issues and projects, apply mechanical corrections, and authorize creations and cancellations through § 6.
 
-**Primary-session wrapper: never delegate this workflow itself.** § 6 authorizes § 7 mutations. Delegate TPM analysis in § 2.1 / § 4.1 (`tpm-audit.md`), except an authorized single filing, which § 4.1 judges in this session; fleet ownership follows [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination).
-
-Overseer heartbeat audits use [Heartbeat audit](../../orch/references/heartbeat-audit.md) for the shared § 4.1 TPM delegation, Triage eligibility and § 6 authorization instead of blanket auto approval or interactive-only asks.
+**Primary-session wrapper: never delegate this workflow itself.** Fleet ownership follows [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination).
 
 ## Inputs
 
@@ -18,13 +16,7 @@ Overseer heartbeat audits use [Heartbeat audit](../../orch/references/heartbeat-
 | `audit-issues --single [file]` | `single` | One item from such a file: creation bar, title duplicate check, label preflight and create, with no cancellation sweep |
 | `audit-issues --analyzed [file]` | `analyzed` | Pre-analyzed [audit-output.md](../schemas/audit-output.md) issue-mode JSON — skips § 4 |
 
-`analyzed` follows every `issue`-mode rule in §§ 5-9, and `single` every one in §§ 4-9. A `single` run performs no cancellation sweep; it can dispose only the filing's confirmed `supersedes[]` entries through § 7.2, with § 7.4 applying to its cancellations. `team` follows every `project`-mode rule in §§ 4-8, a rule added later included; only a rule naming `team` overrides one.
-
-The input file's `tracker` block fixes the tracker for the whole audit. A caller that already resolved one (orch `TRACKER`) must set it.
-
-**Pass inventory.** A `team` or `issue` run on Linear binds one fresh `[INVENTORY_FILE]` in § 1.2.1 and hands it to its § 4.1 TPM analysis, so that analysis lists the team once. Every other mode binds none.
-
-**Hierarchy contract.** A `hierarchy_contract` in the input file is binding per [audit-issues-input.md](../schemas/audit-issues-input.md) § Hierarchy Contract; § 4.2 enforces it before anything is presented or executed.
+A `single` run performs no cancellation sweep; it can dispose only the filing's confirmed `supersedes[]` entries through § 7.2, with § 7.4 applying to its cancellations. `team` follows every `project`-mode rule in §§ 4-8, a rule added later included; only a rule naming `team` overrides one.
 
 ---
 
@@ -48,9 +40,7 @@ Resolve once, before any tracker command. Precedence:
 
 Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 
-**Mode constraint**: `project`, `team`, and `project-order` audit Linear projects and are Linear only — `team` takes its input set from Linear's issue inventory and has no GitHub equivalent. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
-
-**GitHub mode runs no Linear commands** — no `session-status`, Linear read, or Linear mutation anywhere in this workflow. Linear installation/authentication is not a prerequisite for a GitHub-tracked audit.
+**Mode constraint**: `project`, `team`, and `project-order` are Linear only. With `TRACKER=github`, halt: "Project audits are Linear-only; GitHub repositories have no project inventory in this workflow." Never degrade to a partial project audit.
 
 #### 1.2.1 Preflight — Linear (TRACKER=linear)
 
@@ -67,11 +57,9 @@ Every mode runs:
 .agents/skills/orch/scripts/orch-runtime reconcile-items
 ```
 
-Run `orch-runtime reconcile-items` only where the orch skill is installed. Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts. A refused reply exits 1; fix the failed read before auditing. A usage error exits 2. A dropped verification check stays unticked. The linear skill's completion route, `linear.sh issues complete`, owns the box and has no retire option: record its criterion, the person’s reason and their authority in an owner comment on the item that names that route as the box's owner.
+Run `orch-runtime reconcile-items` only where the orch skill is installed. Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts. A refused reply stops the audit until the failed read is fixed.
 
-Keep the issue-label inventory for every create/update preflight.
-
-MODE `team` and `issue` bind `[INVENTORY_FILE]` to `[WORKTREE_PATH]/tmp/inventory-[MODE]-YYYYMMDD-HHMMSS.json`, `[WORKTREE_PATH]` being the § 4.1 `Worktree:`, and create that `tmp/` if it is missing. Bind a path no earlier run wrote: a path another run wrote serves that run's older reading. Nothing in this workflow reads the file; § 4.1 hands it to the TPM, whose first read given it collects the team ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
+MODE `team` and `issue` bind `[INVENTORY_FILE]` to `[WORKTREE_PATH]/tmp/inventory-[MODE]-YYYYMMDD-HHMMSS.json`, `[WORKTREE_PATH]` being the § 4.1 `Worktree:`, and create that `tmp/` if it is missing. Bind a path no earlier run wrote: a path another run wrote serves that run's older reading. § 4.1 hands the path to the TPM, whose first read given it collects the team ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
 
 #### 1.2.2 Preflight — GitHub (TRACKER=github)
 
@@ -81,8 +69,6 @@ gh issue list --repo [OWNER/REPO] --state open --limit 200 --json number,title,l
 ```
 
 `--limit 200` is a stated cap, not a page: a repository whose label or open-issue count reaches 200 is audited against a truncated inventory. Scope the audit to what was fetched and name the truncation on the § 8 degradation line.
-
-No sync step. Load project taxonomy the same way as Linear mode; with no declared taxonomy, validate proposed labels against the live repository label list alone. Never invent or auto-create a label.
 
 ### 1.3 Route
 
@@ -157,7 +143,7 @@ With `TARGET` set, use it. Otherwise take the first `session-status.projects` en
 
 ### 4.1 Delegate
 
-**Authorized single filing.** A `single` item the owner or their delegate asked for, with its outcome, Done-when and `Reached by:` written and one landing ([filing.md § One landing per subsystem](../references/filing.md#one-landing-per-subsystem)), is judged in this session. Run [tpm-audit § 14](tpm-audit.md#14-single-item-mode) here, with no subagent, and carry its one row to § 5; § 4.2 does not apply. Every later section still holds it: the creation bar and the title duplicate check in § 14, § 7.0's label preflight, the tracker's label, project and team refusals at create, and § 7.5's read-back. § 7 publishes no audit JSON for it. Every other `single` item, and every other mode, delegates as below.
+**Authorized single filing.** A `single` item the owner or their delegate asked for, with its outcome, Done-when and `Reached by:` written and one landing ([filing.md § One landing per subsystem](../references/filing.md#one-landing-per-subsystem)), is judged in this session. Run [tpm-audit § 14](tpm-audit.md#14-single-item-mode) here, with no subagent, and carry its one row to § 5; § 4.2 does not apply. Every other `single` item, and every other mode, delegates as below.
 
 Spawn a one-shot `[TPM]` sub-agent (not a teammate).
 
@@ -177,7 +163,7 @@ Omit `[OWNER/REPO]` when `TRACKER=linear`. When § 1.2.1 bound `[INVENTORY_FILE]
 
 ### 4.2 Collect and Validate
 
-1. **Collect the payload.** The agent returns an `<output_format>` block with a `File:` line and fenced JSON. Treat `File:` as a destination hint only — never assume the child wrote it.
+1. **Collect the payload.** The agent returns an `<output_format>` block with a `File:` line and fenced JSON.
 
 2. **Materialize the artifact.** The caller worktree is the delegation's `Worktree:`, the input JSON's `worktree`, or the current repo root. Resolve the returned path under it; an absolute path outside the caller worktree is discarded for the fallback `tmp/audit-[MODE]-YYYYMMDD-HHMMSS.json`. With inline JSON present, ensure `tmp/` exists and write the inline JSON exactly to the resolved path. Without inline JSON, use the resolved path only if it already exists and is readable. If neither holds, halt and request a TPM rerun with inline JSON. Read the resulting file.
 
@@ -229,7 +215,7 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 .agents/skills/orch/scripts/orch-env PM_CREATE_AUTONOMY ask
 ```
 
-Accept `ask`, the caller default, or `auto`, which `ORCH_USER_MODE=ceo` composes when the settings ladder names neither; stop on any other value. The guardrails remain the creation bar of [filing.md § Creation bar](../references/filing.md#creation-bar), the `Reached by:`, `Supersession:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
+Accept `ask`, the caller default, or `auto`, which `ORCH_USER_MODE=ceo` composes when the settings ladder names neither; stop on any other value.
 
 The accepted creation set contains every bar-passing proposed creation in § 5, including architecture gaps. **Auto.** Authorize that set and every row in the displayed Cancel section without a question. Cancel covers issue-mode `cancel`, `supersede`, `combine` and `supersedes[]`, plus project/team `obsolete[]`, `duplicates[]` and `combine[]` as defined in [audit-output.md](../schemas/audit-output.md). Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8. **Ask.** Offer the same accepted creation set. Apply the rest of this section only in this mode.
 
@@ -257,7 +243,7 @@ Everything in the § 5 corrections block — priorities, labels, relations, hier
 
 **Hard precondition: § 6 authorization obtained in the primary session.** Creations and cancellations execute only against its resolved `auto` policy or its `ask` approvals, including a validated carried approval (`approved_at_plan_gate`). If § 6 did not run, § 7 MUST NOT execute: stop and return to the primary session.
 
-Apply [publish-artifacts.md](publish-artifacts.md) to each issue this section creates or updates. The artifact set is the audit JSON plus any supplied plan markdown, plan JSON, and cited research inputs. Resolve missing inputs before mutation. Carry this set through both tracker routes; § 7.5 verifies it with the other writes. Skip this rule when the input's `source` is `roadmap-create`: that wrapper's § 5 publishes the plan set once, after every issue exists, and the audit JSON, a mechanical conversion of the plan JSON, is not published. An authorized single filing (§ 4.1) writes no audit JSON, so its set holds only the inputs supplied with it.
+Apply [publish-artifacts.md](publish-artifacts.md) to each issue this section creates or updates. The artifact set is the audit JSON plus any supplied plan markdown, plan JSON, and cited research inputs. Resolve missing inputs before mutation. Skip this rule when the input's `source` is `roadmap-create`: that wrapper's § 5 publishes the plan set once, after every issue exists, and the audit JSON, a mechanical conversion of the plan JSON, is not published. An authorized single filing (§ 4.1) writes no audit JSON, so its set holds only the inputs supplied with it.
 
 ### 7.0 Label Preflight
 
@@ -265,7 +251,7 @@ Before any mutation that creates an issue or changes labels:
 
 1. Build the intended operation per finding: `create` and gap issues take the full `create_fields.labels[]`; `agent_mismatch` is `replace_category` on `agent`; `label_cooccurrence` is `add`; a `label_updates[]` entry carries its own mode and category.
 2. For an existing issue, fetch current labels and compute the full final set, preserving unrelated labels — Linear `issues get [ISSUE_ID]`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json labels`.
-3. Validate against the § 1.2 inventory and taxonomy per [labels.md](../references/labels.md) § Validation. Any failure there halts before mutation and reports the failing set; a label the tracker lacks follows § Creating Labels in the same file.
+3. Validate against the § 1.2 inventory and taxonomy per [labels.md](../references/labels.md) § Validation. A label the tracker lacks follows § Creating Labels in the same file.
 4. Pass only the validated final set: Linear `--labels`, GitHub `gh issue create --label` and the github skill's `label-add`/`label-remove`.
 
 ### 7.1 Apply Corrections
@@ -288,7 +274,7 @@ Order per issue: relations first, then priority and labels, then project/state, 
 
 ### 7.2 Execute Approved Creations and Cancellations
 
-Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. A bundle parent (`create_fields.is_bundle_parent: true`) is therefore created before its children. The route comes from `TRACKER`. Never mix routes within one audit.
+Process creates in dependency order — every issue after the issues it is blocked by and its parent — and attach each issue's relations and parent immediately after its own create, never after the whole batch. The route comes from `TRACKER`.
 
 **Contract-parent scope transfer.** With a `hierarchy_contract`, exclude its `parent_issue` from every supersession disposition, including carried or analyzed `supersedes[]` entries. Apply [tpm-audit § 7.0](tpm-audit.md#70-hierarchy-contract-binding)'s `related` scope-transfer representation instead. Never cancel or re-scope the contract parent here, or write it into a Completion block. The caller owns its coordination-only conversion after the audit.
 
@@ -298,7 +284,7 @@ Process creates in dependency order — every issue after the issues it is block
 
 | Action | Execution |
 |--------|-----------|
-| create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. After creation, execute each authorized `supersedes[]` entry through Superseded issues below, subject to Contract-parent scope transfer above. Backlog is mandatory, never the team-default Triage. § 7.2.1 then promotes to Todo where it applies. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies. |
+| create | `issues create` with the Create template below, `--state "Backlog"`, and `--parent` per `hierarchy`. Backlog is mandatory, never the team-default Triage. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says how the parent's project is reached and when the fallback applies. |
 | expand, update | workflow-actions § Descriptions + reason comment |
 | supersede, combine | workflow-actions § State Transitions (cancel/absorb), then Superseded issues below |
 | cancel | workflow-actions § State Transitions: disposition descendants before commenting and canceling the parent |
@@ -320,13 +306,13 @@ A `create` whose `review_born` is false is the same command without that flag.
 | expand, update | Fetch with `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`, edit in a tmp file, then `gh issue edit [N] --repo [OWNER/REPO] --body-file [BODY_FILE]`. Title: `gh issue edit [N] --repo [OWNER/REPO] --title "[TITLE]"`. Labels: `.agents/skills/github/scripts/github.sh label-add [N] "[LABEL]" --issue` / `label-remove` |
 | supersede, combine, cancel | `gh issue comment [N] --repo [OWNER/REPO] --body "[REASON]"`, then `gh issue close [N] --repo [OWNER/REPO] --reason "not planned"` |
 
-**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Write the body to a file and pass it by file — Linear `--description-file`, GitHub `--body-file`. Never an inline string or heredoc. Preserve the marked owner directive block in the returned `create_fields.description` unchanged when writing the body file; never summarize it. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `reach` supplying `[REACH]`, `supersession` supplying `[SUPERSESSION]`, `symptom` supplying `[SYMPTOM]`, `regressed_by` supplying `[REGRESSED_BY]`, and `review_born` deciding the `--review-born` flag. A proposal-backed row also carries `source`, which must agree with `review_born` before execution. When creating a child, carry the parent's research and decision references into the template's Filing record.
+**Create template**: [issue-description-template.md](../templates/issue-description-template.md), or [parent-issue-template.md](../templates/parent-issue-template.md) for a bundle parent (`create_fields.is_bundle_parent: true`). Preserve the marked owner directive block in the returned `create_fields.description` unchanged when writing the body file; never summarize it. In `analyzed` mode the create fields come from `issues[].create_fields`, with `create_fields.labels[]` authoritative, `source_path` supplying `[ORIGIN_CONTEXT]`, `symptom` supplying `[SYMPTOM]`, and `review_born` deciding the `--review-born` flag. A proposal-backed row also carries `source`, which must agree with `review_born` before execution.
 
 **Supersession record.** Before creating an issue, require § 6 authorization for every disposition its comparison requires, subject to Contract-parent scope transfer above. If any required disposition is withheld, hold the create and its dependent dispositions, even when other entries remain authorized. Report the held create and every withheld or unexecuted disposition in § 8 as not applied. Resume only when every required disposition is authorized; never replace a withheld action with a no-match record.
 
-Every create's body carries `create_fields.supersession` as its `**Supersession**:` line, the record the TPM comparison wrote ([audit-output.md](../schemas/audit-output.md) § ISSUE Mode). Preserve entries for dispositions already executed or authorized to execute with the filing, including their timing. Leave withheld or held actions out of the actual-action record; retain their not-applied outcomes in § 8.
+In the `**Supersession**:` line, preserve entries for dispositions already executed or authorized to execute with the filing, including their timing. Leave withheld or held actions out of the actual-action record; retain their not-applied outcomes in § 8.
 
-**Superseded issues — Linear**: process every authorized `supersedes[]` entry after its replacement exists, including on a `create` row, subject to Contract-parent scope transfer above. For `when: now` (also the default when omitted), follow workflow-actions § State Transitions to disposition descendants first. Detach any child whose scope the replacement does not cover (`issues update [CHILD_ID] --remove-parent`); replacement coverage alone does not authorize canceling a child. After every remaining descendant has its independently authorized, documented disposition, comment `"Superseded by [ISSUE_ID]. [REASON]"`, then `issues update [SUPERSEDED_ID] --state "Canceled"`. For `when: partial`, post the comment naming the replacement and transferred scope, then use the expand/update Descriptions route above to retain only the remainder; keep the named issue open. For `when: at-completion`, write the exact Completion block from [audit-issues-input.md](../schemas/audit-issues-input.md#completion-block) into the replacement description, containing only those remaining entries, and add `issues add-relation [ISSUE_ID] --related [SUPERSEDED_ID]` for readers. `issues complete` owns the later comment-then-cancel on Done and protects children under that block's contract; resolve any reported open-child disposition through the existing child/update routes before retrying completion. Never cancel it at filing. An entry not confirmed by the TPM or held by authorization is not touched.
+**Superseded issues — Linear**: process every authorized `supersedes[]` entry after its replacement exists, including on a `create` row, subject to Contract-parent scope transfer above. For `when: now` (also the default when omitted), cancel it through workflow-actions § State Transitions, descendants first, with the comment `"Superseded by [ISSUE_ID]. [REASON]"`. For `when: partial`, post the comment naming the replacement and transferred scope, then use the expand/update Descriptions route above to retain only the remainder; keep the named issue open. For `when: at-completion`, write the exact Completion block from [audit-issues-input.md](../schemas/audit-issues-input.md#completion-block) into the replacement description, containing only those remaining entries, and add `issues add-relation [ISSUE_ID] --related [SUPERSEDED_ID]` for readers. Never cancel it at filing. An entry not confirmed by the TPM or held by authorization is not touched.
 
 **GitHub degradation (explicit, never silent)**: GitHub has no bundle, typed-relation, project-state, or cascade model here. Represent structure in issue bodies — `make_child` becomes a `Parent: #[N]` line in the template's Context section plus a comment on the parent; relations become `Blocks: #N` / `Blocked by: #N` / `Related: #N` lines maintained through the body-edit route. Supersession has no detach or cascade: enumerate any sub-items listed in the closed issue's body in the close comment. Apply `partial` through the body-edit route. For `at-completion`, retain the strict Completion block and report the automatic completion close as not executed: `linear.sh issues complete` has no GitHub counterpart here. Never drop an approved hierarchy or relation action — either record its body representation or report it as not executed, and list every degradation in § 8.
 
@@ -348,7 +334,7 @@ Once every create has landed and its relations and parent are attached — never
 
 ### 7.3 Add Research References
 
-**Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); add or extend its research and decision references per [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules, using the parent's template for a container. Preserve existing references. Apply by file (`--description-file` / `--body-file`). Apply the § 7 artifact rule even when the reference already exists.
+**Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); add or extend its research and decision references per [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules, using the parent's template for a container. Preserve existing references. Apply the § 7 artifact rule even when the reference already exists.
 
 Propagate to children — Linear `issues get [ISSUE_ID] | jq -r '.children[].id'`, then repeat per child. `issues get` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
 
@@ -356,7 +342,7 @@ Propagate to children — Linear `issues get [ISSUE_ID] | jq -r '.children[].id'
 
 For each issue cancelled in § 7.1 or § 7.2:
 
-**Linear**: every relation stays; a cancelled blocker leaves its targets' `blocked_by_open` (linear SKILL.md § Blocked Label vs Issue Relations).
+**Linear**: a cancelled blocker leaves its targets' `blocked_by_open`.
 
 **GitHub**: there are no relation objects. Scan the § 1.2.2 inventory and the issues touched here for body lines referencing the closed number, and update those bodies through the § 7.2 route or note the stale reference in a comment.
 
@@ -366,13 +352,13 @@ For decision-eliminated or superseded cancellations, take the old pattern from `
 
 ### 7.5 Post-Mutation Verification
 
-Re-fetch every mutated issue and confirm state, labels, parent, project, relations, and description landed. Use only these commands.
+Re-fetch every mutated issue and confirm state, labels, parent, project, relations, and description landed.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues bulk-get [ISSUE_ID_1] [ISSUE_ID_2] --format=safe
 ```
 
-For a single Linear issue, `.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]` also works. GitHub, per issue:
+GitHub, per issue:
 
 ```bash
 gh issue view [N] --repo [OWNER/REPO] --json number,title,body,labels,state,url
