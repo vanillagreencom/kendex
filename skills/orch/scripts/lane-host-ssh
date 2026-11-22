@@ -834,6 +834,14 @@ case "$line" in
 esac''', row["clone"], package, refusal).stdout.decode().strip()
 
 
+def runtimes(row):
+    """The clone's orch runtime and agent-runtime, built for the sources the
+    clone holds. Every verb that updates the clone calls it right after the
+    update and before any step that runs either runtime: a program the update
+    left unbuilt answers setup-required."""
+    return built(row, "orch", "runtime"), built(row, "agent-runtime", "agent-runtime")
+
+
 def create(row, args, source):
     """Prepare the clone and account, then acquire the worktree through its owner."""
     result = remote(row, '''if test -f "$1/.git/lane-host-item"; then
@@ -856,20 +864,16 @@ fi''', row["clone"], args.repo, args.item)
     if result.stdout == b"existing":
         remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
 exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
-    # The clone's runtimes, built for the sources the update above left and
-    # before any step that runs them: a reuse asks the clone's orch runtime
-    # whether the tree's activity holds it, and a program the update left
-    # unbuilt answers setup-required, which refuses the reuse.
-    # The orch runtime is the one the lane's own workflow runs on this host,
-    # its path in the launch record for the launcher to read before it opens
-    # a window.
-    runtime = built(row, "orch", "runtime")
-    # The prefix's group leader: agent-runtime makes the lane's process group
-    # in place, records its leader beside the item marker and becomes the
-    # harness command, or refuses by name on the pane with the harness
-    # unstarted. The group is never the SSH server's: a server can run every
-    # session's command in one group of its own, which a stop must not reach.
-    lead = built(row, "agent-runtime", "agent-runtime")
+    # A reuse asks the clone's orch runtime whether the tree's activity holds
+    # it. The orch runtime is the one the lane's own workflow runs on this
+    # host, its path in the launch record for the launcher to read before it
+    # opens a window. agent-runtime is the prefix's group leader: it makes the
+    # lane's process group in place, records its leader beside the item marker
+    # and becomes the harness command, or refuses by name on the pane with the
+    # harness unstarted. The group is never the SSH server's: a server can run
+    # every session's command in one group of its own, which a stop must not
+    # reach.
+    runtime, lead = runtimes(row)
     # Claim ownership first; the consumer setup command needs private-file
     # delivery. A relaunch's tree stands before the install reads its lockfile.
     prepared = result.stdout == b"existing" or args.relaunch
@@ -1157,8 +1161,9 @@ line adds tree=unrebased. Without a target, an origin item branch uses
 --base; no origin item branch uses plain create.
 Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.
-create builds the clone's orch runtime and agent-runtime through their own
-setups (runtime-setup-missing, runtime-unbuilt, agent-runtime-setup-missing,
+create, and close once it refreshes the clone, build the clone's orch runtime
+and agent-runtime through their own setups (runtime-setup-missing,
+runtime-unbuilt, agent-runtime-setup-missing,
 agent-runtime-unbuilt). Every create's remote-prefix runs agent-runtime's
 process lead, which makes the lane's process group in place, records its
 leader's pid and start in clone/.git/lane-host-pid and becomes the harness
@@ -1392,6 +1397,8 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"], path,
         if result.returncode == 3:
             notice("close-refused", path=result.stdout.decode().strip())
             raise SystemExit(3)
+        # The archive asks the clone's orch runtime for the item's state.
+        runtimes(row)
         result = remote(row, 'if test -e "$1" || test -L "$1"; then printf present; else printf absent; fi', path)
         archive_tmp(row, args.item, path)
         if result.stdout == b"present":
