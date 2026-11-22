@@ -756,9 +756,9 @@ signal.sigwait({signal.SIGTERM})
                           f"lane-host-ssh: agent-runtime-setup-missing path={setup} fix=".encode() in refused.stderr),
                          (1, b"", True), refused.stderr)
         original = self.script.read_text()
-        step = 'lead = built(row, "agent-runtime", "agent-runtime")'
+        step = 'built(row, "agent-runtime", "agent-runtime")'
         self.assertEqual(original.count(step), 1)
-        self.script.write_text(original.replace(step, 'lead = "agent-runtime"'))
+        self.script.write_text(original.replace(step, '"agent-runtime"'))
         self.assertEqual(self.create("--reuse").returncode, 0)
 
     def failed_steps(self, *names):
