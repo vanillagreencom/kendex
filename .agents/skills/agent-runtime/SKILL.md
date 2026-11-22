@@ -57,6 +57,9 @@ This package owns launch, account selection under the caller's policy, session i
   - `launch --intent` reads a JSON object whose members are the fields of `LaunchIntent` in `runtime/src/launch.rs`.
   - `grants` takes the fields of `Grants` in `runtime/src/confine.rs`.
   - `launch` ignores a member it does not know.
+  - An optional member the intent omits takes its default.
+  - `launch` refuses an intent that lacks a required member, such as `harness`, `cwd` or `grants.file`, with `json-invalid` before anything starts.
+  - That refusal writes no launch record.
 - The launch record:
   - `launch` writes the launch record.
   - `inspect` heals it as the harness comes up.
@@ -96,7 +99,8 @@ Check the answer after a launch that must run confined:
 - Read the record's `confinement`.
 - Its `state` is `confined`, or `unconfined` with a `cause`.
 - A record with no `confinement` comes from an intent that named no grants.
-- `confined` says only that the wrapper runs. A member omitted or misspelled inside `grants` is ignored, and the record still reads `confined`.
+- `confined` says only that the wrapper runs.
+- An optional member inside `grants` that is omitted or misspelled is ignored, and the record still reads `confined`.
 - The record's `command_line` shows the binds the wrapper applies.
 
 An account seat:
