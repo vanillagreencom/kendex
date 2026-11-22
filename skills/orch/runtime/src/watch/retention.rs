@@ -1378,14 +1378,22 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let pruned = judged_pass(
-            &fleet,
-            &paths,
-            &settings,
-            Locking::FLOCK,
-            NOW,
-            Some(&root),
-            |rows, cutoff| prune_records(&fleet, rows, cutoff),
+        let ctx = Context {
+            fleet: fleet.clone(),
+            paths,
+            settings,
+            locking: Locking::FLOCK,
+        };
+        let baseline = crate::watch::baseline::Baseline::default();
+        let pruned = prune(
+            &ctx,
+            &Tick {
+                duty: crate::schedule::Duty::Retention,
+                now: Instant::now(),
+                wall: NOW,
+                baseline: &baseline,
+                clock: &agent_runtime::clock::SystemClock,
+            },
         );
         follow.kill().unwrap();
         follow.wait().unwrap();
