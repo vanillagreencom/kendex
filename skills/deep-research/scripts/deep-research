@@ -2,10 +2,15 @@
 // Diagnostic protocol: command refusals write one JSON object to stderr with
 // {ok:false,key,value,error}. Validate keeps errors/warnings and adds problems
 // with {level,key,value}; English remains display text, not a test contract.
-import { existsSync, realpathSync, statSync, writeSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync, writeSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, extname, join, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
+
+// The computer's private key file is a user-scope setting, so it is read
+// from the environment this process started with, before the project's
+// private env file loads: no project file can point the key read elsewhere.
+const KEY_FILE = process.env.KENDEX_KEY_FILE;
 
 const deepTypes = new Set(["deep-reasoning", "deep-lite", "deep"]);
 const researchModes = new Set(["lite", "standard", "full"]);
@@ -96,13 +101,22 @@ async function loadEnvFile(path) {
   // themselves — checking process.env inside the loop let a key's first
   // line block its own later reassignment.
   const fromProcess = new Set(Object.keys(process.env));
+  for (const [key, assigned] of assignments(text)) {
+    if (fromProcess.has(key)) continue;
+    let value = assigned;
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    process.env[key] = value;
+  }
+}
+
+// `KEY=value` lines as written, in file order; quoting is the caller's grammar.
+function assignments(text) {
+  const found = [];
   for (const line of text.split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!match || fromProcess.has(match[1])) continue;
-    let value = match[2];
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    process.env[match[1]] = value;
+    if (match) found.push([match[1], match[2]]);
   }
+  return found;
 }
 
 // The one setting this reads out of kendex.settings.toml: which file the
@@ -253,11 +267,30 @@ async function loadEnv() {
   await loadEnvFile(resolve(root, await privateEnvFile(root)));
 }
 
-function resolveSecretRef(value, name) {
-  if (!value || !value.startsWith("op://")) return value;
-  const result = spawnSync("op", ["read", value], { encoding: "utf8" });
-  if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
-  fail("secret-reference-unresolved", name, `${name} is a 1Password reference but could not be resolved. Install/sign in to the op CLI and run: op read '${value}'`);
+// The environment, with the project's private env file loaded into it, wins;
+// the computer's key file answers only a name the environment leaves empty.
+// The value is returned, never assigned to process.env, so no process this
+// one starts inherits a key read from the key file.
+function resolveSecretRef(name) {
+  const value = process.env[name];
+  if (value?.startsWith("op://")) {
+    const result = spawnSync("op", ["read", value], { encoding: "utf8" });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+    fail("secret-reference-unresolved", name, `${name} is a 1Password reference but could not be resolved. Install/sign in to the op CLI and run: op read '${value}'`);
+  }
+  if (value || KEY_FILE === undefined) return value;
+  // A set KENDEX_KEY_FILE, empty included, has to name a file: a relative
+  // path would be read against whichever project the run started in.
+  if (!isAbsolute(KEY_FILE)) fail("key-file-not-absolute", KEY_FILE, `KENDEX_KEY_FILE is ${JSON.stringify(KEY_FILE)}: it must be the absolute path of the computer's key file.`, { fix: "Set KENDEX_KEY_FILE to an absolute path." });
+  let text;
+  try {
+    text = readFileSync(KEY_FILE, "utf8");
+  } catch (error) {
+    fail("key-file-unreadable", KEY_FILE, `${KEY_FILE}, the key file KENDEX_KEY_FILE names, could not be read (${error.code ?? error.message}).`, { fix: `Make ${KEY_FILE} readable by this user, with a ${name}=<key> line.` });
+  }
+  const key = assignments(text).filter(([assigned]) => assigned === name).pop()?.[1];
+  if (!key) fail("key-file-key-missing", KEY_FILE, `${KEY_FILE}, the key file KENDEX_KEY_FILE names, holds no ${name} value.`, { fix: `Add a ${name}=<key> line to ${KEY_FILE}.` });
+  return key;
 }
 
 function parseArgs(argv) {
@@ -534,14 +567,14 @@ async function callExaBody(body, options, controller) {
     return mock;
   }
   if (typeof fetch !== "function") fail("runtime-fetch-missing", process.version, "This Node runtime does not provide fetch. Use Node 18+.");
-  const key = resolveSecretRef(process.env.EXA_API_KEY, "EXA_API_KEY");
+  const key = resolveSecretRef("EXA_API_KEY");
   // The file named is the one this project keeps its secrets in, resolved
   // the same way the load at startup resolved it — a person told to write
   // the key into .env.local while the project reads .env.secrets follows
   // the message and the failure stands. Asking again rather than holding
   // the answer: the same call on the same directory, so it cannot name a
   // file the load did not read.
-  if (!key) fail("credential-missing", "EXA_API_KEY", `EXA_API_KEY is required for Exa deep research. Set EXA_API_KEY or add it to ${await privateEnvFile(process.cwd())}.`);
+  if (!key) fail("credential-missing", "EXA_API_KEY", `EXA_API_KEY is required for Exa deep research. Set EXA_API_KEY, add it to ${await privateEnvFile(process.cwd())}, or name the computer's key file in KENDEX_KEY_FILE.`);
   const response = await fetch("https://api.exa.ai/search", { method: "POST", headers: { "content-type": "application/json", "x-api-key": key }, body: JSON.stringify(body), signal: controller.signal });
   if (!response.ok) fail("exa-request-failed", response.status, `Exa request failed (${response.status}): ${await response.text().catch(() => response.statusText)}`);
   return response.json();

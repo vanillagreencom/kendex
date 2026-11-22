@@ -23,7 +23,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 - In Pi with the `web_research` tool active, use that tool.
   - Pass `outputPath` when creating a report.
-- In every other harness, run `scripts/deep-research` with `EXA_API_KEY` set.
+- In every other harness, run `scripts/deep-research` with `EXA_API_KEY` set, or with `KENDEX_KEY_FILE` naming a key file that holds it.
 
 ## Rules
 
