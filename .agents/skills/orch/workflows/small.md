@@ -36,7 +36,11 @@ Run [start-worktree.md](start-worktree.md) § 2 through its step 4. Then check t
 
 Run [start-worktree.md](start-worktree.md) § 3 under these bounds:
 
-- **Panel.** [review-pr.md](review-pr.md) § 2 Prepare Reviewers chooses the first-cycle panel from the domains the diff touches. The panel holds three reviewers at most. The external lane counts as one of the three. Resolve review-pr.md § 2.1 before writing a panel. Record its answer as `"external": true` or `false` beside `agents`; with the lane requested, two domain reviewers remain. Trim a larger panel in this order: `reviewer-error` where review-pr.md § 2 always carries it, then the reviewers whose findings the pass verifies, then the domains with the most changed production lines. Apply the same trim to the verification panel [review-pr-comments.md](review-pr-comments.md) writes.
+- **Panel.** [review-pr.md](review-pr.md) § 2 Prepare Reviewers chooses the first-cycle panel from the domains the diff touches.
+  - The panel holds three reviewers at most. The external lane counts as one of the three.
+  - Resolve review-pr.md § 2.1 before writing a panel. Record its answer as `"external": true` or `false` beside `agents`; with the lane requested, two domain reviewers remain.
+  - Trim a larger panel in this order: `reviewer-error` where review-pr.md § 2 always carries it, then the reviewers whose findings the pass verifies, then the domains with the most changed production lines.
+  - Apply the same trim to the verification panel [review-pr-comments.md](review-pr-comments.md) writes.
 - **QA.** [review-pr.md](review-pr.md) § 5 Verdict Pass records the QA routing. There, drop `needs-review` with the reason `small tier: nothing visible` when the change is not visible in the UI or in the CLI output. `needs-safety-audit`, `needs-perf-test` and `needs-ui-review` follow that routing unchanged.
 - **Fix rounds.** [review-pr.md § At The Cap](review-pr.md#at-the-cap) states the bound. For this item, `orch-runtime state cap REVIEW_MAX_CYCLES --item [ISSUE_ID]` answers 1 even where a project setting raises it, and keeps a setting of 0. A QA fix round follows review-pr.md § 7 Converged unchanged, and this bound does not count it.
 - **Findings.** Answer a wording, naming or index finding by reply, with no fix push ([finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow)).
@@ -48,7 +52,7 @@ Before § 4, repeat the § 2 check on the tree the review left. `tier=small` con
 
 `ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication). Keep § 3's local validation and internal review, report the pushed commit, and take start-worktree.md § 5's direct-delivery route.
 
-Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most. For this item, `orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]` answers 2 even where a project setting raises it, and keeps a lower setting. At that cap, [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
+Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most. For this item, `orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]` answers 2 even where a project setting raises it, and keeps a lower setting. At that cap, [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply.
 
 Whenever `HEAD` differs from the head the last § 2 check read, repeat that check before the lane's next push and before [submit-pr.md](submit-pr.md) § 6.1 Merge Gates. Check a step that pushes before it returns, such as ci-fix, on its return. `tier=small` continues; anything else escapes.
 

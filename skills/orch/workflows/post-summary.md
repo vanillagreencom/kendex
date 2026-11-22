@@ -8,7 +8,12 @@ Post the session summary to the pull request and the tracker. Hand context to th
 | `post-summary [ISSUE_ID]` | Post for a specific issue |
 | (from start-worktree or merge-pr) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 3) or `"self"` (the default); `issue_id`, the workflow-state key: the normalized issue ID, never the bare GitHub issue number; `pr_number`, absent for a direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)). Before you render the summary, resolve `TRACKER` and `ISSUE_REF` from `issue_id` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Resolve `SUB_ISSUE_REF` the same way from each completed sub-issue's ID.
+**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 3) or `"self"` (the default); `issue_id`, the workflow-state key: the normalized issue ID, never the bare GitHub issue number; `pr_number`, absent for a direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)).
+
+**Every path**, before you render the summary:
+
+- Resolve `TRACKER` and `ISSUE_REF` from `issue_id` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution).
+- Resolve `SUB_ISSUE_REF` the same way from each completed sub-issue's ID.
 
 **Standalone init** (`lifecycle: "self"`):
 
@@ -25,11 +30,16 @@ Read the counts the summary needs:
 STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles, post_pr_stop: .post_pr_stop}' <<<"$STATE_READ"
 ```
 
-Collect each round's Validation Routes from its completion or fix artifact, and each later restack run's own evidence, per [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file). Carry the rows into the comment with their original identities and outcomes. In a bundle, put each child's rows on the child's item; the parent summary may carry them too. Never fill a field the original sources lack from a state projection or a final verdict.
+- Collect each round's Validation Routes from its completion or fix artifact, and each later restack run's own evidence, per [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file).
+- Carry the rows into the comment with their original identities and outcomes.
+- In a bundle, put each child's rows on the child's item; the parent summary may carry them too.
+- Never fill a field the original sources lack from a state projection or a final verdict.
 
 **Skip if** every count is zero, `post_pr_stop` is null and no validation route is left to report: go to § 2.
 
-Write the summary with the harness file-write tool to `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`). Bind that path as `SUMMARY_FILE`. With a `pr_number`, post it on the pull request:
+1. Write the summary with the harness file-write tool to `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`).
+2. Bind that path as `SUMMARY_FILE`.
+3. With a `pr_number`, post it on the pull request:
 
 ```bash
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
@@ -73,11 +83,16 @@ With no `pr_number`, post no pull-request comment.
 **Fix rounds**: [N] | [STATUS_SUMMARY]
 ```
 
-- Omit empty sections. Render Orchestration stopped only when `post_pr_stop` is non-null.
+- Omit empty sections.
+- Render Orchestration stopped only when `post_pr_stop` is non-null.
 - Created Issues comes from `audit_issues_created` and `pr_comment_review.issues_created`, with project names.
 - Deduplicate Recommendations Processed by description across cycles.
 
-**Commit SHAs.** Where workflow state carries a `.rebase_map`, resolve every published SHA through it before posting. Follow the chain until no key matches. Never publish an unreconciled pre-rebase SHA. A SHA taken from an artifact, such as a perf QA `benchmark_commit`, is still unreconciled ([submit-pr.md § 2](submit-pr.md#2-push-and-submit) step 1). A stored fix commit `dropped:<sha>` names a commit a rebase dropped. Report that item without a SHA, or cite the upstream commit that carries the patch. Never print the dead hash.
+**Commit SHAs.**
+
+- Where workflow state carries a `.rebase_map`, resolve every published SHA through it before posting. Follow the chain until no key matches.
+- Never publish an unreconciled pre-rebase SHA. A SHA taken from an artifact, such as a perf QA `benchmark_commit`, is still unreconciled ([submit-pr.md § 2](submit-pr.md#2-push-and-submit) step 1).
+- A stored fix commit `dropped:<sha>` names a commit a rebase dropped. Report that item without a SHA, or cite the upstream commit that carries the patch. Never print the dead hash.
 
 ## 2. Post Handoff Comments
 

@@ -4,15 +4,24 @@ Read when the overseer handles a Copilot head notice: the three notices [review-
 
 ## Approve a head
 
-Every approval on this page is one `approve-head` request on an item's record in the overseer's checkout. The item is the owning lane's item. A hosted lane's record is on its host, so that checkout can hold none for the item: the request then needs no setup, and the approval creates the record, as `state init` writes it, for its `head_approvals` ledger. A pull request no lane owns takes a dedicated item, reused for that pull request.
+Every approval on this page is one `approve-head` request on an item's record in the overseer's checkout.
 
-Write the approval body to `[BODY_PATH]` and the request to `[PATH]`. `head` is the SHA the notice or the pr-watch line names, as printed. `repo` is the repository the pr-watch line leads with; for a notice, it is the owning lane's repository:
+- The item is the owning lane's item.
+- A hosted lane's record is on its host, so that checkout can hold none for the item: the request then needs no setup, and the approval creates the record, as `state init` writes it, for its `head_approvals` ledger.
+- A pull request no lane owns takes a dedicated item, reused for that pull request.
+
+Write the approval body to `[BODY_PATH]` and the request to `[PATH]`.
+
+- `head` is the SHA the notice or the pr-watch line names, as printed.
+- `repo` is the repository the pr-watch line leads with; for a notice, it is the owning lane's repository:
 
 ```json
 {"op":"approve-head","repo":"[OWNER/REPO]","pr":[N],"head":"[SHA]","body_file":"[BODY_PATH]","hold_copilot":true}
 ```
 
-A `copilot-declined-unchanged` approval sets `hold_copilot` to `false` and adds `"comment_file":"[COMMENT_PATH]"`, the comment the approval posts first. Run the request from the trusted consumer checkout, then route `result.status` by § Answers:
+A `copilot-declined-unchanged` approval sets `hold_copilot` to `false` and adds `"comment_file":"[COMMENT_PATH]"`, the comment the approval posts first.
+
+Run the request from the trusted consumer checkout, then route `result.status` by § Answers:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [ITEM] --request [PATH]
@@ -20,24 +29,37 @@ A `copilot-declined-unchanged` approval sets `hold_copilot` to `false` and adds 
 
 ## What the runtime checks
 
-The consumer supplies its own GitHub App identity. `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names the file holding the app's installation token, which the consumer's own tooling writes. `ORCH_OVERSEER_REVIEW_LOGIN` names the app's login. `approve-head` reads the token file only when it is a regular file this user owns, with no group or other bits, under a parent this user owns with no group or other write bit, holding one word ([security.rs](../runtime/src/watch/security.rs) `read_token`).
+The consumer supplies its own GitHub App identity.
+
+- `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names the file holding the app's installation token, which the consumer's own tooling writes.
+- `ORCH_OVERSEER_REVIEW_LOGIN` names the app's login.
+- `approve-head` reads the token file only when it is a regular file this user owns, with no group or other bits, under a parent this user owns with no group or other write bit, holding one word ([security.rs](../runtime/src/watch/security.rs) `read_token`).
 
 The runtime approves only a live head that starts with `head`, and posts only after `github.sh check-review-replies [N]` passes on that head.
 
 ## The Copilot hold
 
-Every fallback approval sets `hold_copilot` to `true`. A proved-render refresh approval and a `copilot-declined-unchanged` approval set it to `false`. With the hold, the call waits while Copilot's work runs on the head, up to [`ORCH_COPILOT_HOLD_SECS`](settings.md#review-and-ci) (`ops/approve.rs` `hold`). Work that ends inside the hold answers `finished`: approve nothing, write no `use1` row, and repeat the request on the same head; the repeat checks the review replies Copilot's review left.
+With the hold, the call waits while Copilot's work runs on the head, up to [`ORCH_COPILOT_HOLD_SECS`](settings.md#review-and-ci) (`ops/approve.rs` `hold`).
 
-A `review-replies` refusal approves nothing and writes no `use1` row. Direct the lane to answer what `github.sh check-review-replies [N]` names. A `suppressed-entry` there is a finding Copilot wrote only in a review body, which no thread carries.
+Work that ends inside the hold answers `finished`: approve nothing, write no `use1` row, and repeat the request on the same head. The repeat checks the review replies Copilot's review left.
+
+A `review-replies` refusal approves nothing and writes no `use1` row.
+
+- Direct the lane to answer what `github.sh check-review-replies [N]` names.
+- A `suppressed-entry` there is a finding Copilot wrote only in a review body, which no thread carries.
 
 ## Answers
 
 | `result.status` | Meaning | Action |
 |---|---|---|
-| `confirmed` | The head stands approved. Where the review names another login than `ORCH_OVERSEER_REVIEW_LOGIN`, `result.detail` reads `login-differs configured=[LOGIN] review=[REVIEW_LOGIN]`. | Write the `use1` row. On `login-differs`, correct the setting: every read-back matches it. |
+| `confirmed` | The head stands approved. | Write the `use1` row. |
 | `finished` | Copilot's work ended inside the hold. | Approve nothing; repeat the same request. |
-| `refused` | Nothing approved; `reason` names why. `approval-dismissed` means GitHub dismissed the approval this request confirmed earlier, and nothing posts again. | Once the cause is gone, such as an app permission granted or a failing service back, send the same request again. A repeat of `approval-dismissed` answers the same. |
-| `unknown` | The POST's answer was lost and the reviews could not be read whole. | Repeat the same request: it reads the reviews back first, and posts again only after a complete read finds no approval. |
+| `refused` | Nothing approved; `reason` names why. | Once the cause is gone, such as an app permission granted or a failing service back, send the same request again. |
+| `unknown` | The POST's answer was lost and the reviews could not be read whole. | Repeat the same request. |
+
+- `confirmed`: where the review names another login than `ORCH_OVERSEER_REVIEW_LOGIN`, `result.detail` reads `login-differs configured=[LOGIN] review=[REVIEW_LOGIN]`. On `login-differs`, correct the setting: every read-back matches it.
+- `refused` with `reason` `approval-dismissed` means GitHub dismissed the approval this request confirmed earlier, and nothing posts again. A repeat of `approval-dismissed` answers the same.
+- `unknown`: the repeat reads the reviews back first, and posts again only after a complete read finds no approval.
 
 A refusal of the request itself approves nothing and names what it judged in `refusal.fields`:
 
@@ -46,12 +68,23 @@ A refusal of the request itself approves nothing and names what it judged in `re
 
 ## While the lane's review is pending
 
-While the lane status file's `Review:` line reads `pending` for that pull request ([review-pr.md § 1](../workflows/review-pr.md#1-identify-changes)), no rule on this page acts, § Fallback approval included: approve nothing, request no Copilot review and direct no lane. Once the push carrying the review's fix round lands, [submit-pr.md § 2](../workflows/submit-pr.md#2-push-and-submit) step 1 writes a verdict line in its place, which ends the hold. That step routes the pushed head once by [review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route), which re-delivers what the hold held. A head Copilot read takes its notice; any other head takes the review call's `request` route. A request that call sends restarts pr-watch's quiet period, so a held `awaiting-stale` line rises again.
+While the lane status file's `Review:` line reads `pending` for that pull request ([review-pr.md § 1](../workflows/review-pr.md#1-identify-changes)), no rule on this page acts, § Fallback approval included: approve nothing, request no Copilot review and direct no lane.
+
+- Once the push carrying the review's fix round lands, [submit-pr.md § 2](../workflows/submit-pr.md#2-push-and-submit) step 1 writes a verdict line in its place, which ends the hold.
+- That step routes the pushed head once by [review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route), which re-delivers what the hold held. A head Copilot read takes its notice; any other head takes the review call's `request` route.
+- A request that call sends restarts pr-watch's quiet period, so a held `awaiting-stale` line rises again.
 
 ## Notice rules
 
-- `copilot-declined-unchanged`: the notice holds when it lists every thread `github.sh pr-threads [N]` gives with `author` `copilot-pull-request-reviewer`, each reply holds at that head, and it lists each body finding with the comment answering it. Then write one comment to a file saying why each decline holds. Approve the head at once with one `approve-head` request whose `comment_file` names that file, with no Copilot re-review. `approve-head` is the comment's one writer: once the review-reply check passes, it posts the comment as the app, then records and posts the approval. A comment that did not land approves nothing. Repeat the same request: it reads the comments back, and posts again only after a complete read finds none from the app with that text. Where the notice does not hold, approve nothing and direct the lane on what does not hold.
-- `copilot-fallback`: approve the head with `approve-head`, `hold_copilot` `true`, when the lane's own review of it passed with no open blocker. Otherwise direct the lane on what its review left open. On the review call's own notice, judge the lane's review from the lane status file the notice names, in the lane's worktree. The notice's `cause=off` does not say the repository's `PR_COPILOT_REQUESTS` reads `off` now. On approving a head whose notice ends in `cause=refused exit=N`, also send the Jarvis session, while one runs, one notice naming the pull request, the head and that cause. The notice's `cause=no-files` takes § Fallback approval's `no-files` route.
+- `copilot-declined-unchanged`: the notice holds when it lists every thread `github.sh pr-threads [N]` gives with `author` `copilot-pull-request-reviewer`, each reply holds at that head, and it lists each body finding with the comment answering it. Where the notice does not hold, approve nothing and direct the lane on what does not hold.
+  1. Where it holds, write one comment to a file saying why each decline holds.
+  2. Approve the head at once with one `approve-head` request whose `comment_file` names that file, with no Copilot re-review. `approve-head` is the comment's one writer: once the review-reply check passes, it posts the comment as the app, then records and posts the approval.
+  3. A comment that did not land approves nothing. Repeat the same request: it reads the comments back, and posts again only after a complete read finds none from the app with that text.
+- `copilot-fallback`: approve the head with `approve-head`, `hold_copilot` `true`, when the lane's own review of it passed with no open blocker. Otherwise direct the lane on what its review left open.
+  - On the review call's own notice, judge the lane's review from the lane status file the notice names, in the lane's worktree.
+  - The notice's `cause=off` does not say the repository's `PR_COPILOT_REQUESTS` reads `off` now.
+  - On approving a head whose notice ends in `cause=refused exit=N`, also send the Jarvis session, while one runs, one notice naming the pull request, the head and that cause.
+  - The notice's `cause=no-files` takes § Fallback approval's `no-files` route.
 - `copilot-approved-on-rerequest`: Copilot approved the head; approve nothing.
 
 ## Consumer refresh approval
@@ -70,17 +103,31 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/orch-runtime ci-
 
 `orch-runtime ci-proof --help` states the line each exit prints; exit `1` names its `cause`.
 
-The proved-render branch starts no internal review, GitHub agent review or Copilot wait. `class-not-render`, `engine-mismatch` and `workflow-changed` enter § Fallback approval at once from this `refresh-ready` line. There the consumer's review route applies, and approval requires review. `ci-proof-missing`, a failed aggregate or a moved head grants no approval. The approval, stale-approval dismissal and thread-resolution rules still control merging.
+The proved-render branch starts no internal review, GitHub agent review or Copilot wait.
+
+- `class-not-render`, `engine-mismatch` and `workflow-changed` enter § Fallback approval at once from this `refresh-ready` line. There the consumer's review route applies, and approval requires review.
+- `ci-proof-missing`, a failed aggregate or a moved head grants no approval.
+- The approval, stale-approval dismissal and thread-resolution rules still control merging.
 
 ## Fallback approval
 
-An `awaiting-stale` line means no approval reached the head within the quiet period. A `refresh-ready` line enters here after § Consumer refresh approval reads a completed classifier result that cannot prove render. A pending review line takes § While the lane's review is pending first. A head a `copilot-declined-unchanged` notice names takes that notice's rule instead.
+An `awaiting-stale` line means no approval reached the head within the quiet period. A `refresh-ready` line enters here after § Consumer refresh approval reads a completed classifier result that cannot prove render.
 
-1. When the owning lane's own review of that head passed with no open blocker, approve the head with `approve-head`, `hold_copilot` `true`. The base's rules count the app's approval like Copilot's, and no ruleset or setting changes. Send the Jarvis session, while one runs, one notice naming the pull request and the head.
+- A pending review line takes § While the lane's review is pending first.
+- A head a `copilot-declined-unchanged` notice names takes that notice's rule instead.
+
+1. When the owning lane's own review of that head passed with no open blocker, approve the head with `approve-head`, `hold_copilot` `true`.
+   - The base's rules count the app's approval like Copilot's, and no ruleset or setting changes.
+   - Send the Jarvis session, while one runs, one notice naming the pull request and the head.
 2. Otherwise, use the [Copilot request owner](gates.md#copilot-requests), with `[PR_NUMBER]` set to `[N]` and `[REVIEW_BASE_CHECKOUT]` bound per that reference. Route its answer before any review wait:
    - `fallback`: a consumer workflow can still request Copilot on that head, so step 1's approval keeps `hold_copilot` `true`.
-   - `fallback cause=refresh`: review that head from the consumer checkout with the reviewer skill. When the review leaves no open blocker, approve it with `approve-head`, `hold_copilot` `true`, and record a fallback Use 1 row. Otherwise approve nothing, and send one owner notice naming the pull request, the head and the open blockers.
-   - `fallback cause=no-files`: send no further Copilot request. When the owning lane's review of that head passed with no open blocker, take step 1. When the head's workflow state tier is `micro`, the lane ran no internal review. Approve nothing, and direct the lane to take [micro.md § Escape](../workflows/micro.md#escape) through `/orch small [ISSUE_ID]`, with one internal review round before the fallback approval. The overseer reviews nothing itself on this branch.
+   - `fallback cause=refresh`: review that head from the consumer checkout with the reviewer skill.
+     - When the review leaves no open blocker, approve it with `approve-head`, `hold_copilot` `true`, and record a fallback Use 1 row.
+     - Otherwise approve nothing, and send one owner notice naming the pull request, the head and the open blockers.
+   - `fallback cause=no-files`: send no further Copilot request.
+     - When the owning lane's review of that head passed with no open blocker, take step 1.
+     - When the head's workflow state tier is `micro`, the lane ran no internal review. Approve nothing, and direct the lane to take [micro.md § Escape](../workflows/micro.md#escape) through `/orch small [ISSUE_ID]`, with one internal review round before the fallback approval.
+     - The overseer reviews nothing itself on this branch.
    - Any other answer: direct the lane on what its review left open.
 
 ## Use 1 rows

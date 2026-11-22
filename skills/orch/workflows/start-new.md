@@ -17,7 +17,9 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 
 1. Build the complete label set. Validate it against the live inventory and the project taxonomy: the project-management skill's `references/labels.md` § Preflight.
 2. Search existing issues, in every state, for the same problem or component change. Flag a likely duplicate to the user, with a related relation and a comment, instead of creating blind.
-3. Write the issue body with the harness file tool to `tmp/issue-body-[SLUG].md`, from the project-management skill's `templates/issue-description-template.md`. Its `**Reached by**` line names what arrives at the defect. `[BODY_FILE]` is that path. Beside `Reached by:`, write `Supersession:` from the search: each matched open item with its action and identifier, else `none found; searched: [TERMS]`.
+3. Write the issue body with the harness file tool to `tmp/issue-body-[SLUG].md`, from the project-management skill's `templates/issue-description-template.md`. `[BODY_FILE]` is that path.
+   - Its `**Reached by**` line names what arrives at the defect.
+   - Beside `Reached by:`, write `Supersession:` from the search: each matched open item with its action and identifier, else `none found; searched: [TERMS]`.
 4. Create the issue. **Linear only**:
 
    ```bash

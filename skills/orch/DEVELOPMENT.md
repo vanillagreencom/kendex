@@ -14,14 +14,25 @@ skills/orch/scripts/setup                  # builds agent-runtime, then orch-run
 skills/orch/scripts/orch-runtime --help    # every verb's contract
 ```
 
-`setup` and the `orch-runtime` entry refuse when agent-runtime is not the sibling package beside orch.
-
 ## Stack
 
-- **Language.** The runtime is two Rust crates, `orch-runtime` here and agent-runtime beside it, each its own Cargo workspace with a committed `Cargo.lock`. Revisit the language only for a demonstrated packaging or platform blocker.
-- **Libraries.** Process I/O, waits, timers and cancellation run on Tokio inside agent-runtime; `orch-runtime` takes no Tokio dependency. Add a dependency only for a need the code has.
-- **Storage.** Durable state is versioned local JSON: one record per item under `items/<ITEM>/` of the state directory, and one fleet record beside them, each written through agent-runtime's `record.rs`. A record version change follows agent-runtime's [DEVELOPMENT.md § Record versions](../agent-runtime/DEVELOPMENT.md#record-versions). Mailboxes are append-only JSONL files. The package has no database, server or event bus.
-- **Interfaces.** Requests and results that cross an executable or a remote boundary are versioned JSON. Human diagnostics stay apart from machine output. Git, `gh`, the Linear client, tmux, SSH and each harness's own CLI stay external commands. Bash stays only for the entries § Shell that stays names, and JavaScript only where the host requires it. Model classes resolve through kendex's `tier-model`, never a table copied into the runtime.
+- **Language.**
+  - The runtime is two Rust crates, `orch-runtime` here and agent-runtime beside it, each its own Cargo workspace with a committed `Cargo.lock`.
+  - Revisit the language only for a demonstrated packaging or platform blocker.
+- **Libraries.**
+  - Process I/O, waits, timers and cancellation run on Tokio inside agent-runtime; `orch-runtime` takes no Tokio dependency.
+  - Add a dependency only for a need the code has.
+- **Storage.**
+  - Durable state is versioned local JSON: one record per item under `items/<ITEM>/` of the state directory, and one fleet record beside them, each written through agent-runtime's `record.rs`.
+  - A record version change follows agent-runtime's [DEVELOPMENT.md § Record versions](../agent-runtime/DEVELOPMENT.md#record-versions).
+  - Mailboxes are append-only JSONL files.
+  - The package has no database, server or event bus.
+- **Interfaces.**
+  - Requests and results that cross an executable or a remote boundary are versioned JSON.
+  - Human diagnostics stay apart from machine output.
+  - Git, `gh`, the Linear client, tmux, SSH and each harness's own CLI stay external commands.
+  - Bash stays only for the entries § Shell that stays names, and JavaScript only where the host requires it.
+  - Model classes resolve through kendex's `tier-model`, never a table copied into the runtime.
 
 ## Tests
 
@@ -39,7 +50,13 @@ The runner's header states every argument, CI's `--shard` among them. A set of f
 The suites run from the catalog checkout. A kendex render leaves out `tests/` and this file.
 
 - **Rust rows.** A row that runs the runtime's code in the test process starts with `support::isolated_row` (`tests/rust/support.rs`), so the runtime's git reads never see the operator's git configuration.
-- **Shell suites.** Each `tests/*.sh` builds its own sandbox with stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed. `run-all.sh` finds the suites when it runs, so a new suite needs no registration. It runs them `nproc` at a time, so a suite keeps every file, socket and process it makes inside its own sandbox. A suite that holds a fixed wall-clock window a loaded host misses goes in `run-all.sh`'s `ALONE` list. A suite asserts through `tests/lib/assertions.sh` and defines none of its names. A shell wait runs on `tests/lib/virtual-clock.sh`, whose `date` and `sleep` stubs turn a poll budget into arithmetic over a file.
+- **Shell suites.**
+  - Each `tests/*.sh` builds its own sandbox with stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed.
+  - `run-all.sh` finds the suites when it runs, so a new suite needs no registration.
+  - It runs them `nproc` at a time, so a suite keeps every file, socket and process it makes inside its own sandbox.
+  - A suite that holds a fixed wall-clock window a loaded host misses goes in `run-all.sh`'s `ALONE` list.
+  - A suite asserts through `tests/lib/assertions.sh` and defines none of its names.
+  - A shell wait runs on `tests/lib/virtual-clock.sh`, whose `date` and `sleep` stubs turn a poll budget into arithmetic over a file.
 - **One job.** `tests/one_job.sh` runs whole repository jobs in a disposable consumer, on the real operations, with `tests/job/stub-harness` as the harness and fakes for the external services.
 - **Hosts.** `tests/lane-host-ssh.sh` runs the static SSH provider in temporary git repositories behind an SSH transport stub. No suite proves live SSH connectivity.
 
@@ -61,7 +78,11 @@ In `skills/orch/runtime/`, run:
 cargo clippy --all-targets -- -D warnings
 ```
 
-`runtime/clippy.toml` lists the acting and reading primitives as disallowed methods outside `effects::lane_operation`; its header states the boundary. An allowance is one `#[allow(clippy::disallowed_methods, reason = "..")]` on a function, a trait impl's method or a test module. Its reason sits at the attribute, and review checks it with the change that adds it. A new acting function in agent-runtime joins the list, as `docs/architecture/orchestration.md` § Rules states. Before adding a guard, state the goal it serves and whom it guards against, and weigh its upkeep against the harm it prevents.
+`runtime/clippy.toml` lists the acting and reading primitives as disallowed methods outside `effects::lane_operation`; its header states the boundary.
+
+- An allowance is one `#[allow(clippy::disallowed_methods, reason = "..")]` on a function, a trait impl's method or a test module.
+- Its reason sits at the attribute, and review checks it with the change that adds it.
+- A new acting function in agent-runtime joins the list, as `docs/architecture/orchestration.md` § Rules states.
 
 ## Shell that stays
 

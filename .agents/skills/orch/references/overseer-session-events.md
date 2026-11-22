@@ -21,7 +21,11 @@ The line announces a recovery; the duty's next run submits its request. An admit
 - `transfer-refused cause=[KEY]` under a `watch-step-failed` line: the request was refused. The recovery stays announced, and the next pass asks again.
 - `overseer-relaunch-failed pane=[PANE] attempt=[N] retry=[pending|exhausted] step=[STEP]`, or `overseer-capacity-failed` for a reserve recovery: the transfer failed. `retry=pending` asks once more on the duty's next run. Read the failed intent with `.agents/skills/orch/scripts/orch-runtime state inspect --fleet`.
 
-Replace the overseer by hand ([oversee.md § Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption)) after `retry=exhausted`, and after a walled walk that chose no successor. Also replace it wherever the watch requests no recovery: under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`, or for a dead record that supplies no successor.
+Replace the overseer by hand ([oversee.md § Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption)):
+
+- after `retry=exhausted`;
+- after a walled walk that chose no successor;
+- wherever the watch requests no recovery: under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`, or for a dead record that supplies no successor.
 
 While a pass reads the controller exited or walled, or a controller intent stands open, the native-observation duty judges no lane. The other duties keep their schedule, so the watch still reads lane mail and owner asks.
 
@@ -40,11 +44,15 @@ The watch tells the owner of each death once, through the overseer mailbox's own
 
 `EVENT overseer-walled [PANE] window=[WINDOW] passes=[N] succession=[on|off] source=[SOURCE]`: the controller cannot take another turn on its account. The banner or the account reading follows the line.
 
-§ Recovery requests holds the recovery. A login wall (`source=auth`) or an ended plan (`plan_ended`) needs the owner to restore access or sign in to another account; a usage reset does not repair it.
+- § Recovery requests holds the recovery.
+- A login wall (`source=auth`) or an ended plan (`plan_ended`) needs the owner to restore access or sign in to another account; a usage reset does not repair it.
 
 ### `overseer-reserve`
 
-`EVENT overseer-reserve [PANE] window=[WINDOW] passes=1 succession=[on|off] source=[SOURCE]`: the account judge reads spendable credit below the launch reserve. The controller stays live while the watch requests its reserve recovery under § Recovery requests. A refusal or an exhausted recovery leaves lane checks, mail and owner-ask deadlines running.
+`EVENT overseer-reserve [PANE] window=[WINDOW] passes=1 succession=[on|off] source=[SOURCE]`: the account judge reads spendable credit below the launch reserve.
+
+- The controller stays live while the watch requests its reserve recovery under § Recovery requests.
+- A refusal or an exhausted recovery leaves lane checks, mail and owner-ask deadlines running.
 
 ### `overseer-context-unmeasured`
 
@@ -58,11 +66,16 @@ The watch tells the owner of each death once, through the overseer mailbox's own
 
 ### `overseer-context-stale`
 
-`EVENT overseer-context-stale [PANE] age=[SECONDS]`: the overseer's context record is more than an hour old, and a Stop row came after it, so nothing judges the context mark. Hand the session over as for `overseer-context-unmeasured`, and report the hook's stderr from that turn end.
+`EVENT overseer-context-stale [PANE] age=[SECONDS]`: the overseer's context record is more than an hour old, and a Stop row came after it, so nothing judges the context mark.
+
+- Hand the session over as for `overseer-context-unmeasured`.
+- Report the hook's stderr from that turn end.
 
 ### `overseer-mark`
 
-`EVENT overseer-mark [PANE] kind=[context|headroom|rate|memory] value=[N] mark=[N] succession=[on|off]`: `orch-runtime marks --fleet` reached a mark on the recorded controller. The line repeats every `ORCH_OVERSEER_MARK_REPEAT` passes while the mark stands. The line under it names the step:
+`EVENT overseer-mark [PANE] kind=[context|headroom|rate|memory] value=[N] mark=[N] succession=[on|off]`: `orch-runtime marks --fleet` reached a mark on the recorded controller.
 
-- `succession=on`: hand the session over at the next safe point through [oversee.md § Succession](../workflows/oversee.md#succession), with the line's `kind` as the successor choice's `--mark`.
-- `succession=off`: no successor opens. Write the overseer handoff file and ask the owner to start a fresh overseer session.
+- The line repeats every `ORCH_OVERSEER_MARK_REPEAT` passes while the mark stands.
+- The line under it names the step:
+  - `succession=on`: hand the session over at the next safe point through [oversee.md § Succession](../workflows/oversee.md#succession), with the line's `kind` as the successor choice's `--mark`.
+  - `succession=off`: no successor opens. Write the overseer handoff file and ask the owner to start a fresh overseer session.
