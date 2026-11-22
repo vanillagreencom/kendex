@@ -81,9 +81,7 @@ pub struct Closed {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
     /// The observation the close's effect recorded: the provider's archive
-    /// line under `host_close`, or `standing` with the state its `list`
-    /// still names (`listed`) or `unconfirmed` with the list's cause, its
-    /// refusal's `path`, a cause.
+    /// line under `host_close`, or its refusal's `path`, a cause.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

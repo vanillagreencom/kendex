@@ -810,9 +810,9 @@ fn item_unknown(stderr: &str, item: &str) -> bool {
 }
 
 /// The states a provider lists a sandbox in once its close has begun its
-/// teardown: `destroying`, the state Daytona's provider lists after its
-/// close answered, and `exited`.
-const TORN_DOWN: [&str; 2] = ["destroying", "exited"];
+/// teardown: `destroying` and `destroyed`, the states Daytona's provider
+/// lists after its close answered, and `exited`.
+const TORN_DOWN: [&str; 3] = ["destroying", "destroyed", "exited"];
 
 /// The state of the sandbox the provider's `list` names for `item`: the
 /// second field of a row whose first ends in `/ITEM`, in any case, outside

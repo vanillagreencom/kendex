@@ -450,7 +450,7 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
    The outputs are `[BASE_BRANCH]`, `[LOCAL_SHA]` and `[ORIGIN_SHA]`. A failed ref read stays in the warning as its cause. Never record the sync as done.
 
-4. **Prepare branch and worktree cleanup.** In a lane, the overseer's close owns cleanup. A local close keeps a dirty or unmerged worktree and records the reason. The static SSH provider can remove a clean detached worktree without checking whether another ref reaches its HEAD. Preserve needed commits before handing back a hosted lane for close. A run outside a lane cleans up only the PR's own branch and worktree, never unrelated branches or sibling worktrees:
+4. **Prepare branch and worktree cleanup.** In a lane, the overseer's close owns branch and worktree cleanup. The lane still runs step 6's close-out. A local close keeps a dirty or unmerged worktree and records the reason. The static SSH provider can remove a clean detached worktree without checking whether another ref reaches its HEAD. Preserve needed commits before handing back a hosted lane for close. A run outside a lane cleans up only the PR's own branch and worktree, never unrelated branches or sibling worktrees:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
@@ -514,7 +514,7 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
    **The close-out elsewhere.** In an unconfined lane, save the item's record for the overseer's cycle row before the close-out. Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`. Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed. Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is. Where an earlier close-out already removed the record, keep the saved copy. Where neither reads as a JSON object, report the failure and keep the worktree.
 
-   Close the item out under the main checkout's state folder before any worktree removal. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive. Otherwise drop the `--archive` pair:
+   Close the item out before any worktree removal, whatever the item's tracker state: Done, Verifying, or In Review with a box still open. A hosted lane is unconfined and runs this close-out itself. It removes the item's records alone, never the sandbox, the worktree or the branch, so a hold on stopping or removing the lane's host does not cover it. The overseer's close never runs it for an open item: it refuses `lane-live` while the record stands. Pass no `--state-dir`: the runtime resolves the state folder the run's launch names. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive. Otherwise drop the `--archive` pair:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY] --archive [WORKTREE_PATH]/tmp
@@ -561,7 +561,7 @@ The `Container` row appears only where § 5 step 2 found a container parent. In 
 
 The worktree line closes the block with step 6's reading: `gone`, or `standing — [cause]`. The cause is the one step 4's disposal predicate named, `foreign lease`, `project verification failed`, `close-out refused` or `left to the overseer's close`. Omit the line only where § 4 found no issue worktree.
 
-The `tmp/ close-out` line carries the archive step 6's close-out reported, its refusal key, or `left to the overseer's close`. Omit it where that step never ran.
+The `tmp/ close-out` line carries the archive step 6's close-out reported, its refusal key, or, in a confined lane, `left to the overseer's close`. Omit it where that step never ran.
 
 Add a `Review gate` row only where the merge did not proceed on a plain `approved` verdict: `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 

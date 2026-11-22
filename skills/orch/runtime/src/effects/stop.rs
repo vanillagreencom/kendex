@@ -571,36 +571,11 @@ impl Close<'_> {
             }
             let merged = self.merged(&operation, &mut observation);
             match operation.host_close(self.lane, merged)? {
-                // An absent sandbox is the provider's own answer that none
-                // stands; a repeat after an earlier close keeps that close's
-                // archive line.
-                Ok(HostClosed::Closed { line }) if line.starts_with("closed=absent ") => {
-                    let kept = self
-                        .prior
-                        .and_then(|p| p.get("closed"))
-                        .and_then(Value::as_str)
-                        .filter(|kept| kept.starts_with("kept="));
-                    observation["host_close"] = json!(kept.unwrap_or(&line));
-                }
-                // The provider's exit is no proof its sandbox is gone: its
-                // `list` is asked after it, and only a list naming no row
-                // for the item, or one torn down, lets the close go on.
-                Ok(HostClosed::Closed { line }) => match operation.host_listed(self.lane) {
-                    Ok(None) => observation["host_close"] = json!(line),
-                    Ok(Some(state)) => {
-                        observation["host_close"] = json!("standing");
-                        observation["listed"] = json!(state);
-                        observation["closed"] = json!(line);
-                        observation["cause"] = json!("host-still-listed");
-                        return Ok(self.hold(operation, observation));
-                    }
-                    Err(cause) => {
-                        observation["host_close"] = json!("unconfirmed");
-                        observation["closed"] = json!(line);
-                        observation["cause"] = json!(cause);
-                        return Ok(self.hold(operation, observation));
-                    }
-                },
+                // The provider's exit 0 is its word that the sandbox ends,
+                // `closed=absent` its word that none stood. A provider may
+                // answer before its teardown shows in its `list`, so no
+                // list read after the close judges it.
+                Ok(HostClosed::Closed { line }) => observation["host_close"] = json!(line),
                 Ok(HostClosed::Refused { path }) => {
                     observation["host_close"] = json!("refused");
                     observation["path"] = json!(path);
@@ -890,9 +865,8 @@ fn moved_lane(
 }
 
 /// What a close's run records that its repeat cannot read again: the
-/// local archive of the item's files, which leave in the first run, and
-/// the provider's close line (`closed`) of a close held after it answered.
-const RECEIPTS: [&str; 2] = ["archive", "closed"];
+/// local archive of the item's files, which leave in the first run.
+const RECEIPTS: [&str; 1] = ["archive"];
 
 /// A reconciled close's observation: the reconcile's word and the item,
 /// with the [`RECEIPTS`] the intent's earlier run recorded (`prior`), which
