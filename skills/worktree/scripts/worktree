@@ -1759,6 +1759,24 @@ setup_app_worktree() {
   return 0
 }
 
+# Claude Code hands a command hook its input as one JSON object on stdin:
+# WorktreeCreate carries `name`, WorktreeRemove `worktree_path`, and no
+# environment variable carries either (Claude Code's hooks reference,
+# § WorktreeCreate input and § WorktreeRemove input).
+read_claude_hook_field() { # FIELD OUT_VAR
+  local _hook_input="" _hook_value=""
+  if ! command -v jq >/dev/null 2>&1; then
+    worktree_message claude-hook-input-unreadable "jq-missing" "Error: reading Claude Code's hook input needs jq on PATH." >&2
+    return 1
+  fi
+  if ! _hook_input="$(cat)" ||
+     ! _hook_value="$(jq -er --arg field "$1" '.[$field] | strings | select(length > 0)' <<<"$_hook_input" 2>/dev/null)"; then
+    worktree_message claude-hook-input-unreadable "field=$1" "Error: stdin holds no Claude Code hook input with a '$1' string; with no PATH, run this command as the Claude Code hook the worktree skill's references/hooks.md wires." >&2
+    return 1
+  fi
+  printf -v "$2" '%s' "$_hook_value"
+}
+
 run_worktree_setup_command() {
   local wt="$1" bounded="$SCRIPT_DIR/../../github/scripts/lib/bounded.sh" status=0
   [[ -n "${WORKTREE_SETUP_CMD:-}" ]] || return 0
@@ -4879,18 +4897,27 @@ case "${1:-}" in
     ;;
 
   claude-setup)
-    # Claude Code owns worktree creation for `--worktree` sessions, subagents
-    # with `isolation: worktree`, and desktop parallel sessions — all of which
-    # run a bare `git worktree add`, so tracked content arrives and the
-    # untracked machine-local layer does not. Wire this from a consumer repo's
-    # `.claude/settings.json` WorktreeCreate hook; because that hook lives in
-    # PROJECT-level settings it applies to every Claude config-dir variant on
-    # the machine (CLAUDE_CONFIG_DIR only moves user-level config).
-    #
-    # Same provisioning as codex-setup — see setup_app_worktree.
+    # With no PATH this is Claude Code's WorktreeCreate command hook. A
+    # configured hook replaces Claude Code's own `git worktree add`, so the
+    # hook creates the tree and its last stdout line is the path the session
+    # enters. Claude Code calls it again for a name it already made, so an
+    # existing tree is reopened rather than refused as active work. With a
+    # PATH it applies setup_app_worktree, as codex-setup does, to a worktree
+    # that already exists.
     ARG="${2:-}"
     if [[ -z "$ARG" ]]; then
-      WT_PATH="$PWD"
+      read_claude_hook_field name CLAUDE_WORKTREE_NAME || exit 1
+      WT_PATH="$(worktree_path_for_issue "$CLAUDE_WORKTREE_NAME")" || exit 1
+      if [[ ! -e "$WT_PATH" && ! -L "$WT_PATH" ]]; then
+        exec "$0" create "$CLAUDE_WORKTREE_NAME"
+      fi
+      require_non_main_project_worktree "$WT_PATH" "configure it" || exit 1
+      # Claude Code refuses a returned path that passes through a symlink.
+      canonical_existing_dir "$WT_PATH" WT_PATH || exit 1
+      setup_app_worktree "$WT_PATH" true true || exit 1
+      worktree_message claude-configured "$WT_PATH" "Configured Claude worktree: $WT_PATH" >&2
+      printf '%s\n' "$WT_PATH"
+      exit 0
     elif [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
@@ -4904,12 +4931,15 @@ case "${1:-}" in
     ;;
 
   claude-cleanup)
-    # Claude Code owns worktree/branch deletion. Non-destructive for the same
-    # reason as codex-cleanup: mutating tracked symlink paths before the app has
-    # actually removed the worktree can leave it dirty.
+    # With no PATH this is Claude Code's WorktreeRemove command hook. Claude
+    # Code counts exit 0 as removed and deletes neither the tree its
+    # WorktreeCreate hook returned nor that tree's branch, so the hook removes
+    # both through remove's guards. With a PATH it stays non-destructive, as
+    # codex-cleanup is.
     ARG="${2:-}"
     if [[ -z "$ARG" ]]; then
-      WT_PATH="$PWD"
+      read_claude_hook_field worktree_path WT_PATH || exit 1
+      exec "$0" remove "$WT_PATH"
     elif [[ "$ARG" == */* ]]; then
       WT_PATH="$ARG"
     else
