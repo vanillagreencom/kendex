@@ -732,10 +732,29 @@ fn watch_files(path: &Path) -> agent_runtime::Result<controller::CompanionFiles>
     })
 }
 
-/// Start the fleet watch over the fleet state at `path` detached, under the
-/// files a controller start's companion keeps: `program`, `watch run --file
-/// <path>`, `flags`, then the reach [`fleet_reach`] answers in this process,
-/// launched as the recorded job `name`. The launch's answer and its record.
+/// The fleet watch's command line over the fleet state at `path`:
+/// `program`, `watch run --file <path>`, `flags`, then the reach
+/// [`fleet_reach`] answers in this process.
+pub fn watch_argv(
+    path: &Path,
+    settings: &Settings,
+    program: &[String],
+    flags: &[String],
+) -> Result<Vec<String>> {
+    let reach = fleet_reach(settings)?;
+    let file = path.display().to_string();
+    Ok(program
+        .iter()
+        .cloned()
+        .chain(["watch", "run", "--file", &file].map(str::to_owned))
+        .chain(flags.iter().cloned())
+        .chain(agent_runtime::controller::run::reach_words(&reach))
+        .collect())
+}
+
+/// Start the fleet watch, [`watch_argv`], detached under the files a
+/// controller start's companion keeps, launched as the recorded job `name`.
+/// The launch's answer and its record.
 pub fn start_watch(
     path: &Path,
     settings: &Settings,
@@ -743,17 +762,9 @@ pub fn start_watch(
     flags: &[String],
     name: &str,
 ) -> Result<(job::Launch, PathBuf)> {
-    let reach = fleet_reach(settings)?;
+    let argv = watch_argv(path, settings, program, flags)?;
     let files = watch_files(path)?;
-    let file = path.display().to_string();
-    let words: Vec<String> = agent_runtime::controller::run::reach_words(&reach);
-    let argv: Vec<&str> = program
-        .iter()
-        .map(String::as_str)
-        .chain(["watch", "run", "--file", &file])
-        .chain(flags.iter().map(String::as_str))
-        .chain(words.iter().map(String::as_str))
-        .collect();
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let launch = job::launch_command(name, &files.record, &argv, Some(&files.stderr));
     Ok((launch, files.record))
 }
