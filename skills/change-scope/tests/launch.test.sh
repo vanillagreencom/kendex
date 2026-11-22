@@ -518,15 +518,18 @@ ARM_BIN="$(mutant range-read-continues change-scope \
   '        launch_consider standard protection-unreadable unmeasured' '        true')" \
   control range-read-continues assert_range_unreadable
 
-# Catalog additions carry their render and its inventory name in the same diff,
-# and the inventory is a changed path like any other: the classifier, whose
-# render proof owns no catalog source, answers the range standard too.
+# Catalog additions and removals carry their render and its inventory name in
+# the same diff. A names-only inventory change under rendered roots is left to
+# the classifier: an addition is standard there, since its render proof owns
+# no catalog source, and a removal is read by its size.
 INVENTORY_RANGE="$(new_repo inventory-range)"
-printf '[".kendex-generated.json",{"path":".agents/skills/x/scripts/kept","template":"x","templateHash":"sha256:%064d"}]\n' 0 \
+printf '[".kendex-generated.json",{"path":".agents/skills/x/scripts/kept","template":"x","templateHash":"sha256:%064d"},".agents/skills/x/scripts/gone"]\n' 0 \
   >"$INVENTORY_RANGE/.kendex-generated.json"
 mkdir -p "$INVENTORY_RANGE/.agents/skills/x/scripts" "$INVENTORY_RANGE/skills/x/scripts"
-printf 'kept\n' >"$INVENTORY_RANGE/.agents/skills/x/scripts/kept"
-printf 'kept\n' >"$INVENTORY_RANGE/skills/x/scripts/kept"
+for name in kept gone; do
+  printf '%s\n' "$name" >"$INVENTORY_RANGE/.agents/skills/x/scripts/$name"
+  printf '%s\n' "$name" >"$INVENTORY_RANGE/skills/x/scripts/$name"
+done
 git -C "$INVENTORY_RANGE" add -A
 git -C "$INVENTORY_RANGE" commit -qm inventory-base
 INVENTORY_BASE="$(git -C "$INVENTORY_RANGE" rev-parse HEAD)"
@@ -540,11 +543,17 @@ assert_inventory_ranges() {
     [ "$edit" != unrendered-root ] || root=.other
     [ "$edit" != repository-standard ] ||
       printf '[env]\nHARNESS_CI_STANDARD_PATHS = ".kendex-generated.json"\n' >"$INVENTORY_RANGE/kendex.settings.toml"
-    mkdir -p "$INVENTORY_RANGE/$root/skills/x/scripts"
-    printf 'added\n' >"$INVENTORY_RANGE/skills/x/scripts/added"
-    printf 'added\n' >"$INVENTORY_RANGE/$root/skills/x/scripts/added"
-    jq --arg added "$root/skills/x/scripts/added" '. + [$added]' \
-      "$INVENTORY_RANGE/.kendex-generated.json" >"$SANDBOX/next-inventory"
+    if [ "$edit" = removed ]; then
+      git -C "$INVENTORY_RANGE" rm -q skills/x/scripts/gone .agents/skills/x/scripts/gone
+      jq 'map(select(. != ".agents/skills/x/scripts/gone"))' \
+        "$INVENTORY_RANGE/.kendex-generated.json" >"$SANDBOX/next-inventory"
+    else
+      mkdir -p "$INVENTORY_RANGE/$root/skills/x/scripts"
+      printf 'added\n' >"$INVENTORY_RANGE/skills/x/scripts/added"
+      printf 'added\n' >"$INVENTORY_RANGE/$root/skills/x/scripts/added"
+      jq --arg added "$root/skills/x/scripts/added" '. + [$added]' \
+        "$INVENTORY_RANGE/.kendex-generated.json" >"$SANDBOX/next-inventory"
+    fi
     case "$edit" in
       hash-edited)
         jq --arg hash "sha256:$(printf '%064d' 1)" \
@@ -559,7 +568,8 @@ assert_inventory_ranges() {
     assert_eq "inventory range: $edit" "$expected" \
       "$(run_arm --floor small --base "$INVENTORY_BASE" --head HEAD --repo "$INVENTORY_RANGE")"
   done <<'INVENTORY'
-added|standard cause=excluded-path rc=0
+added|standard cause=branch-class class=standard rc=0
+removed|small cause=floor class=small rc=0
 hash-edited|standard cause=excluded-path rc=0
 kept-unlisted|standard cause=excluded-path rc=0
 unrendered-root|standard cause=excluded-path rc=0
@@ -567,5 +577,8 @@ repository-standard|standard cause=repository-standard-path rc=0
 INVENTORY
 }
 assert_inventory_ranges
+ARM_BIN="$(mutant no-inventory-exception change-scope \
+  '          change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then' \
+  '          false; then')" INVENTORY_ONLY=removed control no-inventory-exception assert_inventory_ranges
 
 report launch

@@ -18,6 +18,9 @@
 # change_scope_location_load REPO loads the narrow-phase lists and
 # CHANGE_CLASS_STANDARD_PATHS from REPO's main checkout, returning 1 with
 # CHANGE_CLASS_CAUSE on an unreadable list or settings file.
+# change_scope_inventory_rendered BASE HEAD REPO STDERR_FILE returns 0 where
+# harness-only proves the range's inventory change names-only under render
+# roots the main checkout's settings name; it needs lib/branch-growth.sh.
 #
 # The helpers after the path rules are the classifier's own, shared with the
 # harness-ci wrapper that judges the queue-only class on the same base commit.
@@ -190,6 +193,7 @@ change_scope_location_load() { # REPO
   fi
   CHANGE_CLASS_CAUSE=base-settings-unreadable
   root="$(change_scope_main_root "$1")" || return 1
+  CHANGE_CLASS_SETTINGS_ROOT="$root"
   # A lane and its inherited settings cannot choose their own standard paths.
   CHANGE_CLASS_STANDARD_PATHS="$(
     unset HARNESS_CI_STANDARD_PATHS
@@ -202,6 +206,21 @@ change_scope_location_load() { # REPO
     [ "${#globs[@]}" -eq 0 ] || printf '%s\n' "${globs[@]}"
   )" || return 1
   CHANGE_CLASS_CAUSE=""
+}
+
+# An unreadable or absent verdict keeps the inventory under the path rules.
+change_scope_inventory_rendered() { # BASE HEAD REPO STDERR_FILE
+  local reader="$CHANGE_SCOPE_LIB_DIR/../harness-only" inventory_change
+  [ -x "$reader" ] || return 1
+  "$reader" --mode harness --event pull_request --base "$1" --head "$2" --repo "$3" \
+    --output /dev/null >/dev/null 2>"$4" || return 1
+  inventory_change="$(sed -n 's/^inventory-change: //p' "$4" | tail -1)" || return 1
+  case "$inventory_change" in
+    names-only\ *\ roots=*)
+      names_only_roots_rendered "${inventory_change##* roots=}" \
+        branch_growth_render_roots "$CHANGE_CLASS_SETTINGS_ROOT" ;;
+    *) return 1 ;;
+  esac
 }
 
 # Splitting a blank-separated list leaves each word open to pathname
