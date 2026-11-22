@@ -561,42 +561,52 @@ fn a_companion_follows_its_parent_only_where_the_parent_runs() {
 /// declared hook requires keeps every tool that requirer runs on besides,
 /// so the next refresh withholds nothing from them. The pin grows to the
 /// requirer's tools and no further: a requirer on one tool adds only that
-/// one, never the scope's others.
+/// one, never the scope's others, and one switched off adds none. Two
+/// hooks pinned together, where the second is required only where the
+/// first is widened to, both keep their requirers' tools.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn pinning_a_required_hook_keeps_every_tool_its_requirers_run_on() {
     use HarnessId::{Claude, Codex, Copilot};
+    type Row<'a> = (
+        &'a str,
+        &'a [&'a str],
+        HarnessId,
+        &'a [HarnessId],
+        &'a [(&'a str, [bool; 2])],
+    );
     let pair = "[hooks.deliver]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n";
+    let halt = "[hooks.halt]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n";
     let one_way = "[hooks.caller]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
-    let rows: [(&str, &str, HarnessId, &[HarnessId], &[(&str, [bool; 2])]); 3] = [
-        (
-            pair,
-            "judge",
-            Copilot,
-            &[Claude, Codex, Copilot],
-            &[
-                ("judge", [true, true]),
-                ("deliver", [true, true]),
-                ("halt", [true, true]),
-            ],
-        ),
-        (
-            pair,
-            "judge",
-            Claude,
-            &[Claude, Codex],
-            &[
-                ("judge", [true, true]),
-                ("deliver", [true, true]),
-                ("halt", [true, true]),
-            ],
-        ),
+    let off = "[hooks.caller]\nsource = \"cat\"\nenabled = false\n";
+    let set = [
+        ("judge", [true, true]),
+        ("deliver", [true, true]),
+        ("halt", [true, true]),
+    ];
+    let rows: [Row; 5] = [
+        (pair, &["judge"], Copilot, &[Claude, Codex, Copilot], &set),
+        (pair, &["judge"], Claude, &[Claude, Codex], &set),
         (
             one_way,
-            "plain",
+            &["plain"],
+            Copilot,
+            &[Claude, Copilot],
+            &[("caller", [true, false]), ("plain", [true, false])],
+        ),
+        (
+            halt,
+            &["judge", "deliver"],
+            Copilot,
+            &[Claude, Codex, Copilot],
+            &set,
+        ),
+        (
+            off,
+            &["plain"],
             Claude,
             &[Claude],
-            &[("caller", [true, false]), ("plain", [true, false])],
+            &[("plain", [true, false])],
         ),
     ];
     for (declarations, added, asked, pin, lands) in rows {
@@ -609,24 +619,27 @@ fn pinning_a_required_hook_keeps_every_tool_its_requirers_run_on() {
             &f.scope,
             &ops::AddRequest {
                 source: Some("cat".into()),
-                hooks: vec![added.into()],
+                hooks: added.iter().map(|name| (*name).to_owned()).collect(),
                 harnesses: Some(vec![asked]),
                 ..Default::default()
             },
         )
         .unwrap();
         apply::execute(&f.env, &report.plan).unwrap();
-        let declared: BTreeSet<HarnessId> = manifest_of(&f).hooks[added]
-            .harnesses
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-        assert_eq!(
-            declared,
-            pin.iter().copied().collect(),
-            "{added} --harness {asked:?}"
-        );
+        let manifest = manifest_of(&f);
+        for name in added {
+            let declared: BTreeSet<HarnessId> = manifest.hooks[*name]
+                .harnesses
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            assert_eq!(
+                declared,
+                pin.iter().copied().collect(),
+                "{added:?} --harness {asked:?}: {name}"
+            );
+        }
         let refresh = audit(&f.env, &f.scope).unwrap();
         apply::execute(&f.env, &refresh.plan).unwrap();
         for (name, on) in lands {
@@ -637,7 +650,7 @@ fn pinning_a_required_hook_keeps_every_tool_its_requirers_run_on() {
                         registered(&f, harness, name)
                     ),
                     (lands, lands),
-                    "{added} --harness {asked:?}: {name} on {harness:?} (written, registered): {:?}",
+                    "{added:?} --harness {asked:?}: {name} on {harness:?} (written, registered): {:?}",
                     messages(&refresh)
                 );
             }

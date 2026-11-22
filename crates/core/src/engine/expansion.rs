@@ -1057,7 +1057,7 @@ pub(super) fn expand(
 }
 
 /// Each package `manifest` declares with a pin that leaves out tools a
-/// requirer runs it on, with those tools (`DesiredState::pins_short`),
+/// requirer switched on requires it on, with those tools (`DesiredState::pins_short`),
 /// read off the declaration walk alone.
 pub(super) fn pins_short_of_requirers(
     env: &Env,

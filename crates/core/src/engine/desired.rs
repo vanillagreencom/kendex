@@ -581,7 +581,7 @@ pub struct DesiredState {
     /// hook off a tool it could not run on anyway.
     pub withheld_past_pin: BTreeSet<(ItemKind, String, HarnessId)>,
     /// Each companion whose own declaration's pin leaves out tools a
-    /// requirer runs it on, with those tools
+    /// requirer switched on requires it on, with those tools
     /// ([`super::desired_kinds::NotWritten::OtherTools`]). It plans
     /// nothing: an add that pins a package reads it before persisting
     /// (`expansion::pins_short_of_requirers`).

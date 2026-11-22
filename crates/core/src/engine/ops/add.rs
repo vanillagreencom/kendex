@@ -294,9 +294,11 @@ impl PreparedAddition {
 }
 
 /// The pin `--harness` writes on each package this request declares,
-/// widened by every tool a requirer runs it on. A pin leaving one out
-/// withholds that requirer there, and every hook requiring the requirer
-/// after it, so a dependency never narrows below what needs it. A widened
+/// widened by every tool a requirer switched on requires it on. A pin
+/// leaving one out leaves that requirer without it there, and a hook is
+/// withheld for it with every hook requiring it after, so a dependency
+/// never narrows below what needs it. An agent's assignment never needs
+/// the skill it loads, so it widens nothing. A widened
 /// package runs on new tools, where it can require another package this
 /// request pins, so the walk is asked again until no pin of this request
 /// is short.
