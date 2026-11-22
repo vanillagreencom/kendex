@@ -267,6 +267,8 @@ This file's stance is not copied into a handoff.
 A standing instruction:
 
 1. When the owner gives it, write the row to a file with the harness file tool. `id` is the owner note's id; `end` is a date, an event or `until lifted`. `orch-runtime` stamps `at` where the row has none.
+   - Set `holds_launches` to `true` on an instruction that holds launches. The status report lists such a row under Blocked until its end.
+   - Write a date `end` as `YYYY-MM-DDThh:mm:ssZ`. The report drops a hold whose `end` in that form has passed, and keeps one whose `end` is an event or `until lifted`.
 2. Append it with `.agents/skills/orch/scripts/orch-runtime state standing add --fleet [FILE]`. The text never crosses argv.
 3. A successor reads the array whole at takeover with `.agents/skills/orch/scripts/orch-runtime state get --fleet /standing`, beside the mailbox and the handoff ([oversee-takeover.md § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff)).
 4. At its end, write the remaining rows to a file as one array. Replace the field with `.agents/skills/orch/scripts/orch-runtime state standing lift --fleet [FILE]`, which records the lift as one `ruling` row in the same write.

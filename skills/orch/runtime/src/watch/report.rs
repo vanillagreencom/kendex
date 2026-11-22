@@ -719,6 +719,49 @@ struct StopLine {
     remaining: Vec<String>,
 }
 
+/// The Blocked lines of the fleet's standing launch holds at `now`: each
+/// `standing[]` row whose `holds_launches` is `true`, less one whose `end`
+/// is a time already past. An `end` naming an event or `until lifted`
+/// holds until the overseer lifts the row. A `holds_launches` that is not
+/// a boolean leaves open whether the row holds launches, so it is named
+/// unread.
+fn launch_holds(doc: &Document, now: u64) -> Vec<String> {
+    let mut lines = Vec::new();
+    for row in doc
+        .get("standing")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let id = row.get("id").map_or("unread".to_owned(), |id| {
+            id.as_str().map_or_else(|| id.to_string(), str::to_owned)
+        });
+        match row.get("holds_launches") {
+            None | Some(Value::Bool(false)) => {}
+            Some(Value::Bool(true)) => {
+                let end = field(row, "end").unwrap_or("unread");
+                if clock::epoch_secs(end).is_some_and(|at| at <= now) {
+                    continue;
+                }
+                lines.push(format!(
+                    "- Standing launch hold {}: {}; end: {}; since {}.\n",
+                    cell(&id),
+                    cell(field(row, "text").unwrap_or("unread")),
+                    cell(end),
+                    cell(field(row, "at").unwrap_or("unread"))
+                ));
+            }
+            Some(other) => lines.push(format!(
+                "- Unread standing row {}: holds_launches is {}; source: the fleet's standing instructions; as of {}.\n",
+                cell(&id),
+                cell(&other.to_string()),
+                clock::iso_utc(now)
+            )),
+        }
+    }
+    lines
+}
+
 pub fn render(ctx: &Context, now: u64) -> Result<String> {
     let policy = Policy::of(&ctx.settings)?;
     let doc = load_fleet(&ctx.fleet)?;
@@ -991,6 +1034,9 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     out.push_str("\n```\nIn progress\n```\n\n");
     let baseline = super::Baseline::load(&super::Paths::of(&ctx.fleet)?.baseline)?;
     let intents = intents(&doc)?;
+    // Read once, and only for a listed lane whose record names no pull
+    // request.
+    let mut open = None;
     for lane in lanes.iter().filter(|l| l.status != LaneStatus::Done) {
         // A lane out of flight is listed only while the watch holds its
         // close.
@@ -1003,12 +1049,31 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         {
             continue;
         }
-        // The pull request the lane record names: its open one, else the
-        // one its park judged.
-        let pull = ["pending_pr", "parked"]
+        // The pull request the lane record names: its pending one, else the
+        // one its park judged, else the open ones GitHub lists as its own.
+        let recorded = ["pending_pr", "parked"]
             .iter()
-            .find_map(|key| lane.extra.get(*key)?.get("pr")?.as_u64())
-            .map_or("no pull request".to_owned(), |number| format!("#{number}"));
+            .find_map(|key| lane.extra.get(*key)?.get("pr")?.as_u64());
+        let pull = match recorded {
+            Some(number) => format!("#{number}"),
+            None => match open.get_or_insert_with(|| {
+                let repos = ctx
+                    .settings
+                    .reads
+                    .watched(ctx.repos.iter().map(String::as_str));
+                super::github::report_open(&super::github::handle(&ctx.gh), &repos, &lanes)
+            }) {
+                Ok(own) => match own.get(&lane.item) {
+                    Some(numbers) => numbers
+                        .iter()
+                        .map(|number| format!("#{number}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    None => "no pull request".to_owned(),
+                },
+                Err(e) => format!("pull request unread ({})", cell(&e.to_string())),
+            },
+        };
         let held = held.map_or(String::new(), |held| format!("; held: {}", cell(&held)));
         out.push_str(&format!(
             "- {}: {:?}, {pull}{held}.\n",
@@ -1032,6 +1097,7 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         ));
     }
     out.push_str("\n```\nBlocked\n```\n\n");
+    lane_blockers.extend(launch_holds(&doc, now));
     let blocked = !lane_blockers.is_empty();
     for line in lane_blockers {
         out.push_str(&line);
@@ -1046,7 +1112,7 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     }
     if !blocked && unread.is_empty() {
         out.push_str(&format!(
-            "- None; source: lane status of every active lane and each lane's post-PR stop; as of {}.\n",
+            "- None; source: lane status of every active lane, each lane's post-PR stop and the standing launch holds; as of {}.\n",
             clock::iso_utc(now)
         ));
     }

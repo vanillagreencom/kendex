@@ -256,7 +256,7 @@ The fleet record `workflow-state-oversee.json` holds the init object and the mem
 | `launch_queue` | string[] | `record-overseer-ledger` entry `launch-queue` | The items the last selection chose and has not launched, in launch order, replaced whole. |
 | `triaged` | object[] | `record-overseer-ledger` entry `triage` | `{issue, reason, verdict}` per issue the triage verifier judged, `verdict` being `kept` or `canceled`. |
 | `alerts_triaged` | object[] | `record-overseer-ledger` entry `alert-verdict` | `{repo, kind, number, verdict, item, reason}` per security alert judged. |
-| `standing` | object[] | `state standing add`, `state standing lift` | The owner's standing instructions, `{at, id, scope, end, text}`. |
+| `standing` | object[] | `state standing add`, `state standing lift` | The owner's standing instructions, `{at, id, scope, end, text, holds_launches?}`. |
 | `fleet_log` | object[] | `state log append`, and the writers named below | One `{at, kind, item, text}` row per entry ([§ Recording policy](#recording-policy)). |
 
 The members' rules, in the table's order:

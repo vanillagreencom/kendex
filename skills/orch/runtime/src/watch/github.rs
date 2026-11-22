@@ -1519,6 +1519,42 @@ pub(super) fn report_merges(
     Ok(rows)
 }
 
+/// Each lane item's own open pull requests, by item, in number order: every
+/// repository's open list read whole and each member judged by the
+/// lane-own rule, since a running lane's record names no pull request
+/// until its park.
+pub(super) fn report_open(
+    gh: &Gh,
+    repos: &[String],
+    lanes: &[Lane],
+) -> Result<BTreeMap<String, Vec<u64>>> {
+    let mut own: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    for repo in repos {
+        let owner = repo.split('/').next().unwrap_or(repo);
+        let path = format!("repos/{repo}/pulls?state=open");
+        let Some(pulls) = gh.list::<Pull>("report-open", &path)? else {
+            return Err(refused(
+                "github-read-failed",
+                &[("read", "report-open"), ("path", &path)],
+            ));
+        };
+        for pull in &pulls {
+            for lane in lanes {
+                let pr = recorded(lane)
+                    .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
+                    .map(|(_, number)| number);
+                if lane_own(pull, &lane.item, owner, pr) {
+                    own.entry(lane.item.clone()).or_default().push(pull.number);
+                }
+            }
+        }
+    }
+    for numbers in own.values_mut() {
+        numbers.sort_unstable();
+    }
+    Ok(own)
+}
+
 /// Whether `workflow` is absent from `repo`, proved by a complete,
 /// successful workflow list alone.
 fn workflow_absent(gh: &Gh, repo: &str, workflow: &str) -> Result<bool> {
