@@ -46,9 +46,9 @@ run_table "room checks" "$DEFAULTS" "$ROWS" room_state
 
 # The stock claude and codex commands' own check: agent-runtime's account pick
 # for kendex's standard model of the harness, taken where orch is installed in
-# the project, the command then running on the account it names. agent-runtime
-# is stubbed here and real below.
-STOCK_DEFAULTS="ps:none current:claude models:claude+codex count:1 bin:claude bin:codex orch:installed runtime:room tier:class"
+# the project and AGENT_RUNTIME_ACCOUNT_DIRS names accounts, the command then
+# running on the account it names. agent-runtime is stubbed here and real below.
+STOCK_DEFAULTS="ps:none current:claude models:claude+codex count:1 bin:claude bin:codex orch:installed accounts:listed runtime:room tier:class"
 CLAUDE_PICK="accounts pick --env --harness claude --native-model opus"
 CODEX_PICK="accounts pick --env --harness codex --native-model gpt-6.2-sol --binding-floor"
 CODEX_TAKEN="calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out"
@@ -73,6 +73,7 @@ STOCK_ROWS="
 a Claude session's codex review runs on the account the pick names for kendex's standard Codex model|-|review|0|<out>|same:claude:claude stockroom:codex:CODEX:runtime-seat single:codex:review:claude written|$CODEX_TAKEN runtime=$CODEX_PICK seat=claude:none,codex:runtime-seat model=codex:gpt-6.2-sol
 a Codex session's claude review likewise, its pick naming the class's Claude model|current:codex|review|0|<out>|stockroom:claude:CLAUDE:runtime-seat single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out runtime=$CLAUDE_PICK seat=claude:runtime-seat,codex:none model=claude:opus
 without orch in the project the built-in entries keep no check and run on the account they inherit|orch:none|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
+with orch installed and AGENT_RUNTIME_ACCOUNT_DIRS unset the pick has no account to choose among, so no check|accounts:unset|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
 with orch installed and agent-runtime not, the check is unavailable, never room, and the next entry reviews|runtime:none models:claude+codex+$NEXT|review|0|<out>|same:claude:claude stockroomunavail:codex:CODEX single:my-model:review:claude written|$NEXT_TAKEN runtime=- seat=claude:none,codex:none model=-
 every account walled refuses the entry and the next reviews|runtime:walled models:claude+codex+$NEXT|review|0|<out>|same:claude:claude roomsaid:runtime:walled stockroomrefused:codex:CODEX:3 single:my-model:review:claude written|$NEXT_TAKEN runtime=$CODEX_PICK seat=claude:none,codex:none model=-
 a configured command replaces the built-in model and check|cmd:codex=codex|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=-
@@ -132,15 +133,16 @@ claude_account() {
 # The built-in Claude command and its built-in check, with orch installed in
 # the project, the runtime real and only the review CLI and kendex's class
 # answer stubbed: the pick is the one the package runs, not a setting.
-# label|second account weekly usage|orch installed|reviewer|account
+# label|second account weekly usage|orch installed|AGENT_RUNTIME_ACCOUNT_DIRS|reviewer|account
 CLAUDE_ROWS='
-Claude chooses the second account after the first reaches its weekly wall|20|yes|claude|second
-Claude account metadata survives collection with another opinion|20|union|claude,my-model|second
-control: without orch the review stays on the walled account it inherits|20|no|claude|first
-Claude pool exhaustion selects the next cross-model reviewer|100|yes|my-model|none
+Claude chooses the second account after the first reaches its weekly wall|20|yes|listed|claude|second
+Claude account metadata survives collection with another opinion|20|union|listed|claude,my-model|second
+control: without orch the review stays on the walled account it inherits|20|no|listed|claude|first
+with orch installed and no account listed the review runs on the account it inherits|20|yes|unset|claude|first
+Claude pool exhaustion selects the next cross-model reviewer|100|yes|listed|my-model|none
 '
 claude_row=0
-while IFS='|' read -r label weekly checked reviewer account; do
+while IFS='|' read -r label weekly checked listed reviewer account; do
   [[ -n "$label" ]] || continue
   claude_row=$((claude_row + 1))
   orch=installed
@@ -163,8 +165,9 @@ set -euo pipefail
 "${0%/*}/claude-response" | jq --arg account "$CLAUDE_CONFIG_DIR" '.qa_metadata.account = $account'
 SH
   chmod +x "$ROW/bin/lane-claude"
-  W_ENV+=("AGENT_RUNTIME_ACCOUNT_DIRS=$H/.firstclaude:$H/.secondclaude" "USAGE_FIXTURE_DIR=$USAGE"
-    "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  W_ENV+=("USAGE_FIXTURE_DIR=$USAGE" "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state"
+    "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  [[ "$listed" != listed ]] || W_ENV+=("AGENT_RUNTIME_ACCOUNT_DIRS=$H/.firstclaude:$H/.secondclaude")
   [[ "$checked" != union ]] || W_ENV+=("SECOND_OPINION_COUNT=2")
   got="$(run review)"
   assert_eq "${got%% *}" rc=0 "$label: review completes"

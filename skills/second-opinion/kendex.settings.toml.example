@@ -55,15 +55,17 @@ SECOND_OPINION_COUNT = "1"
 # The built-in entries come with that check, run from
 # .agents/skills/agent-runtime in the project this skill is installed in
 # (`second-opinion --help` prints each): claude and codex where orch is
-# installed in the project, so each review runs on an account of
-# AGENT_RUNTIME_ACCOUNT_DIRS with room; pi-copilot and pi-copilot-gpt always,
-# with their command, model and inline diff. An entry whose check refuses, or
-# finds agent-runtime not installed or not built, is skipped for the next one.
-# Without orch, claude and codex have no check; in a global install, which has
-# no project, neither have they, and the Copilot entries are skipped. Setting
-# an entry's _CMD replaces its built-in model and check; setting its _ROOM_CMD
-# empty drops the check. Each target remains subject to session-model
-# exclusion.
+# installed in the project and AGENT_RUNTIME_ACCOUNT_DIRS names accounts, so
+# each review runs on one of those accounts with room; pi-copilot and
+# pi-copilot-gpt always, with their command, model and inline diff. An entry
+# whose check refuses, as the claude or codex check does where that key names
+# no account of its harness, or finds agent-runtime not installed or not
+# built, is skipped for the next one. Without orch, or with that key unset or
+# empty, claude and codex have no check and run on the account they inherit;
+# in a global install, which has no project, neither have they, and the
+# Copilot entries are skipped. Setting an entry's _CMD replaces its built-in
+# model and check; setting its _ROOM_CMD empty drops the check. Each target
+# remains subject to session-model exclusion.
 # The Copilot check reads AGENT_RUNTIME_COPILOT_POOL from the settings in the
 # lane's own tree; a hosted lane states it in .env.local until its provider
 # forwards it, and one without it records the check's refusal. The judge reads

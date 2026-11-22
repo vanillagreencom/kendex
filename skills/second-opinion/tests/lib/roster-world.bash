@@ -115,7 +115,7 @@ PROJ=""
 # Word state, reset per row.
 W_PS="" W_PAD="" W_CURRENT="" W_MODELS="" W_COUNT="" W_TARGET="" W_STALE=""
 W_RESP_CLAUDE="" W_RESP_CODEX="" W_RESP_EXTRA="" W_PI="" W_RUNTIME="" W_PATH=""
-W_GLOBAL="" W_ORCH="" W_ENV=()
+W_GLOBAL="" W_ORCH="" W_ACCOUNTS="" W_ENV=()
 
 # `_` is a space and TAB a tab inside an identity value: the padded spellings.
 unpad() { local v="${1//_/ }"; printf '%s' "${v//TAB/$'\t'}"; }
@@ -236,6 +236,11 @@ word() {
     # (skills/agent-runtime/runtime/src/accounts/here.rs `count`); orch:none
     # leaves it out
     orch:installed|orch:none) W_ORCH="${1#orch:}" ;;
+    # accounts:listed names AGENT_RUNTIME_ACCOUNT_DIRS in the project's
+    # kendex.settings.toml, where a consumer sets it, which arms the stock
+    # claude and codex room checks beside orch; accounts:unset leaves it out
+    accounts:listed) W_ACCOUNTS=.claude:.codex ;;
+    accounts:unset) W_ACCOUNTS="" ;;
     # kendex's class table for the built-in claude and codex commands:
     # tier:class answers opus and gpt-6.2-sol, tier:none fails; every other
     # kendex call goes to the next kendex on PATH
@@ -468,8 +473,13 @@ build() {
   SO="$PROJ/skills/second-opinion/scripts/second-opinion"
   W_PS=none W_PAD="" W_CURRENT=- W_MODELS=- W_COUNT=- W_TARGET="" W_STALE=""
   W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean W_PI="" W_RUNTIME="" W_PATH=""
-  W_GLOBAL="" W_ORCH="" W_ENV=()
+  W_GLOBAL="" W_ORCH="" W_ACCOUNTS="" W_ENV=()
   for w in "$@"; do word "$w"; done
+  if [[ -n "$W_ACCOUNTS" ]]; then
+    [[ ! -e "$PROJ/kendex.settings.toml" ]] \
+      || { echo "roster-world: accounts:listed and a proj: word both write kendex.settings.toml" >&2; exit 2; }
+    printf '[env]\nAGENT_RUNTIME_ACCOUNT_DIRS = "%s"\n' "$W_ACCOUNTS" >"$PROJ/kendex.settings.toml"
+  fi
   if [[ -n "$W_GLOBAL" ]]; then
     mkdir -p "$ROW/global"
     second_opinion_install "$SKILL_DIR" "$ROW/global"

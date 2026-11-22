@@ -33,9 +33,9 @@ Set shared values in `kendex.settings.toml` under `[env]` and personal overrides
 - `SECOND_OPINION_TIMEOUT`: seconds per CLI invocation, default `1080`.
 - `SECOND_OPINION_COPILOT_CMD` and `SECOND_OPINION_COPILOT_MODEL`: a `copilot` entry's command and the model it runs. Copilot CLI documents no read-only headless mode, so there is no built-in command. It fronts several vendors, so the entry is skipped until the model is named.
 - `claude` and `codex`: each built-in command runs kendex's standard model for its harness.
-  - Where orch is installed in the project, each also has a room check through agent-runtime's `agent-runtime accounts pick --env`, so a review runs on an account with room, the next account when one is walled.
-  - With orch installed, an entry is skipped when agent-runtime is not installed or not set up in the project, or when the check refuses.
-  - Without orch they have no check.
+  - Where orch is installed in the project and `AGENT_RUNTIME_ACCOUNT_DIRS` names accounts, each also has a room check through agent-runtime's `agent-runtime accounts pick --env`. The check chooses among the accounts that key names, so a review runs on one with room, the next account when one is walled.
+  - With the check armed, an entry is skipped when agent-runtime is not installed or not set up in the project, or when the check refuses, as it does for a harness the key names no account of.
+  - Without orch, or with `AGENT_RUNTIME_ACCOUNT_DIRS` unset or empty, they have no check and run on the account they inherit.
   - Setting an entry's `_CMD` replaces its model and its check.
 - `pi-copilot` and `pi-copilot-gpt`: Pi on the Copilot pool, running Claude Opus and GPT, with read-only file tools and no shell.
   - Both follow `claude` and `codex` in the default list, as their fallbacks.
