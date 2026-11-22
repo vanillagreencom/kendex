@@ -1,13 +1,8 @@
 # Long sessions
 
-- Read each named rule, handoff or memory section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`.
-- Use the exact heading text from its owning file.
-- A returned parent section includes its children; use that text rather than reading a child again.
-
 ## Homes
 
-- For additions to a Jarvis home, start at [Personal additions](home-contract.md#personal-additions).
-- Each record kind has one home. Write a record to its home, never to the handoff.
+Write a record to its home, never to the handoff.
 
 | Record kind | Home |
 |---|---|
@@ -39,8 +34,6 @@ With orch installed, the open-exchange reads are `lane-mail pending`, peer asks 
   - Read both selections live and through every page.
   - When a read fails, report the checks unavailable.
 
-Use [Task reconciliation](../workflows/tasks.md) to capture and reuse each requested outcome, apply current decisions and retain its next action before delegation, waiting or succession. Its tracker setup and migration steps precede reliance on open-item discovery.
-
 ## Handoff
 
 Before normal succession, wait for every attached sub-agent this session launched to return in the current turn.
@@ -58,14 +51,10 @@ If the session is dead, walled, or cannot read its child state, the emergency ha
 The current handoff defaults to `state/handoff.md` in the [home layout](home-layout.md).
 
 - A consumer's home contract may name another path.
-- The `progress-log --handoff PATH` commit check reads that selected path from the index and refuses its established-file deletion. It uses the default only when no override is given.
+- The `progress-log --handoff PATH` commit check reads that selected path from the index and refuses its established-file deletion.
 - Its earlier generations live in the `archive/` directory beside it.
 
-Read this contract when writing, reading or checking a handoff or lane result during the [session workflow](../workflows/session.md).
-
-- Each item has a durable id and a recorded time.
-- The current handoff has these four sections. Each section occurs exactly once.
-- Once committed, the handoff remains present in the candidate commit. New homes may omit it before their first session.
+Each item has a durable id and a recorded time. The current handoff has these four sections. Each section occurs exactly once.
 
 | Section | Required content |
 |---|---|
@@ -74,13 +63,10 @@ Read this contract when writing, reading or checking a handoff or lane result du
 | Instructions in force | Each temporary instruction from the user, its source and the event that ends it. |
 | Progress log | One record at the time of each decision, state change, uncertain send, or user message handled without a reply, under the record contract below. |
 
-- **State**:
-  - Read the next report through `jarvis-session report-due`; retain no due row.
-  - The checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log.
+- **State**: the checkpoint records when this state was checked and the first and last log ids it covers, or none for an empty log.
 - **Sub-agents**:
   - For an attached agent, identify its launch prompt and harness reply by the available agent or message ids.
   - For a lane, record its task file and result file paths.
-  - Keep unfinished ids, available output locations and unknown state or locations under the emergency rule above.
 - **Instructions in force**: link the home of a standing rule.
 
 The handoff and its archive also follow these rules:
@@ -113,8 +99,6 @@ The handoff and its archive also follow these rules:
   - In that same write, apply [State retention](#state-retention) to the existing entries.
   - Keep completion evidence on its tracker item.
   - A `not-issue` ref binds no entry.
-- Keep standing rules in one home.
-- Link that home rather than repeating its text in the handoff.
 - Remove a temporary instruction when its end event occurs.
 - Remove its copied text when the instruction's standing home now states it.
 - Apply [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer) to handoff contents.
@@ -158,7 +142,6 @@ Write and rebuild State by these rules:
 Write a record only for a decision, a state change, a send whose delivery or effect is uncertain, or a user message handled without a reply.
 
 - An action whose evidence already lives in the tracker or a mailbox gets no record of its own. A record that relies on that evidence cites its tracker or message id rather than copying it.
-- Use named fields for each record.
 - Record values rather than a prose account that the successor must interpret.
 
 | Field | Required content |
@@ -200,8 +183,6 @@ Write and replay records by these rules:
   - The archive index also reads this token from a pre-cutover entry's text.
 - When the consumer's home contract names another handoff, add `--handoff PATH`, for example `--handoff state/jarvis/handoff.md`.
   - Relative paths start at the home root, including when invoked from a subdirectory; absolute paths select that file.
-  - The selected file must exist and contain one Progress log section.
-  - Omitting the option selects `state/handoff.md`.
 - A record about a user's message names the message's full id in Operation or Decision.
 - When the record handles a request without a reply, its Decision says `no reply`. `owner-unanswered` then stops listing the message.
 - `owner-unanswered` takes the same `--handoff PATH` and reads the selected handoff and the archive beside it.
@@ -209,7 +190,6 @@ Write and replay records by these rules:
   - The watch loop reads the default handoff.
 - Archive files may hold pre-cutover `- HH:MMZ ...` entries.
   - `owner-unanswered` reads each entry and its indented lines as both Operation and Decision, in archive files only.
-  - Write new records with `progress-log`; nothing writes the old form.
 
 ### Lane results
 
@@ -233,6 +213,4 @@ In Harm and condition, state likelihood only when the source establishes it; oth
 - For a durable ruling, follow [memory.md:Notes](memory.md#notes).
   - Link its tracker item to the affected standing rule.
   - A changed rule states only the resulting current instruction, without the session's disposition history.
-- Keep only unresolved next actions in the handoff's State section.
-- Keep completed findings and their disposition evidence in their homes under [Homes](#homes).
 - Read the recorded disposition at its home before acting on a finding again.

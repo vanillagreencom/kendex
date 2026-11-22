@@ -21,9 +21,6 @@ Read when setting up a Jarvis home, adding an agent, skill or workstream, choosi
 | `tmp/` | Local | Scratch files, which stay on this machine |
 | `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets, which stay on this machine |
 
-- `skills/NAME/`: follow [Customize](../README.md#customize) to declare the home source and install your skills.
-- `agents/NAME.md`: declare it through [Personal additions](home-contract.md#personal-additions).
-- `memory/workstreams.md`: [Personal additions](home-contract.md#personal-additions) sets its content. Active work stays in the tracker.
 - `state/handoff.md`: `jarvis-session succeed` saves and hands over this file only. `progress-log` and `owner-unanswered` select another through `--handoff PATH` under [Handoff](long-session.md#handoff).
 - `state/archive/`: [Handoff](long-session.md#handoff) owns what the session model writes here. `jarvis-session succeed` saves its own copy of the handoff as `handoff-<generation>-<id>.md`.
 - `state/archive/INDEX.md`: `progress-log --archived` writes these lines, under [Handoff](long-session.md#handoff). `owner-unanswered` reads any file it does not list, such as the copy `jarvis-session succeed` saves.
@@ -34,7 +31,7 @@ Read when setting up a Jarvis home, adding an agent, skill or workstream, choosi
 - `tmp/`: scratch files follow [Scratch files](computer-use.md#scratch-files).
 - The private env file: kendex creates it with mode 600.
 
-`kendex add` writes the managed local-state ignore block. When kendex saves a secret into a new private env file, it adds that file's ignore line. These lines keep scratch and secrets out of Git. You do not need to add them yourself.
+`kendex add` writes the managed local-state ignore block. When kendex saves a secret into a new private env file, it adds that file's ignore line. You do not need to add them yourself.
 
 ## Initialize
 
@@ -69,7 +66,6 @@ In a qualifying folder the step creates each missing starting file and keeps eac
 It creates no Git repository, handoff or other folder; their own writers create them when needed.
 
 - A folder that already holds `AGENTS.md` and `memory/MEMORY.md` is an initialized home. Git does not carry an empty `state/` to a clone, so the step creates only that folder there and does not judge the folder again.
-- A change to the starting text reaches only new homes, since `AGENTS.md` is yours.
 
 The step also adds each harness's vendor-memory switch when it is missing, so the home keeps one memory:
 
@@ -119,7 +115,7 @@ The [session command](session-command.md#session-command) keeps one tmux control
 
 - Its record stays across logins and restarts.
 - Each home uses a separate tmux socket. The sessions Start and succession open live on that socket, so a restart of your own tmux server does not end Jarvis.
-- Status names that socket and the owned session, window and pane. While a controller is live, it prints the attach command on stderr.
+- Status names that socket and the owned session, window and pane.
 
 The record also keeps the private brief that the [session command](session-command.md#session-command) describes. The stored brief is continuing instruction: put a one-time fact, such as a session number, in the handoff.
 
