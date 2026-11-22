@@ -2,9 +2,17 @@
 
 For explicit clarification when the answer materially changes the plan. Prose questions buried in your reply are easier to miss and harder to act on.
 
-Use when: the next action depends on a choice only the user can make (which file, which approach, which environment); the request is ambiguous in a way prose paraphrasing won't resolve; you need confirmation before an irreversible/high-blast-radius action (deletes, force-pushes, sending external messages).
+Use when:
 
-Do not use for: simple yes/no that fits in conversation; anything you can determine yourself by reading the code; speculative "would you like me to also…" follow-ups — finish the asked work first.
+- the next action depends on a choice only the user can make (which file, which approach, which environment);
+- the request is ambiguous in a way prose paraphrasing won't resolve;
+- you need confirmation before an irreversible/high-blast-radius action (deletes, force-pushes, sending external messages).
+
+Do not use for:
+
+- simple yes/no that fits in conversation;
+- anything you can determine yourself by reading the code;
+- speculative "would you like me to also…" follow-ups. Finish the asked work first.
 
 Calling rules:
 

@@ -7,7 +7,8 @@ Use:
 - Before any non-trivial multi-step work, `action: "replace"` with a full `tasks: [...]` list.
 - The moment you start an item, `action: "start_task"`.
 - The moment you finish one, `action: "mark_done"` (auto-advances to the next pending task).
-- When scope changes mid-turn, `action: "add_task"` for new follow-ups, `action: "drop_task"` for items that no longer apply.
+- When scope changes mid-turn, `action: "add_task"` for new follow-ups.
+- When scope changes mid-turn, `action: "drop_task"` for items that no longer apply.
 
 Rules:
 

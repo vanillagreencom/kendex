@@ -6,20 +6,24 @@
 
 | Pi tool/path | Exa API | Purpose | Stored content |
 |---|---|---|---|
-| `web_search provider=exa` | `POST /search` with `type: auto` by default | General web search | A **stored excerpt** per result, capped by `textMaxCharacters` |
-| `web_research` | `POST /search` with `type: deep-lite`, `deep`, or `deep-reasoning` | Evidence-backed research | Findings and raw files |
-| `web_fetch provider=exa` or URL fetch fallback | `POST /contents` | Extract known remote URLs | Exa-returned page contents, capped by `textMaxCharacters` |
+| `web_search provider=exa` | `POST /search` | General web search | A **stored excerpt** per result |
+| `web_research` | `POST /search` | Evidence-backed research | Findings and raw files |
+| `web_fetch provider=exa` | `POST /contents` | Extract known remote URLs | Exa-returned page contents |
+| URL fetch fallback | `POST /contents` | Extract known remote URLs | Exa-returned page contents |
 | `web_answer` | `POST /answer` | A direct answer from Exa's search and LLM synthesis | The answer text, returned directly |
-| `web_find_similar` | `POST /findSimilar` | Find pages similar to one URL | Returned source text as excerpts, capped by `textMaxCharacters` |
-| `code_search` | `POST /search` with code/docs domain hints | Search code and technical docs | Returned text as excerpts |
+| `web_find_similar` | `POST /findSimilar` | Find pages similar to one URL | Returned source text as excerpts |
+| `code_search` | `POST /search` | Search code and technical docs | Returned text as excerpts |
 
 - `textMaxCharacters` defaults to 12k per result for `web_search` and `web_find_similar`.
 - `textMaxCharacters` defaults to 6k per URL for `web_fetch`, lower than for search because `web_fetch` can pass dozens of URLs in one call.
+- `web_search` sends `type: auto` by default.
 - `web_search` text and highlights are optional.
+- `web_research` sends `type: deep-lite`, `deep`, or `deep-reasoning`.
 - `web_research` modes tune result count, text and highlight caps, summaries, structured output, and report sidecars.
 - `web_research` source text is provider-capped evidence, not a local crawl.
 - `web_fetch` calls `/contents` when `provider=exa` is forced or when a direct fetch fails.
 - `web_answer` stores any source with text as an excerpt.
+- `code_search` sends code/docs domain hints.
 - `code_search` is currently biased to GitHub, docs and Stack Overflow.
 
 ## Search vs answer vs research
