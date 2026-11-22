@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 # The built-in Codex target: the argv it receives, where `--disable hooks` keeps
-# the project's Codex hooks out of the nested review, and how its usage-limit
-# refusal is recorded.
+# the project's Codex hooks out of the nested review and -m names the model
+# kendex's standard class resolves to, and how its usage-limit refusal is
+# recorded.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
-EXPECTED=$'exec\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--ephemeral\n--disable\nhooks\n--json'
+BASE_EXPECTED=$'exec\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--ephemeral'
+HOOKS_JSON=$'\n--disable\nhooks\n--json'
+EXPECTED="$BASE_EXPECTED"$'\n-m\ngpt-6.2-sol'"$HOOKS_JSON"
 while IFS='|' read -r row target mode; do
   build "$row" current:none "models:$target"
+  # kendex's class table, as `kendex tier-model codex 2` answers it.
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/tier-argv"\nprintf "gpt-6.2-sol\\n"\n' "$ROW" >"$ROW/bin/kendex"
+  chmod +x "$ROW/bin/kendex"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/argv"\nexec "%s/bin/lane-codex" "$@"\n' "$ROW" "$ROW" >"$ROW/bin/codex"
   chmod +x "$ROW/bin/codex"
   want="$EXPECTED"
   want_result=0:pass
   case "$row" in
     default) ;;
-    example) cp "$SKILL_DIR/kendex.settings.toml.example" "$PROJ/kendex.settings.toml"; want=$'exec\n-m\ngpt-6.2-sol\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--disable\nhooks\n--ephemeral\n--disable\nhooks\n--json' ;;
+    unresolved) printf '#!/usr/bin/env bash\necho resolver-failed >&2\nexit 1\n' >"$ROW/bin/kendex"; want="$BASE_EXPECTED$HOOKS_JSON" ;;
     # The row alone: the project's Codex room check needs the fleet's accounts.
     project) { echo '[env]'; grep '^SECOND_OPINION_CODEX_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml"; want=$'exec\n-m\ngpt-6.2-sol\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--disable\nhooks\n--ephemeral\n--disable\nhooks\n--json' ;;
     version-control) mutate_script "$SO" 'DEFAULT_CODEX_CMD="codex exec -s' 'DEFAULT_CODEX_CMD="codex exec -m gpt-6.1-sol -s' ;;
-    env-codex) W_ENV+=("SECOND_OPINION_CODEX_CMD=env -u SO_TEST_UNSET SO_TEST_PREFIX=1 $ROW/bin/codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral") ;;
+    env-codex) W_ENV+=("SECOND_OPINION_CODEX_CMD=env -u SO_TEST_UNSET SO_TEST_PREFIX=1 $ROW/bin/codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral"); want="$BASE_EXPECTED$HOOKS_JSON" ;;
     custom-*)
       W_ENV+=("SECOND_OPINION_MY_MODEL_MODEL=codex" "SECOND_OPINION_MY_MODEL_CMD=$ROW/bin/codex exec -s read-only")
       want=$'exec\n-s\nread-only'
@@ -68,13 +74,17 @@ SH
   else got="$rc:$(jq -r '.verdict' "$ROW/out/out.json" 2>/dev/null || printf missing)"; fi
   assert_eq "$got" "$want_result" "$row delivers the requested $mode answer"
   case "$row" in copilot|opaque) assert_eq "$(cat "$ROW/allow-all")" false "$row keeps configured write restriction" ;; esac
+  case "$row" in
+    default) assert_eq "$(cat "$ROW/tier-argv")" $'tier-model\ncodex\n2' "$row resolves standard through the class table" ;;
+    unresolved) assert_eq "$(grep -c 'class=standard unresolved target=codex; using harness default' "$ROW/stderr")" 1 "$row emits one fallback notice" ;;
+  esac
   if [[ "$row" != *control ]]; then assert_eq "$(cat "$ROW/argv")" "$want" "$row backend argv"; continue; fi
   control_rc=0
   (assert_eq "$(cat "$ROW/argv")" "$EXPECTED" "must-fail: $row"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
   assert_eq "$control_rc" 1 "$row turns the argv pin red"
 done <<'ROWS'
 default|codex|review
-example|codex|review
+unresolved|codex|review
 project|codex|review
 version-control|codex|review
 env-codex|codex|review
