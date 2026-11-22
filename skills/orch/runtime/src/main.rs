@@ -871,7 +871,12 @@ enum WatchOp {
     },
     /// Start `watch run` detached beside the fleet state with these flags,
     /// reaching the mailbox and tmux server this command reaches, named on
-    /// its command line; `launch-job`'s answer and exits.
+    /// its command line; `launch-job`'s answer and exits. With
+    /// `--foreground`, become that `watch run` in place, with the flags the
+    /// last claimed runner recorded beside the fleet state, so its exit
+    /// status is this command's: the form fleet's service manager runs, and
+    /// restarts when it ends. Refuses `watch-flags-unrecorded` where no
+    /// runner has recorded any.
     Start {
         #[command(flatten)]
         target: Target,
@@ -883,6 +888,8 @@ enum WatchOp {
         since: Option<String>,
         #[arg(long = "repo")]
         repos: Vec<String>,
+        #[arg(long, conflicts_with_all = ["interval", "max_loops", "since", "repos"])]
+        foreground: bool,
     },
     /// The claim and whether its identity runs, the due times the records
     /// imply, and the last event line's number.
@@ -2580,6 +2587,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                     interval: std::time::Duration::from_secs(interval),
                     max_loops,
                     since: since.clone(),
+                    repos: repos.clone(),
                     fresh,
                 },
                 identity,
@@ -2653,6 +2661,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             max_loops,
             since,
             repos,
+            foreground,
         } => {
             let path = target_path(&target, &settings);
             let exe = std::env::current_exe().map_err(|e| {
@@ -2665,20 +2674,24 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             if !flags.private_env {
                 program.push("--no-private-env".to_owned());
             }
-            let mut words = Vec::new();
-            let pairs = [
-                ("--interval", interval.map(|n| n.to_string())),
-                ("--max-loops", max_loops.map(|n| n.to_string())),
-                ("--since", since),
-            ];
-            for (flag, value) in pairs {
-                if let Some(value) = value {
-                    words.extend([flag.to_owned(), value]);
-                }
+            if foreground {
+                let paths = watch::Paths::of(&path)?;
+                let Some(recorded) = watch::claim::read_flags(&paths)? else {
+                    return Err(orch_runtime::error::WatchError::FlagsUnrecorded {
+                        path: paths.flags,
+                    }
+                    .into());
+                };
+                let words = run_words(
+                    Some(recorded.interval),
+                    Some(recorded.max_loops),
+                    recorded.since,
+                    recorded.repos,
+                );
+                let argv = effects::watch_argv(&path, &settings, &program, &words)?;
+                return Err(become_watch(&argv));
             }
-            for repo in repos {
-                words.extend(["--repo".to_owned(), repo]);
-            }
+            let words = run_words(interval, max_loops, since, repos);
             let name = format!("watch-{}", Env::system()?.iso().replace(['-', ':'], ""));
             let (launch, record) = effects::start_watch(&path, &settings, &program, &words, &name)?;
             launched(&launch, &record)
@@ -2697,6 +2710,43 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             Ok(serde_json::json!({ "lines": lines }))
         }
     }
+}
+
+/// `watch run`'s flag words for the values a start names, in its own
+/// spelling; a value left out is left to `watch run`'s default.
+fn run_words(
+    interval: Option<u64>,
+    max_loops: Option<u32>,
+    since: Option<String>,
+    repos: Vec<String>,
+) -> Vec<String> {
+    let mut words = Vec::new();
+    let pairs = [
+        ("--interval", interval.map(|n| n.to_string())),
+        ("--max-loops", max_loops.map(|n| n.to_string())),
+        ("--since", since),
+    ];
+    for (flag, value) in pairs {
+        if let Some(value) = value {
+            words.extend([flag.to_owned(), value]);
+        }
+    }
+    for repo in repos {
+        words.extend(["--repo".to_owned(), repo]);
+    }
+    words
+}
+
+/// Replace this process with the watch `argv` names: the pid stays, so a
+/// service manager's main process is the watch and its exit status is the
+/// run's. Returns only where the exec failed, with its cause.
+fn become_watch(argv: &[String]) -> Error {
+    let (program, args) = argv
+        .split_first()
+        .expect("watch_argv starts with this program");
+    let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+    let e = agent_runtime::host::exec(program.as_ref(), &args, false);
+    Error::Runtime(agent_runtime::Error::io("exec", PathBuf::from(program), e))
 }
 
 /// The publication order and the pull request of a worktree, each read with

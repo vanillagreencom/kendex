@@ -99,8 +99,8 @@ disallowed-methods = [
     # the file system: a file is written, replaced, linked, created or
     # removed only by the store, the receipt, sidecar and notice writers
     # inside the operation module, the watch's own record writers (its
-    # claim, stop request, event log and baseline under `watch/`) and the
-    # command's setup; agent-runtime's
+    # claim, stop request, start flags, event log and baseline under
+    # `watch/`) and the command's setup; agent-runtime's
     # record writers stay the one atomic route
     { path = "std::fs::OpenOptions::open", reason = "a file is opened for writing only by the store's writers and the operation module; this catches every `OpenOptions` and `File::options` chain at its call" },
     { path = "std::fs::File::create", reason = "a file is created only by the store's writers and the operation module" },

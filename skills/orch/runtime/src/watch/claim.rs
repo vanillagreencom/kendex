@@ -27,6 +27,12 @@
 //! watch's log in a `tmp/waiter.*` directory of the claim's working
 //! directory: [`waiter`] names it and [`running`] reads whether one runs,
 //! for the turn end and the wake duty alike.
+//!
+//! Beside the claim, the runner that holds it records the flags it was
+//! started with ([`StartFlags`]), so a start from that record (`watch start
+//! --foreground`, what a service manager restarts) runs with the same
+//! triage floor and repositories. The record outlives the claim: a stop
+//! releases the claim and leaves the flags for the next start.
 
 use agent_runtime::record::FLEET_FILE_NAME;
 use std::io::Write;
@@ -37,7 +43,7 @@ use std::time::Duration;
 use agent_runtime::process::{self, Identity};
 use agent_runtime::reading::Reading;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, WatchError};
 use agent_runtime::clock::Clock;
@@ -50,6 +56,8 @@ pub const LOG_FILE: &str = "oversee-watch.log";
 pub const BASELINE_FILE: &str = "oversee-watch.baseline.json";
 /// The stop request a `watch stop` writes and the runner reads.
 pub const STOP_FILE: &str = "oversee-watch.stop";
+/// The flags the claimed runner was started with.
+pub const FLAGS_FILE: &str = "oversee-watch.flags";
 /// What [`read_live`] answers for a record with no start whose pid runs.
 pub const START_MISSING: &str = "start-missing";
 
@@ -71,6 +79,7 @@ pub struct Paths {
     pub log: PathBuf,
     pub baseline: PathBuf,
     pub stop: PathBuf,
+    pub flags: PathBuf,
 }
 
 impl Paths {
@@ -92,6 +101,7 @@ impl Paths {
             log: dir.join(LOG_FILE),
             baseline: dir.join(BASELINE_FILE),
             stop: dir.join(STOP_FILE),
+            flags: dir.join(FLAGS_FILE),
             dir,
         })
     }
@@ -302,6 +312,57 @@ fn whole(tmp: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .open(tmp)?;
     file.write_all(bytes)?;
     file.sync_data()
+}
+
+/// The `watch run` flags a start from the record repeats. `--fresh` is not
+/// among them, since only a fleet's first start empties the log, and the
+/// mailbox and server flags are not either, since each start names its own
+/// reach.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartFlags {
+    pub interval: u64,
+    pub max_loops: u32,
+    pub since: Option<String>,
+    pub repos: Vec<String>,
+}
+
+/// Record the flags the runner `identity` was started with, replacing any
+/// record an earlier runner left: written whole in a pid-named temporary,
+/// then renamed into place. Only a runner that holds the claim writes it,
+/// so a refused start never changes it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the start flags' one writer: the claimed runner's record beside its claim, renamed into place whole"
+)]
+pub fn record_flags(paths: &Paths, identity: &Identity, flags: &StartFlags) -> Result<()> {
+    let tmp = paths.dir.join(format!("{FLAGS_FILE}.{}.tmp", identity.pid));
+    let bytes = serde_json::to_vec(flags).map_err(|e| WatchError::Record {
+        path: paths.flags.clone(),
+        op: "write",
+        cause: e.to_string(),
+    })?;
+    whole(&tmp, &bytes)
+        .and_then(|()| std::fs::rename(&tmp, &paths.flags))
+        .map_err(|e| record_error(&paths.flags, "write", e).into())
+}
+
+/// The flags recorded beside the claim; `None` where no runner has
+/// recorded any. A record that cannot be read or parsed is the error, never
+/// an absent record.
+pub fn read_flags(paths: &Paths) -> Result<Option<StartFlags>> {
+    let bytes = match std::fs::read(&paths.flags) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(record_error(&paths.flags, "read", e).into()),
+    };
+    serde_json::from_slice(&bytes).map(Some).map_err(|e| {
+        WatchError::Record {
+            path: paths.flags.clone(),
+            op: "parse",
+            cause: e.to_string(),
+        }
+        .into()
+    })
 }
 
 /// Remove a record read gone, so the taker's link can land. A record that

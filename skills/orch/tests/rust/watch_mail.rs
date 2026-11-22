@@ -251,6 +251,7 @@ impl World {
                 interval: secs(240),
                 max_loops: 25,
                 since: None,
+                repos: Vec::new(),
                 fresh: false,
             },
             me(),

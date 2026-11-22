@@ -135,8 +135,8 @@ pub struct Tick<'a> {
 /// back what it found; the runner writes.
 pub type Body<'a> = Box<dyn FnMut(&Tick) -> Result<Produced> + Send + 'a>;
 
-/// The runner's own flags: `--interval`, `--max-loops`, `--since` and
-/// `--fresh`.
+/// The runner's own flags: `--interval`, `--max-loops`, `--since`,
+/// `--repo` and `--fresh`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flags {
     pub interval: Duration,
@@ -144,6 +144,9 @@ pub struct Flags {
     /// Printed in the heartbeat's `since=` field: the stamp the runner was
     /// handed.
     pub since: Option<String>,
+    /// The `--repo` values, recorded with the others for a start from the
+    /// record; the duties are handed their own copy at registration.
+    pub repos: Vec<String>,
     /// A fleet's first start: the log is emptied once the claim is taken,
     /// so a fresh reader from line 1 is handed no earlier fleet's line.
     pub fresh: bool,
@@ -288,11 +291,22 @@ impl<'a> Runner<'a> {
         self.program = Some(program);
     }
 
-    /// Claim, open the records, run the duties until a stop, release.
+    /// Claim, record the start flags, open the records, run the duties
+    /// until a stop, release.
     pub fn run(mut self) -> Result<Ended> {
         let held = self.claim()?;
         let bodies = std::mem::take(&mut self.bodies);
-        let outcome = self.serve(held, bodies);
+        let outcome = claim::record_flags(
+            &self.paths,
+            &self.identity,
+            &claim::StartFlags {
+                interval: self.flags.interval.as_secs(),
+                max_loops: self.flags.max_loops,
+                since: self.flags.since.clone(),
+                repos: self.flags.repos.clone(),
+            },
+        )
+        .and_then(|()| self.serve(held, bodies));
         // The claim is released whatever ended the run, where it still
         // names this runner, so a stop leaves no record a successor must
         // read gone first and a moved claim is left to its holder.

@@ -71,6 +71,7 @@ fn flags() -> Flags {
         interval: secs(240),
         max_loops: 25,
         since: None,
+        repos: Vec::new(),
         fresh: false,
     }
 }
@@ -2986,6 +2987,169 @@ fn a_watch_start_naming_no_mailbox_or_server_is_refused_before_any_server_or_ale
             "{log}: nothing asked or sent"
         );
     }
+}
+
+/// `watch start --foreground` on the fleet state in `dir`, under
+/// [`watch_env`], with `$TMUX` naming a socket under `dir` that no server
+/// answers, so the reach this start resolves stays in the row's world.
+fn foreground_start(dir: &Path) -> Command {
+    let state = dir.join(FLEET_FILE_NAME);
+    let mut command = isolated();
+    watch_env(&mut command, dir);
+    command
+        .args(["--state-dir", &dir.display().to_string()])
+        .args(["watch", "start", "--foreground"])
+        .args(["--file", &state.display().to_string()])
+        .env("TMUX", format!("{},0,0", dir.join("tmux.sock").display()))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+/// The flags record beside `paths`' claim, once the runner has written it.
+fn await_flags(paths: &Paths) -> Value {
+    let deadline = Instant::now() + secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&paths.flags) {
+            return serde_json::from_str(&text).expect("a whole flags record");
+        }
+        assert!(Instant::now() < deadline, "no flags were recorded");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A watch a service manager restarts from saved state runs with the triage
+/// floor and repositories it was started with: `watch run` records its
+/// `--interval`, `--max-loops`, `--since` and `--repo` values beside its
+/// claim, and neither `--fresh` nor its mailbox or server; the record
+/// outlives a stop; `watch start --foreground` becomes the watch in place,
+/// under the start's pid, with those flags and the reach this start
+/// resolves, and exits as the run does.
+#[test]
+fn a_watch_run_records_its_start_flags_and_a_foreground_start_runs_from_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
+    let since = "2026-01-01T00:00:00Z";
+    let started = [
+        "--interval",
+        "600",
+        "--max-loops",
+        "3",
+        "--since",
+        since,
+        "--repo",
+        "owner/a",
+        "--repo",
+        "owner/b",
+    ];
+    let expected = json!({
+        "interval": 600, "max_loops": 3, "since": since, "repos": ["owner/a", "owner/b"]
+    });
+    let mut child = Owned(
+        watch_run_command(&state_dir, &[&started[..], &["--fresh"]].concat())
+            .spawn()
+            .expect("spawn watch run"),
+    );
+    await_claim(&mut child, &paths);
+    assert_eq!(await_flags(&paths), expected, "the start's flags alone");
+    stop_watch(&state_dir, child);
+    assert_eq!(
+        await_flags(&paths),
+        expected,
+        "the record outlives the stop"
+    );
+
+    let mut child = Owned(foreground_start(&state_dir).spawn().expect("spawn start"));
+    await_claim(&mut child, &paths);
+    let words: Vec<String> = std::fs::read(format!("/proc/{}/cmdline", child.pid()))
+        .unwrap()
+        .split(|b| *b == 0)
+        .map(|w| String::from_utf8_lossy(w).into_owned())
+        .collect();
+    let state = paths.state.display().to_string();
+    let run = ["watch", "run", "--file", &state];
+    let at = words
+        .windows(run.len())
+        .position(|w| w == run)
+        .unwrap_or_else(|| panic!("the start became `watch run`: {words:?}"));
+    let after = &words[at + run.len()..];
+    let replayed: Vec<&str> = after
+        .iter()
+        .take(started.len())
+        .map(String::as_str)
+        .collect();
+    assert_eq!(replayed, started, "the recorded flags: {words:?}");
+    let socket = state_dir.join("tmux.sock").display().to_string();
+    assert!(
+        after.windows(2).any(|w| w == ["--socket", socket.as_str()]),
+        "the reach this start resolved: {words:?}"
+    );
+    assert!(
+        !words.iter().any(|w| w == "--fresh"),
+        "a restart keeps the log: {words:?}"
+    );
+    let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
+    assert!(
+        reply(&stop)["ok"].as_bool().unwrap_or(false),
+        "{}",
+        stderr(&stop)
+    );
+    let out = bounded_output(child, secs(20), "the stopped watch ran on");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        reply(&out)["ok"].as_bool().unwrap_or(false),
+        "the run's own reply"
+    );
+}
+
+/// A foreground start ends as its run ends, and refuses with a keyed line
+/// before any run where there is nothing to start from: with no record it
+/// refuses `watch-flags-unrecorded`; with a record over a live claim the
+/// run's own `watch-running` refusal is its answer and exit. Neither
+/// claims or logs.
+#[test]
+fn a_foreground_watch_start_refuses_with_no_recorded_flags_and_exits_as_its_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
+    let holder = Owned::sleep();
+    let record = r#"{"interval":600,"max_loops":3,"since":null,"repos":[]}"#;
+    let rows: [(&str, Option<&str>, bool, &str); 2] = [
+        ("no record", None, false, "watch-flags-unrecorded"),
+        (
+            "a record, a live claim",
+            Some(record),
+            true,
+            "watch-running",
+        ),
+    ];
+    for (why, flags, claimed, key) in rows {
+        let _ = std::fs::remove_file(&paths.flags);
+        let _ = std::fs::remove_file(&paths.pid);
+        if let Some(flags) = flags {
+            std::fs::write(&paths.flags, flags).unwrap();
+        }
+        if claimed {
+            plant_claim(&paths, holder.pid(), &holder.start());
+        }
+        let before = std::fs::read_to_string(&paths.pid).ok();
+        let child = Owned(foreground_start(&state_dir).spawn().expect("spawn start"));
+        let out = bounded_output(child, secs(20), "a refused start ran on");
+        assert_eq!(out.status.code(), Some(1), "{why}: {}", stderr(&out));
+        assert_eq!(reply(&out)["refusal"]["key"], key, "{why}");
+        assert_eq!(
+            std::fs::read_to_string(&paths.pid).ok(),
+            before,
+            "{why}: the claim stands as it was"
+        );
+        assert!(log_lines(&paths).is_empty(), "{why}: nothing logged");
+    }
+    assert!(live(holder.pid()), "the holder was never touched");
 }
 
 /// The key agent-runtime's `lib/key.sh` reads for the crate at `crate_dir`:

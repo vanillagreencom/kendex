@@ -426,6 +426,11 @@ pub enum WatchError {
     /// claim without one could not be told live from dead.
     #[error("no readable process identity to claim the watch with")]
     IdentityUnreadable,
+    /// A start from the recorded flags found no record: no runner that
+    /// records its flags has claimed this fleet state, so a start has
+    /// nothing to repeat and guesses none.
+    #[error("{path}: no watch start flags are recorded; start the watch with its flags first")]
+    FlagsUnrecorded { path: PathBuf },
 }
 
 impl WatchError {
@@ -437,6 +442,7 @@ impl WatchError {
             WatchError::StopTimeout { .. } => "watch-stop-timeout",
             WatchError::ClaimMoved { .. } => "watch-claim-moved",
             WatchError::IdentityUnreadable => "watch-identity-unreadable",
+            WatchError::FlagsUnrecorded { .. } => "watch-flags-unrecorded",
         }
     }
 
@@ -465,6 +471,7 @@ impl WatchError {
                 pair("start", start.clone()),
             ],
             WatchError::IdentityUnreadable => Vec::new(),
+            WatchError::FlagsUnrecorded { path } => vec![pair("path", path.display().to_string())],
         }
     }
 }
