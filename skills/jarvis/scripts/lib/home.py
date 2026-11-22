@@ -51,7 +51,7 @@ FEATURES_HEADER = re.compile(r"^[ \t]*\[[ \t]*features[ \t]*\][ \t]*(#[^\r\n]*)?
 
 
 def home_state(home):
-    """The private state directory of the resolved HOME: its session record and its forward outbox."""
+    """The private runtime directory of the canonical home."""
     key = hashlib.sha256(os.fsencode(home)).hexdigest()
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "kendex/jarvis" / key
 

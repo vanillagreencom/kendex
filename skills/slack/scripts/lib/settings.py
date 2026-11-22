@@ -41,6 +41,8 @@ CALLER_ENV = (
     if "_KENDEX_SLACK_CALLER_ENV" in os.environ else dict(os.environ)
 )
 CALLER_ENV.pop("_KENDEX_SLACK_RENAMED_SETTINGS", None)
+# The reader runs in the root it reads: -I keeps that checkout's folder off
+# its import path, so a root supplies settings values and never code.
 ROOT_ENV = r'''
 set -euo pipefail
 source "$1/scripts/lib/kendex-env.sh"
@@ -49,7 +51,7 @@ kendex_load_project_env "$2" _slack_private_file -- "${@:4}" || exit 1
 reader=$3
 shift 3
 export "$@"
-exec "$reader" -c 'import json, os, sys; print(json.dumps(dict({name: os.environ[name] for name in sys.argv[2:] if name in os.environ}, private_file=sys.argv[1])))' "$_slack_private_file" "$@"
+exec "$reader" -I -c 'import json, os, sys; print(json.dumps(dict({name: os.environ[name] for name in sys.argv[2:] if name in os.environ}, private_file=sys.argv[1])))' "$_slack_private_file" "$@"
 '''
 
 
