@@ -23,10 +23,8 @@ The checker selects changed files from Git. Each check reads the file types it s
 ## Wiring
 
 - Validation: run it ahead of the project's own build, lint and test command.
-- Commit time: where `commit-guards` is installed, its pre-commit chain runs `preflight --staged` itself. Any other hook calls the script with `--staged`.
-- CI: `preflight --base origin/<default-branch>` on the PR head, with the installed skill committed.
-
-Hook wrappers and the CI checkout: [references/wiring.md](references/wiring.md).
+- Commit time: [references/wiring.md](references/wiring.md) gives the command for a commit hook.
+- CI: [references/wiring.md](references/wiring.md) gives the command for CI.
 
 ## Setup
 

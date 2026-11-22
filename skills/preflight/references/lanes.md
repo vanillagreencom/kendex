@@ -1,53 +1,79 @@
 # Lane details
 
-What each lane fails on, its exclusions, the settings and the exit codes are in `preflight --help`. This file holds the grammars that do not fit a help entry: how the diff is taken, how `unwired-suite` reads a runner, and how the glob settings affect `data-syntax`, `applied-migration-edited` and the strict-mode shape of `fail-open`.
+Read when setting a `PREFLIGHT_*_GLOBS` value, or when a finding turns on how the diff is taken or how `unwired-suite` reads a runner.
 
 ## Diff construction
 
-Content decides which lines a lane may read, never an attribute. The diff is taken with `--text`, so a `.gitattributes` `-diff` or `binary` row cannot withhold the lines a change adds. A file whose own bytes are binary contributes no lines in any scope.
+preflight takes the diff with `--text`, so a `.gitattributes` `-diff` or `binary` row does not withhold the lines a change adds.
 
-The default and `--base` scopes include every non-ignored untracked file as a new file. `--staged` sees only the index, and reads shared settings from the index too, so a new untracked settings file cannot change the commit verdict. The personal `.env.local` file stays a runtime input in every scope.
+`--staged` reads the shared settings files from the index, so a new untracked settings file does not change the commit verdict. The personal `.env.local` file stays a runtime input in every scope.
 
 ## `unwired-suite` wiring grammar
 
-Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`. They are collected from tracked and untracked paths alike: an untracked runner is in scope exactly when an untracked suite is, so a workflow added beside its suite wires it before either is committed.
+Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`. preflight collects them from tracked and untracked paths alike. An untracked runner is in scope exactly when an untracked suite is, so a workflow added beside its suite wires it before either is committed.
 
-Wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, a runner beside it globbing its own directory, or a runner invoking `vitest`, `jest` or `bun test` over the whole of that runner's default include, which covers the suite (`*.test.ts`/`js`/`mjs`) under the directory the runner runs from.
+A runner wires a suite in any of these ways:
 
-The invocation is read by tokenizing the runner line, never by matching text around the runner word. Within a command a quote opens a span inside the word it stands in and ends nothing, so quoting changes no word boundary, and a `#` opens a comment only at a word boundary outside quotes: `bun test --reporter='a # b' src/` keeps its `src/`.
+- It names the suite outright.
+- It names a path-shaped glob the suite's path satisfies.
+- It names a directory the suite lives under.
+- It is a manifest below the repo root whose subtree holds the suite.
+- It sits beside the suite and globs its own directory.
+- It invokes `vitest`, `jest` or `bun test` over the whole of that runner's default include. That include covers `*.test.ts`, `*.test.js` and `*.test.mjs` under the directory the runner runs from.
 
-Only a field that carries a command is read as one. A shell runner (`Makefile`, `justfile`, `tools/validate*`, `run-all.sh`) is commands throughout. A workflow carries them in a `run:` value and in the block scalar a `run: |` opens, and nowhere else, so a step's `name: bun test` is text. A manifest carries them in a value inside its `scripts` object, tracked by brace depth, so a `description` or a dependency key is text. Everything else is read and dropped unjudged.
+The rules from here to the end of this section apply only to the sixth form, the `vitest`, `jest` or `bun test` invocation. preflight reads that invocation by tokenizing the runner line.
+
+Only a field that carries a command is read as one:
+
+- A shell runner (`Makefile`, `justfile`, `tools/validate*`, `run-all.sh`) is commands throughout.
+- A workflow carries commands in a `run:` value and in the block scalar a `run: |` opens, and nowhere else. A step's `name: bun test` is text.
+- A manifest carries commands in a value inside its `scripts` object. A `description` or a dependency key is text.
+- Everything else is read and dropped unjudged.
 
 A command splits at an unquoted `;`, `&`, `|`, backtick or parenthesis.
 
-A command position is the start of a command, past any leading `NAME=value` assignment words and any `npx`/`pnpm`/`yarn`/`exec`/`dlx`. `bun` must be followed by `test`, since `bun` alone is the package runner and `bun run test` re-enters the script table. `vitest` may be followed by `run` or `watch`, the two subcommands that still run the whole include. `jest` has none, so every word after it is a path pattern.
+A command position is the start of a command, past any leading `NAME=value` assignment words and any `npx`, `pnpm`, `yarn`, `exec` or `dlx`:
 
-Every remaining word must be a flag. A word that is not one is a positional path or filter that restricts the run to part of the tree, so no default include is recorded and the suite is wired, or left unwired, by the path token that word writes. `vitest run src/`, `jest tests/`, `bun test src/` and `bun test 'src/'` are all read that way. A flag's detached value is such a word too: `bun test --timeout 5000` records nothing where `bun test --timeout=5000` records. Separating a detached value from a path filter needs each runner's own flag arity, and guessing it would wire suites a restricted run never reaches.
+- `bun` counts only when `test` follows it. `bun run test` does not count.
+- `vitest` may be followed by `run` or `watch`.
+- `jest` takes no subcommand, so every word after it is a path pattern.
 
-A comment (full-line or trailing), dependency key, or package path is not an invocation, and neither is a prose mention, whose following words are positionals. A path-prefixed binary (`node_modules/.bin/vitest`) is not recognized, and a pinned explicit `include`/`testMatch` is not evaluated.
+Every remaining word must be a flag. A word that is not a flag is a positional path or filter that restricts the run to part of the tree. preflight then records no default include, and the path token that word writes decides whether the suite is wired. `vitest run src/`, `jest tests/`, `bun test src/` and `bun test 'src/'` are all read that way. A flag's detached value is such a word too: `bun test --timeout 5000` records nothing, where `bun test --timeout=5000` records the default include.
+
+These are not invocations:
+
+- A comment, full-line or trailing.
+- A dependency key or a package path.
+- A prose mention, whose following words are positionals.
+- A path-prefixed binary, such as `node_modules/.bin/vitest`.
+
+preflight does not evaluate a pinned explicit `include` or `testMatch`.
 
 ## Glob semantics
 
-A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Every glob setting reads this grammar.
+A glob setting's value lists its globs separated by spaces. A leading `**/` matches at any depth and is the only depth crossing, so a `*` never reaches past its own path component. Every glob setting reads this grammar.
 
 ## `data-syntax` JSONC paths
 
-The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` instead, and `PREFLIGHT_JSONC_GLOBS` names those paths. `JSONC_GLOBS` in `scripts/preflight` declares the shipped set.
-
-The lane has no JSONC parser and leaves these files to the producer that declares the dialect.
+`JSONC_GLOBS` in `scripts/preflight` declares the shipped set of `PREFLIGHT_JSONC_GLOBS`.
 
 ## Sourced-library trees
 
-`PREFLIGHT_SOURCED_LIB_GLOBS` names directories, not files: a path is in a sourced-library tree when one of its parent directories matches a glob, so the tree's whole depth is covered. `SOURCED_LIB_GLOBS` in `scripts/preflight` declares the shipped set. A project that keeps its libraries elsewhere, such as `tools/sh`, lists that directory and retains any shipped trees it still needs.
+`PREFLIGHT_SOURCED_LIB_GLOBS` names directories, not files. A path is in a sourced-library tree when one of its parent directories matches a glob, so the glob covers the tree's whole depth.
 
-For a non-executable file in these trees, `fail-open` omits the strict-mode preamble check and `shellcheck-errors` omits SC2168: a caller can source the file inside a function, where `local` is valid. Other ShellCheck errors still fail. Executable files keep both checks. Staged scope reads the executable bit from the index.
+`SOURCED_LIB_GLOBS` in `scripts/preflight` declares the shipped set. A project that keeps its libraries elsewhere, such as `tools/sh`, lists that directory. That project also retains any shipped trees it still needs.
 
-A consumer whose harness sources rows inside a function from `scripts/smoke/rows` adds that directory to `PREFLIGHT_SOURCED_LIB_GLOBS`, beside any shipped trees it keeps. A row outside the configured trees keeps standalone checks.
+For a non-executable file in these trees:
+
+- `fail-open` omits the strict-mode preamble check.
+- `shellcheck-errors` omits SC2168. Other ShellCheck errors still fail.
+
+Executable files keep both checks. Staged scope reads the executable bit from the index.
 
 ## `applied-migration-edited` glob set
 
-refinery and Flyway record a checksum over a versioned migration's name and text, and refuse to run against a database whose recorded checksum moved.
+`MIGRATION_GLOBS` in `scripts/preflight` declares the shipped set. refinery and Flyway record a checksum over a versioned migration's name and text, and refuse to run against a database whose recorded checksum moved.
 
-`MIGRATION_GLOBS` in `scripts/preflight` declares the shipped set. A runner that records an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change. Every other layout is opt-in, sqlx and Flyway repeatable migrations (`R__*`) included.
+A runner that records an applied version without a checksum (golang-migrate, Goose, Alembic, Django) reopens its database after an edit, so naming its files would hard-fail a legitimate change.
 
-A migration this branch added and then corrected is not the shape: the staged scope diffs against HEAD and qualifies each hit against the base for exactly that.
+Every other layout is opt-in, sqlx and Flyway repeatable migrations (`R__*`) included.
