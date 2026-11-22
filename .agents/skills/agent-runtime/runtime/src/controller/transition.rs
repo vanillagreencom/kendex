@@ -772,10 +772,10 @@ fn record_transfer_outcome(
                 record::set(record, "watch", value(path, watch)?);
             }
             // The class and the posture the successor launched under, its
-            // permission and its own words, and the `scope: unread` of an
-            // account admitted with its model's window unread, where the
-            // pending names them: the next succession carries that posture,
-            // and a session inherits none of another's.
+            // permission and its own words, and the `scope` of an account
+            // admitted with its model's window unread or nothing measuring
+            // it, where the pending names them: the next succession carries
+            // that posture, and a session inherits none of another's.
             for key in ["class", "permission", "extra_args", "scope"] {
                 match pending.get(key).filter(|v| !v.is_null()) {
                     Some(value) => record::set(record, key, value.clone()),

@@ -1627,6 +1627,10 @@ pub enum PickAnswer {
         /// refusal: the read a caller repairs before a retry.
         refusals: Vec<(String, Value)>,
         exclusions: Vec<(String, String)>,
+        /// In an overseer's choice, the account a successor may still take
+        /// where nothing measured has room ([`fallback`]); the overseer walk
+        /// alone reads it.
+        fallback: Option<Box<Judged>>,
     },
     /// Exit 3 of `--lane`: the named account is walled.
     Walled(Judged),
@@ -1700,6 +1704,7 @@ impl PickAnswer {
                 walled_resets_at,
                 refusals,
                 exclusions,
+                fallback: _,
             } => (
                 "none",
                 json!({
@@ -2079,7 +2084,30 @@ pub fn pick(
             .filter(|j| j.verdict != "room")
             .map(|j| (j.row.config_dir.clone(), j.verdict.clone()))
             .collect(),
+        fallback: fallback(&judged, req).map(Box::new),
     }
+}
+
+/// An overseer's choice with no account of room: the account whose usage
+/// query was refused with a 429 and kept no figure, and whose successor's
+/// sign-in reads held, the fewest claims first, then listing order. A 429
+/// shows the token was accepted and the plan answered; an unreachable
+/// endpoint, a 401 or 403 and a reading with no data show neither, so they
+/// are never taken. Nothing measured it, so the walk names it unmeasured.
+fn fallback(judged: &[Judged], req: &PickRequest) -> Option<Judged> {
+    if !req.for_overseer || req.lane.is_some() {
+        return None;
+    }
+    judged
+        .iter()
+        .filter(|j| {
+            j.verdict == "unmeasured"
+                && j.row.status == "rate_limited"
+                && j.row.headroom_pct.is_none()
+                && j.row.signed_in == Some(true)
+        })
+        .min_by_key(|j| j.claims)
+        .cloned()
 }
 
 /// A `--lane` pick's answer from its one judgement: the word's refusal

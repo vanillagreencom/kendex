@@ -1625,7 +1625,7 @@ fn transfer(
                             &caller, harness,
                         )),
                         caller: Some(caller.walk_entry(harness)),
-                        keep_unmeasured: false,
+                        keep_unmeasured: true,
                     };
                     match (pass.judges.walk)(&request) {
                         Ok(walked) => match &walked.answer {

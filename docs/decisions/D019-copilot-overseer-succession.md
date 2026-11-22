@@ -4,7 +4,7 @@
 
 **Date**: 2026-10-02
 
-**Status**: Active
+**Status**: Active (unmeasured-account exception → D037)
 
 **Research**: KEN-2490; the evidence read for this record is a comment on that issue
 

@@ -69,14 +69,15 @@ pub fn source(caller: &Caller, harness: Harness) -> Source {
 /// since that account is the one the successor must leave. A headroom or
 /// rate mark leaves the caller's
 /// account out of every pick. A context or memory mark keeps the caller's
-/// own account, unpicked, where it has room; a context mark also keeps an
-/// account nothing measures where no other account of its harness has room
-/// (the walk's `keep_unmeasured`), and walks the caller's own entry alone
-/// where the setting names no preference, since a context handoff replaces
-/// the session and not its harness or model. An account whose successor's
-/// sign-in reads signed out is kept neither way: the transfer would refuse
-/// it, and the walk's choice among accounts leaves it out `signed-out`.
-/// Every succession walks the caller's own entry last.
+/// own account, unpicked, where it has room; a context mark walks the
+/// caller's own entry alone where the setting names no preference, since a
+/// context handoff replaces the session and not its harness or model. At
+/// every mark a walk with no room takes one account nothing measured (the
+/// walk's `keep_unmeasured`): the caller's own where the mark leaves it in,
+/// else one whose usage query was refused with a 429. An account whose
+/// successor's sign-in reads signed out is kept no way: the transfer would
+/// refuse it, and the walk's choice among accounts leaves it out
+/// `signed-out`. Every succession walks the caller's own entry last.
 fn walk_request(
     choosing: &Choosing,
     pick: &mut dyn FnMut(&PickRequest) -> PickAnswer,
@@ -120,7 +121,7 @@ fn walk_request(
         min_headroom_pct: None,
         source: Some(source(caller, harness)),
         caller: Some(entry),
-        keep_unmeasured: mark == MarkKind::Context && !signed_out,
+        keep_unmeasured: true,
     })
 }
 
@@ -203,7 +204,8 @@ pub fn successor(
     };
     // An account a failed attempt left unproved is no successor while its
     // mark holds, the caller's own among them: its entry is then walked,
-    // never kept.
+    // never kept, and the exclusion keeps it from the walk's unmeasured
+    // keep as well.
     let unproved = unproved(path, now)?;
     if let Some(entry) = request.caller.as_mut()
         && entry
@@ -212,7 +214,6 @@ pub fn successor(
             .is_some_and(|lane| unproved.iter().any(|account| canon(account) == canon(lane)))
     {
         entry.keep = false;
-        request.keep_unmeasured = false;
     }
     request.exclude.extend(unproved);
     let walked = (ground.walk)(&request)?;
@@ -431,10 +432,11 @@ mod tests {
     /// that account as `own_account` reads it: an account with room is kept
     /// unpicked and excluded from nothing; a walled one sends the walk as
     /// the headroom mark's, the account left out of every pick and not
-    /// kept; one nothing measures is not kept, is left in the pick and is
-    /// kept unmeasured where no other account has room. An account whose
-    /// successor's sign-in reads signed out is kept neither way, with room
-    /// or unmeasured, and stays in the pick, whose choice reads its sign-in.
+    /// kept; one nothing measures is not kept and is left in the pick. An
+    /// account whose successor's sign-in reads signed out is not kept with
+    /// room and stays in the pick, whose choice reads its sign-in. Every
+    /// row's walk keeps one account nothing measured where none has room,
+    /// which the walk judges, a signed-out one refused there.
     #[test]
     fn a_marks_walk_keeps_or_leaves_the_callers_account_as_its_own_read_says() {
         let accounts = Setting::of("accounts", Ok(account_settings()));
@@ -469,13 +471,12 @@ mod tests {
             model: Some("claude-opus-5-5".to_owned()),
             ..Caller::default()
         };
-        // case, the pick's answer, the state read, kept, kept unmeasured,
-        // the accounts excluded
+        // case, the pick's answer, the state read, kept, the accounts
+        // excluded
         type Row = (
             &'static str,
             fn() -> PickAnswer,
             AccountState,
-            bool,
             bool,
             &'static [&'static str],
         );
@@ -485,14 +486,12 @@ mod tests {
                 || PickAnswer::Lane(judged("room", 40.0)),
                 AccountState::HasRoom,
                 true,
-                true,
                 &[],
             ),
             (
                 "walled",
                 || PickAnswer::Walled(judged("walled", 95.0)),
                 AccountState::AtTrigger,
-                false,
                 false,
                 &["/a/a1"],
             ),
@@ -501,14 +500,12 @@ mod tests {
                 || PickAnswer::NoRecord,
                 AccountState::Unmeasured,
                 false,
-                true,
                 &[],
             ),
             (
                 "room, signed out",
                 || PickAnswer::Lane(signed_out(judged("room", 40.0))),
                 AccountState::HasRoom,
-                false,
                 false,
                 &[],
             ),
@@ -517,11 +514,10 @@ mod tests {
                 || PickAnswer::Unmeasured(signed_out(judged("unmeasured", 40.0))),
                 AccountState::Unmeasured,
                 false,
-                false,
                 &[],
             ),
         ];
-        for (case, answer, state, keep, keep_unmeasured, exclude) in rows {
+        for (case, answer, state, keep, exclude) in rows {
             let mut pick = |_: &PickRequest| answer();
             let read = caller.own_account(Harness::Claude, &mut pick, 20, 1_800_000_000);
             assert_eq!(read.state, state, "{case}");
@@ -536,7 +532,7 @@ mod tests {
             .unwrap();
             let entry = request.caller.as_ref().unwrap();
             assert_eq!(entry.keep, keep, "{case}");
-            assert_eq!(request.keep_unmeasured, keep_unmeasured, "{case}");
+            assert!(request.keep_unmeasured, "{case}");
             assert_eq!(request.exclude, exclude, "{case}");
         }
     }

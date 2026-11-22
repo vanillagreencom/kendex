@@ -11156,6 +11156,80 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
     assert_eq!(overseer["scope"], "unread", "{overseer}");
 }
 
+/// A controller at its headroom mark, every measured account at the mark
+/// too, hands over by itself to a signed-in account whose usage query this
+/// machine and the provider both had refused with a 429 and no figure: the
+/// real `successor` verb takes it as `kept_unmeasured` with
+/// `scope: unmeasured`, and the transfer confirms with that scope on the
+/// controller record.
+#[test]
+fn a_controller_at_its_headroom_mark_hands_over_to_a_signed_in_account_whose_usage_query_was_refused()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let account = planted(&runner, "bclaude");
+    let mut refused = measured_account("bclaude", 10);
+    for key in ["headroom_pct", "wall", "session_5h_pct", "weekly_pct"] {
+        refused[key] = Value::Null;
+    }
+    refused["status"] = json!("rate_limited");
+    refused["verdict"] = json!("unmeasured");
+    let mut provider = refused.clone();
+    provider["measured_through"] = json!("host");
+    provider["config_dir"] = json!(account);
+    let (_, bin, env, work) = walk_world_on(
+        &runner,
+        Some("vm"),
+        &[measured_account("aclaude", 97), refused, provider],
+    );
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    runner.env.push((
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
+        "claude:fable:high".to_owned(),
+    ));
+    let report = effect_report(
+        &runner.op_fleet(&json!({"op": "start-controller", "controller": pending(&work)})),
+    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let pane = runner.fleet()["controller"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let answer = reply(&runner.run(&[
+        "successor",
+        "--fleet",
+        "--cwd",
+        &work.display().to_string(),
+        "--predecessor",
+        &pane,
+        "--mark",
+        "headroom",
+    ]));
+    let result = answer["result"].clone();
+    assert_eq!(result["walk"]["answer"], "lane", "{answer}");
+    assert_eq!(
+        result["walk"]["chosen"]["kept_unmeasured"], true,
+        "{answer}"
+    );
+    assert_eq!(result["successor"]["account"], account, "{answer}");
+    assert_eq!(result["successor"]["scope"], "unmeasured", "{answer}");
+    runner.snapshot(&work.join("tmp/handoffs/OVERSEER-HANDOFF.md"));
+    runner.transfer_started(&json!({
+        "op": "request-transfer",
+        "cause": "live",
+        "expected": result["expected"],
+        "successor": result["successor"],
+    }));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let overseer = runner.fleet()["controller"].clone();
+    assert_eq!(overseer["account"], account, "{overseer}");
+    assert_eq!(overseer["scope"], "unmeasured", "{overseer}");
+}
+
 /// The real `successor` verb's choice of a first controller over `rows`,
 /// under the provider `vm`, on a Claude entry then a Codex one: the reply's
 /// `result`.
