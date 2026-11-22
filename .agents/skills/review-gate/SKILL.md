@@ -20,37 +20,62 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Review operations
 
-GitHub rulesets enforce approvals, stale-approval dismissal and review-thread resolution. This package refreshes consumer installs. When the github skill is installed, its `scripts/pr-watch.sh` is the pull-request watcher.
+This package refreshes kendex installs in consumer repositories. GitHub rulesets enforce approvals, stale-approval dismissal and review-thread resolution.
 
 ## Consumer refresh
 
-An existing consumer first runs [workflows/retire-consumer-writer.md](workflows/retire-consumer-writer.md). Automatic refresh runs only after that normally reviewed removal merges. Fresh installs run `refresh/adopt-refresh.sh` from a kendex checkout at a release tag. Each consumer calls the shared workflow, which runs its scripts from that release checkout. Environment and token requirements: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
-
-Consumers refresh on a schedule or a manual run. An organization managed by fleet uses `fleet repos kendex-refresh` for immediate refresh dispatch. Dispatch requirements: [references/adoption.md § Immediate refresh](references/adoption.md#immediate-refresh).
+- A consumer that holds the retired gate package first runs [workflows/retire-consumer-writer.md](workflows/retire-consumer-writer.md). Automatic refresh runs only after that normally reviewed removal merges.
+- A fresh install runs `refresh/adopt-refresh.sh` from a kendex checkout at a release tag.
+- An organization managed by fleet uses `fleet repos kendex-refresh` for immediate refresh dispatch.
 
 ## 4. Operations
 
-A pull request with no automatic review needs a Copilot request. When orch is present, its runtime's `verify-review` settles that request under `approval` as orch's `references/gates.md` § Copilot requests says. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures, when the github skill is installed: its `references/automatic-review.md`. The central request workflow: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
+A pull request with no automatic review needs a Copilot request.
 
-The overseer's fallback approval follows the managing repository's merge workflow. An emergency merge past a failing required check exists only in a consumer whose required-checks or merge-queue ruleset lists the overseer app as a bypass actor. A consumer whose rulesets do not list that app has no emergency merge. The landing app's bypass gives none.
+- When orch is present, its runtime's `verify-review` settles that request under `approval`, as orch's `references/gates.md` § Copilot requests says.
+- Without orch, request it directly: `gh pr edit <PR#> --add-reviewer @copilot`.
+- When the github skill is installed, its `references/automatic-review.md` covers ruleset targeting and request failures.
 
-In that consumer, a merge group can fail to pass because a CI input read from the default branch broke: the classifier checkout, the lane declaration, the aggregate's needs or the change-class action. The overseer then asks the repository owner, or the person the owner delegates, by mailbox, naming the broken input and the repair's pull request. The repository owner, or the person the owner delegates, then:
+An emergency merge past a failing required check exists only in a consumer whose required-checks or merge-queue ruleset lists the overseer app as a bypass actor.
 
-1. Adds a bypass for their own credential to the required-checks and merge-queue rulesets through the API, and reads both rulesets back.
-2. Merges that one repair head with `gh pr merge <N> --admin --match-head-commit <SHA>`.
-3. Removes both bypasses, and reads both rulesets back.
-4. Records the bypass and its removal on the repair's work item.
+- That merge bypasses only those rulesets. Approval and thread resolution still apply.
+- A consumer whose rulesets do not list that app has no emergency merge.
+- The landing app's bypass gives no emergency merge.
 
-No lane runs a raw `--admin` merge, and the repair gives no app token a merge path. The landing app's bypass serves one push of a proved render, under [references/adoption.md § Landing a proved render](references/adoption.md#landing-a-proved-render), and no script merges a pull request with that app's token. This package grants no bypass and changes no ruleset.
+In a consumer with no emergency merge, a merge group can fail to pass because a CI input read from the default branch broke: the classifier checkout, the lane declaration, the aggregate's needs or the change-class action. The overseer then asks the repository owner, or the person the owner delegates, by mailbox. The message names the broken input and the repair's pull request. The repository owner, or the person the owner delegates, then:
+
+1. Adds a bypass for their own credential to the required-checks and merge-queue rulesets through the API.
+2. Reads both rulesets back.
+3. Merges that one repair head with `gh pr merge <N> --admin --match-head-commit <SHA>`.
+4. Removes both bypasses.
+5. Reads both rulesets back.
+6. Records the bypass and its removal on the repair's work item.
+
+No lane runs a raw `--admin` merge. The repair gives no app token a merge path.
 
 ## Scripts
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/validate-standard.sh` | Deprecated path for [GitHub repository settings' report](../github-repository-settings/references/platform-checks.md). Warns and forwards until 2.0. |
-| `refresh/adopt-refresh.sh` in the release checkout | Adopt the refresh workflow. `--retire-writer` opts into trusted retirement. |
-| `scripts/install-latest.sh` | Deprecated entry point for harness-ci's `scripts/install-latest.sh`; warns and forwards until the next major release. |
-| `refresh/refresh-consumer.sh` in the release checkout | Rebuild the rolling refresh branch from the default branch and open or update its pull request on a new head at any measured class or an unmeasured standard class. Run the classifier from the same release checkout. Refuse held render edits before workflow adoption or publication. Preserve workflow edits under the [adoption contract](references/adoption.md#automatic-consumer-refresh). An identical rolling tree retains its exact head and existing arm or hold, reports no new publication, and defers automatic admission even with no open pull request. Only a newly published head follows the merge and arm route. Disarm an armed pull request only before pushing a replacement head, after a fresh lifecycle read; a disarm GitHub refuses stops the run unless the pull request is queued, merged or closed. Wait for GitHub to show the published head. If successful branch reads show no rules and no protection, merge that head directly and report `refresh-state=merged`. A failed direct merge reports `refresh-error=merge` and exits with the merge status. A branch with rules or protection, or a failed branch read, keeps app-token auto-merge. A head that stays unseen produces an unarmed warning. If GitHub refuses the arm and calls the pull request clean, merge it directly on the pushed head. Confirm that the arm enabled auto-merge, queued or merged the pull request. The merge queue merges it once the required approval, thread resolution and checks pass. The body names the class, classifier cause and path. An unmeasured standard class uses full review and CI. A failed classifier or missing class line stops publication. Render publication requires measurement. A run that committed a new head of measured class `render` first tries to land it: where the landing token is set, every enabled source of every selected project is the kendex catalog with no `path` and no `rev`, and the read of the default branch's merge queue answers no entry, push that one commit to the default branch with the landing token. A push GitHub takes reports `refresh-state=landed pr=none class=render head=REVISION`, writes the report to the run summary, opens no pull request and closes a rolling pull request GitHub still shows open. A push git rejects because the default branch moved reports `refresh-state=deferred reason=base-moved`, and the next run renders on the new base. A push GitHub refuses prints `refresh-land=refused value=STATUS` and keeps the pull request route. A precondition the run does not meet keeps that route too, and the run prints one line for the first one. `refresh-land=unavailable value=token|sources-read|queue-read` says that no landing token reached the run, or that the run could not read the project sources or the merge queue. `refresh-land=skipped value=verify|class|sources-uncovered|queued` says that the run is held, that the class is not `render`, that a project takes packages from another source, or that the merge queue holds an entry. On `sources-read`, stderr also holds `refresh-sources=unread value=PROJECT`. A run that received neither name of the landing pair prints no landing line. A landing check answer that the script does not report stops the run with `refresh-error=land-check`. A retained head never lands. A verify whose every failure is a declaration a project's own manifest withholds prints `refresh-verify=held project=ENTRY`, publishes the head, a retained one included, as a draft pull request whose body names each finding and its manifest line, disarms it, prints `refresh-state=held pr=NUMBER class=CLASS head=REVISION` and lands nothing; with no content change to publish the verify failure stands. Any other verify failure, an unread verify document included, prints `refresh-error=verify value=STATUS` and exits with verify's status before publication. The next run whose verify passes marks a drafted rolling pull request ready before it arms it. Credential, proof, sources, rulesets and the cause of each line: [references/adoption.md § Landing a proved render](references/adoption.md#landing-a-proved-render). |
-| `refresh/refresh-reviews.sh` in the release checkout | Handle automatic review findings under the [thread-resolution rules](references/adoption.md#automatic-consumer-refresh). |
+| `scripts/validate-standard.sh` | Deprecated path for [GitHub repository settings' report](../github-repository-settings/references/platform-checks.md). |
+| `refresh/adopt-refresh.sh` in the release checkout | Adopt the refresh workflow. |
+| `scripts/install-latest.sh` | Deprecated entry point for harness-ci's `scripts/install-latest.sh`. |
+| `refresh/refresh-consumer.sh` in the release checkout | Rebuild the rolling refresh branch, and publish or land its new head. |
+| `refresh/refresh-reviews.sh` in the release checkout | Handle automatic review findings. |
 
-Reviewer routing for installed packages: [references/vendored-paths.md](references/vendored-paths.md).
+- `scripts/validate-standard.sh` warns and forwards until 2.0.
+- `scripts/install-latest.sh` warns and forwards until the next major release.
+- `refresh/adopt-refresh.sh --retire-writer` opts into trusted retirement.
+- `refresh/refresh-consumer.sh` publishes, arms and lands under [references/adoption.md § Publication](references/adoption.md#publication).
+- `refresh/refresh-reviews.sh` follows the thread-resolution rules in [references/adoption.md § Automatic review threads](references/adoption.md#automatic-review-threads).
+
+## Read when
+
+- Before adopting the refresh workflow in a consumer, or provisioning its environment and app credentials: [references/adoption.md § Caller adoption contract](references/adoption.md#caller-adoption-contract) and § Adoption and file ownership.
+- Before enabling automatic refresh, and when a refresh run's schedule, cancel or input check does not do what you expect: [references/adoption.md § Automatic consumer refresh](references/adoption.md#automatic-consumer-refresh).
+- When a refresh run prints a `refresh-state=`, `refresh-verify=` or `refresh-error=` line about its publication: [references/adoption.md § Publication](references/adoption.md#publication).
+- When a refresh run prints a `refresh-land=` line or `refresh-error=land-check`, before storing the landing pair, and before changing a ruleset for the landing app: [references/adoption.md § Landing a proved render](references/adoption.md#landing-a-proved-render).
+- When an automatic review thread on a rolling refresh pull request is unanswered, or its run fails on one: [references/adoption.md § Automatic review threads](references/adoption.md#automatic-review-threads).
+- When a fix cannot wait for the schedule: [references/adoption.md § Immediate refresh](references/adoption.md#immediate-refresh).
+- Before changing an organization's rulesets or its central Copilot request workflow: [references/adoption.md § Repo-side wiring](references/adoption.md#repo-side-wiring) and § Central Copilot request workflow.
+- Before wiring reviewer instructions for a vendored tree or a committed `kendex refresh` render: [references/vendored-paths.md](references/vendored-paths.md).
