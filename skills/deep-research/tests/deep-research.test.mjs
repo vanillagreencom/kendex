@@ -106,6 +106,40 @@ test("findings template carries every section validate requires", () => {
   assert.equal(hasProblem(JSON.parse(caught.stdout), "error", "report-section-missing", "Risks / Unknowns"), true);
 });
 
+// The approved fallback route writes the report by hand from the template and
+// has no provider payload, so it validates with no sidecar (KEN-5490). The
+// same report still refuses a standard-mode sidecar with no synthesis, and a
+// report naming a sidecar cannot skip it.
+test("a hand-written fallback report validates with no sidecar", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-fallback-"));
+  const template = readFileSync(new URL("../templates/findings.md", import.meta.url), "utf8");
+  const filled = template.replace(/\{\{[a-z_]+\}\}/g, "placeholder");
+  const raw = join(dir, "findings.raw.json");
+  writeFileSync(raw, JSON.stringify({
+    metadata: { researchMode: "standard", queryCount: 1, additionalQueries: [], additionalQueriesApplied: "none", synthesis: false },
+    raw: { results: [{ url: "https://example.com" }] },
+  }));
+  const rows = [
+    { name: "fallback report alone", report: filled, args: [], status: 0 },
+    { name: "standard sidecar without synthesis", report: filled, args: [raw], status: 1, key: "synthesis-missing", value: "standard", missing: "raw.answer" },
+    { name: "report naming its sidecar", report: `${filled}\n- Raw metadata sidecar: ${raw}\n`, args: [], status: 1, key: "raw-sidecar-omitted", value: raw },
+  ];
+  for (const row of rows) {
+    const report = join(dir, "findings.md");
+    writeFileSync(report, row.report);
+    const result = spawnSync(process.execPath, [script, "validate", report, ...row.args], { encoding: "utf8" });
+    assert.equal(result.status, row.status, `${row.name}: ${result.stdout}${result.stderr}`);
+    const json = JSON.parse(result.stdout);
+    if (!row.key) {
+      assert.deepEqual(json.errors, [], row.name);
+      continue;
+    }
+    const problem = json.problems.find((item) => item.level === "error" && item.key === row.key && item.value === row.value);
+    assert.ok(problem, row.name);
+    assert.equal(problem.missing, row.missing, row.name);
+  }
+});
+
 test("invalid --timeout names the flag rather than aborting the request", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-timeout-"));
   const mock = join(dir, "mock.json");
@@ -429,8 +463,8 @@ test("every validation problem keeps its stable key and value", () => {
   const cases = [
     { key: "report-empty", level: "error", status: 1, value: "report", report: "" },
     { key: "raw-sidecar-invalid-json", level: "error", status: 1, value: "raw", rawText: "{" },
-    { key: "raw-sidecar-metadata-missing", level: "error", status: 1, value: "raw", sidecar: { raw: validSidecar.raw } },
-    { key: "raw-sidecar-payload-missing", level: "error", status: 1, value: "raw", sidecar: { metadata: validSidecar.metadata } },
+    { key: "raw-sidecar-metadata-missing", level: "error", status: 1, value: "raw", missing: "metadata", sidecar: { raw: validSidecar.raw } },
+    { key: "raw-sidecar-payload-missing", level: "error", status: 1, value: "raw", missing: "raw", sidecar: { metadata: validSidecar.metadata } },
     { key: "additional-queries-applied-conflict", level: "error", status: 1, value: "none", sidecar: { ...validSidecar, metadata: { ...validSidecar.metadata, queryCount: 2, additionalQueries: ["variant"] } } },
     { key: "additional-queries-metadata-missing", level: "warning", status: 0, value: "raw", sidecar: { ...validSidecar, metadata: { researchMode: "lite", queryCount: 1, additionalQueriesApplied: "none", synthesis: true } } },
     { key: "synthesis-metadata-mismatch", level: "warning", status: 0, value: false, sidecar: { ...validSidecar, metadata: { ...validSidecar.metadata, synthesis: false } } },
@@ -446,7 +480,10 @@ test("every validation problem keeps its stable key and value", () => {
     const result = spawnSync(process.execPath, [script, "validate", report, raw], { encoding: "utf8" });
     assert.equal(result.status, row.status, row.key);
     const expectedValue = row.value === "report" ? report : row.value === "raw" ? raw : row.value;
-    assert.equal(hasProblem(JSON.parse(result.stdout), row.level, row.key, expectedValue), true, row.key);
+    const json = JSON.parse(result.stdout);
+    assert.equal(hasProblem(json, row.level, row.key, expectedValue), true, row.key);
+    // A sidecar refusal names the key the sidecar lacks.
+    if (row.missing) assert.equal(json.problems.find((problem) => problem.key === row.key).missing, row.missing, row.key);
   }
 });
 

@@ -33,6 +33,7 @@ tags: [research]
 - Provider payloads go in the sidecar JSON, never inline. By default the sidecar sits beside the report, named as the report with `.raw.json` in place of its extension: `findings.raw.json` for `findings.md`.
 - Sanitize evidence excerpts: source-page headings must not render as headings.
 - Once the report and its sidecar exist, run `validate` and stop.
+- A report written by hand on the approved fallback route has no sidecar: run `validate` on the report alone.
 - Do no local reproduction, benchmarks, tests, code inspection or implementation unless the caller asked for it.
 
 ## Running
