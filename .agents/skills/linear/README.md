@@ -58,9 +58,13 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 - Without `LINEAR_JOURNAL_CALLER`, the journal names the Linear command script.
 - An absent or invalid `LINEAR_JOURNAL_ITEM` stays unread.
 
-Set application credentials in `.env.local` unless `KENDEX_ENV_FILE` names another private file. Enable client credentials tokens in the application's Linear settings. Credential selection and precedence, expiry and attribution: [references/authentication.md](references/authentication.md).
+- Set application credentials in `.env.local` unless `KENDEX_ENV_FILE` names another private file.
+- Enable client credentials tokens in the application's Linear settings.
 
-On a host with the real client pair, run `scripts/linear.sh auth-mint`. It prints `access_token` and `expires_at` (epoch seconds) as JSON and writes no files. The fleet publishes the token as `LINEAR_APP_TOKEN` to its secret store and replaces it before expiry. Keep one minting host.
+Credential selection and precedence, expiry and attribution: [references/authentication.md](references/authentication.md).
+
+- On a host with the real client pair, run `scripts/linear.sh auth-mint`. It prints `access_token` and `expires_at` (epoch seconds) as JSON and writes no files. The fleet publishes the token as `LINEAR_APP_TOKEN` to its secret store and replaces it before expiry.
+- Keep one minting host.
 
 Client-pair token storage: [references/authentication.md § Client-pair token store](references/authentication.md#client-pair-token-store). Delete stale token files an earlier version left under a checkout's `.cache/linear/oauth/`.
 

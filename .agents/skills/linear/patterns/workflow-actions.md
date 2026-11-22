@@ -16,13 +16,17 @@ scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
 Cancel, duplicate, and absorb first disposition every open descendant, including open work below a closed child:
 
 1. Read `issues get [ISSUE_ID]` and its `children` rows, which report up to three levels with `depth`.
-2. Repeat from every deepest row and deduplicate identifiers until no new descendants appear.
-3. Keep closed children in this walk and act on the open descendants.
-4. Comment the reason for each disposition.
-5. Detach a child to keep it with `issues update [CHILD_ID] --remove-parent`.
-6. Cancel a child only with independent authorization for that child, recording its reason and resolving its descendants first.
-7. After the descendants are detached or terminal, use `comments create` + `issues update --state "Canceled"` on the parent.
-8. Name the surviving issue in the comment on both sides of an absorb.
+2. Repeat from every deepest row until no new descendants appear.
+   - Deduplicate identifiers.
+3. Keep closed children in this walk.
+4. Act on the open descendants.
+5. Comment the reason for each disposition.
+6. Detach a child to keep it with `issues update [CHILD_ID] --remove-parent`.
+7. Cancel a child only with independent authorization for that child.
+   - Record its reason.
+   - Resolve its descendants first.
+8. After the descendants are detached or terminal, use `comments create` + `issues update --state "Canceled"` on the parent.
+9. Name the surviving issue in the comment on both sides of an absorb.
 
 ## Quota Holds
 
@@ -55,22 +59,23 @@ A usable future deadline ends the current GraphQL attempt without retry HTTP. Mi
 
 An `activate` or `complete` that answers with a quota refusal is held:
 
-1. Keep the held command and its `--summary-file` or body file under `tmp/`. Choose the held command this way:
-   - After `complete` reports structured `error: supersession-incomplete`, its stdout preserves the successful transition. Its stderr states `already_done: true` with `retry.resource`, `retry.action`, `retry.issue`, and `retry.options`.
-   - Retry that action with those options, which preserve checklist evidence and merge time but omit summary flags.
-   - Required effects remain unfinished even though the replacement is Done.
-   - Otherwise the held command is the original one.
-   - The exception is a `complete` whose stderr also carries a `State transition to Done failed after the summary comment was posted` line. The summary is already posted, so the held command is the `issues complete` rerun that line names, without summary flags and keeping any `--done-when-met`. Rerunning with summary flags would post the summary twice.
-2. For `quota.status:"future"`, wait until `quota.reset` through the job runner, then run the held command once more.
+1. Keep the held command and its `--summary-file` or body file under `tmp/`. The held command is:
+   - After `complete` reports structured `error: supersession-incomplete`: `retry.action` with `retry.options`. Its stdout preserves the successful transition, and its stderr states `already_done: true` with `retry.resource`, `retry.action`, `retry.issue`, and `retry.options`. Those options preserve checklist evidence and merge time but omit summary flags. Required effects remain unfinished even though the replacement is Done.
+   - After a `complete` whose stderr also carries a `State transition to Done failed after the summary comment was posted` line: the `issues complete` rerun that line names, without summary flags and keeping any `--done-when-met`. The summary is already posted, so rerunning with summary flags would post it twice.
+   - Otherwise: the original command.
+2. For `quota.status:"future"`, wait until `quota.reset` through the job runner.
+3. Run the held command once more.
    - An `elapsed` deadline permits that ordinary retry without a wait.
    - A reset does not prove a full allowance.
-3. A second rate limit, or a `missing` or `invalid` reset, returns the held command and its file to the caller.
+4. A second rate limit, or a `missing` or `invalid` reset, returns the held command and its file to the caller.
    - None authorizes another try or an indefinite wait.
    - A hold-storage failure also returns its diagnostic to the caller.
 
 ## Descriptions
 
-Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings only. Never use heredocs.
+- Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`.
+- Inline `--description`/`--body` is for short plain strings only.
+- Never use heredocs.
 
 After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID]`), preserving sections that are still valid.
 
@@ -93,14 +98,19 @@ scripts/linear.sh issues remove-relation [ISSUE_ID] --blocks|--blocked-by [OTHER
 Before any create or label update from a workflow:
 
 1. Run `scripts/linear.sh labels list --max --format=safe`.
-2. Build the full final set from the project's taxonomy. Reject unknown labels, parent/group labels (`is_group: true`), missing required categories, and exclusive-category conflicts.
-3. Ask for explicit authorization before creating any missing label. Never create labels automatically.
+2. Build the full final set from the project's taxonomy.
+   - Reject unknown labels, parent/group labels (`is_group: true`), missing required categories, and exclusive-category conflicts.
+3. Ask for explicit authorization before creating any missing label.
+   - Never create labels automatically.
 
 Project labels are a separate resource and must not be used for issue-label preflight.
 
 ## Shared label maintenance
 
-`LINEAR_TEAM` requires a target before writes that do not address an issue. It does not restrict an API key or check a label's owning team. `auth-check` verifies authentication and the local target, not the key's permission mask. Inspect key permissions in Linear settings. Report fingerprints only.
+`LINEAR_TEAM` requires a target before writes that do not address an issue. It does not restrict an API key or check a label's owning team. `auth-check` verifies authentication and the local target, not the key's permission mask.
+
+- Inspect key permissions in Linear settings.
+- Report fingerprints only.
 
 Before changing a label definition:
 
@@ -118,9 +128,11 @@ A team-restricted key cannot establish workspace-wide issue use.
 To make the change:
 
 1. Prepare dependent repository corrections before the label change.
-2. After an authorized change, refresh each affected inventory, render instructions from their source, and run its taxonomy and repository checks.
-3. Record the label IDs, issue assignments and repository commits together.
-4. If the API cannot change scope, prepare a replacement plan with history and recovery limits before requesting migration approval.
+2. After an authorized change, refresh each affected inventory.
+3. Render instructions from their source.
+4. Run each inventory's taxonomy and repository checks.
+5. Record the label IDs, issue assignments and repository commits together.
+6. If the API cannot change scope, prepare a replacement plan with history and recovery limits before requesting migration approval.
 
 ## Bulk and Cycle Assignment
 
@@ -128,7 +140,11 @@ To make the change:
 scripts/linear.sh issues bulk-update [ID_1] [ID_2] --cycle [CYCLE_ID] --state "Todo"
 ```
 
-When a child's state or cycle changes, fetch the parent and promote it when a child advances into active work. Never demote it.
+When a child's state or cycle changes:
+
+- Fetch the parent.
+- Promote it when a child advances into active work.
+- Never demote it.
 
 ## Projects and Initiatives
 
@@ -155,7 +171,9 @@ scripts/linear.sh issues create \
 
 ## Resolve a cited artifact
 
-Read a cited repository path when it exists. When it is absent, list the issue's attachments. A failed list is a read failure to report, not a missing attachment.
+- Read a cited repository path when it exists.
+- When it is absent, list the issue's attachments.
+- A failed list is a read failure to report, not a missing attachment.
 
 ```bash
 linear.sh attachments list [ISSUE_ID]
@@ -166,9 +184,11 @@ linear.sh attachments fetch [URL] --output tmp/[FILENAME]
 2. With no such link, match the original cited repository path against `repo_path`, scoped to that issue or the research/source issue its brief explicitly names.
 3. For attachments with no `repo_path` and no such link, accept a filename match only when it is unique within that issue.
 4. Use an attachment URL in the brief to select the matching `url` when references collide.
-5. Fetch the match into `tmp/` and read that file. Keep the repository path as the tracker reference.
-6. Resolve companion files, such as a plan's JSON or research metadata, the same way.
-7. Do not write a machine's `tmp/` path into an issue or delegation for another checkout.
+5. Fetch the match into `tmp/`.
+6. Read that file.
+7. Keep the repository path as the tracker reference.
+8. Resolve companion files, such as a plan's JSON or research metadata, the same way.
+9. Do not write a machine's `tmp/` path into an issue or delegation for another checkout.
 
 - No match leaves the calling workflow's missing-file behavior unchanged.
 - Multiple matches without a distinguishing reference require clarification.
@@ -177,7 +197,9 @@ linear.sh attachments fetch [URL] --output tmp/[FILENAME]
 
 ## Task discovery
 
-Read a managed task project's complete issue set without a state or recency filter. Select unresolved work from the returned states, descriptions and current decisions. Use the selected project's UUID to avoid mixing same-name projects.
+- Read a managed task project's complete issue set without a state or recency filter.
+- Select unresolved work from the returned states, descriptions and current decisions.
+- Use the selected project's UUID to avoid mixing same-name projects.
 
 ```bash
 scripts/linear.sh issues list --project-id [PROJECT_UUID] --max

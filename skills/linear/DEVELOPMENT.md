@@ -5,10 +5,11 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent command refer
 ## Adding a resource
 
 1. Create `scripts/commands/<resource>.sh`, sourcing `../lib/common.sh` (auth, the GraphQL wire, resolvers, argument guards).
-2. Add a `show_help()` and register the resource in `scripts/linear.sh`.
-3. Register write actions that need a configured team with `linear_guard_write_action` in `scripts/lib/common.sh`.
-4. Guard a verb that creates an issue, changes an existing issue's fields, archives it or trashes it with the cross-team guard: `linear_guard_create_team` or `linear_guard_issue_team` in `scripts/lib/common.sh`.
-5. Update the Commands table in `SKILL.md`.
+2. Add a `show_help()`.
+3. Register the resource in `scripts/linear.sh`.
+4. Register write actions that need a configured team with `linear_guard_write_action` in `scripts/lib/common.sh`.
+5. Guard a verb that creates an issue, changes an existing issue's fields, archives it or trashes it with the cross-team guard: `linear_guard_create_team` or `linear_guard_issue_team` in `scripts/lib/common.sh`.
+6. Update the Commands table in `SKILL.md`.
 
 Where each job lives:
 
@@ -31,7 +32,8 @@ Where each job lives:
 - Resource help and a default-help command's bare form return before `common.sh` loads project configuration. Nested help stays with the command parser that owns its option arity.
 - Build every GraphQL variables payload with `jq --arg` / `--argjson`. A name holding a quote must not be able to reshape the request, and a hand-built payload fails as "Invalid GraphQL variables JSON", which names neither the flag nor the value.
 - Validate any value spliced unquoted into JSON, a jq program, or shell arithmetic with `linear_require_pattern` before it gets there.
-- Read a root collection through `graphql_pages`, and request `pageInfo { hasNextPage endCursor }` and `$after` in its query.
+- Read a root collection through `graphql_pages`.
+  - Request `pageInfo { hasNextPage endCursor }` and `$after` in its query.
   - A list verb reads through `linear_list_read` instead, after `linear_list_reset`, handing `--limit`, `--max` and `--first` to `linear_list_option`.
   - `lib/pages.sh` owns the default bound, the page size and the truncation notice. `linear_list_page_size` reads the page from the query itself, smaller where the rows select a connection.
   - A bulk read of named issues goes through `linear_issue_refs_read`, which owns the batch read, the lookup of a reference it left unanswered and the `missing` refusal.
@@ -41,7 +43,8 @@ Where each job lives:
 - Open every GraphQL document with its operation keyword. `graphql_request` sends a document that opens with `query` again after a 5xx or no answer. It sends any other document once on those answers, since a mutation Linear applied before the answer was lost would be applied twice.
 - Pass response-sized JSON to jq on standard input, never through `--argjson` or `--arg`: one argument is capped at 128 KiB on Linux, and a large page or issue description crosses it.
 - Distinguish "the lookup failed" from "there is no such thing". `resolve_label_id` returns 2 for the former and 1 for the latter precisely because `--labels` replaces a label set, where the two outcomes differ by data loss.
-- Build any timestamp compared against Linear's `startsAt` or `updatedAt`, here or in a server-side date filter, with `linear_now_utc` or `linear_utc_days_ago` from `scripts/lib/cycle-dates.sh`. Never use `date -Iseconds`: the comparison is lexical against Linear's UTC strings, so a local-time value with an offset suffix only agrees on a UTC host.
+- Build any timestamp compared against Linear's `startsAt` or `updatedAt`, here or in a server-side date filter, with `linear_now_utc` or `linear_utc_days_ago` from `scripts/lib/cycle-dates.sh`.
+  - Never use `date -Iseconds`: the comparison is lexical against Linear's UTC strings, so a local-time value with an offset suffix only agrees on a UTC host.
 - Select a cycle by date, not by position in the sorted set or by its progress. A cycle runs from its `startsAt` until its `endsAt`.
   - `linear_working_cycle`, `linear_cycles_before` and `linear_cycles_after` are the definitions.
   - Every caller hands the working cycle over unguarded. With none running, they cut at today.
@@ -58,7 +61,7 @@ Each test stands up its own fixture root and a `curl` shim on `PATH`, so none re
 - A suite that changes an existing issue sets `LINEAR_TEAM` to that issue's prefix. Otherwise the cross-team guard refuses the write or sends a team lookup the shim does not expect.
 - A suite that sources `issues.sh` without the shim sets it too, since the checkout's own `LINEAR_TEAM` would otherwise send that lookup to Linear.
 
-The `tests/live-resource-pages-replay-*.test.sh` suites drive each read verb through `linear.sh` against the GraphQL replies in `tests/lib/fixtures/recorded/`, through `recorded_read_case` in the assertion library. The fixtures' README says how the replies were recorded.
+The `tests/live-resource-pages-replay-*.test.sh` suites drive each read verb through `linear.sh` against the GraphQL replies in `tests/lib/fixtures/recorded/`, through `recorded_read_case` in the assertion library. The fixtures' README gives the fixture format, the fixture-value rule and what a re-record captures.
 
 - A new read verb adds a recorded fixture and a row in one of those suites.
 - `PROJECT_ROOT` is not a redirect and cannot be made one: `common.sh` assigns it from `git rev-parse` on every source, so a value you export never survives to be read.

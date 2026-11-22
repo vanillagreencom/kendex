@@ -35,8 +35,8 @@ tags: [integration]
 | Resource | Actions |
 |----------|---------|
 | `issues` | list, get, bulk-get, create, update, bulk-update, archive, trash/delete, list-relations, add-relation, remove-relation, activate, block, unblock, complete, validate-completion |
-| `comments` | list, bulk-list, create, update, delete |
-| `labels` | list, create, update, delete, audit |
+| `comments` | list, bulk-list, owner-requests, create, update, delete |
+| `labels` | list, create, update, delete, audit, declared |
 | `project-labels` | list, create, update, delete |
 | `projects` | list, create, update, delete, list-dependencies, add-dependency, remove-dependency, post-update, list-updates, reorder, set-sort-order, audit |
 | `initiatives` | list, get, create, update, delete, add-project, remove-project |
@@ -50,6 +50,7 @@ tags: [integration]
 | `graphql` | One read document as written |
 | `auth-check` | Report the selected credential, actor, team and `writes_enabled` |
 | `auth-mint` | Mint application token JSON from the client pair, writing no files |
+| `done-when` | parse |
 | `journal` | start, stop, read |
 | `session-status` | Aggregated status for the `/start` workflow |
 
@@ -59,7 +60,8 @@ tags: [integration]
 - A field `issues get` does not carry, such as the GitHub issues Linear's GitHub sync links the issue to (`syncedWith`), is a `graphql` read.
 - Safe `issues get` and `issues list` rows carry `in_pr_bundle`. It is true when the description holds `**In-PR bundle**: yes`.
 - Look up several issues with one `issues bulk-get <ID1> <ID2> ...`. It is also the route to verify a write.
-- Read the comments of several issues with one `comments bulk-list <ID1> <ID2> ...` call. `--stdin` takes one identifier per line. Never loop or run parallel `comments list` readers.
+- Read the comments of several issues with one `comments bulk-list <ID1> <ID2> ...` call. `--stdin` takes one identifier per line.
+- Never loop or run parallel `comments list` readers.
 
 Schema reference over ctx7: `/websites/studio_apollographql_public_linear-api_variant_current` (API), `/linear/linear` (SDK), `/websites/linear_app_developers` (guides).
 
@@ -75,9 +77,9 @@ Schema reference over ctx7: `/websites/studio_apollographql_public_linear-api_va
 
 Read the time an issue entered a state from its history:
 
-1. Take the matching `toState` row's `createdAt`.
+1. Use Linear's API or activity history. `issues get` exposes no history field.
 2. Read every history page needed to identify the latest transition into that state.
-3. Use Linear's API or activity history. `issues get` exposes no history field.
+3. Take the matching `toState` row's `createdAt`.
 4. If the transition is unavailable, report its time as unread.
 
 `updated_at` records the issue's latest update, which can be a different change.
@@ -85,7 +87,8 @@ Read the time an issue entered a state from its history:
 - `issues list --all-projects` enumerates every project in one command. Each row carries its `project` name.
 - `--no-project` returns only unassigned issues.
 - Both are mutually exclusive with `--project`.
-- Use `--all-projects`. Never loop per project.
+- Use `--all-projects`.
+- Never loop per project.
 - Repeated `--label` flags, and `--labels a,b`, require ALL named labels.
 
 A list of issues, projects, labels, project labels, teams, users, cycles, documents or initiatives has these limits:
@@ -100,7 +103,8 @@ Every read is whole or fails:
 - A read follows each nested collection (labels, relations, children, comments) to its end.
 - A read that cannot finish its chain exits nonzero with no output, never a partial result. A failed later page, a missing or repeated cursor, or a chain still open after 400 pages each end the chain.
 - An audit that must see the whole backlog passes `--max`.
-- A text search over issues uses `issues list --search TERMS`, which Linear filters by title and description server-side. Never pipe a `--max` list to a local filter.
+- A text search over issues uses `issues list --search TERMS`, which Linear filters by title and description server-side.
+- Never pipe a `--max` list to a local filter.
 
 A quota refusal exits nonzero with JSON stderr `code:"RATELIMITED"`.
 

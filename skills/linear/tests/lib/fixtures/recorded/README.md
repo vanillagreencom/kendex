@@ -4,6 +4,8 @@ One file per read verb and spelling. `recorded_read_case` in `../../assert.sh` r
 
 Each file's replies came from running its `args` through `linear.sh` with the kendex application token, read-only, on 2026-10-04.
 
+No script records the replies. A re-record captures each GraphQL reply the `args` run receives, in order, with its operation name, then replaces values as the list below sets out.
+
 Every value that names something is a fixture value:
 
 - Issue identifiers are `KEN-9NNN`.
