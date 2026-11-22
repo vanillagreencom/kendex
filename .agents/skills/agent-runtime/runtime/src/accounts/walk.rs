@@ -14,7 +14,7 @@ use crate::harness::{Harness, PermissionMeaning};
 use crate::host::{self, Place};
 use serde_json::{Value, json};
 
-use super::{Env, PickAnswer, PickRequest};
+use super::{Env, Opens, PickAnswer, PickRequest};
 use crate::accounts;
 use crate::error::{Error, Result};
 use crate::settings::DEFAULT_CONTROLLER_PREFERENCE;
@@ -914,9 +914,15 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 // binding bucket, never a model's window.
                 binding_floor: overseer && !matches!(harness, Harness::Claude | Harness::Pi),
                 admit_unread_scope: overseer,
-                // An overseer runs here; a lane does where its host opens
-                // it in a window of this machine.
-                opens_here: overseer || launch == Some("window"),
+                // An overseer's successor runs here; a lane does where its
+                // host opens it in a window of this machine.
+                opens: if overseer {
+                    Opens::Successor
+                } else if launch == Some("window") {
+                    Opens::Window
+                } else {
+                    Opens::Elsewhere
+                },
             }
         };
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());

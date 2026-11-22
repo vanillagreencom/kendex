@@ -208,11 +208,15 @@ pub struct AccountRow {
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
-    /// The sign-in a controller's successor opened on the account here
-    /// starts with, as this machine's listing read it ([`usage::sign_in`]
-    /// with its declared token file): held, missing, or `None` where nothing
-    /// here judged it, a provider's row among them.
+    /// The account's sign-in as this machine's listing read it
+    /// ([`usage::sign_in`]): its declared token file where the setting
+    /// names one, else its stored login. Held, missing, or `None` where
+    /// nothing here judged it, a provider's row among them.
     pub signed_in: Option<bool>,
+    /// The account's stored login as this machine's listing read it, the
+    /// sign-in a launch that exports no token file starts with: held,
+    /// missing, or `None` where nothing here judged it.
+    pub stored_login: Option<bool>,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
     /// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: the judge refuses it
@@ -263,6 +267,21 @@ fn flag(record: &Value, key: &str) -> bool {
         Some(Value::Number(n)) => n.as_u64() == Some(1),
         Some(Value::String(s)) => s == "1" || s == "true",
         None | Some(Value::Null | Value::Array(_) | Value::Object(_)) => false,
+    }
+}
+
+/// A sign-in reading the listing carries under `key`
+/// ([`usage::StoredLogin::record`]): held, missing, or `None` where nothing
+/// judged it or the row carries none.
+fn held(record: &Value, key: &str) -> Option<bool> {
+    match record
+        .get(key)
+        .and_then(|s| s.get("state"))
+        .and_then(Value::as_str)
+    {
+        Some("held") => Some(true),
+        Some("missing") => Some(false),
+        Some(_) | None => None,
     }
 }
 
@@ -342,15 +361,8 @@ impl AccountRow {
             },
             reserved: flag(raw, "reserved"),
             seat: flag(raw, "seat"),
-            signed_in: match raw
-                .get("sign_in")
-                .and_then(|s| s.get("state"))
-                .and_then(Value::as_str)
-            {
-                Some("held") => Some(true),
-                Some("missing") => Some(false),
-                Some(_) | None => None,
-            },
+            signed_in: held(raw, "sign_in"),
+            stored_login: held(raw, "stored_login"),
             retire,
             excluded,
             configured: raw.get("configured") != Some(&Value::Bool(false)),
@@ -689,22 +701,18 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// reading included. An account with one reading keeps it. The roster is
 /// never resolved: it reports both readings.
 ///
-/// A session that opens on this machine (`opens_here`) signs in with this
+/// A session that opens on this machine ([`Opens`]) signs in with this
 /// machine's sign-in of the home, never with the token a provider measured
-/// it through: the provider's reading stands for it only where the sign-in
-/// its launch starts with reads held ([`usage::sign_in`]), else the account
-/// is judged on this machine's own row, and a provider's row with no home
-/// listed here is no candidate for it. A controller's successor exports
-/// the account's declared token file, which the listing's `sign_in` reads;
-/// a lane's launch exports none and signs in with the stored login, read
-/// here. The listing's sign-in stands on whichever row stands, as the
-/// provider's words do.
+/// it through: the provider's reading stands for it only where this
+/// machine's own row reads the sign-in its launch starts with held, else
+/// the account is judged on that own row, and a provider's row with no
+/// home listed here is no candidate for it. This machine's sign-in
+/// readings stand on whichever row stands, as the provider's words do.
 fn resolve(
     rows: &[AccountRow],
     billed: Harness,
     model: &str,
     req: &PickRequest,
-    now: u64,
 ) -> Vec<AccountRow> {
     let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
@@ -720,21 +728,20 @@ fn resolve(
                 } else {
                     (row.clone(), out[i].clone())
                 };
-                let signed_in = !req.opens_here
-                    || if req.for_overseer {
-                        own.signed_in == Some(true)
-                    } else {
-                        usage::sign_in(own.harness, &own.config_dir, None, now)
-                            == usage::StoredLogin::Held
-                    };
+                let launch_held = match req.opens {
+                    Opens::Elsewhere => true,
+                    Opens::Successor => own.signed_in == Some(true),
+                    Opens::Window => own.stored_login == Some(true),
+                };
                 let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
-                let own_signed_in = own.signed_in;
-                let mut stands = if signed_in {
+                let (signed_in, stored_login) = (own.signed_in, own.stored_login);
+                let mut stands = if launch_held {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
                 } else {
                     own
                 };
-                stands.signed_in = own_signed_in;
+                stands.signed_in = signed_in;
+                stands.stored_login = stored_login;
                 stands.reserved |= reserved;
                 if stands.plan_ends == PlanEnd::None {
                     stands.plan_ends = plan_ends;
@@ -744,7 +751,7 @@ fn resolve(
             None => out.push(row.clone()),
         }
     }
-    if req.opens_here {
+    if req.opens != Opens::Elsewhere {
         out.retain(|r| {
             !provider_reading(r)
                 || rows.iter().any(|own| {
@@ -932,12 +939,26 @@ pub struct PickRequest {
     /// walk's question alone, where the account-wall succession covers the
     /// unread window. Otherwise that account is unmeasured for the model.
     pub admit_unread_scope: bool,
-    /// The session the pick places opens on this machine (an overseer, a
-    /// lane in a local window), so it signs in with this machine's sign-in
-    /// of the account, an overseer's from its declared token file where it
-    /// names one, and never with the token a provider measured the account
-    /// through.
-    pub opens_here: bool,
+    /// Where the session the pick places opens, which names the sign-in
+    /// it starts with ([`resolve`]).
+    pub opens: Opens,
+}
+
+/// Where the session a pick places opens. One opened on this machine signs
+/// in with this machine's sign-in of the account, never with the token a
+/// provider measured the account through, and which of the account's
+/// sign-ins it starts with is fixed by its launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opens {
+    /// Nowhere on this machine: no sign-in here is the launch's.
+    Elsewhere,
+    /// A controller's successor here: its launch exports the account's
+    /// declared token file where the setting names one, else signs in with
+    /// the stored login ([`AccountRow::signed_in`]).
+    Successor,
+    /// A lane in a window of this machine: its launch exports no token
+    /// file and signs in with the stored login ([`AccountRow::stored_login`]).
+    Window,
 }
 
 impl PickRequest {
@@ -955,7 +976,7 @@ impl PickRequest {
             min_headroom_pct: None,
             binding_floor: false,
             admit_unread_scope: false,
-            opens_here: false,
+            opens: Opens::Elsewhere,
         }
     }
 
@@ -1976,7 +1997,7 @@ pub fn pick(
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    let rows = &resolve(rows, billed, model, req, now);
+    let rows = &resolve(rows, billed, model, req);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {

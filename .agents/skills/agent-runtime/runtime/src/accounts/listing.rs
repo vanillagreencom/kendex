@@ -136,7 +136,9 @@ pub fn list(
         // Read on every listing, never kept with the usage reading: a
         // login signed in or out since the last sample is the one a
         // launch meets.
-        row["sign_in"] = sign_in(settings, account, now).record();
+        let read = sign_ins(settings, account, now);
+        row["sign_in"] = read.sign_in.record();
+        row["stored_login"] = read.stored_login.record();
         rows.push(row);
     }
     let provider_failure = match provider {
@@ -174,17 +176,32 @@ pub fn list(
     })
 }
 
-/// The sign-in a session opened on `account` starts with
-/// ([`usage::sign_in`]), its declared token file read from the settings;
-/// a declaration that cannot be read judges nothing.
-fn sign_in(settings: &Env, account: &Found, now: u64) -> usage::StoredLogin {
+/// The two sign-ins a session opened on an account here can start with:
+/// the listing is their one reader, and a pick chooses between them by its
+/// launch ([`super::Opens`]).
+struct SignIns {
+    /// The account's declared token file where the setting names one, else
+    /// its stored login ([`usage::sign_in`]); a declaration that cannot be
+    /// read judges nothing.
+    sign_in: usage::StoredLogin,
+    /// The account's stored login, whatever the setting declares.
+    stored_login: usage::StoredLogin,
+}
+
+fn sign_ins(settings: &Env, account: &Found, now: u64) -> SignIns {
+    let stored_login = usage::sign_in(account.harness, &account.dir, None, now);
     let declared =
         usage::declared_token_file(account.harness, settings.account_tokens, &account.dir);
-    match declared {
-        Ok(file) => usage::sign_in(account.harness, &account.dir, file.as_deref(), now),
+    let sign_in = match declared {
+        Ok(Some(file)) => usage::sign_in(account.harness, &account.dir, Some(&file), now),
+        Ok(None) => stored_login,
         Err(_) => usage::StoredLogin::Unjudged {
             cause: "setting-invalid",
         },
+    };
+    SignIns {
+        sign_in,
+        stored_login,
     }
 }
 
@@ -1518,6 +1535,37 @@ mod tests {
         assert_eq!(row["usage_rate_state"], json!("not-increasing"));
         let row = emit_with(Some((body(10, 20), 30)));
         assert_eq!(row["usage_rate_state"], json!("samples-too-close"));
+    }
+
+    /// The listing reads both sign-ins a launch here can start with: a
+    /// Claude home whose declared token file holds a token reads that file
+    /// held, and its stored login, which a lane's window starts with, as
+    /// the home holds none.
+    #[test]
+    fn the_listing_reads_the_declared_token_and_the_stored_login_apart() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().display().to_string();
+        let token = home.path().join("account.token");
+        std::fs::write(&token, "planted-token\n").unwrap();
+        let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
+        let state = Judged::of("state", Ok(PathBuf::new()));
+        let tokens = Judged::of("account-tokens", Ok(vec![(dir.clone(), token)]));
+        let env = Env {
+            accounts: &accounts,
+            account_state: &state,
+            home: None,
+            copilot_home: None,
+            controller_preference: "",
+            account_tokens: &tokens,
+        };
+        let account = Found {
+            harness: Harness::Claude,
+            dir,
+            configured: true,
+        };
+        let read = sign_ins(&env, &account, 1_800_000_000);
+        assert_eq!(read.sign_in, usage::StoredLogin::Held);
+        assert_ne!(read.stored_login, usage::StoredLogin::Held);
     }
 
     /// A Copilot pool answered unlimited reads 0 percent used, so a pair

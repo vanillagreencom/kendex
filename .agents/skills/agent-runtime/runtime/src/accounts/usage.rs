@@ -596,10 +596,9 @@ pub fn expired(expires_ms: u64, now: u64) -> bool {
 }
 
 /// Whether a home holds a sign-in on this machine, as a session opened here
-/// under it signs in. The account walk reads a home's stored login
-/// ([`stored_login`]); a controller's transfer reads the same answer except
-/// on a Claude home a declared token file signs in, which it judges by that
-/// file alone ([`declared_token`]).
+/// under it signs in: its stored login ([`stored_login`]), or on a Claude
+/// home a declared token file signs in, that file alone
+/// ([`declared_token`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoredLogin {
     /// The home holds a credential whose login has not expired, or its

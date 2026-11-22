@@ -32,7 +32,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use account_planters::*;
 use agent_runtime::accounts::{
-    self, AccountRow, EndSource, FleetFacts, PickAnswer, PickRequest, Roster, Word,
+    self, AccountRow, EndSource, FleetFacts, Opens, PickAnswer, PickRequest, Roster, Word,
 };
 use agent_runtime::harness::Harness;
 use agent_runtime::reading::Reading;
@@ -1217,70 +1217,66 @@ fn the_controllers_an_overseers_choice_charges_are_the_other_seats_and_marks() {
 }
 
 /// A session opened on this machine is judged on the provider's reading of
-/// its account only where the sign-in its own launch starts with reads
-/// held: a controller's successor exports the account's declared token
-/// file, which the listing's `sign_in` reads, and a lane's window exports
-/// none and signs in with the stored login. Here the local reading is
-/// walled and the provider's has room, so the account is picked exactly
-/// where the provider's reading stands; an overseer's choice also leaves a
-/// signed-out account out. Claude's stored login is read on Linux alone,
-/// so elsewhere a lane never stands on the provider's reading.
+/// its account only where this machine's row reads the sign-in its own
+/// launch starts with held: a controller's successor starts with the
+/// listing's `sign_in`, a lane's window with its `stored_login`. A session
+/// opened elsewhere is judged on the provider's reading whatever this
+/// machine reads. Here the local reading is walled and the provider's has
+/// room, so the account is picked exactly where the provider's reading
+/// stands; an overseer's choice also leaves a signed-out account out.
 #[test]
 fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
     let world = World::new(&[]);
     let settings = world.settings.accounts.get().unwrap();
-    let lane = PickRequest {
-        opens_here: true,
-        ..claude(None)
-    };
-    let overseer = PickRequest {
+    let elsewhere = claude(None);
+    let successor = PickRequest {
         for_overseer: true,
-        opens_here: true,
+        opens: Opens::Successor,
         ..claude(None)
     };
-    let stored = cfg!(target_os = "linux");
-    // case, the listing's sign-in (the declared file), a stored login on
-    // disk, picked for a lane's window, picked for an overseer's choice
+    let window = PickRequest {
+        opens: Opens::Window,
+        ..claude(None)
+    };
+    // case, the listing's sign-in, its stored login, picked for a session
+    // opened elsewhere, for a controller's successor, for a lane's window
     let arms = [
         (
-            "declared file held, no stored login",
-            "held",
-            false,
-            false,
+            "declared file held, stored login missing",
+            Some("held"),
+            Some("missing"),
             true,
+            true,
+            false,
         ),
         (
             "declared file absent, stored login held",
-            "missing",
+            Some("missing"),
+            Some("held"),
             true,
-            stored,
             false,
+            true,
         ),
+        ("nothing judged here", None, None, true, false, false),
     ];
-    for (case, sign_in, login, for_lane, for_overseer) in arms {
-        let home = tempfile::tempdir().unwrap();
-        let dir = home.path().display().to_string();
-        if login {
-            let far = (now() + 365 * 86_400) * 1000;
-            std::fs::write(
-                home.path().join(".credentials.json"),
-                json!({"claudeAiOauth": {"accessToken": "token-b", "refreshToken": "refresh-b",
-                       "expiresAt": far, "refreshTokenExpiresAt": far}})
-                .to_string(),
-            )
-            .unwrap();
-        }
+    let dir = world.dir("b");
+    for (case, sign_in, stored_login, for_elsewhere, for_successor, for_window) in arms {
         let mut local = measured("b", 96, 5);
         local["config_dir"] = json!(dir);
-        local["sign_in"] = json!({"state": sign_in, "cause": null});
+        for (key, state) in [("sign_in", sign_in), ("stored_login", stored_login)] {
+            if let Some(state) = state {
+                local[key] = json!({"state": state, "cause": null});
+            }
+        }
         let mut provider = measured("b", 10, 5);
         provider["config_dir"] = json!(dir);
         provider["measured_through"] = json!("host");
         let rows = rows(&[local, provider], &world.settings);
         let facts = FleetFacts::default();
         for (who, req, expected) in [
-            ("lane", &lane, for_lane),
-            ("overseer", &overseer, for_overseer),
+            ("elsewhere", &elsewhere, for_elsewhere),
+            ("successor", &successor, for_successor),
+            ("window", &window, for_window),
         ] {
             let answer = accounts::pick(&rows, req, &facts, &settings, now());
             assert_eq!(
