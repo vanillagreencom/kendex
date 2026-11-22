@@ -482,8 +482,9 @@ battery_tree() {
 
 # Bash 3.2 under `set -u` errors on "${arr[@]}" when arr is empty, so each
 # expansion below sits behind its own count.
-wanted() { # BASE
+wanted() { # BASE ; TAKEN=1 when the shard and selectors take BASE, before any rejector
   local keep=1 pat
+  TAKEN=0
   if [ -n "$SHARD" ]; then
     shard_of "$1"
     [ "$OWNING_SHARD" = "$SHARD" ] || return 1
@@ -494,12 +495,13 @@ wanted() { # BASE
       if matches "$1" "$pat"; then keep=1; break; fi
     done
   fi
-  if [ "$keep" -eq 1 ] && [ "${#REJECT[@]}" -gt 0 ]; then
+  [ "$keep" -eq 1 ] || return 1
+  TAKEN=1
+  if [ "${#REJECT[@]}" -gt 0 ]; then
     for pat in "${REJECT[@]}"; do
-      if matches "$1" "$pat"; then keep=0; break; fi
+      if matches "$1" "$pat"; then return 1; fi
     done
   fi
-  [ "$keep" -eq 1 ]
 }
 
 alone() { # FILE
@@ -529,17 +531,16 @@ if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
   fi
 fi
 PROFILE_SELECTED=0
-SHARD_MEMBERS=0
+REJECTED=0
 for TEST_DIR in "${TEST_DIRS[@]}"; do
 for test_file in "$TEST_DIR"/*.sh; do
   [[ -f "$test_file" ]] || continue
   base=$(basename "$test_file" .sh)
   [[ "$base" == "run-all" ]] && continue
-  if [ -n "$SHARD" ]; then
-    shard_of "$base"
-    [ "$OWNING_SHARD" != "$SHARD" ] || SHARD_MEMBERS=$((SHARD_MEMBERS + 1))
+  if ! wanted "$base"; then
+    [ "$TAKEN" -eq 0 ] || REJECTED=$((REJECTED + 1))
+    continue
   fi
-  wanted "$base" || continue
   PROFILE_SELECTED=$((PROFILE_SELECTED + 1))
   if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
     case $'\n'"$NATIVE_FILES"$'\n' in *$'\n'"$test_file"$'\n'*) ;; *) continue ;; esac
@@ -563,10 +564,12 @@ if [[ "$RUN" -eq 0 ]]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: no native contracts selected\n' "$BATTERY"
     exit 0
   fi
-  # A shard step whose suite list skips every suite of its shard rejects
-  # each one; a selector that matches none of the shard still refuses.
-  if [ -n "$SHARD" ] && [ "$SHARD_MEMBERS" -gt 0 ] && [ "${#SELECT[@]}" -eq 0 ] && [ "${#REJECT[@]}" -gt 0 ]; then
-    printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every %s suite rejected\n' "$BATTERY" "$SHARD"
+  # Rejectors can remove every suite the shard and selectors took: a shard
+  # step's suite list can skip each suite of its shard, and a main push's
+  # main-only rejectors can reject the one suite a step's list kept. That
+  # step owes nothing; a selection that takes no suite still refuses.
+  if [ "$REJECTED" -gt 0 ]; then
+    printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every selected suite rejected\n' "$BATTERY"
     exit 0
   fi
   if [[ -n "$FILTER" ]]; then
