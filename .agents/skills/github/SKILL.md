@@ -28,43 +28,102 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 | Command | Purpose |
 |---------|---------|
-| `pr-data <N> [--actionable]` | Get PR with threads, comments, files. `--actionable`: unresolved non-outdated only. |
-| `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view with bounded auth/no-PR errors) |
-| `pr-threads <N> [--unresolved\|--resolved] [--format=safe\|raw]` | Complete paginated thread list/count, outdated included. Both filters apply in both formats. See *PR blocked with no visible conversations*. |
-| `pr-timeline <N> [--repo OWNER/REPO] [--gate-context NAME]` | One PR's phase stamps, push and bot review times, CI spans, and review and fix rounds as one JSON object. Bot reviews exclude reply-only reviews. CI figures exclude Copilot review checks. `--help` defines the clean span over each workflow run's latest attempt and the read limits. |
-| `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
-| `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
-| `pr-create [--title T] [--body B \| --body-file PATH] [--base B] [--draft] [--dry-run] [--force]` | Create PR as bot against `--base`, else the repository's default branch: `WORKTREE_DEFAULT_BRANCH` when set, else GitHub's. Safety checks: the head is not the base, has commits, pushed; `--force` skips them. |
+| `pr-data <N> [--actionable]` | Get a PR with its threads, comments and files. |
+| `pr-view [N] [--json FIELDS]` | View PR details through `gh pr view`. |
+| `pr-threads <N> [--unresolved\|--resolved] [--format=safe\|raw]` | List or count a PR's review threads. |
+| `pr-timeline <N> [--repo OWNER/REPO] [--gate-context NAME]` | One PR's phase stamps, push and bot review times, CI spans, and review and fix rounds as one JSON object. |
+| `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge. |
+| `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures. |
+| `pr-create [--title T] [--body B \| --body-file PATH] [--base B] [--draft] [--dry-run] [--force]` | Create a PR as the bot. |
 | `pr-edit-body <N> --body-file PATH` | Update an existing PR body through the sanitized router. |
-| `pr-merge <N> [--check\|--auto]` | Merge PR. `--check` reports readiness as JSON on stdout plus a one-word verdict and `head-run: <ids>` (the run scope of the CI classification) on stderr; `--auto` queues a currently-blocked PR, and arms only where the base branch's rulesets require at least 1 approval and thread resolution and dismiss stale approvals on push, and refuses the admin route unless `--queue` explicitly requests a queue arm; the immediate merge passes `--admin` to GitHub only where the queue is all its token would bypass and the PR is not queue-only. Three exit codes. See *PR Merge Outcomes*. |
-| `merge-queue-mutation <disablePullRequestAutoMerge\|dequeuePullRequest> <PR_NODE_ID>` | One merge-queue mutation, done only where the answer's body carries its payload and no errors. Disarm before dequeuing: an armed PR re-enters the queue once its requirements pass. Exit 1 prints the reason. |
-| `ci-classify-refusal <N>` | Name the cause of a pr-merge refusal. Output and retry contract: `ci-classify-refusal --help`. |
-| `check-review-replies <N>` | Judge what the PR's review replies say, read live and read-only. See *Review reply check*. |
-| `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
-| `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
-| `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. Mode semantics and exit codes: `label-add --help`. |
+| `pr-merge <N> [--check\|--auto]` | Merge a PR, or report its readiness. |
+| `merge-queue-mutation <disablePullRequestAutoMerge\|dequeuePullRequest> <PR_NODE_ID>` | Run one merge-queue mutation. |
+| `ci-classify-refusal <N>` | Name the cause of a pr-merge refusal. |
+| `check-review-replies <N>` | Judge what the PR's review replies say, read live and read-only. |
+| `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. |
+| `pr-issue <N> [--format=safe\|text]` | Extract the issue ID from the PR branch. |
+| `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. |
 | `label-remove <PR-or-issue> <label> [--issue]` | Remove a label through the sanitized router. |
-| `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
-| `ci-rerun <N> [--required-only] [--repo OWNER/REPO]` | Rerun the PR's current failed run once when its failed log names a transient runner failure; prints `rerun run=ID pattern=P` or `no-rerun cause=...`, the caller keeping the once-per-head rule: `ci-rerun --help`. |
-| `bot-token [--format=safe\|text]` | Check if bot token is configured, naming the selected variable as `source` |
-| `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review. The exit status reports whether the dismissals landed: `dismiss-review --help`. |
-| `resolve-thread <PRRT_...>` | Mark thread(s) resolved. Works on threads the UI cannot render. The exit status reports whether the mutations landed: `resolve-thread --help`. See *PR blocked with no visible conversations*. |
-| `unresolve-thread <PRRT_...>` | Reopen thread(s). The exit status reports whether the mutations landed: `unresolve-thread --help`. |
-| `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to review comment. `--pr N` is REQUIRED for numeric comment IDs; thread `PRRT_...` IDs need no PR number. |
-| `post-comment <PR> [body \| --body-file PATH]` | Post PR-level comment. |
-| `find-comment <PR> --pattern <regex>` | Find comment by pattern/author |
-| `edit-comment <id> [body \| --body-file PATH]` | Edit an existing comment, PR-level (`#issuecomment-<id>`) or inside a review thread (`#discussion_r<id>`). Endpoint order and the unknown-id refusal: `edit-comment --help`. |
-| `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
+| `ci-logs <N> [--lines N] [--format=safe\|text]` | Get a PR's CI failure logs. |
+| `ci-rerun <N> [--required-only] [--repo OWNER/REPO]` | Rerun the PR's current failed run once. |
+| `bot-token [--format=safe\|text]` | Check whether a bot token is configured. |
+| `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss a blocking review. |
+| `resolve-thread <PRRT_...>` | Mark threads resolved. |
+| `unresolve-thread <PRRT_...>` | Reopen threads. |
+| `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to a review comment. |
+| `post-comment <PR> [body \| --body-file PATH]` | Post a PR-level comment. |
+| `find-comment <PR> --pattern <regex>` | Find a comment by pattern or author. |
+| `edit-comment <id> [body \| --body-file PATH]` | Edit an existing comment, PR-level (`#issuecomment-<id>`) or inside a review thread (`#discussion_r<id>`). |
+| `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get the bot's sticky comment. |
+
+- `pr-data --actionable` returns only unresolved threads that are not outdated.
+- `pr-threads` returns the complete paginated list or count, outdated threads included. Both filters apply in both formats. See § PR blocked with no visible conversations.
+- In `pr-timeline`, bot reviews exclude reply-only reviews, and CI figures exclude Copilot review checks. `pr-timeline --help` defines the clean span over each workflow run's latest attempt and the read limits.
+- `pr-create` targets `--base`, else the repository's default branch: `WORKTREE_DEFAULT_BRANCH` when set, else GitHub's.
+- `pr-create` first checks that the head is not the base, has commits and is pushed. `--force` skips these checks.
+- `pr-merge`: § PR Merge Outcomes.
+- A `merge-queue-mutation` is done only where the answer's body carries its payload and no errors. Exit 1 prints the reason.
+- Disarm before dequeuing: an armed PR re-enters the queue once its requirements pass.
+- `ci-classify-refusal --help` gives its output and retry contract.
+- `check-review-replies`: § Review reply check.
+- `pr-cross-check --verify` runs a full build and test, detecting the build system.
+- `pr-issue` reads its issue pattern from `GH_ISSUE_PATTERN`.
+- `label-add --help` gives its mode semantics and exit codes.
+- `ci-rerun` reruns only when the failed log names a transient runner failure. It prints `rerun run=ID pattern=P` or `no-rerun cause=...`. The caller keeps the once-per-head rule: `ci-rerun --help`.
+- `bot-token` names the selected variable as `source`.
+- The exit status of `dismiss-review`, `resolve-thread` and `unresolve-thread` reports whether their mutations landed: each command's `--help`.
+- `resolve-thread` works on threads the UI cannot render. See § PR blocked with no visible conversations.
+- `post-reply` requires `--pr N` for a numeric comment ID. A `PRRT_...` thread ID needs no PR number.
+- `edit-comment --help` gives the endpoint order and the unknown-id refusal.
+- `sticky-comment --verdict` gives a quick pass or fail. `--analysis` gives the deep recommendation.
 
 CI waiting is the orch skill's: its workflows repeat the orch runtime's `verify-pr` operation on one pull request's current head, and its runtime's `queue-watch` reads that verdict on an armed pull request before the merge queue takes it, then the queue entry's progress.
 
-Contracts: `label-add --help`, `edit-comment --help`, `git-https-auth --help`, `git-diff-summary --help`.
+Contracts: `git-https-auth --help`, `git-diff-summary --help`.
 
 ### PR Merge Outcomes
 
-The `pr-merge` readiness check blocks only on contexts the base branch requires, read from its rulesets and classic protection. Required workflows contribute check identities from their current completed runs on the head, executed in the consumer repository. Workflow file metadata must prove the source repository, path and configured revision. Distinct source definitions cannot share an execution. Classic required contexts remain name-based. A red check outside that set is a `ci_optional_failed:` warning, matching what GitHub itself merges over. A required context that has registered no check on the head is `ci_pending: <context> (missing)`. Optional pending or queued checks hold neither the merge nor the required-only CI wait. A pending required workflow or unregistered workflow jobs hold as ci_pending. Unreadable workflow evidence refuses as ci_fetch_failed, even when every visible job passes. A failed required workflow holds as ci_failed. Other unreadable protection, unnameable rule types and a base that requires nothing count every check. `--check`, the immediate merge and `--auto` run that readiness check; `ci-classify-refusal` and `ci-rerun --required-only` read the same required set. The orch runtime's `verify-pr` judges a head under `required_only` on that set and otherwise counts every check.
+`pr-merge --check` reports readiness as JSON on stdout. On stderr it prints a one-word verdict and `head-run: <ids>`, the run scope of the CI classification.
 
-Full contract: `pr-merge --help`. Exit `75` is volatile: the caller arms one exact head and waits on that head with the orch runtime's `queue-watch`, whose verdicts orch's `merge-pr.md` § 5 step 1 maps to routes; an unrecognized verdict is never re-armed. If `can_merge` is false with no `issues`, read `state`. `pr-merge` resolves no review thread. The readiness check each call runs (`--check`, the merge and the `--auto` arm) runs the reply check below, which holds at that moment and no later: `--auto` arms nothing while the check fails, and `pr-merge` does not read again a PR armed before its replies existed while it stays armed or queued. `--auto` refuses with `arm: no-merge-gate=required_approval`, `required_thread_resolution` or `dismiss_stale_reviews` where the base's rulesets do not require an approval, thread resolution and stale-approval dismissal, because GitHub would merge that armed PR before any review, past an open thread, or on an approval of an earlier head; the rule is `pr-merge --help` § Approvals and review threads. On a base that requires a merge queue, `--auto` enrolls the PR and exits `75`, except on an admin route without `--queue`: where the route below reads admin, it arms nothing and exits `1` with `merge-route: admin cause=queue-bypass-safe` as its first stderr line. The immediate merge first reads its route under the merge's own token and names it on a `merge-route:` line: where the merge queue is all `--admin` would skip and the harness-ci skill's `change-class` reads the PR not queue-only at the base branch's tip, the PR's recorded base being that tip, it merges with `--admin` bound to the verified head and exits `0`; any other answer passes `--auto`, which enrolls the PR, and exits `75`, since GitHub refuses a merge on a queue base that passes neither `--auto` nor `--admin`. GitHub still holds an admin merge to every other ruleset. Each condition of the admin route and each queue `cause=`: `pr-merge --help` § Merge route. The merge method is the one the base branch allows, read from GitHub; the admin route merges past the queue, so it takes a method a direct merge allows, and takes the queue where there is none. `--delete-branch` deletes the head only where the repository's `delete_branch_on_merge` is off and the head is not a fork's: `pr-merge --help` § Merge method and § Branch deletion.
+The readiness check:
+
+- It blocks only on contexts the base branch requires, read from its rulesets and classic protection.
+- Required workflows contribute check identities from their current completed runs on the head, executed in the consumer repository.
+- Workflow file metadata must prove the source repository, path and configured revision.
+- Distinct source definitions cannot share an execution.
+- Classic required contexts remain name-based.
+- A red check outside that set is a `ci_optional_failed:` warning, matching what GitHub itself merges over.
+- A required context that has registered no check on the head is `ci_pending: <context> (missing)`.
+- Optional pending or queued checks hold neither the merge nor the required-only CI wait.
+- A pending required workflow or unregistered workflow jobs hold as ci_pending.
+- Unreadable workflow evidence refuses as ci_fetch_failed, even when every visible job passes.
+- A failed required workflow holds as ci_failed.
+- Other unreadable protection, unnameable rule types and a base that requires nothing count every check.
+- `--check`, the immediate merge and `--auto` run that readiness check.
+- `ci-classify-refusal` and `ci-rerun --required-only` read the same required set.
+- The orch runtime's `verify-pr` judges a head under `required_only` on that set, and otherwise counts every check.
+
+Outcomes and routes:
+
+- Full contract: `pr-merge --help`.
+- Exit `75` is volatile. The caller arms one exact head and waits on that head with the orch runtime's `queue-watch`. Orch's `merge-pr.md` § 5 step 1 maps its verdicts to routes. An unrecognized verdict is never re-armed.
+- If `can_merge` is false with no `issues`, read `state`.
+- `pr-merge` resolves no review thread.
+- The readiness check each call runs (`--check`, the merge and the `--auto` arm) runs the reply check below. That check holds at that moment and no later:
+  - `--auto` arms nothing while the check fails.
+  - `pr-merge` does not read again a PR armed before its replies existed while it stays armed or queued.
+- `--auto` queues a currently-blocked PR. It arms only where the base branch's rulesets require at least 1 approval and thread resolution and dismiss stale approvals on push.
+- Otherwise `--auto` refuses with `arm: no-merge-gate=required_approval`, `required_thread_resolution` or `dismiss_stale_reviews`. The rule is `pr-merge --help` § Approvals and review threads.
+- On a base that requires a merge queue, `--auto` enrolls the PR and exits `75`.
+- On an admin route, `--auto` without `--queue` arms nothing. It exits `1` with `merge-route: admin cause=queue-bypass-safe` as its first stderr line. `--queue` explicitly requests a queue arm.
+- The immediate merge first reads its route under the merge's own token, and names it on a `merge-route:` line.
+- It merges with `--admin`, bound to the verified head, and exits `0` only where both hold:
+  - The merge queue is all `--admin` would skip.
+  - The harness-ci skill's `change-class` reads the PR not queue-only at the base branch's tip, the PR's recorded base being that tip.
+- On any other answer it passes `--auto`, which enrolls the PR, and exits `75`. GitHub refuses a merge on a queue base that passes neither `--auto` nor `--admin`.
+- Each condition of the admin route and each queue `cause=`: `pr-merge --help` § Merge route.
+- The merge method is the one the base branch allows, read from GitHub. The admin route merges past the queue, so it takes a method a direct merge allows, and takes the queue where there is none.
+- `--delete-branch` deletes the head only where the repository's `delete_branch_on_merge` is off and the head is not a fork's: `pr-merge --help` § Merge method and § Branch deletion.
 
 ### Review reply check
 
@@ -72,13 +131,31 @@ Full contract: `pr-merge --help`. Exit `75` is volatile: the caller arms one exa
 .agents/skills/github/scripts/github.sh check-review-replies <N>
 ```
 
-GitHub's approval and thread resolution prove that a reply exists, never what it says, and an author can edit a reply without a push. This read-only command reads the pull request's replies live, through the same PR API readers, project env and token selection as the commands above. It fails on four rules: a tracking reply that names no issue (`untracked-claim`), a decline that names no mechanism (`unreasoned-decline`), a thread holding more comments than one read returns (`thread-replies`), and findings a review lists only in its body at the current head with no head-bound answer (`suppressed-findings`). A review body counts only from a bot or an `OWNER`, `MEMBER` or `COLLABORATOR` who is not the PR author; a reply counts only from the PR author, an app author included, the identity the check runs as, such a member, or a declared automation account as described below. A thread's first comment is the finding it opens, never a reply. It needs no review-gate installation and writes nothing. `pr-merge`'s readiness check runs it, orch's submit-pr workflow runs it in its final live gate, orch's Copilot head route runs it before a `copilot-declined-unchanged` notice or a `timeout` row's `copilot-fallback` notice, and the overseer runs it before each app approval. Exit `0` passes; `1` fails, printing a `review-replies: fail head=<sha>` line, a line per failing rule and a `suppressed-entry` line per unanswered body finding; `2` reached no verdict. The grammar of a body-finding answer, a `Dispositions at <sha>` comment, and the output lines: `check-review-replies --help`. What a decline must say is reviewer conduct: `.agents/skills/reviewer/references/finding-disposition.md` § Decision flow.
+- The command reads the pull request's replies live, through the same PR API readers, project env and token selection as the commands above.
+- It fails on four rules:
+  - `untracked-claim`: a tracking reply that names no issue.
+  - `unreasoned-decline`: a decline that names no mechanism.
+  - `thread-replies`: a thread holding more comments than one read returns.
+  - `suppressed-findings`: findings a review lists only in its body at the current head, with no head-bound answer.
+- A review body counts only from a bot, or from an `OWNER`, `MEMBER` or `COLLABORATOR` who is not the PR author.
+- A reply counts only from the PR author (an app author included), the identity the check runs as, such a member, or a declared automation account (below).
+- A thread's first comment is the finding it opens, never a reply.
+- Exit `0` passes.
+- Exit `1` fails. It prints a `review-replies: fail head=<sha>` line, a line per failing rule and a `suppressed-entry` line per unanswered body finding.
+- Exit `2` reached no verdict.
+- `check-review-replies --help` gives the grammar of a body-finding answer, of a `Dispositions at <sha>` comment, and of the output lines.
+- What a decline must say is reviewer conduct: `.agents/skills/reviewer/references/finding-disposition.md` § Decision flow.
 
-GitHub's PR and commit APIs expose no account that pushed the current head. Declare automation accounts that answer reviews in the consumer's `kendex.settings.toml` `[env]` setting `GH_REVIEW_REPLY_ACCOUNT_IDS`: whitespace-separated positive numeric account ids, empty by default. Their thread replies and head-bound `Dispositions at <sha>` comments count under every checking identity. Logins and a commit's author or committer grant no standing. A malformed setting reaches no verdict. An outside account with none of the stated standing still counts for nothing.
+Automation accounts that answer reviews:
+
+- Declare them in the consumer's `kendex.settings.toml` `[env]` setting `GH_REVIEW_REPLY_ACCOUNT_IDS`: whitespace-separated positive numeric account ids, empty by default.
+- Their thread replies and head-bound `Dispositions at <sha>` comments count under every checking identity.
+- Logins and a commit's author or committer grant no standing.
+- A malformed setting reaches no verdict.
 
 ### PR blocked with no visible conversations
 
-Under `required_conversation_resolution`, an outdated thread can block a merge while the UI shows none; `resolve-thread` reaches it by id.
+Under `required_conversation_resolution`, an outdated thread can block a merge while the UI shows none. `resolve-thread` reaches it by id.
 
 ```bash
 github.sh pr-threads 42                  # complete list, outdated included
@@ -89,9 +166,10 @@ github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
 
 ### Waiting for merge state
 
-Read a pull request's merge time from `mergedAt`. An approval or a "merging" notice does not establish that time. Read its queue entry through a GraphQL query for `pullRequest { mergeQueueEntry { position } }`; `gh pr view --json` exposes no `mergeQueueEntry` field.
-
-**Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge: read `state`, which `pr-merge --check` carries. For a PR whose merge state GitHub is still computing, follow the orch skill's `merge-pr.md` § 5 step 1 explicit arm path. The route contract is `pr-merge --help` § Merge route. To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions: see *Watching pull requests*.
+- Read a pull request's merge time from `mergedAt`. An approval or a "merging" notice does not establish that time.
+- Read its queue entry through a GraphQL query for `pullRequest { mergeQueueEntry { position } }`. `gh pr view --json` exposes no `mergeQueueEntry` field.
+- **Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge. Read `state`, which `pr-merge --check` carries.
+- For a PR whose merge state GitHub is still computing, follow the orch skill's `merge-pr.md` § 5 step 1 explicit arm path.
 
 ### Watching pull requests
 
@@ -99,32 +177,26 @@ Read a pull request's merge time from `mergedAt`. An approval or a "merging" not
 GH_REPO=OWNER/REPO .agents/skills/github/scripts/pr-watch.sh [PR# ...]
 ```
 
-Run it through the harness's wake-up mechanism. It reduces every open pull request, or the named ones, to attention lines read from GitHub's review state, and prints nothing for a healthy one. Read its attention lines rather than watching review-state transitions. Attention kinds, output format, exit codes and settings: `pr-watch.sh --help`. Which pull requests draw an automatic review, and what to do when none arrives: [references/automatic-review.md](references/automatic-review.md).
-
-## Output Formats
-
-Formats and flag rules: `github.sh --help`.
+- Run it through the harness's wake-up mechanism.
+- It reduces every open pull request, or the named ones, to attention lines read from GitHub's review state. It prints nothing for a healthy one.
+- Read its attention lines rather than watching review-state transitions.
+- Attention kinds, output format, exit codes and settings: `pr-watch.sh --help`.
+- Which pull requests draw an automatic review, and what to do when none arrives: [references/automatic-review.md](references/automatic-review.md).
 
 ## Configuration
 
-Keep secrets in `.env.local`; commit non-secret defaults to `kendex.settings.toml` under `[env]`. Other contracts: `github.sh --help`.
+Keep secrets in `.env.local`. Commit non-secret defaults to `kendex.settings.toml` under `[env]`. Other contracts: `github.sh --help`.
 
 ## Troubleshooting
 
 A [new required-workflow rule](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules#ruleset-workflows-for-open-pull-requests) does not automatically start its workflow for an open pull request. A new commit, a branch update or closing and reopening the pull request triggers it. Read the workflow run against the current rule before reporting that its requirement is met.
 
-**`VAR_SIGN`**: use a multi-line GraphQL query with `-F` variables.
+If a GraphQL call fails with **`VAR_SIGN`**, use a multi-line GraphQL query with `-F` variables.
 
-**Stale-token `HTTP 401`**: clear both environment tokens:
+On a **stale-token `HTTP 401`**, clear both environment tokens:
 
 ```bash
 env -u GH_TOKEN -u GITHUB_TOKEN gh pr list
 ```
 
-`github.sh` falls back when keyring auth succeeds. A long-running reader selects its credential once, before it starts, through `scripts/gh-auth-ladder --project ROOT`, which runs the same ladder and prints the `GH_TOKEN` and `GITHUB_TOKEN` it leaves; orch's `orch-runtime watch run` runs it at its start (`gh-auth-ladder --help`).
-
-## Dependencies
-
-- `gh` CLI (authenticated)
-- `jq`
-- `op` CLI (optional, 1Password token references)
+`github.sh` falls back when keyring auth succeeds. A long-running reader selects its credential once, before it starts, through `scripts/gh-auth-ladder --project ROOT`. That script runs the same ladder and prints the `GH_TOKEN` and `GITHUB_TOKEN` it leaves (`gh-auth-ladder --help`).
