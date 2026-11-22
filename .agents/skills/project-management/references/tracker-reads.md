@@ -2,6 +2,10 @@
 
 Read before you add or change a mode, a tracker read or a tracker route in a workflow of this package, and when a workflow step resolves or checks the team scope.
 
+## GitHub runs
+
+A workflow that supports GitHub resolves the tracker once per run, as [audit-issues § 1.2](../workflows/audit-issues.md#12-resolve-tracker) does, and routes every preflight, read and write through it. A GitHub-tracked run never requires a Linear installation or authentication. Where GitHub lacks a Linear concept, the workflow degrades in a documented note, never silently.
+
 ## Team scope
 
 A Linear list read with no `--team` returns the whole workspace, with two exceptions: `cycles list` and `statuses` default to `LINEAR_TEAM`. No `issues list` format carries the team, `--format=raw` included. Only `issues get` and `issues bulk-get` with `--format=raw` carry `.team.name`. Check a list row against the scope by its identifier prefix, the team key, as [tpm-audit § 1.1.1](../workflows/tpm-audit.md#111-resolve-team-scope) does.
