@@ -1125,8 +1125,8 @@ cp "$TMP/arm-helper" "$arm_helper"
 # itself, with no pull request and with the landing token alone, where its
 # merge queue holds no entry, and lands where GitHub takes the push. No
 # token, another class, a render that removes a path, other sources, a busy
-# or unread queue and GitHub's refusal keep the pull request route, and a default branch that moved
-# defers to the next run. A retained head never lands, and a landed run
+# or unread queue and GitHub's refusal keep the pull request route, and a
+# default branch that moved defers to the next run. A retained head never lands, and a landed run
 # closes the open rolling pull request only while GitHub still holds it
 # open. SAID is the one refresh-land line the run prints, or none: every
 # precondition that keeps the pull request names itself, once a landing

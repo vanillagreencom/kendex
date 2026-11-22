@@ -182,6 +182,7 @@ What the run lands:
 - The proof shows that the commit holds what kendex renders. It does not judge package content. kendex's own merge queue proves the content of the kendex catalog before `main` holds it, and the consumer runs no second proof of it. No such proof covers another source.
 - The run therefore lands only where every selected project has the source coverage that [§ Schedule and input check](#schedule-and-input-check) requires of a current record: each enabled source is the kendex catalog, `vanillagreencom/kendex`, with no `path` and no `rev`, and no manifest holds a revision override.
 - An update in a project with a third-party catalog, a local path, a declared revision or unknown source evidence keeps the rolling pull request, where the consumer reviews it.
+- A commit that removes or renames a path against the base the run judged keeps the rolling pull request, where the consumer's own checks judge the removal.
 - A landed commit has no pull request and enters no merge group, so no approval, review thread, pull-request check or merge-group check judges it in the consumer.
 
 After a landing:
@@ -207,13 +208,14 @@ A run that committed a new head and kept the pull request route prints one landi
 
 - The shared workflow passes the script the boolean `KENDEX_LAND_CONFIGURED`: true where the run received either name of the pair, and never a secret value.
 - A run that received neither name prints no landing line.
-- The run checks the token, the verify, the class, the sources and the merge queue in that order. The line names the first check the run does not meet.
+- The run checks the token, the verify, the class, the removed paths, the sources and the merge queue in that order. The line names the first check the run does not meet.
 
 | Line | Cause |
 | --- | --- |
 | `refresh-land=unavailable value=token` | The run received one name of the pair alone, or the `Mint the landing token` step failed. |
 | `refresh-land=skipped value=verify` | The run is held: its verify failed only on declarations a project's own manifest withholds. |
 | `refresh-land=skipped value=class` | The classifier answered a class other than `render`. |
+| `refresh-land=skipped value=path-removed` | The commit removes or renames a path against the base the run judged. |
 | `refresh-land=skipped value=sources-uncovered` | A selected project does not have the source coverage above. |
 | `refresh-land=unavailable value=sources-read` | The run could not read a project's source evidence: the engine's subscription list or a project manifest. |
 | `refresh-land=unavailable value=queue-read` | The read of the default branch's merge queue failed. |
