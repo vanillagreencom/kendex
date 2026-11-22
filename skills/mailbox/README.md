@@ -19,7 +19,9 @@ kendex add vanillagreencom/kendex --skill mailbox
 
 Each repository keeps its messages on disk. Sessions send and read them with the `lane-mail` command. Two sessions sending at once never lose a message.
 
-A program, such as a mail watch, can put a data notice into the overseer mailbox. The notice names its source. The session that reads it takes it as data from that source, and takes no instruction from it.
+## Setup
+
+Requires Bash, jq and Python 3.8 or newer. Bash 3.2 is supported.
 
 ## Licence
 
