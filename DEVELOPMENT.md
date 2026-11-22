@@ -14,7 +14,7 @@ cd crates/app && ../../ui/node_modules/.bin/tauri dev   # the desktop app agains
 
 Tauri's native app build regenerates the untracked outputs in `crates/app/gen/schemas/`. In a fresh clone, the local editor schema referenced by `crates/app/capabilities/main.json` becomes available after the first `cargo build -p kendex-app`.
 
-A change to the Tauri command surface regenerates `ui/src/bindings.ts`; the command is in `crates/app/AGENTS.md`. The binary that applies or verifies this tree is built from it first, with the self-install command in the root `AGENTS.md` § Commands.
+A change to the Tauri command surface regenerates `ui/src/bindings.ts`, with the command in the root `AGENTS.md` § Commands. The binary that applies or verifies this tree is built from it first, with the self-install command in the root `AGENTS.md` § Commands.
 
 ## Test
 

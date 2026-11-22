@@ -3,12 +3,15 @@
 The Rust workspace: `core` holds the domain, `cli` and `app` are thin shells over it, and each has its own `AGENTS.md`. `test_util.rs` is the test module every crate's test binaries include by path.
 
 - A package's behavior lives in the package's shipped scripts; the kendex binary only locates them, runs them and surfaces their results.
-- Tests format no secret-bearing values in assertion messages or prints; name safe fields, not structs.
+- Tests format no secret-bearing values in assertion messages or prints.
+  - Name safe fields, not structs.
 - A crate's integration tests are one harness, `tests/main.rs`, and every other file under `tests/` is a `mod` line of it.
   - Cargo's autodiscovery is off in each `Cargo.toml`, so a new test file is a new `mod` line.
-  - `tools/test-roster`, run by `tools/guard` and the Linux cargo job, refuses a `.rs` file directly under `tests/`, or a directory there holding one, that no `mod` line, `#[path]` attribute or `[[test]]` path names. What sits inside a declared directory is that module's to declare.
+  - `tools/test-roster`, run by `tools/guard` and the Linux cargo job, refuses a `.rs` file directly under `tests/`, or a directory there holding one, that no `mod` line, `#[path]` attribute or `[[test]]` path names.
+  - What sits inside a declared directory is that module's to declare.
   - A file that stays its own `[[test]]` target says why beside its declaration in `Cargo.toml`: a workflow selects it by name, or it changes process-global state.
-- Every test in the harness shares one process. A test that needs an environment variable or working directory of its own re-executes the binary and never writes on the process.
+- Every test in the harness shares one process.
+  - A test that needs an environment variable or working directory of its own re-executes the binary and never writes on the process.
   - `core/tests/process_guard_env.rs` is the shape.
   - `test_util::exact_test` spells the child's filter.
 - A test that runs the kendex binary hands it a fixture home through `fixture_env()` from `test_util.rs`.
@@ -19,7 +22,9 @@ The Rust workspace: `core` holds the domain, `cli` and `app` are thin shells ove
   - `fixture_env()` supplies `GIT_CEILING_DIRECTORIES` at the fixture home's parent and the temporary allocation root.
   - Keep fixture repositories below those boundaries.
   - Clear inherited Git redirects before launch.
-  - Hook writers operate only on fixture repositories. `cli/tests/guard_hooks/isolation.rs` proves this with temporary allocations inside an armed checkout.
+  - Hook writers operate only on fixture repositories.
+  - `cli/tests/guard_hooks/isolation.rs` proves this with temporary allocations inside an armed checkout.
 - A test that registers a project registers it into an isolated config dir, `fixture_env()` or an `Env` rooted under a temporary home, never the real one.
   - Registration refuses a folder under a temporary path unless the registry itself is temporary, so a fixture never reaches a person's projects list.
-  - `settings::refuse_temporary` is the rule, and `cli/tests/install_registers_project.rs` proves both sides.
+  - `settings::refuse_temporary` is the rule.
+  - `cli/tests/install_registers_project.rs` proves both sides.

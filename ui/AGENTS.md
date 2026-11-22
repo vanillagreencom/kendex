@@ -7,14 +7,16 @@ React 19, Tailwind v4, shadcn/ui and zustand, rendering state and invoking comma
   - A refusal is read through `src/lib/refusal.ts`, never off its fields.
   - A refusal that is an ANSWER, not a failure, draws a neutral line naming the control that lifts it, and no retry, since asking again answers the same.
   - `src/lib/package-read-state.ts` judges that for the package page, and `src/lib/catalog-read-state.ts` for every other surface drawing one.
-- Every colour, space and radius is a design token. A raw hex, rgb or hsl literal under `src/` warns in `tools/guard`.
+- Every colour, space and radius is a design token.
+  - A raw hex, rgb or hsl literal under `src/` warns in `tools/guard`.
 - Light, dark and system only, no themes.
 - Hue carries one meaning, which harness (`--harness-*`).
   - Status keeps the semantic tokens.
   - Item kinds are told apart by icon.
   - `--customized` marks where a package is changed, on the package page's header and the Customize surfaces.
   - The Library list carries no customization mark, legend or colour.
-- An item that asks something of the person takes its class from `src/components/home/attention-rows.ts` and its tone from `CLASS_TONES` there, never a tone literal. The principle is [docs/architecture/attention.md](../docs/architecture/attention.md).
+- An item that asks something of the person takes its class from `src/components/home/attention-rows.ts` and its tone from `CLASS_TONES` there, never a tone literal.
+  - The principle is [docs/architecture/attention.md](../docs/architecture/attention.md).
 - Four type steps and no fifth: page title (24 semibold), section title (15 semibold), row label (14 medium), description (13 muted).
   - `src/components/page-header.tsx` owns the first, and `src/components/section.tsx` the rest.
   - Not mechanically enforced.
@@ -26,11 +28,14 @@ React 19, Tailwind v4, shadcn/ui and zustand, rendering state and invoking comma
 - `--muted-foreground` is never dimmed further with an opacity suffix.
 - Three surface planes, back to front: sidebar, page, card.
 - Every page draws width and gutters from `src/lib/layout.ts`: a reading measure, or full width for a data-dense table.
-- One search box per page that lists things. `/` focuses the one on screen, or goes to the Library from a page with none.
+- One search box per page that lists things.
+  - `/` focuses the one on screen, or goes to the Library from a page with none.
 - Location filtering belongs to the Library's Installed tab. Every other page and tab shows every scope.
 - A section with nothing in it is not rendered.
 - An empty state appears only when the page would otherwise be blank and its read is done.
-- A failed read shows its error with a retry, kept figures headed as the last kendex could check, never a definite count. `src/components/account-section.dom.test.tsx` enforces this.
+- A failed read shows its error with a retry.
+  - It heads kept figures as the last kendex could check, never as a definite count.
+  - `src/components/account-section.dom.test.tsx` enforces this.
 - One model, stated in `src/lib/copy-model.ts` and nowhere else:
   - a place is the personal setup or a project;
   - packages are installed into a place;
@@ -42,7 +47,9 @@ React 19, Tailwind v4, shadcn/ui and zustand, rendering state and invoking comma
   - Other shared selectors are in [GUIDED-INSTALL.md § Shared selectors](GUIDED-INSTALL.md#shared-selectors).
 - A marketplace is titled by the name its catalogue declares, then by the directory's label for a repository nobody subscribes to, then by the folder or repository it resolves to.
   - A folder says `Local folder` beside its resolved path.
-  - The source alias is a per-place manifest key. It belongs in source details, never in a title, and `.` never stands as one.
+  - The source alias is a per-place manifest key.
+  - The alias belongs in source details, never in a title.
+  - `.` never stands as a title.
 - A page under `useCatalog` reads the `display` it returns and resolves no title of its own, passing it to whatever it draws.
 - A card standing for something openable is the open action.
   - The whole card opens it through `src/lib/click-asks-to-open.ts`.
@@ -50,7 +57,10 @@ React 19, Tailwind v4, shadcn/ui and zustand, rendering state and invoking comma
   - No `Open` button stands beside them.
   - Name, then description, then meta in a quieter step.
 - A fact a card states stays on screen, even where it is also a link.
-- A secondary action on the thing the card names, such as bookmark it or remove it, is separately focusable, never activates the card, and appears on hover or focus.
+- A secondary action on the thing the card names, such as bookmark it or remove it:
+  - is separately focusable;
+  - never activates the card;
+  - appears on hover or focus.
 - Standing reads refresh through `src/lib/rescan.ts`. No reader decides for itself when an install might have happened.
 - A row, card or chip that names a thing opens that thing.
   - A package name opens its page.
@@ -58,6 +68,9 @@ React 19, Tailwind v4, shadcn/ui and zustand, rendering state and invoking comma
   - A place opens the place, a marketplace opens the marketplace, and a harness chip opens the harness.
   - Secondary actions stay buttons.
   - No Open button repeats what the container already does. The one exception is a row whose own action is gone: there the button is the only route left, and it names where it goes.
-  - Every such surface takes `src/lib/opens-on-activate.ts::opensOnActivate`, which puts the open on the pointer and on Enter, names the extra focus stop, and keeps the name a real control. `src/lib/click-asks-to-open.ts` stays the one predicate under it.
-  - The surface takes no widget role. `role="button"` around real buttons is invalid, and on a row it would replace the row semantics a screen reader navigates by.
-- A harness is a harness on screen, never a tool. In a table it is its mark, with its name on hover and for screen readers.
+  - Every such surface takes `src/lib/opens-on-activate.ts::opensOnActivate`, which puts the open on the pointer and on Enter, names the extra focus stop, and keeps the name a real control.
+  - `src/lib/click-asks-to-open.ts` stays the one predicate under it.
+  - The surface takes no widget role.
+  - `role="button"` around real buttons is invalid, and on a row it would replace the row semantics a screen reader navigates by.
+- A harness is a harness on screen, never a tool.
+  - In a table it is its mark, with its name on hover and for screen readers.

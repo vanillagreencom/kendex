@@ -7,7 +7,8 @@ This repository's own continuous integration and the instruction files its revie
 - `instructions/code-review.md` is this repository's whole review doctrine.
   - `AGENTS.md` § Code Review Rules is the directive line that sends Codex there.
   - `copilot-instructions.md` carries the same pointer for Copilot, plus the `severity` block.
-- Every job runs on a GitHub-hosted runner. The AUR, Homebrew and `request-copilot-review.yml` workflows read the fleet's `vars.CI_RUNNER_2V`, unset in this public repository, and fall back to `ubuntu-latest`.
+- Every job runs on a GitHub-hosted runner.
+  - The AUR, Homebrew and `request-copilot-review.yml` workflows read the fleet's `vars.CI_RUNNER_2V`, unset in this public repository, and fall back to `ubuntu-latest`.
 - `skill-tests.yml` owns catalog and CLI checks.
   - Keep caller content out of reusable `catalog-check.yml`.
   - `skill-tests.yml` runs every suite [`../skills/AGENTS.md`](../skills/AGENTS.md) names, plus `refresh/`, `tools/` and `hooks/`, save the four main-only entries of the temporary coverage exception in the merge-rail principle.
@@ -19,7 +20,8 @@ This repository's own continuous integration and the instruction files its revie
   - The secrets scan also judges each commit of the pull request the group squashed.
   - doc-limits and the bot-instructions check judge the whole tree.
 - A selected night runs the macOS and Windows tests and the surviving macOS shell roster.
-- Before changing `actions/change-class` or classifier wiring, read [CI and merge rail](../docs/architecture/merge-rail.md) and [the harness-ci wiring contract](../skills/harness-ci/references/wiring.md). Consumers reference `vanillagreencom/kendex/.github/actions/change-class@main`.
+- Before changing `actions/change-class` or classifier wiring, read [CI and merge rail](../docs/architecture/merge-rail.md) and [the harness-ci wiring contract](../skills/harness-ci/references/wiring.md).
+  - Consumers reference `vanillagreencom/kendex/.github/actions/change-class@main`.
 - `refresh-consumer.yml` is the reusable workflow consumers call through [`../refresh/kendex-refresh.yml`](../refresh/kendex-refresh.yml) at a major tag such as `v1`.
   - It installs the release tagged on `job.workflow_sha` and runs that checkout's refresh scripts.
   - [CI and merge rail](../docs/architecture/merge-rail.md#rules) defines catalog delivery and fallback.
@@ -30,13 +32,15 @@ This repository's own continuous integration and the instruction files its revie
   - Consumers copy and render none of it.
   - Its adoption contract is review-gate's references/adoption.md § Central Copilot request workflow.
   - Its suite is [`../skills/review-gate/tests/request-copilot-review.test.sh`](../skills/review-gate/tests/request-copilot-review.test.sh).
-- `lock-record.yml` runs [`../tools/lock-record`](../tools/lock-record) on every push to `main` with a kendex built from that tree. The script re-records `.kendex-lock.json` where a merge moved it and lands the record.
+- `lock-record.yml` runs [`../tools/lock-record`](../tools/lock-record) on every push to `main` with a kendex built from that tree.
+  - The script re-records `.kendex-lock.json` where a merge moved it and lands the record.
   - Where the merge queue holds no entry and GitHub takes the push, the landing app's token pushes the record to `main` as one `[skip ci]` commit.
   - Otherwise the record lands through the rolling pull request `kendex/lock`, armed with the lanes app's token.
   - Both tokens come from the `kendex` environment.
   - The script's header lists every line a run prints.
   - The script's suite is [`../crates/cli/tests/lock_record.rs`](../crates/cli/tests/lock_record.rs).
-- `dependabot.yml` asks for security updates grouped per manifest directory and weekly action-pin version updates. The orch overseer triages each alert, and a lane takes over its fix pull request, per [`../skills/orch/references/security-alerts.md`](../skills/orch/references/security-alerts.md).
+- `dependabot.yml` asks for security updates grouped per manifest directory and weekly action-pin version updates.
+  - The orch overseer triages each alert, and a lane takes over its fix pull request, per [`../skills/orch/references/security-alerts.md`](../skills/orch/references/security-alerts.md).
 - `release.yml` is the release lane [app-deploy](../.agents/skills/app-deploy/SKILL.md) § What the workflow does describes.
 - `publish-npm.yml` is the [npm-deploy](../.agents/skills/npm-deploy/SKILL.md) skill's trusted-publishing section, which states what renaming it breaks.
 - `publish-aur.yml` and `publish-homebrew.yml` publish `packaging/`.

@@ -3,10 +3,10 @@
 Catalog hooks, one bash script per hook, each with its suite under `tests/<name>.test.sh`.
 
 - A hook opens with a commented frontmatter block between `# ---` lines. `crates/core/src/hook.rs::parse_hook` reads it. Its keys:
-  - `name`, `event` (a name from `crates/core/src/hook.rs::EVENTS`), `matcher`, `description`, `summary`, `safety` and `timeout` (seconds).
+  - `name`, `event` (from `hook.rs::EVENTS`), `matcher`, `description`, `summary`, `safety` and `timeout` (seconds).
   - An optional `harnesses: [..]` restricting delivery. Antigravity is reached only when named there, because its payload is `toolCall.args`, not `tool_input`.
   - An optional `requires: [..]` naming companion hooks, and `requires-on: [..]` restricting those hook requirements to named harnesses.
-  - An optional `requires-skills: [..]` naming skills this hook needs in the same scope.
+  - An optional `requires-skills: [..]` naming skills this hook needs.
 - A hook names under `requires` each companion it runs beside itself, and under `requires-skills` each skill it needs, from its catalog in the same scope. `crates/core/src/engine/deps.rs` installs both through the dependency walk.
   - Without `requires-on`, a companion is required on every harness the requiring hook runs on. The companion's `harnesses` line narrows that.
   - A required dependency kept removed or switched off withholds the hook on the tools that need it, with a finding naming both.
@@ -34,8 +34,10 @@ Catalog hooks, one bash script per hook, each with its suite under `tests/<name>
   - A hook that holds every turn end on something nothing the caller does will lift stops the session from ever ending.
 - A hook here is guard code for finding disposition, its turn-end refusals and the marks it reports included. A mark passed with no keyed line is a fail-open defect, never an excluded class.
 - A refusal states what it refused, why, and the preferred remedy first, before any exemption path. Its wording follows [OUTPUT.md](../crates/cli/OUTPUT.md#person-facing-copy).
-- The first line of a refusal or a notice is `<hook-name>: <key>=<value>`. The rule it follows is [`../skills/code-quality/SKILL.md`](../skills/code-quality/SKILL.md).
-  - Nothing precedes it. Where a command the hook runs writes its own words, capture them at the site and hand them to the message function, which prints the keyed line, then the English, then that cause.
+- The first line of a refusal or a notice is `<hook-name>: <key>=<value>`. The rule it follows is [code-quality](../skills/code-quality/SKILL.md).
+  - Nothing precedes it.
+  - Where a command the hook runs writes its own words, capture them at the site and hand them to the message function.
+  - That function prints the keyed line, then the English, then that cause.
   - A suite asserts the keyed line at position 1 and the cause below it.
 - A suite runs the hook `HOOK_UNDER_TEST` names, else the one beside it, so a must-fail control reruns its assertions on a planted copy.
 - There is no exception for text a person or a model reads.
@@ -44,6 +46,13 @@ Catalog hooks, one bash script per hook, each with its suite under `tests/<name>
   - Relay producer reports unchanged, except for the lane count in `session-drift-check.sh::report`.
 - The one thing a hook cannot put under its keyed line is a diagnostic from shell startup, before the script runs. Everything the hook itself runs is captured at the site and replayed.
 - Two hooks use fixed keys.
-  - `block-bare-cd`: payload or tool errors warn once at exit 0; `missing-tools` lists jq,cat,grep,sed in that order; `refused=bare-cd` exits 2; no bare cd exits 0 silently.
-  - `pre-commit-check`: `bypass=<matched word, verbatim>` exits 2; `missing-tools=<comma list, order jq,cat,grep>`, `payload=invalid-json`, `payload=read-failed`, `command=unresolved`, `unarmed=<directory judged>` and `judged=<directory judged>` exit 0. An unarmed notice adds `setup=consent` or `setup=<main checkout path>`.
+  - `block-bare-cd`:
+    - Payload or tool errors warn once at exit 0.
+    - `missing-tools` lists jq,cat,grep,sed in that order.
+    - `refused=bare-cd` exits 2.
+    - No bare cd exits 0 silently.
+  - `pre-commit-check`:
+    - `bypass=<matched word, verbatim>` exits 2.
+    - `missing-tools=<comma list, order jq,cat,grep>`, `payload=invalid-json`, `payload=read-failed`, `command=unresolved`, `unarmed=<directory judged>` and `judged=<directory judged>` exit 0.
+    - An unarmed notice adds `setup=consent` or `setup=<main checkout path>`.
 - `tests/*` renders nowhere.

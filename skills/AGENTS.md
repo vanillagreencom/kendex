@@ -4,41 +4,52 @@ The catalog's skills, one directory per skill, each rendered under `.agents/skil
 
 - Land a changed source and its tracked render in the same commit.
   - `tools/guard` checks presence, not bytes: renders carry injected instructions.
-  - An unchanged render passes when the source moves a frontmatter key between values the harness omits (`render_blind`), or edits only `skills/<x>/SKILL.md` frontmatter, proved at merge by `own_renders`.
+  - An unchanged render passes when the source moves a frontmatter key between values the harness omits (`render_blind`).
+  - An unchanged render also passes when the source edits only `skills/<x>/SKILL.md` frontmatter, proved at merge by `own_renders`.
 - Changes to an entry's source, shaping manifest or hashing, rendering or recording code leave `.kendex-lock.json` as `main` holds it.
   - `main` re-records after each merge through `tools/lock-record`.
-  - Until then, `kendex verify` and worktree drift notices report changed rows as stale. Never follow their `kendex refresh` remedy in a worktree.
+  - Until then, `kendex verify` and worktree drift notices report changed rows as stale.
+  - Never follow their `kendex refresh` remedy in a worktree.
   - Only a lock-format change whose kendex cannot read `main`'s record re-records on its branch.
-- A shipped file cites no decision record its package lacks; it states the rule.
-- A shipped file's markdown links by relative path only into its own package or one its `SKILL.md` lists as `required`. It names another package's file in plain text.
+- A shipped file cites no decision record its package lacks.
+  - It states the rule.
+- A shipped file's markdown links by relative path only into its own package or one its `SKILL.md` lists as `required`.
+  - It names another package's file in plain text.
 - A catalog agent is added, renamed or removed only with a distinct scope, a launch route, evidence of the gap and the owner's sign-off.
   - A removal also names who covers the scope and updates its launch routes.
   - A name or framework alone is no evidence of a gap.
 - Sync a render by replaying the source diff onto it, never by copying the source over it.
 - Added or removed renders join or leave `.kendex-generated.json`.
-  - Every render reader consults this committed inventory. Unlisted paths are hand-written.
+  - Every render reader consults this committed inventory.
+  - Unlisted paths are hand-written.
   - A worktree adds its entries as [engine.md § The generated-file inventory](../docs/architecture/engine.md#the-generated-file-inventory) sets out.
 - Shell stays Bash 3.2 compatible.
   - `tools/bash32-lint` checks Bash 4+ syntax in the guard.
   - `tools/bash32-parse` parses that tree and `tools/` with real Bash 3.2 under `tools/guard --full` and the Linux `guards-scans` shard.
-  - Each suite of a skill whose `scripts/` is in `NO_SCAN` declares `# bash-runtime: 4` if it needs Bash 4, or `# bash-runtime: 3.2` if it can run on 3.2. The lint refuses undeclared suites there.
+  - Each suite of a skill whose `scripts/` is in `NO_SCAN` declares `# bash-runtime: 4` if it needs Bash 4, or `# bash-runtime: 3.2` if it can run on 3.2.
+  - The lint refuses undeclared suites there.
   - `tools/macos-test-contracts` excludes `4` and retains `3.2`. A declared suite has no JSON entry.
-  - macOS runs retained contracts with `/bin/bash` 3.2. The focused provider check keeps native interpreter proof.
-- A must-fail control for preflight's `early-close-pipe` lane writes its input from the shell, never `cat` reading a file. `cat` pushes several hundred KB before it blocks, so it passes a buffer-sized fixture either way.
+  - macOS runs retained contracts with `/bin/bash` 3.2.
+  - The focused provider check keeps native interpreter proof.
+- A must-fail control for preflight's `early-close-pipe` lane writes its input from the shell, never `cat` reading a file.
+  - `cat` pushes several hundred KB before it blocks, so it passes a buffer-sized fixture either way.
 - A script proves its jq filters with jq 1.7.1, where `f? .r` does not parse and `f? | .r` does.
 - A script that sources another skill's lib declares that skill `required` under `dependencies` in its own `SKILL.md`.
-  - Every fixture that copies a skill into an isolated project installs the required sibling beside it. A copy outside that layout refuses at startup.
+  - Every fixture that copies a skill into an isolated project installs the required sibling beside it.
+  - A copy outside that layout refuses at startup.
   - A script that sources the lib on one path only, feature-detects it there and refuses that path when it is absent declares the skill `optional` instead.
   - Executing another skill's script is a dependency by the same rule as sourcing its lib.
   - A declaration that closes a cycle with the sibling's own edge is still made: the dependency walk in `crates/core/src/engine/deps.rs` accepts cycles.
 - A package change feature-detects every dependency and never names one machine's directory layout.
-- A new `repo-effects` frontmatter key lands in the reader, `FIELDS` in `crates/core/src/repo_effects/declaration.rs`, before a catalog declaration uses it. `every_shipped_declaration_reads_with_no_unknown_key` holds the catalog to that.
+- A new `repo-effects` frontmatter key lands in the reader, `FIELDS` in `crates/core/src/repo_effects/declaration.rs`, before a catalog declaration uses it.
+  - `every_shipped_declaration_reads_with_no_unknown_key` holds the catalog to that.
 - An edit to the line of a finding kendex accepted (`crates/core/src/quality/allowance.toml` names each), not one elsewhere in the file, runs `cargo test -p kendex-core -- --ignored regenerate_allowance` in that commit.
   - `crates/core/tests/allowance.rs` fails while the table is stale.
   - The refresh refuses a file whose findings no longer match its rows one per row (`AcceptedFile::refreshed` states when).
   - A new finding elsewhere in a kendex package stays a finding: the refresh adds no row.
   - A row is written by hand only for a line the package runs or emits.
-- A test that shells out to git clears `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` together. Under `orch/tests/` that clearing is `skills/orch/tests/lib/git-env.sh`, sourced on the line under each suite's `set -...o pipefail`.
+- A test that shells out to git clears `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE` together.
+  - Under `orch/tests/` that clearing is `skills/orch/tests/lib/git-env.sh`, sourced on the line under each suite's `set -...o pipefail`.
 - A fixture repository a test later removes disables git's background maintenance at creation, `gc.auto 0` and `maintenance.auto false` as `skills/bot-instructions/tests/lib/harness.sh` spells it, so the removal cannot race git's background writer.
 - Before changing CI coverage, read [merge-rail](../docs/architecture/merge-rail.md), which owns the main-only entries.
   - `tools/ci-job-set` owns CI selection and event parity.

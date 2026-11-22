@@ -2,17 +2,22 @@
 
 Tauri commands over `kendex-core`, one module per page domain. A command reads, invokes core and answers; no domain logic lives here.
 
-- A command that touches disk, git or a subprocess is `#[tauri::command(async)]`; only window operations stay synchronous. Not mechanically enforced.
-- `specta_builder` (`src/lib.rs`) declares the command surface, the constants the UI reads and the runtime every `Result`-returning command answers through. `tests/bindings.rs` byte-checks `ui/src/bindings.ts` against it.
+- A command that touches disk, git or a subprocess is `#[tauri::command(async)]`.
+  - Only window operations stay synchronous.
+  - Not mechanically enforced.
+- `specta_builder` (`src/lib.rs`) declares the command surface, the constants the UI reads and the runtime every `Result`-returning command answers through.
+  - `tests/bindings.rs` byte-checks `ui/src/bindings.ts` against it.
 - Two raw spawns are sanctioned and exempt from the process constructor: the self re-exec in `src/launch_env.rs` and the detached editor launch in `src/native.rs`. Anything else goes through core's `process::Hardened`.
 - A whole-file write carries the `Base` its copy was read at, and answers different bytes on disk with a refusal, never a silent overwrite.
   - Two writes take that check here, in `src/whole_file.rs`, and answer `WriteRefused`: the Customize tab's manifest and the Settings page's app settings.
   - The third is the project's private env file, which this crate never composes or writes. The Customize save forwards the draft with the `Base` the credential rows were read at. Core's plan carries that as the op's own precondition, and a file that moved since answers `Moved` or `PlanStale` from there.
 - A command answering `SourceReadRefused` from `src/refusal.rs` hands the page a source nothing has downloaded yet as its own kind instead of words.
-  - Its single `From<CoreError>` is the one place `CoreError::SourcePending` is told apart from a real failure. A second match on that error in a command module is a twin.
+  - Its single `From<CoreError>` is the one place `CoreError::SourcePending` is told apart from a real failure.
+  - A second match on that error in a command module is a twin.
   - `git grep -n SourceReadRefused crates/app/src` is which commands answer it.
   - Its serde kind strings (`source-pending`, `failed`) are the wire contract the UI branches on, so renaming one is a bindings change.
-  - `src/refusal.rs` `tests::an_undownloaded_source_is_its_own_shape` enforces the mapping. Nothing enforces which commands answer it.
+  - `src/refusal.rs` `tests::an_undownloaded_source_is_its_own_shape` enforces the mapping.
+  - Nothing enforces which commands answer it.
 - `tauri.conf.json` carries no `bundle.externalBin`, `bundle.resources` or other release-only bundle key, and no `tauri.<platform>.conf.json` sits beside it.
   - tauri-build copies those at compile time, and a plain `cargo build -p kendex-app` needs no staged command.
   - The command each installer carries is the per-platform overlay under `release/`, which `.github/workflows/release.yml` passes to `tauri build --config`.
@@ -24,7 +29,9 @@ Tauri commands over `kendex-core`, one module per page domain. A command reads, 
   - On Linux it decides the display environment. `KENDEX_GDK_BACKEND` is honoured on any session and never overridden.
   - On macOS it puts the login shell's `PATH` in place of the one launchd hands a Finder launch, so every program kendex runs is the one a terminal would find.
   - The tests in `src/launch_env/tests.rs` enforce this.
-- `src/deep_link.rs` parses a `kendex://` link. Until the page's first `deep_link_take`, the link is held for that call. After it, the link reaches the page as the `DeepLinkOpened` event.
+- `src/deep_link.rs` parses a `kendex://` link.
+  - Until the page's first `deep_link_take`, the link is held for that call.
+  - After that call, the link reaches the page as the `DeepLinkOpened` event.
   - The scheme it accepts is the one `tauri.conf.json` declares.
   - On Linux the handler file is kendex's own (`src/deep_link/linux.rs`), with a bare `Exec=` path because `xdg-open` runs no quoted one.
   - The tests in `src/deep_link/tests.rs`, `src/deep_link/linux.rs` and `tests/tauri_config.rs::the_settings_the_window_and_the_release_path_lean_on` enforce this.
