@@ -476,6 +476,8 @@ struct FakePull {
     state: &'static str,
     /// Its head branch, `head.ref`.
     branch: &'static str,
+    /// The body the object reports; `None` plants GitHub's null.
+    body: Option<&'static str>,
     /// The head repository's `full_name`; `None` plants a deleted fork.
     head_repo: Option<&'static str>,
     /// The files page's members, "Diff Entry" objects.
@@ -492,6 +494,7 @@ fn fake_pull(number: u64, branch: &'static str, files: &[&str]) -> FakePull {
         number,
         state: "open",
         branch,
+        body: None,
         head_repo: Some("O/r"),
         files: files.iter().map(|f| json!({"filename": f})).collect(),
         changed: None,
@@ -525,7 +528,7 @@ fn gh_map(pulls: &[FakePull]) -> Value {
                 "number": p.number,
                 "state": p.state,
                 "title": "a holder",
-                "body": null,
+                "body": p.body,
                 "merged_at": merged_at,
                 "merge_commit_sha": null,
                 "changed_files": p.changed.unwrap_or(p.files.len() as u64),
@@ -1157,6 +1160,26 @@ fn an_unowned_open_pull_request_holds_paths_against_a_first_launch() {
         pairs(&[("item", "KEN-N"), ("file", "docs/x.md"), ("holder", "#8")])
     );
     assert_eq!(std::fs::read(fleet.fleet_path()).unwrap(), before);
+
+    // A body line `Closes KEN-N` names the candidate's own pull request on a
+    // branch past its key; a mention or a `Closes` of a longer key does not.
+    // The admitted row comes last, since its launch records a lane.
+    let rows: [(&str, bool); 3] = [
+        ("Follows KEN-N.\n", false),
+        ("Closes KEN-NX\n", false),
+        ("Context.\n- Closes KEN-N\n", true),
+    ];
+    for (body, own) in rows {
+        let mut pull = fake_pull(8, "ken-n-suffix", &["docs/x.md"]);
+        pull.body = Some(body);
+        fleet.gh_api(&gh_map(&[pull]));
+        let out = fleet.op(&request);
+        if own {
+            assert_eq!(reply(&out)["ok"], true, "{body:?}: {}", stderr(&out));
+        } else {
+            assert_eq!(refusal(&out).0, "launch-overlap", "{body:?}");
+        }
+    }
 }
 
 /// The fleet's own repository, which a request names by its checkout alone

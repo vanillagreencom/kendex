@@ -557,11 +557,18 @@ fn lane_own(pull: &Pull, item: &str, owner: &str, pr: Option<u64>) -> bool {
     if scope_names(&title, &key) {
         return true;
     }
-    let body = match &pull.body {
-        Nullable::Present(body) => body.to_ascii_lowercase(),
-        Nullable::Absent | Nullable::Null => String::new(),
+    body_closes(&pull.body, item)
+}
+
+/// Whether a body line says `Closes KEY`, case-insensitively.
+pub(crate) fn body_closes(body: &Nullable<String>, key: &str) -> bool {
+    let Nullable::Present(body) = body else {
+        return false;
     };
-    body.lines().any(|line| closes_names(line, &key))
+    let key = key.to_ascii_lowercase();
+    body.to_ascii_lowercase()
+        .lines()
+        .any(|line| closes_names(line, &key))
 }
 
 /// `^[a-z]+\(([^)]*[ ,])?KEY([ ,][^)]*)?\)!?:` on a lowercased title.

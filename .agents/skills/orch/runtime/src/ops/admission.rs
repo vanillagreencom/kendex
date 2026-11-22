@@ -26,8 +26,9 @@
 //! open pull request of the item's repository: one its record names by its
 //! `pending_pr` or `parked` number, or by its head branch (the lane's
 //! recorded branch, or its item key); the join then refuses by its tie.
-//! An open pull request owned by neither the candidate nor a fleet lane
-//! holds its changed paths against a first launch: `launch-overlap holder=#N`.
+//! An open pull request owned by neither the candidate (its branch, key,
+//! issue number or a body line `Closes` naming it) nor a fleet lane holds
+//! its changed paths against a first launch: `launch-overlap holder=#N`.
 //! The open pull requests are read once after the lanes through `verify::Gh`
 //! where a join stands or a first launch names touched paths. Closed, merged
 //! and forked pull requests hold nothing. An unread or incomplete inventory
@@ -129,6 +130,7 @@ pub(super) struct OpenPull {
     pub number: u64,
     /// Its head branch, `head.ref`.
     pub branch: String,
+    pub body: Nullable<String>,
     /// The detail's count, used to check the completeness of its files list.
     changed_files: Option<u64>,
 }
@@ -1087,6 +1089,7 @@ pub(super) fn judge(
                 } else {
                     None
                 };
+                let closes = issue_number.map_or_else(|| a.item.to_owned(), |n| format!("#{n}"));
                 let named = lanes
                     .iter()
                     .filter(|lane| lane.status != LaneStatus::Done && same_repo(lane, a.repo))
@@ -1096,6 +1099,7 @@ pub(super) fn judge(
                     if own_branch.as_deref() == Some(pull.branch.as_str())
                         || pull.branch.eq_ignore_ascii_case(a.item)
                         || issue_number == Some(pull.number)
+                        || crate::watch::github::body_closes(&pull.body, &closes)
                         || named
                             .iter()
                             .any(|(lane, branch)| names_pull(lane, branch.as_deref(), &pull, &repo))
@@ -1698,6 +1702,7 @@ fn read_open_pulls(
         out.push(OpenPull {
             number,
             branch: pull.head.branch,
+            body: pull.body,
             changed_files: pull.changed_files.present().copied(),
         });
     }
@@ -1944,6 +1949,7 @@ mod tests {
         let pull = |number: u64, branch: &str| OpenPull {
             number,
             branch: branch.to_owned(),
+            body: Nullable::Null,
             changed_files: None,
         };
         let lane = |record: Value| -> Lane {
