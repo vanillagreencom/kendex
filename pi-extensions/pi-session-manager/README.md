@@ -16,8 +16,8 @@ A session browser for Pi. You can search saved conversations, resume them, renam
 
 - npm: `pi install npm:@vanillagreen/pi-session-manager`.
 - kendex:
-  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
-  2. Run `kendex update-pi`.
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-session-manager"]

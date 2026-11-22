@@ -4,7 +4,8 @@ Tool selection:
 
 1. Choose only active tools.
 2. Pick the cheapest option that answers the question.
-3. Select `code_search`, `web_answer`, `web_find_similar` and `web_research` only when Exa is configured; `web_research` also requires `exaDeepResearchEnabled`.
+
+- Select `code_search`, `web_answer`, `web_find_similar` and `web_research` only when Exa is configured; `web_research` also requires `exaDeepResearchEnabled`.
 
 Tools:
 

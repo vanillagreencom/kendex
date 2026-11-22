@@ -17,8 +17,8 @@ Requires Pi 1.0.1 or later. Update older Pi installations before installing this
 
 - npm: `pi install npm:@vanillagreen/pi-tool-renderer`.
 - kendex:
-  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
-  2. Run `kendex update-pi`.
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-tool-renderer"]

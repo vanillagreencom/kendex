@@ -15,8 +15,8 @@ A Pi extension that asks the model to use shorter replies. Users can choose a re
 
 - npm: `pi install npm:@vanillagreen/pi-caveman`.
 - kendex:
-  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
-  2. Run `kendex update-pi`.
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-caveman"]

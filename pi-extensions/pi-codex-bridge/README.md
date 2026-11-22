@@ -15,8 +15,8 @@ Pi Codex bridge adds `pi-codex` models to Pi. Each model runs through the Codex 
 
 - npm: `pi install npm:@vanillagreen/pi-codex-bridge`.
 - kendex:
-  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
-  2. Run `kendex update-pi`.
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-codex-bridge"]

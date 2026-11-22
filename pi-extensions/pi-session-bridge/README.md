@@ -15,8 +15,8 @@ A local connection to a running Pi session. The pi-bridge CLI lets another termi
 
 - npm: `pi install npm:@vanillagreen/pi-session-bridge`.
 - kendex:
-  1. Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
-  2. Run `kendex update-pi`.
+  - Add the declaration below to the project's `kendex.toml`, or to `~/.config/kendex/kendex.toml` for user scope.
+  - Run `kendex update-pi`.
 
 ```toml
 [pi-extensions."@vanillagreen/pi-session-bridge"]

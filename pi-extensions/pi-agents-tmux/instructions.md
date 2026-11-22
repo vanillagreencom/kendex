@@ -50,16 +50,16 @@ Calling rules:
   - Monitor/trace surfaces steer vs follow-up delivery when known.
   - A user-hidden dashboard stays hidden until the user toggles it back in.
 - If dashboard or Monitor output temporarily lags during heavy pane activity:
-  1. Treat it as transient registry contention; the agent task itself is not failed by a skipped refresh.
-  2. Retry by task id.
+  - Treat it as transient registry contention; the agent task itself is not failed by a skipped refresh.
+  - Retry by task id.
 - On a supported provider context overflow, a bg subagent retries once in a fresh one-shot lane unless `sameSession: true`. If the retry fails, the result includes both attempt summaries. With `sameSession: true`, the result keeps the original failure and the remedy: start a fresh agent without `sameSession`.
 - If a subagent returns `needs_completion`, inspect `cwdSnapshot.head`, `cwdSnapshot.dirty`, and `cwdSnapshot.lastCommit.subject` when present before deciding whether the subagent's work completed.
 - On Linux, before queuing work into a reused live pane, `subagent` verifies the pane process cwd is live and matches the requested task `cwd`.
   - If not, the tool returns a structured `pane-cwd-stale` error and publishes `agent.pane_cwd_stale`.
   - On `pane-cwd-stale`:
-    1. Stop the pane with `stop_subagent`.
-    2. Retry with `forceSpawn: true` for a fresh process.
+    - Stop the pane with `stop_subagent`.
+    - Retry with `forceSpawn: true` for a fresh process.
 - Stopping kills the tmux process but preserves the session file; the next default `subagent` call resumes it. For a context-exhausted idle pane:
-  1. Save its final result.
-  2. Stop it.
-  3. Pass `forceSpawn: true` with the new task and that result to start fresh.
+  - Save its final result.
+  - Stop it.
+  - Pass `forceSpawn: true` with the new task and that result to start fresh.
