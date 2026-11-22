@@ -55,7 +55,8 @@ One pass, in order. The first verdict stands.
    - It needs a specific deliverable, an observable impact, and bounded scope.
    - Vague items ("add logging", "consider X") and informational notes are omitted.
    - Automated regression detection is never informational.
-3. Doc or reference updates for code this diff changes are work the Done-when needs → `fix`.
+3. **Done-when.**
+   - Doc or reference updates for code this diff changes are work the Done-when needs → `fix`.
    - A review with no work item (`review.md` run without an issue ID) takes the reviewed change as its Done-when.
    - **Does the Done-when need this work?**
      - If not → `issue` where it clears § Filing bar, else `decline` with its reason.

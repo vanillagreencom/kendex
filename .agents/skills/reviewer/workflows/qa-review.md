@@ -34,7 +34,7 @@ The delegation prompt carries the dev agent's completion summary, the triggering
 - Suggestions that contradict the delegation's listed decisions are invalid.
 - A flawed decision is a blocker citing the decision.
 - When the delegation carries `Issue:`, apply [project-management references/filing.md § Done when](../../project-management/references/filing.md#done-when) to its `Post-merge:` Done-when boxes.
-- Raise a `fix` suggestion for any box that fails that rule.
+  - Raise a `fix` suggestion for any box that fails that rule.
 - For `needs-ui-review`, judge the view from the set in [ui-screenshots.md § Screenshots](../references/ui-screenshots.md#screenshots).
 - **Performance QA agent only**: also follow [`../references/perf-qa.md`](../references/perf-qa.md) and carry `benchmark_commit` into § 3.
 

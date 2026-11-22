@@ -5,7 +5,7 @@ Read when the performance QA agent runs `workflows/qa-review.md` § 2. Threshold
 ## Regression Classification
 
 - When the project benchmarking skill's regression check exits non-zero, classify **every** regressed operation using that skill's rules.
-- Populate `blockers[]` and `qa_metadata.perf_qa.regressions[]`.
+  - Populate `blockers[]` and `qa_metadata.perf_qa.regressions[]`.
 - If a targeted regression command reports numeric regressions but an aggregate validation command passes, classify and report the targeted regressions; the aggregate result is not a substitute.
 
 ## Benchmark Execution and Recording
