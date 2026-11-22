@@ -27,7 +27,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 .agents/skills/change-scope/scripts/harness-only --event pull_request --base "$BASE" --head "$HEAD" --repo "$DIR"
 ```
 
-`change-scope` answers one class for an explicit repository, base and head. `change-scope launch` answers the class a work item launches at, before its branch exists. `harness-only` reads the changed paths and answers whether a diff may skip a family of CI checks. `change-scope --help` states every flag, every setting and the rule behind each class. `harness-only --help` states every flag. The `class:` line on `change-scope`'s stderr names the cause of its answer.
+`change-scope` answers one class for an explicit repository, base and head. `change-scope launch` answers the class a work item launches at, before its branch exists. `harness-only` reads the changed paths and answers whether a diff may skip a family of CI checks. `change-scope --help` states every flag, the rule behind each class and every setting except `HARNESS_CI_DOCS_PATHS`, which `harness-only --help` states with its own flags. The `class:` line on `change-scope`'s stderr names the cause of its answer.
 
 ## Classes
 
@@ -47,7 +47,7 @@ Three floors lift a diff that earns `trivial` or `micro` to `small`:
 - A changed agent instruction file, one an `instruction` glob (`AGENTS.md`, `SKILL.md`) matches.
 - A diff that removes test protection. The classifier counts the list's `case`, `skip` and `selection` lines over the whole range. A failed read of that protection answers `standard`.
 
-Every setting comes from the caller's environment or the commit `--base` names, as `change-scope --help` states for each, never from the judged tree or an author-writable field. A branch cannot choose the roots, test paths, ceilings or exclusions its own size is scored against.
+Every setting comes from the caller's environment or the commit `--base` names, as `change-scope --help` states for each and `harness-only --help` states for `HARNESS_CI_DOCS_PATHS`, never from the judged tree or an author-writable field. A branch cannot choose the roots, test paths, ceilings or exclusions its own size is scored against.
 
 ## Reading the answer
 
