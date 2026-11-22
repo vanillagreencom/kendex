@@ -373,25 +373,27 @@ class OwnerAsksContract(unittest.TestCase):
                     self.assertIn(str(packages / "mailbox/scripts/lane-mail"), argv)
 
     def test_tracker_and_destinations_are_read_side_by_side(self):
-        # Each chain's first read waits, bounded, for the other chain to
-        # start. Read in turn, the first chain waits out its bound.
+        # Each chain's first read waits, bounded, until every chain has
+        # started: the tracker, the local destination and one remote host.
+        # Read in turn, a chain that starts first waits out its bound.
         session = self.owner.session
         session.deadline = owner_asks.time.monotonic() + 60
-        sources = owner_asks.Sources(session, {"JARVIS_MAIN_HOST": ""})
-        started = {"tracker": threading.Event(), "local": threading.Event()}
+        sources = owner_asks.Sources(session, {"JARVIS_MAIN_HOST": "", "JARVIS_REMOTE_HOSTS": "r1"})
+        started = {chain: threading.Event() for chain in ("tracker", "local", "ssh:r1")}
         waited = []
 
-        def meet(own, other):
+        def meet(own):
             started[own].set()
-            if not started[other].wait(5):
+            bound = owner_asks.time.monotonic() + 5
+            if not all(event.wait(max(0, bound - owner_asks.time.monotonic())) for event in started.values()):
                 waited.append(own)
 
         def settings(package, script, args=()):
-            meet("tracker", "local")
+            meet("tracker")
             return {"configured": False, "cause": "settings-unset"}
 
         def registered(target):
-            meet("local", "tracker")
+            meet(target.key)
             return []
 
         with patch.object(sources, "caller", side_effect=settings), patch.object(sources, "registered", side_effect=registered):
@@ -448,8 +450,8 @@ class OwnerAsksContract(unittest.TestCase):
                  'read = {issue.upper(): self.caller("linear", "linear.sh", ["comments", "list", issue, "--format=safe"])'
                  ' for issue in issues}',
                  "PublicOwnerAsks.test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget", "(view='active')"),
-                # The tracker and destination chains read in turn.
-                ("jarvis/scripts/lib/owner_asks.py", "max_workers=1 + len(targets)", "max_workers=1",
+                # One chain waits for a worker until another chain ends.
+                ("jarvis/scripts/lib/owner_asks.py", "max_workers=1 + len(targets)", "max_workers=2",
                  "OwnerAsksContract.test_tracker_and_destinations_are_read_side_by_side", None),
                 ("slack/scripts/lib/settings.py", 'exec "$reader" -I -c', 'exec "$reader" -c',
                  "PublicOwnerAsks.test_carried_presence_preserves_root_settings_and_permission", "(name='renew')"),
