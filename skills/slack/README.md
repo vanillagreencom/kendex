@@ -23,29 +23,48 @@ kendex add vanillagreencom/kendex --skill slack
 
 The relay connects each checkout's overseer to its private channel. Owners write in Slack; the overseer receives their words and files in its mailbox. Questions, replies and reports return to the channel.
 
-Socket Mode reconnects after a dropped connection. Recovery reads saved positions and retained active threads. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. Queue mode receives messages from a hosted receiver and reads no channel history. The hosted receiver owns retries. A first run starts at the newest mailbox message, so it does not replay old posts. Open questions within the history limit still post.
+Socket Mode reconnects after a dropped connection. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. Queue mode receives messages from a hosted receiver and reads no channel history. The hosted receiver owns retries. A first run starts at the newest mailbox message, so it does not replay old posts. Open questions within the history limit still post.
 
-Posts whose response was lost are not repeated. Explicit refusals can retry after their cause is fixed. Use `slack listen --status` for a failed connection, binding or post and its repair. A temporary thread-read failure leaves other threads and posts running. [The relay's record](schemas/journal.md) defines delivery, recovery and status details.
+Posts whose response was lost are not repeated. Explicit refusals can retry after their cause is fixed. Use `slack listen --status` for a failed connection, binding or post and its repair.
 
 ## Setup
 
 Requires Python 3.8 or newer. Installation adds the required skills, including orch.
 
-Settings go in the project's `kendex.settings.toml` under `[env]`. Tokens go in its private env file or process environment. Installation writes no required settings. [kendex.settings.toml.example](kendex.settings.toml.example) describes the keys; `slack --help` gives commands, defaults and diagnostics.
-
-Set `SLACK_OWNERS` to the owners' comma-separated email addresses, or use `KENDEX_USER_EMAIL` for one owner. Set `KENDEX_USER_HANDLE` for the person in the default channel name; otherwise setup uses that email's local part. Setup keeps an existing channel binding and purpose. Use `--name` to choose a name or `--take` to adopt a private channel the app has joined.
-
-Run `slack setup` for each checkout, then serve the checkouts with one relay. Two checkouts cannot share one bound channel. After changing `SLACK_OWNERS`, run setup for each bound checkout: a plain restart does not invite an added owner. Restart after changing tokens or other process-wide settings. Package updates reload the running relay in place; they do not replace this configuration step.
-
-Process-wide settings use the launch checkout, the first `--root` for an installed unit. Caller exports take precedence. The [Jarvis presence settings](#the-jarvis-session-hold) are per checkout and reload without a restart. Run `slack compact` only while the relay is stopped.
+- Settings go in the project's `kendex.settings.toml` under `[env]`.
+- Tokens go in its private env file or process environment.
+- Installation writes no required settings. [kendex.settings.toml.example](kendex.settings.toml.example) describes the keys; `slack --help` gives commands, defaults and diagnostics.
+- Set `SLACK_OWNERS` to the owners' comma-separated email addresses, or use `KENDEX_USER_EMAIL` for one owner.
+- Set `KENDEX_USER_HANDLE` for the person in the default channel name; otherwise setup uses that email's local part.
+- Setup keeps an existing channel binding and purpose. Use `--name` to choose a name or `--take` to adopt a private channel the app has joined.
+- Run `slack setup` for each checkout, then serve the checkouts with one relay.
+- After changing `SLACK_OWNERS`, run setup for each bound checkout: a plain restart does not invite an added owner.
+- Restart after changing tokens or other process-wide settings. Package updates reload the running relay in place; they do not replace this configuration step.
+- Process-wide settings use the launch checkout, the first `--root` for an installed unit. Caller exports take precedence.
+- The [Jarvis presence settings](#the-jarvis-session-hold) are per checkout and reload without a restart.
 
 ### Slack app
 
-Use one Slack app per machine for Socket Mode, the standard mode when you have no hosted receiver. Create it from [this manifest](app-manifest.yaml) and install it to the workspace. Put its bot token in the private env file as `SLACK_BOT_TOKEN`. Under Basic Information, create an app-level token with `connections:write` and save it as `SLACK_APP_TOKEN` in the same file.
+Use one Slack app per machine for Socket Mode, the standard mode when you have no hosted receiver:
 
-For a hosted receiver, use one app per workspace and set `SLACK_INBOUND=queue` before setup and listen. The receiver's worker calls `slack deliver --root ROOT` for each message. Queue mode needs the bot token alone. Disable Socket Mode on the hosted app and configure HTTP delivery; the manifest describes the Socket Mode app. Each mode is explicit and never falls back to the other. Switching modes keeps the existing binding and journal.
+1. Create it from [this manifest](app-manifest.yaml) and install it to the workspace.
+2. Put its bot token in the private env file as `SLACK_BOT_TOKEN`.
+3. Under Basic Information, create an app-level token with `connections:write` and save it as `SLACK_APP_TOKEN` in the same file.
 
-For an existing app, add the manifest's missing OAuth scopes, subscribe to `message.groups` under Event Subscriptions, then reinstall it. Enable Socket Mode only for a Socket Mode app. The app must join every channel it posts to. Invite it to any separate alert channel. Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
+For a hosted receiver, use one app per workspace.
+
+- Set `SLACK_INBOUND=queue` before setup and listen.
+- The receiver's worker calls `slack deliver --root ROOT` for each message. Queue mode needs the bot token alone.
+- Disable Socket Mode on the hosted app and configure HTTP delivery; the manifest describes the Socket Mode app.
+- Each mode is explicit and never falls back to the other. Switching modes keeps the existing binding and journal.
+
+For an existing app:
+
+1. Add the manifest's missing OAuth scopes.
+2. Subscribe to `message.groups` under Event Subscriptions.
+3. Reinstall it.
+
+Enable Socket Mode only for a Socket Mode app. The app must join every channel it posts to. Invite it to any separate alert channel. Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
 
 ### Token rotation
 
@@ -62,10 +81,14 @@ Only `SLACK_OWNERS` steer. Anyone in the channel can read what the overseer post
 |---|---|
 | Top-level | The overseer receives a directive. |
 | In an open question's thread | Every reply is an answer to that question. |
-| In any other thread, at any age, including “Also send to channel” | The overseer receives a directive with the thread context it has not received. [Parent pointers](schemas/journal.md#parent-pointers) define that context. |
-| A file, with or without text | The overseer receives the text and each saved file path, or the reason a file could not be fetched. A failed file download does not hold back the message. |
-| No text and no file, or a message from a nonowner | The message is not routed. The relay replies once to that message; moving its journal aside allows that reply again. |
+| In any other thread, at any age, including “Also send to channel” | The overseer receives a directive with the thread context it has not received. |
+| A file, with or without text | The overseer receives the text and each saved file path, or the reason a file could not be fetched. |
+| No text and no file, or a message from a nonowner | The message is not routed. |
 | An edit or deletion | Ignored. |
+
+- [Parent pointers](schemas/journal.md#parent-pointers) define the thread context.
+- A failed file download does not hold back the message.
+- The relay replies once to a message it does not route; moving its journal aside allows that reply again.
 
 An :eyes: reaction means delivered; :white_check_mark: means read. These marks post no text. Refused marks retry on the next poll. Owner text reaches the overseer as plain text: Slack links, mentions, channel names and dates expand; emoji stay `:name:`.
 
@@ -73,7 +96,11 @@ A tracker-posted question shows an @mention, its first line, item link and deadl
 
 The overseer records its ruling and closes the question. A reserved question waits for your decision; no option stands by default. [Owner asks](../orch/references/communication-modes.md#owner-asks) defines question closure and deadline handling.
 
-A request forwarded by a satellite's Jarvis appears as a new channel message naming the computer, with the request time in your time zone, how forwarding was confirmed and the request's words. The overseer's notices follow in that thread. The confirmation does not prove who asked: reply in that thread if the request is not yours. The overseer judges the confirmation words in its mailbox, where the references stay. If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
+A request forwarded by a satellite's Jarvis appears as a new channel message naming the computer, with the request time in your time zone, how forwarding was confirmed and the request's words. The overseer's notices follow in that thread.
+
+- The confirmation does not prove who asked: reply in that thread if the request is not yours.
+- The overseer judges the confirmation words in its mailbox, where the references stay.
+- If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
 
 Send text and file comments as standard Markdown; the package converts a file comment to Slack's mrkdwn. [Message standard](SKILL.md#message-standard) explains the difference. Use `slack thread` for an explicit thread read and `slack post --thread TS` for a reply confined to that thread.
 
@@ -89,7 +116,7 @@ These are optional and available only to `SLACK_OWNERS`. An empty command settin
 
 Only configured command lines run. Failed commands show their cause without their output; unknown commands do not run. A command lost after acknowledgement is not recovered: type it again. `/report` avoids duplicate delivery only when Slack resends the same request id; stable ids on resends are an assumption, not a guarantee from Slack.
 
-Oversized command output can be cut or withheld in full. The reply names the cut or refusal. A failed command names its cause; a killed command reports its signal without claiming an OOM cause or victim. See `slack --help` for bounds and diagnostics, [the journal schema](schemas/journal.md) for relay records, and this package's `DEVELOPMENT.md` for maintainer details.
+Oversized command output can be cut or withheld in full. The reply names the cut or refusal. A failed command names its cause; a killed command reports its signal without claiming an OOM cause or victim. See `slack --help` for bounds and diagnostics.
 
 To enable them on an app:
 
@@ -106,7 +133,11 @@ A notice that answers the `/report` request with `lane-mail notice --ref` reache
 
 The relay pages an unread owner message from Jarvis's delivered `owner-unread` event in this root's mailbox. It waits for the session hold to end and checks the original message's read receipt before sending. A read message produces no page, even if it remains unanswered. A definite send refusal stays eligible for retry; an accepted page or an unknown send is not repeated. An unavailable relay cannot deliver a page, and a stopped producer emits no new event. Recovery handles retained events within the relay's existing history limit. [Journal lines](schemas/journal.md#journal-lines) define the event and receipt requirements and the limits of the send-time check.
 
-Set `SLACK_JARVIS_SESSION_FILE` to the file the session keeps fresh and `SLACK_JARVIS_SESSION_MAX_AGE` to its freshness limit. Relative paths start at that checkout; `~` expands to the home directory. While held, ordinary mailbox posts wait and `--mention` posts without mentions, with a `mention-held` diagnostic. `slack listen --status` shows `held-by=jarvis`.
+- Set `SLACK_JARVIS_SESSION_FILE` to the file the session keeps fresh.
+- Set `SLACK_JARVIS_SESSION_MAX_AGE` to its freshness limit.
+- Relative paths start at that checkout; `~` expands to the home directory.
+
+While held, ordinary mailbox posts wait and `--mention` posts without mentions, with a `mention-held` diagnostic. `slack listen --status` shows `held-by=jarvis`.
 
 Owner messages still reach the overseer. Replies to messages the owner typed in Slack still post in their threads. A notice answering `/report` posts as a new channel message; a notice answering a forwarded request posts under its root, creating that root when needed.
 
@@ -114,7 +145,7 @@ Presence setting changes take effect at the next poll without a restart. Emptyin
 
 The Jarvis session marks its view read with `lane-mail events --item overseer --box to-overseer --mark-read`. On resume, ordinary notices and questions the session marked read are skipped without a post or mention, including closed questions. Replies to Slack-origin messages, `/report` and forwarded requests still post. Later notices/questions and held answers continue to post. A missing, unreadable or invalid read marker skips nothing; hold times do not decide which messages were read.
 
-The oldest supported mailbox producer is orch 3.0.0. Producers without usable position metadata still route, but cannot supply Jarvis-read suppression or position-based answer read marks. Bad position fields produce `envelope-field` diagnostics; other invalid fields skip that message. A checkout poll failure names the checkout while the others continue. The [journal schema](schemas/journal.md) and `slack --help` own the record and diagnostic details.
+The oldest supported mailbox producer is orch 3.0.0. Producers without usable position metadata still route, but cannot supply Jarvis-read suppression or position-based answer read marks.
 
 ## Credential boundary
 
