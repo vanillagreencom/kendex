@@ -1,0 +1,12 @@
+#!/bin/bash
+# A stub harness named `claude`, as stub-confirm is, that first runs the
+# SessionStart hook STUB_SESSION_START names as Claude Code runs a command
+# hook: through a shell of its own, the payload on standard input in the
+# shape Claude Code 2.1.283 emits. The hook's output goes to
+# `session-start-row.out` in the working directory. Then it becomes
+# stub-confirm, under the same pid, so the composer it draws says the hook
+# has ended.
+payload=$(printf '{"hook_event_name":"SessionStart","session_id":"start-row-1","transcript_path":"%s","cwd":"%s","permission_mode":"default","source":"startup","model":"claude-fable-5-1"}' \
+  "$PWD/start-row-1.jsonl" "$PWD")
+printf '%s' "$payload" | /bin/sh -c 'bash "$1"' sh "$STUB_SESSION_START" > session-start-row.out 2>&1
+exec "${BASH_SOURCE[0]%/*}/../stub-confirm/claude" "$@"

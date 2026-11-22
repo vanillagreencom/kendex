@@ -673,14 +673,15 @@ fn turn_end(transcript: &Path, line: &mut Map<String, Value>) -> Result<(), Unwr
 }
 
 /// Whether the session this process's parent `from` serves is its pane's
-/// top-level harness: exactly one process that is no shell stands between
-/// `from` and the pane's own process, the child of the tmux server
-/// `server` (tmux forks every pane's process from its server). A harness
-/// nested under another, which the other one's tool shell started, counts
-/// two; a harness that is the pane's process itself counts none. Codex's
-/// installed Node launcher and its native child count as one, which
-/// `launcher` judges of the parent of a `codex`. A process under no pane of
-/// `server` never reaches one, and the walk refuses past 64 steps.
+/// top-level harness: exactly one process that is no shell stands from
+/// `from` up to the pane's own process, the child of the tmux server
+/// `server` (tmux forks every pane's process from its server), that
+/// process included. A harness nested under another, which the other one's
+/// tool shell started, counts two; a harness that is the pane's process
+/// itself, as a launch's `exec` leaves it, counts one. Codex's installed
+/// Node launcher and its native child count as one, which `launcher`
+/// judges of the parent of a `codex`. A process under no pane of `server`
+/// never reaches one, and the walk refuses past 64 steps.
 pub fn top_level(
     rows: &[process::Row],
     from: u32,
@@ -695,12 +696,12 @@ pub fn top_level(
         let Some(row) = by_pid.get(&pid).filter(|_| pid > 1) else {
             return false;
         };
-        if row.ppid == server {
-            return harnesses == 1;
-        }
         let uncounted = process::is_shell(&row.name) || (child == Some("codex") && launcher(pid));
         if !uncounted {
             harnesses += 1;
+        }
+        if row.ppid == server {
+            return harnesses == 1;
         }
         child = Some(&row.name);
         pid = row.ppid;
@@ -1160,11 +1161,12 @@ mod tests {
     /// The pane's own top-level harness alone writes a row: a harness under
     /// the pane's shell, through any shells between, counts one; a harness
     /// another harness's tool shell started counts two; a harness that is
-    /// the pane's process counts none; Codex's installed Node launcher and
-    /// its native child count one, any other parent of a `codex` its own;
-    /// a process under no pane of the server, a parent the table lacks, or
-    /// a cycle the walk's bound ends, is no top-level session. Every pid is
-    /// synthetic.
+    /// the pane's process, as a launch's `exec` leaves it, counts one;
+    /// Codex's installed Node launcher and its native child count one,
+    /// under the pane's shell or as the pane's process, and any other
+    /// parent of a `codex` its own; a process under no pane of the server,
+    /// a parent the table lacks, or a cycle the walk's bound ends, is no
+    /// top-level session. Every pid is synthetic.
     #[test]
     fn only_the_panes_top_level_harness_writes_a_row() {
         const SERVER: u32 = 10;
@@ -1180,7 +1182,7 @@ mod tests {
                 .collect()
         };
         let launcher = |pid: u32| pid == 31;
-        let cases: [(&str, Vec<process::Row>, bool); 7] = [
+        let cases: [(&str, Vec<process::Row>, bool); 8] = [
             (
                 "a harness under the pane's shell",
                 table(&[(20, SERVER, "bash"), (21, 20, "claude"), (22, 21, "bash")]),
@@ -1200,7 +1202,12 @@ mod tests {
             (
                 "a harness that is the pane's process",
                 table(&[(21, SERVER, "claude"), (22, 21, "bash")]),
-                false,
+                true,
+            ),
+            (
+                "codex under its installed node launcher as the pane's process",
+                table(&[(31, SERVER, "node"), (32, 31, "codex"), (22, 32, "bash")]),
+                true,
             ),
             (
                 "codex under its installed node launcher",

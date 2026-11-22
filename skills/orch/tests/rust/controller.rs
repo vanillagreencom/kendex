@@ -2575,6 +2575,67 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
     );
 }
 
+/// A session a launch opened on a server of its own socket, the harness the
+/// pane's process itself as the launch's `exec` leaves it, writes its start
+/// row through the real installed SessionStart hook under the rows path
+/// register reads, and registers from that row with no `identity-fallback`.
+#[test]
+fn a_session_that_is_its_pane_s_process_writes_its_start_row_and_registers_from_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "managed");
+    let runner = register_runner(&server);
+    let checkout = runner.state_dir();
+    install_hook(checkout);
+    let hook = checkout.join(".claude/hooks/session-start-row.sh");
+    std::fs::copy(
+        shipped_scripts().join("../../../hooks/session-start-row.sh"),
+        &hook,
+    )
+    .unwrap();
+    let cache = checkout.join("runtime-cache");
+    place_built_runtime(&cache);
+    std::fs::create_dir_all(checkout.join("tmp/lane-mail/overseer")).unwrap();
+    let home = checkout.join("pane-home");
+    let pane = server.open_window(
+        "jarvis",
+        checkout,
+        &format!(
+            "exec env CLAUDE_CONFIG_DIR={} CLAUDE_PROJECT_DIR={} AGENT_RUNTIME_CACHE={} ORCH_STATE_DIR={} STUB_SESSION_START={} {}",
+            home.display(),
+            checkout.display(),
+            cache.display(),
+            checkout.display(),
+            hook.display(),
+            stub("stub-start-row").display()
+        ),
+    );
+    server.await_composer(&pane);
+    let hook_said = std::fs::read_to_string(checkout.join("session-start-row.out")).unwrap();
+    assert_eq!(hook_said, "", "the hook says nothing");
+    let rows = rows_file(&runner, &server, &pane);
+    let text = std::fs::read_to_string(&rows)
+        .unwrap_or_else(|e| panic!("the start row at {}: {e}", rows.display()));
+    let row: Value = serde_json::from_str(text.trim_end()).unwrap();
+    assert_eq!(
+        [
+            &row["event"],
+            &row["harness"],
+            &row["session_id"],
+            &row["model"]
+        ],
+        ["SessionStart", "claude", "start-row-1", "claude-fable-5-1"],
+        "{row}"
+    );
+
+    let out = register(&runner, &pane, &[], &[]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    assert_eq!(answer["result"]["notices"], json!([]), "{answer}");
+    let record = runner.fleet()["controller"].clone();
+    assert_eq!(record["session_rows"], rows.display().to_string());
+    assert_eq!(record["model"], "claude-fable-5-1", "{record}");
+}
+
 /// A session a person started by hand, with its own model, effort and a
 /// narrower permission word on its command line and its own config dir in
 /// its environment, registers with no start row; the next hand-over,
