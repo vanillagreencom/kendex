@@ -216,38 +216,16 @@ Split the remaining `.children` rows by `state_type`. `backlog` and `unstarted` 
 
 An active child pauses the merge. Ask the user, per child, whether this PR landed its work. Yes closes it Done. No appends it to `[SAFE_IDS]`. Abort stops § 4.1.
 
-`[SAFE_IDS]` still empty → § 5. Otherwise apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination), then rebundle the safe children under a new parent:
+`[SAFE_IDS]` still empty → § 5. Otherwise detach each safe child, so the merge does not cascade it to Done. A detached child keeps its project and takes no new parent: the project-management skill's SKILL.md § Disposition groups related items by project or label. Each detach, one pair per safe id:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE]
+.agents/skills/linear/scripts/linear.sh issues update [SAFE_ID] --remove-parent && .agents/skills/linear/scripts/linear.sh issues add-relation [SAFE_ID] --related [ISSUE]
 ```
 
-Read `.title`, `.project_id` and `.labels`. Join the label names with commas. Split them by the taxonomy the create refuses against, with `linear.sh labels declared "[NAMES]"`. `.kept`, joined the same way, is `[PARENT_LABELS]`. `.dropped` is `[DROPPED_LABELS]` (`none` when empty); show it in this step's output. A non-zero exit **aborts the merge**. `[BUNDLE_PRIORITY]` is the highest priority across `[SAFE_IDS]`: Linear runs from `1` Urgent to `4` Low, the lower number wins, and `3` stands where none is set. Build `[BUNDLE_DESC]` from `.agents/skills/project-management/templates/parent-issue-template.md`, with a `## Sub-Issues` list and a `## Context` line naming the detachment. Its `**Reached by**` line is `this merge-pr rebundle, detaching pending children from [ISSUE] before merge`. A rebundle parent is structural, so the create passes no `--review-born`.
-
-Its `**Supersession**` line records `re-scoped [ISSUE]`, per parent-issue-template Rule 7.
-
-Write `[BUNDLE_DESC]` with the harness file-write tool to `tmp/rebundle-description-[ISSUE].md` and bind that path as `[BODY_FILE]`:
-
-```bash
-.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[PARENT_TITLE] follow-ups" --description-file [BODY_FILE] --project "[PARENT_PROJECT]" --labels "[PARENT_LABELS]" --priority [BUNDLE_PRIORITY] --format=ids
-```
-
-A non-zero exit or empty output **aborts the merge**. Otherwise the output is `[NEW_BUNDLE]`. Reparent each safe id, one call each:
-
-```bash
-.agents/skills/linear/scripts/linear.sh issues update [SAFE_ID] --parent [NEW_BUNDLE]
-```
-
-Link the bundle back:
-
-```bash
-.agents/skills/linear/scripts/linear.sh issues add-relation [NEW_BUNDLE] --related [ISSUE]
-```
-
-Write this comment with the harness file-write tool to `tmp/rebundle-comment-[ISSUE].md`. Bind that path as `[BODY_FILE]` and post the comment on the original:
+A non-zero exit **aborts the merge**. Write this comment with the harness file-write tool to `tmp/detach-comment-[ISSUE].md`. Bind that path as `[BODY_FILE]` and post the comment on the original:
 
 ```markdown
-Pending children rebundled under [NEW_BUNDLE] before merge to avoid cascade-Done. Labels the taxonomy does not declare, left off the bundle: [DROPPED_LABELS].
+Pending children detached before merge to avoid cascade-Done; each keeps its project and a related relation to this item: [SAFE_IDS].
 ```
 
 ```bash
@@ -406,7 +384,7 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
    The lane owns completion after merge. Where its sandbox is gone, or its item reads Done with the lane ended, the runtime's close completes the item from the PR body's `## Done-when evidence` section. The overseer owns the remaining post-merge checks on the same item.
 
-   Before completion, give every development remainder from a cut its own issue or bundle. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's `SKILL.md` § Disposition states. Each box names its reading, its location, why the branch cannot prove it, and a deadline in that section's form.
+   Before completion, give every development remainder from a cut its own issue. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's `SKILL.md` § Disposition states. Each box names its reading, its location, why the branch cannot prove it, and a deadline in that section's form.
 
    Linear's GitHub integration can set `[ISSUE]` Done when the PR merges. Read the item live and complete it with the command below, even where the integration already set Done. The merge lane never writes In Review or In Progress. Box acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results. For a failed post-merge check, follow [oversee-events.md](../references/oversee-events.md) § Verification.
 

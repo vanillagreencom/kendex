@@ -309,20 +309,22 @@ Items outside `child_indexes` — `origin: "discovered"` refactors, for instance
 
 `parent_issue` and `blocked_issues` are hints the analysis may override; `hierarchy_contract` is binding per § 7.0. A research issue never appears in `parent_issue`.
 
-Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); and a parent candidate under [SKILL.md § Disposition](../SKILL.md#disposition)'s rework-parent rule. Group on outcome or mechanism, not size.
+Look for: an input item whose scope is a strict subset of a tracked effort (child candidate); and a parent candidate only where items are the parts of one deliverable accepted as one thing, [SKILL.md § Disposition](../SKILL.md#disposition)'s grouping rule. A shared outcome, mechanism or subject makes no parent.
 
-This run is itself an audit. When it proposes more than one create, it files one rework parent for its subject first: a `create` with `create_fields.is_bundle_parent: true` built from [parent-issue-template.md](../templates/parent-issue-template.md), and every other create a `make_child` whose `parent` is that row's `#N`. The rework parent is `hierarchy.action: none`, with a `related` relation to the input's `parent_issue` when one exists. When the input's `parent_issue` names the rework parent already, every create is a `make_child` with `parent: null` instead. Two exceptions:
+This run is itself an audit and files no parent for its subject. Each create is `hierarchy.action: none` in the project its route names, with a `related` relation to the input's `parent_issue` when one exists, except in these cases:
 
-- **The review audit's in-PR bundle.** With the input's `in_pr_bundle` true, each child candidate of its `parent_issue`, the issue being worked, is a `make_child` with `parent: null`: the caller marks that issue its in-PR bundle root and works the child in that issue's own PR. These children count toward no rework parent; only the remaining creates do.
-- **A hierarchy contract.** With `hierarchy_contract`, its parent is the run's rework parent: each `child_indexes` item is its child per § 7.0, and the run files no second rework parent.
+- **A part of an existing deliverable.** When the input's `parent_issue` is a container whose one deliverable the create is a part of, the create is a `make_child` with `parent: null`.
+- **The review audit's in-PR bundle.** With the input's `in_pr_bundle` true, each child candidate of its `parent_issue`, the issue being worked, is a `make_child` with `parent: null`: the caller marks that issue its in-PR bundle root and works the child in that issue's own PR.
+- **A hierarchy contract.** With `hierarchy_contract`, each `child_indexes` item is a child of its parent per § 7.0.
+- **A new deliverable's parts.** When two or more creates are the parts of one deliverable accepted as one thing and no existing container holds it, file its parent first: a create with `create_fields.is_bundle_parent: true`, built from [parent-issue-template.md](../templates/parent-issue-template.md), and `hierarchy.action: none`. Each part is a `make_child` whose `parent` is that row's `#N`.
 
-Outside these two exceptions and a `parent_issue` that names the rework parent already, no create is a `make_child` under the input's `parent_issue`, whatever the `source`: an issue being worked that gains a child becomes a container. A child candidate of it joins the run's rework parent, or as the run's one create is `hierarchy.action: none` with a `related` relation to it.
+Outside these cases no create is a `make_child` under the input's `parent_issue`, whatever the `source`: an issue being worked that gains a child becomes a container. A child candidate of it is `hierarchy.action: none` with a `related` relation to it.
 
 Parent and child must share a project. If they cannot, record `wrong_project[]` or keep the issue standalone with a relation. Under a project map, [project-map.md § Routing](../references/project-map.md#routing) says which.
 
 ### 7.2 Evaluate Coherence
 
-Ask: **would these ship together in one PR?** Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8). No means a container with sibling child-blocks-child relations for ordering.
+Ask: **would these ship together in one PR?** Yes means one leaf work item with an internal checklist, never a parent: a `combine` (§ 8). No means separate items with blocking relations for ordering. They are children of one container only when they are the parts of one deliverable accepted as one thing ([SKILL.md § Disposition](../SKILL.md#disposition)), under § 7.1's existing-deliverable or new-deliverable case; otherwise each stands alone in its project.
 
 Lean sub-issue for tests of the feature being implemented, hardening for the component being built, and platform work under a same-platform parent. Lean independent for platform-specific work under a cross-platform parent, tooling or methodology under a feature parent, and anything that could ship before or after the parent. When uncertain, prefer independent with a blocking relation.
 
@@ -334,7 +336,7 @@ For each parent with children: implementation scope left in the parent (`## Requ
 
 Read each parent's actual direct children with `issues get [PARENT_ISSUE_ID]`: its `.children` rows with `depth` 0. Count its Done and Canceled children from that read. Neither the § 1.5 active set nor an input item's closed search results establishes a parent's full child set. Closed children remain historical evidence and take no disposition (§ 1.1). A parent with an open child is kept. A non-terminal parent whose children are all Done or Canceled is a `hierarchy[]` `close_parent` entry, unless its `issues get --format=safe` read reports `in_pr_bundle`: the review audit's in-PR bundle root is a work item its own PR completes.
 
-Record findings as `findings.hierarchy[]` in project mode — `make_parent` (`issue`, `children[]`), `make_child` (`issue`, `parent`), `bundle` (`issues[]`, `new_parent_title`), `update_parent_desc` (`issue`), `close_parent` (`issue`) — or as each issue's `hierarchy` field in issues mode per [audit-output.md](../schemas/audit-output.md). Include the coherence reasoning in `reason`.
+Record findings as `findings.hierarchy[]` in project mode — `make_parent` (`issue`, `children[]`), `make_child` (`issue`, `parent`), `bundle` (`issues[]`, `new_parent_title`), `update_parent_desc` (`issue`), `close_parent` (`issue`) — or as each issue's `hierarchy` field in issues mode per [audit-output.md](../schemas/audit-output.md). A `make_parent` or `bundle` entry names the parts of one deliverable (§ 7.2). Include the coherence reasoning in `reason`.
 
 ---
 
@@ -431,7 +433,7 @@ Any invariant failing sends you back before the JSON is built.
 - [ ] TRACKER=linear: every issue named anywhere in the output carries the § 1.1.1 team prefix, except an `add_relations.related` entry, which the linear skill's Blocked Label vs Issue Relations section lets name an issue in another team
 - [ ] Every proposed item carries an assigned action, with a one-line reason naming the failed creation-bar test on each `skip`, and on each `create` a complete `create_fields.labels[]`, a `reach`, a `supersession` record from the comparison that admitted it, a `review_born`, and a `symptom` where `review_born` is true at priority 2 (§ 10)
 - [ ] Every `hierarchy_contract.child_indexes` item is `action: create` + `hierarchy.action: make_child` + `hierarchy.parent` = the contract parent, none downgraded (§ 7.0, § 10.2)
-- [ ] More than one create follows § 7.1's rework-parent rule: its placement, its children and its two exceptions; no create is a `make_child` under the input's `parent_issue` outside § 7.1's cases; no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)
+- [ ] No create is a parent filed for the run's subject, and no create is a `make_child` outside § 7.1's cases; no parent with an open child is cancelled, and every parent whose children are all Done or Canceled is a `close_parent` entry unless its safe read reports `in_pr_bundle` (§ 6.2, § 7.3)
 
 ---
 
@@ -468,6 +470,6 @@ One filing: the creation bar, a title-level duplicate check, explicit supersessi
 
    This same read gives a `create` its `create_fields.supersession` in the § 6.1 form: each confirmed `supersedes[]` entry by its `when`, else `none found; searched: [TERMS]`, naming the title terms checked against the open titles.
 
-5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "make_child", "parent": null}` when the input's `parent_issue` names a rework parent, or when the input's `in_pr_bundle` is true and its `parent_issue` is the issue being worked (§ 7.1's in-PR bundle exception), else `{"action": "none", "parent": null}`. When the input `description` has `## Owner directive (verbatim)`, copy its block unchanged into `create_fields.description`; restated Requirements and Done when may add detail, never replace, shorten or reorder it.
+5. **Action.** § 10.1, then `create` or `skip`; no other action. A `create` fills `create_fields` per § 10.2, with `hierarchy: {"action": "make_child", "parent": null}` when the input's `parent_issue` names a container whose one deliverable the item is a part of, or when the input's `in_pr_bundle` is true and its `parent_issue` is the issue being worked (§ 7.1's in-PR bundle case), else `{"action": "none", "parent": null}`. When the input `description` has `## Owner directive (verbatim)`, copy its block unchanged into `create_fields.description`; restated Requirements and Done when may add detail, never replace, shorten or reorder it.
 
 Return per § 13: `mode: "single"` in the issue-mode shape of [audit-output.md](../schemas/audit-output.md), one `issues[]` row. For an authorized single filing, [audit-issues § 4.1](audit-issues.md#41-delegate) runs this section in the filing session: the row goes straight to its § 5, and no file is written.

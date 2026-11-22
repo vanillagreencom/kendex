@@ -175,7 +175,7 @@ A `Post-merge:` box in `create_fields.description` follows [SKILL.md](../SKILL.m
 | `make_child` | `#N` | Sub-issue of issue #N in this batch |
 | `make_child` | null | Sub-issue of the input's `parent_issue` |
 
-A parent created or promoted this way is a container: no requirements, no pull request, and the one Done-when box of [parent-issue-template.md](../templates/parent-issue-template.md). A run that proposes more than one create files its rework parent first, a `create` with `create_fields.is_bundle_parent: true`; where it attaches, which creates are its children and the two exceptions are [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
+A parent created or promoted this way is a container: no requirements, no pull request, and the one Done-when box of [parent-issue-template.md](../templates/parent-issue-template.md). A run files a parent, a `create` with `create_fields.is_bundle_parent: true`, only for the parts of one deliverable accepted as one thing ([SKILL.md](../SKILL.md) § Disposition), never for a run's subject. Which creates are children, of an existing issue or of a bundle parent in the same batch, is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
 
 ## PROJECT-ORDER Mode
 
