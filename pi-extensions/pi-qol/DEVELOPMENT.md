@@ -1,6 +1,6 @@
 # pi-qol development
 
-For maintainers. What it does for a consumer is [README.md](README.md); mechanics live as doc comments on the modules under `extensions/qol/`, and this file holds the invariants that span them.
+What it does for a consumer is [README.md](README.md). Mechanics live as doc comments on the modules under `extensions/qol/`, and this file holds the invariants that span them.
 
 ## Invariants
 
@@ -15,10 +15,18 @@ For maintainers. What it does for a consumer is [README.md](README.md); mechanic
 - The permission gate fails closed: a matched command with no UI to ask is blocked, not allowed. `extensions/qol/permission-gate.ts::permissionGateMatch` is the one matcher.
 - Scheduled prompts persist as `qol-schedule` custom session entries and are re-armed from the session branch on load; `extensions/qol/schedule.ts::createScheduleController`.
 - Sibling extensions are reached only through the `Symbol.for` keys in `extensions/qol/constants.ts` and the interfaces in `extensions/qol/bridges.ts`; a missing sibling disables the feature, never throws.
-- Notifications never block Pi's event path. `extensions/qol/notifications.ts::sendQolNotification` decides synchronously, then delivers in the background: every tmux call goes through `pi.exec` under `TMUX_COMMAND_TIMEOUT_MS`, and one query per notification reads the pane's tty, session, window and window name, because tmux can move a pane to another window or session. Terminal writes run one at a time through one queue, and each opens its tty non-blocking, so a terminal with a full buffer fails its write at once and the queue always advances. The window mark and the tmux message start beside the terminal writes; `clearTmuxWindowMark` bumps a generation, so a notification decided before the clear sets no mark. `tests/notifications.test.ts` holds the deadline, the tmux targets, the mark and the non-blocking queue.
+- Notifications never block Pi's event path.
+  - `extensions/qol/notifications.ts::sendQolNotification` decides synchronously, then delivers in the background: every tmux call goes through `pi.exec` under `TMUX_COMMAND_TIMEOUT_MS`, and one query per notification reads the pane's tty, session, window and window name, because tmux can move a pane to another window or session.
+  - Terminal writes run one at a time through one queue, and each opens its tty non-blocking, so a terminal with a full buffer fails its write at once and the queue always advances.
+  - The window mark and the tmux message start beside the terminal writes; `clearTmuxWindowMark` bumps a generation, so a notification decided before the clear sets no mark.
+  - `tests/notifications.test.ts` holds the deadline, the tmux targets, the mark and the non-blocking queue.
 - The `Text` render patch that aligns Pi's queued-message status line is installed at `session_start` in a UI session and removed at `session_shutdown`. It classifies a `Text` again only when that component's text changes. `extensions/qol/pending-queue.ts::installStatusTextAlignmentPatch`; `tests/pending-queue.test.ts`.
 - `/context` reports a failed transcript-risk estimate as a sanitized error block rather than omitting the warning; `extensions/qol/transcript-risk.ts::transcriptRiskState`.
-- Search text is a bounded display value, not a Copy or Fork payload. The search component owns selected-entry retrieval until its completion callback receives the complete prompt. Copy writes before that callback closes the overlay. Pending Fork commands use the same ready payload without another read. `tests/session-search-actions.test.ts` holds this lifetime across shortcuts, menus, cancellation and pending commands.
+- Search text is a bounded display value, not a Copy or Fork payload.
+  - The search component owns selected-entry retrieval until its completion callback receives the complete prompt.
+  - Copy writes before that callback closes the overlay.
+  - Pending Fork commands use the same ready payload without another read.
+  - `tests/session-search-actions.test.ts` holds this lifetime across shortcuts, menus, cancellation and pending commands.
 
 ## Tests
 
@@ -28,4 +36,9 @@ Install the Pi peers in this directory with the command the `pi-qol regression s
 bun test ./tests
 ```
 
-`bunfig.toml` preloads `tests/preload.ts`, which stubs the `@earendil-works/*` peers. A suite needing more of a peer overrides its stub with `mock.module`. The runtime-copy peer check runs a plain Bun child without that preload and needs the declared peers installed in this package's `node_modules`, at one version that meets the coding-agent floor. `PI_QOL_PEER_VERSION`, when set, requires that exact version. Keep the real-peer check separate from stubbed suite setup.
+`bunfig.toml` preloads `tests/preload.ts`, which stubs the `@earendil-works/*` peers.
+
+- A suite needing more of a peer overrides its stub with `mock.module`.
+- The runtime-copy peer check runs a plain Bun child without that preload and needs the declared peers installed in this package's `node_modules`, at one version that meets the coding-agent floor.
+- `PI_QOL_PEER_VERSION`, when set, requires that exact version.
+- Keep the real-peer check separate from stubbed suite setup.

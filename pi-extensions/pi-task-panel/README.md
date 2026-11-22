@@ -31,7 +31,12 @@ The saved lists sit in `kendex/sessions/<session>/pi-task-panel/` under the Pi u
 
 ## Memory use
 
-The visible panel keeps one rendered layout of at most 65,536 characters. It keeps sorted order for lists of at most 256 tasks. Larger lists sort when layout changes. A task change replaces these caches. Session shutdown removes the widget.
+The visible panel keeps one rendered layout of at most 65,536 characters.
+
+- It keeps sorted order for lists of at most 256 tasks.
+- Larger lists sort when layout changes.
+- A task change replaces these caches.
+- Session shutdown removes the widget.
 
 ## Setup
 

@@ -24,9 +24,3 @@
 Session storage uses generated content ids internally so the assistant can call `get_web_content`. Compact renderers intentionally hide those ids from users and show URLs/source metadata instead.
 
 `get_web_content` labels search/answer/similar/code stored text as `stored excerpt` when it came from provider-capped Exa text. Direct `web_fetch` paths show `full` when the extension stored the full extracted text before preview truncation, and `source cut at N bytes` when a byte limit cut the source short.
-
-## Settings and keys
-
-- Exa key source: `EXA_API_KEY`, project `.env.local`/`.env`, or `PI_WEB_TOOLS_CONFIG_FILE`/private config.
-- Advanced tools (`web_answer`, `web_find_similar`, `code_search`) are registered but only auto-enabled when `pi-web-tools.exaAdvancedEnabled=true` and an Exa key is available.
-- Deep research is controlled separately by `pi-web-tools.exaDeepResearchEnabled`.

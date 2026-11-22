@@ -10,8 +10,5 @@ Calling rules:
 
 - Provide a clear `header`, per-tab `question` text, and concise mutually-exclusive `options`.
 - `multiple: true` only when several answers can co-exist; default is single-select.
-- Every question automatically includes a bottom free-text fallback row labelled `Something else`; agents do not need `allowCustom` for the basic escape hatch.
-- Use `customLabel` / `customPlaceholder` only when the fallback row needs different wording. The legacy `allowCustom` flag is accepted for compatibility, but `false` does not disable the fallback.
 - Group related sub-questions as separate `questions[]` tabs in one call rather than chaining tool calls.
 - Do not add a final `Confirm`, `Submit`, `Review`, or `Done` tab; pi-questions adds its own submit tab when needed.
-- When `pi-session-bridge` is loaded, opened/answered/rejected lifecycle changes also emit structured `question.*` activity broker events for external observers; these do not appear as chat messages.

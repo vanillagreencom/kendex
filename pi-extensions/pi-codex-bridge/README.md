@@ -24,20 +24,18 @@ The kendex catalog declaration is:
 source = "kendex"
 ```
 
-## Requirements
+Requirements:
 
 - Pi 0.86 or later.
 - Node 22.19 or later.
 - Codex CLI 0.163.0 or 0.166.0 on `PATH`. The bridge refuses any other release and offers no model. `package.json` lists the supported releases as its optional `@openai/codex` peer range.
-- A Codex login in the bridge home, stored in `<bridge home>/auth.json`. The bridge home is `PI_CODEX_BRIDGE_HOME` when set, else `CODEX_HOME`, else `~/.codex`; a blank value counts as unset. `PI_CODEX_BRIDGE_HOME` gives the bridge a home apart from the one a `codex` run in Pi's tool shell reads. Without it, sign in with `codex login`. For a home `PI_CODEX_BRIDGE_HOME` names, create that folder first, then run `codex login` with `CODEX_HOME` set to it.
+- A Codex login in the bridge home, stored in `<bridge home>/auth.json`.
+  - The bridge home is `PI_CODEX_BRIDGE_HOME` when set, else `CODEX_HOME`, else `~/.codex`; a blank value counts as unset.
+  - `PI_CODEX_BRIDGE_HOME` gives the bridge a home apart from the one a `codex` run in Pi's tool shell reads.
+  - Without it, sign in with `codex login`.
+  - For a home `PI_CODEX_BRIDGE_HOME` names, create that folder first, then run `codex login` with `CODEX_HOME` set to it.
 
 A login kept in the system keyring (`cli_auth_credentials_store = "keyring"`) has no `auth.json`, so the bridge treats it as absent. Sign in with file storage to use the bridge.
-
-## Settings
-
-| Setting | What it changes |
-|---|---|
-| `enabled` | Registers the `pi-codex` provider. On (`true`) by default. Takes effect after `/reload`. |
 
 ## How it works
 
@@ -59,14 +57,10 @@ A usage reader counts each bridged turn once by this rule:
 
 The bridge releases its thread records, queued events and pending tool calls on `session_shutdown`. [src/bridge.ts](src/bridge.ts) declares and enforces their limits.
 
-## Test
+## Settings
 
-```sh
-npm run test:ci
-```
+- `enabled`: registers the `pi-codex` provider. On (`true`) by default. Takes effect after `/reload`.
 
-Live acceptance uses the existing `CODEX_HOME` login and ignores `PI_CODEX_BRIDGE_HOME`:
+## Licence
 
-```sh
-PI_CODEX_BRIDGE_LIVE=1 PI_CODEX_BRIDGE_MODEL=<model> npm test
-```
+[MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

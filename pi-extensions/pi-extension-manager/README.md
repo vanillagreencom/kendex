@@ -40,13 +40,23 @@ On OMP the manager cannot toggle a plugin's modules, update or uninstall a plugi
 - Package instruction scripts stop after 10 seconds and npm directory lookups after 15 seconds. Ending the session, quitting Pi included, stops any command still running and waits up to 18 seconds for the session's commands to end: up to 4 seconds for a stopped command, then the instruction script that puts back a package's instructions after a failed uninstall, which is not stopped and runs to its own 10-second limit, plus up to 4 seconds to stop it at that limit.
 - Each command keeps at most the last 256 KiB of its output and of its error output.
 - Each npm version request has a total 4-second deadline and a 256 KiB response limit. Closing the package browser cancels requests it started. Session shutdown cancels startup requests.
-- The session keeps one inventory with at most 10,000 package and extension rows. Opening a popup or completing a package action refreshes it. Completion labels, package children and scoped setting values reuse that snapshot. Shutdown releases it. Reopen settings to read a change made outside the manager.
+- The session keeps one inventory with at most 10,000 package and extension rows.
+  - Opening a popup or completing a package action refreshes it.
+  - Completion labels, package children and scoped setting values reuse that snapshot.
+  - Shutdown releases it.
+  - Reopen settings to read a change made outside the manager.
 
 ## Setup
 
 Open `/extensions:settings` on Pi or `/kendex:extensions:settings` on OMP. Values are stored under `kendex.extensionManager.config["@vanillagreen/pi-extension-manager"]`.
 
-Pi uses user and project `settings.json` files. OMP uses the active agent directory's `config.yml`, retaining `config.yaml` when that is the existing file. OMP project settings come from the current directory's `.omp/settings.json` and `.omp/config.yml`; YAML overrides JSON when both exist. The first project-scoped edit creates `.omp/config.yml` in a trusted OMP project when neither file exists. Host directory resolvers determine the active user paths, including OMP profiles and XDG storage. Settings writes preserve unknown fields, but YAML formatting and comments are not retained.
+Pi uses user and project `settings.json` files.
+
+- OMP uses the active agent directory's `config.yml`, retaining `config.yaml` when that is the existing file.
+- OMP project settings come from the current directory's `.omp/settings.json` and `.omp/config.yml`; YAML overrides JSON when both exist.
+- The first project-scoped edit creates `.omp/config.yml` in a trusted OMP project when neither file exists.
+- Host directory resolvers determine the active user paths, including OMP profiles and XDG storage.
+- Settings writes preserve unknown fields, but YAML formatting and comments are not retained.
 
 - `enabled`: a global-only setting, even for a project-installed manager. Display, edits and resets use the global value; project values are ignored. If disabled, the host-specific manager command's `:enable` action restores it; restart or reload afterward.
 - `defaultSaveScope`: where an edit is written when the scope is ambiguous. It stays `project` to keep edits local when project settings are writable. When project settings are not writable, the edit falls back to user scope and affects every project that reads the user settings.

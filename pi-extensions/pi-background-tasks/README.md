@@ -30,10 +30,19 @@ The agent starts a command with the background task tool. The extension runs the
 
 ## Memory and disk use
 
-- The dashboard reads a log tail asynchronously and keeps it for each task until the log changes. `logTailMaxChars` limits the decoded tail by JavaScript string length, with a default of 10,000. The disk read is bounded to three bytes per character plus one byte. Command layouts stay cached until the command, pane width or theme changes; closing the dashboard releases them. Task tails stay cached while finished history retains the task. Clear, finished-task eviction or session replacement makes them eligible for release; session shutdown clears the reader.
+- The dashboard reads a log tail asynchronously and keeps it for each task until the log changes.
+  - `logTailMaxChars` limits the decoded tail by JavaScript string length, with a default of 10,000.
+  - The disk read is bounded to three bytes per character plus one byte.
+  - Command layouts stay cached until the command, pane width or theme changes; closing the dashboard releases them.
+  - Task tails stay cached while finished history retains the task.
+  - Clear, finished-task eviction or session replacement makes them eligible for release; session shutdown clears the reader.
 - A notification regex has a 25 ms execution deadline. A pattern that exceeds it is disabled for that task. The agent receives one bounded failure notice, including in headless sessions. Exit notifications still work.
 - A finished task's output is read from its log file; the process handle and the in-memory output are released once the task has exited and its last log write has finished. A task whose last log write failed or stalled keeps its in-memory output instead.
-- Exit notifications, the dashboard and log tools share a limit of four disk reads at once. Tasks waiting for exit delivery stay outside the 50-task finished-history limit. After delivery or suppression settles, the oldest excess finished task is removed with its log. `clear` also deletes the logs of the tasks it removes. A forked session removes the tasks it copied from the original session but keeps their logs, which the original session still reads.
+- Exit notifications, the dashboard and log tools share a limit of four disk reads at once.
+  - Tasks waiting for exit delivery stay outside the 50-task finished-history limit.
+  - After delivery or suppression settles, the oldest excess finished task is removed with its log.
+  - `clear` also deletes the logs of the tasks it removes.
+  - A forked session removes the tasks it copied from the original session but keeps their logs, which the original session still reads.
 - Logs live in one directory per session in the `lanes/` folder of the task directory (`taskDir`, default the system temporary directory's `kendex-pi-bg`). A session's directory is deleted once its working directory is gone (a merged worktree), and any log older than 5 days is deleted. Pi applies both rules when a session starts, to `lanes/` only, and only to directories the package made there.
 - A log written before 2.1.0 stays directly in the task directory. The prune, `clear` and the 50-task bound do not delete it; a task restored with such a log is removed from the list without its log.
 
@@ -43,7 +52,8 @@ The settings editor writes project values to `.pi/settings.json`. The default us
 
 Open `/extensions:settings`; settings appear under the **Background Tasks** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted.
 
-- `enabled`: package toggle; `glyphStyle` picks Unicode or ASCII symbols, and `pi-tool-renderer`'s global override wins when set.
+- `enabled`: package toggle.
+- `glyphStyle`: Unicode or ASCII symbols; `pi-tool-renderer`'s global override wins when set.
 - Auto-backgrounding: `autoBackgroundBash`, `autoBackgroundPatterns`, `forcedBackgroundWindowSeconds`, `forcedBackgroundNotifyOnOutput`.
 - Execution: `defaultTimeoutSeconds`, `forceKillGraceMs`, and the `resourceControl*` group control task deadlines, termination grace and priority. Resource controls use `nice-ionice` by default, keeping Pi's environment. `auto` can select `systemd-run`, which uses the user manager's environment; commands available to Pi may be missing there.
 - Wakes and output: `outputSettleMs`, `outputAlertMaxChars`, `outputWakeBudgetMaxWakes`, `outputWakeBudgetMaxBytes`, `outputBufferMaxChars`, `logTailMaxChars` control notification timing, inline output and memory.

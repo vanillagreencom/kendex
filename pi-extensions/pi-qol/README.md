@@ -33,10 +33,22 @@ The extension reads your enabled features when Pi starts. It adds their editor c
 
 - A session without a UI loads no session-search index. With a UI, the index is loaded shortly after start and kept for `sessionSearch.cacheTtlSeconds` (default 300 seconds; 0 keeps it until the session ends). A search after the index was released opens at once and fills in when the index has loaded again.
 - The index keeps at most 32,768 characters of message text per session and 8,388,608 characters in total, newest session first. A session past the total is searched by name, path and first prompt only.
-- Searchable user prompts share those per-session and total limits. Search skips saved records above 2,097,152 characters; these limits count UTF-16 code units. Copy and Fork use the complete selected prompt. A newer search cancels the previous one. A regex search reports an error in the popup if matching exceeds 25 ms or startup exceeds 1 second.
-- Submitted image paths and existing clipboard images share a 20 MiB raw-byte limit. The extension checks all file sizes before reading any image. A refusal blocks submission and reports an error. It restores the rejected prompt only if the editor is empty; a newer draft stays unchanged. Print and JSON callers receive the diagnostic on stderr.
+- Searchable user prompts share those per-session and total limits.
+  - Search skips saved records above 2,097,152 characters; these limits count UTF-16 code units.
+  - Copy and Fork use the complete selected prompt.
+  - A newer search cancels the previous one.
+  - A regex search reports an error in the popup if matching exceeds 25 ms or startup exceeds 1 second.
+- Submitted image paths and existing clipboard images share a 20 MiB raw-byte limit.
+  - The extension checks all file sizes before reading any image.
+  - A refusal blocks submission and reports an error.
+  - It restores the rejected prompt only if the editor is empty; a newer draft stays unchanged.
+  - Print and JSON callers receive the diagnostic on stderr.
 - Where Pi cannot switch sessions directly, a chosen resume or fork waits as one `/search:resume-pending` command in the editor. Only the latest one is kept, and it is dropped when the session ends.
-- The search popup retains full user prompts for at most 64 sessions. Searchable text has the separate character limits above. Thinking times are retained for at most 256 finished blocks. Thinking labels are released when the agent run ends. Notification cooldowns are released when they expire or the session ends.
+- The search popup retains full user prompts for at most 64 sessions.
+  - Searchable text has the separate character limits above.
+  - Thinking times are retained for at most 256 finished blocks.
+  - Thinking labels are released when the agent run ends.
+  - Notification cooldowns are released when they expire or the session ends.
 
 ## Saved files
 
@@ -49,7 +61,11 @@ The settings editor writes project values to `.pi/settings.json`. The default us
 Open `/extensions:settings`; settings appear under the **QOL** tab. Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted. `glyphStyle` picks `unicode` or `ascii` symbols, and `@vanillagreen/pi-tool-renderer`'s `globalGlyphStyleOverride` wins when set.
 
 - `enabled`: package toggle for everything below.
-- `gatewayPrivacy.enabled`: require zero data retention and no prompt training for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. Covers QOL compaction, branch summaries, imported-session summaries, handoff and session naming. Keeps other routing options and overrides weaker privacy values. Pi's built-in compaction and branch summaries cannot carry these fields, so on a gateway session model QOL writes them in place of Pi's, whatever `compaction.customEnabled` and `compaction.branchSummaryEnabled` say, and a failed or refused summary cancels the compaction or tree move instead of falling back to Pi's. Custom remote compaction endpoints keep their own privacy policy.
+- `gatewayPrivacy.enabled`: require zero data retention and no prompt training for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway.
+  - Covers QOL compaction, branch summaries, imported-session summaries, handoff and session naming.
+  - Keeps other routing options and overrides weaker privacy values.
+  - Pi's built-in compaction and branch summaries cannot carry these fields, so on a gateway session model QOL writes them in place of Pi's, whatever `compaction.customEnabled` and `compaction.branchSummaryEnabled` say, and a failed or refused summary cancels the compaction or tree move instead of falling back to Pi's.
+  - Custom remote compaction endpoints keep their own privacy policy.
 - Statusline and editor: `statusline.enabled`, `statusline.showProvider`, `statusline.showAccount`, `replaceFooter`, `compactPrompt`, `showSessionNameTitle`, `showSessionNameWindow`, `inputBottomPaddingLines`, `gitRefreshTimeoutMs`, `showDirtyMarker`, `newlineOnShiftEnter`, `newlineFallbackKey`, `pendingQueue.asciiGreen`, `showImageChips`, `showAttachmentCountInStatus`.
 - Commands: `enableSessionNameCommand`, `enableHandoffCommand`, `enableScheduleCommand`, `enableContextCommand`, `handoffReviewPrompt`.
 - Session naming: `sessionAutoRename.*` (model, fallback model, deterministic fallback, prefix, prompt, limits, notify, debug). `sessionAutoRename.maxTokens` includes the naming model's reasoning tokens. The naming request asks for the lowest reasoning effort the model accepts, and turns reasoning off where the model allows it. `sessionAutoRename.maxNameChars` limits the title length.

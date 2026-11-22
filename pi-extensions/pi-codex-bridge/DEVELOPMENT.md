@@ -22,7 +22,11 @@ The bridge calls these methods, which every listed release serves:
 
 ## Supported Codex releases
 
-The app-server protocol is experimental, so the bridge runs only the Codex releases it lists. The list is the optional `@openai/codex` peer range in `package.json`: exact stable versions joined by ` || `, in ascending order. It lists 0.163.0 and 0.166.0. A listed release means the required merge-group CI run of the commit that listed it passed the fixture suite on that release.
+The app-server protocol is experimental, so the bridge runs only the Codex releases it lists.
+
+- The list is the optional `@openai/codex` peer range in `package.json`: exact stable versions joined by ` || `, in ascending order.
+- It lists 0.163.0 and 0.166.0.
+- A listed release means the required merge-group CI run of the commit that listed it passed the fixture suite on that release.
 
 Before each launch, `codex-policy.ts::supportedCodexVersions` reads the range from the `package.json` beside `src/` or `bundle/`, the copy Pi runs, and `app-server.ts::assertSupportedCodex` reads `codex --version`. Each refusal below comes before any app-server starts:
 
@@ -55,19 +59,40 @@ Each Pi assistant message stores `codex-thread:<thread>:<turn>:<tool signature>:
 - the thread's latest turn is the boundary's turn: the bridge's own record in the same process, or the `initialTurnsPage` of a cold resume. A cold resume of a thread the `CODEX_HOME` does not hold (Codex replies `no rollout found for thread id`) counts as a mismatch;
 - for a tool continuation, the boundary's model is the selected model, because tool answers and `turn/steer` carry no model, and the boundary's tool calls are the batch Codex waits on, so a return to an earlier batch of the same turn is not answered with that batch's results. A new turn names its model in `turn/start`, so a model switch alone does not end a thread.
 
-Otherwise it starts a new thread. The new thread's first turn replays every earlier message as text, in order, with each message's images right after its own text, then the trailing user messages. A tool change, a system-prompt change, a Pi tree navigation, a model switch during a tool batch, an aborted turn or a fresh `CODEX_HOME` therefore starts a new thread instead of failing the session. A Pi compaction keeps the thread while its latest pi-codex message survives the compaction. An extension that rewrites the system prompt for one prompt, as pi-caveman's clarity escape does for a prompt that names a destructive operation, costs a replay on that prompt and on the next one that restores it.
+Otherwise it starts a new thread.
+
+- The new thread's first turn replays every earlier message as text, in order, with each message's images right after its own text, then the trailing user messages.
+- A tool change, a system-prompt change, a Pi tree navigation, a model switch during a tool batch, an aborted turn or a fresh `CODEX_HOME` therefore starts a new thread instead of failing the session.
+- A Pi compaction keeps the thread while its latest pi-codex message survives the compaction.
+- An extension that rewrites the system prompt for one prompt, as pi-caveman's clarity escape does for a prompt that names a destructive operation, costs a replay on that prompt and on the next one that restores it.
 
 ## Tool calls
 
-Codex sends each dynamic tool call as an `item/tool/call` server request and holds the turn until the bridge answers that request. Pi's tools are declared in the `pi` namespace, so a call in any other namespace, or in none, refuses the turn with `codex-tool-call-namespace-refused namespace=<n>`. Codex 0.163.0 runs a model response's dynamic calls one at a time. 0.166.0 dispatches them concurrently (`DynamicToolHandler::supports_parallel_tool_calls`, `core/src/tools/handlers/dynamic.rs:88` at `rust-v0.166.0`), so its requests arrive in any order. A stream ends with `toolUse` on the first request, a protocol signal, never on a timer. A call request already queued directly behind it joins that message. A later request waits in the thread's queue, and the stream that answers the earlier calls ends with `toolUse` on it. One model response's calls can therefore reach Pi as several `toolUse` messages, in arrival order; on both listed releases a response with two calls reached Pi as two messages. Codex holds the turn until every call has its answer, then sends the model all the outputs in one request.
+Codex sends each dynamic tool call as an `item/tool/call` server request and holds the turn until the bridge answers that request.
+
+- Pi's tools are declared in the `pi` namespace, so a call in any other namespace, or in none, refuses the turn with `codex-tool-call-namespace-refused namespace=<n>`.
+- Codex 0.163.0 runs a model response's dynamic calls one at a time. 0.166.0 dispatches them concurrently (`DynamicToolHandler::supports_parallel_tool_calls`, `core/src/tools/handlers/dynamic.rs:88` at `rust-v0.166.0`), so its requests arrive in any order.
+- A stream ends with `toolUse` on the first request, a protocol signal, never on a timer.
+- A call request already queued directly behind it joins that message.
+- A later request waits in the thread's queue, and the stream that answers the earlier calls ends with `toolUse` on it.
+- One model response's calls can therefore reach Pi as several `toolUse` messages, in arrival order; on both listed releases a response with two calls reached Pi as two messages.
+- Codex holds the turn until every call has its answer, then sends the model all the outputs in one request.
 
 One queue per thread holds every request and notification in arrival order. A request that arrives between two Pi streams waits there for the next stream.
 
-The next stream answers each pending call by its request id. Text becomes `inputText` and an image becomes `inputImage` with a data URL. A call without a Pi result is answered `success: false` with a lost-result text. User messages after the tool results go to the same turn through `turn/steer`.
+The next stream answers each pending call by its request id.
+
+- Text becomes `inputText` and an image becomes `inputImage` with a data URL.
+- A call without a Pi result is answered `success: false` with a lost-result text.
+- User messages after the tool results go to the same turn through `turn/steer`.
 
 An abort while Pi runs the tool ends only that stream; the app-server child stays with the bridge. Pi then holds an aborted pi-codex message after the boundary, so the next prompt starts a new thread on the same child, and the turn it leaves is abandoned as below.
 
-A turn the bridge does not continue, because the transcript moved to a new thread or its tools changed, has its pending calls answered as lost and is interrupted. Codex refusing an interrupt with `no active turn to interrupt` means the turn already ended; any other refusal stops the child with `codex-interrupt-failed thread=<id> turn=<id>`. An abort ends the stream at once, whatever it waits on, and interrupts the turn. A `turn/start` Codex answers after the abort has its turn interrupted on arrival.
+A turn the bridge does not continue, because the transcript moved to a new thread or its tools changed, has its pending calls answered as lost and is interrupted.
+
+- Codex refusing an interrupt with `no active turn to interrupt` means the turn already ended; any other refusal stops the child with `codex-interrupt-failed thread=<id> turn=<id>`.
+- An abort ends the stream at once, whatever it waits on, and interrupts the turn.
+- A `turn/start` Codex answers after the abort has its turn interrupted on arrival.
 
 A stream claims its thread in the same step as the busy check, before any wait, so a second stream on that thread is refused with `codex-thread-busy thread=<id>`.
 
@@ -76,12 +101,19 @@ A stream claims its thread in the same step as the busy check, before any wait, 
 - `onPayload` receives the `turn/start` params, or `{ method: "item/tool/call", answers, steer }` for a continued turn, before the bridge sends them. A returned replacement is sent instead.
 - `onResponse` receives `{ status: 200, headers: {} }` once Codex accepted the turn or the tool answers were sent.
 - `onProviderStreamEvent` receives each Codex request or notification frame of the turn before the bridge reads it.
-- A message's usage is that of its latest Codex model request, as Pi reads it for the context size. It is a copy derived from the thread's rollout, the store of record (README § Usage records), so its cost is 0. Codex counts cached and cache-written tokens inside its input count; the bridge reports them apart, as Pi's Responses adapter does. A message that ends with `toolUse` reports none, because Codex sends that request's usage after the tool call.
+- A message's usage is that of its latest Codex model request, as Pi reads it for the context size.
+  - It is a copy derived from the thread's rollout, the store of record (README § Usage records), so its cost is 0.
+  - Codex counts cached and cache-written tokens inside its input count; the bridge reports them apart, as Pi's Responses adapter does.
+  - A message that ends with `toolUse` reports none, because Codex sends that request's usage after the tool call.
 - `thinkingLevelMap` maps Pi's `off` to Codex `none` and each other level to itself. A level the model does not list maps to null, which Pi does not offer. The bridge sends the mapped effort of Pi's clamped level, or no effort where the map has none.
 
 ## Credential boundary
 
-`auth-presence.ts::resolveCodexHome` resolves the bridge home: `PI_CODEX_BRIDGE_HOME`, else `CODEX_HOME`, else `~/.codex`, a blank value counting as unset. `hasCodexLogin` checks only whether `<bridge home>/auth.json` exists. It never opens the file. A missing login throws `codex-login-missing home=<bridge home>` before any process starts, and the provider then lists no model.
+`auth-presence.ts::resolveCodexHome` resolves the bridge home: `PI_CODEX_BRIDGE_HOME`, else `CODEX_HOME`, else `~/.codex`, a blank value counting as unset.
+
+- `hasCodexLogin` checks only whether `<bridge home>/auth.json` exists.
+- It never opens the file.
+- A missing login throws `codex-login-missing home=<bridge home>` before any process starts, and the provider then lists no model.
 
 `codex-environment.ts::codexChildEnvironment` passes an allowlist: `PATH`, `HOME`, locale, `TMPDIR`, proxy and CA variables, and `CODEX_HOME` set to the bridge home. No other inherited variable reaches the child, `PI_CODEX_BRIDGE_HOME` included.
 
@@ -107,33 +139,82 @@ No native tool Codex offers the model can change a file or run a command. Which 
 
 - Environment tools, such as `apply_patch`: every bridge turn has no environment, so Codex answers the call that no execution environment is available. Codex 0.166.0 offers `apply_patch` whenever the model's catalog entry declares it, and no thread parameter, config key or feature removes it. The native-tool row holds this group.
 - Code-mode tools, such as `exec` and `wait`, offered at top level to a `code_mode_only` model and in the `functions` namespace to a model with a multi-agent runtime: `code_mode_host` is disabled, so Codex answers each call that the code-mode host is disabled. The code-mode row holds that `exec` lists no Pi tool for such a model.
-- Collaboration tools, the `collaboration` namespace, offered to a model with a multi-agent runtime: `features.multi_agent_v2.max_concurrent_threads_per_session=1` refuses every spawn, so no sub-agent exists. `list_agents` answers with the root thread alone, and `send_message`, `followup_task` and `interrupt_agent` answer that the target is not found. `wait_agent` instead starts a `collabAgentToolCall` item, which the item audit refuses, so that turn ends with `codex-native-item type=collabAgentToolCall`. The sub-agent row holds the refused spawn.
+- Collaboration tools, the `collaboration` namespace, offered to a model with a multi-agent runtime: `features.multi_agent_v2.max_concurrent_threads_per_session=1` refuses every spawn, so no sub-agent exists.
+  - `list_agents` answers with the root thread alone, and `send_message`, `followup_task` and `interrupt_agent` answer that the target is not found.
+  - `wait_agent` instead starts a `collabAgentToolCall` item, which the item audit refuses, so that turn ends with `codex-native-item type=collabAgentToolCall`.
+  - The sub-agent row holds the refused spawn.
 
 These guards hold the contract:
 
-- The launch disables every default-on feature of a listed release that runs something outside Pi (`DISABLED_FEATURES`, and `features.plugin_discovery_prefetch=false` in `LAUNCH_CONFIG` for the 0.166.0 feature that 0.163.0 lacks). It also sets `web_search="disabled"` and `tools.experimental_request_user_input={enabled=false}` (`LAUNCH_CONFIG`), so Codex offers the model no `request_user_input` tool: no user answers Codex here. It also sets `features.code_mode.direct_only_tool_namespaces=["pi"]`. A model whose Codex catalog entry sets `tool_mode = "code_mode_only"` otherwise sees every tool only inside Codex's `exec` tool, which fails closed while `code_mode_host` is disabled; with the setting it sees Pi's `pi` namespace as top-level tools it calls directly, and `exec` does not list them. It also sets `features.multi_agent_v2.max_concurrent_threads_per_session=1`. Models with a multi-agent runtime in the Codex catalog are offered `spawn_agent` even with the `multi_agent` feature off; this limit holds each thread tree to its root thread, so Codex refuses a spawn before the sub-agent thread exists and the sub-agent sends no model request. It does not limit the bridge's own top-level threads. Neither it nor the namespace setting enables a feature; for the namespace setting the fixture suite compares the enabled features with and without it. The fixture suite holds each of these settings.
-- Threads run with `sandbox: "read-only"`, `environments: []` and `approvalPolicy: "untrusted"`, and each `turn/start` sends `environments: []` again. The turn's value holds every bridge turn; the thread's value holds a turn that sends none. Codex resolves a native tool's environment before the tool runs (`core/src/tools/registry.rs:831-837` at `rust-v0.166.0`), and with no environment it answers the model that no execution environment is available. `apply_patch` reads the filesystem (`core/src/tools/handlers/apply_patch.rs:477`) and starts its `fileChange` item through `ToolEmitter` (`:575`) only after that resolution, so the call reaches no write. 0.163.0 does not offer `apply_patch` on such a thread and answers the call as unsupported. Under `untrusted` Codex asks only for a command outside its known-safe set and outside the exec-policy allow rules in `CODEX_HOME`; the bridge declines each such request and refuses the turn. A known-safe or allow-rule command runs without asking, so for it the item audit below is a stop after the command starts, not a refusal before it runs. 0.163.0 has no stricter policy.
+- The launch disables every default-on feature of a listed release that runs something outside Pi (`DISABLED_FEATURES`, and `features.plugin_discovery_prefetch=false` in `LAUNCH_CONFIG` for the 0.166.0 feature that 0.163.0 lacks).
+  - It also sets `web_search="disabled"` and `tools.experimental_request_user_input={enabled=false}` (`LAUNCH_CONFIG`), so Codex offers the model no `request_user_input` tool: no user answers Codex here.
+  - It also sets `features.code_mode.direct_only_tool_namespaces=["pi"]`.
+  - A model whose Codex catalog entry sets `tool_mode = "code_mode_only"` otherwise sees every tool only inside Codex's `exec` tool, which fails closed while `code_mode_host` is disabled; with the setting it sees Pi's `pi` namespace as top-level tools it calls directly, and `exec` does not list them.
+  - It also sets `features.multi_agent_v2.max_concurrent_threads_per_session=1`.
+  - Models with a multi-agent runtime in the Codex catalog are offered `spawn_agent` even with the `multi_agent` feature off; this limit holds each thread tree to its root thread, so Codex refuses a spawn before the sub-agent thread exists and the sub-agent sends no model request.
+  - It does not limit the bridge's own top-level threads.
+  - Neither it nor the namespace setting enables a feature; for the namespace setting the fixture suite compares the enabled features with and without it.
+  - The fixture suite holds each of these settings.
+- Threads run with `sandbox: "read-only"`, `environments: []` and `approvalPolicy: "untrusted"`, and each `turn/start` sends `environments: []` again.
+  - The turn's value holds every bridge turn; the thread's value holds a turn that sends none.
+  - Codex resolves a native tool's environment before the tool runs (`core/src/tools/registry.rs:831-837` at `rust-v0.166.0`), and with no environment it answers the model that no execution environment is available.
+  - `apply_patch` reads the filesystem (`core/src/tools/handlers/apply_patch.rs:477`) and starts its `fileChange` item through `ToolEmitter` (`:575`) only after that resolution, so the call reaches no write. 0.163.0 does not offer `apply_patch` on such a thread and answers the call as unsupported.
+  - Under `untrusted` Codex asks only for a command outside its known-safe set and outside the exec-policy allow rules in `CODEX_HOME`; the bridge declines each such request and refuses the turn.
+  - A known-safe or allow-rule command runs without asking, so for it the item audit below is a stop after the command starts, not a refusal before it runs. 0.163.0 has no stricter policy.
 - After each thread start and resume, `experimentalFeature/list { threadId }` must report no enabled feature outside `REVIEWED_ENABLED_FEATURES`, or the thread is refused with `codex-feature-unreviewed name=<f>` before its first turn.
 - An `item/started` whose type is not in `ALLOWED_ITEM_TYPES` interrupts the turn and refuses it with `codex-native-item type=<t>`.
 - A turn or item on a thread the bridge did not start, such as a Codex sub-agent, stops the child and refuses with `codex-foreign-thread thread=<id>`.
 
 `unified_exec` cannot be disabled in a listed release: `--disable unified_exec`, `-c features.unified_exec=false` and `experimental_use_unified_exec_tool=false` all leave it reported enabled. It is in `REVIEWED_ENABLED_FEATURES` because its `exec_command` and `write_stdin` tools are not offered while `shell_tool` is off; the fixture suite asserts that from the tools Codex sends the model. If Codex ran one anyway, the item audit (`commandExecution` is not an allowed item type) stops it after it starts, and a command outside the known-safe set and the allow rules also meets a declined approval request first.
 
-The native-tool row of the fixture suite proves the contract for its model, the default mock model, on every listed release. Every tool Codex offers that model is the `pi` namespace, a `pi.*` tool or `apply_patch`. The code-mode row holds only that `exec` lists no Pi tool, and the sub-agent row only the refused spawn. No row calls the other code-mode or collaboration tools; their answers rest on the KEN-4841 probe. A scripted `apply_patch` call in the freeform shape Codex declares gets Codex's answer in the next model request. The row also sends one in the function shape, which Codex answers on another path. Neither call starts a `fileChange` or `commandExecution` item or writes a file, and the turn ends `stop`. Its contrast sends the same call through a bridge whose `thread/start` and `turn/start` carry no `environments`; there Codex starts a `fileChange` item, and the item audit refuses it with `codex-native-item type=fileChange`. A release that offers another native tool, or starts a patch on a bridge turn, fails the row.
+The native-tool row of the fixture suite proves the contract for its model, the default mock model, on every listed release.
+
+- Every tool Codex offers that model is the `pi` namespace, a `pi.*` tool or `apply_patch`.
+- The code-mode row holds only that `exec` lists no Pi tool, and the sub-agent row only the refused spawn.
+- No row calls the other code-mode or collaboration tools; their answers rest on the KEN-4841 probe.
+- A scripted `apply_patch` call in the freeform shape Codex declares gets Codex's answer in the next model request.
+- The row also sends one in the function shape, which Codex answers on another path.
+- Neither call starts a `fileChange` or `commandExecution` item or writes a file, and the turn ends `stop`.
+- Its contrast sends the same call through a bridge whose `thread/start` and `turn/start` carry no `environments`; there Codex starts a `fileChange` item, and the item audit refuses it with `codex-native-item type=fileChange`.
+- A release that offers another native tool, or starts a patch on a bridge turn, fails the row.
 
 ## Model discovery
 
-The bridge lists models through its own app-server client, under a 15-second deadline. Pi gives the factory no trust answer, so the package records Pi's answer only at `session_start`, while startup model selection reads only providers a factory registered. The factory therefore lists models and registers the provider only when the package is enabled both with and without the project's settings; otherwise `session_start` records Pi's trust answer and does both unless the trusted settings disable the package. A disabled package starts no app-server. A stall or failure gives an empty model list and one keyed notice at session start; a missing login gives the `codex-login-missing` notice instead. `discoverModels` stops its child and waits for it to exit before it returns, on success and on failure, so a session that never selects a `pi-codex` model holds no app-server, and the first `pi-codex` stream starts a fresh one. Discovery uses the bridge's one client, which is safe because `activate` awaits discovery before it calls `registerProvider`: no stream can reach the client while discovery holds it. A change that registers the provider before discovery returns must give discovery its own client. The wait for the stop adds up to the 3-second termination grace to startup.
+The bridge lists models through its own app-server client, under a 15-second deadline.
 
-The client owns its child from the spawn. One 15-second deadline covers the version check and the handshake together. That deadline, the discovery deadline or `close` stops the child, and the next stream starts a fresh one. A stream abort ends only that stream's wait: the open stays with the bridge, and a stream that comes before it settles joins it.
+- Pi gives the factory no trust answer, so the package records Pi's answer only at `session_start`, while startup model selection reads only providers a factory registered.
+- The factory therefore lists models and registers the provider only when the package is enabled both with and without the project's settings; otherwise `session_start` records Pi's trust answer and does both unless the trusted settings disable the package.
+- A disabled package starts no app-server.
+- A stall or failure gives an empty model list and one keyed notice at session start; a missing login gives the `codex-login-missing` notice instead.
+- `discoverModels` stops its child and waits for it to exit before it returns, on success and on failure, so a session that never selects a `pi-codex` model holds no app-server, and the first `pi-codex` stream starts a fresh one.
+- Discovery uses the bridge's one client, which is safe because `activate` awaits discovery before it calls `registerProvider`: no stream can reach the client while discovery holds it.
+- A change that registers the provider before discovery returns must give discovery its own client.
+- The wait for the stop adds up to the 3-second termination grace to startup.
+
+The client owns its child from the spawn.
+
+- One 15-second deadline covers the version check and the handshake together. That deadline, the discovery deadline or `close` stops the child, and the next stream starts a fresh one.
+- A stream abort ends only that stream's wait: the open stays with the bridge, and a stream that comes before it settles joins it.
 
 ## Tests
 
 `npm run test:ci` builds the published bundle, checks TypeScript and runs two login-free suites:
 
 - `tests/unit-*.mjs` run against `tests/lib/fake-client.mjs`, which stands in for one app-server connection, so the bridge's router, planner and streams run unchanged. `tests/unit-process.mjs` runs the version gate, the handshake deadline and the child stop against `tests/lib/stub-codex.mjs`, a stand-in `codex` executable written into the test's scratch directory, with real processes.
-- `tests/fixture-*.mjs` run every row once per listed release, each against that release's real Codex CLI from its `codex-<version>` dev dependency, through the bridge's own start path. A first row per release checks that the CLI reports that version; a listed release without its CLI fails every row. `tests/lib/codex-fixture.mjs` builds a scratch `CODEX_HOME` with a user marker MCP server and a trusted project that declares another, and `tests/lib/mock-responses.mjs` serves scripted model responses on 127.0.0.1 as a Codex model provider. The bridge receives that provider through its `configOverrides` test seam, which the extension factory never sets.
+- `tests/fixture-*.mjs` run every row once per listed release, each against that release's real Codex CLI from its `codex-<version>` dev dependency, through the bridge's own start path.
+  - A first row per release checks that the CLI reports that version; a listed release without its CLI fails every row.
+  - `tests/lib/codex-fixture.mjs` builds a scratch `CODEX_HOME` with a user marker MCP server and a trusted project that declares another, and `tests/lib/mock-responses.mjs` serves scripted model responses on 127.0.0.1 as a Codex model provider.
+  - The bridge receives that provider through its `configOverrides` test seam, which the extension factory never sets.
 
-The fixture suites hold the MCP guards at thread start and cold resume, the startup abort, the feature audit, the native-tool guards, and the README's usage rule applied to a bridge rollout across a tool call and a cold resume. A scratch `model_catalog_json` marks the mock model `code_mode_only` for the row that holds Pi's direct namespace; the bridge itself writes no model metadata. Their marker MCP server outlives stdin EOF, so the late-server row shows the stop ends a server Codex started. Each row stops its world from `t.after`, which runs when the row times out, and both suites run with `--test-force-exit`, so a stalled row fails after its 30-second deadline instead of holding the CI job. They also scan the bridge's stderr, stream events, child argv and environment, and every file Codex or the bridge wrote, for the env and argument sentinels of the configured servers.
+The fixture suites hold the MCP guards at thread start and cold resume, the startup abort, the feature audit, the native-tool guards, and the README's usage rule applied to a bridge rollout across a tool call and a cold resume.
 
-`tests/int-smoke.sh` runs Pi against the real Codex login. It runs only when `PI_CODEX_BRIDGE_LIVE=1`.
+- A scratch `model_catalog_json` marks the mock model `code_mode_only` for the row that holds Pi's direct namespace; the bridge itself writes no model metadata.
+- Their marker MCP server outlives stdin EOF, so the late-server row shows the stop ends a server Codex started.
+- Each row stops its world from `t.after`, which runs when the row times out, and both suites run with `--test-force-exit`, so a stalled row fails after its 30-second deadline instead of holding the CI job.
+- They also scan the bridge's stderr, stream events, child argv and environment, and every file Codex or the bridge wrote, for the env and argument sentinels of the configured servers.
+
+`tests/int-smoke.sh` runs Pi against the real Codex login. It runs only when `PI_CODEX_BRIDGE_LIVE=1`. Live acceptance uses the existing `CODEX_HOME` login and ignores `PI_CODEX_BRIDGE_HOME`:
+
+```sh
+PI_CODEX_BRIDGE_LIVE=1 PI_CODEX_BRIDGE_MODEL=<model> npm test
+```

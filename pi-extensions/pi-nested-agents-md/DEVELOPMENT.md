@@ -1,6 +1,6 @@
 # pi-nested-agents-md development
 
-For maintainers. What it does for a consumer is [README.md](README.md); the mechanics are the doc comments in `extensions/nested-agents-md.ts`.
+What it does for a consumer is [README.md](README.md). The mechanics are the doc comments in `extensions/nested-agents-md.ts`.
 
 ## Invariants
 
@@ -9,7 +9,6 @@ For maintainers. What it does for a consumer is [README.md](README.md); the mech
 - Order is root-most first, the order Claude Code layers nested `CLAUDE.md`; `directoriesBetween` throws rather than walk to the filesystem top when handed a file outside the root, because its callers hold that precondition.
 - A file is recorded as attached when taken, the unreadable ones included, so the model hears about each file once per session; the record is replaced on every `session_start`.
 - An unreadable `AGENTS.md` never fails the read. The first line gives `unreadable_path` and the file path. The next line explains the failure.
-- Project settings are read only after `recordProjectTrust` saw Pi report the workspace trusted, and `PI_CODING_AGENT_DIR` counts only when root-anchored, matching `crates/core/src/harness/pi.rs::pi_root_is_absolute_for`.
 
 ## Tests
 
@@ -18,4 +17,4 @@ cd pi-extensions/pi-nested-agents-md
 npm test
 ```
 
-`bun test ./tests`; the suite imports nothing from Pi outside type positions, so no install is needed. It builds a project tree in a temporary directory with the root bound canonical at creation, and points `PI_CODING_AGENT_DIR` at an empty root so the developer's own global settings never answer. A new rule about what attaches ships with the case that plants its counterexample.
+`bun test ./tests`; the suite imports nothing from Pi outside type positions, so no install is needed. It builds a project tree in a temporary directory with the root bound canonical at creation, and points `PI_CODING_AGENT_DIR` at an empty root so the developer's own global settings never answer.

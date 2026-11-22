@@ -1,19 +1,49 @@
 # pi-session-bridge development
 
-For maintainers and authors of custom clients. What it does for a consumer is [README.md](README.md); the agent-facing CLI contract is `instructions.md`; the request handlers and event shapes are in `extensions/session-bridge.ts`, with the module header stating discovery and framing.
+For maintainers and authors of custom clients.
+
+- What it does for a consumer is [README.md](README.md).
+- The agent-facing CLI contract is `instructions.md`.
+- The request handlers and event shapes are in `extensions/session-bridge.ts`, with the module header stating discovery and framing.
 
 ## Protocol
 
-One JSON object per LF-delimited line, both directions. A request may carry an `id`; the response is `type: "response"` with the same `id`, the `command` it answered, `success`, and `data`. Events are `type: "event"` with `event`, `timestamp` and `data`; clients receive them by default and mute them with `{"type":"subscribe","enabled":false}`. `pi-bridge request` sends any raw request. The protocol name is `PROTOCOL` in `extensions/session-bridge.ts`, and the events republished to clients are `BRIDGE_STREAM_EVENT_NAMES`; the subset in `REGISTRY_REFRESH_EVENT_NAMES` also rewrites the registry file.
+One JSON object per LF-delimited line, both directions.
+
+- A request may carry an `id`; the response is `type: "response"` with the same `id`, the `command` it answered, `success`, and `data`.
+- Events are `type: "event"` with `event`, `timestamp` and `data`; clients receive them by default and mute them with `{"type":"subscribe","enabled":false}`.
+- `pi-bridge request` sends any raw request.
+- The protocol name is `PROTOCOL` in `extensions/session-bridge.ts`, and the events republished to clients are `BRIDGE_STREAM_EVENT_NAMES`; the subset in `REGISTRY_REFRESH_EVENT_NAMES` also rewrites the registry file.
 
 `prompt` takes `deliverAs` (`auto`, `steer`, `followUp`, `now`), and `steer`, `follow_up` and `abort` are their own request types. Question requests (`questions`, `question_reply`, `question_reject`) resolve the `pi-questions` service through `Symbol.for("kendex.pi-questions.service")` and fail with a plain error when it is not loaded.
 
 ## Invariants
 
-- Nothing leaves the process unbounded. Every event is sanitized to a compact envelope (`extensions/event-sanitizer.ts::sanitizeBridgeEvent`): the events in `COMPACT_EVENT_COMPACTORS` keep counts and previews. The sanitizer serializes each whole payload once. History retains its compact JSON string and uses the original JSON string for raw spill. A shrunk envelope carries `truncated` and `originalBytes`. It gets `rawEventPath` and `rawEventRef` only when a spill is accepted. The events in `STREAMING_DELTA_COMPACTORS` are delta-only: their descriptor never measures or keeps Pi's cumulative `message`, `partial` or `partialResult`, and they never spill, because Pi fires `message_update` once per token and `tool_execution_update` once per partial tool result, so the whole value would be rewritten to disk each time. A `message_update` descriptor keeps the delta and reports its bytes as `originalBytes`; a `tool_execution_update` descriptor keeps the call name and id alone and reports `originalBytes` 0, since Pi's update payload carries no delta and nothing of `partialResult` is retained. `message_end` and `tool_execution_end` carry the whole value instead. A `--raw` response sets `rawError` on a truncated envelope that spilled nothing, so it does not read as a failed spill. That note is optional detail charged against the response budget: when it does not fit it is dropped and `responseTruncated` is set, while a reported failure is never dropped. The stored envelope carries no such text, keeping a streaming turn free of per-event bytes. `extensions/event-history.ts::BridgeHistory` evicts by count and by total bytes, caps each `history` response and reports `responseTruncated`, and queues raw payloads for `<bridgeDir>/raw/<pid>.jsonl` under `maxRawSpillBytes` only while an event subscriber is attached. The queue counts pending and in-flight work against its byte and count bounds. A raw history request waits for queued work. Compact history and the event stream can show `spill_pending=true` until the write completes. A spill the live slots or queue cannot fit is refused with `rawError` without touching the file. The FIFO worker uses asynchronous I/O for append and compaction. Compaction copies live slots to a temporary file, then renames it and updates their offsets. Shutdown cancels pending work and waits for in-flight I/O before removing the sidecar. Sidecars are also removed at process exit, and `cleanupStaleSpills` removes those of dead pids at start.
+- Nothing leaves the process unbounded.
+  - Every event is sanitized to a compact envelope (`extensions/event-sanitizer.ts::sanitizeBridgeEvent`): the events in `COMPACT_EVENT_COMPACTORS` keep counts and previews.
+  - The sanitizer serializes each whole payload once.
+  - History retains its compact JSON string and uses the original JSON string for raw spill.
+  - A shrunk envelope carries `truncated` and `originalBytes`.
+  - It gets `rawEventPath` and `rawEventRef` only when a spill is accepted.
+  - The events in `STREAMING_DELTA_COMPACTORS` are delta-only: their descriptor never measures or keeps Pi's cumulative `message`, `partial` or `partialResult`, and they never spill, because Pi fires `message_update` once per token and `tool_execution_update` once per partial tool result, so the whole value would be rewritten to disk each time.
+  - A `message_update` descriptor keeps the delta and reports its bytes as `originalBytes`; a `tool_execution_update` descriptor keeps the call name and id alone and reports `originalBytes` 0, since Pi's update payload carries no delta and nothing of `partialResult` is retained.
+  - `message_end` and `tool_execution_end` carry the whole value instead.
+  - A `--raw` response sets `rawError` on a truncated envelope that spilled nothing, so it does not read as a failed spill. That note is optional detail charged against the response budget: when it does not fit it is dropped and `responseTruncated` is set, while a reported failure is never dropped.
+  - The stored envelope carries no such text, keeping a streaming turn free of per-event bytes.
+  - `extensions/event-history.ts::BridgeHistory` evicts by count and by total bytes, caps each `history` response and reports `responseTruncated`, and queues raw payloads for `<bridgeDir>/raw/<pid>.jsonl` under `maxRawSpillBytes` only while an event subscriber is attached.
+  - The queue counts pending and in-flight work against its byte and count bounds.
+  - A raw history request waits for queued work.
+  - Compact history and the event stream can show `spill_pending=true` until the write completes.
+  - A spill the live slots or queue cannot fit is refused with `rawError` without touching the file.
+  - The FIFO worker uses asynchronous I/O for append and compaction.
+  - Compaction copies live slots to a temporary file, then renames it and updates their offsets.
+  - Shutdown cancels pending work and waits for in-flight I/O before removing the sidecar.
+  - Sidecars are also removed at process exit, and `cleanupStaleSpills` removes those of dead pids at start.
 - The activity broker is fail-open and in-process. `extensions/activity-broker.ts` installs it at `globalThis[Symbol.for("kendex.pi.activity")]`; `publishPiActivity` swallows every error so a producer never fails because activity did, `recent` replays a bounded ring newest-first, and the bridge forwards live publications as `kendex_activity` events only while connected. Broker rows are never `sendMessage` chat entries.
-- Slash dispatch matches Pi's editor. `pi-bridge send` expands `/skill:<name>` from the loaded skill's `sourceInfo.path` and prompt templates with Pi's substitution rules, and an extension or TUI command is pasted into the session's own tmux pane, resolved by walking parent processes from `process.pid` rather than the active tmux client. A repeated skill send in one session sends a short reminder until the `SKILL.md` hash changes; the cache is evicted per session at shutdown and bounded to `MAX_SKILL_EXPANSION_CACHE_SESSIONS`. A failed command delivery falls back to a plain message.
-- Project settings are read only after Pi reports the workspace trusted (`recordProjectTrust`), the same rule every kendex Pi extension follows.
+- Slash dispatch matches Pi's editor.
+  - `pi-bridge send` expands `/skill:<name>` from the loaded skill's `sourceInfo.path` and prompt templates with Pi's substitution rules, and an extension or TUI command is pasted into the session's own tmux pane, resolved by walking parent processes from `process.pid` rather than the active tmux client.
+  - A repeated skill send in one session sends a short reminder until the `SKILL.md` hash changes; the cache is evicted per session at shutdown and bounded to `MAX_SKILL_EXPANSION_CACHE_SESSIONS`.
+  - A failed command delivery falls back to a plain message.
 - A child session spawned with `PI_BRIDGE_PARENT_SESSION_ID` advertises a synthesized `<parent>:c<pid>` id (`extensions/child-session-id.ts::resolveSessionId`) so parents can tell their children apart in `pi-bridge list`.
 
 ## Tests
@@ -23,4 +53,4 @@ bun test tests/*.test.ts extensions/__tests__/*.test.ts
 npm run check
 ```
 
-`check` also parses `bin/pi-bridge.js`. History budgets, sanitizer shapes, the slash-dispatch matrix against Pi's editor outcomes, tmux pane resolution, the CLI's history flags, child session ids and the broker each have a suite. A new bound ships with the control that overruns it; a new dispatch shape ships with its row in the matrix.
+`check` also parses `bin/pi-bridge.js`. A new dispatch shape ships with its row in the slash-dispatch matrix, which holds dispatch against Pi's editor outcomes.

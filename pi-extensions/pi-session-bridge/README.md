@@ -29,11 +29,19 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - The CLI reads those files to find the session you asked for.
 - It sends your request down that channel, and the session sends the result back.
 - A session you subscribed to keeps sending you what it does next.
-- `pi-bridge history --raw` reads a saved event in full when it was too large to return inline. Raw data exists only for events that fire while an event subscriber is attached and raw spill is enabled. The request waits for queued writes. A full queue or disk budget leaves compact data with a `rawError` reason. Streaming events are the exception: `message_update` arrives once per token and `tool_execution_update` once per partial tool result, and both are kept in reduced form only, so the finished value comes from `message_end` or `tool_execution_end`.
+- `pi-bridge history --raw` reads a saved event in full when it was too large to return inline.
+  - Raw data exists only for events that fire while an event subscriber is attached and raw spill is enabled.
+  - The request waits for queued writes.
+  - A full queue or disk budget leaves compact data with a `rawError` reason.
+  - Streaming events are the exception: `message_update` arrives once per token and `tool_execution_update` once per partial tool result, and both are kept in reduced form only, so the finished value comes from `message_end` or `tool_execution_end`.
 
 ## Memory use
 
-- Raw writes and disk compaction run in one asynchronous queue. The queue holds at most 64 events and 16 MiB of serialized data, including the current write. These queue bounds also apply when `maxRawSpillBytes` disables the disk cap. Compaction copies data through a 64 KiB buffer. Session shutdown cancels queued events, waits for the current write, and removes the raw file.
+- Raw writes and disk compaction run in one asynchronous queue.
+  - The queue holds at most 64 events and 16 MiB of serialized data, including the current write.
+  - These queue bounds also apply when `maxRawSpillBytes` disables the disk cap.
+  - Compaction copies data through a 64 KiB buffer.
+  - Session shutdown cancels queued events, waits for the current write, and removes the raw file.
 
 - The bridge holds at most 8 MiB of unsent data for one client, plus the line it is sending. A client that still leaves more unread when the next line is due is disconnected, and a session with a UI shows a `bridge-client-stalled=<bytes>` warning. One response larger than 8 MiB still reaches a client that reads it.
 - At session end, reload or session replacement, the bridge gives each client one second to close its connection, then disconnects it, so a stopped or wedged client cannot hold the session open.

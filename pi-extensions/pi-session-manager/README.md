@@ -34,8 +34,6 @@ Delete refuses a session that another running Pi has open, such as another lane'
 
 The browser keeps the prompt text of each session it searched while it stays open, and releases it when it closes. A `re:` search stops with an error when the pattern runs past 250 ms on the prompts of one session.
 
-Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
-
 ## Setup
 
 The settings editor writes project values to `.pi/settings.json`. The default user file is `~/.pi/agent/settings.json`. `PI_CODING_AGENT_DIR` changes the user directory. Package values are stored under `kendex.extensionManager.config["@vanillagreen/pi-session-manager"]`.
@@ -47,6 +45,8 @@ Open `/extensions:settings`; settings appear under the **Session Manager** tab. 
 - `defaultScope`, `defaultSort`: the tab and sort the overlay opens with.
 - `visibleRows`, `overlayWidth`: overlay size.
 - `deleteUsesTrash`: try `trash` before a permanent unlink. A `trash` that runs past 5 seconds is stopped, with any helper it started. If the session file is still in place, the delete fails and keeps it; it never falls back to a permanent unlink.
+
+Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Licence
 
