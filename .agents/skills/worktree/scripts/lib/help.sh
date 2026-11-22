@@ -38,7 +38,7 @@ Commands:
   codex-setup | codex-branch | codex-cleanup
                    Codex Desktop app-created worktree hooks
   claude-setup | claude-cleanup
-                   Claude Code worktree hooks (WorktreeCreate)
+                   Claude Code WorktreeCreate and WorktreeRemove hooks
 
 Each mutating command's full contract is its own --help.
 
@@ -1012,17 +1012,27 @@ Usage: worktree codex-setup    [PATH]
        worktree claude-setup   [PATH]
        worktree claude-cleanup [PATH]
 
-App-created worktree hooks. The app (Codex Desktop, Claude Code) owns
-worktree and branch creation and deletion; the setup hooks apply the same
-project-local setup that create applies — env/config symlinks, configured
-copies and dirs, optional bot git config and remote, and WORKTREE_SETUP_CMD
-when set, inside a worktree git
+App-created worktree hooks. Codex Desktop owns worktree and branch creation
+and deletion; codex-setup applies the same project-local setup that create
+applies — env/config symlinks, configured copies and dirs, optional bot git
+config and remote, and WORKTREE_SETUP_CMD when set — inside a worktree git
 has already created (default: the current directory). codex-branch
 normalizes an app-managed branch name to the issue branch orch expects
-before 'orch start'. The cleanup hooks are non-destructive and never remove
+before 'orch start'. codex-cleanup is non-destructive and never removes
 symlinks: mutating tracked symlink paths before the app has actually
-removed the worktree can leave it dirty. Installation wiring: the worktree
-skill's references/hooks.md.
+removed the worktree can leave it dirty.
+
+With no PATH, claude-setup and claude-cleanup are Claude Code's
+WorktreeCreate and WorktreeRemove command hooks and read the hook's JSON
+input on stdin (jq required). claude-setup creates the worktree for the
+input's name as 'create <name>' does, or reopens the one that name already
+has, and prints its physical path as the last stdout line. A reopen
+reapplies the setup, WORKTREE_SETUP_CMD included. claude-cleanup runs
+'remove' on the input's worktree_path: the tree goes with any uncommitted
+work, as the removal Claude Code asked for, and a branch remove cannot
+prove merged stays, with a non-zero exit. With a PATH,
+claude-setup and claude-cleanup act as codex-setup and codex-cleanup do.
+Installation wiring: the worktree skill's references/hooks.md.
 EOF
 }
 

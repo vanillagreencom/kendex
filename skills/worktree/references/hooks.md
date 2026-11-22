@@ -24,13 +24,20 @@ Codex Desktop owns app-created worktree creation and deletion. Configure project
 
 ## Claude Code hooks
 
-Claude Code creates worktrees itself (`--worktree` sessions, subagents with `isolation: worktree`, desktop parallel sessions) with a bare `git worktree add`. Point the `WorktreeCreate` hook in the consumer repo's `.claude/settings.json` at `claude-setup`:
+A `WorktreeCreate` hook replaces Claude Code's own `git worktree add` wherever Claude Code makes a worktree, such as a `--worktree` session or a subagent with `isolation: worktree`. Claude Code passes the hook its input as JSON on stdin and sets no worktree path variable. Wire both hooks in the consumer repo's `.claude/settings.json`, with no argument after the command:
 
-```bash
-.agents/skills/worktree/scripts/worktree claude-setup "$CLAUDE_WORKTREE_PATH"
-.agents/skills/worktree/scripts/worktree claude-cleanup "$CLAUDE_WORKTREE_PATH"
+```json
+{
+  "hooks": {
+    "WorktreeCreate": [{ "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.agents/skills/worktree/scripts/worktree claude-setup" }] }],
+    "WorktreeRemove": [{ "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.agents/skills/worktree/scripts/worktree claude-cleanup" }] }]
+  }
+}
 ```
 
-Keep this in **project-level** settings (`CLAUDE_CONFIG_DIR` only relocates user-level config).
+- Keep this in **project-level** settings. `CLAUDE_CONFIG_DIR` only relocates user-level config.
+- Wire `WorktreeRemove` beside `WorktreeCreate`. Without it, Claude Code removes a hook-created worktree as `git worktree remove --force` does and never deletes its branch. `claude-cleanup` removes the tree through `worktree remove`, which deletes its branch only when it can prove the branch merged.
+- Claude Code keeps a subagent's hook-created worktree when the subagent ends. Remove it with `worktree remove`.
+- Claude Code skips `.worktreeinclude` when the hook is wired. Name the files a worktree needs in `WORKTREE_SYMLINKS` and `WORKTREE_COPIES`.
 
-`claude-setup` runs the same configured command after file setup. A command failure refuses the hook and keeps the app-created worktree for a setup-hook retry.
+What each hook creates, prints and removes: `worktree claude-setup --help`. A `WORKTREE_SETUP_CMD` failure fails the hook, so Claude Code does not start the session. The retry contract is `worktree --help` § Dependencies.
