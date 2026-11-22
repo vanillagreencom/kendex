@@ -66,7 +66,7 @@ Offer the command for the reach needed, run in the repository's main checkout. `
 | Reports and asks | `kendex add vanillagreencom/kendex --skill mailbox --harness [HARNESS] --yes` |
 | Directives after `overseer-absent` | `kendex add vanillagreencom/kendex --skill orch --hook lane-mail-check --harness [HARNESS] --yes` |
 
-The directive install brings orch, mailbox and the hooks lane-mail-check requires. On Copilot CLI, add `--hook lane-mail-start,lane-mail-prompt`.
+The directive install brings orch, mailbox and the hooks lane-mail-check requires. On Copilot CLI, add `--hook lane-mail-start`.
 
 Before approval, say what the command installs, that it writes the checkout and commits nothing, and that a directive install can need a session restart before its hooks reach the running agent. After approval, install, then repeat the judgment in [Reachable repositories](../SKILL.md#reachable-repositories). After a directive install, the agent must still run `orch-runtime register --fleet`. Call the agent instructable only after a directive send prints its receipt.
 

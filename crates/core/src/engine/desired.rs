@@ -580,6 +580,12 @@ pub struct DesiredState {
     /// (`desired_kinds::pin_records`), so a pin is never said to keep a
     /// hook off a tool it could not run on anyway.
     pub withheld_past_pin: BTreeSet<(ItemKind, String, HarnessId)>,
+    /// Each companion whose own declaration's pin leaves out tools a
+    /// requirer runs it on, with those tools
+    /// ([`super::desired_kinds::NotWritten::OtherTools`]). It plans
+    /// nothing: an add that pins a package reads it before persisting
+    /// (`expansion::pins_short_of_requirers`).
+    pub(super) pins_short: BTreeMap<(ItemKind, String), BTreeSet<HarnessId>>,
     /// The paths each enabled agent this pass places on at least one
     /// harness declares as tracked output, by agent name;
     /// `EngineReport::tracked_outputs`.

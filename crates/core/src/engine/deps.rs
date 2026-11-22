@@ -367,6 +367,9 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
     for ((kind, name), found) in wanted {
         state.warnings.extend(found.findings);
         state.warnings.extend(found.answered);
+        for (companion, tools) in found.pins_short {
+            state.pins_short.entry(companion).or_default().extend(tools);
+        }
         state.withheld.extend(
             found
                 .withheld
@@ -409,6 +412,9 @@ struct Wanted {
     /// companion and the pass judges pins: each asked again with the pin
     /// dropped ([`withheld_past_pin`]).
     left_out: Vec<HarnessId>,
+    /// Each companion whose own declaration's pin leaves out tools the
+    /// parent runs it on, with those tools (`DesiredState::pins_short`).
+    pins_short: Vec<(Node, Vec<HarnessId>)>,
     /// For an agent, assigned skills held on at least one tool
     /// ([`held_elsewhere`]). [`walk`] switches them on while the agent is
     /// on, even when its edge must still derive them on another tool.
@@ -801,7 +807,7 @@ fn orphaned_finding(
 }
 
 /// The tools a finding names, in display order.
-fn named(tools: &[HarnessId]) -> String {
+pub(super) fn named(tools: &[HarnessId]) -> String {
     tools
         .iter()
         .map(|harness| harness.display_name())
@@ -1475,6 +1481,11 @@ fn companion(
         }
     }
     for (reason, tools) in refused {
+        if reason == NotWritten::OtherTools {
+            wanted
+                .pins_short
+                .push(((dep_kind, dep.clone()), tools.clone()));
+        }
         // A parent that is off arms nothing, so a companion switched off
         // beside it is missing nowhere and says nothing.
         let quiet = reason == NotWritten::SwitchedOff && !armed;

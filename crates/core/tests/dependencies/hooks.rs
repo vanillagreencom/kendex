@@ -557,6 +557,94 @@ fn a_companion_follows_its_parent_only_where_the_parent_runs() {
     }
 }
 
+/// `add --harness` pins what it adds to the tools it names, and a hook a
+/// declared hook requires keeps every tool that requirer runs on besides,
+/// so the next refresh withholds nothing from them. The pin grows to the
+/// requirer's tools and no further: a requirer on one tool adds only that
+/// one, never the scope's others.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn pinning_a_required_hook_keeps_every_tool_its_requirers_run_on() {
+    use HarnessId::{Claude, Codex, Copilot};
+    let pair = "[hooks.deliver]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n";
+    let one_way = "[hooks.caller]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
+    let rows: [(&str, &str, HarnessId, &[HarnessId], &[(&str, [bool; 2])]); 3] = [
+        (
+            pair,
+            "judge",
+            Copilot,
+            &[Claude, Codex, Copilot],
+            &[
+                ("judge", [true, true]),
+                ("deliver", [true, true]),
+                ("halt", [true, true]),
+            ],
+        ),
+        (
+            pair,
+            "judge",
+            Claude,
+            &[Claude, Codex],
+            &[
+                ("judge", [true, true]),
+                ("deliver", [true, true]),
+                ("halt", [true, true]),
+            ],
+        ),
+        (
+            one_way,
+            "plain",
+            Claude,
+            &[Claude],
+            &[("caller", [true, false]), ("plain", [true, false])],
+        ),
+    ];
+    for (declarations, added, asked, pin, lands) in rows {
+        let f = hook_fixture(declarations);
+        fs::write(f.source.join("hooks/plain.sh"), PLAIN).unwrap();
+        fs::write(f.source.join("hooks/caller.sh"), CALLER).unwrap();
+        apply_now(&f);
+        let report = ops::add(
+            &f.env,
+            &f.scope,
+            &ops::AddRequest {
+                source: Some("cat".into()),
+                hooks: vec![added.into()],
+                harnesses: Some(vec![asked]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        let declared: BTreeSet<HarnessId> = manifest_of(&f).hooks[added]
+            .harnesses
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        assert_eq!(
+            declared,
+            pin.iter().copied().collect(),
+            "{added} --harness {asked:?}"
+        );
+        let refresh = audit(&f.env, &f.scope).unwrap();
+        apply::execute(&f.env, &refresh.plan).unwrap();
+        for (name, on) in lands {
+            for (harness, lands) in [Claude, Codex].into_iter().zip(*on) {
+                assert_eq!(
+                    (
+                        hook_on_disk(&f, harness, &format!("{name}.sh")),
+                        registered(&f, harness, name)
+                    ),
+                    (lands, lands),
+                    "{added} --harness {asked:?}: {name} on {harness:?} (written, registered): {:?}",
+                    messages(&refresh)
+                );
+            }
+        }
+    }
+}
+
 /// A skill keeps the walk's older consequence: the parent installs and the
 /// finding is the whole answer, in the words the skill rows already pin.
 #[test]
