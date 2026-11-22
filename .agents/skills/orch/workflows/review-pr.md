@@ -725,8 +725,7 @@ Omit empty sections.
 5. When delegation does not happen, a gate refusal included, first remove the bundle line the same way. Then detach from `[ISSUE_ID]` each `audit_issues_created` entry whose live `issues get [CHILD_ID]` reports `parent_id` `[ISSUE_ID]`. Otherwise `merge-pr.md` closes them as Done with the parent. Each detach:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh issues update [CHILD_ID] --remove-parent
-   .agents/skills/linear/scripts/linear.sh issues add-relation [CHILD_ID] --related [ISSUE_ID]
+   .agents/skills/linear/scripts/linear.sh issues update [CHILD_ID] --remove-parent && .agents/skills/linear/scripts/linear.sh issues add-relation [CHILD_ID] --related [ISSUE_ID]
    ```
 
 ## 9. Return

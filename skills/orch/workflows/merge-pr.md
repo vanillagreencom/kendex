@@ -219,8 +219,7 @@ An active child pauses the merge. Ask the user, per child, whether this PR lande
 `[SAFE_IDS]` still empty → § 5. Otherwise detach each safe child, so the merge does not cascade it to Done. A detached child keeps its project and takes no new parent: the project-management skill's SKILL.md § Disposition groups related items by project or label. Each detach, one pair per safe id:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues update [SAFE_ID] --remove-parent
-.agents/skills/linear/scripts/linear.sh issues add-relation [SAFE_ID] --related [ISSUE]
+.agents/skills/linear/scripts/linear.sh issues update [SAFE_ID] --remove-parent && .agents/skills/linear/scripts/linear.sh issues add-relation [SAFE_ID] --related [ISSUE]
 ```
 
 A non-zero exit **aborts the merge**. Write this comment with the harness file-write tool to `tmp/detach-comment-[ISSUE].md`. Bind that path as `[BODY_FILE]` and post the comment on the original:
