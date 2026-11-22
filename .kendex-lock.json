@@ -2901,12 +2901,12 @@
     "command:code-scrub:claude": {
       "installation": "e4b800c677fca79f",
       "sourceRepo": ".",
-      "sourceHash": "2f067792937f99543ce00e74604e6477ccd2587a8f7ae6f0c5fcaca2ab08b7c8",
+      "sourceHash": "131a8b0bf437a001eebf75afc2a4fa61381bb29d95a4553a755c5c571b5db493",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "b64dac55ff2f6b9ff555338f7c48098178a31e89a7c07629da4c078ff6e24ca8",
+      "renderedHash": "7027b633d3e503a0eb9c367aeb591afbb9c4fe9cea4cbc5e1df6a114b998f4d0",
       "enabled": true,
       "emitted": {
         "kind": "command",
@@ -2920,12 +2920,12 @@
     "command:code-scrub:pi": {
       "installation": "795383a4ef3f1432",
       "sourceRepo": ".",
-      "sourceHash": "2f067792937f99543ce00e74604e6477ccd2587a8f7ae6f0c5fcaca2ab08b7c8",
+      "sourceHash": "131a8b0bf437a001eebf75afc2a4fa61381bb29d95a4553a755c5c571b5db493",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "b64dac55ff2f6b9ff555338f7c48098178a31e89a7c07629da4c078ff6e24ca8",
+      "renderedHash": "7027b633d3e503a0eb9c367aeb591afbb9c4fe9cea4cbc5e1df6a114b998f4d0",
       "enabled": true,
       "emitted": {
         "kind": "command",
@@ -3035,12 +3035,12 @@
     "hook:block-bare-cd:claude": {
       "installation": "90008382ba7690a4",
       "sourceRepo": ".",
-      "sourceHash": "b03fcc00947bd14fdeca808b20a49ab01be0456601f2a7311ffa1524db9c39cb",
+      "sourceHash": "76bd56529fcfdb6291d83fd6350764fbfa2ddb9242e66d7ad41bc1b13d3084fc",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "3c9edd1561d5016a60271bb0230762825861715f980aaa69c0ea9d2f50dd747f",
+      "renderedHash": "aae7c94d7abad7d5daa4a13f113683ce2645f7e9b1ad3656f2a51922cf2766c1",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3059,12 +3059,12 @@
     "hook:block-bare-cd:copilot": {
       "installation": "574d6116b404f71c",
       "sourceRepo": ".",
-      "sourceHash": "b03fcc00947bd14fdeca808b20a49ab01be0456601f2a7311ffa1524db9c39cb",
+      "sourceHash": "76bd56529fcfdb6291d83fd6350764fbfa2ddb9242e66d7ad41bc1b13d3084fc",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "3c9edd1561d5016a60271bb0230762825861715f980aaa69c0ea9d2f50dd747f",
+      "renderedHash": "aae7c94d7abad7d5daa4a13f113683ce2645f7e9b1ad3656f2a51922cf2766c1",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3179,12 +3179,12 @@
     "hook:block-unsafe-rm:claude": {
       "installation": "06cd8d02284ae668",
       "sourceRepo": ".",
-      "sourceHash": "f8ccd3dfb4de22a284ac29aa19a4b200dd2d2dcf999aae41e40c4edc276f75c7",
+      "sourceHash": "c50041f7992556035731e605fd6f1d76d50b86f6876b3a4751028f41983894cd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4912bcee981eb3012d464e3ed779a86500f8e3b18ff41e169c87ce1d1fe83c43",
+      "renderedHash": "31261ecaefa561747757590613361b46a25eae6a1dffeec325b9d7fd2bcf4432",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3203,12 +3203,12 @@
     "hook:block-unsafe-rm:codex": {
       "installation": "40564b9676148d8f",
       "sourceRepo": ".",
-      "sourceHash": "f8ccd3dfb4de22a284ac29aa19a4b200dd2d2dcf999aae41e40c4edc276f75c7",
+      "sourceHash": "c50041f7992556035731e605fd6f1d76d50b86f6876b3a4751028f41983894cd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4912bcee981eb3012d464e3ed779a86500f8e3b18ff41e169c87ce1d1fe83c43",
+      "renderedHash": "31261ecaefa561747757590613361b46a25eae6a1dffeec325b9d7fd2bcf4432",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3227,12 +3227,12 @@
     "hook:block-unsafe-rm:copilot": {
       "installation": "eefecec58d408e58",
       "sourceRepo": ".",
-      "sourceHash": "f8ccd3dfb4de22a284ac29aa19a4b200dd2d2dcf999aae41e40c4edc276f75c7",
+      "sourceHash": "c50041f7992556035731e605fd6f1d76d50b86f6876b3a4751028f41983894cd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4912bcee981eb3012d464e3ed779a86500f8e3b18ff41e169c87ce1d1fe83c43",
+      "renderedHash": "31261ecaefa561747757590613361b46a25eae6a1dffeec325b9d7fd2bcf4432",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3251,12 +3251,12 @@
     "hook:block-unsafe-rm:pi": {
       "installation": "cfdb50664914688d",
       "sourceRepo": ".",
-      "sourceHash": "f8ccd3dfb4de22a284ac29aa19a4b200dd2d2dcf999aae41e40c4edc276f75c7",
+      "sourceHash": "c50041f7992556035731e605fd6f1d76d50b86f6876b3a4751028f41983894cd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4912bcee981eb3012d464e3ed779a86500f8e3b18ff41e169c87ce1d1fe83c43",
+      "renderedHash": "31261ecaefa561747757590613361b46a25eae6a1dffeec325b9d7fd2bcf4432",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3299,12 +3299,12 @@
     "hook:command-safety:claude": {
       "installation": "ddb2aabf9643c594",
       "sourceRepo": ".",
-      "sourceHash": "522e88051fbd14d8095cabb4091f89be7fe76304f2c757fe3f11c41e95043d9c",
+      "sourceHash": "8471234f3e7c51a5a41e66b5d507ddc014a858e830bdeeb59b4589549d5b02dd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a07a18e7a9e5a511c46d2457f96dcf3986329de6458422370bcb47f2a1ba8d95",
+      "renderedHash": "fc37e478931db566215c21d6294989ee78c1c2d724ed6a9b25f5d89120613bdd",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3324,12 +3324,12 @@
     "hook:command-safety:codex": {
       "installation": "222dd13c0e753edb",
       "sourceRepo": ".",
-      "sourceHash": "522e88051fbd14d8095cabb4091f89be7fe76304f2c757fe3f11c41e95043d9c",
+      "sourceHash": "8471234f3e7c51a5a41e66b5d507ddc014a858e830bdeeb59b4589549d5b02dd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a07a18e7a9e5a511c46d2457f96dcf3986329de6458422370bcb47f2a1ba8d95",
+      "renderedHash": "fc37e478931db566215c21d6294989ee78c1c2d724ed6a9b25f5d89120613bdd",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3349,12 +3349,12 @@
     "hook:command-safety:copilot": {
       "installation": "d3d048032974de0c",
       "sourceRepo": ".",
-      "sourceHash": "522e88051fbd14d8095cabb4091f89be7fe76304f2c757fe3f11c41e95043d9c",
+      "sourceHash": "8471234f3e7c51a5a41e66b5d507ddc014a858e830bdeeb59b4589549d5b02dd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a07a18e7a9e5a511c46d2457f96dcf3986329de6458422370bcb47f2a1ba8d95",
+      "renderedHash": "fc37e478931db566215c21d6294989ee78c1c2d724ed6a9b25f5d89120613bdd",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3374,12 +3374,12 @@
     "hook:command-safety:pi": {
       "installation": "31fc7c0ba08c9139",
       "sourceRepo": ".",
-      "sourceHash": "522e88051fbd14d8095cabb4091f89be7fe76304f2c757fe3f11c41e95043d9c",
+      "sourceHash": "8471234f3e7c51a5a41e66b5d507ddc014a858e830bdeeb59b4589549d5b02dd",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a07a18e7a9e5a511c46d2457f96dcf3986329de6458422370bcb47f2a1ba8d95",
+      "renderedHash": "fc37e478931db566215c21d6294989ee78c1c2d724ed6a9b25f5d89120613bdd",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3399,12 +3399,12 @@
     "hook:critical-path-deny:claude": {
       "installation": "2ea4e6c17772d18a",
       "sourceRepo": ".",
-      "sourceHash": "9246462997cb2e9e8166226f651f7598ea6c81bd0e025f9861e7366ffca2d699",
+      "sourceHash": "1daa50fa2edf1a8bf9cdd6a071a9b0289ee26e02aeaa778cf6347892733c4775",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "7056775e4166b2948d0d67cff023cce01f73ef15715a04bed9de24b61966f2a5",
+      "renderedHash": "6f728f1fce036bfd8708da8738e4685101d018e3a08e4a8af4ab0c92d468aa34",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3620,12 +3620,12 @@
     "hook:lane-mail-check:claude": {
       "installation": "48e0810cc2d4de75",
       "sourceRepo": ".",
-      "sourceHash": "7d339cfe69f099982f51ff076d4cd4d7adfaec5e90066ef78a3840e350305ed5",
+      "sourceHash": "de18a2e30664853e850c1dafdc058a353d968193236f8733c3c5b0d02b7796a4",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f8996c83cc2259e0e4e92d01a7a1381e1989402eb6b36f338b316ac352b19f37",
+      "renderedHash": "9cdf8d3682bd8f39d4f7f80ce1c09a0088467346d89abc5382a397df47158fcc",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3645,12 +3645,12 @@
     "hook:lane-mail-check:codex": {
       "installation": "109c53b8b8f7a2cc",
       "sourceRepo": ".",
-      "sourceHash": "7d339cfe69f099982f51ff076d4cd4d7adfaec5e90066ef78a3840e350305ed5",
+      "sourceHash": "de18a2e30664853e850c1dafdc058a353d968193236f8733c3c5b0d02b7796a4",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f8996c83cc2259e0e4e92d01a7a1381e1989402eb6b36f338b316ac352b19f37",
+      "renderedHash": "9cdf8d3682bd8f39d4f7f80ce1c09a0088467346d89abc5382a397df47158fcc",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3670,12 +3670,12 @@
     "hook:lane-mail-check:copilot": {
       "installation": "48deaa9c23c8f3c3",
       "sourceRepo": ".",
-      "sourceHash": "7d339cfe69f099982f51ff076d4cd4d7adfaec5e90066ef78a3840e350305ed5",
+      "sourceHash": "de18a2e30664853e850c1dafdc058a353d968193236f8733c3c5b0d02b7796a4",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f8996c83cc2259e0e4e92d01a7a1381e1989402eb6b36f338b316ac352b19f37",
+      "renderedHash": "9cdf8d3682bd8f39d4f7f80ce1c09a0088467346d89abc5382a397df47158fcc",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -3695,12 +3695,12 @@
     "hook:lane-mail-check:pi": {
       "installation": "ad22862266416e54",
       "sourceRepo": ".",
-      "sourceHash": "7d339cfe69f099982f51ff076d4cd4d7adfaec5e90066ef78a3840e350305ed5",
+      "sourceHash": "de18a2e30664853e850c1dafdc058a353d968193236f8733c3c5b0d02b7796a4",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f8996c83cc2259e0e4e92d01a7a1381e1989402eb6b36f338b316ac352b19f37",
+      "renderedHash": "9cdf8d3682bd8f39d4f7f80ce1c09a0088467346d89abc5382a397df47158fcc",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -5991,12 +5991,12 @@
     "skill:harness-ci:claude": {
       "installation": "fbc7ba106ab1b7e7",
       "sourceRepo": ".",
-      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
+      "sourceHash": "bc8bdd8222975828b4a2df7c1c25778ee700f32d070b224842b013bebc87f12a",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
+      "renderedHash": "05e4562118e746f3e880a0e42e2eb1352c08a2a236ef6f932190b72080e60008",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6012,12 +6012,12 @@
     "skill:harness-ci:codex": {
       "installation": "81caae023aa6d7be",
       "sourceRepo": ".",
-      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
+      "sourceHash": "bc8bdd8222975828b4a2df7c1c25778ee700f32d070b224842b013bebc87f12a",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
+      "renderedHash": "05e4562118e746f3e880a0e42e2eb1352c08a2a236ef6f932190b72080e60008",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6032,12 +6032,12 @@
     "skill:harness-ci:copilot": {
       "installation": "b96a6f9a28f36369",
       "sourceRepo": ".",
-      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
+      "sourceHash": "bc8bdd8222975828b4a2df7c1c25778ee700f32d070b224842b013bebc87f12a",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
+      "renderedHash": "05e4562118e746f3e880a0e42e2eb1352c08a2a236ef6f932190b72080e60008",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6052,12 +6052,12 @@
     "skill:harness-ci:pi": {
       "installation": "e63a9b3dc5d9867a",
       "sourceRepo": ".",
-      "sourceHash": "ea11ad0b7675702685131737ece8a67adef5d461bca3e347701241924b6f8140",
+      "sourceHash": "bc8bdd8222975828b4a2df7c1c25778ee700f32d070b224842b013bebc87f12a",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "f33024707bc36b163ddb6ed31cce08ccf538b6d908916370a34f81d862c5ac35",
+      "renderedHash": "05e4562118e746f3e880a0e42e2eb1352c08a2a236ef6f932190b72080e60008",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6072,12 +6072,12 @@
     "skill:iced-rs:claude": {
       "installation": "6d240e3079626071",
       "sourceRepo": ".",
-      "sourceHash": "3f0c20ac0862dcfbc0df03837c31847e51d713fb9f8339767dae683adc0cb788",
+      "sourceHash": "aa572335b2fc7540338d1beb938dad2591f6210aa4f04f2d7747cf30d8160c5c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "771802a5f8b60e23272c8e8772c2170589b6ab0e9332779ea73841ce5a142544",
+      "renderedHash": "981b6617765233676ddb9c600851d0ba5e43801d67df0f5cf91f9c0c2f2c1a1d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6092,12 +6092,12 @@
     "skill:iced-rs:codex": {
       "installation": "4534b47f3c8396c8",
       "sourceRepo": ".",
-      "sourceHash": "3f0c20ac0862dcfbc0df03837c31847e51d713fb9f8339767dae683adc0cb788",
+      "sourceHash": "aa572335b2fc7540338d1beb938dad2591f6210aa4f04f2d7747cf30d8160c5c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "771802a5f8b60e23272c8e8772c2170589b6ab0e9332779ea73841ce5a142544",
+      "renderedHash": "981b6617765233676ddb9c600851d0ba5e43801d67df0f5cf91f9c0c2f2c1a1d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6111,12 +6111,12 @@
     "skill:iced-rs:copilot": {
       "installation": "fc054e569ae799a7",
       "sourceRepo": ".",
-      "sourceHash": "3f0c20ac0862dcfbc0df03837c31847e51d713fb9f8339767dae683adc0cb788",
+      "sourceHash": "aa572335b2fc7540338d1beb938dad2591f6210aa4f04f2d7747cf30d8160c5c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "771802a5f8b60e23272c8e8772c2170589b6ab0e9332779ea73841ce5a142544",
+      "renderedHash": "981b6617765233676ddb9c600851d0ba5e43801d67df0f5cf91f9c0c2f2c1a1d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6130,12 +6130,12 @@
     "skill:iced-rs:pi": {
       "installation": "3cbe8e2770d02ad0",
       "sourceRepo": ".",
-      "sourceHash": "3f0c20ac0862dcfbc0df03837c31847e51d713fb9f8339767dae683adc0cb788",
+      "sourceHash": "aa572335b2fc7540338d1beb938dad2591f6210aa4f04f2d7747cf30d8160c5c",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "771802a5f8b60e23272c8e8772c2170589b6ab0e9332779ea73841ce5a142544",
+      "renderedHash": "981b6617765233676ddb9c600851d0ba5e43801d67df0f5cf91f9c0c2f2c1a1d",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6772,12 +6772,12 @@
     "skill:review-gate:claude": {
       "installation": "8c04bf94683e0e8c",
       "sourceRepo": ".",
-      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
+      "sourceHash": "91391cebfa9695e92e59043daabb84c6f7d98334c882db003611c290a94b041f",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
+      "renderedHash": "f57dfe8d1943ed40e4189eb34508059aeb8f8ff4a93962b7ac50f3d6db1fe000",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6793,12 +6793,12 @@
     "skill:review-gate:codex": {
       "installation": "55f4d0da8f4d75d3",
       "sourceRepo": ".",
-      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
+      "sourceHash": "91391cebfa9695e92e59043daabb84c6f7d98334c882db003611c290a94b041f",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
+      "renderedHash": "f57dfe8d1943ed40e4189eb34508059aeb8f8ff4a93962b7ac50f3d6db1fe000",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6813,12 +6813,12 @@
     "skill:review-gate:copilot": {
       "installation": "1d331e895c00dda4",
       "sourceRepo": ".",
-      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
+      "sourceHash": "91391cebfa9695e92e59043daabb84c6f7d98334c882db003611c290a94b041f",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
+      "renderedHash": "f57dfe8d1943ed40e4189eb34508059aeb8f8ff4a93962b7ac50f3d6db1fe000",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -6833,12 +6833,12 @@
     "skill:review-gate:pi": {
       "installation": "f3c7c519a4b0e0f1",
       "sourceRepo": ".",
-      "sourceHash": "4f9ee3527ce120fac249c0f0c90fd706a49eb1e743e4a92e85159583fecad29c",
+      "sourceHash": "91391cebfa9695e92e59043daabb84c6f7d98334c882db003611c290a94b041f",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "e0a5a0e617483f9242cf6d3a536a25f27dd22002f57b141fe4db324096f8ed81",
+      "renderedHash": "f57dfe8d1943ed40e4189eb34508059aeb8f8ff4a93962b7ac50f3d6db1fe000",
       "enabled": true,
       "emitted": {
         "kind": "skill",
@@ -7405,7 +7405,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "e614988fe68df42a9eeeea8e6faebeaf2785701f"
+      "commit": "43c721c38c8cc57ddf99a48286296c4673376b8f"
     }
   },
   "claudeProjectDefault": "released"
