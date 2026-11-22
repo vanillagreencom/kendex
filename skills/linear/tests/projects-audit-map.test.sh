@@ -4,8 +4,9 @@
 # the Audit section of project-management references/project-map.md lists,
 # one planted defect per row in a copy of a clean team that yields none, and
 # its refusal of a map project Linear lacks or has twice live. Then the audit
-# pass's team inventory its readers share (`issues list`, `labels audit` and
-# `projects audit` given --inventory): each answers what its live read does,
+# pass's team inventory its readers share (`issues list`, as orch's
+# reconciliation and the project-management workflows run it, `labels audit`
+# and `projects audit` given --inventory): each answers what its live read does,
 # the pass lists the team once, and a file a reader cannot use refuses.
 
 set -euo pipefail
@@ -232,9 +233,11 @@ ambiguous^.projects += [.projects[] | select(.name == "Fixture Area") | .id = "p
 ROWS
 
 # --- one audit pass's team inventory -----------------------------------------
-# The batch is the full audit's team reads in the command forms the
-# project-management workflows run: the team-mode and all-open-states lists,
-# then the label and project audits. Its world adds an undeclared label on an
+# The batch is one full audit pass's team reads, in order and in their
+# command forms: orch-runtime reconcile-items' every-state list (the form
+# skills/orch/tests/rust/reconcile_items.rs pins), then the project-management
+# workflows' team-mode and all-open-states lists and the label and project
+# audits. Its world adds an undeclared label on an
 # open, a completed and a duplicate issue, In Review and Verifying issues, an
 # open item off the map and one in a completed map project.
 BATCH="$TMP_ROOT/batch.json"
@@ -251,7 +254,8 @@ mkdir -p "$TMP_ROOT/pass" "$TMP_ROOT/failed"
 INVENTORY="$TMP_ROOT/pass/inventory.json"
 
 # Each step: its name, then its arguments separated by `|`.
-STEPS='team-mode^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review|--max
+STEPS='reconcile^issues|list|--max|--team|kendex|--format=safe
+team-mode^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review|--max
 open-states^issues|list|--team|kendex|--all-projects|--state|Backlog,Todo,In Progress,In Review,Verifying|--max
 labels-audit^labels|audit
 projects-audit^projects|audit|--team|kendex'
@@ -282,15 +286,17 @@ while IFS='^' read -r name argv; do
   pass_logs+=("$TMP_ROOT/pass-$name.jsonl")
 done <<<"$STEPS"
 
-assert "inventory: the team-mode read collects the inventory once" \
-  jq -e '.collections == 1 and .listings == ["InventoryIssues"]' <(request_counts "$TMP_ROOT/pass-team-mode.jsonl")
-assert "inventory: the team-mode read publishes the file" test -s "$INVENTORY"
-for name in open-states labels-audit projects-audit; do
+assert "inventory: the reconciliation read collects the inventory once" \
+  jq -e '.collections == 1 and .listings == ["InventoryIssues"]' <(request_counts "$TMP_ROOT/pass-reconcile.jsonl")
+assert "inventory: the reconciliation read publishes the file" test -s "$INVENTORY"
+for name in team-mode open-states labels-audit projects-audit; do
   assert "inventory: $name lists no issues" \
     jq -e '.pages == 0' <(request_counts "$TMP_ROOT/pass-$name.jsonl")
 done
 assert "inventory: holds the team's every state and no other team" \
   jq -e '[.nodes[].identifier] | sort == ["KEN-1", "KEN-2", "KEN-3", "KEN-4", "KEN-5", "KEN-6", "KEN-7", "KEN-8", "KEN-9"]' "$INVENTORY"
+assert "inventory: reconciliation keeps every state" \
+  jq -e '[.[].id] | sort == ["KEN-1", "KEN-2", "KEN-3", "KEN-4", "KEN-5", "KEN-6", "KEN-7", "KEN-8", "KEN-9"]' "$TMP_ROOT/pass-reconcile.out"
 assert "inventory: team-mode keeps its state filter" \
   jq -e '[.[].id] == ["KEN-1", "KEN-2", "KEN-4", "KEN-6", "KEN-8", "KEN-9"]' "$TMP_ROOT/pass-team-mode.out"
 assert "inventory: labels audit keeps duplicate-state issues" \

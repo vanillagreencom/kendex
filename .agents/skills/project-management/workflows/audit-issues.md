@@ -56,24 +56,25 @@ Only MODE `project` runs this read for § 3 fallback target resolution:
 .agents/skills/linear/scripts/linear.sh session-status
 ```
 
-Every mode runs:
-
-```bash
-.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
-.agents/skills/orch/scripts/orch-runtime reconcile-items
-```
-
-- Run `orch-runtime reconcile-items` only where the orch skill is installed.
-- Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts.
-- A refused reply stops the audit until the failed read is fixed.
-
-MODE `team` and `issue`:
+MODE `team` and `issue` first bind the pass inventory:
 
 1. Bind `[INVENTORY_FILE]` to `[WORKTREE_PATH]/tmp/inventory-[MODE]-YYYYMMDD-HHMMSS.json`, `[WORKTREE_PATH]` being the § 4.1 `Worktree:`.
 2. Create that `tmp/` if it is missing.
 3. Bind a path no earlier run wrote: a path another run wrote serves that run's older reading.
 
-§ 4.1 hands the path to the TPM, whose first read given it collects the team ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
+Every mode runs:
+
+```bash
+.agents/skills/linear/scripts/linear.sh labels list --max --format=safe
+.agents/skills/orch/scripts/orch-runtime reconcile-items --inventory [INVENTORY_FILE]
+```
+
+- Run `orch-runtime reconcile-items` only where the orch skill is installed.
+- Drop `--inventory [INVENTORY_FILE]` where it is unbound.
+- Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts.
+- A refused reply stops the audit until the failed read is fixed. Never rerun it without `--inventory`: the live listing would be a second reading.
+
+The first read given `[INVENTORY_FILE]` collects the team into it: reconciliation's, or the TPM's where the orch skill is not installed. § 4.1 hands the same path to the TPM, whose reads take their rows from that file ([tpm-audit § 1.1.2](tpm-audit.md#112-read-the-pass-inventory)).
 
 #### 1.2.2 Preflight — GitHub (TRACKER=github)
 
