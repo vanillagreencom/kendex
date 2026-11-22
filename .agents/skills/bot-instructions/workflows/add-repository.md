@@ -15,7 +15,9 @@ Run when adding a repository to bot-instructions. Before the first pass, read [r
    - It writes nothing and says so, because every flag is off.
    - That is the staging point, not a finished install: the existing bot files are still the repo's own and still what the bots read.
 
-**Pass two, per capability.** One capability at a time, finishing each before starting the next so a failure names the bot that caused it:
+**Pass two, per capability.** Enable `codex` first if this repo wants `copilot` or `coderabbit`, and `qodo` before its two sub-flags.
+
+One capability at a time, finishing each before starting the next so a failure names the bot that caused it:
 
 5. Work that capability's settings section in [references/checklist.md § The settings](../references/checklist.md#the-settings).
 6. Do its prerequisite, where it has one.
