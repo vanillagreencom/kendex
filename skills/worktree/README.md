@@ -24,21 +24,25 @@ You give the CLI an issue identifier. It checks existing worktrees, branches and
 
 Run from the main checkout of a Git repository with an origin remote. Claiming work requires authenticated gh and flock. Bash 3.2 is supported.
 
-Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.local` wins for secrets and personal overrides, and a `.env` file is never read.
+Put project defaults in committed `kendex.settings.toml` under `[env]`. `.env.local` wins for secrets and personal overrides. The CLI never reads a `.env` file.
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKTREE_BASE_DIR` | Parent directory for created worktrees; never inside the repository root |
+| `WORKTREE_BASE_DIR` | Parent directory for created worktrees |
 | `WORKTREE_HOSTED_NAME` | Directory name for a hosted lane's worktree (`create --hosted`) |
 | `WORKTREE_DEFAULT_BRANCH` | Overrides the repository's default branch |
 | `WORKTREE_SYMLINKS` | Space-separated untracked paths symlinked from the main checkout into each worktree |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `link=target` pairs created inside each worktree |
-| `WORKTREE_COPIES` | Space-separated files copied from the main checkout only when neither checkout's Git index owns them; Git-owned files stay with their checkout |
+| `WORKTREE_COPIES` | Space-separated files copied from the main checkout |
 | `WORKTREE_MKDIRS` | Space-separated gitignored scratch directories created in each worktree |
-| `WORKTREE_SETUP_CMD` | Optional Bash command run after file and Git setup. A failure keeps the worktree for retry through `create --reuse` or the app setup hook |
+| `WORKTREE_SETUP_CMD` | Optional Bash command run after file and Git setup |
 | `BOT_NAME` / `BOT_EMAIL` | Git identity for worktree commits |
 | `BOT_SIGNING_KEY` | SSH signing key for those commits |
 | `BOT_REMOTE_NAME` / `BOT_REMOTE_URL` | Remote for bot pushes |
+
+- Never point `WORKTREE_BASE_DIR` inside the repository root.
+- `WORKTREE_COPIES` copies a file only when neither checkout's Git index owns it. Git-owned files stay with their checkout.
+- A `WORKTREE_SETUP_CMD` failure keeps the worktree for retry through `create --reuse` or the app setup hook.
 
 ```toml
 [env]
@@ -52,9 +56,12 @@ For pnpm or Next.js, leave `node_modules` out of `WORKTREE_SYMLINKS` and set `WO
 
 Hosted creates run this command on the lane host. The provider must deliver private files before the create that runs setup.
 
-Use the full path to `scripts/worktree` in the installed skill directory containing this README, and keep your working directory at the repository's main checkout. Run that executable with `--help` for each key's full semantics, default-branch fallback and refusal conditions, setup requirements and retries. Run it with `fix-links --help` for links beside tracked files.
+- Use the full path to `scripts/worktree` in the installed skill directory containing this README.
+- Keep your working directory at the repository's main checkout.
+- Run that executable with `--help` for each key's full semantics, default-branch fallback and refusal conditions, setup requirements and retries.
+- Run it with `fix-links --help` for links beside tracked files.
 
-Wiring the Codex Desktop and Claude Code worktree hooks: [references/hooks.md](references/hooks.md).
+To wire the Codex Desktop and Claude Code worktree hooks, read [references/hooks.md](references/hooks.md).
 
 ## Licence
 

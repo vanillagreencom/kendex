@@ -21,66 +21,66 @@ tags: [git]
 .agents/skills/worktree/scripts/worktree <command> [options]
 ```
 
-Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outside the repo root. A hosted lane's worktree lives at one path beside its clone instead, so a compile cache keyed by absolute source path hits across lanes: `create --help`, `--hosted`. Every command's contract is its `--help`: flags, exit codes, failure semantics, recovery. The top-level `worktree --help` carries the command index, path and issue-ID rules, configuration variables, and setup-path hardening.
+Every command's contract is its `--help`: flags, exit codes, failure semantics and recovery. The top-level `worktree --help` gives the command index, the path and issue-ID rules, the configuration variables and setup-path hardening.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `create` | Claim a new issue worktree, a new-work claim, not a discovery command: existing ownership exits 75, and owned work is inspected or monitored, never given a second implementer. Reuse and conflict recovery: `create --help` |
+| `create` | Claim a new issue worktree |
 | `restack` | Guardedly continue, skip, or abort a tool-created paused restack |
 | `list` | List all worktrees |
 | `remove` | Remove worktree, clean symlinks, prune branches |
-| `cleanup` | Remove worktrees whose branches are merged; `--targets-only` prunes build output instead, keeping every worktree and branch |
-| `path` / `exists` | Print / check the worktree path for an issue ID; `path --hosted` prints the hosted lane path |
-| `merged` | Print the commit the issue tree's pull request merged as, asking about the branch that tree has checked out; exit 1 when none did, 2 when the lookup could not answer, a detached tree included (`merged --help`) |
+| `cleanup` | Remove worktrees whose branches are merged |
+| `path` | Print the worktree path for an issue ID |
+| `path --hosted` | Print the hosted lane path |
+| `exists` | Check the worktree path for an issue ID |
+| `merged` | Print the commit the issue tree's pull request merged as |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
-| `push` | Push worktree branch to remote. Publication, rebase, force-with-lease and `rebase-map:` contracts: `push --help` |
-| `fix-links` / `repair-links` | Restore configured symlinks; `repair-links` is the git-hook-driven variant that never destroys untracked data |
-| `codex-setup` / `codex-branch` / `codex-cleanup`, `claude-setup` / `claude-cleanup` | App-created worktree hooks. Installation wiring: [references/hooks.md](references/hooks.md) |
+| `push` | Push worktree branch to remote |
+| `fix-links` | Restore configured symlinks |
+| `repair-links` | Restore configured symlinks, run by the git hooks |
+| `codex-setup` / `codex-branch` / `codex-cleanup`, `claude-setup` / `claude-cleanup` | App-created worktree hooks |
 
-### Policy-blocked rebase (cherry-pick replay fallback)
+- `repair-links` never destroys untracked data.
+- `create` is a new-work claim, not a discovery command. Existing ownership exits 75.
+- Inspect or monitor owned work. Never give it a second implementer.
+- Rebase a branch through `worktree push`, `create --restack` or `create --reuse`.
 
-When an execution policy rejects top-level `git rebase` porcelain, never retry the porcelain and never substitute a raw `--force` push. Add `--replay` to the guarded restack (`create --help`); the controls stay `restack continue|skip|abort <ID>`.
+## Policy-blocked rebase (cherry-pick replay fallback)
 
-A branch is rebased through `worktree push`, `create --restack`, or `create --reuse`. After a bare `git rebase`, `worktree push` republishes with a pinned lease when every remote commit has one exact local match in changed paths, modes and complete before/after file contents. A base update in the same file, missing work or an unproved comparison keeps the refusal and the fetch-and-integrate route. Use this section's replay fallback when execution policy blocks rebase.
+When an execution policy rejects top-level `git rebase` porcelain:
 
-`create --reuse --keep-on-conflict` aborts a conflicting rebase and hands the tree back on its pre-rebase head, and exits 76 for every tree it hands back whose head does not contain the base, for a relaunch that must start the session before the restack; a caller that needs the base omits the flag and keeps the failure (`create --help`).
+- Never retry the porcelain.
+- Never substitute a raw `--force` push.
+- Add `--replay` to the guarded restack (`create --help`). The controls stay `restack continue|skip|abort <ID>`.
 
-A branch whose pull request the merge lookup confirms merged is not rebased by `create`. A squash merge rewrites the branch into a fresh commit, so a rebase replays the merged work onto its own squash and stops on conflicts: `create --reuse` keeps the tree as it stands, and `create --restack` and `create --replay` refuse, all three naming the merge commit. When the lookup cannot answer, `create` records `worktree-merge-unverified` and rebases as for a branch in flight (`merged --help`).
+## Read when
 
-## Recovering a failed removal
-
-Git removal is not atomic. It can delete a worktree's registration while leaving its directory. The first `remove` failure reports the repository, worktree path, retained branch and observed registration and directory state. Keep that diagnostic with the lane owner's records. A retry refuses unidentified leftovers; missing registration proves neither ownership nor merged ancestry.
-
-Follow the failure or refusal's manual recovery steps from the main checkout. The owner must prove the exact lane's identity, physical path containment, no symlink or foreign target, no active sessions or writers, and the retained branch tip's ancestry into the freshly fetched default branch before deleting leftovers. Failed or unread proof stops recovery. Review remaining work, mailbox data and rewrite records before deletion. Keep an unproved branch. These checks are manual; `remove` never adopts an unknown directory.
-
-`fix-links` repairs configured links only while Git can still identify the registered worktree. It cannot restore deleted Git registration. When registration remains, inspect the partial checkout and repair its links before the normal removal route.
-
-## Recovering a broken `.agents` entry
-
-Route by shape, not by whether `test -L .agents` passes. To repair a broken `.agents` entry, follow [workflows/repair-agent-links.md](workflows/repair-agent-links.md).
-
-A consumer wanting this file locally gets a pointer, never a copy: `cat "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"/.agents/skills/worktree/SKILL.md` resolves the main checkout from any worktree, at any depth. A verbatim copy in a tracked `AGENTS.md` or `CLAUDE.md` is out of `kendex refresh`'s reach and goes stale silently.
+- When wiring Codex Desktop or Claude Code to run the app-created worktree hooks, read [references/hooks.md](references/hooks.md).
+- When a worktree's `.agents` entry is broken, follow [workflows/repair-agent-links.md](workflows/repair-agent-links.md).
+- When claiming, refreshing or releasing a worktree lease, or judging whether one is stale, read [references/session-guard.md](references/session-guard.md). `worktree-session-guard --help` gives the guard's commands, exit codes and `--repo` scope.
+- Before installing JS dependencies in a worktree, read `worktree --help` § Dependencies. It owns install and linked-`node_modules` behavior.
 
 ## Session guard (ownership leases)
 
-`scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree, using a native Git worktree lock whose reason line carries the owner and a heartbeat. The catalog's `worktree-session-claim` hook claims, when a session starts in it, a worktree carrying the `kendex-issue` record every tree `create` returns carries, one adopted through `--reuse` or `--restack` included, and the orchestrating workflow's `claim --owner <ISSUE_ID> --adopt` takes that lease over. Who claims and when, what staleness measures, and the guard's limits: [references/session-guard.md](references/session-guard.md); commands, exit codes and `--repo` scope: `worktree-session-guard --help`.
+`scripts/worktree-session-guard` stops cleanup from destroying a claimed worktree. Its lease is a native Git worktree lock whose reason line carries the owner and a heartbeat.
+
+## Recovering a failed removal
+
+- Keep the first `remove` failure's diagnostic with the lane owner's records. It names the repository, worktree path, retained branch and observed registration and directory state.
+- Follow the failure or refusal's manual recovery steps from the main checkout.
 
 ## Reclaiming build output
 
-`cleanup --targets-only` prunes build output and keeps the worktree, its branch and every tracked and untracked source file. It runs on a worktree with uncommitted work: output is written by a compiler or a package manager, so uncommitted work is no reason to leave it on disk, and on a machine hosting many worktrees the trees holding the output are the ones still in use. It previews by default and deletes only under `--apply`, and wherever it cannot establish that a path is safe to remove it keeps that path and says why. Run it from the main checkout, read the preview, then repeat with `--apply`. It skips every leased worktree, with one exception: `--worktree PATH --owner ID` lets the session holding a worktree's lease prune that one worktree's Cargo profiles, with no retention window.
+`cleanup --targets-only` prunes build output. It keeps the worktree, its branch and every tracked and untracked source file. It previews by default and deletes only under `--apply`.
 
-The layout table is data, one row per ecosystem, in `scripts/worktree-output-prune`; covering a further ecosystem is a new row there and no other change. `cleanup --help` owns everything else: the flags, the layouts, the locking, what the walk excludes, every reason a path is kept, and the recovery for an `--apply` that did not finish.
+1. Run it from the main checkout.
+2. Read the preview.
+3. Repeat with `--apply`.
 
-## JS Dependencies
-
-`worktree --help` § Dependencies owns install and linked-`node_modules` behavior.
-
-## System Dependencies
-
-`git`; authenticated `gh` for reading the repository's default branch (without it, git's record of origin's HEAD answers), for new-work PR ownership discovery and for proving a squash-merged branch merged in `cleanup` and `remove`; `flock` for repository-local per-issue claim serialization; Bash 3.2+ (macOS system bash is supported).
+It skips every leased worktree, with one exception: `--worktree PATH --owner ID` lets the session holding a worktree's lease prune that one worktree's Cargo profiles, with no retention window.
 
 ## Configuration
 
-Set non-sensitive defaults in committed `kendex.settings.toml` under `[env]`; `.env.local` wins for secrets or personal overrides, and a `.env` file is never read. **Symlink only what git does not carry.** An entry does nothing when git carries every path under it, and a directory holding tracked content stays a real directory with its untracked children linked, bar an untracked `.gitignore`, which is copied (`fix-links --help`). Variable semantics and setup-path hardening: `worktree --help`.
+**Symlink only what git does not carry.**
