@@ -67,6 +67,8 @@
 # macOS wherever its original does. Lists of suites outside the reach and
 # suites proved by the group become skipped_suites and skipped_suites_macos. main_suites selects the
 # workflow-owned dedicated declarations; cache_compile selects build inputs.
+# runtime_publish names the package runtime builds the head has no published
+# artifact for, and adds the leg that publishes them; no proof subtracts it.
 # main-proof=read|none|unread reports proof availability on stderr.
 #
 # THE NIGHT ROUTE, for EVENT=schedule: nightly=false only where the latest
@@ -197,6 +199,14 @@
 #                       shell bit is false. Merge groups run these on macOS,
 #                       a main push the selected macOS shards its group left
 #                       unproved. A selected night uses its fixed full matrix.
+#   runtime_publish     a push's alone: the JSON list of `{name, key}` for
+#                       each package runtime whose build at the head has no
+#                       unexpired `<name>-<key>` artifact from a run on this
+#                       repository's main, the key skills/agent-runtime's
+#                       lib/key.sh gives. A listing that cannot be read owes
+#                       the publication. Where the list is not empty, the
+#                       `shards=` list holds PUBLISH_SHARD, whose Linux leg
+#                       builds the runtimes and publishes each listed build.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -341,6 +351,48 @@ SELECTION_ARTIFACT=ci-selection
 # The shards whose steps hand --suite-list no candidate, so a green leg
 # proves the shard whole and the skip lists never narrow it.
 LISTLESS_SHARDS="guards-scans node pi-claude-bridge"
+# The package runtimes a push publishes, `<binary name>:<source tree>`, as
+# skills/orch/scripts/setup builds them. skill-tests.yml uploads each name
+# in a step of its own, so a runtime added here adds its step there.
+RUNTIMES="agent-runtime:skills/agent-runtime/runtime orch-runtime:skills/orch/runtime"
+# The one leg that publishes: both orch shards build the same keys, and two
+# uploads of one name in a run collide.
+PUBLISH_SHARD="orch-state"
+
+# The runtime_publish value the header states. A key that cannot be computed
+# stops the selection: the leg's build computes the same key and would fail
+# too. Only main's own runs count, since a fork's pull-request run can upload
+# an artifact of any name.
+runtime_publish() {
+  local entry name key listing found owed="" mains
+  mains='[.[].artifacts[] | select(.name == $name and .expired == false
+    and .workflow_run.head_branch == "main" and .workflow_run.head_repository_id == .workflow_run.repository_id)] | length'
+  for entry in $RUNTIMES; do
+    name="${entry%%:*}"
+    key="$(refuse() { printf 'ci-job-set: %s\n' "$*" >&2; exit 1; }
+      . skills/agent-runtime/scripts/lib/key.sh && agent_runtime_key "${entry#*:}")" ||
+      die "runtime-key-unread name=$name" "the build key of ${entry#*:} could not be computed"
+    listing="" found=""
+    if listing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name-$key&per_page=100")"; then
+      found="$(jq -s --arg name "$name-$key" "$mains" <<<"$listing")" || found=""
+    fi
+    if [ -n "$found" ]; then
+      [ "$found" -eq 0 ] || continue
+    else
+      printf 'ci-job-set: runtime-artifacts-unread name=%s key=%s\n' "$name" "$key" >&2
+    fi
+    owed="$owed,{\"name\":\"$name\",\"key\":\"$key\"}"
+  done
+  printf '[%s]' "${owed#,}"
+}
+
+# The Linux shard list LIST, with PUBLISH_SHARD in its roster place where a
+# runtime build is owed.
+with_publisher() { # LIST
+  [ "$RUNTIME_PUBLISH" != '[]' ] || { printf '%s' "$1"; return 0; }
+  jq -c --arg add "$PUBLISH_SHARD" --arg roster "$SHARDS" '
+    . as $list | [$roster | split(" ")[] | select(. as $s | $s == $add or ($list | index($s)))]' <<<"$1"
+}
 
 # Every universe suite with each shard whose steps run it on each runner, one
 # `<runner>\t<shard>\t<suite>` line per pair: orch's by run-all.sh
@@ -440,7 +492,9 @@ main_proof() {
   linux_n=0 macos_n=0 targets_n=0
   if [ "$state" != read ]; then
     rm -rf -- "$work"
-    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" "main_suites=$main_suites" "cache_compile=$main_build"
+    main_linux="$(with_publisher "$main_linux")" || die publisher-unadded "jq could not add the publishing leg"
+    emit "$main_linux" "$main_macos" "$main_skipped" "$main_skipped" "$main_targets" "main_suites=$main_suites" \
+      "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
   else
     jq -cs 'add // []' <<<"$jobs" >"$work/jobs.json" &&
       jq -cs '.' <<<"$sels" >"$work/selections.json" &&
@@ -509,7 +563,9 @@ main_proof() {
       die main-proof-unevaluated "jq could not subtract the proved suites and targets"
     rm -rf -- "$work"
     read -r linux macos skipped skipped_macos rust linux_n macos_n targets_n <<<"$owed"
-    emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" "main_suites=$main_suites" "cache_compile=$main_build"
+    linux="$(with_publisher "$linux")" || die publisher-unadded "jq could not add the publishing leg"
+    emit "$linux" "$macos" "$skipped" "$skipped_macos" "$rust" "main_suites=$main_suites" \
+      "cache_compile=$main_build" "runtime_publish=$RUNTIME_PUBLISH"
   fi
   ids="$(printf '%s' "$ids" | tr '\n' ',')"
   ids="${ids#,}"
@@ -1043,6 +1099,7 @@ if [ "${EVENT:-}" = push ]; then
     if type != "array" or length == 0 then error("missing main declarations") else
       [.[] | select(.shard as $s | $selected | index($s))] end' <<<"${MAIN_ONLY_SUITES:-}")" ||
     die main-suites-unread "the workflow main-only declarations could not be read"
+  RUNTIME_PUBLISH="$(runtime_publish)" || exit 2
   main_proof
   exit 0
 fi

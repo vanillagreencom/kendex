@@ -154,6 +154,24 @@ case "$#:${1-}:${2-}" in
   *) echo "gh-stub: args=$*" >&2; exit 64 ;;
 esac
 [ ! -e "$GH_WORLD/fail" ] || { echo 'gh: HTTP 502' >&2; exit 1; }
+# A runtime build's listing by name: runtime-<runtime> in the world names
+# the one artifact's state, published from main where the file is absent.
+case "$#:$url" in
+  3:repos/*/actions/artifacts\?name=*)
+    artifact="${url#*name=}"
+    artifact="${artifact%%&*}"
+    state=published
+    [ ! -f "$GH_WORLD/runtime-${artifact%-*}" ] || state="$(cat "$GH_WORLD/runtime-${artifact%-*}")"
+    case "$state" in
+      unread) echo 'gh: HTTP 502' >&2; exit 1 ;;
+      none) echo '{"total_count":0,"artifacts":[]}' ;;
+      *) jq -cn --arg name "$artifact" --arg state "$state" '{total_count: 1, artifacts: [{name: $name,
+          expired: ($state == "expired"), workflow_run: {repository_id: 1,
+            head_repository_id: (if $state == "fork" then 2 else 1 end),
+            head_branch: (if $state == "queue" then "gh-readonly-queue/main/pr-1-0" else "main" end)}}]}' ;;
+    esac
+    exit 0 ;;
+esac
 case "$#:$url" in
   3:repos/*/actions/workflows/skill-tests.yml/runs\?event=push\&*) file=push-runs.json ;;
   3:repos/*/actions/workflows/skill-tests.yml/runs\?*) file=runs.json ;;
@@ -292,6 +310,7 @@ got="$(push_select all-proved)"
 M="$(sed -n 's/.* skips=[0-9]*\/\([0-9]*\) .*/\1/p' <<<"$got")"
 check "push route: all-proved" "shards=[] queue_macos_shards=[] rust_targets=[] skips=$U/$M main-proof=read warned=no" "$got"
 check "push route: all-proved places suites on macOS" true "$([ "${M:-0}" -gt 0 ] && echo true || echo false)"
+check "push route: all-proved publishes no runtime build main has" '[]' "$(field runtime_publish <"$TMP/push-out")"
 # WORLD|EXPECTED. A suite counts only where no selection left it out and
 # every same-head leg that runs it on its runner succeeded; a target only
 # where every selection listed it and the orch-rest Linux leg succeeded; any
@@ -359,6 +378,51 @@ check "push route: one-target" "shards=[\"orch-rest\"] queue_macos_shards=[] mai
 check "push route: one-target leaves out the proved target" false "$(in_list rust_targets orch/lib)"
 check "push route: one-target owes another orch target" true "$(in_list rust_targets orch/watch_reads)"
 check "push route: one-target owes the other runtime whole" true "$(in_list rust_targets 'agent-runtime/*')"
+
+# THE RUNTIME PUBLICATION: a push owes each package runtime build whose
+# `<name>-<key>` has no unexpired artifact from a run on this repository's
+# main, whatever its group proved, and runs the orch-state leg that publishes
+# it. STATES|OWED: each runtime's listing state in the world, and the names
+# owed; each owed name carries the key lib/key.sh gives the head's sources.
+runtime_key() { # RUNTIME_DIR
+  (cd "$PUSH_REPO" && refuse() { exit 1; } && . skills/agent-runtime/scripts/lib/key.sh && agent_runtime_key "$1")
+}
+KEYS="$(jq -cn --arg a "$(runtime_key skills/agent-runtime/runtime)" --arg o "$(runtime_key skills/orch/runtime)" \
+  '{"agent-runtime": $a, "orch-runtime": $o}')"
+publish_world() { # STATES — a world from all-proved, its listing states set
+  local state
+  rm -rf -- "${TMP:?}/push/publish"
+  cp -R "$TMP/push/all-proved" "$TMP/push/publish"
+  for state in $1; do printf '%s\n' "${state#*=}" >"$TMP/push/publish/runtime-${state%%=*}"; done
+}
+owed_publish() { # OWED — the runtime_publish value naming OWED
+  jq -c --argjson keys "$KEYS" 'map({name: ., key: $keys[.]})' <<<"$1"
+}
+publish_rows=0
+while IFS='|' read -r states owed; do
+  publish_rows=$((publish_rows + 1))
+  publish_world "$states"
+  push_select publish >/dev/null
+  check "runtime publication: $states" "shards=[\"orch-state\"] runtime_publish=$(owed_publish "$owed")" \
+    "shards=$(field shards <"$TMP/push-out") runtime_publish=$(field runtime_publish <"$TMP/push-out")"
+done <<'ROWS'
+agent-runtime=none|["agent-runtime"]
+agent-runtime=fork orch-runtime=expired|["agent-runtime","orch-runtime"]
+agent-runtime=queue orch-runtime=unread|["agent-runtime","orch-runtime"]
+ROWS
+[ "$publish_rows" -eq 3 ] || { echo "the publication table read $publish_rows rows" >&2; exit 1; }
+# Control: a selector that takes any repository's artifact as main's counts
+# a fork's upload as published.
+mkdir -p "$TMP/forked/tools"
+cp -R "$ROOT/tools/lib" "$TMP/forked/tools/lib"
+cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$ROOT/tools/guard" "$TMP/forked/tools/"
+awk '{ n += sub(/ and \.workflow_run\.head_repository_id == \.workflow_run\.repository_id/, "") } { print } END { exit n != 1 }' \
+  "$JOB_SET" >"$TMP/forked/tools/ci-job-set" ||
+  { echo "the fork check is no longer one condition in $JOB_SET" >&2; exit 1; }
+chmod +x "$TMP/forked/tools/ci-job-set"
+publish_world agent-runtime=fork
+push_select publish "$TMP/forked/tools/ci-job-set" >/dev/null
+check "control: a selector taking a fork's artifact owes no agent-runtime build" '[]' "$(field runtime_publish <"$TMP/push-out")"
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
