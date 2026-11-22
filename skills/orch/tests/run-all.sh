@@ -58,9 +58,9 @@
 # a set and that set negated therefore partition the battery: every suite
 # runs in exactly one of them, and a suite added later lands in the negated
 # run rather than in neither. --shard intersects shard_of membership with
-# these filters, and where rejectors alone reject every suite of the shard,
-# as a narrowed CI step's do, it runs none and passes. Its macOS table
-# spreads suites across the existing CI pools.
+# these filters; its macOS table spreads suites across the existing CI
+# pools. A run whose rejectors remove every suite the shard and selectors
+# took runs none and passes; a selection that takes no suite refuses.
 #
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
@@ -482,8 +482,9 @@ battery_tree() {
 
 # Bash 3.2 under `set -u` errors on "${arr[@]}" when arr is empty, so each
 # expansion below sits behind its own count.
-wanted() { # BASE
+wanted() { # BASE ; TAKEN=1 when the shard and selectors take BASE, before any rejector
   local keep=1 pat
+  TAKEN=0
   if [ -n "$SHARD" ]; then
     shard_of "$1"
     [ "$OWNING_SHARD" = "$SHARD" ] || return 1
@@ -494,12 +495,13 @@ wanted() { # BASE
       if matches "$1" "$pat"; then keep=1; break; fi
     done
   fi
-  if [ "$keep" -eq 1 ] && [ "${#REJECT[@]}" -gt 0 ]; then
+  [ "$keep" -eq 1 ] || return 1
+  TAKEN=1
+  if [ "${#REJECT[@]}" -gt 0 ]; then
     for pat in "${REJECT[@]}"; do
-      if matches "$1" "$pat"; then keep=0; break; fi
+      if matches "$1" "$pat"; then return 1; fi
     done
   fi
-  [ "$keep" -eq 1 ]
 }
 
 alone() { # FILE
@@ -529,17 +531,16 @@ if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
   fi
 fi
 PROFILE_SELECTED=0
-SHARD_MEMBERS=0
+REJECTED=0
 for TEST_DIR in "${TEST_DIRS[@]}"; do
 for test_file in "$TEST_DIR"/*.sh; do
   [[ -f "$test_file" ]] || continue
   base=$(basename "$test_file" .sh)
   [[ "$base" == "run-all" ]] && continue
-  if [ -n "$SHARD" ]; then
-    shard_of "$base"
-    [ "$OWNING_SHARD" != "$SHARD" ] || SHARD_MEMBERS=$((SHARD_MEMBERS + 1))
+  if ! wanted "$base"; then
+    [ "$TAKEN" -eq 0 ] || REJECTED=$((REJECTED + 1))
+    continue
   fi
-  wanted "$base" || continue
   PROFILE_SELECTED=$((PROFILE_SELECTED + 1))
   if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
     case $'\n'"$NATIVE_FILES"$'\n' in *$'\n'"$test_file"$'\n'*) ;; *) continue ;; esac
@@ -563,10 +564,10 @@ if [[ "$RUN" -eq 0 ]]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: no native contracts selected\n' "$BATTERY"
     exit 0
   fi
-  # A shard step whose suite list skips every suite of its shard rejects
-  # each one; a selector that matches none of the shard still refuses.
-  if [ -n "$SHARD" ] && [ "$SHARD_MEMBERS" -gt 0 ] && [ "${#SELECT[@]}" -eq 0 ] && [ "${#REJECT[@]}" -gt 0 ]; then
-    printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every %s suite rejected\n' "$BATTERY" "$SHARD"
+  # A narrowed shard step's list can skip each suite of its shard, and a main
+  # push's main-only rejectors can reject the one suite a step kept.
+  if [ "$REJECTED" -gt 0 ]; then
+    printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every selected suite rejected\n' "$BATTERY"
     exit 0
   fi
   if [[ -n "$FILTER" ]]; then

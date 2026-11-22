@@ -598,6 +598,13 @@ set --
 for name in $(selected --shard orch-state); do set -- "$@" "!=$name"; done
 check "a shard whose rejectors reject each of its suites runs none and passes" \
   "0|" "$(status_of --shard orch-state "$@")|$(selected --shard orch-state "$@")"
+# A main push's main-only rejector can reject the one suite a step's list
+# kept: that step runs none and passes. A selector that takes no suite still
+# refuses beside a rejector.
+check "an exact selector whose suite a rejector rejects runs none and passes" \
+  "0|" "$(status_of '=lane-marker' '!=lane-marker')|$(selected '=lane-marker' '!=lane-marker')"
+check "a selector that takes no suite refuses beside a rejector" \
+  "1" "$(status_of '=no-suite-carries-this-name' '!=lane-marker')"
 for args in '--shard' '--shard unknown' '--shard orch-rest =lane-marker'; do
   # These words are the argument contract under test, with no shell quoting.
   # shellcheck disable=SC2086
