@@ -74,7 +74,15 @@ impl Dialog {
 
 /// The first-run questions by a line their drawing carries, read from
 /// Claude Code 2.1.330 under a fresh config dir on 2026-11-22 (the
-/// captures under the integration tests' `fixtures/claude-*.txt`).
+/// captures under the integration tests' `fixtures/claude-*.txt`). The
+/// screen is read because no documented interface reports either question:
+/// Claude Code's hook events and `Notification` matcher types
+/// (https://code.claude.com/docs/en/hooks) name neither dialog, so a hook
+/// that runs before trust (the permissions page's "What runs before you
+/// trust a folder") still has no event that fires on one. The documented
+/// trust key, `hasTrustDialogAccepted`, is what the launch writes ahead
+/// (`crate::trust`); this reading names the question when one is still
+/// drawn.
 const DIALOGS: &[(&str, Dialog)] = &[
     ("Yes, I trust this folder", Dialog::FolderTrust),
     (

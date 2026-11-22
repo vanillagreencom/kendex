@@ -739,11 +739,8 @@ fn resolve(
                 } else {
                     (row.clone(), out[i].clone())
                 };
-                let launch_held = match req.opens {
-                    Opens::Elsewhere => true,
-                    Opens::Successor => own.signed_in == Some(true),
-                    Opens::Window => own.stored_login == Some(true),
-                };
+                let launch_held =
+                    req.opens == Opens::Elsewhere || req.opens.sign_in(&own) == Some(true);
                 let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
                 let (signed_in, stored_login) = (own.signed_in, own.stored_login);
                 let mut stands = if launch_held {
@@ -964,13 +961,27 @@ pub struct PickRequest {
 pub enum Opens {
     /// Nowhere on this machine: no sign-in here is the launch's.
     Elsewhere,
-    /// A controller's successor here: its launch exports the account's
-    /// declared token file where the setting names one, else signs in with
-    /// the stored login ([`AccountRow::signed_in`]).
+    /// A Claude controller's successor here: its launch exports the
+    /// account's declared token file where the setting names one, else
+    /// signs in with the stored login ([`AccountRow::signed_in`]).
     Successor,
-    /// A lane in a window of this machine: its launch exports no token
-    /// file and signs in with the stored login ([`AccountRow::stored_login`]).
+    /// A session in a window of this machine whose launch exports no token
+    /// file and signs in with the stored login ([`AccountRow::stored_login`]):
+    /// a lane, or a successor on another harness.
     Window,
+}
+
+impl Opens {
+    /// The sign-in of this machine's `row` the session starts with: held,
+    /// missing, or `None` where nothing here judged it. A session opened
+    /// elsewhere starts with none of this machine's, so the listing's own
+    /// reading stands for it.
+    fn sign_in(self, row: &AccountRow) -> Option<bool> {
+        match self {
+            Opens::Elsewhere | Opens::Successor => row.signed_in,
+            Opens::Window => row.stored_login,
+        }
+    }
 }
 
 impl PickRequest {
@@ -1850,7 +1861,7 @@ fn judge(
         facts.seats.get(&row.canon).copied().unwrap_or(0)
     };
     let seat = seats > 0;
-    let signed_out = overseer_choice && row.signed_in == Some(false);
+    let signed_out = overseer_choice && req.opens.sign_in(row) == Some(false);
     let projection = binding.as_ref().map(|b| {
         projection(
             row,
@@ -2118,7 +2129,7 @@ fn fallback(judged: &[Judged], req: &PickRequest) -> Option<Judged> {
             j.verdict == "unmeasured"
                 && j.row.usage_refused_429()
                 && j.row.headroom_pct.is_none()
-                && j.row.signed_in == Some(true)
+                && req.opens.sign_in(&j.row) == Some(true)
         })
         .min_by_key(|j| j.claims)
         .cloned()

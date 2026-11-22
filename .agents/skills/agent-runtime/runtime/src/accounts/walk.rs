@@ -925,11 +925,14 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 // binding bucket, never a model's window.
                 binding_floor: overseer && !matches!(harness, Harness::Claude | Harness::Pi),
                 admit_unread_scope: overseer,
-                // An overseer's successor runs here; a lane does where its
-                // host opens it in a window of this machine.
-                opens: if overseer {
+                // An overseer's successor runs here, exporting a declared
+                // token file only on Claude (`usage::declared_token_file`),
+                // so one on another harness, a `pi-claude/` model's among
+                // them, signs in as a window's lane does; a lane runs here
+                // where its host opens it in a window of this machine.
+                opens: if overseer && harness == Harness::Claude {
                     Opens::Successor
-                } else if launch == Some("window") {
+                } else if overseer || launch == Some("window") {
                     Opens::Window
                 } else {
                     Opens::Elsewhere

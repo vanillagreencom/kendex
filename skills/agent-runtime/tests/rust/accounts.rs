@@ -1219,11 +1219,12 @@ fn the_controllers_an_overseers_choice_charges_are_the_other_seats_and_marks() {
 /// A session opened on this machine is judged on the provider's reading of
 /// its account only where this machine's row reads the sign-in its own
 /// launch starts with held: a controller's successor starts with the
-/// listing's `sign_in`, a lane's window with its `stored_login`. A session
-/// opened elsewhere is judged on the provider's reading whatever this
-/// machine reads. Here the local reading is walled and the provider's has
-/// room, so the account is picked exactly where the provider's reading
-/// stands; an overseer's choice also leaves a signed-out account out.
+/// listing's `sign_in`, a lane's window and an overseer's choice opened in
+/// a window with its `stored_login`. A session opened elsewhere is judged
+/// on the provider's reading whatever this machine reads. Here the local
+/// reading is walled and the provider's has room, so the account is picked
+/// exactly where the provider's reading stands; an overseer's choice also
+/// leaves out an account signed out of the sign-in its launch starts with.
 #[test]
 fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
     let world = World::new(&[]);
@@ -1238,8 +1239,13 @@ fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
         opens: Opens::Window,
         ..claude(None)
     };
+    let overseer_window = PickRequest {
+        for_overseer: true,
+        ..window.clone()
+    };
     // case, the listing's sign-in, its stored login, picked for a session
     // opened elsewhere, for a controller's successor, for a lane's window
+    // and for an overseer's choice opened in a window
     let arms = [
         (
             "declared file held, stored login missing",
@@ -1247,6 +1253,7 @@ fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
             Some("missing"),
             true,
             true,
+            false,
             false,
         ),
         (
@@ -1256,11 +1263,14 @@ fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
             true,
             false,
             true,
+            true,
         ),
-        ("nothing judged here", None, None, true, false, false),
+        ("nothing judged here", None, None, true, false, false, false),
     ];
     let dir = world.dir("b");
-    for (case, sign_in, stored_login, for_elsewhere, for_successor, for_window) in arms {
+    for (case, sign_in, stored_login, for_elsewhere, for_successor, for_window, for_overseer) in
+        arms
+    {
         let mut local = measured("b", 96, 5);
         local["config_dir"] = json!(dir);
         for (key, state) in [("sign_in", sign_in), ("stored_login", stored_login)] {
@@ -1277,6 +1287,7 @@ fn a_session_opened_here_reads_the_sign_in_its_own_launch_starts_with() {
             ("elsewhere", &elsewhere, for_elsewhere),
             ("successor", &successor, for_successor),
             ("window", &window, for_window),
+            ("overseer's window", &overseer_window, for_overseer),
         ] {
             let answer = accounts::pick(&rows, req, &facts, &settings, now());
             assert_eq!(

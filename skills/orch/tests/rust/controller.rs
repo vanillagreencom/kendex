@@ -611,73 +611,105 @@ fn transfer_to_account(
     (intent, panes, predecessor)
 }
 
-/// A named Claude account whose declared token file holds a token signs
-/// the successor in with that token in its own window alone: the harness's
-/// environment carries it, a key the server holds that would outrank it and
-/// an endpoint it would be sent to are cleared, and neither the tmux
-/// server's environment nor the pane's screen holds it.
+/// A named Claude account signs the successor in with its own sign-in
+/// alone, in its own window: its declared token file's token where it
+/// declares one, else its stored login. A token, a key the tmux server's
+/// environment holds that would outrank that sign-in and an endpoint it
+/// would be sent to are cleared from the harness's environment, and
+/// neither the server's environment nor the pane's screen holds the file's
+/// token.
 #[test]
-fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let account = runner.state_dir().join("6claude");
-    let token = runner.state_dir().join("6claude.token");
-    std::fs::write(&token, "planted-token\n").unwrap();
-    let setting = format!("{}={}", account.display(), token.display());
-    let (intent, _, _predecessor) = transfer_to_account(
-        &server,
-        &runner,
-        &account,
-        &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
-        &[
-            ("ANTHROPIC_API_KEY", "planted-key"),
-            ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
-        ],
-    );
-    assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    assert_eq!(
-        intent["observation"]["sign_in"],
-        json!({"token_file": token.display().to_string()}),
-        "{intent}"
-    );
-    let pane = runner.fleet()["controller"]["pane"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let environ = std::fs::read(format!("/proc/{}/environ", server.pane_pid(&pane))).unwrap();
-    let entries: Vec<&[u8]> = environ.split(|b| *b == 0).collect();
-    assert!(
-        entries.contains(&&b"CLAUDE_CODE_OAUTH_TOKEN=planted-token"[..]),
-        "the harness signs in with the file's token"
-    );
-    assert!(
-        !entries.iter().any(|e| e.starts_with(b"ANTHROPIC_API_KEY=")),
-        "a key that outranks the token is cleared"
-    );
-    assert!(
-        !entries
+fn a_named_claude_account_signs_the_successor_in_with_its_own_sign_in_alone() {
+    // case, whether the account declares a token file (else it holds a
+    // stored login)
+    for (case, declared) in [("declared token file", true), ("stored login", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let account = runner.state_dir().join("6claude");
+        std::fs::create_dir_all(&account).unwrap();
+        let token = runner.state_dir().join("6claude.token");
+        let setting = if declared {
+            std::fs::write(&token, "planted-token\n").unwrap();
+            format!("{}={}", account.display(), token.display())
+        } else {
+            let far = (now_secs() + 365 * 86_400) * 1000;
+            std::fs::write(
+                account.join(".credentials.json"),
+                json!({"claudeAiOauth": {"accessToken": "token-6", "refreshToken": "refresh-6",
+                       "expiresAt": far, "refreshTokenExpiresAt": far}})
+                .to_string(),
+            )
+            .unwrap();
+            String::new()
+        };
+        let (intent, _, _predecessor) = transfer_to_account(
+            &server,
+            &runner,
+            &account,
+            &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
+            &[
+                ("CLAUDE_CODE_OAUTH_TOKEN", "inherited-token"),
+                ("ANTHROPIC_API_KEY", "planted-key"),
+                ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
+            ],
+        );
+        assert_eq!(intent["outcome"], "confirmed", "{case}: {intent}");
+        assert_eq!(
+            intent["observation"]["sign_in"],
+            if declared {
+                json!({"token_file": token.display().to_string()})
+            } else {
+                Value::Null
+            },
+            "{case}: {intent}"
+        );
+        let pane = runner.fleet()["controller"]["pane"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let environ = std::fs::read(format!("/proc/{}/environ", server.pane_pid(&pane))).unwrap();
+        let entries: Vec<&[u8]> = environ.split(|b| *b == 0).collect();
+        let tokens: Vec<String> = entries
             .iter()
-            .any(|e| e.starts_with(b"ANTHROPIC_BASE_URL=")),
-        "an endpoint that would receive the token is cleared"
-    );
-    for scope in [vec!["-g"], vec!["-t", runner.session.as_str()]] {
-        let mut args = vec!["show-environment"];
-        args.extend(&scope);
-        args.push("CLAUDE_CODE_OAUTH_TOKEN");
-        let out = tmux(&server.socket, &args);
+            .filter(|e| e.starts_with(b"CLAUDE_CODE_OAUTH_TOKEN="))
+            .map(|e| String::from_utf8_lossy(e).into_owned())
+            .collect();
+        let expected: Vec<String> = if declared {
+            vec!["CLAUDE_CODE_OAUTH_TOKEN=planted-token".to_owned()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            tokens, expected,
+            "{case}: the harness signs in with the account's own sign-in"
+        );
         assert!(
-            !out.status.success(),
-            "{scope:?}: the server holds no token: {}",
-            String::from_utf8_lossy(&out.stdout)
+            !entries.iter().any(|e| e.starts_with(b"ANTHROPIC_API_KEY=")),
+            "{case}: a key that outranks the sign-in is cleared"
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.starts_with(b"ANTHROPIC_BASE_URL=")),
+            "{case}: an endpoint that would receive the token is cleared"
+        );
+        for scope in [vec!["-g"], vec!["-t", runner.session.as_str()]] {
+            let mut args = vec!["show-environment"];
+            args.extend(&scope);
+            let out = tmux(&server.socket, &args);
+            assert!(
+                !String::from_utf8_lossy(&out.stdout).contains("planted-token"),
+                "{case}, {scope:?}: the server holds no file's token"
+            );
+        }
+        let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
+        assert!(
+            !String::from_utf8_lossy(&screen.stdout).contains("planted-token"),
+            "{case}: the pane's screen never shows the token"
         );
     }
-    let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
-    assert!(
-        !String::from_utf8_lossy(&screen.stdout).contains("planted-token"),
-        "the pane's screen never shows the token"
-    );
 }
 
 /// The roster, the overseer walk and the transfer read an account's

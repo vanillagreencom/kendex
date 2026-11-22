@@ -637,7 +637,9 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
 /// Measured room wins over either; a caller's account the mark leaves out
 /// is never kept, and a signed-out account, the token endpoint's 429, a
 /// 401 or 403, an unreachable endpoint and a walk without the keep take
-/// none. Each row:
+/// none. Signed out is judged on the sign-in the successor's launch starts
+/// with: a `pi-claude/` successor exports no declared token file, so its
+/// account's stored login holds it whatever file the account declares. Each row:
 /// the case, the preference, the listing, the caller's harness and
 /// account, whether the mark leaves the caller's account out, the account
 /// whose declared token file is absent, the retirement setting, the keep,
@@ -696,6 +698,17 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             None,
             true,
             None,
+        ),
+        (
+            "a Pi successor's 429 account its declared file signs out",
+            "pi:pi-claude/claude-fable-5-1:high",
+            vec![measured("aclaude", 96, 5), refused_429("bclaude")],
+            ("pi", "aclaude"),
+            true,
+            Some("bclaude"),
+            None,
+            true,
+            Some(("bclaude", "pi:pi-claude/claude-fable-5-1:high", true)),
         ),
         (
             "a 429 from the token endpoint",
@@ -835,8 +848,10 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             "--caller-account",
             lane.as_str(),
         ];
-        if harness == "claude" {
-            args.extend(["--caller-pick-model", "fable"]);
+        match harness {
+            "claude" => args.extend(["--caller-pick-model", "fable"]),
+            "pi" => args.extend(["--caller-pick-model", "pi-claude/claude-fable-5-1"]),
+            _ => {}
         }
         if at_headroom {
             args.extend(["--exclude-account", lane.as_str()]);

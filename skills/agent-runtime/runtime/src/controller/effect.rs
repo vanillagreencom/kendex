@@ -90,21 +90,28 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
 /// The variable a declared token file's text is exported under.
 const CLAUDE_TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
-/// The environment sources Claude Code ranks above `CLAUDE_CODE_OAUTH_TOKEN`
+/// The environment sources Claude Code ranks above a stored `/login`
 /// (https://code.claude.com/docs/en/authentication § Authentication
-/// precedence, ranks 1 to 3), which a launch signing in by a declared token
-/// file clears, so the token it exports is the one used. `apiKeyHelper`,
-/// rank 4, and a gateway sign-in are settings and stored sessions, which no
-/// launch environment reaches.
-const CLAUDE_OUTRANKING_TOKEN: [&str; 5] = [
+/// precedence, ranks 1 to 3, 5 and the variables of rank 6), which a launch
+/// on a named Claude account clears, since its tmux window takes the
+/// server's environment: the account's own sign-in, its declared token file
+/// (rank 5, exported over the cleared name) or its stored login, is the one
+/// used. `apiKeyHelper`, rank 4, an active profile file of rank 6 and a
+/// gateway sign-in are settings, files and stored sessions, which no launch
+/// environment reaches.
+const CLAUDE_OUTRANKING_LOGIN: [&str; 9] = [
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
+    CLAUDE_TOKEN_VAR,
+    "ANTHROPIC_PROFILE",
+    "ANTHROPIC_FEDERATION_RULE_ID",
+    "ANTHROPIC_ORGANIZATION_ID",
 ];
 
-/// The endpoint a declared account's launch also clears: with a claude.ai
+/// The endpoint a named account's launch also clears: with a claude.ai
 /// login and no gateway credential, Claude Code sends the login's token in
 /// `Authorization` to the endpoint `ANTHROPIC_BASE_URL` names
 /// (https://code.claude.com/docs/en/llm-gateway-protocol § Request
@@ -587,9 +594,12 @@ impl Successor {
     /// harness's own compaction off where it has a word for it, since orch's
     /// handoff mark judges the window, and the brief held for delivery once
     /// the runner is at its composer. A resume continues the recorded session in the
-    /// harness's own resume form and fixes no fresh id. A declared token
-    /// file is exported for the harness alone, the sources that outrank it
-    /// and an endpoint that would receive it cleared.
+    /// harness's own resume form and fixes no fresh id. A Claude launch on a
+    /// named account clears every inherited token that would sign it in
+    /// over the account's own sign-in, and an endpoint that would receive
+    /// it, since its window takes the tmux server's environment; a declared
+    /// token file is then exported for the harness alone
+    /// (`LaunchCommand::shell_line` drops a cleared name the export sets).
     fn command(&self, settings: &Settings, session_id: Option<&str>) -> Result<LaunchCommand> {
         let compaction = match self.harness.compaction_off_words() {
             Some(_) => Compaction::Off,
@@ -632,11 +642,8 @@ impl Successor {
             }
             crate::launch::build(&intent)?
         };
-        if let Some(file) = &self.token_file {
-            command
-                .env_files
-                .insert(CLAUDE_TOKEN_VAR.to_owned(), file.clone());
-            for name in CLAUDE_OUTRANKING_TOKEN
+        if self.harness == Harness::Claude && self.seat.is_some() {
+            for name in CLAUDE_OUTRANKING_LOGIN
                 .into_iter()
                 .chain([CLAUDE_TOKEN_ENDPOINT])
             {
@@ -644,6 +651,11 @@ impl Successor {
                     command.env_remove.push(name.to_owned());
                 }
             }
+        }
+        if let Some(file) = &self.token_file {
+            command
+                .env_files
+                .insert(CLAUDE_TOKEN_VAR.to_owned(), file.clone());
         }
         Ok(command)
     }
