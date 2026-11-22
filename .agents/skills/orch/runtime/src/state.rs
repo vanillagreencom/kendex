@@ -55,6 +55,13 @@ pub fn item_path(dir: &Path, item: &str) -> PathBuf {
     item_dir(dir, item).join(format!("workflow-state-{item}.json"))
 }
 
+/// The item record's stamp a confined lane's `state remove` writes, an
+/// ISO-8601 UTC time, where an unconfined call removes the record: its
+/// grants hold the item's own folder, so it can mark the close-out's end
+/// but not run it. The close reads a stamp of the lane's current attempt as
+/// it reads a removed record.
+pub const CLOSED_OUT_AT: &str = "closed_out_at";
+
 /// The state directory a state file of [`item_path`]'s stands in, its
 /// inverse; `None` for a path outside that layout.
 pub fn dir_of(path: &Path) -> Option<&Path> {
@@ -772,8 +779,9 @@ pub enum CloseGround {
         park: Option<crate::ops::OwedPark>,
     },
     /// The close judged the lane ended while its item stays open: its merge
-    /// cycle stands and its work is over (its worktree gone, or a local
-    /// lane's item closed out), or its host kind declares no
+    /// cycle stands and its work is over (its worktree gone, or its item
+    /// closed out: the record removed, or, for a confined lane, stamped
+    /// `closed_out_at` at its current attempt), or its host kind declares no
     /// stop this machine can make (a cloud session). The lane ends done
     /// whatever its harness reads, the item's files kept. `source` names the
     /// reading; [`HOST_ABSENT`] is the one that ends an item its tracker

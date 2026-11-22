@@ -2399,11 +2399,13 @@ fn age(path: &Path, secs: u64) {
 }
 
 /// A confined lane's `state remove` is the overseer's close-out: under the
-/// wrapper's marker the command says so and removes, archives and locks
-/// nothing; the same remove unmarked, the close-out the overseer's terminal
-/// close runs, takes the item's files after their archive.
+/// wrapper's marker the command says so, stamps its record's
+/// `closed_out_at` with the time it ran, the one close-out write its grants
+/// hold, and removes and archives nothing; the same remove unmarked, the
+/// close-out the overseer's terminal close runs, takes the item's files
+/// after their archive.
 #[test]
-fn a_confined_lanes_state_remove_steps_aside_and_an_unconfined_remove_takes_the_items_files() {
+fn a_confined_state_remove_stamps_its_record_and_an_unconfined_one_takes_its_files() {
     let archive_root = tempfile::tempdir().unwrap();
     let mut fleet = Fleet {
         env: vec![
@@ -2418,8 +2420,13 @@ fn a_confined_lanes_state_remove_steps_aside_and_an_unconfined_remove_takes_the_
     let dir = fleet.state_dir().to_path_buf();
     git_checkout(&dir);
     let record = plant(&dir, "items/KEN-A/workflow-state-KEN-A.json");
+    std::fs::write(&record, "{}\n").unwrap();
     let status = plant(&dir, "lane-status-KEN-A.md");
     let remove = ["state", "remove", "--item", "KEN-A"];
+    let before = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let out = fleet.run(&remove);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
@@ -2429,9 +2436,12 @@ fn a_confined_lanes_state_remove_steps_aside_and_an_unconfined_remove_takes_the_
     for path in [&record, &status] {
         assert!(path.exists(), "{} left", path.display());
     }
-    let mut lock = record.clone().into_os_string();
-    lock.push(".lock");
-    assert!(!Path::new(&lock).exists(), "a lock taken");
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    let stamped = doc["closed_out_at"].as_str().and_then(clock::epoch_secs);
+    assert!(
+        stamped.is_some_and(|at| at >= before),
+        "the record is stamped with the remove's time: {doc}"
+    );
     assert_eq!(
         std::fs::read_dir(archive_root.path()).unwrap().count(),
         0,

@@ -5076,94 +5076,184 @@ fn a_close_releases_a_worktree_of_the_repository_its_row_records() {
     }
 }
 
+/// A merged idle local lane as the close finds it: its launch confirmed,
+/// its fleet row naming its worktree, its merge cycle and its repository,
+/// its item Verifying on its tracker with only a post-merge box open, and
+/// its live state record standing. The worktree package as planted records
+/// whether the harness runs when the release asks it to remove the
+/// worktree, then removes it.
+struct MergedLane {
+    runner: Runner,
+    repo: PathBuf,
+    wt: PathBuf,
+    pid: u32,
+    record: PathBuf,
+    saw: PathBuf,
+    cli: String,
+    _server: Server,
+    _dir: tempfile::TempDir,
+}
+
+impl MergedLane {
+    fn new() -> MergedLane {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-confirm");
+        let replies = runner.state_dir().join("linear.json");
+        let item = json!({
+            "issues bulk-get": {"body": {"issues": {"nodes": [
+                {"identifier": "KEN-W", "state": {"type": "started"}, "description": POST_MERGE_ONLY, "children": {"nodes": []}}
+            ]}}},
+            "graphql BoxItem": {"body": {"issue": {"description": POST_MERGE_ONLY, "state": {"name": "Verifying", "type": "started"}}}},
+        });
+        std::fs::write(&replies, item.to_string()).unwrap();
+        runner.env = vec![
+            (
+                "OVERSEE_WATCH_TRACKER".to_owned(),
+                fixtures()
+                    .join("linear-fixture/linear.sh")
+                    .display()
+                    .to_string(),
+            ),
+            (
+                "LINEAR_FAKE_REPLIES".to_owned(),
+                replies.display().to_string(),
+            ),
+            (
+                "LINEAR_FAKE_LOG".to_owned(),
+                runner.state_dir().join("linear.log").display().to_string(),
+            ),
+        ];
+        runner.init_fleet();
+        let (repo, wt) = worktree_fixture(dir.path());
+        let launched =
+            effect_report(&runner.op_fleet(&launch_request("KEN-W", runner.state_dir())));
+        assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+        let pid = launched["lane"]["launch"]["pid"].as_u64().unwrap() as u32;
+        let mut fleet = runner.fleet();
+        fleet["lanes"][0]["mail_root"] = json!(wt.display().to_string());
+        fleet["lanes"][0]["cycle"] = json!({"pr": 7});
+        fleet["lanes"][0]["repo"] = json!("o/r");
+        runner.write_fleet(&fleet);
+        let record = support::item_record(runner.state_dir(), "KEN-W");
+        std::fs::write(&record, "{}\n").unwrap();
+        let saw = runner.state_dir().join("release-saw-harness");
+        let cli = runner.state_dir().join("worktree-recording");
+        write_executable(
+            &cli,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = remove ]; then if kill -0 {pid} 2>/dev/null; then echo live; else echo gone; fi > '{}'; fi\nexec '{}' \"$@\"\n",
+                saw.display(),
+                worktree_cli()
+            ),
+        );
+        MergedLane {
+            runner,
+            repo,
+            wt,
+            pid,
+            record,
+            saw,
+            cli: cli.display().to_string(),
+            _server: server,
+            _dir: dir,
+        }
+    }
+
+    fn close(&self) -> Value {
+        let close = json!({"op": "close-lane", "item": "KEN-W"});
+        let worktree = [("WORKTREE_CLI", self.cli.as_str())];
+        reply(&self.runner.op_fleet_in(&self.repo, &close, &worktree))
+    }
+
+    /// The close refused the lane at its idle screen, touching neither the
+    /// harness nor the worktree.
+    fn assert_refused(&self, case: &str, answer: &Value) {
+        assert_eq!(answer["refusal"]["key"], "lane-live", "{case}: {answer}");
+        assert_eq!(
+            refusal_field(answer, "state"),
+            Some("idle".to_owned()),
+            "{case}: {answer}"
+        );
+        assert!(live(self.pid), "{case}: a refused close stops nothing");
+        assert!(self.wt.exists(), "{case}: a refused close removes nothing");
+    }
+
+    /// The close ended the lane on its merge, its harness stopped before
+    /// the worktree's release, so the session never runs on in a removed
+    /// directory.
+    fn assert_closed(&self, answer: &Value) {
+        assert_eq!(answer["result"]["word"], "closed", "{answer}");
+        assert!(!live(self.pid), "the harness is stopped");
+        assert!(!self.wt.exists(), "the clean merged worktree is released");
+        assert_eq!(
+            std::fs::read_to_string(&self.saw).unwrap().trim(),
+            "gone",
+            "the harness is stopped before the worktree's release: {answer}"
+        );
+    }
+}
+
 /// An idle local lane whose merge landed, its item still open on its
 /// tracker and its worktree standing: while the item's live state record
 /// stands the lane may be at work on it, so `close-lane` refuses
-/// `lane-live state=idle` and touches neither the harness nor the
-/// worktree. Once the item's close-out removed that record the close ends
-/// the lane on its merge, its harness stopped before the worktree is
-/// released, so the session never runs on in a removed directory.
+/// `lane-live state=idle`. Once the item's close-out removed that record
+/// the close ends the lane on its merge.
 #[test]
 fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_released() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
-    let replies = runner.state_dir().join("linear.json");
-    // The lane completed its boxes: the item reads Verifying with none open.
-    let open = json!({
-        "issues bulk-get": {"body": {"issues": {"nodes": [
-            {"identifier": "KEN-W", "state": {"type": "started"}, "description": "", "children": {"nodes": []}}
-        ]}}},
-        "graphql BoxItem": {"body": {"issue": {"description": "", "state": {"name": "Verifying", "type": "started"}}}},
-    });
-    std::fs::write(&replies, open.to_string()).unwrap();
-    runner.env = vec![
-        (
-            "OVERSEE_WATCH_TRACKER".to_owned(),
-            fixtures()
-                .join("linear-fixture/linear.sh")
-                .display()
-                .to_string(),
-        ),
-        (
-            "LINEAR_FAKE_REPLIES".to_owned(),
-            replies.display().to_string(),
-        ),
-        (
-            "LINEAR_FAKE_LOG".to_owned(),
-            runner.state_dir().join("linear.log").display().to_string(),
-        ),
-    ];
-    runner.init_fleet();
-    let (repo, wt) = worktree_fixture(dir.path());
-    let launched = effect_report(&runner.op_fleet(&launch_request("KEN-W", runner.state_dir())));
-    assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
-    let pid = launched["lane"]["launch"]["pid"].as_u64().unwrap() as u32;
-    let mut fleet = runner.fleet();
-    fleet["lanes"][0]["mail_root"] = json!(wt.display().to_string());
-    fleet["lanes"][0]["cycle"] = json!({"pr": 7});
-    fleet["lanes"][0]["repo"] = json!("o/r");
-    runner.write_fleet(&fleet);
-    let record = support::item_record(runner.state_dir(), "KEN-W");
-    std::fs::write(&record, "{}\n").unwrap();
-    let close = json!({"op": "close-lane", "item": "KEN-W"});
-    // The worktree package as planted: it records whether the harness runs
-    // when the release asks it to remove the worktree, then removes it.
-    let saw = runner.state_dir().join("release-saw-harness");
-    let cli = runner.state_dir().join("worktree-recording");
-    write_executable(
-        &cli,
-        format!(
-            "#!/bin/sh\nif [ \"$1\" = remove ]; then if kill -0 {pid} 2>/dev/null; then echo live; else echo gone; fi > '{}'; fi\nexec '{}' \"$@\"\n",
-            saw.display(),
-            worktree_cli()
-        ),
-    );
-    let cli = cli.display().to_string();
-    let worktree = [("WORKTREE_CLI", cli.as_str())];
+    let lane = MergedLane::new();
+    lane.assert_refused("the record standing", &lane.close());
+    std::fs::remove_file(&lane.record).unwrap();
+    lane.assert_closed(&lane.close());
+}
 
-    let answer = reply(&runner.op_fleet_env(&close, &worktree));
-    assert_eq!(answer["refusal"]["key"], "lane-live", "{answer}");
-    assert_eq!(
-        refusal_field(&answer, "state"),
-        Some("idle".to_owned()),
-        "{answer}"
-    );
-    assert!(live(pid), "a refused close stops nothing");
-    assert!(wt.exists(), "a refused close removes nothing");
+/// A confined lane's close-out stamps its item's record, which its grants
+/// hold, where an unconfined one removes it. A stamp an earlier attempt
+/// wrote, between the lane's first launch and its current session as a
+/// relaunch leaves them, says nothing of this attempt, so the close
+/// refuses. Once this attempt's confined `state remove` stamped the record
+/// the close ends the lane on its merge with the record standing for the
+/// open item and its post-merge box left to the verification duty.
+#[test]
+fn a_confined_lanes_close_out_stamp_of_this_attempt_ends_its_merged_lane() {
+    let lane = MergedLane::new();
+    let mut fleet = lane.runner.fleet();
+    fleet["lanes"][0]["launched_at"] = json!("2000-01-01T00:00:00Z");
+    lane.runner.write_fleet(&fleet);
+    std::fs::write(
+        &lane.record,
+        json!({"closed_out_at": "2000-06-01T00:00:00Z"}).to_string(),
+    )
+    .unwrap();
+    lane.assert_refused("an earlier attempt's stamp", &lane.close());
 
-    std::fs::remove_file(&record).unwrap();
-    let answer = reply(&runner.op_fleet_in(&repo, &close, &worktree));
-    let result = &answer["result"];
-    assert_eq!(result["word"], "closed", "{answer}");
-    assert!(!live(pid), "the harness is stopped");
-    assert!(!wt.exists(), "the clean merged worktree is released");
+    let removed = lane.runner.run_in(
+        &lane.repo,
+        &["state", "remove", "--item", "KEN-W"],
+        &[("AGENT_RUNTIME_CONFINED", "1")],
+    );
     assert_eq!(
-        std::fs::read_to_string(&saw).unwrap().trim(),
-        "gone",
-        "the harness is stopped before the worktree's release: {answer}"
+        String::from_utf8_lossy(&removed.stdout),
+        "state-remove: left cause=confined owner=overseer\n",
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    lane.assert_closed(&lane.close());
+    assert!(lane.record.exists(), "the open item's record stays");
+    let tracker = std::fs::read_to_string(lane.runner.state_dir().join("linear.log")).unwrap();
+    assert!(
+        tracker.lines().any(|l| l.starts_with("graphql")),
+        "the close read the item's boxes: {tracker}"
+    );
+    assert!(
+        !tracker.lines().any(|l| l.starts_with("issues complete")),
+        "the post-merge box is left to the verification duty: {tracker}"
     );
 }
+
+/// A merged item's Done-when with its branch-provable box ticked with its
+/// evidence and its post-merge box open: merge-pr's completion has run.
+const POST_MERGE_ONLY: &str = "## Done when\n- [x] branch proof\n  Evidence: branch tests\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: 2026-10-02T00:00:00Z";
 
 /// The value of the refusal's field `name`.
 fn refusal_field(answer: &Value, name: &str) -> Option<String> {

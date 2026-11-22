@@ -470,7 +470,8 @@ struct LaneHead {
 /// Why the close completes a merged item's boxes on `ground`, and whether
 /// its tracker read the item Done, or `None` where it completes none: its
 /// worktree or sandbox gone (`gone`, or the merged ground, which the close
-/// takes only on a gone worktree), or its item Done with the lane ended.
+/// takes once the lane's work is over, [`Close::merged_and_done`]), or its
+/// item Done with the lane ended.
 fn boxes_cause(ground: &Ground, gone: bool) -> Option<(boxes::Cause, bool)> {
     match ground {
         Ground::Ended("merged") => Some((boxes::Cause::SandboxGone, false)),
@@ -997,12 +998,13 @@ impl Close<'_> {
     /// stands and the lane's last work is over: its item closed out or its
     /// worktree gone, read here ([`hosted::left_locally`], the watch's own
     /// reading) or on its host through the provider where it is hosted
-    /// ([`hosted::record_left`]). The close-out removes the live state
-    /// record only once the project's verification passed, and the close
-    /// stops the session before it releases the worktree, so a lane need not
-    /// remove the directory it runs in. A recorded merge alone is no proof:
-    /// a lane resumed on a merged item works on with its record standing. A
-    /// read that fails refuses.
+    /// ([`hosted::record_left`]). The close-out runs only once the project's
+    /// verification passed: it removes the live state record, or, in a
+    /// confined lane, stamps it with this attempt's end and leaves it for
+    /// the open item. The close stops the session before it releases the
+    /// worktree, so a lane need not remove the directory it runs in. A
+    /// recorded merge alone is no proof: a lane resumed on a merged item
+    /// works on with its record standing. A read that fails refuses.
     fn merged_and_done(&self) -> Result<bool> {
         if !(super::stop::record_merged(&self.lane) || self.r.delivery.is_some()) {
             return Ok(false);

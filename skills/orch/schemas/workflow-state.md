@@ -87,6 +87,7 @@ The Owner column names the writer. An `op` request is `orch-runtime op --item [I
 | `handoff` | object | `record-handoff`, `resume-handoff` | [§ Handoff](#handoff). |
 | `model_checks`, `lane_session`, `model_reset` | object | `state model-check`, the turn end | [§ Model checks](#model-checks). |
 | `finding_occurrences` | object | `state init`, `state findings record`, `dev-return check` | [§ Finding occurrences](#finding-occurrences). |
+| `closed_out_at` | string | `state remove` in a confined lane | The UTC time the lane's close-out ran, [§ Item close-out](#item-close-out). |
 
 ### Stages
 
@@ -283,7 +284,7 @@ Before it removes anything, `remove` writes one archive at `ORCH_ARCHIVE_ROOT/[R
 
 The reply's `result` carries `removed`, the paths that left; `kept`, the archive or null; and `pruned`, the retention pass it ran where no fleet record stands, else null. A configured root a removal would take along, or an archive `remove` cannot build, refuses the call, and nothing is removed.
 
-A lane runs `remove` at [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 6. A confined lane's call answers `state-remove: left cause=confined owner=overseer`, exits 0 and changes nothing: the overseer's terminal close removes the item's files. The runtime's close runs the same close-out at a close that ends the item: a terminal tracker verdict, or a terminal close of a sandbox its provider does not list. A park, a `keep-sandbox` close, or a close of an item still open keeps the files a relaunch resumes into.
+A lane runs `remove` at [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 6. A confined lane's call sets the item record's `closed_out_at` to the current UTC time (`YYYY-MM-DDThh:mm:ssZ`), the one close-out write its grants hold, then answers `state-remove: left cause=confined owner=overseer` and exits 0. It archives and removes nothing. The overseer's close reads that stamp as this step's end ([lane-reach.md § How a running lane is judged](../references/lane-reach.md#how-a-running-lane-is-judged)), and its terminal close removes the item's files. A stamp that cannot be written refuses, as any record write does. The runtime's close runs the same close-out at a close that ends the item: a terminal tracker verdict, or a terminal close of a sandbox its provider does not list. A park, a `keep-sandbox` close, or a close of an item still open keeps the files a relaunch resumes into.
 
 ## CLI
 

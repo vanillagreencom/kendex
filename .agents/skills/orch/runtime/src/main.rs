@@ -3016,13 +3016,21 @@ fn init_state(path: &Path, fields: &state::InitFields) -> Result<state::Initiali
 /// and writes lie outside: its line, exit 0, before any lock or write. An
 /// unconfined caller, the overseer or a lane run with no wrapper, goes on.
 fn step_aside(act: &str) {
-    if std::env::var_os(agent_runtime::confine::CONFINED_VAR).is_some_and(|value| value == "1") {
-        let _ = writeln!(
-            std::io::stdout().lock(),
-            "{act}: left cause=confined owner=overseer"
-        );
-        std::process::exit(0);
+    if confined() {
+        left_to_overseer(act);
     }
+}
+
+fn confined() -> bool {
+    std::env::var_os(agent_runtime::confine::CONFINED_VAR).is_some_and(|value| value == "1")
+}
+
+fn left_to_overseer(act: &str) -> ! {
+    let _ = writeln!(
+        std::io::stdout().lock(),
+        "{act}: left cause=confined owner=overseer"
+    );
+    std::process::exit(0);
 }
 
 /// The `state remove` verb: the item's close-out, then, where no fleet
@@ -3387,8 +3395,23 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             }
         },
         StateOp::Remove { item, archive } => {
-            step_aside("state-remove");
             let env = Env::system()?;
+            // A confined lane's close-out stamps its own record, the one
+            // close-out write its grants hold, so the overseer's
+            // close can tell that merge-pr's verification passed and this
+            // step ran: the archive and removals lie outside those grants.
+            if confined() {
+                write(
+                    &item_target(item),
+                    Write::Set {
+                        pointer: format!("/{}", state::CLOSED_OUT_AT),
+                        value: serde_json::Value::String(agent_runtime::clock::iso_utc(
+                            env.now_secs,
+                        )),
+                    },
+                )?;
+                left_to_overseer("state-remove");
+            }
             remove_item(&settings, &item, &archive, locking, env.now_secs)
         }
         StateOp::NewLocalKey => {
