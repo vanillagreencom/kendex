@@ -191,7 +191,9 @@ To add a consumer's own rule or its action route, start at [Personal additions](
 6. Run `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME` from the Jarvis package installed in that home.
    - A caller that has positively established an account wall runs `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME --account-walled`. The command binds that wall to the recorded controller's account, and excludes that account even when its reading reports room or cannot measure it. An eligible alternative can succeed; without one, the command refuses before ending the predecessor.
    - Ordinary context or voluntary succession omits the flag.
-   - The command selects a successor through agent-runtime's controller preference walk and account pick, from the first `AGENT_RUNTIME_CONTROLLER_PREFERENCE` entry to the recorded account and its choice. When no account qualifies, or an entry's account reading fails, succession refuses before the predecessor ends. The home and saved handoff stay with the successor.
+   - The command selects a successor through agent-runtime's controller preference walk and account pick, from the first `AGENT_RUNTIME_CONTROLLER_PREFERENCE` entry to the recorded account and its choice. The home and saved handoff stay with the successor.
+   - Where no account has room, the walk takes one account nothing measured: the recorded account where the mark leaves it in, else a signed-in account whose usage query was refused with HTTP 429. The successor's record then carries `scope: unmeasured`.
+   - When neither exists, or an entry's account reading fails, succession refuses before the predecessor ends.
    - The walk does not read `JARVIS_UNATTENDED_HARNESSES`. A successor carries its harness's bypass words only when the setting names that harness.
    - To keep every successor unattended, name every harness the overseer preference can reach. Per-account setup, such as Claude Code bypass consent, applies to every account the preference's harnesses can pick.
    - A missing orch dependency refuses succession before the predecessor ends; report the returned account and failure to the owner.

@@ -301,6 +301,15 @@ fn refused_429(alias: &str) -> Value {
     row
 }
 
+/// A local row whose expired access token the token endpoint refused to
+/// renew with a 429, its refresh token live: rate-limited with no
+/// headroom, and no usage query posted.
+fn token_429(alias: &str) -> Value {
+    let mut row = refused_429(alias);
+    row["refused_endpoint"] = json!("token");
+    row
+}
+
 /// A local row whose usage query was refused with a 401 or 403 that no
 /// profile read confirmed as an ended plan.
 fn refused_401(alias: &str) -> Value {
@@ -625,8 +634,10 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
 /// own where the mark leaves it in (the session running there is the
 /// proof, whatever its harness or its stated end), else a signed-in
 /// account whose usage query was refused with a 429 and kept no figure.
-/// Measured room wins over either; a signed-out account, a 401 or 403, an
-/// unreachable endpoint and a walk without the keep take none. Each row:
+/// Measured room wins over either; a caller's account the mark leaves out
+/// is never kept, and a signed-out account, the token endpoint's 429, a
+/// 401 or 403, an unreachable endpoint and a walk without the keep take
+/// none. Each row:
 /// the case, the preference, the listing, the caller's harness and
 /// account, whether the mark leaves the caller's account out, the account
 /// whose declared token file is absent, the retirement setting, the keep,
@@ -687,6 +698,17 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             None,
         ),
         (
+            "a 429 from the token endpoint",
+            entry,
+            vec![measured("aclaude", 96, 5), token_429("bclaude")],
+            claude,
+            true,
+            None,
+            None,
+            true,
+            None,
+        ),
+        (
             "a 401 or 403 refusal",
             entry,
             vec![measured("aclaude", 96, 5), refused_401("bclaude")],
@@ -718,6 +740,17 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             None,
             false,
             None,
+        ),
+        (
+            "the caller's own unmeasured account left out at a headroom mark",
+            entry,
+            vec![unreachable("aclaude"), refused_429("bclaude")],
+            claude,
+            true,
+            None,
+            None,
+            true,
+            Some(("bclaude", entry, true)),
         ),
         (
             "the caller's own account over a 429 account where the mark leaves it in",

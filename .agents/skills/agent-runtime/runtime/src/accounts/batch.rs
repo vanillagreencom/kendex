@@ -337,6 +337,10 @@ fn line_row(ctx: &Ctx, read: Line, host_pool: &str, through: &str) -> Value {
         Harness::Claude | Harness::Codex => "plan",
     };
     let alias = alias(ctx.accounts, &account);
+    // The provider protocol's `rate_limited` is a usage read that backs
+    // off, as orch's lane-host schema states; no other word names an
+    // endpoint.
+    let refused_endpoint = (status == "rate_limited").then_some("usage");
     let mut row = emit(
         ctx,
         &Emit {
@@ -356,6 +360,7 @@ fn line_row(ctx: &Ctx, read: Line, host_pool: &str, through: &str) -> Value {
                 // fall of it can follow a wall's sighting; a record of
                 // this spelling here is this machine's.
                 fall: None,
+                refused_endpoint,
             },
             words: Some(words),
         },

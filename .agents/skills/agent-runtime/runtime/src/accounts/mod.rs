@@ -191,6 +191,9 @@ pub struct AccountRow {
     pub canon: String,
     pub measured_through: String,
     pub status: String,
+    /// The endpoint whose refusal the status reports (`usage` or `token`),
+    /// where the listing read one.
+    pub refused_endpoint: Option<String>,
     pub detail: Option<String>,
     pub verdict: String,
     pub headroom_pct: Option<f64>,
@@ -341,6 +344,7 @@ impl AccountRow {
             harness,
             measured_through: text(raw, "measured_through"),
             status: text(raw, "status"),
+            refused_endpoint: string(raw, "refused_endpoint"),
             detail: string(raw, "detail"),
             verdict: text(raw, "verdict"),
             headroom_pct: number(raw, "headroom_pct"),
@@ -488,7 +492,14 @@ impl AccountRow {
     /// Whether the credential answered: a stated end a measured reading
     /// contradicts.
     pub fn answers(&self) -> bool {
-        self.status == "ok" || self.status == "rate_limited"
+        self.status == "ok" || self.usage_refused_429()
+    }
+
+    /// Whether the usage endpoint refused the reading with a 429: the
+    /// token was accepted and the plan answered. The token endpoint's 429
+    /// reads the same status and posted no usage query.
+    fn usage_refused_429(&self) -> bool {
+        self.status == "rate_limited" && self.refused_endpoint.as_deref() == Some("usage")
     }
 
     /// The label of the window the listing rated, its binding bucket's:
@@ -854,6 +865,7 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
         "retire_date": Value::Null,
         "measured_through": through,
         "status": "no_usage_data",
+        "refused_endpoint": Value::Null,
         "detail": detail,
         "refreshable": false,
         "plan": Value::Null,
@@ -2091,9 +2103,11 @@ pub fn pick(
 /// An overseer's choice with no account of room: the account whose usage
 /// query was refused with a 429 and kept no figure, and whose successor's
 /// sign-in reads held, the fewest claims first, then listing order. A 429
-/// shows the token was accepted and the plan answered; an unreachable
-/// endpoint, a 401 or 403 and a reading with no data show neither, so they
-/// are never taken. Nothing measured it, so the walk names it unmeasured.
+/// from the usage endpoint shows the token was accepted and the plan
+/// answered; the token endpoint's 429 posted no usage query, and an
+/// unreachable endpoint, a 401 or 403 and a reading with no data show
+/// neither, so they are never taken. Nothing measured it, so the walk names
+/// it unmeasured.
 fn fallback(judged: &[Judged], req: &PickRequest) -> Option<Judged> {
     if !req.for_overseer || req.lane.is_some() {
         return None;
@@ -2102,7 +2116,7 @@ fn fallback(judged: &[Judged], req: &PickRequest) -> Option<Judged> {
         .iter()
         .filter(|j| {
             j.verdict == "unmeasured"
-                && j.row.status == "rate_limited"
+                && j.row.usage_refused_429()
                 && j.row.headroom_pct.is_none()
                 && j.row.signed_in == Some(true)
         })

@@ -301,15 +301,21 @@ fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).unwrap();
     let config_dir = dir.display().to_string();
-    let expires_ms = if status == "expired" {
-        (now - 3600) * 1000
+    // A row a token endpoint refused (`refused_endpoint: token`) is an
+    // expired access token under a live refresh token, its refusal recorded.
+    let endpoint = row["refused_endpoint"].as_str().unwrap_or("usage");
+    let past = (now - 3600) * 1000;
+    let ahead = (now + 365 * 86_400) * 1000;
+    let refresh_ms = if status == "expired" { past } else { ahead };
+    let expires_ms = if endpoint == "token" {
+        past
     } else {
-        (now + 365 * 86_400) * 1000
+        refresh_ms
     };
     let credential = match harness {
         "claude" => json!({"claudeAiOauth": {
             "accessToken": format!("token-{alias}"), "refreshToken": format!("refresh-{alias}"),
-            "expiresAt": expires_ms, "refreshTokenExpiresAt": expires_ms,
+            "expiresAt": expires_ms, "refreshTokenExpiresAt": refresh_ms,
             "subscriptionType": row["plan"].as_str().unwrap_or("max")}})
         .to_string(),
         "codex" => json!({"tokens": {"access_token": format!("token-{alias}"), "account_id": format!("acct-{alias}")}}).to_string(),
@@ -335,7 +341,7 @@ fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
         _ => copilot_body(row),
     };
     let refusal = |status: &str, code: &str| {
-        json!({"endpoint": "usage", "status": status, "code": code,
+        json!({"endpoint": endpoint, "status": status, "code": code,
                "detail": row["detail"].as_str().unwrap_or(&format!("usage query refused with HTTP {code}")),
                "expires_at": now + 300})
     };

@@ -2981,7 +2981,9 @@ fn a_dead_overseer_whose_caps_oom_kill_count_rose_is_dead_of_the_memory_cap() {
 /// harness is `overseer-walled` on its first pass with the row's message
 /// under it, and the transfer asked for carries `cause: walled`, the spent
 /// account to exclude and the successor on the account the walk picked; the
-/// account judgement reading room lifts it instead.
+/// walk leaves out the spent account and each account the record holds
+/// unproved inside its hold, never one whose hold has ended; the account
+/// judgement reading room lifts it instead.
 #[test]
 fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excluded() {
     let dir = tempfile::tempdir().unwrap();
@@ -3008,9 +3010,27 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
     record["session_rows"] = json!(rows_file.display().to_string());
     record["harness_pid"] = json!(identity.pid.to_string());
     record["harness_start"] = json!(identity.start);
+    let now = 1_800_000_000;
+    record["unproved"] = json!([
+        {"account": "/home/me/.cclaude", "at": clock::iso_utc(now - 60)},
+        {"account": "/home/me/.dclaude", "at": clock::iso_utc(now - 7200)},
+    ]);
     fleet.set_overseer(record);
     let state = fleet.read();
-    overseer_driver!(server, fleet, reached, walk_b, readers, transfers, driver);
+    let excluded = RefCell::new(Vec::new());
+    let walk_noting = |request: &WalkRequest| {
+        excluded.borrow_mut().push(request.exclude.clone());
+        walk_b(request)
+    };
+    overseer_driver!(
+        server,
+        fleet,
+        reached,
+        walk_noting,
+        readers,
+        transfers,
+        driver
+    );
     let key = format!("{} {pane}", server.pid);
     let first = driver.pass(&state);
     assert_eq!(
@@ -3043,6 +3063,10 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
         assert_eq!(
             asked[0].successor.home, None,
             "the launch prepares the home"
+        );
+        assert_eq!(
+            *excluded.borrow(),
+            [["/home/me/.eclaude", "/home/me/.cclaude"]]
         );
     }
     // The same rows wall with the account judgement reading room: lifted.

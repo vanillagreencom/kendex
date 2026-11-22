@@ -1997,6 +1997,7 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     let refused = world.roster();
     let row = &refused["rows"][0]["record"];
     assert_eq!(row["status"], json!("rate_limited"), "{refused}");
+    assert_eq!(row["refused_endpoint"], json!("usage"), "{refused}");
     assert_eq!(
         row["headroom_pct"],
         json!(80),
@@ -2031,6 +2032,11 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
         old["rows"][0]["record"]["headroom_pct"],
         Value::Null,
         "a figure a day old is not served: {old}"
+    );
+    assert_eq!(
+        old["rows"][0]["record"]["refused_endpoint"],
+        json!("usage"),
+        "{old}"
     );
     assert_eq!(world.curl_log().len(), 2);
     assert_eq!(world.pick(&claude(None))["answer"], json!("none"));
@@ -3068,6 +3074,7 @@ fn a_claude_token_refusal_reads_its_status_by_http_answer_and_parks_the_lane_for
         world.plant_answer("refresh-aclaude", "token", &body, Some(status));
         let row = listed_row(&world, "aclaude");
         assert_eq!(row["status"], json!(expected), "{status} {body}: {row}");
+        assert_eq!(row["refused_endpoint"], json!("token"), "{status}: {row}");
         assert_eq!(row["refreshable"], json!(false), "{status}: {row}");
         assert_eq!(row["headroom_pct"], Value::Null, "{status}: {row}");
         let detail = row["detail"].as_str().unwrap();
@@ -3106,6 +3113,11 @@ fn a_claude_token_refusal_reads_its_status_by_http_answer_and_parks_the_lane_for
         );
         let again = listed_row(&world, "aclaude");
         assert_eq!(again["status"], json!(expected), "{status}: {again}");
+        assert_eq!(
+            again["refused_endpoint"],
+            json!("token"),
+            "{status}: {again}"
+        );
         assert!(again["usage_age_s"].is_number(), "{status}: {again}");
         assert_eq!(
             world.curl_log(),

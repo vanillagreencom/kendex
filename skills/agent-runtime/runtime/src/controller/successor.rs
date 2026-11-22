@@ -202,20 +202,14 @@ pub fn successor(
             keep_unmeasured: false,
         },
     };
-    // An account a failed attempt left unproved is no successor while its
-    // mark holds, the caller's own among them: its entry is then walked,
-    // never kept, and the exclusion keeps it from the walk's unmeasured
-    // keep as well.
-    let unproved = unproved(path, now)?;
-    if let Some(entry) = request.caller.as_mut()
-        && entry
-            .lane
-            .as_deref()
-            .is_some_and(|lane| unproved.iter().any(|account| canon(account) == canon(lane)))
-    {
-        entry.keep = false;
-    }
-    request.exclude.extend(unproved);
+    let doc = record::read_document(path)?;
+    hold_unproved(
+        &mut request,
+        doc.as_ref()
+            .and_then(|doc| doc.get(MEMBER))
+            .and_then(|member| member.get("unproved")),
+        now,
+    );
     let walked = (ground.walk)(&request)?;
     let successor = match &walked.answer {
         WalkAnswer::Lane(chosen) => {
@@ -252,15 +246,15 @@ pub fn successor(
 /// well inside an account's weekly window.
 pub const UNPROVED_HOLD_SECS: u64 = 1800;
 
-/// The accounts the record at `path` holds unproved at `now`: each a failed
-/// attempt's successor since the last confirmed hand-over whose stamp is
-/// within [`UNPROVED_HOLD_SECS`]. An entry with no stamp, or one that does
-/// not parse, is expired, since nothing says when its hold began. No
-/// record names none.
-fn unproved(path: &Path, now: u64) -> Result<Vec<String>> {
-    let Some(doc) = record::read_document(path)? else {
-        return Ok(Vec::new());
-    };
+/// The walk of a succession with the accounts a failed attempt left
+/// unproved held out of it: each in the controller record's `unproved`
+/// list (`marked`) whose stamp is within [`UNPROVED_HOLD_SECS`] of `now`,
+/// the caller's own among them, is excluded, which keeps it from the walk's
+/// unmeasured keep as well, and the caller's entry naming one is walked,
+/// never kept. An entry with no stamp, or one that does not parse, is
+/// expired, since nothing says when its hold began. Every succession walk
+/// that reads a controller record takes it, the watch's walled one too.
+pub fn hold_unproved(request: &mut WalkRequest, marked: Option<&Value>, now: u64) {
     let holds = |entry: &Value| {
         entry
             .get("at")
@@ -268,19 +262,23 @@ fn unproved(path: &Path, now: u64) -> Result<Vec<String>> {
             .and_then(crate::clock::epoch_secs)
             .is_some_and(|at| now < at.saturating_add(UNPROVED_HOLD_SECS))
     };
-    Ok(doc
-        .get(MEMBER)
-        .and_then(|member| member.get("unproved"))
+    let unproved: Vec<String> = marked
         .and_then(Value::as_array)
-        .map(|marked| {
-            marked
-                .iter()
-                .filter(|entry| holds(entry))
-                .filter_map(|entry| entry.get("account").and_then(Value::as_str))
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default())
+        .into_iter()
+        .flatten()
+        .filter(|entry| holds(entry))
+        .filter_map(|entry| entry.get("account").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    if let Some(entry) = request.caller.as_mut()
+        && entry
+            .lane
+            .as_deref()
+            .is_some_and(|lane| unproved.iter().any(|account| canon(account) == canon(lane)))
+    {
+        entry.keep = false;
+    }
+    request.exclude.extend(unproved);
 }
 
 /// The successor a model recovery opens for the recorded controller whose
