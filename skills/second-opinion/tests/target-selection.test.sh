@@ -88,7 +88,9 @@ run_table "target selection" "$DEFAULTS" "$ROWS"
 # configured but the claude and codex lanes: the stock entries resolve their
 # command, model, room check and inline diff from the package, pi stubbed,
 # agent-runtime's account pick answering room. A Claude session skips both Claude-backed
-# entries and takes GPT on Copilot. An unset roster names neither entry.
+# entries and takes GPT on Copilot. An unset roster names them after claude
+# and codex, so each is reached only when the entry of its model ahead of it
+# is not taken.
 STOCK_DEFAULTS="ps:none current:claude models:pi-copilot+claude+pi-copilot-gpt+codex count:1 cmd:claude=claude cmd:codex=codex pi:stub runtime:room"
 # What the stock commands run: each entry's pi argv and agent-runtime room check, and
 # the suffix of a row in which no stock entry ran.
@@ -104,7 +106,9 @@ CODEX_TAKEN="calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out"
 
 # label|world|command|rc|out|err|calls art files pi runtime seat inline
 STOCK_ROWS="
-an unset roster takes the package roster claude codex, so a Claude session reviews on codex and no stock entry runs|models:-|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN $NO_STOCK
+an unset roster takes the package roster, claude and codex ahead of the Copilot entries, so a Claude session reviews on codex and no stock entry runs|models:-|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN $NO_STOCK
+on the package roster a Claude session whose codex is not installed falls back to GPT on Copilot, never to Claude on Copilot|models:- cmd:codex=missing|review|0|<out>|same:claude:claude nocli:codex:CODEX same:pi-copilot:claude $GPT_ROOM single:pi-copilot-gpt:review:claude written|$GPT_TAKEN pi=$GPT_PI runtime=$GPT_PICK seat=runtime-seat inline=true
+on the package roster a Copilot session declared on a GPT model whose claude is not installed falls back to Claude on Copilot, never to GPT|models:- ps:copilot current:openai/gpt-6.2-sol cmd:claude=missing|review|0|<out>|nocli:claude:CLAUDE same:codex:codex stockroom:pi-copilot:PI_COPILOT:runtime-seat single:pi-copilot:review:codex written|calls=claude:0,codex:0,extra:1 art=external-pi-copilot/$OWN files=out pi=$OPUS_PI runtime=$OPUS_PICK seat=runtime-seat inline=true
 an explicit roster naming the stock entries gets them with no other key: a Claude session skips both Claude-backed entries to review on GPT on Copilot, read-only, the diff inline, on the seat its room check picked|-|review|0|<out>|$SAME_TWO $GPT_ROOM single:pi-copilot-gpt:review:claude written|$GPT_TAKEN pi=$GPT_PI runtime=$GPT_PICK seat=runtime-seat inline=true
 a Codex session takes Claude on Copilot first|current:codex|review|0|<out>|stockroom:pi-copilot:PI_COPILOT:runtime-seat single:pi-copilot:review:codex written|calls=claude:0,codex:0,extra:1 art=external-pi-copilot/$OWN files=out pi=$OPUS_PI runtime=$OPUS_PICK seat=runtime-seat inline=true
 with pi not installed the entry is unavailable before its room check is spent, and codex reviews|pi:missing|review|0|<out>|$SAME_TWO nocli:pi-copilot-gpt:PI_COPILOT_GPT single:codex:review:claude written|$CODEX_TAKEN $NO_STOCK
@@ -123,7 +127,7 @@ run_table "stock Copilot entries" "$STOCK_DEFAULTS" "$STOCK_ROWS" stock_state
 # turns the unset-roster row red: the Claude session reaches GPT on Copilot.
 # shellcheck disable=SC2086 # STOCK_DEFAULTS is a word list
 build stock-control $STOCK_DEFAULTS models:-
-mutate_script "$SO" 'DEFAULT_MODELS="claude codex"' 'DEFAULT_MODELS="pi-copilot claude pi-copilot-gpt codex"'
+mutate_script "$SO" 'DEFAULT_MODELS="claude codex pi-copilot pi-copilot-gpt"' 'DEFAULT_MODELS="pi-copilot claude pi-copilot-gpt codex"'
 assert_eq "$(run review) $(stock_state)" "rc=0 out=<out> err=$(err_text "$SAME_TWO $GPT_ROOM single:pi-copilot-gpt:review:claude written") $GPT_TAKEN pi=$GPT_PI runtime=$GPT_PICK seat=runtime-seat inline=true" \
   'control: under a Copilot-first package roster an unset roster reaches GPT on Copilot'
 

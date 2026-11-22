@@ -115,7 +115,7 @@ PROJ=""
 # Word state, reset per row.
 W_PS="" W_PAD="" W_CURRENT="" W_MODELS="" W_COUNT="" W_TARGET="" W_STALE=""
 W_RESP_CLAUDE="" W_RESP_CODEX="" W_RESP_EXTRA="" W_PI="" W_RUNTIME="" W_PATH=""
-W_GLOBAL="" W_ENV=()
+W_GLOBAL="" W_ORCH="" W_ACCOUNTS="" W_ENV=()
 
 # `_` is a space and TAB a tab inside an identity value: the padded spellings.
 unpad() { local v="${1//_/ }"; printf '%s' "${v//TAB/$'\t'}"; }
@@ -227,6 +227,24 @@ word() {
     # project root: runtime:<kind> answers as room:<kind> and records its argv,
     # runtime:none leaves it uninstalled
     runtime:*) W_RUNTIME="${1#runtime:}" ;;
+    # the program a built-in claude or codex command runs, bin:<name>: it
+    # records its argv in argv-<name> and answers as that lane
+    bin:claude|bin:codex) make_program "${1#bin:}" ;;
+    # orch:installed plants orch's entry point under the project root, where
+    # the stock claude and codex room checks look for it, answering
+    # `lane charges` with no lane as agent-runtime's account pick reads it
+    # (skills/agent-runtime/runtime/src/accounts/here.rs `count`); orch:none
+    # leaves it out
+    orch:installed|orch:none) W_ORCH="${1#orch:}" ;;
+    # accounts:listed names AGENT_RUNTIME_ACCOUNT_DIRS in the project's
+    # kendex.settings.toml, where a consumer sets it, which arms the stock
+    # claude and codex room checks beside orch; accounts:unset leaves it out
+    accounts:listed) W_ACCOUNTS=.claude:.codex ;;
+    accounts:unset) W_ACCOUNTS="" ;;
+    # kendex's class table for the built-in claude and codex commands:
+    # tier:class answers opus and gpt-6.2-sol, tier:none fails; every other
+    # kendex call goes to the next kendex on PATH
+    tier:class|tier:none) make_tier "${1#tier:}" ;;
     # install:global puts the skill in no repository, as a global install
     # is, and runs it from the project, the tree under review, so the runtime
     # word plants its entry under the working directory instead
@@ -319,6 +337,35 @@ room_word() { # NAME=KIND DIR PREFIX
   W_ENV+=("$(so_var "$1" ROOM_CMD)=$3room-${1##*=}-${1%%=*}")
 }
 
+# A program named NAME, claude or codex, where a built-in command finds it.
+make_program() {
+  cat >"$ROW/bin/$1" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >"$ROW/argv-$1"
+exec "$ROW/bin/lane-$1" "\$@"
+SH
+  chmod +x "$ROW/bin/$1"
+}
+
+make_tier() {
+  local answer='echo opus; exit 0' codex='echo gpt-6.2-sol; exit 0'
+  [[ "$1" != none ]] || { answer='echo resolver-failed >&2; exit 1'; codex="$answer"; }
+  cat >"$ROW/bin/kendex" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  "tier-model claude 2") $answer ;;
+  "tier-model codex 2") $codex ;;
+esac
+IFS=: read -r -a dirs <<<"\$PATH"
+for dir in "\${dirs[@]}"; do
+  [[ "\$dir/kendex" -ef "\$0" || ! -x "\$dir/kendex" ]] || exec "\$dir/kendex" "\$@"
+done
+echo 'kendex: command not found' >&2
+exit 127
+SH
+  chmod +x "$ROW/bin/kendex"
+}
+
 # The PATH a host without pi has, staged once per suite.
 NOPI_PATH="$TMP_ROOT/nopi-bin"
 stage_nopi() {
@@ -342,6 +389,15 @@ SH
       chmod +x "$ROW/bin/pi" ;;
     missing) stage_nopi; W_PATH="$NOPI_PATH" ;;
   esac
+  if [[ "$W_ORCH" == installed ]]; then
+    mkdir -p "$PROJ/.agents/skills/orch/scripts"
+    cat >"$PROJ/.agents/skills/orch/scripts/orch-runtime" <<'SH'
+#!/usr/bin/env bash
+[[ "$1 $2" == "lane charges" ]] || exit 2
+printf '%s\n' '{"ok":true,"result":{"fleet":null,"charges":{},"started":{}}}'
+SH
+    chmod +x "$PROJ/.agents/skills/orch/scripts/orch-runtime"
+  fi
   [[ -n "$W_RUNTIME" && "$W_RUNTIME" != none ]] || return 0
   make_room_stub "runtime=$W_RUNTIME" "$ROW/bin"
   mkdir -p "$PROJ/.agents/skills/agent-runtime/scripts"
@@ -417,8 +473,13 @@ build() {
   SO="$PROJ/skills/second-opinion/scripts/second-opinion"
   W_PS=none W_PAD="" W_CURRENT=- W_MODELS=- W_COUNT=- W_TARGET="" W_STALE=""
   W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean W_PI="" W_RUNTIME="" W_PATH=""
-  W_GLOBAL="" W_ENV=()
+  W_GLOBAL="" W_ORCH="" W_ACCOUNTS="" W_ENV=()
   for w in "$@"; do word "$w"; done
+  if [[ -n "$W_ACCOUNTS" ]]; then
+    [[ ! -e "$PROJ/kendex.settings.toml" ]] \
+      || { echo "roster-world: accounts:listed and a proj: word both write kendex.settings.toml" >&2; exit 2; }
+    printf '[env]\nAGENT_RUNTIME_ACCOUNT_DIRS = "%s"\n' "$W_ACCOUNTS" >"$PROJ/kendex.settings.toml"
+  fi
   if [[ -n "$W_GLOBAL" ]]; then
     mkdir -p "$ROW/global"
     second_opinion_install "$SKILL_DIR" "$ROW/global"
@@ -562,14 +623,17 @@ run() {
 }
 
 # --- the err specs -------------------------------------------------------------
-# The stock room check of the entry whose settings namespace is NAME.
+# The stock room check of the entry whose settings namespace is NAME, the
+# claude and codex ones for the models tier:class answers.
 stock_pick() {
+  local pick='.agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env'
   case "$1" in
-    PI_COPILOT) set -- claude-opus-5.5 ;;
-    PI_COPILOT_GPT) set -- gpt-6.2-sol ;;
+    PI_COPILOT) printf '%s --harness pi --native-model github-copilot/claude-opus-5.5' "$pick" ;;
+    PI_COPILOT_GPT) printf '%s --harness pi --native-model github-copilot/gpt-6.2-sol' "$pick" ;;
+    CLAUDE) printf '%s --harness claude --native-model opus' "$pick" ;;
+    CODEX) printf '%s --harness codex --native-model gpt-6.2-sol --binding-floor' "$pick" ;;
     *) echo "UNKNOWN-STOCK-ENTRY: $1" >&2; exit 2 ;;
   esac
-  printf '.agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness pi --native-model github-copilot/%s' "$1"
 }
 # One word per line the guards emit, held here once; a space composes them.
 same_model() { printf '→ skipping %s: runs the same model as this session (%s) — a second opinion must be cross-model' "$1" "$2"; }
@@ -612,6 +676,7 @@ err_word() {
     stockroomrefused:*) printf "→ skipping %s: room check refused — the default SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above, and running the default SECOND_OPINION_%s_ROOM_CMD's command prints it again: %s" "$a" "$b" "$c" "$b" "$(stock_pick "$b")" ;;
     stockroomunavail:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs a program not installed here: %s' "$a" "$b" "$(stock_pick "$b")" ;;
     stockroomnoroot:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs agent-runtime from the project root this install is in, and it is in none: %s' "$a" "$b" "$(stock_pick "$b")" ;;
+    unresolved:*) printf 'second-opinion: class=standard unresolved target=%s; using harness default' "$a" ;;
     noassign:*) printf '→ skipping %s: room check printed a line that is no NAME=value assignment: {"config_dir":"/seat"} — SECOND_OPINION_%s_ROOM_CMD prints the env prefix of the account it judged and nothing else' "$a" "$b" ;;
     target-undeclared:*) printf '→ skipping %s: model undeclared — %s fronts a selectable model; set SECOND_OPINION_%s_MODEL to the model id it runs' "$a" "$a" "$b" ;;
     roster-empty) printf '→ skipping roster: SECOND_OPINION_MODELS is set but empty — no targets to consider' ;;

@@ -44,6 +44,56 @@ a multi-lane review runs each lane on its own account: the lane re-judges its ro
 
 run_table "room checks" "$DEFAULTS" "$ROWS" room_state
 
+# The stock claude and codex commands' own check: agent-runtime's account pick
+# for kendex's standard model of the harness, taken where orch is installed in
+# the project and AGENT_RUNTIME_ACCOUNT_DIRS names accounts, the command then
+# running on the account it names. agent-runtime is stubbed here and real below.
+STOCK_DEFAULTS="ps:none current:claude models:claude+codex count:1 bin:claude bin:codex orch:installed accounts:listed runtime:room tier:class"
+CLAUDE_PICK="accounts pick --env --harness claude --native-model opus"
+CODEX_PICK="accounts pick --env --harness codex --native-model gpt-6.2-sol --binding-floor"
+CODEX_TAKEN="calls=claude:0,codex:1,extra:0 art=external-codex/$OWN files=out"
+NEXT="my-model+codex cmd:my-model=extra model:my-model=deepseek"
+NEXT_TAKEN="calls=claude:0,codex:0,extra:1 art=external-my-model/$OWN files=out"
+# Each pick's argv, `;`-joined, the account each built-in lane ran under, and
+# the model flag each built-in command carried.
+stock_cli_state() {
+  local f seats="" models=""
+  for f in claude codex; do
+    seats="$seats,$f:$(cat "$ROW/seat-$f" 2>/dev/null || printf 'none')"
+    [[ -e "$ROW/argv-$f" ]] || continue
+    models="$models,$f:$(sed -n -e '/^--model$/{n;p;}' -e '/^-m$/{n;p;}' "$ROW/argv-$f" | paste -s -d ' ' -)"
+  done
+  printf 'runtime=%s seat=%s model=%s' "$(paste -s -d ';' "$ROW/runtime-argv" 2>/dev/null || printf -- '-')" \
+    "${seats#,}" "${models:+${models#,}}"
+  [[ -n "$models" ]] || printf -- '-'
+}
+
+# label|world|command|rc|out|err|calls art files runtime seat model
+STOCK_ROWS="
+a Claude session's codex review runs on the account the pick names for kendex's standard Codex model|-|review|0|<out>|same:claude:claude stockroom:codex:CODEX:runtime-seat single:codex:review:claude written|$CODEX_TAKEN runtime=$CODEX_PICK seat=claude:none,codex:runtime-seat model=codex:gpt-6.2-sol
+a Codex session's claude review likewise, its pick naming the class's Claude model|current:codex|review|0|<out>|stockroom:claude:CLAUDE:runtime-seat single:claude:review:codex written|calls=claude:1,codex:0,extra:0 art=external-claude/$OWN files=out runtime=$CLAUDE_PICK seat=claude:runtime-seat,codex:none model=claude:opus
+without orch in the project the built-in entries keep no check and run on the account they inherit|orch:none|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
+with orch installed and AGENT_RUNTIME_ACCOUNT_DIRS unset the pick has no account to choose among, so no check|accounts:unset|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
+with orch installed and agent-runtime not, the check is unavailable, never room, and the next entry reviews|runtime:none models:claude+codex+$NEXT|review|0|<out>|same:claude:claude stockroomunavail:codex:CODEX single:my-model:review:claude written|$NEXT_TAKEN runtime=- seat=claude:none,codex:none model=-
+every account walled refuses the entry and the next reviews|runtime:walled models:claude+codex+$NEXT|review|0|<out>|same:claude:claude roomsaid:runtime:walled stockroomrefused:codex:CODEX:3 single:my-model:review:claude written|$NEXT_TAKEN runtime=$CODEX_PICK seat=claude:none,codex:none model=-
+a configured command replaces the built-in model and check|cmd:codex=codex|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=-
+a room check set empty is no check|marker:SECOND_OPINION_CODEX_ROOM_CMD=|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
+an unresolved class leaves the harness default, said once, and a pick naming no model|tier:none|review|0|<out>|same:claude:claude unresolved:codex stockroom:codex:CODEX:runtime-seat single:codex:review:claude written|$CODEX_TAKEN runtime=accounts pick --env --harness codex --binding-floor seat=claude:none,codex:runtime-seat model=codex:
+a global install has no project, so no check, though orch and agent-runtime sit under the working directory|install:global|review|0|<out>|same:claude:claude single:codex:review:claude written|$CODEX_TAKEN runtime=- seat=claude:none,codex:- model=codex:gpt-6.2-sol
+a forced target is held to the built-in check too|runtime:walled|review --target codex|1|-|roomsaid:runtime:walled stockroomrefused:codex:CODEX:3 refused:claude:1|$NONE runtime=$CODEX_PICK seat=claude:none,codex:none model=-
+"
+
+run_table "stock claude and codex room checks" "$STOCK_DEFAULTS" "$STOCK_ROWS" stock_cli_state
+
+# Must-fail control: with the built-in check's branch cut in a disposable copy,
+# the first stock row's codex runs on no picked account.
+# shellcheck disable=SC2086 # STOCK_DEFAULTS is a word list
+build stock-check-control $STOCK_DEFAULTS
+mutate_script "$SO" '  elif harness=$(stock_harness "$t") &&' '  elif false && harness=$(stock_harness "$t") &&'
+got="$(run review) $(stock_cli_state)"
+assert_eq "$([[ "$got" == *"runtime=$CODEX_PICK seat=claude:none,codex:runtime-seat"* ]] && printf green || printf red)" red \
+  "control: with the built-in check cut, codex runs on no picked account"
+
 # Under a forced target the caller's stdin reaches the check, and a prompt piped
 # there is still whole when the check has run, even one that drains its stdin.
 echo "=== a room check never reads the prompt ==="
@@ -80,22 +130,25 @@ claude_account() {
     limits: [{kind: "weekly_scoped", percent: 0, resets_at: "2099-08-01T06:00:00Z",
       scope: {model: {display_name: "Opus"}}}]}' > "$USAGE/token-$2.usage.json"
 }
-CLAUDE_ROOM_CMD="$(sed -n 's/^SECOND_OPINION_CLAUDE_ROOM_CMD = "\(.*\)"$/\1/p' "$SKILL_DIR/../../kendex.settings.toml")"
-assert_eq "$(sed -n 's/^# SECOND_OPINION_CLAUDE_ROOM_CMD = "\(.*\)"$/\1/p' "$SKILL_DIR/kendex.settings.toml.example")" "$CLAUDE_ROOM_CMD" "the fleet example uses the project's Claude room command"
-
-# label|second account weekly usage|room command enabled|reviewer|account
+# The built-in Claude command and its built-in check, with orch installed in
+# the project, the runtime real and only the review CLI and kendex's class
+# answer stubbed: the pick is the one the package runs, not a setting.
+# label|second account weekly usage|orch installed|AGENT_RUNTIME_ACCOUNT_DIRS|reviewer|account
 CLAUDE_ROWS='
-Claude chooses the second account after the first reaches its weekly wall|20|yes|claude|second
-Claude account metadata survives collection with another opinion|20|union|claude,my-model|second
-control: removing the room command leaves the review on the walled account|20|no|claude|first
-Claude pool exhaustion selects the next cross-model reviewer|100|yes|my-model|none
+Claude chooses the second account after the first reaches its weekly wall|20|yes|listed|claude|second
+Claude account metadata survives collection with another opinion|20|union|listed|claude,my-model|second
+control: without orch the review stays on the walled account it inherits|20|no|listed|claude|first
+with orch installed and no account listed the review runs on the account it inherits|20|yes|unset|claude|first
+Claude pool exhaustion selects the next cross-model reviewer|100|yes|listed|my-model|none
 '
 claude_row=0
-while IFS='|' read -r label weekly checked reviewer account; do
+while IFS='|' read -r label weekly checked listed reviewer account; do
   [[ -n "$label" ]] || continue
   claude_row=$((claude_row + 1))
+  orch=installed
+  [[ "$checked" != no ]] || orch=none
   build "claude-pool-$claude_row" ps:none current:codex models:claude+codex+my-model count:1 \
-    cmd:claude=claude cmd:codex=codex cmd:my-model=extra model:my-model=deepseek claude:parse extra:parse
+    bin:claude "orch:$orch" tier:class cmd:codex=codex cmd:my-model=extra model:my-model=deepseek claude:parse extra:parse
   H="$ROW/home"
   USAGE="$ROW/usage"
   mkdir -p "$USAGE" "$PROJ/.agents/skills"
@@ -112,11 +165,9 @@ set -euo pipefail
 "${0%/*}/claude-response" | jq --arg account "$CLAUDE_CONFIG_DIR" '.qa_metadata.account = $account'
 SH
   chmod +x "$ROW/bin/lane-claude"
-  W_ENV+=("AGENT_RUNTIME_ACCOUNT_DIRS=$H/.firstclaude:$H/.secondclaude" "USAGE_FIXTURE_DIR=$USAGE"
-    "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
-  room_cmd="$CLAUDE_ROOM_CMD"
-  [[ "$checked" != no ]] || room_cmd=""
-  W_ENV+=("SECOND_OPINION_CLAUDE_ROOM_CMD=$room_cmd")
+  W_ENV+=("USAGE_FIXTURE_DIR=$USAGE" "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state"
+    "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  [[ "$listed" != listed ]] || W_ENV+=("AGENT_RUNTIME_ACCOUNT_DIRS=$H/.firstclaude:$H/.secondclaude")
   [[ "$checked" != union ]] || W_ENV+=("SECOND_OPINION_COUNT=2")
   got="$(run review)"
   assert_eq "${got%% *}" rc=0 "$label: review completes"
@@ -133,7 +184,7 @@ SH
   assert_eq "$cli_account" "$expected_cli_account" "$label: the CLI uses the selected configuration directory"
   assert_eq "$(jq '[.blockers[]] | length > 0' "$ROW/out/out.json")" true "$label: the artifact retains findings"
   if [[ "$checked" == no ]]; then
-    assert_eq "$([[ "$actual_account" != .secondclaude ]] && printf red || printf green)" red "control: the account-selection assertion turns red without the room command"
+    assert_eq "$([[ "$actual_account" != .secondclaude ]] && printf red || printf green)" red "control: the account-selection assertion turns red without orch's built-in check"
   elif [[ "$account" == none ]]; then
     assert_eq "$(count claude)" 0 "$label: the refused Claude CLI never runs"
     # This selection diagnostic is the room-check caller's program-readable

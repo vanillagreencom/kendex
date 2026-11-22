@@ -10,7 +10,7 @@
 #
 # Environment:
 #   SECOND_OPINION_MODELS        Priority-ordered target roster
-#                                (default: "claude codex")
+#                                (default: "claude codex pi-copilot pi-copilot-gpt")
 #   SECOND_OPINION_COUNT         Opinions to collect in review mode (default: 1)
 #   SECOND_OPINION_CURRENT_MODEL Declared model identity of THIS session (overrides detection)
 #   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>, or
@@ -19,7 +19,9 @@
 #   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude, codex, pi-copilot and
 #                                pi-copilot-gpt have defaults)
 #   SECOND_OPINION_<NAME>_ROOM_CMD  Room check for target <NAME>'s account (default: none;
-#                                agent-runtime's account pick for pi-copilot/pi-copilot-gpt)
+#                                agent-runtime's account pick for pi-copilot/pi-copilot-gpt,
+#                                and for claude/codex where orch is installed in the project and
+#                                AGENT_RUNTIME_ACCOUNT_DIRS names accounts)
 #   SECOND_OPINION_<NAME>_INLINE_DIFF  Set to 1 to embed the review diff for target <NAME>
 #                                (default: on for pi-copilot/pi-copilot-gpt)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
@@ -99,7 +101,7 @@ With --foreground, run the printed wait command and follow Exit codes below unti
 Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session,
 AND whose account has room by its room check where it has one
-(SECOND_OPINION_<NAME>_ROOM_CMD, or the stock Copilot entries' default) — the model this session runs is never dispatched to, in any mode, forced
+(SECOND_OPINION_<NAME>_ROOM_CMD, or a stock entry's default) — the model this session runs is never dispatched to, in any mode, forced
 or not.
 A nonzero exit, per-CLI timeout or recognized quota/rate-limit refusal on
 stderr advances to the next roster name. On a zero exit the stderr refusal
@@ -121,9 +123,10 @@ Environment. Every key below belongs in kendex.settings.toml [env] (or
 .env.local) except SECOND_OPINION_CURRENT_MODEL and
 SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
   SECOND_OPINION_MODELS      Priority-ordered target roster, space/comma
-                             separated (default: "claude codex"; name
-                             pi-copilot or pi-copilot-gpt here to use those
-                             stock entries); set empty and the run refuses
+                             separated (default: "claude codex pi-copilot
+                             pi-copilot-gpt": Claude and Codex first, then
+                             Pi on Copilot running each of their models as
+                             the fallback); set empty and the run refuses
                              rather than using the default
   SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
   SECOND_OPINION_CURRENT_MODEL
@@ -159,7 +162,9 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              (below). Setting it for pi-copilot or
                              pi-copilot-gpt replaces that entry's default
                              model, room check and inline diff too, so the
-                             entry reads only its own settings. Targets
+                             entry reads only its own settings; setting it
+                             for claude or codex replaces that entry's
+                             class model and default room check. Targets
                              named codex (any case) also receive --disable
                              hooks --json when their command directly runs
                              codex, including overrides with supported env
@@ -178,7 +183,10 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              Whether the account target <NAME> spends has
                              room now (default: none, no check; for
                              pi-copilot and pi-copilot-gpt on their default
-                             command, agent-runtime's account pick, below; set empty for
+                             command, and for claude and codex on theirs
+                             where orch is installed in the project and
+                             AGENT_RUNTIME_ACCOUNT_DIRS names accounts,
+                             agent-runtime's account pick, below; set empty for
                              no check). Before it runs, its program word is
                              resolved as an entry's command program is; one
                              not installed skips the target as room check
@@ -299,17 +307,31 @@ Default commands:
           unchanged.
   codex:  codex exec -s read-only -c model_reasoning_effort=xhigh
             --ephemeral --disable hooks --json
-          Claude adds --model from kendex tier-model claude 2 (standard).
-          An unresolved class uses the harness default with one notice.
-          Codex uses its harness default.
+          Claude adds --model, and Codex -m, from kendex tier-model
+          <harness> 2 (standard). An unresolved class uses the harness
+          default with one notice.
+          Room check, where orch is installed in the project this script is
+          installed in and AGENT_RUNTIME_ACCOUNT_DIRS names accounts:
+          .agents/skills/agent-runtime/scripts/agent-runtime
+            accounts pick --env --harness claude --native-model MODEL
+          and for codex the same with --harness codex and --binding-floor,
+          MODEL being the class's model (omitted where it is unresolved).
+          The pick chooses among the accounts AGENT_RUNTIME_ACCOUNT_DIRS
+          names, and the one it names is the one the reviewer runs on. A
+          pick that refuses, as it does for a harness the key names no
+          account of, or an agent-runtime that is not installed or not
+          built, skips the entry for the next. Without orch there, with the
+          key unset or empty, or in an install in no repository, neither
+          entry has a check and each runs on the account it inherits.
   pi-copilot, pi-copilot-gpt:
           pi -p --no-session --no-extensions --model MODEL --thinking high
             --tools read,grep,find,ls
           MODEL is github-copilot/claude-opus-5.5 for pi-copilot (identity
           claude) and github-copilot/gpt-6.2-sol for pi-copilot-gpt
-          (identity codex). Neither is in the default roster: a consumer
-          names it in SECOND_OPINION_MODELS, which needs no other key.
-          Read-only file tools and no shell, so each is sent the review
+          (identity codex). Both follow claude and codex in the default
+          roster, so each is reached only where the entry of its model ahead
+          of it was skipped or failed. Read-only file tools and no shell,
+          so each is sent the review
           diff inline. Room check:
           .agents/skills/agent-runtime/scripts/agent-runtime
             accounts pick --env --harness pi --native-model MODEL
@@ -427,14 +449,13 @@ if ! PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)
   # points nowhere gets the same three words WITHOUT a parenthetical
   # (`not a git repository: (null)`), and that is a repository git could not
   # read, from a checkout that does carry settings, so it refuses. Any message
-  # this does not recognise refuses too. hooks/block-worktree-refresh.sh splits
-  # the same diagnostic the same way.
+  # this does not recognise refuses too.
   #
   # The limit of reading the message: an EMPTY or malformed `.git` DIRECTORY
   # draws the parenthetical too, so it lands here as an absence. Separating
-  # that from a true absence takes an ancestor walk for a `.git` entry, which
-  # the hook above owns; this does not carry a second copy of it. Git itself
-  # reports no repository in that state, so no root could be resolved anyway.
+  # that from a true absence would take an ancestor walk for a `.git` entry,
+  # and it would buy nothing: git itself reports no repository in that state,
+  # so no root could be resolved anyway.
   case "$_git_diag" in
     *"not a git repository (or any"*) PROJECT_ROOT="" ;;
     *)
@@ -452,11 +473,13 @@ fi
 # roster is known (target_settings_names below).
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-# The package's one declared list: its fixed names, worktree's default branch
-# a review's scope starts from (derive_review_scope), and the four suffixes of
-# a target's own names (target_var).
-SETTINGS_NAMES=(SECOND_OPINION_ARTIFACT_DIR SECOND_OPINION_COUNT
-  SECOND_OPINION_CURRENT_MODEL SECOND_OPINION_FOREGROUND_CAP
+# The package's one declared list: its fixed names, agent-runtime's account
+# list the stock claude and codex room checks key on (target_room),
+# worktree's default branch a review's scope starts from
+# (derive_review_scope), and the four suffixes of a target's own names
+# (target_var).
+SETTINGS_NAMES=(AGENT_RUNTIME_ACCOUNT_DIRS SECOND_OPINION_ARTIFACT_DIR
+  SECOND_OPINION_COUNT SECOND_OPINION_CURRENT_MODEL SECOND_OPINION_FOREGROUND_CAP
   SECOND_OPINION_MODELS SECOND_OPINION_REVIEW_INSTRUCTIONS
   SECOND_OPINION_REVIEW_TARGETS SECOND_OPINION_TARGET SECOND_OPINION_TIMEOUT
   WORKTREE_DEFAULT_BRANCH)
@@ -638,7 +661,7 @@ done
 # the argument loop leaves a previous run's artifact behind. `detect` is the one
 # deliberate exclusion: it writes nothing and takes no --output.
 
-DEFAULT_MODELS="claude codex"
+DEFAULT_MODELS="claude codex pi-copilot pi-copilot-gpt"
 FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
 
 # The roster, one entry per line, split with globbing off: an entry is a name,
@@ -1117,7 +1140,19 @@ DEFAULT_CODEX_CMD="codex exec -s read-only -c model_reasoning_effort=xhigh --eph
 # installed under the project root the check is unavailable and the entry is
 # skipped.
 DEFAULT_PI_COPILOT_CMD="pi -p --no-session --no-extensions --model %s --thinking high --tools read,grep,find,ls"
-DEFAULT_PI_COPILOT_ROOM_CMD=".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness pi --native-model %s"
+ACCOUNT_PICK=".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env"
+DEFAULT_PI_COPILOT_ROOM_CMD="$ACCOUNT_PICK --harness pi --native-model %s"
+# The stock claude and codex entries take the same pick where orch is
+# installed in the project and AGENT_RUNTIME_ACCOUNT_DIRS names accounts. The
+# pick chooses among the accounts that key names alone, and orch's settings
+# ship it unset, so a working orch project may name none; with the key unset
+# or empty the entries keep no check and run on the account they inherit, as
+# without orch. With the key set, a review spends only the accounts it names:
+# for a harness it names no account of the pick refuses and the entry is
+# skipped, never run on an account the owner left out. orch is installed where
+# its entry point stands, the path the pick itself reads orch's lane charges
+# from (agent-runtime's runtime/src/accounts/here.rs ORCH_ENTRY).
+ORCH_ENTRY=".agents/skills/orch/scripts/orch-runtime"
 
 # The model a stock Copilot entry runs: pi-copilot Claude Opus, pi-copilot-gpt
 # GPT, matched on the settings namespace as every other per-target key is.
@@ -1135,16 +1170,39 @@ stock_copilot_model() {
     *)                                 return 1 ;;
   esac
 }
-DEFAULT_CLAUDE_RESOLVED=0
-resolve_default_model() {
-  local var model
-  var=$(target_cmd_var "$TARGET_CLI")
-  [[ $DEFAULT_CLAUDE_RESOLVED == 0 && -z ${!var:-} && $(harness_model "$TARGET_CLI") == claude ]] || return 0
-  DEFAULT_CLAUDE_RESOLVED=1
-  if model=$(cd -- "$CWD" && kendex tier-model claude 2 </dev/null 2>/dev/null) && [[ -n $model && $model != inherit ]]; then
-    DEFAULT_CLAUDE_CMD="$DEFAULT_CLAUDE_CMD --model $model"
+# The harness, claude or codex, a target runs on its built-in command. Returns
+# 1 for a target whose SECOND_OPINION_<NAME>_CMD is set, which is the
+# consumer's own command, and for a name that has no such built-in command.
+stock_harness() {
+  local var harness
+  var="$(target_cmd_var "$1")"
+  [[ -z "${!var:-}" ]] || return 1
+  harness=$(harness_model "$1") || return 1
+  [[ "$harness" == claude || "$harness" == codex ]] || return 1
+  printf '%s' "$harness"
+}
+
+# The model the stock claude or codex command runs, kendex's standard class
+# for the harness, resolved once per harness when its room check or its
+# command first needs it, and added to that command. The room check judges
+# the account for that model. An unresolved class leaves the harness
+# default, said once, and no model.
+STOCK_CLAUDE_MODEL="" STOCK_CODEX_MODEL=""
+STOCK_CLAUDE_RESOLVED=false STOCK_CODEX_RESOLVED=false
+resolve_stock_model() { # HARNESS
+  local model
+  case "$1" in
+    claude) ! $STOCK_CLAUDE_RESOLVED || return 0; STOCK_CLAUDE_RESOLVED=true ;;
+    codex) ! $STOCK_CODEX_RESOLVED || return 0; STOCK_CODEX_RESOLVED=true ;;
+    *) echo "second-opinion: stock-model harness=$1 is no stock command's" >&2; exit 1 ;;
+  esac
+  if model=$(cd -- "$CWD" 2>/dev/null && kendex tier-model "$1" 2 </dev/null 2>/dev/null) && [[ -n $model && $model != inherit ]]; then
+    case "$1" in
+      claude) STOCK_CLAUDE_MODEL="$model"; DEFAULT_CLAUDE_CMD="$DEFAULT_CLAUDE_CMD --model $model" ;;
+      codex) STOCK_CODEX_MODEL="$model"; DEFAULT_CODEX_CMD="$DEFAULT_CODEX_CMD -m $model" ;;
+    esac
   else
-    echo "second-opinion: class=standard unresolved target=claude; using harness default" >&2
+    echo "second-opinion: class=standard unresolved target=$1; using harness default" >&2
   fi
 }
 
@@ -1235,16 +1293,19 @@ command_program() { # CMD DIR
 target_available() { command_program "$(target_cmd "$1")" "$CWD"; }
 
 # Whether the account a target spends has room, by its
-# SECOND_OPINION_<NAME>_ROOM_CMD, or for a stock Copilot entry with that key
-# unset the stock check; a target with none, or with the key set empty, has no
-# check. A check whose program is not installed where it runs is unavailable,
-# not refused, and skips the target before anything runs: a missing optional
-# integration is no reading of the account, and never admits it. The stock
-# check names agent-runtime by a path relative to the project root this script is
-# installed in, the tree that supplies the script and its settings; an install
-# in no repository, such as a global one, has none, and resolving it from the
-# working directory would run a file of the tree under review, so the stock
-# check is unavailable there. Exit 0 is
+# SECOND_OPINION_<NAME>_ROOM_CMD, or with that key unset the stock check: a
+# stock Copilot entry's always, the stock claude and codex commands' where
+# orch is installed in the project and AGENT_RUNTIME_ACCOUNT_DIRS names
+# accounts (ORCH_ENTRY above); a target with none, or with the key set
+# empty, has no check. A check whose program is not installed where it runs is
+# unavailable, not refused, and skips the target before anything runs: a
+# missing optional integration is no reading of the account, and never admits
+# it. The stock check names agent-runtime by a path relative to the project
+# root this script is installed in, the tree that supplies the script and its
+# settings; an install in no repository, such as a global one, has none, and
+# resolving it from the working directory would run a file of the tree under
+# review, so a Copilot entry's check is unavailable there, and claude and
+# codex, whose check that project decides, have none. Exit 0 is
 # room, and the stdout lines are the NAME=value env prefix naming the account
 # the command judged, which ROOM_ENV carries to the target command: `agent-runtime
 # accounts pick --env` prints exactly that, and the pick without --env prints a
@@ -1260,7 +1321,7 @@ target_available() { command_program "$(target_cmd "$1")" "$CWD"; }
 # under a forced target it is the caller's, where a prompt may still wait.
 ROOM_ENV=""
 target_room() {
-  local t="$1" var from cmd="" model out rc=0 line shown="" again=""
+  local t="$1" var from cmd="" model harness out rc=0 line shown="" again=""
   ROOM_ENV=""
   var="$(target_var "$t" ROOM_CMD)"
   from="$var"
@@ -1276,6 +1337,18 @@ target_room() {
       skip_target "$t" "room check unavailable — $from runs agent-runtime from the project root this install is in, and it is in none: $cmd"
       return 1
     fi
+  elif harness=$(stock_harness "$t") && [[ -n "$PROJECT_ROOT" && -e "$PROJECT_ROOT/$ORCH_ENTRY" && -n "${AGENT_RUNTIME_ACCOUNT_DIRS:-}" ]]; then
+    resolve_stock_model "$harness"
+    # The pick for the model resolve_stock_model gave the command. A Codex
+    # review spends the account's own limit beside its model's window, so
+    # --binding-floor holds that limit to the same bound and the fuller of
+    # the two decides.
+    case "$harness" in
+      claude) cmd="$ACCOUNT_PICK --harness claude${STOCK_CLAUDE_MODEL:+ --native-model $STOCK_CLAUDE_MODEL}" ;;
+      codex) cmd="$ACCOUNT_PICK --harness codex${STOCK_CODEX_MODEL:+ --native-model $STOCK_CODEX_MODEL} --binding-floor" ;;
+    esac
+    from="the default $var"
+    again=": $cmd"
   fi
   [[ -n "$cmd" ]] || return 0
   if ! command_program "$cmd" "${PROJECT_ROOT:-.}" >/dev/null; then
@@ -3047,10 +3120,10 @@ REFUSAL_PATTERNS=(
 # and its answer is a first response: the primary call's and a fall-through
 # target's alike pass gate_first_response before either becomes the response.
 collect_response() {
-  local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc answer_json attempt_account assignment
+  local invocation_prompt="$1" attempt_started attempt_finished attempt_seconds pattern refusal_rc answer_json attempt_account assignment harness
   while :; do
     EXIT_CODE=0
-    resolve_default_model
+    if harness=$(stock_harness "$TARGET_CLI"); then resolve_stock_model "$harness"; fi
     attempt_started=$(date +%s)
     RESULT=$(run_target_cli "$invocation_prompt") || EXIT_CODE=$?
     if [[ $EXIT_CODE -eq 0 ]]; then unwrap_codex_events; fi

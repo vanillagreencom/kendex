@@ -7,12 +7,13 @@ Fix each reason a refused candidate names as follows:
 
 - An ineligible target: install its CLI, or adjust `SECOND_OPINION_<NAME>_CMD`, `SECOND_OPINION_MODELS` or `SECOND_OPINION_CURRENT_MODEL`. Never force the same model.
 - `model undeclared`: set that target's `SECOND_OPINION_<NAME>_MODEL` to the model id it runs.
-- `room check refused`: the candidate names the check's setting and its exit. For a stock Copilot entry it quotes the default command. The check's own stderr, passed through above it, holds the cause.
+- `room check refused`: the candidate names the check's setting and its exit. For a built-in check it quotes the default command. The check's own stderr, passed through above it, holds the cause.
   1. Run that command.
-  2. Read its keyed line: a wall to wait out, or a setting or read to fix. For the stock check, see `agent-runtime accounts pick --help`.
+  2. Read its keyed line: a wall to wait out, or a setting or read to fix. For a built-in check, see `agent-runtime accounts pick --help`. The built-in claude and codex checks choose among the accounts `AGENT_RUNTIME_ACCOUNT_DIRS` names, so a harness it names no account of finds none: add that account to the key.
+  - An `agent-runtime: setup-required` line names an agent-runtime whose runtime is not built: run the `scripts/setup` it names.
 - `room check printed a line that is no NAME=value assignment`: the candidate quotes that line. The check must print only the `NAME=value` env prefix of the account it judged. Fix that `SECOND_OPINION_<NAME>_ROOM_CMD` command, for example by dropping a `--json` flag.
 - `room check unavailable`: the candidate quotes the check's command.
-  - Install its program. For a stock Copilot entry, that is agent-runtime in the project this skill is installed in. A global install has no project, so there its check is always unavailable.
+  - Install its program. For a built-in check, that is agent-runtime in the project this skill is installed in. A global install has no project, so there a Copilot entry's check is always unavailable.
   - Or set that entry's `SECOND_OPINION_<NAME>_ROOM_CMD` or `_CMD`.
   - Or leave the entry out of `SECOND_OPINION_MODELS`.
 

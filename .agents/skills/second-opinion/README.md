@@ -26,14 +26,19 @@ Requires jq, perl and a logged-in external CLI: claude, codex, pi with a Copilot
 
 Set shared values in `kendex.settings.toml` under `[env]` and personal overrides in `.env.local`. Nothing is marked required, so installing writes no settings. Every key, its default and the built-in `claude`, `codex`, `pi-copilot` and `pi-copilot-gpt` command lines: `second-opinion --help`. The ones most projects touch:
 
-- `SECOND_OPINION_MODELS`: the ordered fallback list, default `claude codex`. Set empty, the run refuses. An entry skipped for room or failing to run advances to the next name.
+- `SECOND_OPINION_MODELS`: the ordered fallback list, default `claude codex pi-copilot pi-copilot-gpt`. Set empty, the run refuses. An entry skipped for room or failing to run advances to the next name.
 - `SECOND_OPINION_COUNT`: opinions a `review` collects, default `1`.
 - `SECOND_OPINION_<NAME>_CMD`: the command a roster entry runs. Another model CLI is a settings entry, not new code. Keep the sandbox or tool restrictions read-only so a second opinion can never write to your worktree.
 - An entry is skipped when its command's program is not installed. The command runs without a shell, so a leading shell builtin such as `exec` makes the entry unavailable.
 - `SECOND_OPINION_TIMEOUT`: seconds per CLI invocation, default `1080`.
 - `SECOND_OPINION_COPILOT_CMD` and `SECOND_OPINION_COPILOT_MODEL`: a `copilot` entry's command and the model it runs. Copilot CLI documents no read-only headless mode, so there is no built-in command. It fronts several vendors, so the entry is skipped until the model is named.
+- `claude` and `codex`: each built-in command runs kendex's standard model for its harness.
+  - Where orch is installed in the project and `AGENT_RUNTIME_ACCOUNT_DIRS` names accounts, each also has a room check through agent-runtime's `agent-runtime accounts pick --env`. The check chooses among the accounts that key names, so a review runs on one with room, the next account when one is walled.
+  - With the check armed, an entry is skipped when agent-runtime is not installed or not set up in the project, or when the check refuses, as it does for a harness the key names no account of.
+  - Without orch, or with `AGENT_RUNTIME_ACCOUNT_DIRS` unset or empty, they have no check and run on the account they inherit.
+  - Setting an entry's `_CMD` replaces its model and its check.
 - `pi-copilot` and `pi-copilot-gpt`: Pi on the Copilot pool, running Claude Opus and GPT, with read-only file tools and no shell.
-  - Neither is in the default list. Name one in `SECOND_OPINION_MODELS` to use it, such as `claude pi-copilot-gpt codex`, which sends a Claude session's review to GPT on Copilot before `codex`.
+  - Both follow `claude` and `codex` in the default list, as their fallbacks.
   - Each comes with its command, declared model, inline diff and a room check through agent-runtime's `agent-runtime accounts pick --env`, so it needs no other key.
   - An entry is skipped when pi is not installed, when agent-runtime is not installed in the project, when the skill is installed in no repository, such as a global install, or when the room check refuses.
   - Setting an entry's `_CMD` replaces its stock model, room check and inline diff with that entry's own settings.
