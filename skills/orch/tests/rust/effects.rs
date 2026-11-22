@@ -8229,14 +8229,13 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
         "the standing record's worktree is reused: {:?}",
         world.calls()
     );
-    // The shipped provider has no stop-sandbox verb: its check exits 2.
+    // The shipped provider declares `park=none`: its sandbox never stops.
     let calls = world.calls();
     assert!(
-        calls.iter().any(|c| c.contains(" stop-sandbox --check "))
-            && !calls
-                .iter()
-                .any(|c| c.ends_with(" list") || c.contains(" start ")),
-        "a provider without the sandbox pair is asked neither list nor start: {calls:?}",
+        !calls.iter().any(|c| {
+            c.contains(" stop-sandbox ") || c.ends_with(" list") || c.contains(" start ")
+        }),
+        "a park=none provider is asked neither check, list nor start: {calls:?}",
     );
     assert_eq!(report["lane"]["mail_root"], world.host(), "{report}");
     assert_eq!(
@@ -8281,6 +8280,8 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
             &std::fs::read_to_string(world.scripts.join("lane-host.json")).unwrap(),
         )
         .unwrap();
+        let line = answers["capabilities"]["stdout"].as_str().unwrap().to_owned();
+        answers["capabilities"]["stdout"] = json!(line.replace("park=none", "park=verb"));
         answers["start --item KEN-H"] = start;
         answers[format!(
             "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
@@ -8323,64 +8324,43 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
 }
 
 /// A lane that handed off is closed on the `no_landing` ground, which keeps
-/// its sandbox, then relaunched over its record. On a provider whose check
-/// reads the stop-sandbox and start pair, where its list still names the
-/// sandbox, its start takes it up before `create --relaunch`, which the
-/// provider refuses as another session's (`item-owned`) over a standing
-/// sandbox no start took up. A list naming none asks no start, and a list
-/// that fails refuses with nothing asked of the sandbox. A provider whose
-/// check exits 2 has no pair and is asked neither list nor start, so a list
-/// that would fail cannot hold its create.
+/// its sandbox, then relaunched over its record. On a `park=verb` provider,
+/// where its list still names the sandbox, its start takes it up before
+/// `create --relaunch`, which the provider refuses as another session's
+/// (`item-owned`) over a standing sandbox no start took up. A list naming
+/// none asks no start, and a list that fails refuses with nothing asked of
+/// the sandbox. The `park=none` relaunch is
+/// `a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree`.
 #[test]
 fn a_relaunch_after_a_no_landing_close_starts_the_standing_sandbox_before_its_create() {
     struct Row {
         name: &'static str,
-        check: Value,
         list: Value,
         outcome: &'static str,
-        lists: bool,
         starts: bool,
         creates: bool,
     }
-    let standing = json!({"stdout": "o/r/KEN-H\tstarted\t3m\tlane-o-r-ken-h\n"});
-    let stoppable = json!({"stdout": "sandbox-stoppable item=KEN-H\n"});
-    let list_failed = json!({"exit": 1, "stderr": "lane-host-fixture: list-failed\n"});
     let rows = [
         Row {
             name: "standing",
-            check: stoppable.clone(),
-            list: standing,
+            list: json!({"stdout": "o/r/KEN-H\tstarted\t3m\tlane-o-r-ken-h\n"}),
             outcome: "confirmed",
-            lists: true,
             starts: true,
             creates: true,
         },
         Row {
             name: "gone",
-            check: stoppable.clone(),
             list: json!({"stdout": ""}),
             outcome: "confirmed",
-            lists: true,
             starts: false,
             creates: true,
         },
         Row {
             name: "list failed",
-            check: stoppable,
-            list: list_failed.clone(),
+            list: json!({"exit": 1, "stderr": "lane-host-fixture: list-failed\n"}),
             outcome: "failed",
-            lists: true,
             starts: false,
             creates: false,
-        },
-        Row {
-            name: "no pair, list failed",
-            check: json!({"exit": 2, "stderr": "lane-host-fixture: invalid choice\n"}),
-            list: list_failed,
-            outcome: "confirmed",
-            lists: false,
-            starts: false,
-            creates: true,
         },
     ];
     for row in rows {
@@ -8392,7 +8372,9 @@ fn a_relaunch_after_a_no_landing_close_starts_the_standing_sandbox_before_its_cr
             .runner
             .env
             .push(("ORCH_LANE_CLOSE_SECS".to_owned(), "1".to_owned()));
-        let mut answers = json!({});
+        let mut answers = json!({
+            "capabilities": {"stdout": DETACHED_CAPABILITIES.replace("park=none", "park=verb")},
+        });
         for file in [
             "to-lane.jsonl",
             "to-overseer.jsonl",
@@ -8461,7 +8443,6 @@ fn a_relaunch_after_a_no_landing_close_starts_the_standing_sandbox_before_its_cr
                 "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
             )] = created;
         }
-        answers["stop-sandbox --check --item KEN-H"] = row.check;
         answers["list"] = row.list;
         answers["start --item KEN-H"] = json!({"stdout": "sandbox-started item=KEN-H\n"});
         answers["cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"] =
@@ -8475,7 +8456,7 @@ fn a_relaunch_after_a_no_landing_close_starts_the_standing_sandbox_before_its_cr
             row.name
         );
         let at = |verb: &str| verbs.iter().position(|v| v.starts_with(verb));
-        assert_eq!(at("list").is_some(), row.lists, "{}: {verbs:?}", row.name);
+        assert!(at("list").is_some(), "{}: {verbs:?}", row.name);
         assert_eq!(
             at("start ").is_some(),
             row.starts,

@@ -31,7 +31,7 @@ use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
 use crate::policy::{Stage, Stages};
 use crate::settings::{LaneOutput, Settings};
 use crate::state::{self, Lane, LaneMembers, SANDBOX, STANDING};
-use crate::watch::hosted::{self, Launch, PaneKind};
+use crate::watch::hosted::{self, Launch, PaneKind, ParkKind};
 use agent_runtime::effects::prepare::{
     Kept, Spec, Unready, accountless_kept, build_launch, build_runtimes, check_directory,
     check_program, gate, launch_home, pending_observation, read_brief, up,
@@ -1072,28 +1072,24 @@ fn hosted_launch(
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
     // `create --relaunch` resumes on the sandbox the item's work stands in.
-    // A provider holding the stop-sandbox and start pair may refuse a create
-    // over a standing sandbox no start took up as another session's
-    // (`item-owned`), so its start brings that sandbox up first: a parked
-    // lane's, stopped with its disk kept, and on any other relaunch one its
-    // list still names, as a no-landing close keeps it. A provider whose
-    // check exits 2 has no pair: its sandbox never stops and its create
-    // reuses it as it stands, so it is asked neither list nor start. A
-    // provider answers `sandbox-started` for a sandbox already up, so a
-    // relaunch after a start that failed asks it again. Each start is
-    // recorded before it is made, so a launch cut after it leaves a step its
-    // reconcile holds.
+    // A provider holding the stop-sandbox and start pair (`park=verb`) may
+    // refuse a create over a standing sandbox no start took up as another
+    // session's (`item-owned`), so its start brings that sandbox up first: a
+    // parked lane's, stopped with its disk kept, and on any other relaunch
+    // one its list still names, as a no-landing close keeps it. A `park=none`
+    // provider's sandbox never stops and its create reuses it as it stands,
+    // so it is asked neither list nor start. A provider answers
+    // `sandbox-started` for a sandbox already up, so a relaunch after a start
+    // that failed asks it again. Each start is recorded before it is made, so
+    // a launch cut after it leaves a step its reconcile holds.
     let starts = parked
         || (relaunch
-            && match hosted::stop_sandbox(&scripts, provider, &r.item, true) {
-                Ok(false) => false,
-                Ok(true) => match hosted::lists_item(&scripts, provider, &r.item) {
+            && match caps.park {
+                ParkKind::None => false,
+                ParkKind::Verb => match hosted::lists_item(&scripts, provider, &r.item) {
                     Ok(state) => state.is_some(),
                     Err(cause) => return failed(operation, &format!("host-list-failed {cause}")),
                 },
-                Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) => {
-                    return failed(operation, &format!("host-check-failed {cause}"));
-                }
             });
     if starts {
         operation.record_phase(Phase::Preparing {

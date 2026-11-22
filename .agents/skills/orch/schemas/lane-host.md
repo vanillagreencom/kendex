@@ -30,7 +30,7 @@ A host declares its kind in one capability line: tab-separated `key=value` field
 | `pane` | `local`, `verb` | `local`: the lane's window on the control machine holds the ssh client its harness runs under. `verb`: the provider owns the harness's session; the runtime reads it through `capture` and types into it through `send`. |
 | `stop` | `window`, `verb`, `none` | The close's stop: `window` and `verb` end the harness by its record and its provider, `none` stops nothing. |
 | `relaunch` | `resume`, `fresh` | Declared, read by no caller. |
-| `park` | `verb`, `none` | Declared, read by no caller: a park and a relaunch ask `stop-sandbox --check` instead. |
+| `park` | `verb`, `none` | `verb`: the provider holds the `stop-sandbox` and `start` pair. A relaunch that is not a park asks `list` and `start` only of a `verb` host. A park asks `stop-sandbox --check`. |
 | `accounts` | `verb`, `none` | Declared, read by no caller: the account listing asks the `accounts` verb and reads exit `2` as absent. |
 | `pool` | `plan`, `cloud-credit` | The account judge's tier: a Claude row on a `cloud-credit` host is judged on cloud credit. |
 | `land` | `lane`, `handoff` | The `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md). |
@@ -70,7 +70,7 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
 
 ## Who calls each verb
 
-- The launch (`launch-lane` request) asks `capabilities`; on a relaunch, `start` for a parked lane, and for any other one `stop-sandbox --check`, then, where the check reads the pair, `list`, and `start` where the list names the item's sandbox; then `create`, and `wait` after an accepted create. It asks `cat` and `put` for the host files of § Launch on a provider and § Launch record. On a `pane=verb` host it asks `status`, `capture`, `viewer-prefix` and, after a failure, `stop`.
+- The launch (`launch-lane` request) asks `capabilities`; on a relaunch, `start` for a parked lane, and for any other one on a `park=verb` host `list`, then `start` where the list names the item's sandbox; then `create`, and `wait` after an accepted create. It asks `cat` and `put` for the host files of § Launch on a provider and § Launch record. On a `pane=verb` host it asks `status`, `capture`, `viewer-prefix` and, after a failure, `stop`.
 - The watch asks only of lanes in flight. Each pass reads each host's `capabilities` once and makes one `read-many` per host for the hosted lanes' mailbox files under `<lane root>/tmp/lane-mail/<item>/`. Its lane duty asks `cat`, `touch`, `status` on a `status=verb` host and `capture` on a `pane=verb` host. Before a hosted relaunch it asks `stop`.
 - The wake asks `status` of a lane on a `pane=local`, `status=verb` host, and sends a `pane=verb` lane its line through `send --file`. On a `files=verb` host for Claude Code, Codex or Copilot, it also reads `<root>/tmp/lane-mail/<item>/session-rows.jsonl` through `cat` and `touch`.
 - `lane-mail` reads a hosted mailbox through `cat`, `touch` and `list`, and writes it through `append`.

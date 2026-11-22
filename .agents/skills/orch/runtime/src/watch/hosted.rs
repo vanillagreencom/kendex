@@ -160,6 +160,9 @@ pub struct Capabilities {
     /// How a kind's lane is stopped (`stop=`); `None` where the line names
     /// none, which no close has an arm for.
     pub stop: Option<StopKind>,
+    /// Whether the kind's provider holds the `stop-sandbox` and `start`
+    /// pair (`park=`).
+    pub park: ParkKind,
     /// The credit a kind's lane spends (`pool=`).
     pub pool: CreditPool,
 }
@@ -204,6 +207,15 @@ const CAPABILITY_SETS: [(&str, &[&str]); 12] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopKind {
     Window,
+    Verb,
+    None,
+}
+
+/// Whether a kind's provider stops a sandbox with its disk kept and starts
+/// it again (`park=`): `Verb` holds the `stop-sandbox` and `start` pair,
+/// `None` neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParkKind {
     Verb,
     None,
 }
@@ -277,6 +289,10 @@ impl Capabilities {
                 "verb" => StopKind::Verb,
                 _ => StopKind::None,
             }),
+            park: match of("park") {
+                "verb" => ParkKind::Verb,
+                _ => ParkKind::None,
+            },
             pool: match of("pool") {
                 "plan" => CreditPool::Plan,
                 _ => CreditPool::CloudCredit,
@@ -715,10 +731,9 @@ pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<Hos
 
 /// `stop-sandbox [--check] --item ITEM`: the check confirmed by
 /// `sandbox-stoppable item=ITEM`, the stop by `sandbox-stopped item=ITEM`.
-/// `Ok(false)` is exit 2, the absent-verb status of a provider without the
-/// stop-sandbox and start pair. A refusal is `Asked::Failed` with `exit=N`,
-/// `cause=answer-unparsed` or [`BUSY`].
-pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Result<bool, Asked> {
+/// A refusal is `Asked::Failed` with `exit=N` (2 the absent-verb status of a
+/// provider without the pair), `cause=answer-unparsed` or [`BUSY`].
+pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Result<(), Asked> {
     let mut args = vec!["stop-sandbox"];
     if check {
         args.push("--check");
@@ -732,11 +747,10 @@ pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Resu
     let out = call(scripts, host, "stop-sandbox", &args, READ_BOUND, step)?;
     match exit_code(&out) {
         0 => {}
-        2 => return Ok(false),
         code => return Err(Asked::Failed(format!("exit={code}"))),
     }
     if host::stdout_text(&out) == format!("{word} item={item}") {
-        Ok(true)
+        Ok(())
     } else {
         Err(Asked::Failed("cause=answer-unparsed".to_owned()))
     }
@@ -2644,6 +2658,7 @@ mod tests {
                 pane: PaneKind::Local,
                 launch: Some(Launch::Ssh),
                 stop: Some(StopKind::Verb),
+                park: ParkKind::None,
                 pool: CreditPool::Plan,
             })
         );
