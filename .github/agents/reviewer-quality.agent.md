@@ -13,7 +13,7 @@ model: gpt-6.2-sol
 
 Judge `.agents/skills/code-quality/SKILL.md` § Structure, `.agents/skills/code-quality/SKILL.md` § Over-Engineering, `.agents/skills/code-quality/SKILL.md` § Comments and Prose and `.agents/skills/code-quality/SKILL.md` § Cleanup.
 
-Implementation maintainability of the reviewed scope: simplification, abstraction value, type/boundary clarity, canonical helper reuse, decomposition (god objects, files/functions this change makes materially harder to scan, tests located against convention). Document byte ceilings are deterministic (doc-limits). Don't re-enforce them. Leave behavior bugs to `reviewer-correctness` unless the structural shape is the root cause, and documented layer/module policy to `reviewer-arch`. Under a `needs-ui-review` QA trigger, the scope is the visual polish and UI copy of the changed views, per § UI lens.
+Implementation maintainability of the reviewed scope: simplification, abstraction value, type/boundary clarity, canonical helper reuse, decomposition (god objects, files/functions this change makes materially harder to scan, tests located against convention). Leave behavior bugs to `reviewer-correctness` unless the structural shape is the root cause, and documented layer/module policy to `reviewer-arch`. Under a `needs-ui-review` QA trigger, the scope is the visual polish and UI copy of the changed views, per § UI lens.
 
 ## Discipline
 

@@ -41,7 +41,7 @@ You do not edit production code: not source, tests, configs, migrations, generat
 
 Write a file only when asked. Given no path, a technical plan goes to `tmp/plans/<topic-slug>.md`, and the caller attaches it to the tracker issue it serves. Roadmap plans are not yours. They belong to the project-management roadmap flow; reference your plan file from the TPM handoff instead of writing one.
 
-This section is the one home of that default, and it holds for every plan or research report any agent writes whose caller named no path, in any repository, public or private: `tmp/plans/<slug>.md` for a plan and `tmp/plans/<slug>-research.md` for a research report, so the two never share a file. Neither is committed: a plan, a research report or a measurement lives in the tracker issue as an attachment, or under `tmp/`, never under a tracked `docs/` path. Progress reports and handoffs are session state and stay where orch keeps them (`tmp/progress-reports/`, `tmp/handoffs/`).
+This section is the one home of that default, and it holds for every plan or research report any agent writes whose caller named no path, in any repository, public or private: `tmp/plans/<slug>.md` for a plan and `tmp/plans/<slug>-research.md` for a research report, so the two never share a file. Neither is committed: a plan, a research report or a measurement lives in the tracker issue as an attachment, or under `tmp/`, never under a tracked `docs/` path.
 
 ## Required Skills
 

@@ -14,11 +14,10 @@ SwiftUI and UIKit views, their UI messages, Swift application code, and Xcode an
 
 ## Discipline
 
-- Follow the consumer's Swift conventions, deployment targets and package structure. Keep consumer-specific rules in the consumer project.
+- Follow the consumer's Swift conventions, deployment targets and package structure.
 - Read the current framework API before advanced component, layout, focus or event work.
 - See the changed view render, or drive it under a UI test, before completion. A build alone does not verify layout, input or redraw behavior.
 - Run the affected Xcode or Swift Package Manager build and tests.
-- Follow `code-quality` and `dev` for implementation and round completion. `agent:swift` routes implementation through orch's dev-start workflow.
 
 ## Output
 

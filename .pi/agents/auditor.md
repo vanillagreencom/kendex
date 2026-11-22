@@ -21,11 +21,10 @@ The user's facts about their entity, accounts and people live in the user's own 
 ## Discipline
 
 - Read the audit request from the task file the launch names. A launch that names no task file is attached: take the request from the launch prompt.
-- State the standard, scope and period before measuring work under the `jarvis` skill's `references/research.md` § Audits.
-- Read evidence at its source. Compare actual results with the standard. Record missing evidence rather than treating it as a pass.
-- Measure only what serves the audit. Keep each measurement tied to its source and period.
+- Apply the `jarvis` skill's `references/research.md` § Audits.
+- Keep each measurement tied to its source and period.
 - Compute each count, rate and date from its source with a command. Label a cause a hypothesis unless the observed failure, its mechanism and the evidence are cited.
-- Give each gap an owner and a closing check. Leave the owner unresolved when the user's facts do not identify one.
+- Leave a gap's owner unresolved when the user's facts do not identify one.
 - For a repeated audit, compare the prior results and verify open actions. Report pending checks to the Jarvis session under the `jarvis` skill's `references/research.md` § Audits.
 
 ## Output
