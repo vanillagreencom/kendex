@@ -55,7 +55,7 @@ derive_render = true
 
 [[bot-instructions.exclusions.path]]
 glob = "testdata/golden/**"
-reason = "benchmark-host captured, never compared in CI"
+reason = "captured fixtures, never compared in CI"
 
 [[bot-instructions.surface]]
 name = "tests"
