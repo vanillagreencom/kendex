@@ -217,7 +217,9 @@ impl AdmissionReads<'static> {
         AdmissionReads {
             clis,
             item: Box::new(read_item),
-            range_paths: Box::new(read_range_paths),
+            range_paths: Box::new(|clis: &Clis, dir: &Path, range: &ScopeRange| {
+                read_range_paths(&clis.scope_paths, dir, range)
+            }),
             pulls: Box::new(read_open_pulls),
             checkout: Box::new(read_checkout),
             team_key: Box::new(read_team_key),
@@ -1522,14 +1524,14 @@ pub(super) fn read_item(
 /// (`--paths-output`), one per line, ahead of the one line its stdout
 /// documents, the verdict `harness_only=true|false`, which is dropped.
 pub(super) fn read_range_paths(
-    clis: &Clis,
+    scope_paths: &Path,
     repo_dir: &Path,
     range: &ScopeRange,
 ) -> std::result::Result<Vec<String>, ReadFailure> {
     let dir = repo_dir.display().to_string();
     let stdout = read_stdout(
         "harness-only",
-        &clis.scope_paths,
+        scope_paths,
         "range-paths",
         &[
             "--event",

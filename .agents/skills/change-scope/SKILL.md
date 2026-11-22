@@ -61,6 +61,8 @@ Every setting comes from the caller's environment or the commit `--base` names, 
 
 `change-scope launch` classifies a work item from the inputs that name a class: a production estimate, the item body's `Expected delta` line, the paths it names, a class the item already holds and a range. It reads them in that order. The widest class wins. The first input that names it is the cause.
 
+The range input takes the class the classifier answers for the range through `change_scope_read`, the reading review depth takes. The range's production lines count, so a range past `small_max_production` is `standard`. `render` and `trivial` read as `micro`. The cause is `branch-class class=C rule=R`, with the classifier's class and cause.
+
 `HARNESS_CI_STANDARD_PATHS` comes from the main checkout of `--repo`, never from a linked worktree's own settings. stdout is `change_class=micro|small|standard`. The arm prints no `quick-proof:` line.
 
 ## Rules

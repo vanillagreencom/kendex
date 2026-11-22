@@ -10,7 +10,7 @@ The tier for a change inside one subsystem and within the `small` ceiling, `smal
 
 The runner is a lane in the item's worktree, or a session that prepared one from the main checkout by the route above. A lane never waits on the overseer for a step this workflow permits ([skill-rules.md § Lane asks](../references/skill-rules.md#lane-asks)).
 
-The admission that launched the run reads the tier once, and the tier floors the run: `--floor small` below carries it. Each later check reads the branch's range against change-scope's rules, never a line count. A fix inside the admitted paths keeps the tier.
+The admission that launched the run reads the tier once, and the tier floors the run: `--floor small` below carries it. Each later check reads the branch's range through change-scope's classifier, its paths and its production lines, as review depth reads it. A fix inside the admitted paths keeps the tier while the range stays within the `small` ceiling.
 
 ## 1. Open The Session
 
@@ -24,7 +24,7 @@ Where that § 1's step 3 stamped a handoff record, continue from the first entry
 
 ## 2. Implement
 
-Run [start-worktree.md](start-worktree.md) § 2 through its step 4. Then check the branch against its class:
+Run [start-worktree.md](start-worktree.md) § 2 through its step 4. Then check the branch's paths and production lines against its class:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime tier --floor small --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH]

@@ -60,6 +60,13 @@ impl World {
             git(&repo, &["config", k, v]);
         }
         fs::write(repo.join("seed"), "seed\n").unwrap();
+        // The classifier measures a range only over a base that holds the
+        // generated-file inventory.
+        fs::write(
+            repo.join(".kendex-generated.json"),
+            "[\".kendex-generated.json\"]\n",
+        )
+        .unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-qm", "seed"]);
         World {
@@ -182,20 +189,96 @@ fn an_unmeasured_classification_answers_standard_with_its_cause() {
     );
 }
 
+/// `lines` lines appended to `path` in the checkout.
+fn append(repo: &Path, path: &str, lines: usize) {
+    let file = repo.join(path);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let mut text = fs::read_to_string(&file).unwrap_or_default();
+    for i in 0..lines {
+        text.push_str(&format!("export const added_{i} = 1;\n"));
+    }
+    fs::write(file, text).unwrap();
+}
+
+/// A range is classified by its changed paths and by its production lines,
+/// as review depth reads it, and its changed paths are counted. The MEM-460
+/// range changes 7 files, 3 of them new, with 506 production lines added.
 #[test]
-fn a_range_is_classified_by_its_changed_paths() {
+fn a_range_is_classified_by_its_paths_and_its_production_lines() {
     let w = World::new();
-    let base = git(&w.repo, &["rev-parse", "HEAD"]);
-    fs::write(w.repo.join("AGENTS.md"), "# Instructions\n").unwrap();
+    let modified = ["auth", "session", "store", "net"].map(|n| format!("apps/sidecar/src/{n}.ts"));
+    for path in &modified {
+        append(&w.repo, path, 60);
+    }
     git(&w.repo, &["add", "."]);
-    git(&w.repo, &["commit", "-qm", "instructions"]);
-    let out = w.tier(&["--base", &base, "--head", "HEAD"]);
-    assert_eq!(
-        answer(&out).1,
-        "tier=small brief=small cause=instruction-file path=AGENTS.md glob=AGENTS.md estimate=- delta=- paths=0",
-        "{}",
-        stderr(&out)
+    git(&w.repo, &["commit", "-qm", "sidecar"]);
+    let base = git(&w.repo, &["rev-parse", "HEAD"]);
+    let body = w.file(
+        "body",
+        "**Location**: `src/b.rs`\n**Expected delta**: 4 lines\n",
     );
+    let body = body.to_str().unwrap();
+    let ranges: &[(&str, &[(&str, usize)])] = &[
+        ("micro", &[("src/a.rs", 20)]),
+        ("small", &[("src/a.rs", 150)]),
+        (
+            "mem-460",
+            &[
+                ("apps/sidecar/src/auth.ts", 90),
+                ("apps/sidecar/src/session.ts", 70),
+                ("apps/sidecar/src/store.ts", 40),
+                ("apps/sidecar/src/net.ts", 26),
+                ("apps/sidecar/src/stall.ts", 120),
+                ("apps/sidecar/src/retry.ts", 100),
+                ("apps/sidecar/src/signal.ts", 60),
+            ],
+        ),
+        ("instructions", &[("AGENTS.md", 1)]),
+    ];
+    for (branch, files) in ranges {
+        git(&w.repo, &["checkout", "-q", "-B", branch, &base]);
+        for (path, lines) in *files {
+            append(&w.repo, path, *lines);
+        }
+        git(&w.repo, &["add", "."]);
+        git(&w.repo, &["commit", "-qm", branch]);
+    }
+    let mem_460 = "tier=standard brief=start cause=branch-class class=standard rule=production-past-small production=506 estimate=- delta=- paths=7";
+    let rows: &[(&str, &[&str], &str)] = &[
+        (
+            "micro",
+            &[],
+            "tier=micro brief=micro cause=branch-class class=micro rule=production-within-micro production=20 estimate=- delta=- paths=1",
+        ),
+        (
+            "small",
+            &[],
+            "tier=small brief=small cause=branch-class class=small rule=production-within-small subsystem=src estimate=- delta=- paths=1",
+        ),
+        ("mem-460", &[], mem_460),
+        ("mem-460", &["--floor", "small"], mem_460),
+        (
+            "instructions",
+            &[],
+            "tier=small brief=small cause=instruction-file path=AGENTS.md glob=AGENTS.md estimate=- delta=- paths=1",
+        ),
+        (
+            "micro",
+            &["--body", body],
+            "tier=micro brief=micro cause=estimate-within-micro production=4 estimate=- delta=4 paths=2",
+        ),
+    ];
+    for (head, args, line) in rows {
+        let mut argv = vec!["--base", base.as_str(), "--head", head];
+        argv.extend_from_slice(args);
+        let out = w.tier(&argv);
+        assert_eq!(
+            (out.status.code(), answer(&out).1.as_str()),
+            (Some(0), *line),
+            "{argv:?}: {}",
+            stderr(&out)
+        );
+    }
 }
 
 /// The brief the launch will be given names a path outside the Location:
@@ -283,6 +366,29 @@ fn a_body_to_refile_and_each_environment_failure_refuse_with_their_exit() {
             stderr(&out)
         );
     }
+}
+
+/// A range whose changed paths the path reader cannot read refuses: its
+/// count is unknown, never zero.
+#[test]
+fn a_range_the_path_reader_cannot_read_refuses() {
+    let w = World::new();
+    let seed = git(&w.repo, &["rev-parse", "HEAD"]);
+    fs::remove_file(w.scripts.join("harness-only")).unwrap();
+    let out = w.tier(&["--base", &seed, "--head", "HEAD"]);
+    assert_eq!(
+        (out.status.code(), out.stdout.is_empty()),
+        (Some(2), true),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        answer(&out)
+            .2
+            .starts_with("orch-runtime: tier cause=range-paths-unreadable detail="),
+        "{}",
+        stderr(&out)
+    );
 }
 
 #[test]

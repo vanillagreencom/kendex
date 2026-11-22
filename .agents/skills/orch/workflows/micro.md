@@ -16,7 +16,7 @@ An owner-directed small change, such as a settings line or a few lines of Markdo
 
 The cost of the check decides whether the overseer or a lane makes a change, never the kind of file. A change the commit chain checks in its diff-scoped pass is this tier's. A change whose check needs a build or a test run takes a lane in its own sandbox. A lane is keyed by a tracker item, so `directive-[ID]` never runs as a lane. The overseer files the change as a tracker item from the directive, as it files an item an `owner-note` asks for ([oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone)). That item launches under its own key, at the tier [oversee.md](oversee.md) § Item Tier assigns it, with neither the directive's branch nor its pull request. Its lane makes the change again from the item.
 
-The admission that launched the run reads the tier once, and the tier floors the run. § 4 judges a later edit by the paths it touches, never by a new class.
+The admission that launched the run reads the tier once, and the tier floors the run. The admission judges a later edit by the paths it touches. § 4 reads the class of the pushed range, its production lines included.
 
 `[WT_PATH]` is the running checkout's root throughout. A step marked **Main checkout only** runs on the main-checkout route alone, the directed change included. A lane never waits on the overseer for a step this workflow permits ([skill-rules.md § Lane asks](../references/skill-rules.md#lane-asks)).
 
@@ -186,7 +186,7 @@ Through the github skill, read the pull request's recorded base, not the base br
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-view [PR_NUMBER] --json baseRefOid,headRefOid
 ```
 
-Check the pushed range against the tier:
+Check the pushed range's paths and production lines against the tier:
 
 ```bash
 [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
