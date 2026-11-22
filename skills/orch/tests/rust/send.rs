@@ -686,7 +686,8 @@ fn the_mailbox_program_writes_none_of_the_fleet() {
 
 /// A directive to a lane on a provider goes to the mailbox at the lane's
 /// root on the host its record names, the route the runtime hands the
-/// program whole: never the local mailbox the lane does not read.
+/// program whole: never the local mailbox the lane does not read. The host
+/// holds the lane's worktree, its `.git`, and no mailbox file yet.
 #[test]
 fn a_hosted_lanes_directive_lands_on_the_host_its_record_names() {
     let w = world();
@@ -696,7 +697,7 @@ fn a_hosted_lanes_directive_lands_on_the_host_its_record_names() {
     write_executable(
         &provider,
         format!(
-            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n  append) cat >> '{log}' ;;\n  cat) exit 2 ;;\n  touch) ;;\n  *) exit 64 ;;\nesac\n",
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n  append) cat >> '{log}' ;;\n  cat) case \"$4\" in */.git) echo 'gitdir: /srv/clone/.git/worktrees/ssh-1' ;; *) exit 2 ;; esac ;;\n  touch) ;;\n  *) exit 64 ;;\nesac\n",
             log = log.display()
         ),
     );

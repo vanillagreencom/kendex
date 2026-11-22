@@ -1125,6 +1125,9 @@ new_lane hosted
 REMOTE_ROOT=/srv/lane/ken-1
 REMOTE_DISK="$TMP_ROOT/remote"
 mkdir -p "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1"
+# The `.git` file git writes into a linked worktree it registers: the lane's
+# worktree stands, so a hosted send may write its mailbox.
+printf 'gitdir: /srv/clone/.git/worktrees/ken-1\n' > "$REMOTE_DISK$REMOTE_ROOT/.git"
 printf '{"id":"remote-ask","kind":"ask","at":"t","text":"Hosted question"}\n' \
   > "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-overseer.jsonl"
 STUB_LOG="$TMP_ROOT/host.log"
@@ -1284,6 +1287,35 @@ HOST_ENV=(LANE_HOST_STUB_STATUS=4)
 host_lm send --item KEN-3 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'no host')"
 assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=KEN-3 state=unknown" \
   "a hosted send whose host cannot be reached is refused as unreachable, with its state"
+
+# A hosted send that arrives before the launch creates the lane's worktree
+# refuses and writes nothing, so the launch's worktree create finds the item
+# path free: a root that is not there on the host, and one standing with no
+# `.git`, a path git never registered. The provider's append would make the
+# root; a local --root that is not there is refused as root-not-checkout.
+# root|state of the root before the send
+worktree_absent_rows() {
+  local row root before made
+  for row in \
+    "/srv/lane/ken-8|absent" \
+    "/srv/lane/ken-9|unregistered"; do
+    IFS='|' read -r root before <<<"$row"
+    made="$REMOTE_DISK$root"
+    rm -rf -- "$made"
+    [ "$before" = absent ] || mkdir -p -- "$made"
+    host_lm send --item KEN-8 --root "$root" --host --directive --file "$(text d 'Too early.')"
+    assert_eq "$RC=$ERR=$OUT" "2=lane-mail: worktree-absent=KEN-8 root=$root=" \
+      "hosted $before root: the send refuses, naming the item and its root"
+    assert_eq "$([ -e "$made/tmp" ] || [ -L "$made/tmp" ] && echo written || echo untouched)" untouched \
+      "hosted $before root: nothing is made under the lane root"
+    [ "$before" != absent ] ||
+      assert_eq "$([ -e "$made" ] || [ -L "$made" ] && echo made || echo free)" free \
+        "hosted $before root: the item path stays free for the worktree create"
+  done
+  assert_eq "$(grep -c -- 'append --item KEN-8' "$STUB_LOG" || :)" 0 \
+    "no refused hosted send reaches the provider's append"
+}
+worktree_absent_rows
 # A host that answers and a mailbox that is not there yet is an empty read; a
 # host that does not answer is refused, since the transport reports one status
 # for both and a silent lane is not the safe reading.
@@ -1525,6 +1557,18 @@ assert_eq "$RC=$ERR=$OUT" "2=lane-mail: mail-read-failed=PROOF-1=" \
 assert_eq "$(grep -c '^touch ' "$STUB_LOG" || :)" "0" \
   "control: the later error probe is absent after a successful read"
 unset LANE_MAIL_BIN
+
+# The hosted worktree-absent guard removed fails the rows it holds.
+worktree_absent_control() {
+  local rc=0
+  # shellcheck disable=SC2016  # the script's own text, never expanded here.
+  mutant worktree-absent-hosted \
+    '[ "$LM_FETCH_ABSENT" -eq 0 ] || REFUSE_EXTRA="root=$ROOT" refuse worktree-absent "$ITEM"' ':'
+  ( FAIL=0; worktree_absent_rows; [[ "$FAIL" -eq 0 ]] ) >"$TMP_ROOT/worktree-absent-control.out" || rc=$?
+  assert_eq "$rc" 1 "control: without the hosted guard the worktree-absent rows fail"
+  unset LANE_MAIL_BIN
+}
+worktree_absent_control
 
 # The overseer answer through the cursor-backed read the watch makes, from
 # the start of PEER_A's mailbox: its peek hands the peer's answer over.
