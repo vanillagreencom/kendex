@@ -3120,19 +3120,18 @@ fn park_pause() -> Value {
     json!({"from": "2026-01-29T15:10:00Z", "to": "2026-01-29T15:20:00Z", "cause": "parked"})
 }
 
-/// A record whose relaunch from a park did not bring its sandbox back: the
-/// relaunch failed before its provider answered a start (`stopped`), or is
-/// held at that start (`preparing`). Its sandbox stays stopped and listed,
+/// A record whose relaunch from a park failed before its provider answered
+/// a start: it is `stopped` over a sandbox that stays stopped and listed,
 /// its box unreadable, and no session has run there since the park read
-/// it. Its close, on an item its tracker ended or holds open, holds on no
-/// box or ask read: a failed relaunch's box is not read, a held one's read
-/// fails without holding, and the provider's close ends the sandbox.
+/// it. Its close, on an item its tracker ended or holds open, reads no box
+/// and no ask, and the provider's close ends the sandbox. A relaunch from a
+/// park still `preparing` may have brought its sandbox back, so a box read
+/// that fails holds its close with `mail: unread`, asking no provider close.
 #[test]
 fn a_relaunch_from_a_park_that_brought_no_sandbox_back_closes_through_its_provider() {
-    for (case, status, tracker) in [
-        ("failed, item ended", "stopped", "completed"),
-        ("failed, item open", "stopped", "started"),
-        ("held at its start, item ended", "preparing", "completed"),
+    for (case, tracker) in [
+        ("failed, item ended", "completed"),
+        ("failed, item open", "started"),
     ] {
         let mut fleet = Fleet::hosted(4);
         for (name, value) in MAIL_UNREACHABLE {
@@ -3141,21 +3140,18 @@ fn a_relaunch_from_a_park_that_brought_no_sandbox_back_closes_through_its_provid
         fleet.answer("LIST", "o/r/KEN-1\tstopped\t-\tlane.example");
         fleet.answer("LIST_CLOSED", "");
         let mut lane = hosted_lane("KEN-1");
-        lane["status"] = json!(status);
+        lane["status"] = json!("stopped");
         lane["pauses"] = json!([park_pause()]);
         fleet.write_lanes(vec![lane]);
         fleet.plant_tracker("KEN-1", tracker);
         let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
         let result = &answer["result"];
         assert_eq!(result["word"], "closed", "{case}: {answer}");
-        // A failed relaunch's box is not read; a held one's is, and its
-        // failure holds nothing.
-        let mail = if status == "stopped" {
-            Value::Null
-        } else {
-            json!("unread-parked")
-        };
-        assert_eq!(result["observation"]["mail"], mail, "{case}: {result}");
+        assert_eq!(
+            result["observation"]["mail"],
+            Value::Null,
+            "{case}: {result}"
+        );
         let close = if tracker == "completed" {
             "close --item KEN-1 --merged"
         } else {
@@ -3168,6 +3164,36 @@ fn a_relaunch_from_a_park_that_brought_no_sandbox_back_closes_through_its_provid
         );
         assert_eq!(fleet.lane("KEN-1")["status"], "done", "{case}");
     }
+
+    let mut fleet = Fleet::hosted(4);
+    for (name, value) in MAIL_UNREACHABLE {
+        fleet.answer(name, value);
+    }
+    fleet.answer("LIST", "o/r/KEN-1\tstopped\t-\tlane.example");
+    let mut lane = hosted_lane("KEN-1");
+    lane["status"] = json!("preparing");
+    lane["pauses"] = json!([park_pause()]);
+    fleet.write_lanes(vec![lane]);
+    fleet.plant_tracker("KEN-1", "completed");
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    let result = &answer["result"];
+    assert_eq!(result["word"], "unconfirmed", "preparing: {answer}");
+    assert_eq!(
+        result["observation"]["mail"], "unread",
+        "preparing: {result}"
+    );
+    assert!(
+        result["observation"]["cause"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("mail-read-failed ")),
+        "preparing: {result}"
+    );
+    let calls = fleet.provider_calls();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("close ")),
+        "preparing: no provider close: {calls:?}"
+    );
+    assert_eq!(fleet.lane("KEN-1")["status"], "preparing", "preparing");
 }
 
 /// A terminal close removes the item's own records and keeps a caller's

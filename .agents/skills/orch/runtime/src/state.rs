@@ -742,13 +742,12 @@ impl Lane {
     }
 
     /// Whether the lane is a relaunch from its last park that failed
-    /// (`stopped`) or has not confirmed (`preparing`), and names no sandbox
-    /// standing ([`SANDBOX`]): no session has confirmed in its sandbox since
-    /// the park read its mailbox. A failed one's sandbox is still stopped,
-    /// since its provider answered no start or create; a preparing one's may
-    /// have come back.
+    /// (`stopped`) and names no sandbox standing ([`SANDBOX`]): its provider
+    /// answered no start or create, so its sandbox is still stopped and no
+    /// session has run there since the park read its mailbox. A relaunch
+    /// still `preparing` is not one: its sandbox may have come back.
     pub fn park_unresumed(&self) -> bool {
-        matches!(self.status, LaneStatus::Stopped | LaneStatus::Preparing)
+        self.status == LaneStatus::Stopped
             && self.parked_last()
             && self.extra.get(SANDBOX).and_then(Value::as_str) != Some(STANDING)
     }
@@ -760,7 +759,7 @@ impl Lane {
     pub fn mail_parked(&self) -> bool {
         self.status == LaneStatus::Parked
             || self.extra.contains_key(PARK_OWED)
-            || (self.status == LaneStatus::Stopped && self.park_unresumed())
+            || self.park_unresumed()
     }
 }
 

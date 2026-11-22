@@ -563,13 +563,6 @@ impl Close<'_> {
             match self.last_mail(&operation) {
                 Ok(None) => {}
                 Ok(Some(mail)) => observation["mail"] = json!(mail),
-                // A relaunch from a park that has not confirmed may have left
-                // its sandbox stopped, which answers no read; no session has
-                // confirmed there since the park read the box.
-                Err(Unread::Failed { cause }) if self.lane.park_unresumed() => {
-                    observation["mail"] = json!("unread-parked");
-                    observation["mail_cause"] = json!(cause);
-                }
                 Err(unread) => {
                     observation["mail"] = json!("unread");
                     observation["cause"] = json!(unread.to_string());
