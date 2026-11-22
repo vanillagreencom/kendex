@@ -13,11 +13,7 @@
 | `RATIONALE_SUMMARY` | the key reason | `Battle-tested, ecosystem support` |
 | `REVISIT_WHEN` | the trigger | `Alternative runtime outperforms tokio 2x` |
 | `STATUS` | See `../schemas/decision-format.md` | `Active (ThreadBound → D017)` |
-| `LINK` | See `../schemas/decision-format.md` § INDEX.md: `[Full](DECISION_ID-descriptor.md)` while the document exists, the backticked filename once it is gone | `[Full](D034-async-runtime.md)` |
-
-The Link cell names the decision file; the CLI resolves body search and `get` through it, and `decisions check` compares the filename the cell resolves to as the record's identity across branches. The cell's form follows the document's existence, as that schema states: a withdrawn record keeps its short document and link. A removed record keeps its link when a pointer document remains; otherwise it carries the filename in a code span (`` `D034-async-runtime.md` ``), so the identity holds and no dead link remains.
-
-Append new rows at the end of the table, before the `---` separator; never re-sort, even for a decision written up late.
+| `LINK` | See `../schemas/decision-format.md` § INDEX.md | `[Full](D034-async-runtime.md)` |
 
 ```markdown
 | 2026-03-24 | D034 | [PROJ-200](https://linear.app/acme/issue/PROJ-200) | Use tokio for async runtime | Battle-tested, ecosystem support | Alternative runtime outperforms tokio 2x | Active | [Full](D034-async-runtime.md) |

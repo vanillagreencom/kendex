@@ -20,9 +20,20 @@ Numbered decision documents indexed in one `INDEX.md` (default `docs/decisions/`
 .agents/skills/decider/scripts/decisions <command> [options]
 ```
 
-Actions (`search`, `search --issue`, `list`, `next-id`, `get`, `check`), search coverage and scoring, output shapes, and the `DECISIONS_DIR` / `DECISIONS_BASE_REF` / `DECISION_ID_*` environment: `decisions --help`. There is no bare `issue` action; use `search --issue`.
+Actions (`search`, `search --issue`, `list`, `next-id`, `get`, `check`), search coverage and scoring, output shapes, and the `DECISIONS_DIR` / `DECISIONS_BASE_REF` / `DECISION_ID_*` environment: `decisions --help`.
 
-Read a hit's INDEX row first. Read an active or superseded record's document before treating it as binding. When considering a withdrawn option, read its retained document and withdrawal reason. A removed record's reason lives where its Rationale cell names it, the comment at the code or the principle doc's section. An active decision binds design policy; a suggestion contradicting it is invalid unless the decision itself is flawed. One marked superseded binds only what its status leaves active; a withdrawn one binds nothing; a removed one binds through the code or principle doc its INDEX row names.
+Read a search hit's INDEX row first. Then, by the record's status:
+
+- Active or superseded: read its document before treating it as binding.
+- Withdrawn: when considering the option, read its retained document and withdrawal reason.
+- Removed: its reason lives where its Rationale cell names it, the comment at the code or the principle doc's section.
+
+What a record binds:
+
+- An active decision binds design policy. A suggestion contradicting it is invalid unless the decision itself is flawed.
+- A superseded decision binds only what its status leaves active.
+- A withdrawn decision binds nothing.
+- A removed decision binds through the code or principle doc its INDEX row names.
 
 ## What warrants a decision record, and why
 
@@ -41,7 +52,11 @@ Not warranted:
 - A choice no one would revisit: a file format version field, a naming scheme.
 - A record of what was done: git history holds it.
 
-A record is short: the choice, why, the main rejected alternative, the revisit trigger, with its ID, status, issue or evidence link and partial-supersession scope. Shortening a record keeps its ID and status; moving a reason into code is not a reversal. A record whose choice is routine is removed once its reason lives in the code or principle doc it governs: removal is not withdrawal and changes no policy. A withdrawal with no replacement is a retirement. Follow `workflows/update-decision.md`: retain a significant withdrawn decision's short document with status `Withdrawn` and the withdrawal reason; remove a routine record's document after moving its reason. Keep the INDEX row in both cases so the ID stays reserved. Supersede only changed policy.
+An existing record:
+
+- Shortening a record keeps its ID and status. Moving a reason into code is not a reversal.
+- A record whose choice is routine is removed once its reason lives in the code or principle doc it governs. Removal is not withdrawal and changes no policy.
+- A withdrawal with no replacement is a retirement.
 
 ## Workflows
 
@@ -50,7 +65,7 @@ A record is short: the choice, why, the main rejected alternative, the revisit t
 | `workflows/create-decision.md` | A choice under the bar above is settled |
 | `workflows/update-decision.md` | A new decision supersedes, partially supersedes, or revisits an existing one, or an existing one is retired or removed |
 
-Format: `schemas/decision-format.md` (constraints), `templates/decision-entry.md` (document skeleton), `templates/index-row.md` (INDEX row). The finished example is the docs-writing skill's `examples/decision.md`.
+Format: `schemas/decision-format.md` (constraints), `templates/decision-entry.md` (document skeleton), `templates/index-row.md` (INDEX row).
 
 ## Approval
 
