@@ -1,8 +1,6 @@
 # Review
 
-Code review of pending changes via external model. The script auto-generates the review prompt (embedded schema, review lenses, the repo's own instruction files); no custom prompt is needed.
-
-With no `--target` and no `SECOND_OPINION_TARGET`, the script takes the first eligible entry of `SECOND_OPINION_MODELS` that is not this session's model (`SECOND_OPINION_COUNT` of 2 or more collects distinct opinions in order and writes one union artifact) — do not pass `--target` unless the user asked for a specific model. A refusal (exit 1, "no eligible cross-model target") is reported as-is, never worked around by forcing the same model.
+Code review of pending changes via external model. The script builds the review prompt, so no custom prompt is needed.
 
 ## 1. Interpret Scope
 
@@ -18,7 +16,7 @@ Translate the user's request into a `--range` value. The script passes it direct
 | "review since yesterday" | `@{yesterday}..HEAD` | Commits since a time |
 | "review abc123..def456" | `abc123..def456` | Explicit range (pass through) |
 
-If user specifies a PR number → resolve the worktree path first, then pass `--cwd`.
+If the user names a PR number, resolve its worktree path first, then pass it as `--cwd`.
 
 ## 2. Run Script
 
@@ -32,29 +30,18 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
   --foreground
 ```
 
-Execute the exact command printed after `wait:` and follow its exit handling in `second-opinion --help` until terminal. Then read and validate the artifact.
+1. Execute the exact command printed after `wait:`.
+2. Follow its exit handling in `second-opinion --help` until terminal.
+3. Then read and validate the artifact.
 
 ## 3. Present Results
 
-Standard review-finding JSON — same schema used by all internal review agents:
+The artifact is review-finding JSON, the schema every internal review agent uses.
 
-```json
-{
-  "agent": "external-[TARGET]",
-  "verdict": "pass|action_required",
-  "summary": "1-2 sentence summary",
-  "blockers": [],
-  "suggestions": [],
-  "questions": [],
-  "qa_metadata": {}
-}
-```
-
-When multiple lanes ran, the artifact is a union — field meanings, merge rules, and lane-artifact placement: [../references/multi-lane.md](../references/multi-lane.md). When `qa_metadata.coverage` is `"degraded"`, say so when presenting. `qa_metadata.reviewed_head` records the head commit the review covered — budget review passes per head, not per submission.
-
-`questions` is always empty (no PR comment context).
-
-The script never writes an artifact for a review that did not happen (empty diff, response unusable after its one retry, CLI never answered — each exits non-zero). **On any non-zero exit, report what failed instead of presenting a verdict**; the codes and their sidecar files are in `second-opinion --help`.
+- When multiple lanes ran, the artifact is a union. Field meanings, merge rules and lane-artifact placement: [../references/multi-lane.md](../references/multi-lane.md).
+- When `qa_metadata.coverage` is `"degraded"`, say so when presenting.
+- `qa_metadata.reviewed_head` records the head commit the review covered. Budget review passes per head, not per submission.
+- **On any non-zero exit, report what failed instead of presenting a verdict.** The codes and their sidecar files are in `second-opinion --help`.
 
 <output_format>
 
@@ -78,4 +65,5 @@ The script never writes an artifact for a review that did not happen (empty diff
 
 </output_format>
 
-Omit empty sections. If `action_required` → ask user which items to address.
+- Omit empty sections.
+- If the verdict is `action_required`, ask the user which items to address.

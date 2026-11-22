@@ -4,15 +4,9 @@ Adversarial analysis of a proposed approach before implementation.
 
 ## 1. Build Prompt
 
-Gather the user's description. The user may be brief — expand from conversation context:
-
-| User says | What to include in prompt |
-|-----------|--------------------------|
-| "challenge my refactor approach" | Summarize the approach from recent conversation, include relevant code |
-| "challenge using async here" | Describe the async pattern being considered, include the code in question |
-| "challenge this design" + file paths | Read the files, describe the design |
-
-Read relevant code files for context, then write a prompt file to `tmp/second-opinion-prompt.md`:
+1. Gather the user's description. The user may be brief: expand it from conversation context.
+2. Read relevant code files for context.
+3. Then write a prompt file to `tmp/second-opinion-prompt.md`:
 
 <prompt_template>
 You are an adversarial reviewer providing a cross-model second opinion. The developer wants to take the following approach — your job is to stress-test it.
@@ -57,8 +51,11 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
   --foreground
 ```
 
-Execute the exact command printed after `wait:` and follow its exit handling in `second-opinion --help` until terminal. On success, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
+1. Execute the exact command printed after `wait:`.
+2. Follow its exit handling in `second-opinion --help` until terminal.
+3. On success, read the file printed after `artifact:` with `cat < [ARTIFACT_PATH]`.
 
 ## 3. Present Results
 
-Present the structured artifact contents directly. Highlight CRITICAL/HIGH risks with emphasis.
+- Present the structured artifact contents directly.
+- Highlight CRITICAL and HIGH risks with emphasis.

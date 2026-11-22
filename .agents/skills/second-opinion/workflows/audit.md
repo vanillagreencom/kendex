@@ -4,7 +4,9 @@ Examine caller-specified code or a caller-specified diff. Returns review-finding
 
 ## 1. Build Prompt
 
-Identify target files/directories from user request. Read the code to understand scope, then write a prompt file to `tmp/second-opinion-prompt.md`:
+1. Identify the target files or directories from the user's request.
+2. Read the code to understand the scope.
+3. Then write a prompt file to `tmp/second-opinion-prompt.md`:
 
 <prompt_template>
 You are a code auditor providing a cross-model second opinion. Examine the specified code for quality issues.
@@ -27,7 +29,10 @@ Skip: style preferences, naming opinions, documentation gaps.
 
 ## 2. Run Script
 
-For a diff audit, pass the exact range as `--range [BASE...HEAD]` in addition to the prompt. Do not rely on a range named only in prompt text. Scope and caller-prompt transport are defined by `second-opinion --help`.
+- For a diff audit, pass the exact range as `--range [BASE...HEAD]` in addition to the prompt.
+- Do not rely on a range named only in prompt text.
+
+Scope and caller-prompt transport are defined by `second-opinion --help`.
 
 Run `second-opinion …`; it backgrounds itself and prints when to check.
 
@@ -39,7 +44,9 @@ Run `second-opinion …`; it backgrounds itself and prints when to check.
   --foreground
 ```
 
-Execute the exact command printed after `wait:` and follow its exit handling in `second-opinion --help` until terminal. Then read and validate the artifact.
+1. Execute the exact command printed after `wait:`.
+2. Follow its exit handling in `second-opinion --help` until terminal.
+3. Then read and validate the artifact.
 
 ## 3. Present Results
 
