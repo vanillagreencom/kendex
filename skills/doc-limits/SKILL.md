@@ -1,7 +1,7 @@
 ---
 name: doc-limits
 description: "Load to add, tune, or debug document byte ceilings and DOC_LIMITS_* settings."
-summary: "Byte limits for the Markdown a harness loads at every turn: an AGENTS.md, CLAUDE.md, GEMINI.md or SKILL.md over its limit fails. Path classes set the limits, with reasoned exclusions."
+summary: "Byte limits for the Markdown a harness loads at every turn: an AGENTS.md, CLAUDE.md, GEMINI.md or SKILL.md over its limit fails. Path classes set the limits, and each exclusion carries a written reason."
 license: MIT
 user-invocable: true
 dependencies:
@@ -32,4 +32,4 @@ Bring a document over its limit under that limit in this order:
 
 Never delete a rule to fit.
 
-Read [references/policy.md](references/policy.md) to choose a class or write an exclusion. Flags, settings and exit codes are in `doc-limits --help`.
+Read [references/policy.md](references/policy.md) to choose a class, write an exclusion, or learn which files the generated-file inventory `.kendex-generated.json` excludes and what an absent one means. Flags, settings and exit codes are in `doc-limits --help`.

@@ -11,7 +11,7 @@
 
 ## Exclusion list
 
-- Generated files are excluded by exact path from the render writer's `.kendex-generated.json`. Adopted in-place source remains governed because the writer leaves it out of that inventory. Adoption needs no ownership row in the exclusions file.
+- Generated files are excluded by exact path from the render writer's `.kendex-generated.json`. Adopted in-place source remains governed because the writer leaves it out of that inventory. Adoption needs no ownership row in the excludes file.
 - An absent inventory is an empty one: nothing is excluded and every file in the measured set is measured. A project whose items are all in-place, or one installed below the Git root, writes no repository inventory and needs none.
 - The default mode reads the worktree inventory, falling back to its index copy when absent. Staged mode reads the tracked index copy; an inventory staged for deletion is absent. An untracked inventory reads from the worktree.
 - Each row of the excludes file is `pattern<TAB>reason`. `doc-limits --help` names the setting and the flag that select the file. Blank lines and lines starting with `#` are ignored.

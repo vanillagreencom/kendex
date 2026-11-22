@@ -21,7 +21,7 @@ The checker measures every tracked `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SK
 
 ## Path classes
 
-Set `DOC_LIMITS_CLASSES` to override the limit of a measured file. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) defines class selection and reasoned exclusions.
+Set `DOC_LIMITS_CLASSES` to override the limit of a measured file. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) says how a file's class is chosen and how to exclude a document with a written reason.
 
 ## Setup
 

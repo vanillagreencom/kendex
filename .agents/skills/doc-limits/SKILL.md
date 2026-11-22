@@ -36,4 +36,4 @@ Bring a document over its limit under that limit in this order:
 
 Never delete a rule to fit.
 
-Read [references/policy.md](references/policy.md) to choose a class or write an exclusion. Flags, settings and exit codes are in `doc-limits --help`.
+Read [references/policy.md](references/policy.md) to choose a class, write an exclusion, or learn which files the generated-file inventory `.kendex-generated.json` excludes and what an absent one means. Flags, settings and exit codes are in `doc-limits --help`.
