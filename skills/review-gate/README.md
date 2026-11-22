@@ -1,6 +1,6 @@
 # Review operations
 
-This package updates kendex installs in consumer repositories. GitHub rulesets enforce the approval and review-thread requirements. The github skill watches pull requests and reports their review state.
+This package updates kendex installs in consumer repositories. GitHub rulesets enforce the approval and review-thread requirements.
 
 ## Features
 
@@ -15,7 +15,7 @@ kendex add vanillagreencom/kendex --skill review-gate
 
 ## How it works
 
-Consumer refresh updates one rolling branch. The [arm contract](SKILL.md#scripts) defines when it requests auto-merge. The [consumer refresh rules](references/adoption.md#automatic-consumer-refresh) define how it handles automatic review threads.
+Consumer refresh updates one rolling branch. The [publication rules](references/adoption.md#publication) define when it requests auto-merge. The [review thread rules](references/adoption.md#automatic-review-threads) define how it handles automatic review threads.
 
 ## Setup
 

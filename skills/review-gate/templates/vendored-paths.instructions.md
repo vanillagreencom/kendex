@@ -49,8 +49,8 @@ that most often survive and they are the two the flat rule forbids.
    repo before it arrives here. Nothing under this glob is edited in this
    repo. Interactive refresh holds a hand edit until someone forks it or
    discards it. The rolling refresh preserves hand edits and refuses publication under the contract in
-   `.agents/skills/review-gate/SKILL.md` § Scripts. A local fix does not reach
-   the repos that share this render.
+   `.agents/skills/review-gate/references/adoption.md` § Publication. A local
+   fix does not reach the repos that share this render.
 
    [UPSTREAM_REPO] and [PIN_CHECK] do not apply and are not filled: a render
    has no pin, and its upstream is whichever catalog `kendex.toml` names.

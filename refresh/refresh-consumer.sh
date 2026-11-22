@@ -3,7 +3,7 @@
 # from the kendex release tree the shared workflow checked out. It rebuilds the rolling branch from the
 # checkout and never executes the remote rolling branch. After GitHub shows the
 # published head, it merges directly where the base has no rules or protection,
-# or requests auto-merge. SKILL.md defines the arm outcomes. A render this
+# or requests auto-merge. review-gate references/adoption.md, Publication, defines the arm outcomes. A render this
 # run committed first goes to the default branch itself where the landing
 # token, KENDEX_LAND_TOKEN, is set, every project takes its packages from
 # the default catalog at main alone, and that branch's merge queue holds no
