@@ -33,6 +33,22 @@ ln -s "$SRC/tests/setup/rustup" "$TMP_ROOT/bin/rustc"
 export FAKE_TOOLCHAINS=1.96.1
 # A caller under `rustup run` would otherwise choose the planted toolchain.
 unset RUSTUP_TOOLCHAIN
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# Setup reads the home directory's skills after a build: a scratch home.
+export HOME="$TMP_ROOT/home"
+export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+mkdir -p "$HOME"
+# The planted kendex answers `project list --json` from FAKE_KENDEX_REGISTRY,
+# or exits FAKE_KENDEX_EXIT.
+cat >"$TMP_ROOT/bin/kendex" <<'SHIM'
+#!/bin/sh
+[ "$*" = 'project list --json' ] || exit 97
+[ "${FAKE_KENDEX_EXIT:-0}" -eq 0 ] || exit "$FAKE_KENDEX_EXIT"
+cat "$FAKE_KENDEX_REGISTRY"
+SHIM
+chmod 755 "$TMP_ROOT/bin/kendex"
+export FAKE_KENDEX_REGISTRY="$TMP_ROOT/registry.json"
+printf '[]\n' >"$FAKE_KENDEX_REGISTRY"
 
 # chmod as BSD reads its arguments, first on PATH for every row, so a Linux
 # run fails the placement a macOS one fails: getopt(3) stops at the first
@@ -238,6 +254,197 @@ RC=0
 env -u AGENT_RUNTIME_CACHE XDG_CACHE_HOME="$TMP_ROOT/xdg" "$SETUP" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || RC=$?
 assert_eq "$RC" 0 'setup under XDG_CACHE_HOME exits 0' "$TMP_ROOT/err"
 assert_eq "$(cat "$TMP_ROOT/out")" "agent-runtime-setup: key=$KEY binary=$TMP_ROOT/xdg/kendex/agent-runtime/bin/agent-runtime-$KEY" 'the default cache is kendex/agent-runtime under XDG_CACHE_HOME'
+
+# --- after a build, setup removes the keys nothing uses ---------------------
+# One cache holding a key of each kind setup tells apart, then a build of the
+# package's key from a registered copy of the package, since a build from a
+# checkout no record names removes nothing. The registered checkouts beside
+# it: a repository and its linked
+# worktree, a folder in no repository (a source catalog's skills/ layout),
+# beside the home directory. The unregistered ones: a runtime a cargo is
+# building now, and a hosted lane's clone for the row after. Each holds the
+# package's runtime one comment off, so each resolves to a key of its own.
+# Every finished build's dep-info names a checkout that is gone unless a row
+# says otherwise.
+PC="$TMP_ROOT/cache-prune"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+hex() { printf '%064d' 0 | tr 0 "$1"; }
+placed() { printf '#!/bin/sh\n' >"$PC/bin/agent-runtime-$1" && chmod -- 755 "$PC/bin/agent-runtime-$1"; }
+built_from() { # KEY RUNTIME — the dep-info cargo leaves, a space escaped as `\ `
+  local escaped="${2// /\\ }"
+  printf '%s: %s/src/main.rs %s/src/lib.rs %s/skills/other/runtime/src/lib.rs\n' \
+    "$PB/$1/release/agent-runtime" "$escaped" "$escaped" "$TMP_ROOT/dependency" >"$PB/$1/release/agent-runtime.d"
+}
+built() { mkdir -p "$PB/$1/release" && : >"$PB/$1.log" && placed "$1" && built_from "$1" "$TMP_ROOT/gone/$1"; }
+runtime_copy() { # DEST MARK
+  mkdir -p "$1"
+  cp -p "$PKG/runtime/Cargo.toml" "$PKG/runtime/Cargo.lock" "$1/"
+  cp -R "$PKG/runtime/src" "$1/src"
+  printf '// %s\n' "$2" >>"$1/src/lib.rs"
+}
+key_at() { bash -c 'refuse() { exit 1; }; . "$1"; agent_runtime_key "$2"' _ "$SRC/scripts/lib/key.sh" "$1"; }
+until_args() { # PID PREFIX — until ps shows the process's arguments opening with PREFIX
+  local n=0
+  until [[ "$(ps -p "$1" -ww -o args= 2>/dev/null || :)" == "$2"* ]]; do
+    n=$((n + 1))
+    [ "$n" -lt 100 ] || return 1
+    sleep 0.1
+  done
+}
+REPO="$TMP_ROOT/checkouts/repo"
+LANE="$TMP_ROOT/checkouts/lane"
+PLAIN="$TMP_ROOT/checkouts/plain"
+PACKAGE="$TMP_ROOT/checkouts/package/skills/agent-runtime/runtime"
+CLONE="$TMP_ROOT/lane host/clone/.agents/skills/agent-runtime/runtime"
+BUILDING="$TMP_ROOT/building/.agents/skills/agent-runtime/runtime"
+mkdir -p "$REPO"
+git -C "$REPO" init -q
+git -C "$REPO" config gc.auto 0
+git -C "$REPO" config maintenance.auto false
+runtime_copy "$REPO/.agents/skills/agent-runtime/runtime" repo
+git -C "$REPO" add -A
+git -C "$REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m fixture
+git -C "$REPO" worktree add -q -b lane "$LANE"
+printf '// lane\n' >>"$LANE/.agents/skills/agent-runtime/runtime/src/lib.rs"
+# A copy delivery: the tool's own directory holds a copy, not a link.
+runtime_copy "$REPO/.claude/skills/agent-runtime/runtime" copy
+runtime_copy "$PLAIN/skills/agent-runtime/runtime" plain
+mkdir -p "$PACKAGE"
+cp -p "$PKG/runtime/Cargo.toml" "$PKG/runtime/Cargo.lock" "$PACKAGE/"
+cp -R "$PKG/runtime/src" "$PACKAGE/src"
+runtime_copy "$HOME/.agents/skills/agent-runtime/runtime" home
+runtime_copy "$HOME/.pi/agent/skills/agent-runtime/runtime" pi
+runtime_copy "$CLONE" clone
+runtime_copy "$BUILDING" building
+printf '[{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"folder-not-found","worktree":null}]\n' \
+  "$REPO" "$PLAIN" "$TMP_ROOT/checkouts/package" "$TMP_ROOT/gone" >"$FAKE_KENDEX_REGISTRY"
+assert_eq "$(key_at "$PACKAGE")" "$KEY" 'premise: the registered copy of the package resolves to its key'
+REPO_KEY="$(key_at "$REPO/.agents/skills/agent-runtime/runtime")"
+LANE_KEY="$(key_at "$LANE/.agents/skills/agent-runtime/runtime")"
+COPY_KEY="$(key_at "$REPO/.claude/skills/agent-runtime/runtime")"
+PLAIN_KEY="$(key_at "$PLAIN/skills/agent-runtime/runtime")"
+HOME_KEY="$(key_at "$HOME/.agents/skills/agent-runtime/runtime")"
+PI_KEY="$(key_at "$HOME/.pi/agent/skills/agent-runtime/runtime")"
+CLONE_KEY="$(key_at "$CLONE")"
+BUILDING_KEY="$(key_at "$BUILDING")"
+CHECKOUT_KEYS="$REPO_KEY $LANE_KEY $COPY_KEY $PLAIN_KEY $HOME_KEY $PI_KEY $BUILDING_KEY"
+# shellcheck disable=SC2086 # the keys, one word each
+assert_eq "$(printf '%s\n' "$KEY" $CHECKOUT_KEYS "$CLONE_KEY" | grep -c -E '^[0-9a-f]{64}$' | tr -d ' ')|$(printf '%s\n' "$KEY" $CHECKOUT_KEYS "$CLONE_KEY" | sort -u | wc -l | tr -d ' ')" '9|9' 'premise: each checkout resolves to a key of its own'
+for checkout_key in $CHECKOUT_KEYS; do
+  [ "$checkout_key" = "$BUILDING_KEY" ] || built "$checkout_key"
+done
+# A build of a key no checkout holds now, its dep-info naming a recorded
+# checkout that has since moved to another key.
+UNUSED="$(hex a)"
+built "$UNUSED"
+built_from "$UNUSED" "$PLAIN/skills/agent-runtime/runtime"
+: >"$PB/$UNUSED.told-0-build-failed"
+# A finished build whose dep-info names no source proves no builder.
+UNRECORDED="$(hex 3)"
+built "$UNRECORDED"
+: >"$PB/$UNRECORDED/release/agent-runtime.d"
+FAILED="$(hex 1)"
+mkdir -p "$PB/$FAILED"
+printf 'build-failed\n' >"$PB/$FAILED.failed"
+: >"$PB/$FAILED.log"
+# A failed detached build that a setup without --detach is building again:
+# no claim, a .failed record, and a cargo naming the runtime's manifest.
+mkdir -p "$PB/$BUILDING_KEY"
+printf 'build-failed\n' >"$PB/$BUILDING_KEY.failed"
+bash -c 'exec -a "cargo build --release --locked --manifest-path $1/Cargo.toml" sleep 30' _ "$BUILDING" &
+cargo_pid=$!
+until_args "$cargo_pid" "cargo build --release --locked --manifest-path $BUILDING/Cargo.toml" ||
+  fail 'premise: the running cargo shows its manifest path'
+STALE="$(hex 2)"
+built "$STALE"
+ln -s '1 1200' "$PB/$STALE.lock"
+LOCKED="$(hex b)"
+built "$LOCKED"
+sleep 30 &
+holder=$!
+ln -s "$(date +%s) 1200 $holder" "$PB/$LOCKED.lock"
+RUNNING="$(hex c)"
+built "$RUNNING"
+# A placed program runs with its path as argv[0], as the wrapper's exec
+# leaves it.
+bash -c 'exec -a "$1" sleep 30' _ "$PC/bin/agent-runtime-$RUNNING" &
+runner=$!
+until_args "$runner" "$PC/bin/agent-runtime-$RUNNING" || fail 'premise: the running program shows its path as argv[0]'
+# Installed from elsewhere on a host with no cargo: a binary, and only the
+# .log and .told-* its detached setup leaves under build/.
+FLEET="$(hex d)"
+placed "$FLEET"
+printf 'agent-runtime-setup: cargo-missing key=%s\n' "$FLEET" >"$PB/$FLEET.log"
+: >"$PB/$FLEET.told-0123-cargo-missing"
+FLIGHT="$(hex e)"
+mkdir -p "$PB/$FLIGHT/release"
+
+# A narrow COLUMNS, as a terminal or harness exports it, ends a cut ps line
+# well inside the running program's key.
+COLUMNS=40 run "$PC" "$SETUP" --runtime "$PACKAGE"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|" 'prune: the build passes with its one line and no diagnostic'
+expected_bin=""
+for k in "$KEY" $CHECKOUT_KEYS "$UNRECORDED" "$LOCKED" "$RUNNING" "$FLEET"; do
+  [ "$k" = "$BUILDING_KEY" ] || expected_bin="$expected_bin
+agent-runtime-$k"
+done
+assert_eq "$(ls -A "$PC/bin" | sort)" "$(printf '%s\n' "$expected_bin" | sed '/^$/d' | sort)" 'prune: bin/ keeps the built, checkout, unrecorded, claimed, running and installed keys alone'
+expected_build="$KEY
+$BUILDING_KEY
+$BUILDING_KEY.failed
+$FLIGHT
+$FLEET.log
+$FLEET.told-0123-cargo-missing
+$LOCKED
+$LOCKED.log
+$LOCKED.lock
+$RUNNING
+$RUNNING.log
+$UNRECORDED
+$UNRECORDED.log"
+for k in $CHECKOUT_KEYS; do
+  [ "$k" = "$BUILDING_KEY" ] || expected_build="$expected_build
+$k
+$k.log"
+done
+assert_eq "$(ls -A "$PB" | sort)" "$(printf '%s\n' "$expected_build" | sort)" 'prune: build/ loses the unused, failed and lost-claim keys whole, the builds in flight kept'
+kill "$holder" "$runner" "$cargo_pid" 2>/dev/null || :
+wait "$holder" "$runner" "$cargo_pid" 2>/dev/null || :
+
+# A key built from a checkout that stands outside every recorded one, as a
+# hosted lane's clone does, shows the host holds checkouts its record misses:
+# another clone can share a key the dep-info names for this one alone, so
+# nothing goes, not even a key no checkout holds.
+PC="$TMP_ROOT/cache-prune-clone"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+built "$CLONE_KEY"
+built_from "$CLONE_KEY" "$CLONE"
+built "$UNUSED"
+run "$PC" "$SETUP" --runtime "$PACKAGE"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=checkout-unrecorded runtime=$CLONE" 'prune: a binary built in an unrecorded checkout passes the build and names the skip'
+assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$CLONE_KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$CLONE_KEY" "$CLONE_KEY.log" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: a binary built in an unrecorded checkout removes nothing'
+
+# A build from a checkout no record names, as a hosted lane's clone builds,
+# shows the same: nothing goes.
+PC="$TMP_ROOT/cache-prune-unrecorded"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+built "$UNUSED"
+run "$PC" "$SETUP"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=checkout-unrecorded runtime=$PKG/runtime" 'prune: a build from an unrecorded checkout passes and names the skip'
+assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: a build from an unrecorded checkout removes nothing'
+
+# A project list that does not read proves nothing unused: nothing goes.
+PC="$TMP_ROOT/cache-prune-unread"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+built "$UNUSED"
+FAKE_KENDEX_EXIT=1 run "$PC" "$SETUP"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=projects-unread" 'prune: an unread project list passes the build and names the skip'
+assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: an unread project list removes nothing'
+printf '[]\n' >"$FAKE_KENDEX_REGISTRY"
 
 # --- --detach: the build a caller that must answer starts beside itself ----
 # A turn end on a computer whose runtime is unbuilt (a pull, a cleared
