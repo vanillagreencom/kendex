@@ -1,14 +1,28 @@
 # Set up publishers
 
-Run for a publisher setup task launched with the `publicist` agent. Read that agent's § Setup before acting.
+- Run for a publisher setup task launched with the `publicist` agent.
+- Read that agent's § Setup before acting.
 
 ## Steps
 
-Install approved third-party selections on the consumer through `kendex add`. Keep their source files with their publishers. Do not copy them into the kendex catalog.
+Install approved third-party selections on the consumer through `kendex add`.
 
-Before each install command, resolve the publisher's selected full commit and read its complete licence at that commit. Stop installation and report to Jarvis if the licence is unreadable or does not establish the required licence in the table. Record its publisher, checked commit, licence and licence URL in the consumer's `kendex.toml`, before running the command. Use a manifest comment for this record. Select the consumer's project and environment, then install for `claude,codex,copilot,pi`.
+- Keep their source files with their publishers.
+- Do not copy them into the kendex catalog.
 
-Set `heygen_commit`, `hyperframes_commit` and `marketing_commit` to those checked full commits. The commands below bind new remote subscriptions to them. An existing subscription is reused; the positional revision does not change its revision setting. Before installation, confirm that the existing source's `rev` setting names the checked full commit and any retained package revision resolves to that commit. A branch or tag does not bind the checked commit. Change only the relevant consumer revision setting when the recorded setup approval covers that change. Preserve unrelated consumer choices. If the source cannot resolve to the checked commit within that approval, stop installation and report the mismatch to Jarvis.
+1. Before each install command, resolve the publisher's selected full commit.
+2. Read its complete licence at that commit.
+   - Stop installation and report to Jarvis if the licence is unreadable or does not establish the required licence in the table.
+3. Record its publisher, checked commit, licence and licence URL in the consumer's `kendex.toml`, before running the command.
+   - Use a manifest comment for this record.
+4. Set `heygen_commit`, `hyperframes_commit` and `marketing_commit` to those checked full commits. The commands below bind new remote subscriptions to them.
+5. An existing subscription is reused; the positional revision does not change its revision setting. For an existing subscription:
+   - Confirm that the existing source's `rev` setting names the checked full commit and any retained package revision resolves to that commit. A branch or tag does not bind the checked commit.
+   - Change only the relevant consumer revision setting when the recorded setup approval covers that change.
+   - Preserve unrelated consumer choices.
+   - If the source cannot resolve to the checked commit within that approval, stop installation and report the mismatch to Jarvis.
+6. Select the consumer's project and environment.
+7. Install for `claude,codex,copilot,pi` with the commands below.
 
 | Publisher and selection | Licence | Acceptance for this install |
 |---|---|---|
@@ -26,8 +40,27 @@ kendex add "$google_checkout/skills/ads/google-ads-api-quickstart" --skill googl
 kendex add "$google_checkout/skills/ads/google-ads-api-mcp-setup" --skill google-ads-api-mcp-setup --harness claude,codex,copilot,pi --yes --leave
 ```
 
-Google's plugin registry omits the Ads skills. The consumer retains an unchanged checkout of `google/skills` at its checked full commit. Set `google_checkout` to its absolute path. Confirm that commit and read its licence before each local-folder install. Keep the checkout unchanged and available as the local source.
+Google's plugin registry omits the Ads skills. The consumer retains an unchanged checkout of `google/skills` at its checked full commit.
 
-After each remote install, read the installed revision from the consumer's installation record and confirm that it equals the checked commit. For Google, confirm that the checkout remains unchanged at the checked commit and that the installation record names the selected local folder. A local-folder record has no remote commit field. Report a mismatch to Jarvis and stop setup. Do not accept or use that install.
+- Set `google_checkout` to its absolute path.
+- Confirm that commit before each local-folder install.
+- Read its licence before each local-folder install.
+- Keep the checkout unchanged and available as the local source.
 
-Extend the consumer's `publicist` assignment in `[agent-skills]` with the logical skill names selected above. Preserve its existing same-catalog assignments. Run `kendex apply` in that consumer. Check the rendered agent's required paths or Claude preload names against each installed native name. Then use each harness's native skill list or loader to check every selection. A file on disk alone does not prove loading. Stop setup and report the failed skill and harness if any selection fails.
+After each install:
+
+1. After each remote install, read the installed revision from the consumer's installation record.
+   - Confirm that it equals the checked commit.
+2. For Google, confirm that the checkout remains unchanged at the checked commit and that the installation record names the selected local folder. A local-folder record has no remote commit field.
+3. Report a mismatch to Jarvis and stop setup.
+   - Do not accept that install.
+   - Do not use that install.
+
+Then assign and check the skills:
+
+1. Extend the consumer's `publicist` assignment in `[agent-skills]` with the logical skill names selected above.
+   - Preserve its existing same-catalog assignments.
+2. Run `kendex apply` in that consumer.
+3. Check the rendered agent's required paths or Claude preload names against each installed native name.
+4. Then use each harness's native skill list or loader to check every selection. A file on disk alone does not prove loading.
+5. Stop setup and report the failed skill and harness if any selection fails.

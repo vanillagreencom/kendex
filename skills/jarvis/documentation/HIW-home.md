@@ -30,7 +30,7 @@ Package updates preserve your standing instructions, own skills, memory and hand
 
 ## Your choices
 
-You choose the Jarvis home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. Jarvis main runs Jarvis, the main long-running session. Jarvis Voice is the VGS voice session on any computer. A [Jarvis satellite](HIW-messages.md#a-second-machine) runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](../references/agent-reach.md#satellite) and [forwarding](../references/agent-reach.md#forward) are described separately. Jarvis main remains responsible for shared home work.
+You choose the Jarvis home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. Jarvis main remains responsible for shared home work; [A second machine](HIW-messages.md#a-second-machine) explains Jarvis main and Jarvis satellites.
 
 ## Related pages
 

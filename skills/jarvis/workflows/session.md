@@ -2,118 +2,204 @@
 
 Follow this workflow when starting a continuing session, reconciling open work or transferring control.
 
-Use [Task reconciliation](tasks.md) for incoming requests, replies, worker results and blocker changes before launching work or waiting. Run that same procedure during Start's queue reconciliation, Progress checkpoint and Succession's reconciliation.
+- Use [Task reconciliation](tasks.md) for incoming requests, replies, worker results and blocker changes before launching work or waiting.
+- Run that same procedure during Start's queue reconciliation, Progress checkpoint and Succession's reconciliation.
+- Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`, using its owning file and exact heading. The command includes child sections and stops before the next heading of the same or higher level.
+- Use already loaded text when a parent read includes the requested child.
 
-Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`, using its owning file and exact heading. The command includes child sections and stops before the next heading of the same or higher level. Use already loaded text when a parent read includes the requested child.
-
-## Session command
-
-Use [Owner asks](../references/owner-asks.md) for the shared list and its Later operation. These operations need no running controller session.
-
-- Start, resume and succession read published policy from the systemd user manager on Linux, and from launchd's caller context on macOS. Shell-only exports do not reach a managed session. `environment()` in `scripts/lib/session.py` owns the list of supported names; extend it through a package change. A failed source read refuses launch before handover. Status and Stop stay available. The selected account's launch owner supplies credentials and harness identity. Only Pi can keep the caller's explicit `CLAUDE_CONFIG_DIR`, for its Claude provider.
-- Before the first Start with Copilot CLI, follow [Copilot folder trust](../references/home-layout.md#copilot-folder-trust) unless the home's `JARVIS_UNATTENDED_HARNESSES` names `copilot`.
-- Before the first Start with Claude Code in a home whose `JARVIS_UNATTENDED_HARNESSES` names `claude`, follow [Claude Code bypass consent](../references/home-layout.md#claude-code-bypass-consent).
-- `JARVIS_UNATTENDED_HARNESSES`, in the home's `kendex.settings.toml` `[env]`, lists comma-separated the start harnesses whose managed session runs with nobody at its pane. Start, resume and succession launch each named harness with the full-bypass permission words orch writes for overseers: `--dangerously-skip-permissions` on Claude Code, `--dangerously-bypass-approvals-and-sandbox` on Codex and `--allow-all` on Copilot CLI. Pi has no such word. The [settings example](../kendex.settings.toml.example) states its empty default.
-- Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`. Use the Jarvis package installed in HOME. Supply the account directory for the selected app. Both modes follow [Start](#start).
-- Append `--model MODEL --effort LEVEL`, both or neither, to launch a stated model. `MODEL` accepts the model class or native model spelling the task command takes. The session records the pair as its choice. Start refuses a Pi model that spends another app's account, a `pi-claude/` model. A succession that falls back to the recorded account keeps that choice. Without the pair, a resumed session keeps its recorded choice, and a new one runs the app's default model. A running session with another or no recorded choice starts new context, as an account change does.
-- A consumer can append `--brief-file PATH`, its private instructions on one printable line. After the harness confirms its native identity, the session command delivers those instructions with Start. The session record keeps them, so every successor, a `succeed` retry included, receives them with its Start brief. The consumer can remove the file once Start answers. A session started without `--brief-file` gives its successors the Start brief alone. This route starts no repository overseer workflow.
-- To move a Jarvis session that runs outside this package onto it, run Start from inside that session with `--mode new --origin manual --adopt-pane PANE --adopt-pid PID`. PANE is its tmux pane, and PID is that pane's process. Start refuses, before saving or stopping anything, when the home's record names a running or starting controller, or when PANE is missing or dead, its process is not PID, or PID runs no supported harness or two at the same nearest depth. The harness nearest PID names the session, so a Pi session's codex-bridge child is not a second one. Start's own arguments select the successor's app, account, model and brief. The command then follows [Succession](#succession): it saves `state/handoff.md` and ends that process by its process identity. It closes only that pane, and opens the home's `jarvis` session for the successor. Start answers `handing-over`, and status reads as it does for succession. A retry is `succeed`, which selects the successor through orch's walk, not Start's arguments.
-- Read `.agents/skills/jarvis/scripts/jarvis-session status --home HOME` for the recorded session. A `starting` answer means a fact Start waits for, such as the native identity or the session's taking of the Start brief, is still unconfirmed. While a controller is live, status also prints the attach command on stderr. Status starts and stops nothing.
-- `.agents/skills/jarvis/scripts/jarvis-session attach --home HOME` puts the caller's terminal on the live controller's session, under [Attach](../references/home-layout.md#attach). A refusal exits 1, and its line names the cause; `terminal-unresolved` means `xdg-terminal-exec` is not on PATH. With no live controller, it starts nothing.
-- `.agents/skills/jarvis/scripts/jarvis-session report-due --home HOME` reads orch's derived schedule under [Control-host events: Delivery](../references/control-host-events.md#delivery). Succession retains the controller's original session start. When adopting this checkpoint in an already running session, repeat its Start command once to establish the start floor.
-- On a satellite, `jarvis-session forward --home HOME --record PATH` forwards a confirmed owner request to the main, under [Agent reach: Forward](../references/agent-reach.md#forward).
-- Use `jarvis-session forward-drain --home HOME` under [Agent reach: Status](../references/agent-reach.md#status).
-- Read `jarvis-session status --home HOME --main` for forwarding status; its output names its fields, states and causes. Follow [Agent reach: Status](../references/agent-reach.md#status) for kept answers.
-- While the main session is unregistered, a request whose receipt was lost reads `queued` with `overseer-absent`, though the main already holds it. The next delivery or the answer settles it.
-- Stop through `.agents/skills/jarvis/scripts/jarvis-session stop --home HOME`. An app that turns Jarvis off uses `--origin app-off`. Only `start --origin app-on` clears that Off. A boot caller uses `start --origin boot`; a repeated call in the same login does not start another session.
-
-## Task command
-
-- Launch a task with `.agents/skills/jarvis/scripts/task launch --home HOME --name NAME --harness claude|codex|copilot|pi --model MODEL --task-file PATH --result-file PATH`. The managed Jarvis session must be running. Use the same command for each harness. `MODEL` accepts the model class or native model spelling; Pi uses its provider/model spelling. Add `--effort LEVEL` unless high is the intended effort. The lane selector chooses the account. Add `--account DIR` to ask that selector about a named account.
-- Add `--short` for a task of a few minutes when every account of the harness is past the launch limit. The selector then accepts an account with room left up to its wall (`agent-runtime accounts pick --max-pct 100`). The projected wall still applies. Full workers launch without it.
-- Put the private brief in the task file. Add one `--input PATH` for each other input. The task reads that brief directly and writes its Output to the result file. This route starts no repository overseer workflow.
-- For an agent that reads mail, pages or files, put a reference to [Authority](../references/decisions.md#authority) in its brief and require it to read that section before acting.
-- Add `--cwd PATH` to start the harness in an existing directory and use its native instruction loading there. Without it, the task starts in `HOME`. Relative task, input, result and working-directory paths resolve from the caller's directory. Task records and scratch stay owned by the Jarvis home; the selected directory does not move them or the result destination. An invalid or unavailable directory refuses before task allocation.
-- Add `--browser` for browser work. Each launch creates its own absolute scratch directory and browser profile beneath it. The child receives `JARVIS_TASK_SCRATCH`, `JARVIS_BROWSER_PROFILE` and `JARVIS_BROWSER_PORT=0`, so Chromium allocates the profile's debugging endpoint; `jarvis-browser --port` reports the live port. Use that profile with the [browser guide](../references/browser.md#profile-and-tabs). Keep the result outside scratch so cleanup retains it.
-- Retain the returned task id. Read its record with `task status --home HOME --id ID`; it names the task, inputs, selected model and account, result path and terminal window. Record the outcome with `task complete --home HOME --id ID --outcome succeeded|failed`. A succeeded task requires its result file. After checking the result and closing task-owned browser work, run `task cleanup --home HOME --id ID`. Cleanup closes that task's window, stops the browser running on its profile, and removes its scratch. Completion and cleanup remain on the same task record.
-- A launch records a running task only once the harness can take its brief. When the account's harness cannot take it yet, the launch refuses `harness-setup-pending` or `harness-not-ready` and prints a `fix=` line naming the account. Open the harness once on that account and finish its first-run setup or the screen shown. Then launch the task again.
-- A launch refused after task allocation prints its task id and keeps the failure cause. Read that record with `task status`. If cleanup is pending, read its `reason`, close task-owned browser work and retry `task cleanup`. Reason `browser-running` names a browser on the task's profile that could not be stopped. Task windows open in the Jarvis session, so Stop ends them with it. Once the controller has ended, Stop or Start ends a session that holds only task windows. A session of that name that holds any other window stays, and Start then answers `name-conflict`. An unfinished task whose window is gone reads `failed` with reason `controller-ended`. Its scratch stays for inspection and explicit cleanup.
+The `jarvis-session` and `task` commands this workflow runs are in [Session command](../references/session-command.md#session-command) and [Task command](../references/session-command.md#task-command).
 
 ## Start
 
-- First read the State, Sub-agents and Instructions in force sections of `state/handoff.md` with `jarvis-section`, at the path in the [home layout](../references/home-layout.md). If it is absent and the user has an earlier handoff elsewhere, read those sections there, and have the user move it once to the current path. Read the [Handoff contract](../references/long-session.md#handoff) with `jarvis-section` before using it. Apply its checkpoint, staleness and recovery rules. If no staleness bound exists, ask the user to set one.
-- Load only the safety core at start: the role in [persona.md](../persona.md), [Authority, read content and consent](../references/decisions.md#authority), [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) and [Official records](../references/accounts-and-secrets.md#official-records). Use already loaded text rather than reading it again. Keep one assistant in control at a time.
-- Check current holds and temporary instructions in the compact handoff sections above. Read the current owner request with its delivered context. Apply its decision boundary through Authority before choosing work.
-- Check the event registration state in the handoff's State section.
-- For control-host events, register and start `watch-loop` through [Control-host events](#control-host-events). For another selected event source, use its supported registration and delivery interface.
-- On a satellite, read `jarvis-session status --home HOME --main` and report each open forward that has a cause. A confirmation a crash left unforwarded is forwarded by running `forward` again with the same record; a console confirmation with no reply still shows in `owner-unanswered`.
-- Check the user channel and each agent's channel for unread events. Keep one communication channel per agent. Use the source's delivery order rather than sorting event ids.
-- Run `.agents/skills/jarvis/scripts/owner-unanswered --root HOME`. Each listed owner note whose first line opens `voice-request: caller=` is an open voice request. Make each open voice request the first decision, before any other read. Send a progress notice on its ref through `.agents/skills/mailbox/scripts/lane-mail notice --item overseer --to owner --ref ID --progress --file TEXT`, then send its answer.
-- Confirm the session prerequisites under [Homes](../references/long-session.md#homes). If any is missing, take its setup route as the first decision and leave the handoff untouched. Otherwise, read all open session work from the selected tracker project, through every page. Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source. Reconcile the tracker queue, the open asks and the due audits through live reads of their homes. Keep a compact view of open work and due obligations for the first decision. Check what each open item waits for, and why. Resume authorized work once its wait no longer applies.
-- Read no other record before the first decision.
-- Before taking the selected action, load its sections under [Action routes](#action-routes).
-- Follow [Handoff replacement](#handoff-replacement) before writing the current handoff under the [Handoff contract](../references/long-session.md#handoff) and entering the event loop.
+1. First read the State, Sub-agents and Instructions in force sections of `state/handoff.md` with `jarvis-section`, at the path in the [home layout](../references/home-layout.md).
+   - If it is absent and the user has an earlier handoff elsewhere:
+     - Read those sections there.
+     - Have the user move that earlier handoff once to the current path.
+   - For the handoff you read, at either path:
+     - Read the [Handoff](../references/long-session.md#handoff) contract with `jarvis-section` before using it.
+     - Apply its checkpoint, staleness and recovery rules.
+     - If no staleness bound exists, ask the user to set one.
+2. Load only the safety core at start: the role in [persona.md](../persona.md), the read content and consent rules of [Authority](../references/decisions.md#authority), [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) and [Official records](../references/accounts-and-secrets.md#official-records).
+   - Use already loaded text rather than reading it again.
+   - Keep one assistant in control at a time.
+3. Check current holds and temporary instructions in the compact handoff sections above.
+   - Read the current owner request with its delivered context.
+   - Apply its decision boundary through Authority before choosing work.
+4. Check the event registration state in the handoff's State section.
+5. Register and start the event source:
+   - For control-host events, register and start `watch-loop` through [Control-host events](#control-host-events).
+   - For another selected event source, use its supported registration and delivery interface.
+6. On a satellite, read `jarvis-session status --home HOME --main`.
+   - Report each open forward that has a cause.
+   - A confirmation a crash left unforwarded is forwarded by running `forward` again with the same record.
+   - A console confirmation with no reply still shows in `owner-unanswered`.
+7. Check the user channel and each agent's channel for unread events.
+   - Keep one communication channel per agent.
+   - Use the source's delivery order rather than sorting event ids.
+8. Run `.agents/skills/jarvis/scripts/owner-unanswered --root HOME`.
+   - Each listed owner note whose first line opens `voice-request: caller=` is an open voice request.
+   - Make each open voice request the first decision, before any other read.
+   - Send a progress notice on its ref through `.agents/skills/mailbox/scripts/lane-mail notice --item overseer --to owner --ref ID --progress --file TEXT`.
+   - Then send its answer.
+9. Confirm the session prerequisites under [Homes](../references/long-session.md#homes).
+   - If any is missing:
+     - Take its setup route as the first decision after open voice requests.
+     - Leave the handoff untouched.
+   - Otherwise:
+     - Read all open session work from the selected tracker project, through every page.
+     - Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source.
+     - Reconcile the tracker queue, the open asks and the due audits through live reads of their homes.
+     - Keep a compact view of open work and due obligations for the first decision.
+     - Check what each open item waits for, and why.
+     - Resume authorized work once its wait no longer applies.
+10. Read no other record before the first decision.
+11. Before taking the selected action, load its sections under [Action routes](#action-routes).
+12. Follow [Handoff replacement](#handoff-replacement).
+13. Write the current handoff under the [Handoff](../references/long-session.md#handoff) contract.
+14. Enter the event loop.
 
 ## Control-host events
 
-- Read [Control-host events](../references/control-host-events.md) before starting or recovering the producer. Use the settings in the [example](../kendex.settings.toml.example). Select one absolute home path for every start and recovery command.
-- From the native session's own pane, run `.agents/skills/orch/scripts/orch-runtime register --fleet`. The session's next native hook establishes its session binding. Registration alone cannot renew presence. A satellite registers only in its own home, and its loop runs as a satellite under [Control-host events](../references/control-host-events.md#satellite).
-- Set the existing orch keys `ORCH_WAKE_PROCESS` and `ORCH_WAKE_START` in the home's settings. The process pattern matches `watch-loop --home HOME` for this home. Escape regular-expression characters in HOME. The start command names this same home and its harness route below. The existing turn-end check reports an absent loop and that command. It starts no process.
-- On Claude Code, run `.agents/skills/jarvis/scripts/watch-loop --home HOME` through Monitor at its maximum expiry. Keep that same loop for the session. A batch pointer means the directive is ready in the home mailbox. Read it through the installed deliver hook or `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer` from HOME. Re-arm Monitor only on expiry or reported loop death.
-- On Pi and Copilot, launch the same command through `.agents/skills/orch/scripts/orch-runtime launch-job --name NAME --run RUN -- .agents/skills/jarvis/scripts/watch-loop --home HOME`. Use a home-specific NAME and an absolute, home-specific RUN in an existing directory, and retain the reply's `record`, `RUN.runner`, in the handoff. Exit 75 may have started the loop: keep `RUN.runner` and launch no second loop. Pi's installed mailbox wake delivers the directive. Copilot's installed hooks deliver at their native checkpoints; this producer supplies no idle extension.
-- Stop a job through `.agents/skills/orch/scripts/orch-runtime stop-job --record RUN.runner`, using its retained record; `"stopped":null` means the loop had already ended. Stop the Monitor-owned command through Monitor. Retain the event log and batch state for restart. Keep the source registration, home, launch route and runner record in the handoff's State section.
+1. Read [Control-host events](../references/control-host-events.md) before starting or recovering the producer.
+   - Use the settings in the [example](../kendex.settings.toml.example).
+   - Select one absolute home path for every start and recovery command.
+2. From the native session's own pane, run `.agents/skills/orch/scripts/orch-runtime register --fleet`.
+   - The session's next native hook establishes its session binding.
+   - Registration alone cannot renew presence.
+   - A satellite registers only in its own home, and its loop runs as a satellite under [Control-host events: Satellite](../references/control-host-events.md#satellite).
+3. Set the existing orch keys `ORCH_WAKE_PROCESS` and `ORCH_WAKE_START` in the home's settings.
+   - The process pattern matches `watch-loop --home HOME` for this home. Escape regular-expression characters in HOME.
+   - The start command names this same home and its harness route below.
+   - The existing turn-end check reports an absent loop and that command. It starts no process.
+4. Start the loop by harness:
+   - On Claude Code, run `.agents/skills/jarvis/scripts/watch-loop --home HOME` through Monitor at its maximum expiry.
+     - Keep that same loop for the session.
+     - A batch pointer means the directive is ready in the home mailbox. Read it through the installed deliver hook or `.agents/skills/mailbox/scripts/lane-mail inbox --item overseer` from HOME.
+     - Re-arm Monitor only on expiry or reported loop death.
+   - On Pi and Copilot, launch the same command through `.agents/skills/orch/scripts/orch-runtime launch-job --name NAME --run RUN -- .agents/skills/jarvis/scripts/watch-loop --home HOME`.
+     - Use a home-specific NAME and an absolute, home-specific RUN in an existing directory.
+     - Retain the reply's `record`, `RUN.runner`, in the handoff.
+     - Exit 75 may have started the loop: keep `RUN.runner` and launch no second loop.
+     - Pi's installed mailbox wake delivers the directive. Copilot's installed hooks deliver at their native checkpoints; this producer supplies no idle extension.
+
+To stop the loop:
+
+- Stop a job through `.agents/skills/orch/scripts/orch-runtime stop-job --record RUN.runner`, using its retained record; `"stopped":null` means the loop had already ended.
+- Stop the Monitor-owned command through Monitor.
+- Retain the event log and batch state for restart.
+
+Keep the source registration, home, launch route and runner record in the handoff's State section.
 
 ## Action routes
 
-Load each named section with `jarvis-section` before the step that acts on it. Read its full text, including its rules, rather than only its heading or a summary. Use [Acceptance](../references/verification.md#acceptance) to select any further instructions the task needs. A start instruction must not read whole rule files in advance.
+Load each named section with `jarvis-section` before the step that acts on it.
+
+- Read its full text, including its rules, rather than only its heading or a summary.
+- Use [Acceptance](../references/verification.md#acceptance) to select any further instructions the task needs.
+- A start instruction must not read whole rule files in advance.
 
 | Action | Load before acting |
 |---|---|
 | Reply or request a decision | [Medium and threads](../../communication/references/messages.md#medium-and-threads), [Message types](../references/communication.md#message-types), [Delivery](../references/communication.md#delivery) and [Sources](../references/verification.md#sources). |
 | Queue decision | [Authority](../references/decisions.md#authority), [Approach](../references/decisions.md#approach), [Evidence and risk](../references/decisions.md#evidence-and-risk), [Homes](../references/long-session.md#homes) and [Acceptance](../references/verification.md#acceptance). |
-| Payment or spend | [Authority](../references/decisions.md#authority), [Evidence and risk](../references/decisions.md#evidence-and-risk) and [Account ledger](../references/accounts-and-secrets.md#account-ledger). Load [Official records](../references/accounts-and-secrets.md#official-records) when the action uses those records. |
-| Browser or account step | [Authority](../references/decisions.md#authority), [Account ledger](../references/accounts-and-secrets.md#account-ledger) and [Secret transfer](../references/accounts-and-secrets.md#secret-transfer). For a browser step, load [Browser guide](../references/browser.md#browser-guide), [Profile and tabs](../references/browser.md#profile-and-tabs), [Forms and captures](../references/browser.md#forms-and-captures) and [Bot checks](../references/browser.md#bot-checks). For sign-in, load [Remote sign-in](../references/accounts-and-secrets.md#remote-sign-in). For the user's input devices, load [Desktop and terminal](../references/computer-use.md#desktop-and-terminal). |
-| Merge | [Authority](../references/decisions.md#authority), orch's [Workflow Execution](../../orch/SKILL.md#workflow-execution) and its [merge workflow](../../orch/workflows/merge-pr.md). Load the target repository's merge instructions before its merge step. |
-| Lane launch | [Authority](../references/decisions.md#authority), orch's [Delegation](../../orch/references/skill-rules.md#delegation) and [Agent Lifecycle](../../orch/references/skill-rules.md#agent-lifecycle). For an independent work-item session, follow orch's [handoff workflow](../../orch/workflows/handoff.md). |
-| Succession | [Succession](#succession), [Handoff replacement](#handoff-replacement), the [Handoff contract](../references/long-session.md#handoff) and [Retention](../references/accounts-and-secrets.md#retention). |
+| Payment or spend | [Authority](../references/decisions.md#authority), [Evidence and risk](../references/decisions.md#evidence-and-risk) and [Account ledger](../references/accounts-and-secrets.md#account-ledger). |
+| Browser or account step | [Authority](../references/decisions.md#authority), [Account ledger](../references/accounts-and-secrets.md#account-ledger) and [Secret transfer](../references/accounts-and-secrets.md#secret-transfer). |
+| Merge | [Authority](../references/decisions.md#authority), orch's [Workflow Execution](../../orch/SKILL.md#workflow-execution) and its [merge workflow](../../orch/workflows/merge-pr.md). |
+| Lane launch | [Authority](../references/decisions.md#authority), orch's [Delegation](../../orch/references/skill-rules.md#delegation) and [Agent Lifecycle](../../orch/references/skill-rules.md#agent-lifecycle). |
+| Succession | [Succession](#succession), [Handoff replacement](#handoff-replacement), the [Handoff](../references/long-session.md#handoff) contract and [Retention](../references/accounts-and-secrets.md#retention). |
+
+- **Payment or spend**: load [Official records](../references/accounts-and-secrets.md#official-records) when the action uses those records.
+- **Browser or account step**:
+  - For a browser step, load [Browser guide](../references/browser.md#browser-guide), [Profile and tabs](../references/browser.md#profile-and-tabs), [Forms and captures](../references/browser.md#forms-and-captures) and [Bot checks](../references/browser.md#bot-checks).
+  - For sign-in, load [Remote sign-in](../references/accounts-and-secrets.md#remote-sign-in).
+  - For the user's input devices, load [Desktop and terminal](../references/computer-use.md#desktop-and-terminal).
+- **Merge**: load the target repository's merge instructions before its merge step.
+- **Lane launch**: for an independent work-item session, follow orch's [handoff workflow](../../orch/workflows/handoff.md).
 
 To add a consumer's own rule or its action route, start at [Personal additions](../references/home-contract.md#personal-additions).
 
 ## Event loop
 
-- Read each delivered event and connect it to an open item or create that item.
-- On `EVENT report-due`, follow [Progress checkpoint](#progress-checkpoint). The producer schedules this event; set no model timer and store no due row.
-- Load the action's sections under [Action routes](#action-routes) before acting.
-- Handle user decisions through [decisions.md:Authority](../references/decisions.md#authority). Use [communication.md:Message types](../references/communication.md#message-types) for replies, notices and scheduled reports.
-- Update the item's state after each action. Keep an unresolved obligation open until its acceptance check passes.
-- Run the verify pass after handling events and before waiting again. Select the checks under [Homes](../references/long-session.md#homes). Check each due box at its evidence source under [verification.md:Sources](../references/verification.md#sources). Record the outcome on the item and take the next action on failure.
-- Wait through the selected event source when no authorized work or due check remains.
+1. Read each delivered event.
+   - Connect it to an open item or create that item.
+2. On `EVENT report-due`, follow [Progress checkpoint](#progress-checkpoint). The producer schedules this event.
+   - Set no model timer.
+   - Store no due row.
+3. Load the action's sections under [Action routes](#action-routes) before acting.
+4. Handle user decisions through [decisions.md:Authority](../references/decisions.md#authority).
+   - Use [communication.md:Message types](../references/communication.md#message-types) for replies, notices and scheduled reports.
+5. Update the item's state after each action.
+   - Keep an unresolved obligation open until its acceptance check passes.
+6. Run the verify pass after handling events and before waiting again.
+   - Select the checks under [Homes](../references/long-session.md#homes).
+   - Check each due box at its evidence source under [verification.md:Sources](../references/verification.md#sources).
+   - Record the outcome on the item.
+   - Take the next action on failure.
+7. Wait through the selected event source when no authorized work or due check remains.
 
 ## Progress checkpoint
 
-- Read [Homes](../references/long-session.md#homes), the [Handoff contract](../references/long-session.md#handoff), [Message types](../references/communication.md#message-types) and [Delivery](../references/communication.md#delivery) through `jarvis-section`.
-- Capture the collection cutoff in UTC before reading live evidence. Read the tracker live through every page: Verifying counts, each item's entry time into that state, and open session checks. Read landings with merge times at or after the event's `since` cutoff and before the collection cutoff, and pending asks and their answers from the live mailboxes. Use the consumer's selected repositories and tracker project. A failed read is unavailable evidence; preserve that distinction in the report.
-- Refresh changed lines in the handoff's four required sections and its checkpoint coverage. Correct the State lines `progress-log --check-state` lists under the Handoff contract in the same write. Follow Handoff replacement before converting an older handoff. Run the consumer's registered checks from its standing instructions and record their results at their owning tracker items.
-- Write the summary using communication's report template. Follow the consumer's report format and delivery settings.
-- Write the report to the `result.path` of `.agents/skills/orch/scripts/orch-runtime state progress-report-path`. Set the completed file's modification time to the retained collection cutoff with `TZ=UTC touch -t YYYYMMDDhhmm.SS -- PATH` before the first send. Send it once through `.agents/skills/mailbox/scripts/lane-mail notice --item overseer --to owner --attach PATH --file SUMMARY`. Keep the file and its modification time unchanged on a failed send and retry that same attachment; do not claim delivery or advance coverage without the writer's receipt. Record an unresolved send as open work before waiting or handing over.
-- Read `jarvis-session report-due --home HOME` after delivery to confirm the schedule. The next checkpoint is derived from the receipted file, and succession inherits that schedule without copying a due time. Commit changed session state under the Handoff contract.
+1. Read [Homes](../references/long-session.md#homes), the [Handoff](../references/long-session.md#handoff) contract, [Message types](../references/communication.md#message-types) and [Delivery](../references/communication.md#delivery) through `jarvis-section`.
+2. Capture the collection cutoff in UTC before reading live evidence.
+3. Read the live evidence:
+   - Read the tracker live through every page: Verifying counts, each item's entry time into that state, and open session checks.
+   - Read landings with merge times at or after the event's `since` cutoff and before the collection cutoff.
+   - Read pending asks and their answers from the live mailboxes.
+   - Use the consumer's selected repositories and tracker project.
+   - A failed read is unavailable evidence; preserve that distinction in the report.
+4. Refresh changed lines in the handoff's four required sections and its checkpoint coverage.
+   - Correct the State lines `progress-log --check-state` lists under the handoff contract in the same write.
+   - Follow Handoff replacement before converting an older handoff.
+   - Run the consumer's registered checks from its standing instructions.
+   - Record their results at their owning tracker items.
+5. Write the summary using communication's report template.
+   - Follow the consumer's report format and delivery settings.
+6. Write the report to the `result.path` of `.agents/skills/orch/scripts/orch-runtime state progress-report-path`.
+7. Set the completed file's modification time to the retained collection cutoff with `TZ=UTC touch -t YYYYMMDDhhmm.SS -- PATH` before the first send.
+8. Send it once through `.agents/skills/mailbox/scripts/lane-mail notice --item overseer --to owner --attach PATH --file SUMMARY`.
+   - Keep the file and its modification time unchanged on a failed send.
+   - Retry that same attachment.
+   - Do not claim delivery without the writer's receipt.
+   - Do not advance coverage without the writer's receipt.
+   - Record an unresolved send as open work before waiting or handing over.
+9. Read `jarvis-session report-due --home HOME` after delivery to confirm the schedule. The next checkpoint is derived from the receipted file, and succession inherits that schedule without copying a due time.
+10. Commit changed session state under the handoff contract.
 
 ## Handoff replacement
 
-- After the initial reads and first decision, read every section of the predecessor handoff and its progress log. Include records in Owed and open, Context, Agent contact, Verify and Open requests when those sections exist.
-- For every record outside session state, write it to its home under [Homes](../references/long-session.md#homes), or confirm that its home already retains it. Preserve its contents, durable id and recorded time. Read each destination to confirm retention before replacing the handoff or clearing the progress log. A failed destination read or write leaves the predecessor handoff and progress log untouched and stops replacement.
-- Archive the predecessor's handoff and progress log in the `archive/` directory beside the current handoff, `state/archive/` in the [home layout](../references/home-layout.md), before replacing them. Then index each archived file with `.agents/skills/jarvis/scripts/progress-log --archived FILE`, adding the `--handoff PATH` that selects the current handoff when it is not the default. Use the retention rule in [accounts-and-secrets.md:Retention](../references/accounts-and-secrets.md#retention). An archive or index failure stops replacement.
+1. After the initial reads and first decision, read every section of the predecessor handoff and its progress log.
+   - Include records in Owed and open, Context, Agent contact, Verify and Open requests when those sections exist.
+2. For every record outside session state, write it to its home under [Homes](../references/long-session.md#homes), or confirm that its home already retains it.
+   - Preserve its contents, durable id and recorded time.
+   - Read each destination to confirm retention before replacing the handoff or clearing the progress log.
+   - A failed destination read or write leaves the predecessor handoff and progress log untouched and stops replacement.
+3. Archive the predecessor's handoff and progress log in the `archive/` directory beside the current handoff, `state/archive/` in the [home layout](../references/home-layout.md), before replacing them.
+4. Then index each archived file with `.agents/skills/jarvis/scripts/progress-log --archived FILE`, adding the `--handoff PATH` that selects the current handoff when it is not the default.
+   - Use the retention rule in [accounts-and-secrets.md:Retention](../references/accounts-and-secrets.md#retention).
+   - An archive or index failure stops replacement.
 
 ## Succession
 
-- Judge whether the remaining context permits continued work. Use the user's succession trigger when they set one.
-- Follow [Handoff replacement](#handoff-replacement) and the reconciliation and update rules in the [Handoff contract](../references/long-session.md#handoff), read through `jarvis-section`.
-- Wait for attached agents under the Handoff contract before calling the session command. Keep reconciliation and retention in this workflow; the command cannot read every harness's attached-agent state.
-- Before running `succeed`, run `.agents/skills/jarvis/scripts/owner-unanswered --root HOME`. Send each open voice request a progress notice on its ref: this session hands over, and the next session continues the request.
-- After replacement succeeds, leave the successor's progress log empty in `state/handoff.md`. Run `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME` from the Jarvis package installed in that home.
-- A caller that has positively established an account wall runs `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME --account-walled`. The command binds that wall to the recorded controller's account, and excludes that account even when its reading reports room or cannot measure it. An eligible alternative can succeed; without one, the command refuses before ending the predecessor. Ordinary context or voluntary succession omits the flag.
-- The command selects a successor through agent-runtime's controller preference walk and account pick, from the first `AGENT_RUNTIME_CONTROLLER_PREFERENCE` entry to the recorded account and its choice. When no account qualifies, or an entry's account reading fails, succession refuses before the predecessor ends. The home and saved handoff stay with the successor.
-- The walk does not read `JARVIS_UNATTENDED_HARNESSES`. A successor carries its harness's bypass words only when the setting names that harness. To keep every successor unattended, name every harness the overseer preference can reach. Per-account setup, such as Claude Code bypass consent, applies to every account the preference's harnesses can pick. A missing orch dependency refuses succession before the predecessor ends; report the returned account and failure to the owner.
-- The command saves the handoff, then selects a successor, leaving out a Claude Code account that has not finished first-run setup. agent-runtime opens the successor in a new window of the same tmux session. It ends the predecessor only after the successor confirms its native identity and takes the Start brief.
-- Read `jarvis-session status --home HOME` for the transfer. An open transfer answers `handing-over`; read its status before retrying `succeed`. A failed attempt leaves its account recorded `unproved`, and `succeed` does not retry it. With no successor left, status reports `handover-failed`. Keep the handoff and the recorded failure cause. An unfinished wall transfer keeps its spent-account exclusion on every retry, retries without the flag included; a completed transfer ends it, and a new explicit wall binds the current controller's account. Boot and Start do not resume the retired predecessor.
-- Keep session state in the current handoff. Never move it into memory.
+1. Judge whether the remaining context permits continued work.
+   - Use the user's succession trigger when they set one.
+2. Wait for attached agents under the [Handoff](../references/long-session.md#handoff) contract before calling the session command.
+   - Keep reconciliation and retention in this workflow; the command cannot read every harness's attached-agent state.
+3. Follow [Handoff replacement](#handoff-replacement) and the reconciliation and update rules in the [Handoff](../references/long-session.md#handoff) contract, read through `jarvis-section`.
+4. Before running `succeed`, run `.agents/skills/jarvis/scripts/owner-unanswered --root HOME`.
+   - Send each open voice request a progress notice on its ref: this session hands over, and the next session continues the request.
+5. After replacement succeeds, leave the successor's progress log empty in `state/handoff.md`.
+6. Run `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME` from the Jarvis package installed in that home.
+   - A caller that has positively established an account wall runs `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME --account-walled`. The command binds that wall to the recorded controller's account, and excludes that account even when its reading reports room or cannot measure it. An eligible alternative can succeed; without one, the command refuses before ending the predecessor.
+   - Ordinary context or voluntary succession omits the flag.
+   - The command selects a successor through agent-runtime's controller preference walk and account pick, from the first `AGENT_RUNTIME_CONTROLLER_PREFERENCE` entry to the recorded account and its choice. When no account qualifies, or an entry's account reading fails, succession refuses before the predecessor ends. The home and saved handoff stay with the successor.
+   - The walk does not read `JARVIS_UNATTENDED_HARNESSES`. A successor carries its harness's bypass words only when the setting names that harness.
+   - To keep every successor unattended, name every harness the overseer preference can reach. Per-account setup, such as Claude Code bypass consent, applies to every account the preference's harnesses can pick.
+   - A missing orch dependency refuses succession before the predecessor ends; report the returned account and failure to the owner.
+   - The command saves the handoff, then selects a successor, leaving out a Claude Code account that has not finished first-run setup. agent-runtime opens the successor in a new window of the same tmux session. It ends the predecessor only after the successor confirms its native identity and takes the Start brief.
+7. Read `jarvis-session status --home HOME` for the transfer.
+   - An open transfer answers `handing-over`; read its status before retrying `succeed`.
+   - A failed attempt leaves its account recorded `unproved`, and `succeed` does not retry it.
+   - With no successor left, status reports `handover-failed`. Keep the handoff and the recorded failure cause.
+   - An unfinished wall transfer keeps its spent-account exclusion on every retry, retries without the flag included; a completed transfer ends it, and a new explicit wall binds the current controller's account.
+   - Boot and Start do not resume the retired predecessor.
+8. Keep session state in the current handoff. Never move it into memory.

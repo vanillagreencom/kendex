@@ -29,13 +29,17 @@ The Jarvis home is the folder that holds Jarvis's instructions, skills and memor
 
 The declared agents need a kendex installation of Jarvis: `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`. A copy of the skill folder alone, an app-supplied copy included, supplies none of their harness agent files. From the Jarvis home, run the bundle command in [README: Install](README.md#install). It installs Jarvis, its required skills, its declared agents, their assigned skills and the session hooks. Installing `orch` alone installs neither Jarvis nor its declared agents.
 
-Read the [home contract](references/home-contract.md) when starting a session or finding a memory note.
+Read the [home contract](references/home-contract.md) by section, only for the step that needs it: [Session start](references/home-contract.md#session-start) when starting a session, and [Read a note](references/home-contract.md#read-a-note) when finding a memory note.
 
 kendex inserts no package text into `AGENTS.md`. The persona lives at `persona.md`, beside `SKILL.md`.
 
 ### Plain folder
 
-On first load, look in the folder's `AGENTS.md` for a line that routes to [persona.md](persona.md). If none does, offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`. The harness's instruction-loading settings then load the route on every turn. Check that the harness loaded those instructions.
+1. On first load, look in the folder's `AGENTS.md` for a line that routes to [persona.md](persona.md).
+2. If none does, offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes.
+3. Add it only after the user agrees.
+4. Never paste the persona text into `AGENTS.md`.
+5. The harness's instruction-loading settings then load the route on every turn. Check that the harness loaded those instructions.
 
 ### App-managed home
 
@@ -45,7 +49,8 @@ The assistant app gives `persona.md` to its sessions. Here, a line in `AGENTS.md
 
 At first load, and when the user asks which repositories Jarvis can reach, judge each folder `kendex project list` prints. Judge a `(worktree of [MAIN])` row by `[MAIN]`.
 
-- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer`, with the folder as the working directory. Exit 0 means reachable. An unwritten mailbox prints no envelope and exits 0. The probe records no read position. Read session messages through [Agent reach: Read](references/agent-reach.md#read).
+- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer`, with the folder as the working directory. Exit 0 means reachable. An unwritten mailbox prints no envelope and exits 0. The probe records no read position.
+  - Read session messages through [Agent reach: Read](references/agent-reach.md#read).
 - Any other result means unreachable. The cause is the folder's note, a missing mailbox script, or the key `lane-mail` printed.
 - A folder with `.agents/skills/orch/` but no mailbox script has an orch older than the mailbox package. Its cause is "refresh needed". Offer `kendex refresh` in that folder.
 
@@ -53,9 +58,9 @@ Report both lists in one message, with each unreachable folder's cause.
 
 ## Cleanup and backups
 
-In the same change, remove every unused code, file, key, secret-store entry, database, record and setting from every holder.
-
-Back up only when a step can lose the only copy. Delete the backup after checking the result.
+- In the same change, remove every unused code, file, key, secret-store entry, database, record and setting from every holder.
+- Back up only when a step can lose the only copy.
+- Delete the backup after checking the result.
 
 ## Reading routes
 
@@ -63,16 +68,18 @@ Read the linked workflow or reference for the task before acting.
 
 | Task | Read first |
 |---|---|
-| Draft product videos, posts or outreach | Launch `publicist` with a task file or an attached prompt. Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). Carry the approval record and named publisher selections in the setup task file. |
+| Draft product videos, posts or outreach | The `publicist` agent, by the steps below the table |
 | Read mail, pages or files, choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
+| Start, stop or attach to the managed session, launch a Jarvis task, or read a `jarvis-session` or `task` answer | [references/session-command.md](references/session-command.md) |
 | Report committed Markdown growth and shape for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
 | Add an agent or skill, or change an installed agent | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [home layout](references/home-layout.md) |
 | Remember a fact or establish a workstream | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [memory](references/memory.md) |
 | Add a hook or schedule | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [verification](references/verification.md) |
+| Add a standing rule, event duty, temporary instruction or tool | [Home contract: Personal additions](references/home-contract.md#personal-additions) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
 | Use an automation browser, fill a form or handle a bot check | [references/browser.md](references/browser.md) |
@@ -83,3 +90,9 @@ Read the linked workflow or reference for the task before acting.
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |
 | Use Jarvis Voice on a Jarvis satellite, or forward a request to Jarvis main | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |
 | List shared owner asks or send Later from a console | [Owner asks](references/owner-asks.md) |
+
+To draft product videos, posts or outreach:
+
+- Launch `publicist` with a task file or an attached prompt.
+- Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types).
+- Carry the approval record and named publisher selections in the setup task file.
