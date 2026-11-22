@@ -621,13 +621,12 @@ A Copilot thread posted after this read routes as § 1 states.
 2. Other reply bodies follow § 6.3's table.
    - A `questions[]` item § 5 routed here takes the Question row: its own `draft_response`.
    - A question is not a finding, takes no disposition, and is never answered `Declined:`.
-3. A skip that contradicts a recorded decision spells its `[REASON]` `contradicts [DECISION_ID]`.
-4. File the issue a `Tracked:` reply names before you post the reply.
-5. Write each reply body with the harness file tool to `tmp/pr-reply-[SOURCE_ID].md`, and bind it as `[BODY_FILE]`.
+3. A skip that contradicts a recorded decision spells its `[REASON]` `contradicts [DECISION_ID]`. File the issue a `Tracked:` reply names before you post the reply.
+4. Write each reply body with the harness file tool to `tmp/pr-reply-[SOURCE_ID].md`, and bind it as `[BODY_FILE]`.
    - Use `github.sh post-reply [ID] --body-file [BODY_FILE]` for a thread.
    - Use `github.sh post-comment [PR_NUMBER] --body-file [BODY_FILE]` for a PR-level comment.
    - Number lists `1.` `2.` `3.`, never `#N`.
-6. **Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise:
+5. **Contested bot reviews.** When a domain agent classifies a bot's blocking comment as noise:
    - tag the bot with the reason and a re-review request;
    - dismiss its `CHANGES_REQUESTED` with `github.sh dismiss-review [PR_NUMBER] --bot --message "[REASON]"`, and resolve the thread;
    - tag a human reviewer the same way, and never dismiss a human's review.
