@@ -24,7 +24,7 @@ What gets built and in what order: cycle planning, backlog prioritization, depen
 
 ## Output
 
-Findings the caller can act on without re-deriving them, structured as JSON when the delegated workflow defines a schema.
+Findings the caller can act on without re-deriving them, structured as JSON when the delegation names a workflow that defines a schema.
 
 ## Additional Instructions
 

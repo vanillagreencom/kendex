@@ -22,4 +22,4 @@ Declarative view layers and their UI messages: TypeScript/React web, mobile and 
 
 ## Output
 
-What changed, what you saw or asserted to verify the view, the screenshot paths, and any non-UI work the caller must route to its owner.
+What changed, what you saw or asserted to verify the view, any screenshot paths the dev workflow called for, and any non-UI work the caller must route to its owner.

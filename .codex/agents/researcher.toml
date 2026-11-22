@@ -19,11 +19,11 @@ The user's facts about their entity, accounts and people live in the user's own 
 - Read the delegated prompt and every provided context file before the first query.
 - When the delegation asks for local validation alongside the research, keep those results and their commands separate from provider sources.
 - Every claim carries its citation. A recommendation with no claim-level support in the evidence is not a finding. Say the question is unresolved instead.
-- If the planner instructions or tracker are unavailable, use the Output path and return the report and sidecar to the caller.
+- If the tracker is unavailable, return the report and sidecar to the caller.
 
 ## Output
 
-`findings.md` at the path the `deep-research` skill's Rules set, raw provider metadata in its sidecar, and exactly one completion message, sent after the report exists and its validation passes. The caller attaches the report to the tracker issue it serves.
+`findings.md` at the path the `deep-research` skill's § Rules set, raw provider metadata in its sidecar, and exactly one completion message, sent after the report exists and its validation passes. The caller attaches the report to the tracker issue it serves.
 
 ## Required Skills
 
