@@ -98,7 +98,12 @@ class SshHostTests(unittest.TestCase):
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SSH_TEST_LOG"
-[[ "${SSH_TEST_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_FAIL"
+# SSH_TEST_FAIL=N refuses every connection with N, as ssh does, after the
+# refusal line SSH_TEST_FAIL_LINE names.
+if [[ "${SSH_TEST_FAIL:-0}" != 0 ]]; then
+  [[ -z "${SSH_TEST_FAIL_LINE:-}" ]] || printf '%s\n' "$SSH_TEST_FAIL_LINE" >&2
+  exit "$SSH_TEST_FAIL"
+fi
 tty_off=false
 for arg in "$@"; do
   if [[ "$arg" == -T ]]; then tty_off=true; fi
@@ -812,6 +817,11 @@ signal.sigwait({signal.SIGTERM})
              lambda: "lane-host-ssh: archive-root-failed item=TEST-1 exit=1 "
                      "cause=orch-runtime: setting-invalid key=ORCH_ARCHIVE_ROOT value=relative"),
             ("silent", tar_silent, close, lambda: "lane-host-ssh: remote-failed target=lane.example exit=23 cause=none"),
+            # The lock session is each lifecycle verb's first connection.
+            ("ssh-refused",
+             lambda: {"SSH_TEST_FAIL": "255", "SSH_TEST_FAIL_LINE": "lane@lane.example: Permission denied (publickey)."},
+             close, lambda: f"lane-host-ssh: ownership-lock-failed target=lane.example clone={clone()} exit=255 "
+                            "cause=lane@lane.example: Permission denied (publickey)."),
         )
         base = self.row["clone"]
         for name, prepare, call, cause in rows:
@@ -828,13 +838,15 @@ signal.sigwait({signal.SIGTERM})
         self.failed_steps()
 
     def test_control_failed_step_refusals_unrecorded(self):
-        """The refusal stays on the provider's line in each control; one
-        drops that line's fix=, so the runtime no longer records it, the
-        other reads the report without the worktree command's Error: mark."""
+        """The refusal stays on stderr in each control: one drops the
+        provider line's fix=, so the runtime no longer records it, one reads
+        the report without the worktree command's Error: mark, and one
+        leaves the lock session's stderr uncaptured."""
         original = self.script.read_text()
         controls = (("setup", "    notice(key, **values, cause=refusal, fix=own or fix)\n",
                      "    notice(key, **values, cause=refusal)\n"),
-                    ("worktree-remove", '    re.compile(rb"^(worktree-[a-z0-9-]+: [^\\n]*)\\n  Error: ", re.M),\n', ""))
+                    ("worktree-remove", '    re.compile(rb"^(worktree-[a-z0-9-]+: [^\\n]*)\\n  Error: ", re.M),\n', ""),
+                    ("ssh-refused", "stdout=subprocess.PIPE, stderr=self.errors,", "stdout=subprocess.PIPE,"))
         for name, rule, mutant in controls:
             self.assertEqual(original.count(rule), 1, rule)
             with self.subTest(row=name), tempfile.TemporaryDirectory() as control:

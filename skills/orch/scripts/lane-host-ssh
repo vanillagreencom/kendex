@@ -157,8 +157,13 @@ while read -r command_size input_size; do
   cat -- "$session/output" "$session/error"
 done
 '''
+        # The session's own stderr, SSH's and the lock script's, held in a
+        # file rather than a pipe nobody drains while steps run; close reads
+        # it so a failed lock names that refusal.
+        self.errors = tempfile.TemporaryFile()
+        self.report = b""
         self.process = subprocess.Popen(remote_command(row, script, row["clone"] + ".lane-host.lock"),
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors,
                                         env=dict(os.environ))
 
     def request(self, script, args, data):
@@ -206,6 +211,9 @@ done
             return 1
         finally:
             self.process.stdout.close()
+            self.errors.seek(0)
+            self.report = self.errors.read()
+            self.errors.close()
 
 
 @contextmanager
@@ -223,14 +231,19 @@ def ownership_lock(row):
         code = session.close()
         if not ready and code == 0:
             code = 1
+        relay(session.report)
         decides = error is None or isinstance(error, SystemExit) and error.code == 0
         if code == 75:
             notice("ownership-busy", target=row["target"], clone=row["clone"], exit=code)
+        elif code and decides:
+            # The lock's exit decides the call, so its line is the recorded
+            # cause, naming SSH's or the lock script's own refusal.
+            step_failed("ownership-lock-failed", session.report,
+                        "retry once SSH to the target holds the connection",
+                        target=row["target"], clone=row["clone"], exit=code)
         elif code:
-            # Where the lock's exit decides the call it is the recorded cause;
-            # after a failed step that step's refusal stays the cause.
-            fix = {"fix": "retry once SSH to the target holds the connection"} if decides else {}
-            notice("ownership-lock-failed", target=row["target"], clone=row["clone"], exit=code, **fix)
+            # After a failed step that step's refusal stays the cause.
+            notice("ownership-lock-failed", target=row["target"], clone=row["clone"], exit=code)
         if decides:
             if code:
                 raise SystemExit(code if code > 0 else 1)
@@ -1199,8 +1212,10 @@ command, lane-marker, sync-base, a setup or a runtime; else the report's last
 line; none for an empty report. The same cause= and fix= end a failed runtime
 call's status-read-failed, stop-validations-failed, close-validations-failed,
 stop-failed and close-stop-failed, and close's archive-root-failed item=ID
-exit=N when this machine's orch-runtime archive root refuses. An
-ownership-lock-failed that decides the exit carries fix= too.
+exit=N when this machine's orch-runtime archive root refuses. They also end an
+ownership-lock-failed that decides the exit, its REFUSAL read from the lock
+session's own stderr (SSH's or the lock script's), which arrives when that
+session closes.
 list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
 static hosts. touch probes SSH; static hosts have no idle expiry.
 capabilities prints the static ssh host kind's one capability line

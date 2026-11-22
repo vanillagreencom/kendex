@@ -6017,12 +6017,12 @@ fn a_failed_finished_hosted_close_is_retried_without_repeating_the_exit_event() 
 /// A walled hosted lane's harness must not run on beside the successor the
 /// relaunch opens: a walled lane whose kind declares a local pane has its
 /// harness stopped through the provider's `stop --item --harness` under the
-/// record's host before the relaunch starts; a stop the provider refuses,
-/// or answers with exit 0 and a line that is not `stopped item=ITEM
-/// processes=N`, leaves the wall to the overseer with
-/// `wall-relaunch-refused reason=stop-failed`, the status and the
-/// provider's refusal line (the last stderr line carrying `fix=`) under the
-/// line, and nothing starts. So does a stop that gave no answer, a status
+/// record's host before the relaunch starts. A stop the provider refuses
+/// leaves the wall to the overseer with `wall-relaunch-refused
+/// reason=stop-failed`, its status and its refusal line under the line, and
+/// nothing starts; one that answers exit 0 with a line other than `stopped
+/// item=ITEM processes=N` does the same with `cause=answer-unparsed` alone
+/// (`hosted::stop` states both). So does a stop that gave no answer, a status
 /// of 128 and above (a signal, the ssh provider's 255), said
 /// `reason=stop-unanswered`, since the harness may still run.
 #[test]
