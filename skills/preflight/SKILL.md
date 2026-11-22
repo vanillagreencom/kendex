@@ -22,6 +22,9 @@ Run preflight in the validate step, before the project's own validation command.
 .agents/skills/preflight/scripts/preflight --all        # every tracked file, every line
 ```
 
-Fix what a finding reports; never widen a lane's exclusions to clear it.
+Fix what a finding reports. Never widen a lane's exclusions to clear it.
 
-Lanes, scopes, settings, output and exit codes are in `preflight --help`. Diff construction and the `unwired-suite`, `data-syntax`, `applied-migration-edited` and `fail-open` sourced-library glob grammars are [references/lanes.md](references/lanes.md). Hook and CI wiring is [references/wiring.md](references/wiring.md).
+`preflight --help` gives the lanes, scopes, settings, output and exit codes.
+
+- When a finding or a glob setting turns on how the diff is taken, how `unwired-suite` reads a runner, or how a glob setting matches a path, read [references/lanes.md](references/lanes.md).
+- When wiring preflight into a Git hook or CI, read [references/wiring.md](references/wiring.md).
