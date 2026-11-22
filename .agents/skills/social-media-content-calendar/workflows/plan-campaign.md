@@ -4,9 +4,9 @@ Read when planning a campaign or preparing its draft handoff.
 
 ## Define the brief
 
+- Read the consumer's product and brand files.
 - Record the business objective, audience, offer, platforms, date range, time zone, posting frequency and voice.
 - Record required and prohibited claims, destinations, link tracking, languages, campaign owner and tracker item.
-- Read the consumer's product and brand files.
 - Mark missing facts as questions for the owner.
 
 ## Collect source material
@@ -26,9 +26,9 @@ Read when planning a campaign or preparing its draft handoff.
 - Use that identifier in the calendar, draft file, asset brief and approval reference.
 - Keep one calendar row per proposed post:
 
-| Post | Proposed date and time zone | Platform and account | Theme and objective | Owner | Draft and assets | State | Approval record |
-|---|---|---|---|---|---|---|---|
-| launch-intro | To confirm | Consumer's selected account | Explain the launch | Campaign owner | Local file paths | draft | Pending |
+| Post | Proposed date | Time zone | Platform | Account | Theme | Objective | Owner | Draft | Assets | State | Approval record |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| launch-intro | To confirm | To confirm | LinkedIn | Consumer's selected account | Product | Explain the launch | Campaign owner | Local file path | Local file path or missing | draft | Pending |
 
 ## Write briefs and drafts
 
@@ -36,17 +36,20 @@ Read when planning a campaign or preparing its draft handoff.
 - Specify asset content, dimensions, captions and accessibility text.
 - Link each factual claim to the claim inventory.
 - Draft copy in the consumer's voice.
-- Preserve the campaign identity while adapting wording and format to each platform.
+- Preserve the campaign identity across platforms.
+- Adapt wording and format to each platform.
 - Use available native media tools when the task calls for assets.
-- If those tools are unavailable, supply an asset brief and mark the asset as missing.
+- If those tools are unavailable, supply an asset brief.
+- If those tools are unavailable, mark that asset as missing.
 - Record draft copy and asset status for every slot.
 
 ## Review each piece
 
-- Check claims, tone, repetition, rights, permission, accessibility, disclosures, link destinations, dates and sensitive events.
-- Mark each piece with a state from the skill's Draft states table and an owner.
-- A review issue keeps the piece in `needs review`.
 - Include AI media disclosures where the target platform requires them.
+- Check claims, tone, repetition, rights, permission, accessibility, disclosures, link destinations, dates and sensitive events.
+- Mark each piece with a state from the skill's Draft states table.
+- Give each piece an owner.
+- A review issue keeps the piece in `needs review`.
 
 ## Hand off the approval batch
 
