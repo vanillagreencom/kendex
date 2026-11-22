@@ -52,7 +52,7 @@ Collection failures remain errors. The verdict is `2` when any scope could not b
 - `COMMIT_GUARDS_SETTINGS_FILE=/dev/null` skips file sources.
 - The settings template [kendex.settings.toml.example](../kendex.settings.toml.example) declares project settings. Each check's script owns its defaults; `--help` describes its interface.
 - `commit-msg` never batches.
-- A configured retired `md-format`, `todo-ban`, `prose` or `comments` name is dropped with a `retired-check` warning.
+- A configured retired `md-format`, `todo-ban`, `prose`, `comments` or `suppression-ban` name is dropped with a `retired-check` warning.
 - For check-specific settings and their meaning, read the matching [CHECKS.md](../CHECKS.md) section. Its [md-refs](../CHECKS.md#md-refs) contract owns document and source path selection, the additive `_EXTRA` lists and extensionless scripts.
 - `COMMAND_SAFETY_DENY_PATTERN` configures the command-safety hook through this settings loader where that bundle installs it; its declaration is in the settings template.
 - Exclude immutable first-party sources, including applied SQL migrations, through the excludes lists of the checks that read them.

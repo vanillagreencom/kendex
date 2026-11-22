@@ -18,7 +18,12 @@ bash skills/commit-guards/tests/terminal-paths.test.sh
 
 - Before diagnosing an installation, read `scripts/install-git-hooks --help`. It owns install, repair, removal and read-only check results, including `core.hooksPath` and linked-worktree limits.
 - Run installation cases in fixture repositories, not against the developer's own hooks.
-- When changing the installer, use `tests/install-git-hooks-check.test.sh` for the status predicate and `tests/lib/install-hooks.bash` for shared fixtures.
+- When changing the installer, run the suite that holds the behaviour, by its header comment:
+  - `tests/install-git-hooks.test.sh`: arming a repository, what an install writes and refuses, what a commit meets once armed, what an uninstall gives back, and `--check` answering armed from a linked worktree that carries its own render.
+  - `tests/install-git-hooks-check.test.sh`: the `--check` verdicts over the shims, and the install refusals that keep an install from reporting what the next `--check` would contradict.
+  - `tests/install-git-hooks-hookspath.test.sh`: the `core.hooksPath` stand-down, in both modes.
+  - `tests/install-git-hooks-scope.test.sh`: which scripts the shim reaches, rediscovery, and the doc-limits and preflight lanes the chain runs beside its own checks.
+- Installer suites share their fixtures through `tests/lib/install-hooks.bash`.
 - Inspect `scripts/lib/helper-body.sh` and `scripts/lib/hook-check.sh` together: the installed helper's bytes and the checker that accepts them must agree.
 - Keep the helper's stamp check and byte check distinct; a current stamp alone does not prove the helper matches.
 
