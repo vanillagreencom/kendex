@@ -29,7 +29,7 @@ Set up takes the review files over from bot-instructions. Until Set up runs, the
 1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION`. It has no default. `check` reports the value. Adoption and setup refuse while it is empty. No other command reads it.
 2. `GITHUB_STANDARD_BOT_REVIEW` defaults to `off`, which selects local output. To render the bots the existing `[bot-instructions]` manifest table enables, set it to `on`.
 3. Put these settings in the `[env]` table of `kendex.settings.toml` at the repository root, as [the settings example](kendex.settings.toml.example) shows.
-4. Use Set up on this package's desktop page, or the CLI's disclosed install with `--allow-repo-effects`.
+4. Use Set up on this package's desktop page, or run the `kendex add` or `kendex apply` that installs this package with `--allow-repo-effects`.
 
 Local output writes the `AGENTS.md` review pointer region. It needs the manifest's `codex` flag and an installed bot-instructions package inside the checkout. It leaves remote review files alone. This package installs no hosted CI.
 
