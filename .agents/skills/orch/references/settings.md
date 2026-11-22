@@ -198,7 +198,7 @@ The account judge, `orch-runtime lane pick`, reads these through agent-runtime.
 
 | Key | What it changes | Default |
 |---|---|---|
-| `ORCH_RECORD_RETENTION_DAYS` | Days past a record's own end before the retention duty removes it. `lane-mail compact` reads it too. | `5` |
+| `ORCH_RECORD_RETENTION_DAYS` | Days past a record's own end, or a scratch entry's last write, before the retention duty removes it. `lane-mail compact` reads it too. | `5` |
 | `ORCH_FLEET_LOG_ROW_BYTES` | Bytes of text one fleet-log row may carry. | `600` |
 | `ORCH_TAKEOVER_ROWS` | Fleet-log rows a successor reads whole at takeover. | `10` |
 | `ORCH_PROGRESS_REPORT_DIR` | The owner progress reports' folder. A relative path joins the main checkout. | `tmp/progress-reports` |

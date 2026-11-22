@@ -384,7 +384,7 @@ Stop when the queue is empty or the user stops the fleet. An empty queue under a
    .agents/skills/orch/scripts/orch-runtime handoff --fleet --body [BODY] --handoff [HANDOFF_PATH]
    ```
 
-The watch's retention duty runs the retention [workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states, the overseer mailbox's compaction included. Prune or compact nothing by hand.
+The watch's retention duty runs the retention [workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states, the overseer mailbox's compaction and the scratch of `tmp/` included. Prune or compact nothing by hand.
 
 ### Succession
 

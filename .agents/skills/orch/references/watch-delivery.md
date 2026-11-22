@@ -19,6 +19,8 @@ The log is `oversee-watch.log` beside the fleet state. `oversee-watch.err` besid
 3. Save the follow of § Repeat watch or § Single passes as `[RUN_DIR]/follow.sh`.
 4. Follow with `sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]`, starting after the last numbered line handled.
 
+The retention duty removes a reader folder once nothing uses it, as [workflow-state.md § Scratch](../schemas/workflow-state.md#scratch) states. The newest one on the watch's log stays as the live follow's.
+
 A fleet's first start, a `start-controller` with no `resume`, empties the log an earlier fleet left. After it the reader starts at 1, whatever a standing handoff names. A succession, a resume, a takeover and a hand `watch start` keep the log, so a successor keeps the cursor its handoff names. Never launch a second follow merely to receive events.
 
 ## Claim

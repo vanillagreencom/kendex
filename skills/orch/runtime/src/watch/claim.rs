@@ -95,6 +95,18 @@ impl Paths {
             dir,
         })
     }
+
+    /// The prefix the runner's own files beside the log share: the log's
+    /// stem and a `.`.
+    pub fn runner_prefix(&self) -> String {
+        format!(
+            "{}.",
+            self.log
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        )
+    }
 }
 
 /// The claim as recorded: the runner's identity and what it recorded of
@@ -468,7 +480,7 @@ pub(crate) fn waiter(cwd: &Path, origin: &str, log: &Path) -> Follow {
 }
 
 /// Whether `a` and `b` name one file, links followed.
-fn same_file(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     match (std::fs::metadata(a), std::fs::metadata(b)) {
         (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
         _ => false,

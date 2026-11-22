@@ -1,10 +1,12 @@
 //! The retention duty: each lane record judged by its own recorded end, and
 //! the state directory pruned of a closed list of kinds ([`Unit`]), each
 //! serialized by a lock the commit holds through its removal or written by
-//! nothing once selected. Every other entry stays, whatever its age or
-//! name: a lane's files, briefs, handoffs, mailboxes, receipts, notices and
-//! operator scratch leave only through an item's close-out
-//! (`archive::close_out`) or by hand.
+//! nothing once selected. The watch's duty alone judges the main checkout's
+//! scratch too, the overseer's own, which goes once nothing uses it
+//! ([`super::scratch`]); the pass a fleetless close-out runs judges none.
+//! Every other entry stays, whatever its age or name:
+//! a lane's files, handoffs, mailboxes, receipts and notices leave only
+//! through an item's close-out (`archive::close_out`).
 //!
 //! The lane records and fleet-log rows past the retention leave the fleet
 //! state through [`crate::ops::prune::prune_records`], applied under its
@@ -21,10 +23,14 @@
 //!
 //! The overseer mailbox is compacted on the same pass by the mailbox
 //! skill's own `lane-mail compact`; its refusal is the pass's failure, and
-//! the prune still runs.
+//! the prune still runs. The watch's stderr is cut to its newest lines
+//! there too ([`bound_stderr`]); its log stays whole, since every follow
+//! numbers its lines from the log's first and `tail -F` reads a cut or
+//! replaced file again from its start.
 
 use agent_runtime::record::{self, Document, Locking};
 use std::collections::BTreeSet;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -52,6 +58,12 @@ use agent_runtime::journal::Env;
 pub const TERMINAL_WORDS: [&str; 2] = ["done", "closed"];
 
 const SECS_PER_DAY: u64 = 86_400;
+
+/// The size past which the watch's stderr is cut, and the newest bytes the
+/// cut keeps: its readers read the latest duty failure's cause, and a cause
+/// is one line of a few hundred bytes.
+const ERR_BYTES: u64 = 1024 * 1024;
+const ERR_KEPT: u64 = ERR_BYTES / 2;
 
 /// What the duty runs with, fixed at registration.
 pub struct Context {
@@ -241,7 +253,7 @@ pub fn judge(
     clippy::disallowed_methods,
     reason = "a file's modification time read as an epoch second, its own recorded end, beside the injected clock's cutoff"
 )]
-fn epoch_of(modified: SystemTime) -> u64 {
+pub(super) fn epoch_of(modified: SystemTime) -> u64 {
     modified
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -306,6 +318,14 @@ pub(super) fn is_progress_report(name: &str) -> bool {
         && fields
             .iter()
             .all(|f| f.len() == 2 && f.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether `name` is a progress report's delivery attempt, its stamped name
+/// with `.notice.json` for `.md`: `report write` keeps it until the owner's
+/// notice is sent, or none is owed.
+pub(super) fn is_report_attempt(name: &str) -> bool {
+    name.strip_suffix(".notice.json")
+        .is_some_and(|stem| is_progress_report(&format!("{stem}.md")))
 }
 
 /// The records of items no lane record judges whose state was last written
@@ -409,11 +429,15 @@ fn intent_files(dir: &Path, intents: &[Value], cutoff: u64) -> Result<Vec<Unit>>
     Ok(out)
 }
 
-/// The owner progress reports under `dir` last written before `cutoff`.
+/// The owner progress reports under `dir` last written before `cutoff`
+/// and sent: no delivery attempt stands beside one.
 fn progress_reports(dir: &Path, cutoff: u64) -> Result<Vec<Unit>> {
     let mut out = Vec::new();
     for file in read_dir(dir)? {
-        if is_progress_report(&name_of(&file)) && written(&file)?.is_some_and(|at| at < cutoff) {
+        if is_progress_report(&name_of(&file))
+            && written(&file)?.is_some_and(|at| at < cutoff)
+            && stamp(&file.with_extension("notice.json"))?.is_none()
+        {
             out.push(Unit::ProgressReport(file));
         }
     }
@@ -503,6 +527,10 @@ enum Unit {
     /// An owner progress report: written once, at the minute its name
     /// carries.
     ProgressReport(PathBuf),
+    /// A scratch entry nothing uses ([`super::scratch`]): past the
+    /// retention, so no writer is expected; one that writes it between the
+    /// judgement and the removal finds its write in the archive.
+    Scratch(PathBuf),
     /// A session rows file of the overseer mailbox (see
     /// [`dead_session_rows`]): only its pane's own session writes it, and
     /// that pane is gone.
@@ -515,6 +543,7 @@ impl Unit {
             Unit::Record { path, .. }
             | Unit::IntentFile(path)
             | Unit::ProgressReport(path)
+            | Unit::Scratch(path)
             | Unit::SessionRows(path) => path,
         }
     }
@@ -522,7 +551,10 @@ impl Unit {
     fn item(&self) -> Option<&str> {
         match self {
             Unit::Record { item, .. } => Some(item),
-            Unit::IntentFile(_) | Unit::ProgressReport(_) | Unit::SessionRows(_) => None,
+            Unit::IntentFile(_)
+            | Unit::ProgressReport(_)
+            | Unit::Scratch(_)
+            | Unit::SessionRows(_) => None,
         }
     }
 }
@@ -540,6 +572,8 @@ struct Plan {
     records: Vec<PathBuf>,
     fleet: Option<Document>,
     cutoff: u64,
+    /// Why the scratch went unjudged this pass.
+    unjudged: Option<String>,
 }
 
 /// The places a pass reads beside the state directory, and the tmux server
@@ -548,6 +582,16 @@ struct Places {
     progress: PathBuf,
     overseer: PathBuf,
     server: Option<PathBuf>,
+    /// The main checkout whose scratch the pass judges, `None` for a pass
+    /// that judges none.
+    scratch: Option<Checkout>,
+}
+
+/// The main checkout, whose `tmp/` holds the scratch, and the private env
+/// file the settings read, which cites.
+struct Checkout {
+    root: PathBuf,
+    private_env: Option<PathBuf>,
 }
 
 /// The judgement: the records at `fleet`, the directory beside it and the
@@ -597,6 +641,30 @@ fn plan(
     units.extend(laneless_records(paths, project, &judged, cutoff)?);
     units.extend(intent_files(&paths.dir, intents, cutoff)?);
     units.extend(progress_reports(&places.progress, cutoff)?);
+    let scratch = match &places.scratch {
+        Some(checkout) => {
+            // An item's folder outlives its record, since every locked
+            // write leaves the lock there: only a standing record keeps the
+            // item's entries.
+            let mut items: BTreeSet<String> = judged.iter().map(|i| (*i).to_owned()).collect();
+            for folder in read_dir(&state::items_dir(&paths.dir))? {
+                let item = name_of(&folder);
+                if stamp(&state::item_path(&paths.dir, &item))?.is_some() {
+                    items.insert(item);
+                }
+            }
+            super::scratch::unused(&super::scratch::Inputs {
+                paths,
+                checkout: &checkout.root,
+                private_env: checkout.private_env.as_deref(),
+                record,
+                items: &items,
+                cutoff,
+            })?
+        }
+        None => super::scratch::Judged::default(),
+    };
+    units.extend(scratch.paths.into_iter().map(Unit::Scratch));
     units.extend(
         dead_session_rows(&places.overseer, places.server.as_deref(), record)?
             .into_iter()
@@ -639,6 +707,7 @@ fn plan(
         records,
         fleet: doc,
         cutoff,
+        unjudged: scratch.unread,
     })
 }
 
@@ -690,6 +759,8 @@ pub struct Pruned {
     /// Each item record whose lock could not be taken, as
     /// `record=<path> <cause>`: its item stays for the next pass.
     pub unlocked: Vec<String>,
+    /// Why the scratch went unjudged: every scratch entry stays.
+    pub unjudged: Option<String>,
 }
 
 /// What the fleet transition confirmed: the items whose rows still equal
@@ -724,13 +795,15 @@ fn going(plan: &Plan, abandoned: &BTreeSet<String>) -> Vec<PathBuf> {
 /// of each item record it removes: a record that moved since the judgement
 /// abandons its item, the archive is written, `commit` drops the rows of
 /// the items left while they equal the plan's and names those confirmed,
-/// and only their records and the units naming no item go.
+/// and only their records and the units naming no item go. `scratch` is
+/// the main checkout whose scratch the pass judges, or `None`.
 fn judged_pass(
     fleet: &Path,
     paths: &Paths,
     settings: &Settings,
     locking: Locking,
     now: u64,
+    scratch: Option<&Path>,
     commit: impl FnOnce(&[PlannedRows], u64) -> Result<Confirmed>,
 ) -> Result<Pruned> {
     let reach = crate::effects::fleet_reach(settings)?;
@@ -742,6 +815,10 @@ fn judged_pass(
             progress: settings.store.progress_report_dir.clone(),
             overseer: crate::watch::mail::overseer_dir(&reach.mail_root),
             server: reach.socket,
+            scratch: scratch.map(|root| Checkout {
+                root: root.to_path_buf(),
+                private_env: settings.private_env_file.clone(),
+            }),
         },
         settings.retention_days.get()?,
         now,
@@ -787,6 +864,7 @@ fn judged_pass(
             rows: live_rows(&abandoned),
             archive,
             unlocked: causes,
+            unjudged: plan.unjudged.clone(),
         })
     })
 }
@@ -794,7 +872,8 @@ fn judged_pass(
 /// One pass with no record transition: the judgement, the archive, then the
 /// units go. The duty applies the transition between the archive and the
 /// removal; a checkout with no fleet state has no transition to apply, and
-/// every planned item stands confirmed.
+/// every planned item stands confirmed. It judges no scratch: a checkout
+/// with no fleet has no overseer whose files the scratch would be.
 pub fn pass(
     fleet: &Path,
     paths: &Paths,
@@ -802,7 +881,7 @@ pub fn pass(
     locking: Locking,
     now: u64,
 ) -> Result<Pruned> {
-    judged_pass(fleet, paths, settings, locking, now, |rows, _| {
+    judged_pass(fleet, paths, settings, locking, now, None, |rows, _| {
         Ok(Confirmed {
             items: rows.iter().map(|r| r.item.clone()).collect(),
             dropped: rows
@@ -831,6 +910,7 @@ fn prune(ctx: &Context, tick: &Tick) -> Result<Pruned> {
         &ctx.settings,
         ctx.locking,
         tick.wall,
+        Some(&ctx.settings.roots.common),
         |rows, cutoff| {
             let request = Request::PruneRecords(PruneRecords {
                 lanes: rows.to_vec(),
@@ -872,17 +952,80 @@ fn compact(settings: &Settings) -> Option<String> {
         .map(|refusal| format!("lane-mail compact item=overseer {refusal}"))
 }
 
-/// One pass of the duty: the overseer mailbox's compaction, then the prune.
-/// A prune that fails fails the pass; a refused compaction and each record
-/// left for want of its lock are the causes of a pass that otherwise ran.
+/// The watch's stderr kept to [`ERR_BYTES`]: past it, cut to its newest
+/// [`ERR_KEPT`] bytes from the first whole line. Every writer appends (the
+/// job launcher opens it `O_APPEND`, by `append:` or by its own open), so a
+/// line written after the cut lands after the kept tail; one written
+/// between the read and the cut is lost.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the watch's own stderr file, cut in place under its appending writers"
+)]
+fn bound_stderr(path: &Path) -> Result<()> {
+    let io = |op, e| agent_runtime::Error::io(op, path, e);
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && meta.len() > ERR_BYTES => {}
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(io("read", e).into()),
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| io("open", e))?;
+    let len = file.metadata().map_err(|e| io("read", e))?.len();
+    let mut tail = Vec::new();
+    file.seek(SeekFrom::Start(len.saturating_sub(ERR_KEPT)))
+        .and_then(|_| file.read_to_end(&mut tail))
+        .map_err(|e| io("read", e))?;
+    let start = tail
+        .iter()
+        .position(|b| *b == b'\n')
+        .map_or(tail.len(), |at| at + 1);
+    file.set_len(0)
+        .and_then(|()| file.write_all(&tail[start..]))
+        .map_err(|e| io("write", e))?;
+    Ok(())
+}
+
+/// One pass of the duty: the overseer mailbox's compaction, the prune, then
+/// the stderr's bound, which runs whatever the prune's outcome, since a
+/// prune that fails on every pass writes its cause to that file each time.
+/// A prune that fails fails the pass, its cause first; a refused
+/// compaction, each record left for want of its lock, unjudged scratch and
+/// a stderr that could not be cut are the causes of a pass that otherwise
+/// ran, and follow a failed prune's cause.
 fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     let refused = compact(&ctx.settings);
-    let pruned = prune(ctx, tick)?;
-    let causes: Vec<String> = refused.into_iter().chain(pruned.unlocked).collect();
-    Ok(Produced {
-        failed: (!causes.is_empty()).then(|| causes.join("\n")),
-        ..Produced::default()
-    })
+    let pruned = prune(ctx, tick);
+    let bounded = bound_stderr(&ctx.paths.dir.join(crate::effects::WATCH_ERR_FILE))
+        .err()
+        .map(|e| format!("stderr=uncut {e}"));
+    let (pruned, failed) = match pruned {
+        Ok(pruned) => (pruned, None),
+        Err(e) => (Pruned::default(), Some(e)),
+    };
+    let causes: Vec<String> = refused
+        .into_iter()
+        .chain(pruned.unlocked)
+        .chain(pruned.unjudged)
+        .chain(bounded)
+        .collect();
+    match failed {
+        None => Ok(Produced {
+            failed: (!causes.is_empty()).then(|| causes.join("\n")),
+            ..Produced::default()
+        }),
+        Some(e) if causes.is_empty() => Err(e),
+        Some(e) => Err(crate::error::Error::Artifact {
+            key: e.key(),
+            cause: std::iter::once(e.to_string())
+                .chain(causes)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -900,9 +1043,13 @@ mod tests {
     const NOW: u64 = 1_769_700_000;
 
     fn aged(path: &Path) {
+        aged_by(path, 10);
+    }
+
+    fn aged_by(path: &Path, days: u64) {
         std::fs::File::open(path)
             .unwrap()
-            .set_modified(UNIX_EPOCH + Duration::from_secs(NOW - 10 * SECS_PER_DAY))
+            .set_modified(UNIX_EPOCH + Duration::from_secs(NOW - days * SECS_PER_DAY))
             .unwrap();
     }
 
@@ -917,6 +1064,10 @@ mod tests {
     }
 
     fn settings_with(root: &Path, extra: &[(&str, &str)]) -> Settings {
+        settings_at(root, root, extra)
+    }
+
+    fn settings_at(root: &Path, state_dir: &Path, extra: &[(&str, &str)]) -> Settings {
         let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = extra
             .iter()
             .map(|(k, v)| ((*k).into(), (*v).into()))
@@ -928,8 +1079,8 @@ mod tests {
             },
             &environment,
             &crate::settings::Flags {
-                state_dir: Some(root.to_path_buf()),
-                private_env: false,
+                state_dir: Some(state_dir.to_path_buf()),
+                private_env: true,
             },
         )
         .unwrap()
@@ -994,6 +1145,7 @@ mod tests {
             &settings(&root),
             Locking::FLOCK,
             NOW,
+            None,
             |rows, cutoff| {
                 let confirmed = prune_records(&fleet, rows, cutoff)?;
                 std::fs::write(&late, "{}\n").unwrap();
@@ -1070,6 +1222,7 @@ mod tests {
                 &settings,
                 Locking::FLOCK,
                 NOW,
+                None,
                 |rows, cutoff| {
                     let confirmed = prune_records(&fleet, rows, cutoff)?;
                     sender = Some(scope.spawn(|| {
@@ -1099,6 +1252,235 @@ mod tests {
             std::fs::read_to_string(&received).unwrap(),
             "the owner reads this\n"
         );
+    }
+
+    /// The checkout's scratch, in the default layout where `tmp/` is the
+    /// state directory, past the retention: the watch's duty removes an
+    /// entry only once no citing text names it, no running process names
+    /// it, its name carries no item with a standing record and it is not the
+    /// live follow's reader folder. The pass a fleetless close-out runs
+    /// judges no scratch, and the progress folder, here outside the
+    /// checkout, loses only its sent stamped reports.
+    #[test]
+    fn scratch_goes_once_nothing_cites_holds_or_names_it() {
+        let world = tempfile::tempdir().unwrap();
+        let top = world.path().canonicalize().unwrap();
+        let root = top.join("checkout");
+        let tmp = root.join("tmp");
+        let fleet = tmp.join(record::FLEET_FILE_NAME);
+        let progress = top.join("reports");
+        // A name a running process names is held, so each entry that goes,
+        // and the one the test's own follow holds, carries this run's own
+        // tag, which no other process spells.
+        let tag = name_of(&top).replace('.', "");
+        plant(
+            &fleet,
+            &json!({
+                "issue_id": "oversee", "lanes": [], "launch_queue": [], "fleet_log": [],
+                "intents": [], "standing": [{"text": "keep tmp/cited.md for the owner"}],
+                "controller": {"handoff": "ops/overseer.md"}
+            })
+            .to_string(),
+        );
+        let item = state::item_path(&tmp, "KEN-7");
+        std::fs::create_dir_all(item.parent().unwrap()).unwrap();
+        // A JSON string escapes the line break before a name it opens.
+        std::fs::write(&item, "{\"notes\": \"Keep:\\nitem-cited.json\"}\n").unwrap();
+        // A closed item: its folder keeps only its record's lock.
+        plant(
+            &agent_runtime::record::lock_path(&state::item_path(&tmp, "KEN-8")),
+            "",
+        );
+        plant(
+            &tmp.join("handoffs").join("OVERSEER-HANDOFF.md"),
+            "Read tmp/handed.md.\n",
+        );
+        plant(
+            &root.join("ops").join("overseer.md"),
+            "Read tmp/recovery.md\n",
+        );
+        plant(
+            &root.join("kendex.settings.toml"),
+            "[env]\nDEV_VALIDATE_CMD = \"bash tmp/nested-slot.sh\"\nKENDEX_ENV_FILE = \"config/private.env\"\n",
+        );
+        plant(
+            &root.join("config").join("private.env"),
+            "DEV_VALIDATE_RANGE_CMD=\"bash tmp/private-slot.sh\"\n",
+        );
+        plant(&tmp.join("oversee-watch.log"), "1\n");
+        let young = tmp.join("young-brief.md");
+        std::fs::write(&young, "Research: tmp/chain.md\n").unwrap();
+        let reader = |name: &str, days: u64| {
+            let dir = tmp.join(name);
+            plant(&dir.join("follow.sh"), "tail\n");
+            std::os::unix::fs::symlink(tmp.join("oversee-watch.log"), dir.join("watch.log"))
+                .unwrap();
+            aged_by(&dir, days);
+            dir
+        };
+        let live = reader("waiter.live01", 8);
+        let ended = reader(&format!("waiter.{tag}r"), 10);
+        let waited = tmp.join(format!("waiter.{tag}w"));
+        plant(&waited.join("wait.exit"), "0\n");
+        aged(&waited);
+        let lane_mail = tmp.join("lane-mail").join("KEN-1");
+        plant(&lane_mail.join("to-lane.jsonl"), "");
+        aged(&tmp.join("lane-mail"));
+        let held = tmp.join(format!("follow-{tag}.log"));
+        plant(&held, "a follow reads this\n");
+        // An entry nothing keeps cites nothing: the brief goes, and the note
+        // only it names goes with it.
+        let brief = tmp.join(format!("brief-{tag}.md"));
+        plant(&brief, &format!("Read tmp/note-{tag}.md\n"));
+        let unsent = progress.join("01-01-00-01.md");
+        let sent = progress.join("01-01-00-00.md");
+        let rows: Vec<(PathBuf, bool)> = vec![
+            (fleet.clone(), true),
+            (tmp.join("cited.md"), true),
+            (tmp.join("item-cited.json"), true),
+            (tmp.join("handed.md"), true),
+            (tmp.join("recovery.md"), true),
+            (tmp.join("nested-slot.sh"), true),
+            (tmp.join("private-slot.sh"), true),
+            (tmp.join("chain.md"), true),
+            (held.clone(), true),
+            (tmp.join("lane-status-KEN-7.md"), true),
+            (tmp.join("oversee-watch.err"), true),
+            (tmp.join(".gitkeep"), true),
+            (tmp.join("other.lock"), true),
+            (unsent.clone(), true),
+            (unsent.with_extension("notice.json"), true),
+            (progress.join(format!("summary-{tag}.md")), true),
+            (tmp.join(format!("KEN-8-{tag}.md")), false),
+            (tmp.join(format!("inventory-{tag}.json")), false),
+            (brief.clone(), false),
+            (tmp.join(format!("note-{tag}.md")), false),
+            (sent.clone(), false),
+        ];
+        for (path, _) in &rows {
+            if ![&fleet, &held, &brief].contains(&path) {
+                plant(path, "scratch\n");
+            }
+        }
+        aged(&progress);
+        let settings = settings_at(
+            &root,
+            &tmp,
+            &[("ORCH_PROGRESS_REPORT_DIR", progress.to_str().unwrap())],
+        );
+        let paths = Paths::of(&fleet).unwrap();
+        let closed_out = pass(&fleet, &paths, &settings, Locking::FLOCK, NOW).unwrap();
+        assert_eq!(closed_out.paths, vec![sent.clone()]);
+        let mut follow = std::process::Command::new("tail")
+            .arg("-f")
+            .arg(&held)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let ctx = Context {
+            fleet: fleet.clone(),
+            paths,
+            settings,
+            locking: Locking::FLOCK,
+        };
+        let baseline = crate::watch::baseline::Baseline::default();
+        let pruned = prune(
+            &ctx,
+            &Tick {
+                duty: crate::schedule::Duty::Retention,
+                now: Instant::now(),
+                wall: NOW,
+                baseline: &baseline,
+                clock: &agent_runtime::clock::SystemClock,
+            },
+        );
+        follow.kill().unwrap();
+        follow.wait().unwrap();
+        let pruned = pruned.unwrap();
+        assert_eq!(pruned.unjudged, None);
+        let folders = [
+            (young, true),
+            (live, true),
+            (lane_mail, true),
+            (ended, false),
+            (waited, false),
+        ];
+        for (path, stays) in rows.into_iter().chain(folders) {
+            assert_eq!(
+                std::fs::symlink_metadata(&path).is_ok(),
+                stays,
+                "{}",
+                path.display()
+            );
+        }
+    }
+
+    /// A prune that fails, here on a retention of none, still bounds the
+    /// watch's stderr it writes its cause to, and the pass fails with that
+    /// cause first and the compaction's after it.
+    #[test]
+    fn a_failed_prune_still_bounds_the_watch_stderr() {
+        let world = tempfile::tempdir().unwrap();
+        let root = world.path().canonicalize().unwrap();
+        let fleet = root.join(record::FLEET_FILE_NAME);
+        let err = root.join(crate::effects::WATCH_ERR_FILE);
+        std::fs::write(&err, vec![b'x'; ERR_BYTES as usize + 1]).unwrap();
+        let mut settings = settings_with(&root, &[("ORCH_RECORD_RETENTION_DAYS", "0")]);
+        settings.lane_mail_cli = root.join("lane-mail-absent");
+        let ctx = Context {
+            paths: Paths::of(&fleet).unwrap(),
+            fleet,
+            settings,
+            locking: Locking::FLOCK,
+        };
+        let baseline = crate::watch::baseline::Baseline::default();
+        let failed = run(
+            &ctx,
+            &Tick {
+                duty: crate::schedule::Duty::Retention,
+                now: Instant::now(),
+                wall: NOW,
+                baseline: &baseline,
+                clock: &agent_runtime::clock::SystemClock,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(failed.key(), "setting-invalid", "{failed}");
+        let causes: Vec<String> = failed.to_string().lines().map(str::to_owned).collect();
+        assert!(
+            causes[1..]
+                .iter()
+                .any(|line| line.starts_with("lane-mail compact item=overseer")),
+            "{causes:?}"
+        );
+        assert!(std::fs::metadata(&err).unwrap().len() <= ERR_KEPT);
+    }
+
+    /// Past its bound the watch's stderr keeps its newest whole lines, and
+    /// a line its appending writer writes after the cut lands after them;
+    /// under its bound it is left as written.
+    #[test]
+    fn the_watch_stderr_past_its_bound_keeps_its_newest_whole_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oversee-watch.err");
+        std::fs::write(&path, "one cause\n").unwrap();
+        bound_stderr(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one cause\n");
+        let text: String = (0..100_000).map(|n| format!("cause {n:07}\n")).collect();
+        assert!(text.len() as u64 > ERR_BYTES);
+        std::fs::write(&path, &text).unwrap();
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        bound_stderr(&path).unwrap();
+        writer.write_all(b"after\n").unwrap();
+        let kept = std::fs::read_to_string(&path).unwrap();
+        let lines = kept.strip_suffix("after\n").unwrap();
+        assert!(lines.len() as u64 <= ERR_KEPT, "{}", lines.len());
+        assert!(lines.starts_with("cause "), "a whole first line");
+        assert!(text.ends_with(lines), "the newest lines, in order");
     }
 
     #[test]
