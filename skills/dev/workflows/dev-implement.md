@@ -77,7 +77,9 @@ Ad-hoc: no tracker reads.
 
 Read the issue description, `.description` from the read above, or `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`. For a sub-issue, read the parent's description too; for a bundle, read the unique paths across its sub-issues.
 
-Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and the principle docs; a doc whose claim the change makes false is updated in the change. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`, and `decisions search "[KEYWORDS]"` for the area) rather than duplicating it, reading the full record and its status before treating it as binding; record a new one only under the decider bar.
+Before the first edit, read each page that the repository's `AGENTS.md`, and the `AGENTS.md` nearest each path the change touches, routes for those paths.
+
+Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and the principle docs, the pages that routed read names; a doc whose claim the change makes false is updated in the change. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`, and `decisions search "[KEYWORDS]"` for the area) rather than duplicating it, reading the full record and its status before treating it as binding; record a new one only under the decider bar.
 
 For a missing planning or research path in a brief, find it by the route the project-management skill's references/planning-artifacts.md gives for the work item's tracker before classifying the context as missing.
 
@@ -153,7 +155,7 @@ Implement per your domain expertise; § 5 runs the quality gates.
 
 Before writing a refusal, a validator, a lock, a retry, or a test, read [dev SKILL.md § Engineering Rules](../SKILL.md#engineering-rules).
 
-When writing a new or changed check, apply [code-quality § Tests](../../code-quality/SKILL.md#tests) at this step, its protection-against-cost and time-injection rules included: each real-clock wait and real device effect the check performs is part of its cost.
+When writing a new or changed check, apply [code-quality § Tests](../../code-quality/SKILL.md#tests) at this step, its protection-against-cost and time-injection rules included: each real-clock wait and real device effect the check performs is part of its cost. Hold each comment the round writes to [code-quality § Comments and Prose](../../code-quality/SKILL.md#comments-and-prose): it claims only what the adjacent code establishes.
 
 - **Scope growing?** Report the discovered scope in § 9 for every tracker; never create issues here. Follow [skill-rules.md § Coordination](../../orch/references/skill-rules.md#coordination) for issue creation.
 - **Work outside scope?** Note it under Discovered Work in § 9.
