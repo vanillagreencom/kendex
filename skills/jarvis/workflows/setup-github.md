@@ -20,9 +20,11 @@ Use the [home layout](../references/home-layout.md) for home paths.
    - Alternatively, supply a `GH_TOKEN` through a password-manager reference or protected transfer file under Secret transfer.
 5. **Jarvis**: For a supplied token, resolve the project's private env file through `KENDEX_ENV_FILE` and the project's settings layers, defaulting to `.env.local`.
    - Check that Git ignores the file and does not track it before writing.
-   - Add an ignore entry if needed and check again.
+   - Add an ignore entry if needed.
+   - Check again after adding one.
    - Resolve a tracked file or failed check before accepting the token.
-   - Create or protect the destination with mode 600, then write `GH_TOKEN` through Secret transfer.
+   - Create or protect the destination with mode 600.
+   - Then write `GH_TOKEN` through Secret transfer.
    - Preserve other entries.
 6. **Jarvis**: Prepare the proof process with the selected token in its environment through Secret transfer, or the signed-in `gh` home for the login route.
    - A bare `gh` process does not load the project's private env file.

@@ -50,10 +50,11 @@ Use [Owner asks](owner-asks.md) for the shared list and its Later operation. The
   - With no live controller, it starts nothing.
 - `.agents/skills/jarvis/scripts/jarvis-session report-due --home HOME` reads orch's derived schedule under [Control-host events: Delivery](control-host-events.md#delivery).
   - Succession retains the controller's original session start.
-  - When adopting this checkpoint in an already running session, repeat its Start command once to establish the start floor.
+  - When adopting the [progress checkpoint](../workflows/session.md#progress-checkpoint) in an already running session, repeat its Start command once to establish the start floor.
 - On a satellite, `jarvis-session forward --home HOME --record PATH` forwards a confirmed owner request to the main, under [Agent reach: Forward](agent-reach.md#forward).
 - Use `jarvis-session forward-drain --home HOME` under [Agent reach: Status](agent-reach.md#status).
-- Read `jarvis-session status --home HOME --main` for forwarding status; its output names its fields, states and causes. Follow [Agent reach: Status](agent-reach.md#status) for kept answers.
+- Read `jarvis-session status --home HOME --main` for forwarding status; its output names its fields, states and causes.
+- Follow [Agent reach: Status](agent-reach.md#status) for kept answers.
 - While the main session is unregistered, a request whose receipt was lost reads `queued` with `overseer-absent`, though the main already holds it. The next delivery or the answer settles it.
 - Stop through `.agents/skills/jarvis/scripts/jarvis-session stop --home HOME`.
   - An app that turns Jarvis off uses `--origin app-off`.
@@ -76,7 +77,8 @@ Use [Owner asks](owner-asks.md) for the shared list and its Later operation. The
   - Add one `--input PATH` for each other input.
   - The task reads that brief directly and writes its Output to the result file.
   - This route starts no repository overseer workflow.
-- For an agent that reads mail, pages or files, put a reference to [Authority](decisions.md#authority) in its brief and require it to read that section before acting.
+- For an agent that reads mail, pages or files, put a reference to [Authority](decisions.md#authority) in its brief.
+  - Require it to read that section before acting.
 - Add `--cwd PATH` to start the harness in an existing directory and use its native instruction loading there.
   - Without it, the task starts in `HOME`.
   - Relative task, input, result and working-directory paths resolve from the caller's directory.
@@ -90,17 +92,23 @@ Use [Owner asks](owner-asks.md) for the shared list and its Later operation. The
 - Retain the returned task id.
   1. Read its record with `task status --home HOME --id ID`; it names the task, inputs, selected model and account, result path and terminal window.
   2. Record the outcome with `task complete --home HOME --id ID --outcome succeeded|failed`. A succeeded task requires its result file.
-  3. After checking the result and closing task-owned browser work, run `task cleanup --home HOME --id ID`. Cleanup closes that task's window, stops the browser running on its profile, and removes its scratch.
+  3. Check the result.
+  4. Close task-owned browser work.
+  5. Run `task cleanup --home HOME --id ID`. Cleanup closes that task's window, stops the browser running on its profile, and removes its scratch.
 
   Completion and cleanup remain on the same task record.
 
 - A launch records a running task only once the harness can take its brief.
   - When the account's harness cannot take it yet, the launch refuses `harness-setup-pending` or `harness-not-ready` and prints a `fix=` line naming the account.
-  - Open the harness once on that account and finish its first-run setup or the screen shown.
+  - Open the harness once on that account.
+  - Finish its first-run setup or the screen shown.
   - Then launch the task again.
 - A launch refused after task allocation prints its task id and keeps the failure cause.
   - Read that record with `task status`.
-  - If cleanup is pending, read its `reason`, close task-owned browser work and retry `task cleanup`. Reason `browser-running` names a browser on the task's profile that could not be stopped.
+  - If cleanup is pending:
+    1. Read its `reason`. Reason `browser-running` names a browser on the task's profile that could not be stopped.
+    2. Close task-owned browser work.
+    3. Retry `task cleanup`.
 - Task windows open in the Jarvis session, so Stop ends them with it.
   - Once the controller has ended, Stop or Start ends a session that holds only task windows.
   - A session of that name that holds any other window stays, and Start then answers `name-conflict`.

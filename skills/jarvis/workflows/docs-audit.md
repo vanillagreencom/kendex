@@ -3,7 +3,8 @@
 1. Obtain explicit repository roots and start and end timestamps from the consumer.
    - Use absolute timestamps with seconds and a UTC offset, such as `2026-10-01T00:00:00+00:00`.
    - Keep repository defaults and schedules in the consumer.
-2. Run [scripts/docs-audit](../scripts/docs-audit) with `--since START --until END REPO_DIR...`. Use `--top N` to change the finite displayed growth and size lists. The command's help defines the default.
+2. Run [scripts/docs-audit](../scripts/docs-audit) with `--since START --until END REPO_DIR...`.
+   - Use `--top N` to change the finite displayed growth and size lists. The command's help defines the default.
 3. Check the exit status and every `repo=` row.
    - An unread repository has `status=unread` and a cause, with no measurements. Report that cause.
    - Missing history or inventory does not mean zero documents.

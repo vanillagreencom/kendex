@@ -37,8 +37,9 @@ kendex inserts no package text into `AGENTS.md`. The persona lives at `persona.m
 
 1. On first load, look in the folder's `AGENTS.md` for a line that routes to [persona.md](persona.md).
 2. If none does, offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes.
-3. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`.
-4. The harness's instruction-loading settings then load the route on every turn. Check that the harness loaded those instructions.
+3. Add it only after the user agrees.
+4. Never paste the persona text into `AGENTS.md`.
+5. The harness's instruction-loading settings then load the route on every turn. Check that the harness loaded those instructions.
 
 ### App-managed home
 
@@ -48,7 +49,8 @@ The assistant app gives `persona.md` to its sessions. Here, a line in `AGENTS.md
 
 At first load, and when the user asks which repositories Jarvis can reach, judge each folder `kendex project list` prints. Judge a `(worktree of [MAIN])` row by `[MAIN]`.
 
-- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer`, with the folder as the working directory. Exit 0 means reachable. An unwritten mailbox prints no envelope and exits 0. The probe records no read position. Read session messages through [Agent reach: Read](references/agent-reach.md#read).
+- Run the folder's own `.agents/skills/mailbox/scripts/lane-mail events --item overseer --box to-overseer`, with the folder as the working directory. Exit 0 means reachable. An unwritten mailbox prints no envelope and exits 0. The probe records no read position.
+  - Read session messages through [Agent reach: Read](references/agent-reach.md#read).
 - Any other result means unreachable. The cause is the folder's note, a missing mailbox script, or the key `lane-mail` printed.
 - A folder with `.agents/skills/orch/` but no mailbox script has an orch older than the mailbox package. Its cause is "refresh needed". Offer `kendex refresh` in that folder.
 
@@ -77,6 +79,7 @@ Read the linked workflow or reference for the task before acting.
 | Add an agent or skill, or change an installed agent | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [home layout](references/home-layout.md) |
 | Remember a fact or establish a workstream | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [memory](references/memory.md) |
 | Add a hook or schedule | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [verification](references/verification.md) |
+| Add a standing rule, event duty, temporary instruction or tool | [Home contract: Personal additions](references/home-contract.md#personal-additions) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
 | Use an automation browser, fill a form or handle a bot check | [references/browser.md](references/browser.md) |

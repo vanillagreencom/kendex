@@ -1,13 +1,16 @@
 # Reconcile tasks
 
-Run for an incoming request, reply, worker result or blocker change, and during Start, the existing progress checkpoint and succession. Run before launching work or waiting. Use the current tracker as the work store under [Homes](../references/long-session.md#homes); the handoff indexes work and does not replace discovery.
+- Run for an incoming request, reply, worker result or blocker change, and during Start, the existing progress checkpoint and succession.
+- Run before launching work or waiting.
+- Use the current tracker as the work store under [Homes](../references/long-session.md#homes); the handoff indexes work and does not replace discovery.
 
 ## 1. Read the scope
 
 1. Confirm tracker access and the consumer's selected task project under Homes.
    - For Linear, use its installed `patterns/workflow-actions.md` sections Task discovery and Task-scope automation.
    - Keep the consumer's team, project, identity, schedule and authority in its own instructions.
-   - An unavailable required read leaves reconciliation incomplete. Retain its cause and next read on the affected item, and hold dependent launches or closure.
+   - An unavailable required read leaves reconciliation incomplete. Retain its cause and next read on the affected item.
+   - Hold dependent launches or closure while that read is unavailable.
 2. At Start and the progress checkpoint, discover every open item in the selected project through every page.
    - Include held work and checks selected under Homes.
    - Compare this discovery with tracker ids in the handoff, incoming exchanges and linked work.
@@ -25,7 +28,8 @@ Run for an incoming request, reply, worker result or blocker change, and during 
 
 1. Reuse the item that retains the same requested outcome.
    - Record the incoming request's source, full message or request id, recorded time and a retrievable reference to its original content.
-   - Preserve the original request when a later message changes the outcome. Add the later message and its authorized decision to the same item.
+   - Preserve the original request when a later message changes the outcome.
+   - Add the later message and its authorized decision to the same item.
    - Distinct requested outcomes can have distinct items; a reply, attempt or delivery does not itself require another item.
 2. When no item retains the outcome, create one in the selected project through the tracker's existing creation route.
    - Put the original request reference, outcome, acceptance check and acceptance owner in its description.
@@ -33,8 +37,11 @@ Run for an incoming request, reply, worker result or blocker change, and during 
    - An exchange that owes only a reply can end with that checked reply; retain any further requested result as work on the item.
 3. Read back the binding before delegation or waiting.
    - Preserve the request identity and outcome on that item through every next step.
-   - If capture or readback fails, hold the dependent action and keep the original request in its exchange home until capture succeeds.
-4. Before treating an owner thread as handled, read every request in the thread. For each distinct outcome the owner requested or a reply promised, answer it in full or bind it to a tracker item and read back the binding.
+   - If capture or readback fails, hold the dependent action.
+   - Keep the original request in its exchange home until capture succeeds.
+4. Before treating an owner thread as handled, read every request in the thread.
+   - For each distinct outcome the owner requested or a reply promised, answer it in full or bind it to a tracker item.
+   - Read back each binding.
 
 ## 3. Reconcile decisions and attempts
 
@@ -45,11 +52,14 @@ Run for an incoming request, reply, worker result or blocker change, and during 
    - An unresolved answer application remains work even when delivery succeeded.
 2. Before launching anything, inspect existing attempts and available results for this request and outcome.
    - Use the item's attempt references, the handoff's Sub-agents entries and the existing execution owner's records.
-   - For a Jarvis task id, use [Task command](../references/session-command.md#task-command), including `task status --home HOME --id ID`, and read its retained task file and result file.
+   - For a Jarvis task id, use [Task command](../references/session-command.md#task-command), including `task status --home HOME --id ID`.
+   - Read a Jarvis task's retained task file and result file.
    - For repository work, read the existing orch lane through its owning interface.
    - Adopt a matching running attempt or reuse a completed result that meets the current request.
-   - Keep attempt identity at that owner and link it from the tracker item; create no second attempt registry.
-   - If a known launch or result has unread identity or state, retain that uncertainty and recover it before launching a replacement.
+   - Keep attempt identity at that owner; create no second attempt registry.
+   - Link the attempt from the tracker item.
+   - If a known launch or result has unread identity or state, retain that uncertainty.
+   - Recover that uncertainty before launching a replacement.
 3. For an authorized new attempt, put the tracker item id, original request reference, current outcome and acceptance check/owner in its existing task brief.
    - Record the returned attempt id and result destination on that same tracker item immediately.
    - An unconfirmed launch remains a recovery action at the execution owner before any retry.
@@ -81,14 +91,16 @@ Run for an incoming request, reply, worker result or blocker change, and during 
    - For terminal or archived work, follow [Check the outcome](#4-check-the-outcome) first.
 4. Before using the command without an item, follow [Read the scope](#1-read-the-scope) for this request, including terminal and archived bindings.
    - If a match is terminal or archived, follow [Check the outcome](#4-check-the-outcome).
-   - Keep its State entry until the restored item or the surviving open item reads back as the work's destination, then name that item with `--item ID`.
+   - Keep its State entry until the restored item or the surviving open item reads back as the work's destination.
+   - Then name that item with `--item ID`.
 5. For authorized capture with no terminal or archived binding to resolve, replace `--item ID` with `--task-project UUID --source REF --outcome TEXT`.
    - Use the original request reference and the same outcome text on repeat calls.
    - When no binding exists, the installed Linear skill creates a session task in its configured team.
-   - If discovery reports ambiguity, read the named candidates and use `--item` once the binding is clear.
+   - If discovery reports ambiguity, read the named candidates.
+   - Use `--item` once the binding is clear.
    - A tracker refusal leaves the handoff intact. Read the tracker result before retrying.
 6. Read back changed items and any surviving-item links before waiting or handing over.
-   - Use the [Handoff contract](../references/long-session.md#handoff) for the compact tracker ids and session state.
+   - Use the [Handoff](../references/long-session.md#handoff) contract for the compact tracker ids and session state.
    - At succession, reconcile every retained open item and next action with the current tracker before replacement.
    - Reports consume these reconciled items; they do not create a separate selection policy.
 7. Continue authorized next actions, or wait through the existing event source when none can proceed.

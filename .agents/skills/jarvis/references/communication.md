@@ -2,7 +2,8 @@
 
 ## Message types
 
-Use the shared message types in [orch § Routing](../../orch/references/communication-modes.md#routing) for where to send and whether to mention the person. Jarvis adds the types below. Send messages only for these types. A consumer may add types.
+- Use the shared message types in [orch § Routing](../../orch/references/communication-modes.md#routing) for where to send and whether to mention the person. Jarvis adds the types below.
+- Send messages only for these types. A consumer may add types.
 
 | Type | Wording |
 |---|---|
@@ -13,8 +14,12 @@ Use the shared message types in [orch § Routing](../../orch/references/communic
 | Input-device notice | [Action requests](../../communication/references/questions.md#action-requests) |
 | Phone sign-in | The rule below |
 
-- **Progress report**: send it through the [progress checkpoint](../workflows/session.md#progress-checkpoint). Send one before a session handoff only when the user set no rule for it.
-- **Input-device notice**: before taking control, name the mouse or keyboard action and when it happens. Wait for the user's agreement.
+- **Progress report**:
+  - Send it through the [progress checkpoint](../workflows/session.md#progress-checkpoint).
+  - Send one before a session handoff only when the user set no rule for it.
+- **Input-device notice**:
+  1. Before taking control, name the mouse or keyboard action and when it happens.
+  2. Wait for the user's agreement.
 - **Phone sign-in**: when a sign-in waits on the person's phone, send the digits to enter at once.
 
 ### Presentation

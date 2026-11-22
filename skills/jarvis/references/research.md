@@ -2,11 +2,13 @@
 
 ## Sources
 
-- Use official sources and vendor documentation first. Apply [verification.md:Sources](verification.md#sources) to evidence and unchecked claims.
+- Use official sources and vendor documentation first.
+- Apply [verification.md:Sources](verification.md#sources) to evidence and unchecked claims.
 - Use a third-party report to identify a question or supply evidence the original source does not publish.
   - Record its author, date, method and relevant limits.
   - Separate its inference from a checked fact.
-- Check a third-party claim against the original source when available. State a conflict or missing source rather than presenting the report as official policy.
+- Check a third-party claim against the original source when available.
+- State a conflict or missing source rather than presenting the report as official policy.
 - Apply [decisions.md:Evidence and risk](decisions.md#evidence-and-risk) to each vendor's current terms and AI-use policy before using its service.
 - For a long-form cited report, use the deep-research package when available.
 
@@ -15,20 +17,23 @@
 - Give the original legal source and its checked date with each legal answer.
 - State the jurisdiction and facts to which the answer applies.
 - Record the event that requires another check, such as a changed rule, jurisdiction or relevant fact. Reuse follows [decisions.md:Evidence and risk](decisions.md#evidence-and-risk).
-- Leave an answer unchecked when its required source cannot be read. Do not treat a third-party summary as the legal authority.
+- Leave an answer unchecked when its required source cannot be read.
+- Do not treat a third-party summary as the legal authority.
 
 ## Audits
 
 - State the standard, scope and period before measuring work.
-- Read evidence from its source and compare actual results with that standard.
+- Read evidence from its source.
+- Compare actual results with that standard.
 - Measure cost, elapsed time, waits, repeated work and unresolved failures when those measures serve the stated audit.
 - Record missing evidence and each gap's owner and closing check.
 - For a scheduled audit:
   - Record its due time and scope on its tracker item under [long-session.md:Homes](long-session.md#homes).
   - Compare with the prior audit.
-  - Verify open actions and set their next check.
+  - Verify open actions.
+  - Set their next check.
 - Count work as done only when its result meets its acceptance check.
-  - A merge, a close or a worker's success proves only that event, per [tasks.md:Check the outcome](../workflows/tasks.md#4-check-the-outcome).
+  - A merge, a close or a worker's success proves only that event, per [tasks.md:4. Check the outcome](../workflows/tasks.md#4-check-the-outcome).
   - Count abandoned attempts against the outcome they sought.
   - A grouping parent is not a second outcome.
   - A denominator the audit could not read stays unread, and no rate is computed from it.
@@ -37,4 +42,5 @@
   - Check whether each section has a current task, one rule owner and a reading route.
   - Remove repeated or obsolete instructions through their source owner.
   - Keep facts in the home defined by [memory.md:Home](memory.md#home).
-- Report results through [communication.md:Message types](communication.md#message-types). Keep open audit actions open in the tracker until their checks pass.
+- Report results through [communication.md:Message types](communication.md#message-types).
+- Keep open audit actions open in the tracker until their checks pass.

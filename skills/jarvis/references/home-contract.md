@@ -4,9 +4,11 @@ Read when starting a session, adding or changing a personal customization, findi
 
 ## Personal additions
 
-Read this section for a request to add something to a Jarvis home. Use the existing owner in the table before acting.
+Read this section for a request to add something to a Jarvis home.
 
-Put text in a section read at every Start only when every Start acts on it. Otherwise give it a reading route for the action or event that needs it.
+- Use the existing owner in the table before acting.
+- Put text in a section read at every Start only when every Start acts on it.
+- Otherwise give it a reading route for the action or event that needs it.
 
 | Request | Source owner and reading route |
 |---|---|
@@ -30,7 +32,8 @@ Put text in a section read at every Start only when every Start acts on it. Othe
 - **Change an installed agent**:
   - Use `[agent-additional-instructions]` for added instructions and `[agent-frontmatter]` for harness-specific fields.
   - Read the selected harness's supported fields before changing them.
-  - Fork through `kendex fork` when the published body must change; read its help first.
+  - Fork through `kendex fork` when the published body must change.
+  - Read `kendex fork`'s help first.
   - Never edit a rendered agent to personalize it.
 - **Add an event duty**: put its work and checks in their homes under [Homes](long-session.md#homes).
 - **Keep a result**: use [Notes](memory.md#notes) for a durable fact, ruling, preference or lesson.
@@ -39,21 +42,26 @@ Put text in a section read at every Start only when every Start acts on it. Othe
   - Read [Long sessions: Homes](long-session.md#homes) and [Task reconciliation](../workflows/tasks.md) for active tasks, acceptance and waiting conditions.
   - The note is no live queue; the handoff holds only session state.
 - **Add a hook or schedule**:
-  - Read [Verification](verification.md) and inspect the existing supported event, hook or native scheduling mechanism first.
-  - Use its owning package and declared capability.
+  - Read [Verification](verification.md).
+  - Inspect the existing supported event, hook or native scheduling mechanism first.
   - Universal lifecycle and delivery retain their existing runtime and mailbox owners.
   - Add no parallel watcher.
 
 For agent and skill additions:
 
 1. Inspect the existing source and selected harness support before changing a declaration.
-2. Refresh in the consumer home and read back each selected supported harness's rendering.
-3. Refresh again and check that the addition and its source remain.
-4. Keep source, declarations and the resulting tracked outputs together through the home repository's normal commit and pull-request route.
+2. Refresh in the consumer home.
+3. Read back each selected supported harness's rendering.
+4. Refresh again.
+5. Check that the addition and its source remain.
+6. Keep source, declarations and the resulting tracked outputs together through the home repository's normal commit and pull-request route.
 
 A satellite forwards the change to Jarvis main under [Main and satellites](agent-reach.md#main-and-satellites).
 
-After a rule changes, a consumer that renders it to another surface checks that the installed copy there has the new revision. It runs one relevant request at that surface.
+After a rule changes, a consumer that renders it to another surface:
+
+1. Checks that the installed copy there has the new revision.
+2. Runs one relevant request at that surface.
 
 An app-managed home's file tools can be limited to `state/`; that access grants no permission to write sources elsewhere.
 
@@ -79,7 +87,8 @@ An app-managed home's file tools can be limited to `state/`; that access grants 
 
 - A terminal session reads the note with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Subject heading'`, using the file and exact heading from its index row.
 - A session with only search access searches for the subject heading in the named file and reads that section.
-- Read the selected heading and its content. Stop before the next heading of the same or higher level.
+- Read the selected heading and its content.
+- Stop before the next heading of the same or higher level.
 
 ## Consumer recovery policy
 

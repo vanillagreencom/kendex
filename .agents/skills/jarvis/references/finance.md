@@ -21,10 +21,13 @@ Keep one obligations record in the consumer's private record store, at the locat
 - Prepare a period from the current official source.
   - Check the source again for each period; a prior period's rule is not evidence for this one.
   - Apply [research.md:Legal answers](research.md#legal-answers) when the rule needs a legal answer.
-- When an obligation's next action depends on a document or approval, derive a preparation date from that dependency and include it in the obligation's entry in the consumer's existing calendar or reminder.
-- Keep unknowns unknown. Record a value the source does not give as unknown; never fill it from an estimate or a prior period.
+- When an obligation's next action depends on a document or approval, derive a preparation date from that dependency.
+  - Include it in the obligation's entry in the consumer's existing calendar or reminder.
+- Keep unknowns unknown.
+  - Record a value the source does not give as unknown; never fill it from an estimate or a prior period.
 - Derive the next period from the rule itself, not by adding an interval to the last due date.
-- Leave an obligation at its status when its source or confirmation cannot be read, and name the cause.
+- Leave an obligation at its status when its source or confirmation cannot be read.
+  - Name the cause.
 - A rejection read at its source returns the obligation to `open`, with the rejection, its source and checked date as evidence.
   - The earlier approval does not cover the new filing.
   - Prepare a new packet.
@@ -32,11 +35,13 @@ Keep one obligations record in the consumer's private record store, at the locat
 
 ## Monthly close
 
-- Read the bank only through the connection the consumer configured, such as the bank's own read-only connector where it offers one. With no configured connection, report the close unread.
+- Read the bank only through the connection the consumer configured, such as the bank's own read-only connector where it offers one.
+- With no configured connection, report the close unread.
 - Read every page of the period, following the connection's pagination to its end.
   - A missing, malformed or unreadable page stops the close: report no total and name the page and its cause.
   - Counts follow [verification.md:Sources](verification.md#sources).
-- Keep the bank's own meaning of each date filter, such as posted date against transaction date. State which one the period uses.
+- Keep the bank's own meaning of each date filter, such as posted date against transaction date.
+- State which one the period uses.
 - Match every transaction to evidence in the record store.
 - Return the matched transactions with their evidence, every unmatched transaction and each classification gap.
 - A bank warning that ties to a recent forward only by its time window stays unresolved when the match is unclear.
@@ -80,20 +85,23 @@ Keep one obligations record in the consumer's private record store, at the locat
   - Leave an unknown field empty and list it in the packet.
   - Apply [browser.md:Forms and captures](browser.md#forms-and-captures) to a web form.
 - Leave a protected identifier, such as a taxpayer identifier, empty in the working copy.
-  - List it in the packet as a field filled at print time.
-  - Never write it into the working copy, the obligations record, a packet or a report.
+  - List its field name in the packet as filled at print time.
+  - Never write its value into the working copy, the obligations record, a packet or a report.
 - Read a protected identifier only at fill time, from its protected source, into the copy to be printed or the web form.
   - Treat a filled print copy as a transfer file under [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer).
   - Remove it when printing ends.
 
 ## Analysis methods
 
-Apply each method only in the jurisdiction or product whose rule it rests on, and name that jurisdiction or product with the result.
+Apply each method only in the jurisdiction or product whose rule it rests on.
 
+- Name that jurisdiction or product with the result.
 - Collect every whole-return input before an estimate a tax computes on the whole return, such as a federal income tax.
-- Label an estimate from partial inputs partial and list the missing inputs.
+- Label an estimate from partial inputs partial.
+  - List the missing inputs.
 - Track basis per taxpayer.
 - Compare loan quotes on total cost over the term, fees included, each with its quote date.
 - Keep company and household ledgers apart.
-- Keep planning inputs apart from proved figures. Label each figure as planned or proved, with its source.
+- Keep planning inputs apart from proved figures.
+- Label each figure as planned or proved, with its source.
 - Recheck an estimate against its inputs when an input changes and before it enters a packet.

@@ -31,7 +31,9 @@ cursor: {"side":"consumer","roots":{}}
 ```
 
 - Never edit the pass cursor's bookkeeping or its root positions.
-- Never truncate, replace or logrotate `events.log`: an outside rotation cannot reconcile its positions with `batch.json`.
+- Never truncate `events.log`.
+- Never replace `events.log`.
+- Never logrotate `events.log`: an outside rotation cannot reconcile its positions with `batch.json`.
 
 ## Delivery
 
@@ -74,7 +76,9 @@ The loop prints one batch pointer without its body; the [session workflow](../wo
 
 ## Restart and destination identity
 
-- After an interruption or a storage failure, keep both owner files and restart with this producer. Never edit their recovery data.
+- After an interruption or a storage failure, keep both owner files.
+  - Restart with this producer.
+  - Never edit their recovery data.
 - Do not downgrade to an older producer after reclamation starts.
 - Keep `JARVIS_CONTROL_HOST` at its original alias through the first upgrade: the producer binds old `host` state to that alias as `ssh:ALIAS`.
   - With no configured control alias, old host state stays dormant, and added aliases do not inherit it.
@@ -98,8 +102,10 @@ Run `watch-loop --home HOME --initial-pass PASS_FILE` once to start fresh contin
    - Never remove state to meet this precondition.
 2. Finish the earlier reader's final drain.
    - Hand its results and outstanding delivery obligations to the continuing session.
-   - Stop the earlier reader through its process owner, and confirm it stopped.
-   - Do not edit its private offsets or leave it sending alongside.
+   - Stop the earlier reader through its process owner.
+   - Confirm it stopped.
+   - Do not edit its private offsets.
+   - Do not leave it sending alongside.
    - Adoption imports no pending send or reminder ledger; finish those obligations, or keep their explicit consumer handoff.
 3. Capture a successful, complete public pass for each destination to adopt.
    - Locally, run `.agents/skills/jarvis/scripts/vm-watch.sh --home HOME --side local > PASS_FILE`.
@@ -110,13 +116,17 @@ Run `watch-loop --home HOME --initial-pass PASS_FILE` once to start fresh contin
 4. Reconcile every event in the captured outputs against the earlier reader's final results, by mail identity.
    - Hand every unhandled result to the session before adoption.
    - A pass begins with kept history, so its output can include mail already handled.
-   - Resolve a failed root read and capture the pass again; a failed root is not an empty successful root.
+   - Resolve a failed root read; a failed root is not an empty successful root.
+   - Then capture the pass again.
 5. From the Jarvis home, run the native `lane-mail inbox --item overseer` for the final home inbox handoff.
    - A local home pass records positions but prints no ordinary home to-lane mail as `EVENT mail`, so the pass alone does not prove the session received those rows.
    - Use the native reader for this drain, not the earlier private reader.
 6. Initialize once with those unchanged pass files.
-   - On a refusal, keep the files and fix the prerequisite it names.
-   - Never edit a footer, delete state or force a reset.
+   - On a refusal, keep the files.
+   - Fix the prerequisite the refusal names.
+   - Never edit a footer.
+   - Never delete state.
+   - Never force a reset.
    - After success, start the packaged loop through the session workflow's Monitor or `launch-job` route.
    - Keep its state and log for every restart.
    - Record the consumer's adoption and the private reader's retirement on the consumer's tracker.

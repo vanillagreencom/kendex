@@ -18,8 +18,10 @@ Run this workflow when the user requests the weekly efficiency audit or its trac
   - Its six tab-separated fields are defined in commit-guards CHECKS.md § The run log.
   - A named repository with no log has no row to read; list it as unread with that cause.
 - Use the user's sample size per source, or 5 when unset.
-- Use the named audit model, or the session's own model when unset. Record the model actually used.
-- Mark a required input or source unread when it is missing or inaccessible. Name its cause and the closing check.
+- Use the named audit model, or the session's own model when unset.
+- Record the model actually used.
+- Mark a required input or source unread when it is missing or inaccessible.
+  - Name its cause and the closing check.
 - Never infer consumer paths, hosts or accounts.
 - If the report path is missing, obtain it before writing the report.
 
@@ -34,7 +36,8 @@ Run this workflow when the user requests the weekly efficiency audit or its trac
   - Use original transcript files only for required event details or original bytes the installed interface does not return.
 - For Copilot CLI, the [documented session directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference#session-state) contains each session's `events.jsonl`.
   - Its [conversation export](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/chronicle#sharing-a-session), `/share file`, supplies prompts and responses.
-  - Read an existing export when it contains the needed evidence; use the event log for historical tool records the export does not supply.
+  - Read an existing export when it contains the needed evidence.
+  - Use the event log for historical tool records the export does not supply.
   - Create no export during this audit.
 - Prefer available read-only documented interfaces.
   - Before reading internal records instead, record the required evidence the interface cannot supply or why the installed interface is unavailable.
@@ -42,7 +45,8 @@ Run this workflow when the user requests the weekly efficiency audit or its trac
 
 ## Sample
 
-1. Read the clock. Record the run time and the period covering the preceding 7 days.
+1. Read the clock.
+   - Record the run time and the period covering the preceding 7 days.
 2. Select transcripts with recorded activity in that period.
    - Sample the largest session transcripts per harness and the largest overseer transcripts by file size.
    - Record each selected path, size and activity time.
@@ -66,7 +70,8 @@ Run this workflow when the user requests the weekly efficiency audit or its trac
 
 Run each read over every sampled transcript or lane and its linked transcript.
 
-- Mark the affected read and source coverage unread when required records or hosts are inaccessible, or record formats are unfamiliar, unparseable or incomplete. Give the cause and closing check.
+- Mark the affected read and source coverage unread when required records or hosts are inaccessible, or record formats are unfamiliar, unparseable or incomplete.
+  - Give the cause and closing check.
 - Never report zero findings for an unread check.
 - State when a read does not apply to that source.
 
@@ -115,7 +120,8 @@ For guard delays and blocks:
   - Put the path and record evidence in the root-problem field.
   - State the observed effect and the conditions under which it occurs.
 - Use state `applied` only when existing evidence confirms a prior fix and its acceptance check.
-- For a referral, name its owner and proposed fix. Prepare the referral in the report with state `prepared for owner`.
+- For a referral, name its owner and proposed fix.
+- Prepare the referral in the report with state `prepared for owner`.
   - Use state `sent to its owner` only when evidence confirms the owner's approval of the exact text and recipient under [Decisions: Authority](../references/decisions.md#authority) and the sending tool confirms delivery under [Verification: Tools and records](../references/verification.md#tools-and-records).
   - Keep state `prepared for owner` while approval or confirmed delivery is pending.
 - List a guard for redesign or removal only when two or more confirmed blocks in the period found no defect.
@@ -132,12 +138,15 @@ For guard delays and blocks:
    - List read, skipped and unread sources separately.
    - Keep unchecked claims and gaps apart from findings.
    - Name transcripts by path and record.
-   - Paste no user text or credential value. Apply [Accounts and secrets: Secret transfer](../references/accounts-and-secrets.md#secret-transfer) to the report.
-2. Read the saved report back. Check its findings against the cited records under [Verification: Acceptance](../references/verification.md#acceptance).
+   - Paste no user text or credential value.
+   - Apply [Accounts and secrets: Secret transfer](../references/accounts-and-secrets.md#secret-transfer) to the report.
+2. Read the saved report back.
+   - Check its findings against the cited records under [Verification: Acceptance](../references/verification.md#acceptance).
 3. List in the report each proposed tracker change: every unresolved audit action with its closing check, and the next audit due at report time plus 7 days with its scope.
 4. The session that ran or launched the audit makes those tracker writes under [Task reconciliation](tasks.md) and [Long sessions: Homes](../references/long-session.md#homes), with the report link. The next audit stays a due tracker item, not a new scheduler.
-5. Return a progress report under [Communication: Message types](../references/communication.md#message-types) in the [persona's conduct format](../persona.md#conduct).
+5. Return a progress report under [Communication: Message types](../references/communication.md#message-types) under the [persona's conduct route](../persona.md#conduct).
    - Open with the answer.
    - Use at most 15 lines, with one line per finding.
    - Include the report path, sources read, skipped or unread, and next due time.
-   - If all findings cannot fit, identify the omitted findings in the report and give their count in the summary.
+   - If all findings cannot fit, identify the omitted findings in the report.
+   - Give the count of omitted findings in the summary.

@@ -25,8 +25,8 @@ Read when setting up a Jarvis home, adding an agent, skill or workstream, choosi
 - `agents/NAME.md`: declare it through [Personal additions](home-contract.md#personal-additions).
 - `memory/workstreams.md`: [Personal additions](home-contract.md#personal-additions) sets its content. Active work stays in the tracker.
 - `state/handoff.md`: `jarvis-session succeed` saves and hands over this file only. `progress-log` and `owner-unanswered` select another through `--handoff PATH` under [Handoff](long-session.md#handoff).
-- `state/archive/`: the session model writes archived handoffs and progress logs under [Handoff](long-session.md#handoff). `jarvis-session succeed` saves its own copy of the handoff as `handoff-<generation>-<id>.md`.
-- `state/archive/INDEX.md`: `progress-log --archived` adds one dated line for each file the session's handoff replacement step archives, under [Handoff](long-session.md#handoff). `owner-unanswered` reads any file it does not list, such as the copy `jarvis-session succeed` saves.
+- `state/archive/`: [Handoff](long-session.md#handoff) owns what the session model writes here. `jarvis-session succeed` saves its own copy of the handoff as `handoff-<generation>-<id>.md`.
+- `state/archive/INDEX.md`: `progress-log --archived` writes these lines, under [Handoff](long-session.md#handoff). `owner-unanswered` reads any file it does not list, such as the copy `jarvis-session succeed` saves.
 - Other files under `state/`: an app-managed home limits model file and shell writes to this folder.
 - The controller record: the session runtime and the native SessionStart hook write it. The runtime writes no start-critical record under `state/`.
 - `owner-asks.json`: the [owner-ask operations](owner-asks.md) retain it. Satellites call this main-owned authority and hold no local copy.
@@ -52,7 +52,8 @@ A folder qualifies when it is its own Git root, lies inside no other Git work tr
 - kendex's `kendex.toml`, `kendex.settings.toml`, `.kendex-lock.json`, `.kendex-generated.json`, `.cache`, `.kendex` and `.kendex-local`;
 - the harness folders and files kendex writes: `.agents`, `.claude`, `.codex`, `.github`, `.pi`, `.opencode`, `.cursor`, `.gemini`, `.mcp.json`, `opencode.json` and `opencode.jsonc`.
 
-Make the home a new folder outside any project and run `git init` before `kendex add`, so `kendex add` can offer to commit the files it writes and to set up the commit-guards hooks.
+1. Make the home a new folder outside any project.
+2. Run `git init` before `kendex add`, so `kendex add` can offer to commit the files it writes and to set up the commit-guards hooks.
 
 - When `COMMIT_GUARDS_PRE_COMMIT_LOCAL` in the home's `kendex.settings.toml` is unset or empty, this step sets it to `.agents/skills/jarvis/scripts/progress-log`, the home-contract commit check. That check refuses a commit whose staged memory notes or State break the home contract's structure.
 - A home that already names a lane there keeps it, and the step prints `init-local-lane=kept` with the check's path for that lane to call.
@@ -108,7 +109,7 @@ Without this setup, Start ends the native session and reports Blocked with reaso
 A home whose `JARVIS_UNATTENDED_HARNESSES` names `claude` launches Claude Code with `--dangerously-skip-permissions`. Claude Code asks once per account to accept Bypass Permissions mode, and Jarvis does not approve native security requests.
 
 1. Before the first Jarvis Start with Claude Code, launch the selected account once natively with `--dangerously-skip-permissions`.
-2. Accept.
+2. Accept Bypass Permissions mode.
 
 Without this setup, Start waits at that dialog until its launch bound ends and reports Failed with reason `launch-failed`.
 
@@ -136,15 +137,20 @@ A tmux picker such as sesh lists only your default server, so it does not show t
   - It opens that window through `xdg-terminal-exec`, which picks your terminal from your terminal list and the terminals' desktop entries; `$TERMINAL` is not read.
   - The command succeeds once the new window's client is on the managed session.
   - With no `xdg-terminal-exec` on PATH, it refuses inside tmux.
-- Its refusals are listed under the [session command](session-command.md#session-command).
+- The [session command](session-command.md#session-command) explains `terminal-unresolved`; the refusal line names every other cause.
 
-To reach Jarvis from a picker, add an entry that runs the attach command. kendex does not write your picker's configuration. One sesh session entry serves both sesh and television's sesh channel, which lists sesh's configured sessions and connects through `sesh connect`; bind that channel to a key such as Ctrl+Shift+S. Put HOME's absolute path in place of HOME:
+kendex does not write your picker's configuration. One sesh session entry serves both sesh and television's sesh channel, which lists sesh's configured sessions and connects through `sesh connect`. To reach Jarvis from a picker:
 
-```toml
-[[session]]
-name = "jarvis"
-path = "HOME"
-startup_command = "HOME/.agents/skills/jarvis/scripts/jarvis-session attach --home HOME && exit"
-```
+1. Add an entry that runs the attach command:
+
+   ```toml
+   [[session]]
+   name = "jarvis"
+   path = "HOME"
+   startup_command = "HOME/.agents/skills/jarvis/scripts/jarvis-session attach --home HOME && exit"
+   ```
+
+2. Bind television's sesh channel to a key such as Ctrl+Shift+S.
+3. Put HOME's absolute path in place of HOME.
 
 The picker creates a session on your server and runs the command in it. The `&& exit` closes that session once the window opens. tmux's `detach-on-destroy` option then decides where your client goes. A refusal leaves its line on screen.

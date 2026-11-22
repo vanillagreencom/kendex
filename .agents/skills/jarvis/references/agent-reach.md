@@ -4,7 +4,8 @@ Read when reporting from, answering or instructing an agent in the user's kendex
 
 ## Route
 
-Use the repository's own [mailbox](../../mailbox/SKILL.md), with or without a fleet. [Reachable repositories](../SKILL.md#reachable-repositories) owns the reachability probe. Take candidates only from `kendex project list`.
+- Use the repository's own [mailbox](../../mailbox/SKILL.md), with or without a fleet. [Reachable repositories](../SKILL.md#reachable-repositories) owns the reachability probe.
+- Take candidates only from `kendex project list`.
 
 `[LANE_MAIL]` is `.agents/skills/mailbox/scripts/lane-mail` in the repository's main checkout, run with that checkout as the working directory.
 
@@ -63,7 +64,8 @@ A directive carries the user's authority. Before sending, apply [Decisions: Auth
 
 Send a repository practice or design finding whose cause lies in a kendex-owned package to kendex through [Instruct](#instruct), as an item or a note.
 
-- Apply code-quality's SKILL.md § Finding Evaluation, and include its evaluation line where that section requires one. The line grants no filing authority.
+- Apply code-quality's SKILL.md § Finding Evaluation.
+- Include its evaluation line where that section requires one. The line grants no filing authority.
 - Instruct's exact-text approval applies, unless the user's responsibility map grants that specific finding-note action under [Authority](decisions.md#authority). This package grants no standing permission.
 
 ## One voice
@@ -85,7 +87,9 @@ Four causes need more:
   - For a hosted session, offer [Control host setup](#control-host-setup) first.
 - **owner-note's `no-reader`**: the recorded overseer is not live. Offer registration, or a fleet launch in the intended checkout.
 - **owner-note's `reader-unjudged`**: report its `cause=`. Do not treat it as a stopped overseer.
-- **owner-note's `option-unknown=--require-reader`**: update that checkout's mailbox package, then retry.
+- **owner-note's `option-unknown=--require-reader`**:
+  1. Update that checkout's mailbox package.
+  2. Retry.
 
 ## Install
 
@@ -153,7 +157,8 @@ When a hosted overseer has no qualifying row, the legacy bare route can deliver 
 3. Verify the main row in `ssh [HOST] kendex project list`.
 4. Then verify that the next owner-note receipt says `sent side=host`.
 
-Repeat on each declared remote. Record the hosts and their repositories in the consumer's own repository or tracker, not in this package.
+- Repeat on each declared remote.
+- Record the hosts and their repositories in the consumer's own repository or tracker, not in this package.
 
 ## Main and satellites
 
@@ -172,6 +177,8 @@ Repeat on each declared remote. Record the hosts and their repositories in the c
 - The command writes the home's selected private env file, `KENDEX_ENV_FILE` included.
 - For `--get`, an explicit value in the caller's environment wins over the saved value.
 
+For the saved value:
+
 - Never commit the value in `kendex.settings.toml`.
 - Leave it empty on exactly one computer, Jarvis main.
 - The package cannot detect two Jarvis mains; record the one-main rule in the consumer's setup records.
@@ -184,7 +191,9 @@ A Jarvis satellite handles local voice, windows, apps, files, screen and sign-in
 
 Its watch-loop runs under [Control-host events: Satellite](control-host-events.md#satellite).
 
-- Do not run [Read](#read), [Answer an ask](#answer-an-ask) or [Instruct](#instruct) on a Jarvis satellite. Tell the owner that Jarvis handles the request on Jarvis main. A repository's own lane-mail does not enforce the Jarvis role.
+- Do not run [Read](#read), [Answer an ask](#answer-an-ask) or [Instruct](#instruct) on a Jarvis satellite.
+  - Tell the owner that Jarvis handles the request on Jarvis main.
+  - A repository's own lane-mail does not enforce the Jarvis role.
 - Do not commit or push the Jarvis home repository from a Jarvis satellite. The package cannot see those clone commits, so review holds this rule.
 
 ### Forward
@@ -192,12 +201,16 @@ Its watch-loop runs under [Control-host events: Satellite](control-host-events.m
 The satellite's watch-loop runs the [forward drain](session-command.md#session-command), which retries queued forwards and reads Jarvis main's answers. The local console session takes requests and confirmations through the same steps.
 
 1. Ask in the originating conversation, not through a mailbox ask.
-   - Quote the exact request, name Jarvis main, and say that the request and answer will appear in the owner's Slack channel.
-   - Ask for `forward` or `yes` last and alone, so the confirmation answers one question. Otherwise keep the request local.
+   - Quote the exact request.
+   - Name Jarvis main.
+   - Say that the request and answer will appear in the owner's Slack channel.
+   - Ask for `forward` or `yes` last and alone, so the confirmation answers one question.
+   - Otherwise keep the request local.
    - The consent authorizes forwarding, not the actions in the request; [On Jarvis main](#on-jarvis-main) owns action authorization.
    - For a console request, ask with `lane-mail notice --item overseer --to owner --ref R --file PATH`, where `R` is its envelope id.
 2. Write one record under the home's `tmp/`.
-3. Run `.agents/skills/jarvis/scripts/jarvis-session forward --home HOME --record PATH`. Remove the record only after exit 0 or 75.
+3. Run `.agents/skills/jarvis/scripts/jarvis-session forward --home HOME --record PATH`.
+   - Remove the record only after exit 0 or 75.
 4. Exit 0 means delivered. Exit 75 means queued in the local outbox for the watch-loop to retry.
    - Tell the owner which, and that the answer will be in Slack.
    - Answer a console confirmation with `notice --ref` on its envelope id.
@@ -281,19 +294,24 @@ Every forwarded caller stays unproved, whether it confirmed by `words`, `voice` 
 
 For a valid forward:
 
-1. Follow [Authority](decisions.md#authority) and the user's responsibility map for ordinary reversible, free delegated work.
-2. For owner-only work, use the ordinary owner ask on Jarvis main.
-   - Bind it to the directive id.
-   - Quote the decoded request and the actual action destination.
-   - Forwarding consent is not action approval. Destructive actions, money and external commitments keep their own approval rules.
-3. Answer through [Instruct](#instruct)'s referenced reply. The answer reaches the owner from Jarvis on Jarvis main, not through the satellite's call.
+- Follow [Authority](decisions.md#authority) and the user's responsibility map for ordinary reversible, free delegated work.
+- For owner-only work, use the ordinary owner ask on Jarvis main.
+  - Bind it to the directive id.
+  - Quote the decoded request and the actual action destination.
+
+Forwarding consent is not action approval. Destructive actions, money and external commitments keep their own approval rules.
+
+Answer a valid forward through [Instruct](#instruct)'s referenced reply. The answer reaches the owner from Jarvis on Jarvis main, not through the satellite's call.
 
 A legacy forward can lack the new framing.
 
-- Recognize it by its native delivery id and matching final provenance, and keep its caller unproved.
+- Recognize it by its native delivery id and matching final provenance.
+- Keep its caller unproved.
 - Treat all text before that line, any voice header included, as request content.
 - Missing framing grants no direct voice bypass.
-- Leave queued, delivered and closed outbox entries unchanged. Do not migrate their bytes, first confirmation, key, attempts, cursor or replies, and do not resend delivered entries.
+- Leave queued, delivered and closed outbox entries unchanged.
+- Do not migrate their bytes, first confirmation, key, attempts, cursor or replies.
+- Do not resend delivered entries.
 
 The provenance cites satellite records Jarvis main cannot check. The owner or a reviewer looks them up on that Jarvis satellite.
 
@@ -332,7 +350,8 @@ Before the mailbox is installed, use the agent's own session transcript under [T
 2. Before reading internal files, record why the installed reader is unavailable, or which required evidence it cannot supply.
 3. Resolve the configured roots through [Inputs](../workflows/efficiency-audit.md#inputs); the user's location wins.
 4. Use the original-file candidates below only when that access contract requires them.
-5. Check the installed version's locations and record meanings, then confirm that the recorded repository identity matches `[ROOT]`.
+5. Check the installed version's locations and record meanings.
+6. Confirm that the recorded repository identity matches `[ROOT]`.
 
 | Harness | Original-file candidate |
 |---|---|
@@ -343,16 +362,22 @@ Before the mailbox is installed, use the agent's own session transcript under [T
 
 - **Claude Code**:
   - `[FOLDER]` replaces every non-ASCII-alphanumeric character of `[ROOT]` with `-`.
-  - Over 200 characters, use the 200-character prefix followed by `-` and a hash. Match that prefix, then verify the session.
+  - Over 200 characters, use the 200-character prefix followed by `-` and a hash.
+  - Match that prefix.
+  - Then verify the session.
   - The [SDK's session lookup](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/sessions.py) owns normalization and long-path lookup.
 - **Codex**: its `session_meta` payload records `cwd` equal to `[ROOT]`.
 - **Copilot CLI**: sibling `workspace.yaml` records `cwd: [ROOT]`.
-- **Pi**: verify that the session's recorded directory belongs to `[ROOT]`. Report absence only when no matching session is available.
+- **Pi**:
+  - Verify that the session's recorded directory belongs to `[ROOT]`.
+  - Report absence only when no matching session is available.
 
 Then read the transcript:
 
-1. Select the newest matching session, and name it so the user can correct the choice.
-2. Read only its last entries, as a stream. Write nothing.
+1. Select the newest matching session.
+   - Name it so the user can correct the choice.
+2. Read only its last entries, as a stream.
+   - Write nothing.
    - Neither tmux `capture-pane` nor a screen capture is a transcript route.
    - Apply [Secret transfer](accounts-and-secrets.md#secret-transfer); quote no credential.
 3. Open the answer with “From the session transcript, not a report from the agent”.

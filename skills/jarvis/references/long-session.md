@@ -1,10 +1,13 @@
 # Long sessions
 
-Read each named rule, handoff or memory section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`. Use the exact heading text from its owning file. A returned parent section includes its children; use that text rather than reading a child again.
+- Read each named rule, handoff or memory section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`.
+- Use the exact heading text from its owning file.
+- A returned parent section includes its children; use that text rather than reading a child again.
 
 ## Homes
 
-For additions to a Jarvis home, start at [Personal additions](home-contract.md#personal-additions). Each record kind has one home. Write a record to its home, never to the handoff.
+- For additions to a Jarvis home, start at [Personal additions](home-contract.md#personal-additions).
+- Each record kind has one home. Write a record to its home, never to the handoff.
 
 | Record kind | Home |
 |---|---|
@@ -45,7 +48,10 @@ Before normal succession, wait for every attached sub-agent this session launche
 1. Use the harness wait or result tool and collect each result.
 2. Record a failed child as failed.
 
-Launch an attached child only when the context room holds its return. Otherwise use the orch job runner described in `waiter-launch.md`, Launch, or a separate session. Record its run directory in the handoff.
+Launch an attached child only when the context room holds its return.
+
+- Otherwise use the orch job runner described in orch's [waiter-launch.md § Launch](../../orch/references/waiter-launch.md#launch), or a separate session.
+- Record its run directory in the handoff.
 
 If the session is dead, walled, or cannot read its child state, the emergency handoff names each known unfinished child, its known output location, and any unknown state or location. An output location can be a file path or a harness reply. The successor reads existing child output before repeating the task.
 
@@ -77,30 +83,7 @@ Read this contract when writing, reading or checking a handoff or lane result du
   - Keep unfinished ids, available output locations and unknown state or locations under the emergency rule above.
 - **Instructions in force**: link the home of a standing rule.
 
-### State retention
-
-- Keep a State entry only if its absence would cause the successor to act wrongly or repeat work and the successor cannot recover the fact from its owning source.
-  - Examples include an unfinished operation with no receipt, a live lane, a temporary instruction, report coverage or a hold.
-  - Keep an existing entry whose source is unreadable until a readback succeeds.
-
-An explicit session identity uses the existing `session=ID` token or a State entry opening `- SESSION ID`. Each session identity has one resumable State entry, even when entries carry different ask ids. When State carries a session identity, its checkpoint includes `session ID`; the checkpoint identity and every explicit session identity in that entry agree. The commit check compares staged text only and consults no running session or private transcript.
-
-- Change a State entry with the single `progress-log` call under [Progress records](#progress-records).
-  - It replaces the whole entry or removes it and appends the record under the same file lock and write.
-  - Put the account in the record, never append it to the old State text.
-- Update session-only state when it changes: an unfinished operation's next step, a running lane's identity or result path, a temporary instruction or its end event, report coverage, or a hold.
-  - Change only the affected lines and append the state-change record in the same write.
-  - Advance the checkpoint's covered log range with the update.
-- At the scheduled report, refresh changed lines.
-  - Commit changed state at each scheduled report unless the user's standing instructions set another commit trigger.
-  - Never recompose the whole state for a report.
-- Before succession transfers control, reconcile the checkpoint and later log records against live tracker items, the mailbox and relevant memory notes under [Homes](#homes).
-  - Record each correction as a state change.
-  - Advance the checkpoint's covered log range.
-- Rebuild state from the checkpoint and replay later state-change records in their recorded order.
-  - Compare the checkpoint time with the clock and the user's staleness bound.
-  - If the state is stale, its covered range is incomplete, or a source disagrees, widen the reads to the relevant source history and earlier log records.
-  - Do not refuse recovery solely because the state is stale.
+The handoff and its archive also follow these rules:
 
 - An archive may hold `INDEX.md`, one Markdown bullet for each file the handoff replacement step archives: `- FILE dates=START..END entries=JSON`.
   - It does not list the copy `jarvis-session succeed` saves.
@@ -111,7 +94,8 @@ An explicit session identity uses the existing `session=ID` token or a State ent
   - Each entry carries its source line, recorded id and time, tracker ids and mailbox or Slack message ids.
   - The entry time locates a recorded ruling or lesson; it does not date a cited external source.
   - An unavailable id, full time or identifier list is `unread`; no records gives an empty array.
-  - Search these facts in the index, then read FILE at the entry's line.
+  - Search these facts in the index.
+  - Then read FILE at the entry's line.
   - Further `key=value` fields are space-separated.
   - Date readers ignore fields other than `dates`.
 - A pre-cutover entry keeps its recorded `HH:MMZ` as `time`, with its full `at` still `unread`.
@@ -129,9 +113,45 @@ An explicit session identity uses the existing `session=ID` token or a State ent
   - In that same write, apply [State retention](#state-retention) to the existing entries.
   - Keep completion evidence on its tracker item.
   - A `not-issue` ref binds no entry.
-- Keep standing rules in one home. Link that home rather than repeating its text in the handoff.
-- Remove a temporary instruction when its end event occurs. Remove its copied text when the instruction's standing home now states it.
+- Keep standing rules in one home.
+- Link that home rather than repeating its text in the handoff.
+- Remove a temporary instruction when its end event occurs.
+- Remove its copied text when the instruction's standing home now states it.
 - Apply [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer) to handoff contents.
+
+### State retention
+
+- Keep a State entry only if its absence would cause the successor to act wrongly or repeat work and the successor cannot recover the fact from its owning source.
+  - Examples include an unfinished operation with no receipt, a live lane, a temporary instruction, report coverage or a hold.
+  - Keep an existing entry whose source is unreadable until a readback succeeds.
+
+An explicit session identity uses the existing `session=ID` token or a State entry opening `- SESSION ID`.
+
+- Each session identity has one resumable State entry, even when entries carry different ask ids.
+- When State carries a session identity, its checkpoint includes `session ID`.
+- The checkpoint identity and every explicit session identity in that entry agree.
+- The commit check compares staged text only and consults no running session or private transcript.
+
+Write and rebuild State by these rules:
+
+- Change a State entry with the single `progress-log` call under [Progress records](#progress-records).
+  - It replaces the whole entry or removes it and appends the record under the same file lock and write.
+  - Put the account in the record, never append it to the old State text.
+- Update session-only state when it changes: an unfinished operation's next step, a running lane's identity or result path, a temporary instruction or its end event, report coverage, or a hold.
+  - Change only the affected lines.
+  - Append the state-change record in the same write.
+  - Advance the checkpoint's covered log range with the update.
+- At the scheduled report, refresh changed lines.
+  - Commit changed state at each scheduled report unless the user's standing instructions set another commit trigger.
+  - Never recompose the whole state for a report.
+- Before succession transfers control, reconcile the checkpoint and later log records against live tracker items, the mailbox and relevant memory notes under [Homes](#homes).
+  - Record each correction as a state change.
+  - Advance the checkpoint's covered log range.
+- Rebuild state from the checkpoint.
+  - Replay later state-change records in their recorded order.
+  - Compare the checkpoint time with the clock and the user's staleness bound.
+  - If the state is stale, its covered range is incomplete, or a source disagrees, widen the reads to the relevant source history and earlier log records.
+  - Do not refuse recovery solely because the state is stale.
 
 ### Progress records
 
@@ -153,6 +173,8 @@ Write a record only for a decision, a state change, a send whose delivery or eff
 - In Decision, link any recorded disposition under [Lane results](#lane-results).
 - A State change set carries the complete replacement next action on one line.
 
+Write and replay records by these rules:
+
 - Write each record with `.agents/skills/jarvis/scripts/progress-log --operation TEXT --result TEXT --decision TEXT --state-change TEXT`.
   - It stamps the id and the clock time.
   - An id is `P-` and the UTC time as `YYYYMMDDTHHMMSSZ`, with `-2`, `-3` added for later records in the same second.
@@ -161,11 +183,13 @@ Write a record only for a decision, a state change, a send whose delivery or eff
   - `--state-change 'set State wake=mail Wait for the registered wake'` sets or replaces that session entry as its id, one next action and the new progress record id.
   - `--state-change 'remove State wake=mail'` removes it.
   - `none` writes only the record.
-  - For work on a tracker item, follow [Retain the next action](../workflows/tasks.md#5-retain-the-next-action).
+  - For work on a tracker item, follow [5. Retain the next action](../workflows/tasks.md#5-retain-the-next-action).
 - A durable id is a whitespace-free token; session-only entries may use `session=ID`, `wake=ID` or `ask=ID`.
   - An existing entry names its id on its opening line; `KEN-123`, `KEN-123:` and `` `KEN-123` `` name the same entry.
   - Multiple matching entries refuse without writing, and so does an explicit `--state-change` remove that matches no entry.
-  - When State holds one key twice under two spellings, such as `- KEN-123: ...` and `- KEN-123:: ...`, the writer refuses every spelling of that key and the staged commit check refuses every commit in the home. Delete the stale entry from State by hand, then commit the handoff.
+  - When State holds one key twice under two spellings, such as `- KEN-123: ...` and `- KEN-123:: ...`, the writer refuses every spelling of that key and the staged commit check refuses every commit in the home.
+    1. Delete the stale entry from State by hand.
+    2. Then commit the handoff.
 - Preserve an open question's exact words in its next action, with its message id.
 - Keep location, holds, wake registrations and report coverage in the session entries when replacing them.
 - Replay each later record's State change with that record's id; a set replaces the whole earlier value and a remove deletes it.
@@ -178,7 +202,8 @@ Write a record only for a decision, a state change, a send whose delivery or eff
   - Relative paths start at the home root, including when invoked from a subdirectory; absolute paths select that file.
   - The selected file must exist and contain one Progress log section.
   - Omitting the option selects `state/handoff.md`.
-- A record about a user's message names the message's full id in Operation or Decision. When the record handles a request without a reply, its Decision says `no reply`. `owner-unanswered` then stops listing the message.
+- A record about a user's message names the message's full id in Operation or Decision.
+- When the record handles a request without a reply, its Decision says `no reply`. `owner-unanswered` then stops listing the message.
 - `owner-unanswered` takes the same `--handoff PATH` and reads the selected handoff and the archive beside it.
   - A missing selected handoff refuses `handoff-missing`; a missing default reads as no records.
   - The watch loop reads the default handoff.
@@ -188,7 +213,8 @@ Write a record only for a decision, a state change, a send whose delivery or eff
 
 ### Lane results
 
-Each lane result opens with an Answer section. Use one decision record per finding with these named fields.
+- Each lane result opens with an Answer section.
+- Use one decision record per finding with these named fields.
 
 | Field | Required content |
 |---|---|
@@ -202,9 +228,11 @@ Each lane result opens with an Answer section. Use one decision record per findi
 
 In Harm and condition, state likelihood only when the source establishes it; otherwise mark it unknown.
 
-- The parent records each final disposition and its evidence on the owning tracker item. Link that record from the lane result and the progress record that acts on it.
+- The parent records each final disposition and its evidence on the owning tracker item.
+- Link that record from the lane result and the progress record that acts on it.
 - For a durable ruling, follow [memory.md:Notes](memory.md#notes).
   - Link its tracker item to the affected standing rule.
   - A changed rule states only the resulting current instruction, without the session's disposition history.
-- Keep only unresolved next actions in the handoff's State section. Keep completed findings and their disposition evidence in their homes under [Homes](#homes).
+- Keep only unresolved next actions in the handoff's State section.
+- Keep completed findings and their disposition evidence in their homes under [Homes](#homes).
 - Read the recorded disposition at its home before acting on a finding again.
