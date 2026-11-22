@@ -152,6 +152,11 @@ fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
     // Live: the sleeper's own identity.
     plant_claim(&paths, sleeper.pid(), &sleeper.start());
     let before = std::fs::read_to_string(&paths.pid).unwrap();
+    // The live runner's record differs from `flags()`, so a refused start
+    // that recorded its own flags would change these bytes.
+    let held_flags =
+        r#"{"interval":600,"max_loops":3,"since":"2026-01-01T00:00:00Z","repos":["owner/a"]}"#;
+    std::fs::write(&paths.flags, held_flags).unwrap();
     let refused = runner(dir.path(), &clock, &settings, me()).run();
     assert!(
         matches!(&refused, Err(e) if e.key() == "watch-running"),
@@ -177,6 +182,11 @@ fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
         std::fs::read_to_string(&paths.pid).unwrap(),
         before,
         "a refused claim writes nothing"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&paths.flags).unwrap(),
+        held_flags,
+        "a refused claim leaves the live runner's flags record"
     );
     assert!(log_lines(&paths).is_empty(), "a refused claim logs nothing");
     // Gone: a dead pid, then the sleeper's pid under another start.
