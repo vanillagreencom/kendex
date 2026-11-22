@@ -109,7 +109,7 @@ test("findings template carries every section validate requires", () => {
 // The approved fallback route writes the report by hand from the template and
 // has no provider payload, so it validates with no sidecar (KEN-5490). The
 // same report still refuses a standard-mode sidecar with no synthesis, and a
-// report naming a sidecar cannot skip it.
+// report `report` rendered cannot skip its sidecar, named or not.
 test("a hand-written fallback report validates with no sidecar", () => {
   const dir = mkdtempSync(join(tmpdir(), "deep-research-fallback-"));
   const template = readFileSync(new URL("../templates/findings.md", import.meta.url), "utf8");
@@ -119,10 +119,20 @@ test("a hand-written fallback report validates with no sidecar", () => {
     metadata: { researchMode: "standard", queryCount: 1, additionalQueries: [], additionalQueriesApplied: "none", synthesis: false },
     raw: { results: [{ url: "https://example.com" }] },
   }));
+  const mock = join(dir, "mock.json");
+  writeFileSync(mock, JSON.stringify({ results: [{ title: "Source", url: "https://example.com", text: "Evidence only." }] }));
+  const rendered = (name, ...flags) => {
+    const output = join(dir, name);
+    const run = spawnSync(process.execPath, [script, "report", "q", "--mode", "standard", "--output", output, ...flags], { encoding: "utf8", env: { ...process.env, EXA_MOCK_RESPONSE_FILE: mock } });
+    assert.equal(run.status, 0, run.stderr);
+    return readFileSync(output, "utf8");
+  };
   const rows = [
     { name: "fallback report alone", report: filled, args: [], status: 0 },
+    { name: "fallback report missing a section", report: filled.replace("## Risks / Unknowns", "## Unrelated Heading"), args: [], status: 1, key: "report-section-missing", value: "Risks / Unknowns" },
     { name: "standard sidecar without synthesis", report: filled, args: [raw], status: 1, key: "synthesis-missing", value: "standard", missing: "raw.answer" },
-    { name: "report naming its sidecar", report: `${filled}\n- Raw metadata sidecar: ${raw}\n`, args: [], status: 1, key: "raw-sidecar-omitted", value: raw },
+    { name: "rendered report naming its sidecar", report: rendered("rendered.md"), args: [], status: 1, key: "raw-sidecar-omitted", value: join(dir, "rendered.raw.json") },
+    { name: "rendered report with --no-raw-output", report: rendered("bare.md", "--no-raw-output"), args: [], status: 1, key: "raw-sidecar-omitted", value: null },
   ];
   for (const row of rows) {
     const report = join(dir, "findings.md");

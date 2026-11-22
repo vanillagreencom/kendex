@@ -89,7 +89,7 @@ function helpPayload() {
       "--timeout <seconds>",
     ],
     sidecar: "report --output findings.md writes findings.raw.json by default unless --raw-output or --no-raw-output is supplied. Raw provider JSON is not embedded in findings.md.",
-    validate: "validate <findings.md> [findings.raw.json] runs deterministic post-run checks and prints {ok, errors, warnings}. Exit 0 = no errors. With no sidecar it checks a report written by hand on the approved fallback route: its sections only, and it refuses a report that names a sidecar.",
+    validate: "validate <findings.md> [findings.raw.json] runs deterministic post-run checks and prints {ok, errors, warnings}. Exit 0 = no errors. With no sidecar it checks a report written by hand on the approved fallback route: its sections only, and it refuses a report deep-research report wrote.",
   };
 }
 
@@ -705,13 +705,14 @@ async function validateCommand(options) {
   }
 
   const sidecarRef = report.match(/Raw metadata sidecar:\s*(\S+)/);
-  if (sidecarRef) {
-    const referenced = stripMarkdownPathDelimiters(sidecarRef[1]);
-    // `report` writes this line beside every sidecar it saves, so such a
-    // report validated alone would skip its provider checks.
-    if (!rawPath) recordError("raw-sidecar-omitted", referenced, `Report names its sidecar ${referenced}, which validate was not given: run validate <findings.md> ${referenced}.`);
-    else if (resolve(referenced) !== rawPath) recordWarning("sidecar-reference-mismatch", referenced, `Report references sidecar ${referenced} but ${rawPath} was validated.`, { validated: rawPath });
-  }
+  const referenced = sidecarRef ? stripMarkdownPathDelimiters(sidecarRef[1]) : undefined;
+  // `renderFindings` writes `- Exa type:` into every report `report` renders,
+  // with or without a sidecar, and the fallback template has no such line: a
+  // provider report validated alone would skip its provider checks.
+  if (!rawPath && /^- Exa type:/m.test(report)) {
+    const remedy = referenced ? `run validate <findings.md> ${referenced}` : "re-run report without --no-raw-output and validate the report with its sidecar";
+    recordError("raw-sidecar-omitted", referenced, `Report was written by deep-research report, which validate checks only with its sidecar: ${remedy}.`);
+  } else if (referenced && rawPath && resolve(referenced) !== rawPath) recordWarning("sidecar-reference-mismatch", referenced, `Report references sidecar ${referenced} but ${rawPath} was validated.`, { validated: rawPath });
 
   const ok = errors.length === 0;
   jsonOut(process.stdout, { ok, report: reportPath, raw: rawPath, mode: metadata?.researchMode, synthesis, queryCount: metadata?.queryCount, errors, warnings, problems });
