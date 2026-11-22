@@ -28,9 +28,10 @@
 # refresh-land=refused value=STATUS (GitHub refused the push),
 # refresh-land=unavailable value=token|sources-read|queue-read (no landing
 # token reached the run, or the project sources or the merge queue could not
-# be read), or refresh-land=skipped value=verify|class|sources-uncovered|queued
-# (the run is held, the class is not render, a project takes packages from
-# another catalog or revision, or the merge queue holds an entry). An unread
+# be read), or refresh-land=skipped value=verify|class|path-removed|sources-uncovered|queued
+# (the run is held, the class is not render, the render removes or renames a
+# path, a project takes packages from another catalog or revision, or the
+# merge queue holds an entry). An unread
 # source answer also writes refresh-sources=unread value=PROJECT to stderr.
 # A consumer whose render did not run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
@@ -684,16 +685,18 @@ fi
 # nothing about them first. The render proof covers a package's bytes, and
 # kendex's merge queue proved only the default catalog's content, so a
 # project that takes packages from any other catalog or revision keeps the
-# pull request, where the consumer reviews them. No token, a class other
-# than render, that coverage, and a merge queue that holds an entry or
-# could not be read keep the pull request route.
+# pull request, where the consumer reviews them. A render that removes or
+# renames a path can break a file the consumer still cites, which only the
+# consumer's own checks judge, so it keeps the pull request too. No token, a
+# class other than render, a removed path, that coverage, and a merge queue
+# that holds an entry or could not be read keep the pull request route.
 # Sets land_check to try, to unconfigured where the caller set neither
 # landing name, or to unavailable:CAUSE or skipped:CAUSE for the first
 # precondition the run does not meet. The one reporter below prints every
 # CAUSE, and refuses an answer it does not know, so no precondition keeps
 # the pull request route unsaid.
 refresh_land_check() {
-  local queued
+  local queued removed
   land_check=""
   if [ -z "$land_token" ]; then
     # A half pair, or a mint that failed, leaves the token empty.
@@ -702,6 +705,12 @@ refresh_land_check() {
   fi
   if [ -n "$verify_report" ]; then land_check=skipped:verify; return 0; fi
   if [ "$class" != render ]; then land_check=skipped:class; return 0; fi
+  # --no-renames reports a renamed path as removed.
+  if ! removed="$(git diff --no-renames --diff-filter=D --name-only "$base" "$head")"; then
+    printf 'refresh-error=read value=removed-paths\n' >&2
+    exit 1
+  fi
+  if [ -n "$removed" ]; then land_check=skipped:path-removed; return 0; fi
   case "$(refresh_source_coverage)" in
     sources=covered) ;;
     sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;
