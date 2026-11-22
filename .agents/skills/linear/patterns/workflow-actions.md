@@ -64,8 +64,7 @@ An `activate` or `complete` that answers with a quota refusal is held:
    - After a `complete` whose stderr also carries a `State transition to Done failed after the summary comment was posted` line: the `issues complete` rerun that line names, without summary flags and keeping any `--done-when-met`. The summary is already posted, so rerunning with summary flags would post it twice.
    - Otherwise: the original command.
 2. For `quota.status:"future"`, wait until `quota.reset` through the job runner.
-3. Run the held command once more.
-   - An `elapsed` deadline permits that ordinary retry without a wait.
+3. After that wait, or at once for an `elapsed` deadline, run the held command once more.
    - A reset does not prove a full allowance.
 4. A second rate limit, or a `missing` or `invalid` reset, returns the held command and its file to the caller.
    - None authorizes another try or an indefinite wait.
@@ -74,8 +73,7 @@ An `activate` or `complete` that answers with a quota refusal is held:
 ## Descriptions
 
 - Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`.
-- Inline `--description`/`--body` is for short plain strings only.
-- Never use heredocs.
+- Inline `--description`/`--body` is for short plain strings only; never use heredocs.
 
 After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID]`), preserving sections that are still valid.
 
@@ -109,8 +107,7 @@ Project labels are a separate resource and must not be used for issue-label pref
 
 `LINEAR_TEAM` requires a target before writes that do not address an issue. It does not restrict an API key or check a label's owning team. `auth-check` verifies authentication and the local target, not the key's permission mask.
 
-- Inspect key permissions in Linear settings.
-- Report fingerprints only.
+- Inspect key permissions in Linear settings; report fingerprints only.
 
 Before changing a label definition:
 
