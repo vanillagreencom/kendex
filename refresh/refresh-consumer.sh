@@ -5,9 +5,10 @@
 # published head, it merges directly where the base has no rules or protection,
 # or requests auto-merge. review-gate references/adoption.md, Publication, defines the arm outcomes. A render this
 # run committed first goes to the default branch itself where the landing
-# token, KENDEX_LAND_TOKEN, is set, every project takes its packages from
-# the default catalog at main alone, and that branch's merge queue holds no
-# entry: the run pushes its one commit with that token, and where GitHub's
+# token, KENDEX_LAND_TOKEN, is set, the classifier measures the commit as
+# class render, the commit removes and renames no path against the base the
+# run fetched, every project takes its packages from the default catalog at
+# main alone, and that branch's merge queue holds no entry: the run pushes its one commit with that token, and where GitHub's
 # rulesets let the push through, no pull request, merge group or approval
 # follows.
 # Output records: refresh-state=current pr=none class=none, or
@@ -686,8 +687,9 @@ fi
 # kendex's merge queue proved only the default catalog's content, so a
 # project that takes packages from any other catalog or revision keeps the
 # pull request, where the consumer reviews them. A render that removes or
-# renames a path can break a file the consumer still cites, which only the
-# consumer's own checks judge, so it keeps the pull request too. No token, a
+# renames a path can break a file the consumer still cites, which the render
+# proof does not read, so it keeps the pull request too, where the
+# consumer's approval and the lanes that claim that path come first. No token, a
 # class other than render, a removed path, that coverage, and a merge queue
 # that holds an entry or could not be read keep the pull request route.
 # Sets land_check to try, to unconfigured where the caller set neither
