@@ -27,9 +27,9 @@ Requires Node 18 or newer and `EXA_API_KEY`, the only setting.
 - Or set the key by hand in that file.
 - Keep the key out of committed configuration.
 - The value may be a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
-- Check the setup with `scripts/deep-research doctor`, run from the project root.
+- Check the setup from the project root: `.agents/skills/deep-research/scripts/deep-research doctor` prints `"exaApiKey":true` when it finds a key.
 
-Domain, date, result-count and context flags are per call. `scripts/deep-research help` lists them.
+Domain, date, result-count and context flags are per call. `.agents/skills/deep-research/scripts/deep-research help` lists them.
 
 ## Licence
 
