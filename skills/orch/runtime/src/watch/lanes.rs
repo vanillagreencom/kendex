@@ -446,7 +446,7 @@ pub fn classify(inputs: &Inputs) -> LaneState {
             }
         }
         State::Working => LaneState::Working,
-        State::Asking => LaneState::Asking,
+        State::Asking { .. } => LaneState::Asking,
         State::RateLimitSwitch => LaneState::RateLimitSwitch,
         State::Walled { kind, banner } => LaneState::Walled {
             kind,

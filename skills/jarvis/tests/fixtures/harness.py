@@ -6,7 +6,8 @@ and records each line it reads as one user turn in a session file of Claude
 Code's shape under CLAUDE_CONFIG_DIR (`projects/<cwd slug>/<id>.jsonl`), as
 agent-runtime's session reader reads it. An account `.fixture.json` lists
 under `unsigned` answers every turn with Claude Code's login wall; one it
-lists under `mute` never draws its composer. It launches no model."""
+lists under `mute` never draws its composer; one it lists under `asking`
+stands on Claude Code's folder-trust question. It launches no model."""
 from contextlib import contextmanager
 import json
 import os
@@ -21,6 +22,10 @@ import time
 COMPOSER = "❯ \n  ? for shortcuts"
 # Claude Code's login wall below a turn (agent-runtime observe.rs AUTH_FAILURE).
 LOGIN_WALL = "  ⎿  Not logged in · Please run /login\n"
+# Claude Code 2.1.330's folder-trust question, as recorded under
+# agent-runtime's tests/rust/fixtures/claude-folder-trust.txt.
+FOLDER_TRUST = (" Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n"
+                " ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel")
 
 
 @contextmanager
@@ -63,6 +68,10 @@ def main():
         stream.write(json.dumps({"argv": args, "id": session, "account": account, "cwd": cwd, "pid": os.getpid(),
                                  "display": [os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY")]}) + "\n")
     if account in fixture.get("mute", []):
+        sys.stdin.read()
+        return
+    if account in fixture.get("asking", []):
+        print(FOLDER_TRUST, flush=True)
         sys.stdin.read()
         return
     file = Path(account) / "projects" / re.sub(r"[/.]", "-", cwd) / (session + ".jsonl")

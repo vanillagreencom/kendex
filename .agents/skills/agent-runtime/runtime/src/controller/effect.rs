@@ -1191,15 +1191,43 @@ fn succeed(
                 "pane-gone",
             );
         }
-        Polled::Pending { .. } => {
-            return abandoned_before_retirement(
+        // A named first-run question on screen is a step someone takes in
+        // the account, named so the request can wait for it; it marks
+        // nothing unproved, since the account itself is not in question.
+        Polled::Pending {
+            state: State::Asking { dialog },
+            ..
+        } if dialog.step().is_some() => {
+            let mut outcome = abandoned_before_retirement(
+                operation,
+                &opened,
+                None,
+                &pane,
+                Some(&successor.target),
+                "successor-asking",
+            )?;
+            outcome.annotate("step", json!(dialog.step()));
+            outcome.annotate("account", json!(successor.named_account().1));
+            return Ok(outcome);
+        }
+        // Any other screen, a dialog no drawing names among them, is the
+        // launch's failure: the account is marked unproved, and the screen
+        // read is carried for the owner.
+        Polled::Pending { reading, state, .. } => {
+            let mut outcome = abandoned_before_retirement(
                 operation,
                 &opened,
                 None,
                 &pane,
                 Some(&successor.target),
                 "successor-not-ready",
-            );
+            )?;
+            if let Value::Object(fields) = pending_observation(&reading, &state) {
+                for (key, value) in fields {
+                    outcome.annotate(&key, value);
+                }
+            }
+            return Ok(outcome);
         }
         Polled::Unobservable { .. } => {
             return abandoned_before_retirement(
@@ -1306,7 +1334,7 @@ fn succeed(
         }
         State::Idle
         | State::Working
-        | State::Asking
+        | State::Asking { .. }
         | State::RateLimitSwitch
         | State::Walled {
             kind: WallKind::Usage,

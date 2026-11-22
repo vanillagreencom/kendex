@@ -293,7 +293,7 @@ pub fn provider_line(row: &Value, account: &str) -> String {
 }
 
 /// One local account: its directory, its credential as the row's status
-/// reads, and its usage record.
+/// reads, its usage record, and its spent 5-hour window where it has one.
 fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
     let harness = row["harness"].as_str().unwrap_or("claude");
     let alias = row["alias"].as_str().unwrap_or("account");
@@ -301,15 +301,21 @@ fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).unwrap();
     let config_dir = dir.display().to_string();
-    let expires_ms = if status == "expired" {
-        (now - 3600) * 1000
+    // A row a token endpoint refused (`refused_endpoint: token`) is an
+    // expired access token under a live refresh token, its refusal recorded.
+    let endpoint = row["refused_endpoint"].as_str().unwrap_or("usage");
+    let past = (now - 3600) * 1000;
+    let ahead = (now + 365 * 86_400) * 1000;
+    let refresh_ms = if status == "expired" { past } else { ahead };
+    let expires_ms = if endpoint == "token" {
+        past
     } else {
-        (now + 365 * 86_400) * 1000
+        refresh_ms
     };
     let credential = match harness {
         "claude" => json!({"claudeAiOauth": {
             "accessToken": format!("token-{alias}"), "refreshToken": format!("refresh-{alias}"),
-            "expiresAt": expires_ms, "refreshTokenExpiresAt": expires_ms,
+            "expiresAt": expires_ms, "refreshTokenExpiresAt": refresh_ms,
             "subscriptionType": row["plan"].as_str().unwrap_or("max")}})
         .to_string(),
         "codex" => json!({"tokens": {"access_token": format!("token-{alias}"), "account_id": format!("acct-{alias}")}}).to_string(),
@@ -325,6 +331,19 @@ fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
         "error" => std::fs::write(dir.join(file), "not json\n").unwrap(),
         _ => std::fs::write(dir.join(file), credential).unwrap(),
     }
+    // A row carrying `session_spent_until` is an account the harness's own
+    // session-limit report recorded spent until that reset.
+    let session = agent_runtime::accounts::wall::session_wall_path(state, &config_dir);
+    let _ = std::fs::remove_file(&session);
+    if let Some(until) = row["session_spent_until"].as_str() {
+        let spent = agent_runtime::accounts::wall::AccountWall {
+            config_dir: agent_runtime::accounts::wall::canon(&config_dir),
+            resets_at: agent_runtime::clock::epoch_secs(until).unwrap(),
+            seen_at: Some(now),
+        };
+        std::fs::create_dir_all(session.parent().unwrap()).unwrap();
+        std::fs::write(&session, serde_json::to_string(&spent).unwrap()).unwrap();
+    }
     let record = usage_record_path(state, harness, &config_dir);
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     let _ = std::fs::remove_file(&record);
@@ -335,7 +354,7 @@ fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
         _ => copilot_body(row),
     };
     let refusal = |status: &str, code: &str| {
-        json!({"endpoint": "usage", "status": status, "code": code,
+        json!({"endpoint": endpoint, "status": status, "code": code,
                "detail": row["detail"].as_str().unwrap_or(&format!("usage query refused with HTTP {code}")),
                "expires_at": now + 300})
     };

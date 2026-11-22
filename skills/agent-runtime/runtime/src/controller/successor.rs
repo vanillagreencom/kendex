@@ -69,12 +69,13 @@ pub fn source(caller: &Caller, harness: Harness) -> Source {
 /// since that account is the one the successor must leave. A headroom or
 /// rate mark leaves the caller's
 /// account out of every pick. A context or memory mark keeps the caller's
-/// own account, unpicked, where it has room; a context mark also keeps an
-/// account nothing measures where no other account of its harness has room
-/// (the walk's `keep_unmeasured`), and walks the caller's own entry alone
-/// where the setting names no preference, since a context handoff replaces
-/// the session and not its harness or model. Every succession walks the
-/// caller's own entry last.
+/// own account, unpicked, where it has room; a context mark walks the
+/// caller's own entry alone where the setting names no preference, since a
+/// context handoff replaces the session and not its harness or model. At
+/// every mark a walk with no room takes one account nothing measured (the
+/// walk's `keep_unmeasured`): the caller's own where the mark leaves it in,
+/// else one whose usage query was refused with a 429. Every succession
+/// walks the caller's own entry last.
 fn walk_request(
     choosing: &Choosing,
     pick: &mut dyn FnMut(&PickRequest) -> PickAnswer,
@@ -114,7 +115,7 @@ fn walk_request(
         min_headroom_pct: None,
         source: Some(source(caller, harness)),
         caller: Some(entry),
-        keep_unmeasured: mark == MarkKind::Context,
+        keep_unmeasured: true,
     })
 }
 
@@ -195,20 +196,14 @@ pub fn successor(
             keep_unmeasured: false,
         },
     };
-    // An account a failed attempt left unproved is no successor until the
-    // next confirmed hand-over, the caller's own among them: its entry is
-    // then walked, never kept.
-    let unproved = unproved(path)?;
-    if let Some(entry) = request.caller.as_mut()
-        && entry
-            .lane
-            .as_deref()
-            .is_some_and(|lane| unproved.iter().any(|account| canon(account) == canon(lane)))
-    {
-        entry.keep = false;
-        request.keep_unmeasured = false;
-    }
-    request.exclude.extend(unproved);
+    let doc = record::read_document(path)?;
+    hold_unproved(
+        &mut request,
+        doc.as_ref()
+            .and_then(|doc| doc.get(MEMBER))
+            .and_then(|member| member.get("unproved")),
+        now,
+    );
     let walked = (ground.walk)(&request)?;
     let successor = match &walked.answer {
         WalkAnswer::Lane(chosen) => {
@@ -237,24 +232,47 @@ pub fn successor(
     }))
 }
 
-/// The accounts the record at `path` holds unproved: each a failed attempt's
-/// successor since the last confirmed hand-over. No record names none.
-fn unproved(path: &Path) -> Result<Vec<String>> {
-    let Some(doc) = record::read_document(path)? else {
-        return Ok(Vec::new());
+/// How long a failed attempt holds its account out of the walk. A mark
+/// repeats every watch pass, so an account that just failed would be
+/// relaunched at once with no hold; a hold with no end would keep it out
+/// after its cause was repaired, with nothing that clears it short of a
+/// confirmed hand-over. Half an hour spans several mark repeats and ends
+/// well inside an account's weekly window.
+pub const UNPROVED_HOLD_SECS: u64 = 1800;
+
+/// The walk of a succession with the accounts a failed attempt left
+/// unproved held out of it: each in the controller record's `unproved`
+/// list (`marked`) whose stamp is within [`UNPROVED_HOLD_SECS`] of `now`,
+/// the caller's own among them, is excluded, which keeps it from the walk's
+/// unmeasured keep as well, and the caller's entry naming one is walked,
+/// never kept. An entry with no stamp, or one that does not parse, is
+/// expired, since nothing says when its hold began. Every succession walk
+/// that reads a controller record takes it, the watch's walled one too.
+pub fn hold_unproved(request: &mut WalkRequest, marked: Option<&Value>, now: u64) {
+    let holds = |entry: &Value| {
+        entry
+            .get("at")
+            .and_then(Value::as_str)
+            .and_then(crate::clock::epoch_secs)
+            .is_some_and(|at| now < at.saturating_add(UNPROVED_HOLD_SECS))
     };
-    Ok(doc
-        .get(MEMBER)
-        .and_then(|member| member.get("unproved"))
+    let unproved: Vec<String> = marked
         .and_then(Value::as_array)
-        .map(|marked| {
-            marked
-                .iter()
-                .filter_map(|entry| entry.get("account").and_then(Value::as_str))
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default())
+        .into_iter()
+        .flatten()
+        .filter(|entry| holds(entry))
+        .filter_map(|entry| entry.get("account").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    if let Some(entry) = request.caller.as_mut()
+        && entry
+            .lane
+            .as_deref()
+            .is_some_and(|lane| unproved.iter().any(|account| canon(account) == canon(lane)))
+    {
+        entry.keep = false;
+    }
+    request.exclude.extend(unproved);
 }
 
 /// The successor a model recovery opens for the recorded controller whose
@@ -400,6 +418,8 @@ mod tests {
     /// unpicked and excluded from nothing; a walled one sends the walk as
     /// the headroom mark's, the account left out of every pick and not
     /// kept; one nothing measures is not kept and is left in the pick.
+    /// Every row's walk keeps one account nothing measured where none has
+    /// room, which the walk judges.
     #[test]
     fn a_marks_walk_keeps_or_leaves_the_callers_account_as_its_own_read_says() {
         let accounts = Setting::of("accounts", Ok(account_settings()));
@@ -433,6 +453,8 @@ mod tests {
             model: Some("claude-opus-5-5".to_owned()),
             ..Caller::default()
         };
+        // case, the pick's answer, the state read, kept, the accounts
+        // excluded
         type Row = (
             &'static str,
             fn() -> PickAnswer,
@@ -478,6 +500,7 @@ mod tests {
             .unwrap();
             let entry = request.caller.as_ref().unwrap();
             assert_eq!(entry.keep, keep, "{case}");
+            assert!(request.keep_unmeasured, "{case}");
             assert_eq!(request.exclude, exclude, "{case}");
         }
     }

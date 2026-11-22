@@ -27,6 +27,8 @@ skills/agent-runtime/tests/rust/fixtures/pi-idle.txt text eol=lf whitespace=-bla
 skills/agent-runtime/tests/rust/fixtures/pi-working.txt text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 skills/agent-runtime/tests/rust/fixtures/pi-status-idle.txt text eol=lf
 skills/agent-runtime/tests/rust/fixtures/pi-status-working.txt text eol=lf
+skills/agent-runtime/tests/rust/fixtures/claude-folder-trust.txt text eol=lf
+skills/agent-runtime/tests/rust/fixtures/claude-bypass-consent.txt text eol=lf
 skills/orch/scripts/lane-host-ssh text eol=lf
 skills/mailbox/scripts/lane-mail text eol=lf
 skills/mailbox/scripts/lib/mailbox-append.sh text eol=lf

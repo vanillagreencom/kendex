@@ -720,9 +720,11 @@ enum AccountsOp {
         /// Keep the caller's own account without a pick.
         #[arg(long, requires = "caller_harness")]
         caller_keep: bool,
-        /// At a context mark with the caller's account unmeasured: an entry
-        /// of its harness whose pick finds none keeps the caller's account
-        /// where the judge still reads it unmeasured.
+        /// An overseer's walk at a mark: where no entry finds room, take the
+        /// caller's own account where it is left in and still reads
+        /// unmeasured, else an account whose usage query was refused with a
+        /// 429, whose stored login reads held and whose 5-hour window is not
+        /// spent.
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
     },
@@ -1754,7 +1756,7 @@ fn press(session: &Session, judged: &Judged, key: &str) -> Result<Delivery> {
         ));
     }
     match &judged.state {
-        State::Asking | State::RateLimitSwitch => {}
+        State::Asking { .. } | State::RateLimitSwitch => {}
         State::Idle
         | State::Working
         | State::Walled { .. }

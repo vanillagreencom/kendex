@@ -30,8 +30,12 @@ pub enum State {
     Idle,
     /// A turn is running.
     Working,
-    /// A dialog waits on an answer: a permission, trust or model prompt.
-    Asking,
+    /// A dialog waits on an answer: a permission, trust or model prompt,
+    /// and which first-run question it is where [`Dialog`] names it.
+    Asking {
+        #[serde(default)]
+        dialog: Dialog,
+    },
     /// Codex's model-switch reminder is up over a dialog row.
     RateLimitSwitch,
     /// The account refused the turn.
@@ -40,6 +44,59 @@ pub enum State {
     Exited,
     /// The screen settles nothing.
     Unjudged { cause: String },
+}
+
+/// The first-run question an asking screen holds: the step a person takes
+/// in the account before a launch onto it can come up unattended. Each
+/// named question is a drawing recorded from the harness ([`DIALOGS`]);
+/// any other dialog is `other`, which names no step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Dialog {
+    FolderTrust,
+    BypassConsent,
+    #[default]
+    Other,
+}
+
+impl Dialog {
+    /// The step a person takes in the account, as a refusal's `step=` names
+    /// it; a dialog no recorded drawing names gives the person no step, so
+    /// it is the launch's failure, never a step to wait for.
+    pub fn step(self) -> Option<&'static str> {
+        match self {
+            Dialog::FolderTrust => Some("folder-trust"),
+            Dialog::BypassConsent => Some("bypass-consent"),
+            Dialog::Other => None,
+        }
+    }
+}
+
+/// The first-run questions by a line their drawing carries, read from
+/// Claude Code 2.1.330 under a fresh config dir on 2026-11-22 (the
+/// captures under the integration tests' `fixtures/claude-*.txt`). The
+/// screen is read because no documented interface reports either question:
+/// Claude Code's hook events and `Notification` matcher types
+/// (https://code.claude.com/docs/en/hooks) name neither dialog, so a hook
+/// that runs before trust (the permissions page's "What runs before you
+/// trust a folder") still has no event that fires on one. The documented
+/// trust key, `hasTrustDialogAccepted`, is what the launch writes ahead
+/// (`crate::trust`); this reading names the question when one is still
+/// drawn.
+const DIALOGS: &[(&str, Dialog)] = &[
+    ("Yes, I trust this folder", Dialog::FolderTrust),
+    (
+        "Claude Code running in Bypass Permissions mode",
+        Dialog::BypassConsent,
+    ),
+];
+
+/// The question an asking `slice` holds.
+fn dialog(slice: &str) -> Dialog {
+    DIALOGS
+        .iter()
+        .find(|(line, _)| slice.contains(line))
+        .map_or(Dialog::Other, |(_, dialog)| *dialog)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -521,7 +578,9 @@ pub fn judge(
         {
             return State::RateLimitSwitch;
         }
-        return State::Asking;
+        return State::Asking {
+            dialog: dialog(&slice),
+        };
     }
     if is_working(&slice) || (harness == Harness::Pi && pi_working(&slice)) {
         return State::Working;
@@ -986,7 +1045,9 @@ mod tests {
             ),
             (
                 "  Approaching rate limits. Switch to gpt-6-luna for lower credit usage?",
-                State::Asking,
+                State::Asking {
+                    dialog: Dialog::Other,
+                },
             ),
         ] {
             let screen = format!("› Continue the task.\n• Done.\n\n{heading}\n\n\n{list}");

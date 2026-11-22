@@ -737,7 +737,7 @@ class SessionContract(unittest.TestCase):
         (self.home / "state").mkdir()
         (self.home / "state/handoff.md").write_text("# Handoff\nWhere the work stands.\n")
         self.rows = self.root / "rows.jsonl"
-        self.fixture = {"rows": str(self.rows), "unsigned": [], "mute": []}
+        self.fixture = {"rows": str(self.rows), "unsigned": [], "mute": [], "asking": []}
         self.write_fixture()
         shutil.copyfile(HARNESS_SCRIPT, self.home / ".fixture-harness.py")
         bin_dir = self.root / "bin"

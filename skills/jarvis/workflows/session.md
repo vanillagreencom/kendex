@@ -191,14 +191,17 @@ To add a consumer's own rule or its action route, start at [Personal additions](
 6. Run `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME` from the Jarvis package installed in that home.
    - A caller that has positively established an account wall runs `.agents/skills/jarvis/scripts/jarvis-session succeed --home HOME --account-walled`. The command binds that wall to the recorded controller's account, and excludes that account even when its reading reports room or cannot measure it. An eligible alternative can succeed; without one, the command refuses before ending the predecessor.
    - Ordinary context or voluntary succession omits the flag.
-   - The command selects a successor through agent-runtime's controller preference walk and account pick, from the first `AGENT_RUNTIME_CONTROLLER_PREFERENCE` entry to the recorded account and its choice. When no account qualifies, or an entry's account reading fails, succession refuses before the predecessor ends. The home and saved handoff stay with the successor.
+   - The command selects a successor through agent-runtime's controller preference walk and account pick, from the first `AGENT_RUNTIME_CONTROLLER_PREFERENCE` entry to the recorded account and its choice. The home and saved handoff stay with the successor.
+   - Where no account has room, the walk takes one account nothing measured: the recorded account where the mark leaves it in, else a signed-in account whose usage query was refused with HTTP 429. The successor's record then carries `scope: unmeasured`.
+   - When neither exists, or an entry's account reading fails, succession refuses before the predecessor ends.
    - The walk does not read `JARVIS_UNATTENDED_HARNESSES`. A successor carries its harness's bypass words only when the setting names that harness.
    - To keep every successor unattended, name every harness the overseer preference can reach. Per-account setup, such as Claude Code bypass consent, applies to every account the preference's harnesses can pick.
    - A missing orch dependency refuses succession before the predecessor ends; report the returned account and failure to the owner.
    - The command saves the handoff, then selects a successor, leaving out a Claude Code account that has not finished first-run setup. agent-runtime opens the successor in a new window of the same tmux session. It ends the predecessor only after the successor confirms its native identity and takes the Start brief.
 7. Read `jarvis-session status --home HOME` for the transfer.
    - An open transfer answers `handing-over`; read its status before retrying `succeed`.
-   - A failed attempt leaves its account recorded `unproved`, and `succeed` does not retry it.
+   - A failed attempt whose note holds its account, such as `successor-not-ready` or a login wall at the successor's first turn, records that account `unproved`, and `succeed` goes on to the next account, never to one it already tried.
+   - Any other failure, such as `successor-asking` with its `step`, ends `handover-failed` naming its note.
    - With no successor left, status reports `handover-failed`. Keep the handoff and the recorded failure cause.
    - An unfinished wall transfer keeps its spent-account exclusion on every retry, retries without the flag included; a completed transfer ends it, and a new explicit wall binds the current controller's account.
    - Boot and Start do not resume the retired predecessor.

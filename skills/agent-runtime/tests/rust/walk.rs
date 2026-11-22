@@ -292,6 +292,40 @@ fn unreachable(alias: &str) -> Value {
     row
 }
 
+/// A local row whose usage query was refused with a 429 and whose last
+/// figure is too old to stand in for one: rate-limited, with no headroom.
+fn refused_429(alias: &str) -> Value {
+    let mut row = unreachable(alias);
+    row["status"] = json!("rate_limited");
+    row["usage_age_s"] = json!(6 * 3600);
+    row
+}
+
+/// A local row whose expired access token the token endpoint refused to
+/// renew with a 429, its refresh token live: rate-limited with no
+/// headroom, and no usage query posted.
+fn token_429(alias: &str) -> Value {
+    let mut row = refused_429(alias);
+    row["refused_endpoint"] = json!("token");
+    row
+}
+
+/// A 429 row whose 5-hour window the harness's own session-limit report
+/// holds spent for two more hours.
+fn spent_429(alias: &str) -> Value {
+    let mut row = refused_429(alias);
+    row["session_spent_until"] = json!(stamp(now() + 2 * 3600));
+    row
+}
+
+/// A local row whose usage query was refused with a 401 or 403 that no
+/// profile read confirmed as an ended plan.
+fn refused_401(alias: &str) -> Value {
+    let mut row = unreachable(alias);
+    row["status"] = json!("refused");
+    row
+}
+
 const BYPASS: &str = "--dangerously-skip-permissions";
 
 #[test]
@@ -603,69 +637,243 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
     );
 }
 
+/// The keep of an overseer's walk at a mark (`--keep-unmeasured`) where
+/// nothing measured has room: one account nothing measured, the caller's
+/// own where the mark leaves it in (the session running there is the
+/// proof, whatever its harness or its stated end), else an account whose
+/// usage query was refused with a 429 and kept no figure, whose stored
+/// login this machine reads held, and whose 5-hour window is not spent.
+/// Measured room wins over either; a caller's account the mark leaves out
+/// is never kept, and a 429 account whose stored login nothing here reads
+/// (a Copilot one), a 429 account with a spent 5-hour window, the token
+/// endpoint's 429, a 401 or 403, an unreachable endpoint and a walk
+/// without the keep take none. Each row: the case, the preference, the
+/// listing, the caller's harness, pick model and account, whether the mark
+/// leaves the caller's account out, the retirement setting, the keep, and
+/// the account and entry chosen with whether nothing measured it.
 #[test]
-fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_reads_it_unmeasured()
- {
-    let mut world = World::new(&[(
-        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-        "claude:standard:high",
-    )]);
-    world.plant_listing(&[unreachable("aclaude")]);
-    let lane = world.dir("aclaude");
-    let args = [
-        "--controller",
-        "--source-harness",
-        "claude",
-        "--caller-harness",
-        "claude",
-        "--caller-account",
-        lane.as_str(),
-        "--caller-pick-model",
-        "fable",
-        "--keep-unmeasured",
-    ];
-    let result = world.answered(&args);
-    assert_eq!(result["answer"], json!("lane"), "{result}");
-    let chosen = &result["chosen"];
-    assert_eq!(chosen["entry"], json!("claude:standard:high"));
-    assert_eq!(chosen["account"], json!(world.dir("aclaude")));
-    assert_eq!(chosen["kept_unmeasured"], json!(true));
-    assert_eq!(chosen["model"], json!("opus"));
-    assert_eq!(chosen["record"]["verdict"], json!("unmeasured"));
-    assert_eq!(result["unmeasured"], json!(1));
-    // Without the mark's rule the entry is skipped and the caller's sweep
-    // finds the same account unmeasured.
-    let result = world.answered(&args[..args.len() - 1]);
-    assert_eq!(result["answer"], json!("none"), "{result}");
-    assert_eq!(
-        skipped(&result),
-        [
-            format!("claude:standard:high unmeasured {lane}"),
-            format!("caller unmeasured {lane}")
-        ]
+fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
+    let mut copilot = unreachable("acopilot");
+    copilot["harness"] = json!("copilot");
+    let mut copilot_429 = refused_429("bcopilot");
+    copilot_429["harness"] = json!("copilot");
+    type Row = (
+        &'static str,
+        &'static str,
+        Vec<Value>,
+        (&'static str, &'static str, &'static str),
+        bool,
+        Option<&'static str>,
+        bool,
+        Option<(&'static str, &'static str, bool)>,
     );
-    // The caller's account retired: the judge's word refuses it, and no
-    // unmeasured record admits it.
-    let mut retired = World::new(&[
+    let entry = "claude:standard:high";
+    let claude = ("claude", "fable", "aclaude");
+    let rows: Vec<Row> = vec![
         (
-            "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
-            "claude:standard:high",
+            "a 429 account at a headroom mark",
+            entry,
+            vec![measured("aclaude", 96, 5), refused_429("bclaude")],
+            claude,
+            true,
+            None,
+            true,
+            Some(("bclaude", entry, true)),
         ),
-        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2020-01-01"),
-    ]);
-    retired.plant_listing(&[unreachable("aclaude")]);
-    let lane = retired.dir("aclaude");
-    let mut args = args.to_vec();
-    args[6] = lane.as_str();
-    let result = retired.answered(&args);
-    assert_eq!(result["answer"], json!("none"), "{result}");
-    assert_eq!(
-        skipped(&result),
-        [
-            format!("claude:standard:high retired {lane}"),
-            format!("caller retired {lane}")
-        ]
-    );
+        (
+            "measured room beats the 429 account",
+            entry,
+            vec![
+                measured("aclaude", 96, 5),
+                refused_429("bclaude"),
+                measured("cclaude", 20, 5),
+            ],
+            claude,
+            true,
+            None,
+            true,
+            Some(("cclaude", entry, false)),
+        ),
+        (
+            "a Copilot 429 account no stored login here reads",
+            "",
+            vec![copilot.clone(), copilot_429.clone()],
+            ("copilot", "", "acopilot"),
+            true,
+            None,
+            true,
+            None,
+        ),
+        (
+            "a 429 account whose 5-hour window is spent",
+            entry,
+            vec![measured("aclaude", 96, 5), spent_429("bclaude")],
+            claude,
+            true,
+            None,
+            true,
+            None,
+        ),
+        (
+            "a 429 from the token endpoint",
+            entry,
+            vec![measured("aclaude", 96, 5), token_429("bclaude")],
+            claude,
+            true,
+            None,
+            true,
+            None,
+        ),
+        (
+            "a 401 or 403 refusal",
+            entry,
+            vec![measured("aclaude", 96, 5), refused_401("bclaude")],
+            claude,
+            true,
+            None,
+            true,
+            None,
+        ),
+        (
+            "an unreachable endpoint",
+            entry,
+            vec![measured("aclaude", 96, 5), unreachable("bclaude")],
+            claude,
+            true,
+            None,
+            true,
+            None,
+        ),
+        (
+            "a 429 account without the keep",
+            entry,
+            vec![measured("aclaude", 96, 5), refused_429("bclaude")],
+            claude,
+            true,
+            None,
+            false,
+            None,
+        ),
+        (
+            "the caller's own unmeasured account left out at a headroom mark",
+            entry,
+            vec![unreachable("aclaude"), refused_429("bclaude")],
+            claude,
+            true,
+            None,
+            true,
+            Some(("bclaude", entry, true)),
+        ),
+        (
+            "the caller's own account over a 429 account where the mark leaves it in",
+            entry,
+            vec![unreachable("aclaude"), refused_429("bclaude")],
+            claude,
+            false,
+            None,
+            true,
+            Some(("aclaude", "caller", true)),
+        ),
+        (
+            "a Copilot caller's own account",
+            "",
+            vec![copilot],
+            ("copilot", "", "acopilot"),
+            false,
+            None,
+            true,
+            Some(("acopilot", "caller", true)),
+        ),
+        (
+            "a Pi caller's own account on a Copilot pool nothing measured",
+            "",
+            Vec::new(),
+            ("pi", "github-copilot/gpt-6.1-sol", "api"),
+            false,
+            None,
+            true,
+            Some(("api", "caller", true)),
+        ),
+        (
+            "a Pi caller's own account on an API-credit pool nothing measured",
+            "",
+            Vec::new(),
+            ("pi", "anthropic/claude-fable-5-1", "api"),
+            false,
+            None,
+            true,
+            Some(("api", "caller", true)),
+        ),
+        (
+            "the caller's own account past its stated end",
+            entry,
+            vec![unreachable("aclaude")],
+            claude,
+            false,
+            Some("aclaude=2020-01-01"),
+            true,
+            Some(("aclaude", "caller", true)),
+        ),
+    ];
+    for (case, preference, listing, (harness, model, own), at_headroom, retire, keep, chosen) in
+        rows
+    {
+        let mut world = World::new(&[]);
+        world.plant_listing(&listing);
+        if let Some(retire) = retire {
+            world
+                .env
+                .push(("AGENT_RUNTIME_ACCOUNT_RETIRE".to_owned(), retire.to_owned()));
+        }
+        let lane = world.dir(own);
+        let mut args = vec![
+            "--controller",
+            "--preference",
+            preference,
+            "--source-harness",
+            harness,
+            "--caller-harness",
+            harness,
+            "--caller-account",
+            lane.as_str(),
+        ];
+        if !model.is_empty() {
+            args.extend(["--caller-pick-model", model]);
+        }
+        if at_headroom {
+            args.extend(["--exclude-account", lane.as_str()]);
+        }
+        if keep {
+            args.push("--keep-unmeasured");
+        }
+        let result = world.answered(&args);
+        let Some((alias, entry, unmeasured)) = chosen else {
+            assert_eq!(result["answer"], json!("none"), "{case}: {result}");
+            continue;
+        };
+        assert_eq!(result["answer"], json!("lane"), "{case}: {result}");
+        let chosen = &result["chosen"];
+        assert_eq!(
+            chosen["account"],
+            json!(world.dir(alias)),
+            "{case}: {result}"
+        );
+        assert_eq!(chosen["entry"], json!(entry), "{case}: {result}");
+        assert_eq!(
+            chosen["kept_unmeasured"],
+            json!(unmeasured),
+            "{case}: {result}"
+        );
+        assert_eq!(
+            chosen["record"]["scope"],
+            if unmeasured {
+                json!("unmeasured")
+            } else {
+                Value::Null
+            },
+            "{case}: {result}"
+        );
+    }
 }
 
 #[test]

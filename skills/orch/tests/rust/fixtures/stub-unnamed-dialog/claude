@@ -1,0 +1,7 @@
+#!/bin/bash
+# A stub that stands on a dialog no recorded first-run drawing names and
+# never draws its composer. It proves only its own text. Named `claude` and
+# run by bash directly so the kernel records the harness's process name for
+# it.
+printf ' Do you want to proceed?\n \xe2\x9d\xaf 1. Yes\n   2. No\n\n Esc to cancel\n'
+while IFS= read -r _line; do :; done

@@ -360,6 +360,10 @@ pub struct Reading {
     pub rated_from: Option<(Value, u64)>,
     /// The fall of the weekly figure the account's record holds.
     pub fall: Option<cache::Fall>,
+    /// The endpoint whose refusal the reading reports, `usage` or `token`:
+    /// a 429 reads `rate_limited` from either, and only the usage
+    /// endpoint's shows the plan answered.
+    pub refused_endpoint: Option<&'static str>,
 }
 
 impl Reading {
@@ -373,6 +377,7 @@ impl Reading {
             prior: None,
             rated_from: None,
             fall: None,
+            refused_endpoint: None,
         }
     }
 
@@ -395,6 +400,7 @@ impl Reading {
             prior: None,
             rated_from: None,
             fall: None,
+            refused_endpoint: None,
         }
     }
 }
@@ -642,6 +648,7 @@ fn renewed_token(ctx: &mut Ctx, harness: Harness, dir: &str) -> Result<String, B
     {
         let mut reading = Reading::refused(&refusal.status, refusal.detail.clone());
         reading.age = Some(age);
+        reading.refused_endpoint = Some("token");
         return Err(Box::new(reading));
     }
     let refused = match renewal::renew(ctx.accounts, harness, dir, ctx.now) {
@@ -652,12 +659,14 @@ fn renewed_token(ctx: &mut Ctx, harness: Harness, dir: &str) -> Result<String, B
         "access token expired and could not be renewed: {}",
         refused.cause
     );
+    let mut reading = Reading::refused(&refused.status, detail.clone());
     if let Some(code) = refused.code {
+        reading.refused_endpoint = Some("token");
         let refusal = Refusal {
             endpoint: "token".to_owned(),
             status: refused.status.clone(),
             code: Some(code.to_string()),
-            detail: detail.clone(),
+            detail,
             expires_at: ctx.now + refusal_window(refused.retry_after.as_deref()),
         };
         if let Err(cause) = cache::write_refusal(&path, harness.name(), dir, refusal, ctx.now) {
@@ -667,7 +676,7 @@ fn renewed_token(ctx: &mut Ctx, harness: Harness, dir: &str) -> Result<String, B
             ));
         }
     }
-    Err(Box::new(Reading::refused(&refused.status, detail)))
+    Err(Box::new(reading))
 }
 
 /// A refusal's window: the answer's own Retry-After where it named
@@ -757,6 +766,7 @@ fn served(figure: Box<cache::Figure>, status: &str, detail: String) -> Reading {
         prior,
         rated_from,
         fall: figure.fall,
+        refused_endpoint: None,
     }
 }
 
@@ -791,14 +801,17 @@ fn refused_reading(
     if refusal.status == "rate_limited"
         && let FigureRead::Served(figure) = cache::figure(record, harness, Some(FIVE_HOURS_S), now)
     {
-        return served(
+        let mut reading = served(
             figure,
             "rate_limited",
             format!("{}; these are the last figures it gave", refusal.detail),
         );
+        reading.refused_endpoint = Some("usage");
+        return reading;
     }
     let mut reading = Reading::refused(&refusal.status, refusal.detail.clone());
     reading.age = Some(age);
+    reading.refused_endpoint = Some("usage");
     reading
 }
 
@@ -873,6 +886,7 @@ fn fetch(
         prior,
         rated_from,
         fall: written.fall,
+        refused_endpoint: None,
     }
 }
 
@@ -968,13 +982,17 @@ fn refused_answer(
         && let FigureRead::Served(figure) =
             cache::figure(&record, harness, Some(FIVE_HOURS_S), ctx.now)
     {
-        return served(
+        let mut reading = served(
             figure,
             "rate_limited",
             format!("{detail}; these are the last figures it gave"),
         );
+        reading.refused_endpoint = Some("usage");
+        return reading;
     }
-    Reading::refused(&status, detail)
+    let mut reading = Reading::refused(&status, detail);
+    reading.refused_endpoint = Some("usage");
+    reading
 }
 
 /// Whether Claude's profile confirms an ended plan behind a usage 401 or
@@ -1075,6 +1093,7 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         prior,
         rated_from,
         fall,
+        refused_endpoint,
     } = &e.reading;
     let mut status = status.clone();
     let mut detail = detail.clone();
@@ -1128,6 +1147,7 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         "retire_date": retire_date,
         "measured_through": e.through,
         "status": status,
+        "refused_endpoint": refused_endpoint,
         "refreshable": false,
         "plan": if plan.is_empty() { Value::Null } else { Value::from(plan.as_str()) },
         "weekly_pct": num("weekly_pct"),
@@ -1481,6 +1501,7 @@ mod tests {
                         prior,
                         rated_from: None,
                         fall: None,
+                        refused_endpoint: None,
                     },
                     words: None,
                 },
@@ -1542,6 +1563,7 @@ mod tests {
                         prior: Some((prior.clone(), 60)),
                         rated_from: None,
                         fall: None,
+                        refused_endpoint: None,
                     },
                     words: None,
                 },

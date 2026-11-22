@@ -14,7 +14,7 @@ use crate::harness::{Harness, PermissionMeaning};
 use crate::host::{self, Place};
 use serde_json::{Value, json};
 
-use super::{Env, PickAnswer, PickRequest};
+use super::{Env, Judged, PickAnswer, PickRequest};
 use crate::accounts;
 use crate::error::{Error, Result};
 use crate::settings::DEFAULT_CONTROLLER_PREFERENCE;
@@ -81,10 +81,13 @@ pub struct WalkRequest {
     pub min_headroom_pct: Option<u32>,
     pub source: Option<Source>,
     pub caller: Option<Caller>,
-    /// At a context mark whose caller's own account nothing measured: an
-    /// entry of the caller's harness spending that account's kind, whose
-    /// pick finds none with room, keeps the caller's lane where the judge
-    /// still reads it unmeasured.
+    /// An overseer's walk at a mark: where no entry finds room, the walk
+    /// takes one account nothing measured, the caller's own lane where the
+    /// request leaves it in and the judge still reads it unmeasured, else
+    /// an account an entry's choice kept as its fallback, one whose usage
+    /// query was refused with a 429, whose stored login reads held and
+    /// whose 5-hour window is not spent. A certain wall is the alternative,
+    /// and a failed attempt leaves the predecessor in control.
     pub keep_unmeasured: bool,
 }
 
@@ -519,7 +522,9 @@ pub struct Chosen {
     pub launch: Option<&'static str>,
     /// The caller's own lane, kept without a pick.
     pub kept: bool,
-    /// The caller's own lane, kept with the judge reading it unmeasured.
+    /// An account nothing measured, taken where no entry found room
+    /// ([`WalkRequest::keep_unmeasured`]); its record carries
+    /// `scope: unmeasured`.
     pub kept_unmeasured: bool,
 }
 
@@ -722,6 +727,12 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
     let mut unread_hosts: Vec<(String, String)> = Vec::new();
     let mut unverified_classes: Vec<(String, String, &'static str)> = Vec::new();
     let mut unpicked: Vec<(String, &'static str)> = Vec::new();
+    // A walk that finds no room may still take one unmeasured account
+    // (`keep_unmeasured`): the caller's own, met on its entry, else the
+    // first account an entry's choice kept as its fallback.
+    let keep_unmeasured = req.scope == Scope::Overseer && req.keep_unmeasured;
+    let mut own: Option<WalkAnswer> = None;
+    let mut refused_unmeasured: Option<WalkAnswer> = None;
     let last = preference.entries.len().saturating_sub(1);
     let caller = req.caller.iter().map(|c| Step::Caller(c.clone()));
     let steps = preference
@@ -922,6 +933,44 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
         let mut pick = |pr: &PickRequest| judge(pr, Some(&judge_host));
         let answer = pick(&request(None, named.clone(), req.exclude.clone()));
+        // The caller's own account, asked by name where its entry's choice
+        // found no room: none of room, or a grant pool nothing measured (a
+        // Pi caller's `github-copilot/` or `anthropic/` pool). The running
+        // session is the proof it serves, so a reading nothing took keeps
+        // it, unless the request leaves it out.
+        if keep_unmeasured
+            && let Step::Caller(c) = &step
+            && let Some(lane) = &c.lane
+            && matches!(
+                answer,
+                PickAnswer::None { .. } | PickAnswer::ProviderUnmeasured { .. }
+            )
+        {
+            match pick(&request(None, Some(lane.clone()), req.exclude.clone())) {
+                PickAnswer::Unmeasured(j) => {
+                    own = Some(chosen(
+                        launch,
+                        Some(j.row.config_dir.clone()),
+                        Some(unmeasured_record(&j)),
+                        true,
+                    ));
+                    judged = true;
+                }
+                PickAnswer::Unjudged { cause } => {
+                    return Err(unjudged(&text, "kept-lane", &cause));
+                }
+                PickAnswer::Lane(_)
+                | PickAnswer::None { .. }
+                | PickAnswer::Walled(_)
+                | PickAnswer::Reserved(_)
+                | PickAnswer::Retired { .. }
+                | PickAnswer::Excluded(_)
+                | PickAnswer::ProviderUnmeasured { .. }
+                | PickAnswer::Unbilled { .. }
+                | PickAnswer::NoRecord
+                | PickAnswer::CloudRepoUnset(_) => {}
+            }
+        }
         let picked = match &answer {
             PickAnswer::Lane(j) => Some((j.row.config_dir.clone(), j.record(), false)),
             PickAnswer::Unjudged { cause } => return Err(unjudged(&text, "pick", cause)),
@@ -945,40 +994,31 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 walled,
                 unmeasured,
                 exclusions,
+                fallback,
                 ..
             } => {
                 walked.walled += walled;
                 walked.unmeasured += unmeasured;
-                let caller = req.caller.as_ref();
-                let keep = req.scope == Scope::Overseer
-                    && req.keep_unmeasured
-                    && caller.is_some_and(|c| {
-                        c.harness == harness
-                            && c.harness.billed(c.pick_model.as_deref().unwrap_or("")) == billed
-                    });
-                let kept = keep
-                    .then(|| caller.and_then(|c| c.lane.clone()))
-                    .flatten()
-                    .map(|lane| pick(&request(None, Some(lane), Vec::new())));
-                match kept {
-                    Some(PickAnswer::Unmeasured(j)) => {
-                        Some((j.row.config_dir.clone(), j.record(), true))
-                    }
-                    Some(PickAnswer::Unjudged { cause }) => {
-                        return Err(unjudged(&text, "kept-lane", &cause));
-                    }
-                    _ => {
-                        if exclusions.is_empty() {
-                            walked
-                                .skipped
-                                .push(skip(&text, "no-candidate", named.as_deref()));
-                        }
-                        for (lane, reason) in exclusions {
-                            walked.skipped.push(skip(&text, reason, Some(lane)));
-                        }
-                        None
-                    }
+                if exclusions.is_empty() {
+                    walked
+                        .skipped
+                        .push(skip(&text, "no-candidate", named.as_deref()));
                 }
+                for (lane, reason) in exclusions {
+                    walked.skipped.push(skip(&text, reason, Some(lane)));
+                }
+                if keep_unmeasured
+                    && refused_unmeasured.is_none()
+                    && let Some(j) = fallback
+                {
+                    refused_unmeasured = Some(chosen(
+                        launch,
+                        Some(j.row.config_dir.clone()),
+                        Some(unmeasured_record(j)),
+                        true,
+                    ));
+                }
+                None
             }
             PickAnswer::Walled(_)
             | PickAnswer::Reserved(_)
@@ -1045,7 +1085,18 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         }
         return Err(refused("account-unjudged", &fields));
     }
+    if let Some(answer) = own.or(refused_unmeasured) {
+        walked.answer = answer;
+    }
     Ok(walked)
+}
+
+/// The record of an account the walk took with nothing measuring it, which
+/// the successor carries to its launch and its controller record.
+fn unmeasured_record(judged: &Judged) -> Value {
+    let mut record = judged.record();
+    record["scope"] = json!("unmeasured");
+    record
 }
 
 enum Step {

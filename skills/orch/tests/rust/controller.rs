@@ -456,6 +456,24 @@ fn a_succession_types_the_brief_before_retirement_and_retires_on_the_runner_s_tu
     assert_eq!(intent["phase"]["phase"], "identity-read");
 }
 
+/// The record's `unproved` entries with each one's `at` stamp read as a
+/// stamp and taken off, for a row that compares the rest.
+fn unstamped(unproved: Option<Value>) -> Option<Value> {
+    unproved.map(|mut marked| {
+        for entry in marked.as_array_mut().unwrap() {
+            let at = entry.as_object_mut().unwrap().remove("at");
+            assert!(
+                at.as_ref()
+                    .and_then(Value::as_str)
+                    .and_then(agent_runtime::clock::epoch_secs)
+                    .is_some(),
+                "{entry} {at:?}"
+            );
+        }
+        marked
+    })
+}
+
 /// A successor whose first turn meets a login wall is refused before
 /// retirement with its cause and the account it ran on: the predecessor
 /// keeps running, the runner's window is closed, the record stands as it
@@ -487,16 +505,17 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
         !server.panes().contains(&runner_pane),
         "the runner's window is closed"
     );
-    let mut unproved = before.clone();
-    unproved["unproved"] = json!([{
-        "account": runner.state_dir().display().to_string(),
-        "note": "successor-not-signed-in",
-        "cause": "auth-wall",
-    }]);
+    let mut record = runner.fleet()["controller"].clone();
+    let unproved = record.as_object_mut().unwrap().remove("unproved");
+    assert_eq!(record, before, "the record as it stood");
     assert_eq!(
-        runner.fleet()["controller"],
-        unproved,
-        "the record as it stood, the attempt's account unproved"
+        unstamped(unproved),
+        Some(json!([{
+            "account": runner.state_dir().display().to_string(),
+            "note": "successor-not-signed-in",
+            "cause": "auth-wall",
+        }])),
+        "the attempt's account unproved"
     );
     assert_eq!(intent["notice"]["key"], "successor-not-signed-in");
     assert_eq!(intent["notice"]["owner"], "sent");
@@ -8871,6 +8890,74 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
     assert_eq!(refused_field(&unstamped, "found"), "none", "{unstamped}");
 }
 
+/// A controller's own account with room gets no headroom mark whatever end
+/// is stated for it: a provider's plan end or the machine's own stated end
+/// ahead, and the machine's stated end passed while the account's
+/// credential still answers, read `below-mark` with the account's figures;
+/// a walled account reads `mark-reached kind=headroom` at a value inside
+/// the mark.
+#[test]
+fn a_controller_with_room_gets_no_headroom_mark_whatever_its_stated_end() {
+    let ahead = agent_runtime::accounts::today(now_secs() + 30 * 86_400);
+    let passed = agent_runtime::accounts::today(now_secs() - 86_400);
+    let (ahead_setting, passed_setting) = (format!("eclaude={ahead}"), format!("eclaude={passed}"));
+    // case, the provider's host and its plan end, the owner's setting,
+    // percent used, the key
+    let cases = [
+        (
+            "provider end ahead",
+            Some(ahead.as_str()),
+            None,
+            20,
+            "below-mark",
+        ),
+        (
+            "setting ahead",
+            None,
+            Some(ahead_setting.as_str()),
+            20,
+            "below-mark",
+        ),
+        (
+            "setting passed",
+            None,
+            Some(passed_setting.as_str()),
+            20,
+            "below-mark",
+        ),
+        ("walled", None, None, 97, "mark-reached"),
+    ];
+    for (case, plan_end, setting, used, key) in cases {
+        let mut world = MarksWorld::new();
+        let home = world.dir("eclaude");
+        let mut measured = measured_account("eclaude", used);
+        measured["model_buckets"] =
+            json!([{"label": null, "pct": used, "resets_at": measured["binding_resets_at"]}]);
+        let mut rows = vec![measured];
+        if let Some(end) = plan_end {
+            rows.push(json!({
+                "harness": "claude", "config_dir": home, "measured_through": "host", "plan_ends": end
+            }));
+        }
+        world.plant(plan_end.map(|_| "vm"), &rows);
+        world.write_fleet(&home);
+        let env: Vec<(&str, &str)> = setting
+            .map(|value| ("AGENT_RUNTIME_ACCOUNT_RETIRE", value))
+            .into_iter()
+            .collect();
+        let marks = world.marks(&["--context", "100000:1000000"], &env);
+        assert_eq!(marks["key"], json!(key), "{case}: {marks}");
+        match key {
+            "below-mark" => assert_eq!(marks["headroom"], json!("80"), "{case}: {marks}"),
+            _ => {
+                assert_eq!(marks["kind"], json!("headroom"), "{case}: {marks}");
+                let figure = |field: &str| marks[field].as_str().unwrap().parse::<u64>().unwrap();
+                assert!(figure("value") <= figure("mark"), "{case}: {marks}");
+            }
+        }
+    }
+}
+
 /// An account kept from workers, by the owner's
 /// `AGENT_RUNTIME_ACCOUNT_EXCLUDE` or by a provider's `reserved=1` on a row
 /// with no reading, is kept from every lane, never from the controller
@@ -10049,7 +10136,7 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     let unproved = record.as_object_mut().unwrap().remove("unproved");
     assert_eq!(record, before, "the record as it stood");
     assert_eq!(
-        unproved,
+        unstamped(unproved),
         Some(json!([{
             "account": out.chosen()["result"]["successor"]["account"],
             "note": "successor-not-ready",
@@ -10057,6 +10144,97 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
         }])),
         "the attempt's account unproved"
     );
+}
+
+/// A successor whose harness stands on a dialog at the end of the launch's
+/// bound fails before retirement: the predecessor keeps running and the
+/// runner's window is closed. A named first-run question fails
+/// `successor-asking` with its `step` and the account, the record standing
+/// as it was, since the question is a step in the account and not its
+/// failure. A dialog no recorded drawing names gives no step: it fails
+/// `successor-not-ready` with the screen it read and marks the account
+/// unproved, so the next walk moves on.
+#[test]
+fn a_successor_on_a_dialog_ends_the_wait_naming_its_first_run_step_or_marking_the_account() {
+    // the stub's screen, the note, the step it names
+    let rows = [
+        ("stub-first-run", "successor-asking", Some("folder-trust")),
+        ("stub-unnamed-dialog", "successor-not-ready", None),
+    ];
+    for (screen, note, step) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+        let state = runner
+            .state_dir()
+            .join(agent_runtime::record::FLEET_FILE_NAME);
+        let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
+        let before = recorded_on(
+            &runner,
+            &server,
+            running.pid(),
+            "bclaude",
+            &work,
+            "bypass",
+            &[],
+        );
+        let out = workflow_launch(
+            &runner,
+            &scripts,
+            &bin,
+            &env,
+            &work,
+            "claude",
+            "fable",
+            &stub(screen),
+        )
+        .predecessor("%99")
+        .wait_secs(1)
+        .run();
+        let op = out.op();
+        assert_eq!(op.status.code(), Some(3), "{screen}: {}", stderr(op));
+        let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+        assert_eq!(intent["outcome"], "failed", "{screen}: {intent}");
+        let observation = &intent["observation"];
+        assert_eq!(observation["note"], note, "{screen}: {intent}");
+        assert_eq!(observation["retired"], false, "{screen}: {intent}");
+        assert!(
+            live(running.pid()),
+            "{screen}: the predecessor keeps running"
+        );
+        assert_eq!(
+            server.panes().len(),
+            1,
+            "{screen}: the runner's window is closed"
+        );
+        let account = &out.chosen()["result"]["successor"]["account"];
+        let controller = runner.fleet()["controller"].clone();
+        match step {
+            Some(step) => {
+                assert_eq!(observation["step"], step, "{screen}: {intent}");
+                assert_eq!(&observation["account"], account, "{screen}: {intent}");
+                assert_eq!(
+                    controller, before,
+                    "{screen}: the record as it stood, no account unproved"
+                );
+            }
+            None => {
+                assert_eq!(observation["step"], Value::Null, "{screen}: {intent}");
+                assert_eq!(
+                    observation["state"],
+                    json!({"state": "asking", "dialog": "other"}),
+                    "{screen}: {intent}"
+                );
+                let marked: Vec<&Value> = controller["unproved"]
+                    .as_array()
+                    .map(|entries| entries.iter().map(|e| &e["account"]).collect())
+                    .unwrap_or_default();
+                assert_eq!(marked, vec![account], "{screen}: {controller}");
+            }
+        }
+    }
 }
 
 /// The fleet's session the server does not hold fails the start
@@ -10325,7 +10503,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
     let unproved = record.as_object_mut().unwrap().remove("unproved");
     assert_eq!(record, before, "the record as it stood");
     assert_eq!(
-        unproved,
+        unstamped(unproved),
         Some(json!([{
             "account": successor["account"],
             "note": "launch-gate-refused",
@@ -10834,6 +11012,80 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
     let overseer = runner.fleet()["controller"].clone();
     assert_eq!(overseer["account"], account, "{overseer}");
     assert_eq!(overseer["scope"], "unread", "{overseer}");
+}
+
+/// A controller at its headroom mark, every measured account at the mark
+/// too, hands over by itself to a signed-in account whose usage query this
+/// machine and the provider both had refused with a 429 and no figure: the
+/// real `successor` verb takes it as `kept_unmeasured` with
+/// `scope: unmeasured`, and the transfer confirms with that scope on the
+/// controller record.
+#[test]
+fn a_controller_at_its_headroom_mark_hands_over_to_a_signed_in_account_whose_usage_query_was_refused()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let account = planted(&runner, "bclaude");
+    let mut refused = measured_account("bclaude", 10);
+    for key in ["headroom_pct", "wall", "session_5h_pct", "weekly_pct"] {
+        refused[key] = Value::Null;
+    }
+    refused["status"] = json!("rate_limited");
+    refused["verdict"] = json!("unmeasured");
+    let mut provider = refused.clone();
+    provider["measured_through"] = json!("host");
+    provider["config_dir"] = json!(account);
+    let (_, bin, env, work) = walk_world_on(
+        &runner,
+        Some("vm"),
+        &[measured_account("aclaude", 97), refused, provider],
+    );
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    runner.env.push((
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
+        "claude:fable:high".to_owned(),
+    ));
+    let report = effect_report(
+        &runner.op_fleet(&json!({"op": "start-controller", "controller": pending(&work)})),
+    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let pane = runner.fleet()["controller"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let answer = reply(&runner.run(&[
+        "successor",
+        "--fleet",
+        "--cwd",
+        &work.display().to_string(),
+        "--predecessor",
+        &pane,
+        "--mark",
+        "headroom",
+    ]));
+    let result = answer["result"].clone();
+    assert_eq!(result["walk"]["answer"], "lane", "{answer}");
+    assert_eq!(
+        result["walk"]["chosen"]["kept_unmeasured"], true,
+        "{answer}"
+    );
+    assert_eq!(result["successor"]["account"], account, "{answer}");
+    assert_eq!(result["successor"]["scope"], "unmeasured", "{answer}");
+    runner.snapshot(&work.join("tmp/handoffs/OVERSEER-HANDOFF.md"));
+    runner.transfer_started(&json!({
+        "op": "request-transfer",
+        "cause": "live",
+        "expected": result["expected"],
+        "successor": result["successor"],
+    }));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let overseer = runner.fleet()["controller"].clone();
+    assert_eq!(overseer["account"], account, "{overseer}");
+    assert_eq!(overseer["scope"], "unmeasured", "{overseer}");
 }
 
 /// The real `successor` verb's choice of a first controller over `rows`,
@@ -11436,13 +11688,15 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
     }
 }
 
-/// An account a failed attempt left unproved is no successor until the next
-/// confirmed hand-over. At a context mark the caller's own account with room
-/// is kept, and once it is unproved the walk passes it; at a headroom mark
-/// the walk's best account is chosen, and once that one is unproved too the
-/// walk names the next.
+/// An account a failed attempt left unproved is no successor while its
+/// mark holds. At a context mark the caller's own account with room is
+/// kept, and once it is unproved the walk passes it; at a headroom mark the
+/// walk's best account is chosen, and once that one is unproved too the
+/// walk names the next. A mark past its hold, one with no stamp and one
+/// whose stamp does not read as one hold nothing: the best account is
+/// walked again.
 #[test]
-fn an_account_a_failed_attempt_left_unproved_is_passed_by_the_next_choice() {
+fn an_unproved_mark_holds_its_account_out_of_the_walk_until_it_expires() {
     let mut world = MarksWorld::new();
     world.plant(
         None,
@@ -11473,34 +11727,48 @@ fn an_account_a_failed_attempt_left_unproved_is_passed_by_the_next_choice() {
         answer["result"]["successor"]["account"].clone()
     };
     let state = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
-    let unprove = |aliases: &[&str]| {
+    let fresh = json!(agent_runtime::clock::iso_utc(now_secs()));
+    let unprove = |aliases: &[&str], at: &Value| {
         let mut fleet: Value = serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
         fleet["controller"]["unproved"] = aliases
             .iter()
             .map(|alias| {
-                json!({
+                let mut entry = json!({
                     "account": world.dir(alias),
-                    "note": "successor-not-signed-in",
-                    "cause": "auth-wall",
-                })
+                    "note": "successor-not-ready",
+                    "cause": null,
+                });
+                if !at.is_null() {
+                    entry["at"] = at.clone();
+                }
+                entry
             })
             .collect();
         std::fs::write(&state, serde_json::to_vec(&fleet).unwrap()).unwrap();
     };
     assert_eq!(chosen("context"), json!(world.dir("eclaude")), "kept");
     assert_eq!(chosen("headroom"), json!(world.dir("bclaude")), "the best");
-    unprove(&["eclaude"]);
+    unprove(&["eclaude"], &fresh);
     assert_eq!(
         chosen("context"),
         json!(world.dir("bclaude")),
         "the caller's own unproved account is not kept"
     );
-    unprove(&["eclaude", "bclaude"]);
+    unprove(&["eclaude", "bclaude"], &fresh);
     assert_eq!(
         chosen("headroom"),
         json!(world.dir("aclaude")),
         "the unproved best account passed"
     );
+    let expired = json!(agent_runtime::clock::iso_utc(now_secs() - 1801));
+    for (case, at) in [
+        ("past its hold", expired),
+        ("unstamped", Value::Null),
+        ("unreadable stamp", json!("yesterday")),
+    ] {
+        unprove(&["eclaude", "bclaude"], &at);
+        assert_eq!(chosen("headroom"), json!(world.dir("bclaude")), "{case}");
+    }
 }
 
 /// The launch starts with no fleet state, which its first step makes, and

@@ -189,6 +189,9 @@ pub struct AccountRow {
     pub canon: String,
     pub measured_through: String,
     pub status: String,
+    /// The endpoint whose refusal the status reports (`usage` or `token`),
+    /// where the listing read one.
+    pub refused_endpoint: Option<String>,
     pub detail: Option<String>,
     pub verdict: String,
     pub headroom_pct: Option<f64>,
@@ -315,6 +318,7 @@ impl AccountRow {
             harness,
             measured_through: text(raw, "measured_through"),
             status: text(raw, "status"),
+            refused_endpoint: string(raw, "refused_endpoint"),
             detail: string(raw, "detail"),
             verdict: text(raw, "verdict"),
             headroom_pct: number(raw, "headroom_pct"),
@@ -428,11 +432,17 @@ impl AccountRow {
         self.standing_for(today, false)
     }
 
-    fn standing_for(&self, today: &str, ignore_reservation: bool) -> Standing {
-        match self.stated(ignore_reservation) {
+    /// The standing; a controller's question about its own account
+    /// (`own`) reads neither the reservation nor a stated end, which keep
+    /// an account from a new pick and say nothing of whether the account
+    /// running a controller has room: its windows answer that, and an ended
+    /// plan reads walled there ([`Reads::PlanEnded`]).
+    fn standing_for(&self, today: &str, own: bool) -> Standing {
+        match self.stated(own) {
             Word::Pick => Standing::Open,
             Word::Reserve => Standing::Reserved,
             Word::PlanEndInvalid { value } => Standing::EndUnread { value },
+            Word::Retired { .. } if own => Standing::Open,
             Word::Retired { date, source } if date.as_str() <= today => {
                 Standing::Retired { date, source }
             }
@@ -454,7 +464,14 @@ impl AccountRow {
     /// Whether the credential answered: a stated end a measured reading
     /// contradicts.
     pub fn answers(&self) -> bool {
-        self.status == "ok" || self.status == "rate_limited"
+        self.status == "ok" || self.usage_refused_429()
+    }
+
+    /// Whether the usage endpoint refused the reading with a 429: the
+    /// token was accepted and the plan answered. The token endpoint's 429
+    /// reads the same status and posted no usage query.
+    fn usage_refused_429(&self) -> bool {
+        self.status == "rate_limited" && self.refused_endpoint.as_deref() == Some("usage")
     }
 
     /// The label of the window the listing rated, its binding bucket's:
@@ -804,6 +821,7 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
         "retire_date": Value::Null,
         "measured_through": through,
         "status": "no_usage_data",
+        "refused_endpoint": Value::Null,
         "detail": detail,
         "refreshable": false,
         "plan": Value::Null,
@@ -1126,9 +1144,12 @@ fn window_hours(bucket: &str) -> f64 {
 /// On a seat each controller seated on it is one more spender at the
 /// sample, so the measured rate is shared with it. A seat holds nothing back
 /// from the lanes, so no worker sits idle beside a controller: a seated
-/// controller is never charged in `headroom`, which is the lanes' and the
-/// candidate's alone, and a worker on a seat is held to the bound as on any
-/// account. A controller whose own account reaches its mark is moved.
+/// controller is never charged in a lane's `headroom`, and a worker on a
+/// seat is held to the bound as on any account. An overseer's choice
+/// charges each other controller seated on the account to the reset as it
+/// charges its candidate (`burn × hours_to_reset × (1 + controllers)`), so
+/// an account the controllers there will spend is no room for one more. A
+/// controller whose own account reaches its mark is moved.
 ///
 /// The selection score (`with_lane_selection_score`, `agent-runtime
 /// accounts pick`) is no charge: it is `headroom` weighted by the reset
@@ -1174,13 +1195,15 @@ fn same_window(row: &AccountRow, binding: &Binding) -> bool {
 
 /// Who spends a window [`projection`] charges: the fleet's live lanes on
 /// the account, those of them live at the sample, the candidate about to
-/// join them, and on a seat the controllers seated on it.
+/// join them, on a seat the controllers seated on it, and of those the
+/// controllers an overseer's choice charges beside its candidate.
 #[derive(Clone, Copy)]
 struct Spenders {
     claims: u32,
     sampled: u32,
     candidate: Candidate,
     seats: u32,
+    controllers: u32,
 }
 
 /// The session the launch question places on the account, charged beside
@@ -1205,6 +1228,7 @@ fn projection(
         sampled,
         candidate,
         seats,
+        controllers,
     } = *spenders;
     let seat = seats > 0;
     let share = if binding.bucket == "model" {
@@ -1228,7 +1252,7 @@ fn projection(
     let (lanes, controller_hours) = match candidate {
         Candidate::None => (claims, 0.0),
         Candidate::Lane => (claims + 1, 0.0),
-        Candidate::Controller => (claims, to_reset.unwrap_or(1.0)),
+        Candidate::Controller => (claims, to_reset.unwrap_or(1.0) * f64::from(1 + controllers)),
     };
     Projection {
         headroom: 100.0 - binding.pct - (f64::from(lanes) + controller_hours) * burn,
@@ -1393,7 +1417,7 @@ fn grant(row: &AccountRow, floor: f64, now: u64) -> Option<Grant> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Judged {
     pub row: AccountRow,
-    /// `room`, `walled`, `unmeasured`, `seated`, `cloud-repo-unset`,
+    /// `room`, `walled`, `unmeasured`, `cloud-repo-unset`,
     /// `reserved`, `retired` or `plan-end-invalid`.
     pub verdict: String,
     /// The reading's wall: the binding window's percentage used.
@@ -1556,6 +1580,10 @@ pub enum PickAnswer {
         /// refusal: the read a caller repairs before a retry.
         refusals: Vec<(String, Value)>,
         exclusions: Vec<(String, String)>,
+        /// In an overseer's choice, the account a successor may still take
+        /// where nothing measured has room ([`fallback`]); the overseer walk
+        /// alone reads it.
+        fallback: Option<Box<Judged>>,
     },
     /// Exit 3 of `--lane`: the named account is walled.
     Walled(Judged),
@@ -1629,6 +1657,7 @@ impl PickAnswer {
                 walled_resets_at,
                 refusals,
                 exclusions,
+                fallback: _,
             } => (
                 "none",
                 json!({
@@ -1668,9 +1697,9 @@ impl PickAnswer {
 pub struct FleetFacts {
     /// The controllers seated per canonical config dir ([`FleetFacts::seat`]).
     pub seats: BTreeMap<String, u32>,
-    /// The canonical config dirs a controller other than the caller sits
-    /// on, which an overseer's choice refuses ([`FleetFacts::seat`]).
-    pub seated: Vec<String>,
+    /// The controllers other than the caller seated per canonical config
+    /// dir, which an overseer's choice charges ([`FleetFacts::seat`]).
+    pub others: BTreeMap<String, u32>,
     pub charges: BTreeMap<String, u32>,
     /// The instant, as epoch seconds, each charged lane began spending on
     /// its account, per canonical config dir, where its record names one:
@@ -1688,36 +1717,35 @@ impl FleetFacts {
     /// controller whose recorded harness holds it, and one where none is
     /// recorded here and the provider marks it: the provider's mark names
     /// no controller, and a controller this machine records is the one it
-    /// marks wherever one stands. Another controller sits on an account
-    /// another seat record held or the provider's mark names, but never on
-    /// the account the caller's own seat names.
+    /// marks wherever one stands. The other controllers on an account are
+    /// those another seat record holds, and one the provider's mark names
+    /// where no seat is recorded here, but never the mark on the account
+    /// the caller's own seat names, which is the caller.
     pub fn seat(&mut self, rows: &[AccountRow], local: &crate::group::Seats) {
         let own = local.own.as_ref().map(|(account, _)| account);
         let mut seats = local.others.clone();
         if let Some((account, true)) = &local.own {
             *seats.entry(account.clone()).or_insert(0) += 1;
         }
-        let mut seated: Vec<String> = local.others.keys().cloned().collect();
+        let mut others = local.others.clone();
         for row in rows.iter().filter(|r| r.seat) {
+            if !seats.contains_key(&row.canon) && Some(&row.canon) != own {
+                others.insert(row.canon.clone(), 1);
+            }
             seats.entry(row.canon.clone()).or_insert(1);
-            seated.push(row.canon.clone());
         }
-        seated.retain(|account| Some(account) != own);
         self.seats = seats;
-        self.seated = seated;
+        self.others = others;
     }
 }
-
-/// The verdict of an account another controller sits on, in an overseer's
-/// choice among accounts.
-const SEATED: &str = "seated";
 
 /// Judge one row for `req`: the one limit every pick, handoff mark and
 /// overseer mark is held to. The bound is the request's, or the setting,
 /// on every account: a seat, an account a controller sits on
 /// ([`FleetFacts::seat`]), holds nothing back from a worker. An overseer's
-/// own question reads no seat; its choice among accounts refuses one
-/// another controller sits on, `seated`, whatever its room.
+/// own question reads no seat; its choice among accounts charges each
+/// other controller seated on an account as it charges the candidate, so
+/// overseers that walk together do not all land on one account.
 fn judge(
     row: &AccountRow,
     req: &PickRequest,
@@ -1743,14 +1771,20 @@ fn judge(
     let binding = lane_binding(row, req.model.as_deref(), req.binding_floor);
     let wall = binding.as_ref().map(|b| b.pct);
     let pool = matches!(row.harness, Harness::Copilot | Harness::Pi);
-    let seats = if req.for_overseer || pool {
+    let overseer_choice = req.for_overseer && req.lane.is_none() && !pool;
+    let controllers = if overseer_choice {
+        facts.others.get(&row.canon).copied().unwrap_or(0)
+    } else {
+        0
+    };
+    let seats = if overseer_choice {
+        controllers
+    } else if req.for_overseer || pool {
         0
     } else {
         facts.seats.get(&row.canon).copied().unwrap_or(0)
     };
     let seat = seats > 0;
-    let seated =
-        req.for_overseer && req.lane.is_none() && !pool && facts.seated.contains(&row.canon);
     let projection = binding.as_ref().map(|b| {
         projection(
             row,
@@ -1764,6 +1798,7 @@ fn judge(
                     (true, true) => Candidate::Controller,
                 },
                 seats,
+                controllers,
             },
             f64::from(settings.burn_pct_per_hour),
             now,
@@ -1796,7 +1831,6 @@ fn judge(
         Standing::Reserved => "reserved",
         Standing::Retired { .. } => "retired",
         Standing::EndUnread { .. } => "plan-end-invalid",
-        Standing::Open if seated => SEATED,
         Standing::Open => reads.verdict(),
     };
     let verdict = match &facts.cloud_repo {
@@ -1857,7 +1891,8 @@ fn left_out(row: &AccountRow, req: &PickRequest) -> bool {
 
 /// The account's standing for `req`: its word's, except that a
 /// controller's question about its own account reads a provider's
-/// reservation as no refusal, as it reads the owner's exclusion.
+/// reservation and a stated end as no refusal, as it reads the owner's
+/// exclusion.
 fn standing_for(row: &AccountRow, req: &PickRequest, today: &str) -> Standing {
     row.standing_for(today, own_question(req))
 }
@@ -1994,7 +2029,37 @@ pub fn pick(
             .filter(|j| j.verdict != "room")
             .map(|j| (j.row.config_dir.clone(), j.verdict.clone()))
             .collect(),
+        fallback: fallback(&judged, req, now).map(Box::new),
     }
+}
+
+/// An overseer's choice with no account of room: the account whose usage
+/// query was refused with a 429 and kept no figure, whose stored login on
+/// this machine reads held ([`usage::stored_login`]), and whose 5-hour
+/// window no session-limit report holds spent, the fewest claims first,
+/// then listing order. A 429 from the usage endpoint shows the token was
+/// accepted and the plan answered; the token endpoint's 429 posted no
+/// usage query, and an unreachable endpoint, a 401 or 403 and a reading
+/// with no data show neither, so they are never taken. A spent window
+/// admits no start until its reset, and with no figure the judge reads it
+/// unmeasured rather than walled, so it is refused here. Nothing measured
+/// the account taken, so the walk names it unmeasured.
+fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
+    if !req.for_overseer || req.lane.is_some() {
+        return None;
+    }
+    judged
+        .iter()
+        .filter(|j| {
+            j.verdict == "unmeasured"
+                && j.row.usage_refused_429()
+                && j.row.headroom_pct.is_none()
+                && j.row.session_spent_until(now).is_none()
+                && usage::stored_login(j.row.harness, &j.row.config_dir, now)
+                    == usage::StoredLogin::Held
+        })
+        .min_by_key(|j| j.claims)
+        .cloned()
 }
 
 /// A `--lane` pick's answer from its one judgement: the word's refusal

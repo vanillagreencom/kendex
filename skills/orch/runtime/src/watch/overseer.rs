@@ -910,7 +910,7 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
         }
         | State::Idle
         | State::Working
-        | State::Asking
+        | State::Asking { .. }
         | State::RateLimitSwitch
         | State::Unjudged { .. } => Verdict::Live,
     }
@@ -1579,7 +1579,8 @@ fn transfer_settled(
 
 /// The announced succession: `request-transfer` with the case's cause and
 /// the spent account, the successor a walled case takes from the overseer
-/// walk with the spent account excluded; a refusal is the duty's failure,
+/// walk with the spent account and the record's unproved accounts
+/// excluded; a refusal is the duty's failure,
 /// said on the log by the runner, and the row stays announced so the next
 /// pass asks again. An admitted transfer is `requested`, its intent and
 /// attempt on the transfer row for the next pass to read its outcome.
@@ -1614,7 +1615,7 @@ fn transfer(
             let caller = Caller::of(record);
             let successor = match (record.harness, spent.as_deref()) {
                 (Some(harness), Some(spent)) => {
-                    let request = WalkRequest {
+                    let mut request = WalkRequest {
                         scope: walk::Scope::Overseer,
                         preference: None,
                         lane: None,
@@ -1625,8 +1626,16 @@ fn transfer(
                             &caller, harness,
                         )),
                         caller: Some(caller.walk_entry(harness)),
-                        keep_unmeasured: false,
+                        keep_unmeasured: true,
                     };
+                    agent_runtime::controller::successor::hold_unproved(
+                        &mut request,
+                        pass.fleet
+                            .overseer
+                            .as_ref()
+                            .and_then(|overseer| overseer.extra.get("unproved")),
+                        pass.now,
+                    );
                     match (pass.judges.walk)(&request) {
                         Ok(walked) => match &walked.answer {
                             walk::WalkAnswer::Lane(chosen) => Some(caller.successor_of(chosen)),

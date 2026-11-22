@@ -174,7 +174,8 @@ impl Caller {
     /// the home its harness and account run under; the one home named is
     /// this session's own root, kept by a same-harness successor whose
     /// account is not its home (a Pi seat). An account the walk admitted
-    /// with its model's window unread carries `scope: unread` to the launch.
+    /// with its model's window unread carries `scope: unread` to the launch,
+    /// and one it took with nothing measuring it `scope: unmeasured`.
     pub fn successor_of(&self, chosen: &walk::Chosen) -> Pending {
         let same = self.harness == Some(chosen.harness);
         Pending {
@@ -205,7 +206,7 @@ impl Caller {
                 .record
                 .as_ref()
                 .and_then(|r| r.get("scope"))
-                .filter(|scope| scope.as_str() == Some("unread"))
+                .filter(|scope| matches!(scope.as_str(), Some("unread" | "unmeasured")))
                 .map(|scope| serde_json::Map::from_iter([("scope".to_owned(), scope.clone())]))
                 .unwrap_or_default(),
         }

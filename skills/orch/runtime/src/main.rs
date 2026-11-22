@@ -767,11 +767,6 @@ enum LaneOp {
         /// Keep the caller's own lane without a pick.
         #[arg(long, requires = "caller_harness")]
         caller_keep: bool,
-        /// At a context mark with the caller's account unmeasured: an entry
-        /// of its harness whose pick finds none keeps the caller's lane
-        /// where the judge still reads it unmeasured.
-        #[arg(long, requires = "caller_harness")]
-        keep_unmeasured: bool,
     },
     /// The live charges per account of a fleet's lanes and of the workers
     /// `agent-runtime process lead --account` recorded, the count
@@ -2914,7 +2909,6 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
             caller_effort,
             caller_pick_model,
             caller_keep,
-            keep_unmeasured,
         } => {
             settings.accounts_now()?;
             let request = agent_runtime::accounts::walk::WalkRequest {
@@ -2943,7 +2937,9 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
                         pick_model: caller_pick_model,
                         keep: caller_keep,
                     }),
-                keep_unmeasured,
+                // A lane walk keeps nothing unmeasured: only an overseer's
+                // walk takes an account nothing measured.
+                keep_unmeasured: false,
             };
             Ok(ops::accounts::walk(
                 &settings,

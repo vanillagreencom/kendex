@@ -791,6 +791,10 @@ class Session:
         brief = self.path.parent / ("succeed-brief-" + uuid.uuid4().hex + ".txt")
         brief.write_text(start_brief(record.get("private_brief")))
         request = self.path.parent / ("succeed-request-" + uuid.uuid4().hex + ".json")
+        # The accounts this call already tried: a mark the walk let expire
+        # while later attempts ran must not send it back to one, so each
+        # account is tried at most once and the call ends.
+        tried = set()
         try:
             while True:
                 recorded = self.status(reconcile=False)["recorded"]
@@ -800,11 +804,15 @@ class Session:
                 if code:
                     sys.stderr.write(errors)
                     raise Refusal("handover-failed", "The successor could not be chosen: " + str(refusal) + ".", "failed")
-                if not choice.get("successor"):
+                if not choice.get("successor") or choice["successor"].get("account") in tried:
                     unproved = (self.status().get("recorded") or {}).get("unproved") or []
                     named = "; ".join(entry.get("account", "") + " (" + entry.get("note", "") + ")" for entry in unproved)
                     raise Refusal("handover-failed", short("No account is left to take over"
                                                            + (": " + named if named else "") + ". Jarvis keeps running."), "failed")
+                # The marks as they stood before this attempt: a failure
+                # retries only where it stamped the account it tried, never on
+                # an older mark, which the walk may have let expire.
+                stamped = {entry.get("account"): entry.get("at") for entry in recorded.get("unproved") or []}
                 successor = dict(choice["successor"], window=SESSION_NAME, seat=SEAT)
                 request.write_text(json.dumps({"expected": choice["expected"], "successor": successor,
                                                "brief_file": str(brief), "session": SESSION_NAME,
@@ -823,11 +831,13 @@ class Session:
                 if code == 75:
                     return self.answer(record, state="handing-over", reason="succession"), 0
                 attempted = successor.get("account")
+                if attempted:
+                    tried.add(attempted)
                 unproved = (self.status(reconcile=False).get("recorded") or {}).get("unproved") or []
-                marked = {entry.get("account"): entry.get("note") for entry in unproved}
-                if attempted and attempted in marked:
+                marked = {entry.get("account"): entry for entry in unproved}
+                if attempted and attempted in marked and marked[attempted].get("at") != stamped.get(attempted):
                     print("jarvis-session: successor-unproved account=" + attempted
-                          + " note=" + str(marked[attempted]), file=sys.stderr)
+                          + " note=" + str(marked[attempted].get("note")), file=sys.stderr)
                     continue
                 note = ((((result or {}).get("settled") or {}).get("observation")) or {}).get("note") or refusal
                 raise Refusal("handover-failed", short("The successor on " + str(attempted) + " failed"
