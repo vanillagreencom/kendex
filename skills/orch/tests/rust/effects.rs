@@ -12312,27 +12312,80 @@ fn the_home_named_in_the_lane_writable_setting_refuses_the_launch() {
     assert_eq!(world.server.panes().len(), 1, "no window opened");
 }
 
-/// The cache folder is a build cache the lane writes, a Go-style cache in
-/// it among them, while kendex's folder in it, which holds the runtimes a
-/// controller runs, stays read-only.
+/// A lane's tools build and cache in caches of its own in its tree, each
+/// named by the variable its tool reads, while the operator's stay
+/// read-only: Cargo's extracted sources, build scripts and git checkouts an
+/// unconfined build compiles, and the cache folder's package managers and
+/// runtimes, kendex's among them, which unconfined programs run.
 #[test]
 #[cfg(target_os = "linux")]
-fn a_lane_writes_a_build_cache_under_the_cache_folder_and_is_refused_the_runtime_s() {
+fn a_lane_builds_in_caches_of_its_own_and_is_refused_the_operator_s_build_inputs() {
     let mut world = Confined::new();
+    let cargo = world.dir.path().join("cargo");
     let cache = world.dir.path().join("cache");
-    let [go, runtime] = ["go-build", "kendex/agent-runtime"].map(|name| cache.join(name));
-    for dir in [&go, &runtime] {
-        std::fs::create_dir_all(dir).unwrap();
+    let operators = [
+        cargo.join("registry/src/index.crates.io-0/dep-1.0.0/build.rs"),
+        cargo.join("registry/src/index.crates.io-0/dep-1.0.0/src/lib.rs"),
+        cargo.join("registry/cache/index.crates.io-0/dep-1.0.0.crate"),
+        cargo.join("git/checkouts/dep-0/abc1234/src/main.rs"),
+        cargo.join("config.toml"),
+        cache.join("node/corepack/pnpm/9.0.0/dist/pnpm.cjs"),
+        cache.join("kendex/agent-runtime/bin/agent-runtime-k"),
+    ];
+    for file in &operators {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "operator\n").unwrap();
     }
-    world
-        .runner
-        .env
-        .push(("XDG_CACHE_HOME".to_owned(), cache.display().to_string()));
-    world.seat_env(&format!("{} {}", go.display(), runtime.display()));
+    world.runner.env.extend([
+        ("CARGO_HOME".to_owned(), cargo.display().to_string()),
+        ("XDG_CACHE_HOME".to_owned(), cache.display().to_string()),
+    ]);
+    world.file_env(
+        &operators
+            .iter()
+            .map(|f| f.display().to_string())
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    let tmp = std::fs::canonicalize(world.runner.state_dir())
+        .unwrap()
+        .join("tmp");
+    // (variable, the lane's own folder it names)
+    let own = [
+        ("CARGO_HOME", tmp.join("cargo-home")),
+        ("npm_config_cache", tmp.join("npm-cache")),
+        ("XDG_CACHE_HOME", tmp.join("cache-home")),
+    ];
+    world.probe_env(
+        "PROBE_RUN",
+        &own.iter()
+            .map(|(var, _)| {
+                format!("echo \"{var}=${var}\"; touch \"${var}/probe\" 2>/dev/null && echo \"own={var} written\" || echo \"own={var} refused\"")
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
     world.launch(&launch_request("KEN-K", world.runner.state_dir()));
     let probe = world.probe("KEN-K", 1);
-    assert!(probe.contains("seat=go-build written"), "{probe}");
-    assert!(probe.contains("seat=agent-runtime refused"), "{probe}");
+    for file in &operators {
+        let name = file.file_name().unwrap().to_string_lossy();
+        assert!(
+            probe.contains(&format!("file={name} refused")),
+            "{name}: {probe}"
+        );
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "operator\n");
+    }
+    for (var, dir) in &own {
+        assert!(
+            probe.contains(&format!("{var}={}\n", dir.display())),
+            "{var}: {probe}"
+        );
+        assert!(
+            probe.contains(&format!("own={var} written")),
+            "{var}: {probe}"
+        );
+        assert!(dir.join("probe").is_file(), "{var}");
+    }
 }
 
 /// A confined lane runs its runtimes from a cache of its own in its tree:

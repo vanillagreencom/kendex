@@ -58,8 +58,7 @@ On Linux the sandbox limits a lane's writes to its checkout, its issue's own rec
 
 The sandbox is not complete. A sandboxed lane can still write:
 
-- the shared Cargo and npm caches and the wider cache folder;
-- the account folders' plugins and instruction files;
+- the account folders' plugins and instruction files, and the session folders, among them the shell snapshots Claude Code runs before each command;
 - four parts of the main checkout's git folder: its hooks folder when it has none at launch, its worktree settings, its submodule stores and its attributes file;
 - the other lanes' worktree records.
 
