@@ -198,7 +198,7 @@ On Codex, a dev round that writes a dev-return artifact holds its watchdog throu
 - The successor resumes the round from it.
 - A review step is never a precondition of the record.
 - On every harness that runs it, the lane's turn-end hook judges both marks. It refuses a session's first turn end at a reached mark, and a later turn end without the record ends the turn with a `lane-stopped` notice to the overseer.
-- A hosted Claude Code or Pi lane's account mark is the overseer's: the overseer reads it between turn ends and directs the lane to write the record ([oversee-events.md § Judgement rules](oversee-events.md#judgement-rules), Hand off a lane).
+- A hosted Claude Code or Pi lane's account mark is the overseer's: the overseer reads it between turn ends and directs the lane to write the record ([oversee-events.md § Hand off a lane before it runs out](oversee-events.md#hand-off-a-lane-before-it-runs-out)).
 
 **Attached-launch reserve.**
 
@@ -441,7 +441,7 @@ Every lane brief also closes on the unattended words, `runtime/src/watch/unatten
 - The runtime's launch turns automatic compaction off on every Claude Code and Codex lane and controller (agent-runtime's `Harness::compaction_off_words`), so the context mark sees the real window.
 - Pi turns it off through its settings file.
 - Copilot CLI has no switch for it. A Copilot CLI fleet session keeps its own compaction, and [copilot-runtime.md](copilot-runtime.md) owns its context reader.
-- On every harness, the lane's handoff at its mark follows [§ Round Closure](#round-closure), Handoff at a mark, and [oversee-events.md § Judgement rules](oversee-events.md#judgement-rules).
+- On every harness, the lane's handoff at its mark follows [§ Round Closure](#round-closure), Handoff at a mark, and [oversee-events.md § Hand off a lane before it runs out](oversee-events.md#hand-off-a-lane-before-it-runs-out).
 
 ### Tracked issue creation
 

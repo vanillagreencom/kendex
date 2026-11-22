@@ -282,7 +282,7 @@ The members' rules, in the table's order:
 - `text` is at most `ORCH_FLEET_LOG_ROW_BYTES`.
 - `text` is one line and never a token value.
 - A `use1` row also carries `outcome`.
-- [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules) says when to write each kind.
+- [oversee-events.md](../references/oversee-events.md) says when to write each kind.
 
 A cloud lane's close writes one more `close` row: `cloud lane closed; session=ID account=ACCOUNT`, with `none` for a member the record lacks. Where the lane recorded a directive send, the row continues with ` send=RESULT credit=DOLLARS locked=REASON cli=TEXT`, the CLI's words cut to 300 characters. The archive list in [§ Recording policy](#recording-policy) parses that form.
 
