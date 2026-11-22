@@ -53,14 +53,15 @@ The inventory records which playbooks apply.
 | Pinned AI or agent SDK | Registry `latest` and release notes | `auto-with-fixes`, majors included | Build and test suites |
 | Pinned runtime binary with SHA constants | The official release manifest for the exact version | `auto-with-fixes` | Pin unit tests and a live download smoke on the host platform |
 | npm or pnpm deps | `pnpm -r outdated` and `pnpm audit` | `auto-with-fixes`, majors included | Typecheck and tests |
-| cargo deps | `cargo update --dry-run`, and `cargo audit` when installed | `auto-with-fixes`, majors included | Workspace tests at the repo's CI feature parity |
-| Bundled-extension fork: a small upstream synced in by script, with provenance tracked and local patches on top | The sync script's upstream ref | `auto-with-fixes`, under the gate below | That full test suite and the sync script's own checks |
+| cargo deps | `cargo update --dry-run` | `auto-with-fixes`, majors included | Workspace tests at the repo's CI feature parity |
+| Bundled-extension fork: a small upstream synced in by script, with provenance tracked and local patches on top | The sync script's upstream ref | `auto-with-fixes`, under the gate below | The consuming repo's full test suite and the sync script's own checks |
 | Patched vendor fork of a large upstream, with no script-gated sync | Upstream releases | Report, owner-decided | None |
 | Model weights and artifact SHA pins | Upstream manifest | Report | The repo's own integrity-verify scripts |
 | Pinned GitHub Actions SHAs | Tag to SHA for the same action | `auto-with-fixes`, majors included | Workflow run |
 
 - **Pinned AI or agent SDK.** Migrate changed auth, runtime and tooling APIs in the same PR. New provider models a bump exposes are report tier. The bump itself ships. Verify also that the expected models and features appear.
 - **Pinned runtime binary.** Never take the SHA from a third party. Never compute it by hand from a local download alone. Migrate auth, protocol and contract changes.
+- **cargo deps.** Also run `cargo audit` when it is installed.
 - **Bundled-extension fork.** The tier is `auto-with-fixes` only when the consuming repo's full test suite gates the sync. Take the update, rebase the local patches and fix the fallout in the same PR.
 - **Pinned GitHub Actions SHAs.** A patch or minor tag move also refreshes the SHA comment. A major migrates the workflow in the same PR.
 

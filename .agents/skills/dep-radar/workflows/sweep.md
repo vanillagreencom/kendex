@@ -41,11 +41,14 @@ Sort every finding per the operating policy plus the inventory's per-surface tie
 
 1. Load `github` before the first PR creation, CI status read or merge.
 2. If the run applies more than one surface, load `worktree`, and use one working copy per surface branch.
-3. Apply the inventory's refresh procedure.
-4. Fix the fallout in that surface's PR: migrate changed APIs, re-vendor bundled-extension bridges, repair broken tests and CI.
-5. Run the verify command.
-6. Open the PR only once the verify command passes locally. Follow the repo's review and merge-queue conventions.
-7. Write the PR body: old→new version, changelog summary with links, fallout fixed, and what was verified.
+
+For each auto-tier surface:
+
+1. Apply the inventory's refresh procedure.
+2. Fix the fallout in that surface's PR: migrate changed APIs, re-vendor bundled-extension bridges, repair broken tests and CI.
+3. Run the verify command.
+4. Open the PR only once the verify command passes locally. Follow the repo's review and merge-queue conventions.
+5. Write the PR body: old→new version, changelog summary with links, fallout fixed, and what was verified.
 
 If a blocker hits mid-apply or verification fails, stop the surface. Make it a report item with the exact error output. Never ship a partial bump.
 
