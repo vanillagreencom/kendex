@@ -798,20 +798,21 @@ fn launched_by_node(name: &str) -> Option<Harness> {
 
 /// Whether `pid` is `harness`'s installed Node launcher.
 fn node_launcher(pid: u32, harness: Harness) -> bool {
-    let Some((_, script)) = NODE_LAUNCHERS.iter().find(|(h, _)| *h == harness) else {
-        return false;
-    };
     process::command_lines().is_ok_and(|lines| {
         lines
             .iter()
-            .any(|(p, words)| *p == pid && is_node_launcher(words, script))
+            .any(|(p, words)| *p == pid && is_node_launcher(words, harness))
     })
 }
 
-/// Whether a process's argument words are an installed Node launcher's:
-/// `node` running an absolute script that resolves, through every link, to
-/// `script` under its package.
-fn is_node_launcher(words: &[String], script_in_package: &str) -> bool {
+/// Whether a process's argument words are `harness`'s installed Node
+/// launcher's: `node` running an absolute script that resolves, through
+/// every link, to that harness's script under its package
+/// ([`NODE_LAUNCHERS`]).
+fn is_node_launcher(words: &[String], harness: Harness) -> bool {
+    let Some((_, script_in_package)) = NODE_LAUNCHERS.iter().find(|(h, _)| *h == harness) else {
+        return false;
+    };
     let (Some(executable), Some(script)) = (words.first(), words.get(1)) else {
         return false;
     };
@@ -1492,13 +1493,12 @@ mod tests {
     /// An installed Node launcher is known by its argument words: an
     /// executable named `node` and an absolute script that resolves,
     /// through a link as npm installs it on `PATH`, to that harness's
-    /// launcher script ([`NODE_LAUNCHERS`]); a relative script, another
+    /// launcher script under its package; a relative script, another
     /// executable, another script, another harness's launcher and a missing
     /// script are not it.
     #[test]
     fn an_installed_node_launcher_is_known_by_its_resolved_script() {
         let root = tempfile::tempdir().unwrap();
-        let [(_, codex), (_, copilot)] = NODE_LAUNCHERS;
         let installed = |script: &str, bin: &str| {
             let real = root.path().join("lib/node_modules").join(script);
             fs::create_dir_all(real.parent().unwrap()).unwrap();
@@ -1509,8 +1509,8 @@ mod tests {
                 .unwrap();
             link.display().to_string()
         };
-        let link = installed(codex, "codex");
-        let loader = installed(copilot, "copilot");
+        let link = installed("@openai/codex/bin/codex.js", "codex");
+        let loader = installed("@github/copilot/npm-loader.js", "copilot");
         let other = root.path().join("lib/other.js");
         fs::write(&other, "").unwrap();
         let other = other.display().to_string();
@@ -1523,21 +1523,25 @@ mod tests {
             "../".repeat(cwd.components().count() - 1),
             link.trim_start_matches('/')
         );
-        let cases: [(&[&str], &str, bool); 10] = [
-            (&["/usr/bin/node", &link], codex, true),
-            (&["node", &link, "--yolo"], codex, true),
-            (&["node", &loader, "--help"], copilot, true),
-            (&["node", &loader], codex, false),
-            (&["node", &link], copilot, false),
-            (&["node", "bin/codex"], codex, false),
-            (&["node", &relative], codex, false),
-            (&["/usr/bin/bun", &link], codex, false),
-            (&["node", &other], codex, false),
-            (&["node", &gone], codex, false),
+        let cases: [(&[&str], Harness, bool); 10] = [
+            (&["/usr/bin/node", &link], Harness::Codex, true),
+            (&["node", &link, "--yolo"], Harness::Codex, true),
+            (&["node", &loader, "--help"], Harness::Copilot, true),
+            (&["node", &loader], Harness::Codex, false),
+            (&["node", &link], Harness::Copilot, false),
+            (&["node", "bin/codex"], Harness::Codex, false),
+            (&["node", &relative], Harness::Codex, false),
+            (&["/usr/bin/bun", &link], Harness::Codex, false),
+            (&["node", &other], Harness::Codex, false),
+            (&["node", &gone], Harness::Codex, false),
         ];
-        for (words, script, want) in cases {
+        for (words, harness, want) in cases {
             let words: Vec<String> = words.iter().map(|w| (*w).to_owned()).collect();
-            assert_eq!(is_node_launcher(&words, script), want, "{words:?} {script}");
+            assert_eq!(
+                is_node_launcher(&words, harness),
+                want,
+                "{words:?} {harness:?}"
+            );
         }
     }
 
