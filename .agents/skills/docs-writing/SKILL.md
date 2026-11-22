@@ -24,18 +24,19 @@ Migrate this repository hand-written harness instructions only through an author
 
 A repository's internal design documentation holds what the code cannot show: the principle behind a design, the rule an agent could break without noticing, a decision with its reason, a convention that differs from a tool default, and a pointer to the canonical code. Everything else lives in the code, its comments, the tests and git history.
 
-This skill governs repository markdown and documentation HTML. It states one writing standard, one repository layout, what each file type holds, and the finished example an author reads before writing one. Policy and operating documents also follow § Writing.
+This skill governs repository markdown and documentation HTML. Policy and operating documents also follow § Writing.
 
-Do not hand-copy code-owned inventories or defaults. A reference may define a contract not declared elsewhere, or explain semantics beside a link to its declaration. A generated reference may show declared values. A claim that a checker enforces something names the checker.
+Do not hand-copy code-owned inventories or defaults.
 
 ## The standard
 
-- Write short sentences. Put one idea in each sentence.
+- Write short sentences. Put one idea in each sentence. A condition and its exception are one idea, and so are a field and its grammar.
+- State a condition in full: "If the read fails, stop", not "Read fails: stop".
 - Use active voice and name the actor. Say what the code does, not what is done.
 - Use plain words. Basic technical terms are fine: CLI, API, repo, PR, hook, lock, glob.
 - Use one term per thing, the same term every time.
-- State each fact once. In a reference read by section, state the fact in its home section and point to it from elsewhere. In other documents, point at the first statement instead of repeating it.
-- Write a heading that names the subject. A heading never makes a claim.
+- State each fact once. In a reference read by section, state the fact in its home section and point to it from elsewhere. In other documents, point at the first statement instead of repeating it. A rule's "never" clause is part of the rule, not a second statement of it.
+- Write a heading that names the subject. A heading never makes a claim. A heading or rule name that other files cite stays as written.
 - Write in the present tense. A rule states what holds.
 - Delete sales language, quips, metaphors, and hedges.
 - Delete a sentence nothing acts on.
@@ -73,7 +74,7 @@ Nothing else lives under `docs/`. A software implementation plan, research repor
 ### Reference rules
 
 - The root `AGENTS.md` gives each principle doc a task trigger, or routes to a nested `AGENTS.md` that gives the local trigger: "Before writing a plugin: `docs/architecture/plugins.md`".
-- A nested `AGENTS.md` names the principle doc for its folder. Codex reads every `AGENTS.md` on the path to the working directory. Claude Code loads a nested `AGENTS.md` when it reads a file there. Copilot reads the nested file when it opens files there.
+- A nested `AGENTS.md` names the principle doc for its folder.
 - The Copilot review instruction files point the review bot at the same principle docs for the matching paths; the bot-instructions skill renders them.
 - Decision records are not listed in `AGENTS.md`. Review and dev workflows find them by keyword with `decisions search`, and a code comment cites a decision ID only where that code carries out the choice.
 - A code comment holds a local reason or an external cause at its site, per the code-quality skill's SKILL.md § Comments and Prose, and nothing points to it.
@@ -82,7 +83,7 @@ Nothing else lives under `docs/`. A software implementation plan, research repor
 
 ## Per file type
 
-Each section says who reads the file, what it holds, and what it never carries. Each finished example under [examples/](examples/) ends with a contrast drawn from a real failure and one sentence on why that failure fails the reader.
+Each finished example under [examples/](examples/) ends with a contrast drawn from a real failure and one sentence on why that failure fails the reader.
 
 A passage stays in a file only if a reader of that file needs it for their task. A file's readers are the ones its type's section names, where § Per file type has one. A file with two readers, such as a `DEVELOPMENT.md` or a runbook, keeps a passage that either reader needs. For an agent, a rule is needed only when the mistake it prevents is real and costly, and nothing else already prevents it: a command that refuses the wrong input, a rule the same agent already loads, a step of the workflow it runs, or ordinary competence. Move a passage that a reader of another file needs to that file under § Layout, and delete the rest. A licence or notice file keeps the text its licence requires.
 
@@ -118,7 +119,7 @@ Read by a reviewer or agent about to reverse a choice. The bar, the format and t
 
 Read by an operator, a person or an agent, maintaining or recovering a running system. A procedure names the task and when to use it, the target environment, required access and tools, and approval for effects that change service or data. Put steps in execution order. Give each step its expected reading and the condition that permits the next step. Name the source of the reading, such as a status page, command result or log. An unavailable reading is unresolved, not success.
 
-State when the operator stops, how to leave or restore the system, and who receives a failure with its evidence. Describe recovery only where the system's current operating contract supports it. Finish with the end-state check and cleanup of temporary access, files or changed settings; preserve evidence until its handoff is checked. Verify instructions against the current tools and operating contract. Link to declarations and tool help instead of copying their inventories or defaults.
+State when the operator stops, how to leave or restore the system, and who receives a failure with its evidence. Describe recovery only where the system's current operating contract supports it. Finish with the end-state check and cleanup of temporary access, files or changed settings; preserve evidence until its handoff is checked.
 
 Never: build and test instructions for package development, design rationale, incident history or a record of one run. Those facts keep their homes under § Layout and § Plans and research. Example: [examples/runbook.md](examples/runbook.md).
 
@@ -133,8 +134,8 @@ Read by a person reading a release. The `changelog-entries` lane owns the shape,
 ## Maintenance
 
 - Update a doc when a change makes a claim in it false. A code change alone owes no doc change.
-- A constraint without an enforcer names review, an operator step, or the gap.
-- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures instruction files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else. The commit-guards `md-type` lane checks the shapes the route table names; every other rule is held by the owner's review of each rewrite.
+- A claim that a checker enforces something names the checker. A constraint without an enforcer names review, an operator step, or the gap.
+- This writing standard sets no fixed document-size limit. Harness limits still apply to loaded instructions, including imports. For example, [Codex limits combined project instructions](https://developers.openai.com/codex/guides/agents-md) to 32 KiB by default. The doc-limits check measures instruction files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md`, and nothing else. The commit-guards `md-type` lane checks the shapes the route table names; every other rule is held by review, and a rewrite's cuts also by its check by use.
 
 ## Plans and research
 
@@ -144,9 +145,10 @@ A software implementation plan, research report, measurement or handoff is not r
 
 - One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-reflow` script rewrites a file to this format, and `md-reflow --check` names a file that departs from it.
 - Relative links in Markdown must resolve. The commit-guards skill's CHECKS.md § md-refs owns the checked forms.
+- A link sits in a sentence that says when to read its target or what the target holds.
 - Keep release and implementation narration out of agent-loaded markdown. Keep dates, attribution, source links and supersession that establish a current rule or qualify its evidence.
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
 
 ## Writing
 
-A focused change edits the affected text and verifies each claim against its owning source. A focused change whose paragraph adds a fact first takes § One home per fact. Use code where code owns the claim. Preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Converting a document onto this convention, or restructuring it, follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow extracts what is unique, then writes each file in scope from a blank page. The scope names the files: a `docs/` cleanup edits `AGENTS.md` only for the "Read when" lines of the docs it retains or deletes, and edits no `SKILL.md`; a rewrite of an `AGENTS.md` or `SKILL.md` body is a separate request the owner approves by naming the file. Both follow § Per file type and start from the example its table names for the file type.
+A focused change edits the affected text. A focused change whose paragraph adds a fact first takes § One home per fact. Converting a document onto this convention, restructuring it, or cutting what its readers do not need follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for, one file, one folder or the repository; the workflow names each file's readers, keeps only the rules they need, and checks the result on their tasks. Both verify each claim against its owning source, and use code where code owns the claim. Both preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Both follow § Per file type and start from the example its table names for the file type.
