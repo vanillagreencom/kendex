@@ -49,7 +49,7 @@ Every issue carries a `Reached by:` line. It names the user action, run, check o
 
 - These are not a reach: the thread a finding came from, a shape such as "a name containing a quote", and something true only in theory. An item with nothing to name is a decline, not an issue.
 - The author judges the reach. Under `LINEAR_REQUIRE_REACH`, `issues create` refuses only a body with no `Reached by:` line. An unsubstituted placeholder and a null token (`TBD`, `n/a`, `none`, `-`) count as no line.
-- A filing whose source is a review round carries, at priority 2, a `Symptom:` line. It names the run, the user or the red check that already showed the defect, and the create passes `--review-born`. Priority 2 from any other source is structural: it reports no symptom, and no check asks for one.
+- A filing whose source is a review round carries, at priority 2, a `Symptom:` line. It names the run, the user or the red check that already showed the defect. A Linear `issues create` for it passes `--review-born`; the GitHub route is [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations). Priority 2 from any other source is structural: it reports no symptom, and no check asks for one.
 - [reviewer finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) decides whether a review-born finding files at all.
 
 ## Requirements

@@ -153,7 +153,7 @@ Save findings to: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 `research-complete [RESEARCH_ISSUE_ID]`
 
 ## Researcher Execution
-Before either execution route, use existing local assets first. For each absent file in Assets, find it on [RESEARCH_ISSUE_ID] by the route [planning-artifacts.md](../references/planning-artifacts.md) gives, create its parent directories inside this checkout, and copy the resolved bytes to its listed repository path. Stop on any lookup or copy failure before starting research. Use the deep-research skill with Exa. Prefer Pi `web_research`, taking `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` from `command.txt`'s `--query-file`, `--context-glob`, `--mode`, `--output`, and `--raw-output` arguments respectively. If Pi is unavailable, run `bash [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
+Before either execution route, use existing local assets first. For each absent file in Assets, find it on [RESEARCH_ISSUE_ID] by the route the project-management skill's references/planning-artifacts.md gives, create its parent directories inside this checkout, and copy the resolved bytes to its listed repository path. Stop on any lookup or copy failure before starting research. Use the deep-research skill with Exa. Prefer Pi `web_research`, taking `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` from `command.txt`'s `--query-file`, `--context-glob`, `--mode`, `--output`, and `--raw-output` arguments respectively. If Pi is unavailable, run `bash [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
 ```
 
 ## 4. Delegate to the Researcher

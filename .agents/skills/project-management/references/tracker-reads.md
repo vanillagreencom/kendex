@@ -4,7 +4,7 @@ Read before you add or change a mode, a tracker read or a tracker route in a wor
 
 ## Team scope
 
-A Linear list read with no `--team` returns the whole workspace, with two exceptions: `cycles list` and `statuses` default to `LINEAR_TEAM`. `issues list` returns no team through its `safe`, `compact`, `ids` or `table` formatter, so a row read through those cannot be checked against `--team X`. Only `--format=raw` carries `.team.name`.
+A Linear list read with no `--team` returns the whole workspace, with two exceptions: `cycles list` and `statuses` default to `LINEAR_TEAM`. No `issues list` format carries the team, `--format=raw` included. Only `issues get` and `issues bulk-get` with `--format=raw` carry `.team.name`. Check a list row against the scope by its identifier prefix, the team key, as [tpm-audit § 1.1.1](../workflows/tpm-audit.md#111-resolve-team-scope) does.
 
 ## Scope by Path
 
