@@ -29,7 +29,7 @@ The main home's mailbox `owner-tracker-settings` command supplies the existing p
 
 A row's link is the request comment's server URL. A mailbox ask's link is the URL of its exact tracker mirror. A mailbox ask with no tracker mirror has a null link. An unread source makes the list unavailable.
 
-Cross-source suppression requires confirmed tracker posting and equality of workspace, issue UUID and request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A mailbox ask's exact tracker mirror stays suppressed while the ask's tracker-posting record remains in the mailbox events, open or closed.
+Cross-source suppression requires confirmed tracker posting and equality of the request comment identity. Linear gives each comment a unique identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A mailbox ask's exact tracker mirror stays suppressed while the ask's tracker-posting record remains in the mailbox events, open or closed.
 
 ## Pages
 

@@ -43,29 +43,44 @@ def mailbox_projection(home):
     ask = {"id": "mail-ask", "from": "overseer:repo", "at": "2026-11-01T02:00:00Z", "text": "Mailbox question"}
     return {"home": home, "config": {"configured": False}, "tracker": None,
             "mailboxes": [{"destination": "local", "root": "/canonical/repo", "asks": [ask],
-                           "outward": {"rows": [ask]}, "posted": {},
+                           "outward": {"rows": [ask]},
                            "links": {ask["id"]: {"url": "https://linear.app/example/issue/KEN-1#comment-mirror"}}}]}
 
 
-# Linear's GraphQL endpoint for the readers the list uses, over the comment
-# rows in TRACKER_DATABASE on one issue; a .mode file beside it fails,
-# truncates or omits the assigned view.
+# Linear's GraphQL endpoint for the readers the list uses, over the issues
+# in TRACKER_DATABASE: {"issues": {IDENTIFIER: [comment rows]}, "assigned":
+# [the owner's labelled view]}. A .mode file beside it fails, truncates or
+# omits the assigned view. Each request appends its operation to a .log file
+# beside it; past TRACKER_REQUEST_LIMIT requests, the tracker refuses.
 TRACKER_API = r'''
 import json, os, sys
 from pathlib import Path
 config = sys.stdin.read()
 payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if line.startswith('data = '))))
-query = payload['query']
+query, variables = payload['query'], payload.get('variables') or {}
 path = Path(os.environ['TRACKER_DATABASE'])
-comments = json.loads(path.read_text())
+database = json.loads(path.read_text())
 mode_path = path.with_suffix('.mode')
 mode = mode_path.read_text() if mode_path.exists() else 'present'
+operation = next(name for name in ('GetUserByEmail', 'TeamKeys', 'ListIssues', 'GetIssueWithBundle', 'ListComments',
+                                   'IssueRefs') if name in query)
+if operation == 'IssueRefs':
+    operation += ' ' + variables['filter']['id']['in'][0].split('-')[0]
+with path.with_suffix('.log').open('a') as log:
+    log.write(operation + '\n')
+if len(path.with_suffix('.log').read_text().splitlines()) > int(os.environ.get('TRACKER_REQUEST_LIMIT', '1000000')):
+    print('___HTTP_CODE___403', end='')
+    sys.exit(0)
 def connection(nodes):
     return {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}
 def comment(row):
     return dict(id=row['id'], body=row['body'], createdAt=row['created_at'], updatedAt=row['updated_at'],
                 user={'id': row['user_id'], 'name': row['user'], 'email': row['user_email']},
                 parent={'id': row['parent_id']} if row['parent_id'] else None, url=row['url'])
+def issue(identifier, **fields):
+    return dict(id=identifier + '-uuid', identifier=identifier, url='https://linear.app/example/issue/' + identifier, **fields)
+def comments(identifier):
+    return connection(list(map(comment, database['issues'][identifier])))
 if 'GetUserByEmail' in query:
     data = {'users': connection([dict(id='owner-id', name='Owner', email='owner@example.test',
                                      url='https://linear.app/example/profiles/owner')])}
@@ -75,20 +90,24 @@ elif 'ListIssues' in query:
     if mode == 'failed':
         print('___HTTP_CODE___403', end='')
         sys.exit(0)
-    issues = connection([] if mode == 'omitted' else [dict(
-        id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
-        updatedAt='2026-11-01T01:00:00Z')])
+    issues = connection([] if mode == 'omitted' else [issue(identifier, updatedAt='2026-11-01T01:00:00Z')
+                                                      for identifier in database['assigned']])
     if mode == 'incomplete':
         issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
     data = {'issues': issues}
 elif 'GetIssueWithBundle' in query:
-    data = {'issue': dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
-                          labels=connection([]), relations=connection([]), inverseRelations=connection([]),
-                          children=connection([]))}
+    data = {'issue': issue(variables['id'], labels=connection([]), relations=connection([]),
+                           inverseRelations=connection([]), children=connection([]))}
 elif 'ListComments' in query:
-    data = {'issue': dict(id='issue-uuid', comments=connection(list(map(comment, comments))))}
-elif 'comments' in query:
-    data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', comments=connection(list(map(comment, comments))))])}
+    data = {'issue': issue(variables['issueId'], comments=comments(variables['issueId']))}
+elif 'IssueRefs' in query:
+    # Linear's page of 50, the size the reader asks for.
+    refs = variables['filter']['id']['in']
+    offset = int(variables.get('after') or 0)
+    page = connection([issue(ref, comments=comments(ref)) for ref in refs[offset:offset + 50]])
+    if offset + 50 < len(refs):
+        page['pageInfo'] = {'hasNextPage': True, 'endCursor': str(offset + 50)}
+    data = {'issues': page}
 else:
     raise RuntimeError(query)
 print(json.dumps({'data': data})+'___HTTP_CODE___200', end='')
@@ -138,8 +157,7 @@ class OwnerAsksContract(unittest.TestCase):
         ask = {"id": "actual-mail-id", "from": "overseer:repo", "at": "2026-10-30T01:00:00Z", "text": "Mailbox original",
                "tracker_posted": True, "issue": "KEN-1", "tracker_comment": first["id"]}
         data["mailboxes"] = [{"destination": "local", "root": "/canonical/repo", "asks": [ask], "outward": {"rows": [ask]},
-                              "links": {ask["id"]: {"url": first["url"]}},
-                              "posted": {"KEN-1": {"workspace": "example", "uuid": "issue-uuid"}}}]
+                              "links": {ask["id"]: {"url": first["url"]}}}]
         rows = owner_asks.source_rows(data)
         self.assertEqual(len(rows), 2)
         self.assertEqual({row["askedBy"]["id"] for row in rows.values()}, {"overseer:repo", "requester"})
@@ -354,6 +372,35 @@ class OwnerAsksContract(unittest.TestCase):
                     self.assertEqual(argv[0], BASH)
                     self.assertIn(str(packages / "mailbox/scripts/lane-mail"), argv)
 
+    def test_tracker_and_destinations_are_read_side_by_side(self):
+        # Each chain's first read waits, bounded, until every chain has
+        # started: the tracker, the local destination and one remote host.
+        # Read in turn, a chain that starts first waits out its bound.
+        session = self.owner.session
+        session.deadline = owner_asks.time.monotonic() + 60
+        sources = owner_asks.Sources(session, {"JARVIS_MAIN_HOST": "", "JARVIS_REMOTE_HOSTS": "r1"})
+        started = {chain: threading.Event() for chain in ("tracker", "local", "ssh:r1")}
+        waited = []
+
+        def meet(own):
+            started[own].set()
+            bound = owner_asks.time.monotonic() + 5
+            if not all(event.wait(max(0, bound - owner_asks.time.monotonic())) for event in started.values()):
+                waited.append(own)
+
+        def settings(package, script, args=()):
+            meet("tracker")
+            return {"configured": False, "cause": "settings-unset"}
+
+        def registered(target):
+            meet(target.key)
+            return []
+
+        with patch.object(sources, "caller", side_effect=settings), patch.object(sources, "registered", side_effect=registered):
+            with patch.object(sources, "mailboxes", return_value=[]):
+                self.assertEqual(sources.collect()["mailboxes"], [])
+        self.assertEqual(waited, [])
+
     def test_controls_reject_each_guarded_regression(self):
         # Keep the mutant outside the worktree and acquire only its own
         # scratch directory. The original suite supplies all test fixtures.
@@ -396,6 +443,16 @@ class OwnerAsksContract(unittest.TestCase):
                  "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='trailing\\n')"),
                 ("jarvis/scripts/lib/owner_asks.py", 'or link is not None and not http(link["url"]))', 'or False)',
                  "OwnerAsksContract.test_mailbox_ask_links_are_its_tracker_mirror_or_null", "(link='not-http')"),
+                # A tracker read per posted issue, each spending the call's
+                # one deadline in turn.
+                ("jarvis/scripts/lib/owner_asks.py",
+                 'read = self.caller("linear", "linear.sh", ["comments", "bulk-list", "--format=safe", *issues])',
+                 'read = {issue.upper(): self.caller("linear", "linear.sh", ["comments", "list", issue, "--format=safe"])'
+                 ' for issue in issues}',
+                 "PublicOwnerAsks.test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget", "(view='active')"),
+                # One chain waits for a worker until another chain ends.
+                ("jarvis/scripts/lib/owner_asks.py", "max_workers=1 + len(targets)", "max_workers=2",
+                 "OwnerAsksContract.test_tracker_and_destinations_are_read_side_by_side", None),
                 ("slack/scripts/lib/settings.py", 'exec "$reader" -I -c', 'exec "$reader" -c',
                  "PublicOwnerAsks.test_carried_presence_preserves_root_settings_and_permission", "(name='renew')"),
             ]
@@ -473,10 +530,10 @@ class PublicOwnerAsks(MailWorld):
                 self.assertEqual(record["key"], ["project-list", "registration-unreadable", state])
                 self.assertNotIn("activeCount", error)
 
-    def tracker_api(self, comments):
-        """Linear's API for the caller's reads, answered from COMMENTS on issue KEN-1."""
+    def tracker_api(self, comments, issues=None, assigned=("KEN-1",)):
+        """Linear's API for the caller's reads, answered from COMMENTS on issue KEN-1 and any further ISSUES."""
         database = self.root / "tracker.json"
-        database.write_text(json.dumps(comments))
+        database.write_text(json.dumps({"issues": dict(issues or {}, **{"KEN-1": comments}), "assigned": list(assigned)}))
         self.env.update(TRACKER_DATABASE=str(database), LINEAR_API_KEY_OVERRIDE="fixture", LINEAR_FORMAT="raw")
         self.executable("curl", "#!" + sys.executable + "\n" + TRACKER_API)
         return database
@@ -705,6 +762,66 @@ print(json.dumps(owner._presence('ssh:fixture')))
         self.assertEqual(mirrored["activeCount"], 1)
         self.assertEqual((mirrored["rows"][0]["kind"], mirrored["rows"][0]["what"], mirrored["rows"][0]["link"]["url"]),
                          ("jarvis-ask", "Mirrored owner ask", original["url"]))
+
+    def test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget(self):
+        # The main home's tracker as read on 2026-11-22: posted owner asks on
+        # 171 issues in the 30 days before and 22 open owner-gated items, here
+        # through four overseer mailboxes. A whole `linear.sh issues get` took
+        # 0.42 s on that home, so this tracker answers the requests 14 s holds
+        # at that cost and refuses the next one. The list runs with a deadline
+        # no CPU load reaches: the request count, not this runner's clock,
+        # decides the claim.
+        posted, assigned, mailboxes = 171, 22, 4
+        limit = int(owner_asks.CALL_SECONDS / 0.42)
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
+        requests = {"OWN-%d" % n: [request_comment("waiting-%d" % n, "https://linear.app/example/profiles/owner Waiting %d" % n)]
+                    for n in range(assigned)}
+        issues = ["ASK-%d" % n for n in range(posted)]
+        mirrors = {issue: [request_comment("mirror-" + issue, "Posted ask on " + issue)] for issue in issues}
+        log = self.tracker_api([], dict(requests, **mirrors), assigned=list(requests)).with_suffix(".log")
+        self.env.update(TRACKER_REQUEST_LIMIT=str(limit))
+        roots = [make_project(self.root / ("mailbox-%d" % n)) for n in range(mailboxes)]
+        for number, root in enumerate(roots):
+            template = self.mail(root, "ask", "Template", "--to", "owner", "--options", "a,b", "--reserved")
+            path = root / "tmp/lane-mail/overseer/to-overseer.jsonl"
+            records = [json.loads(line) for line in path.read_text().split("\n") if line]
+            envelope, = [record for record in records if record["id"] == template]
+            stem = template.rsplit("-", 1)[0]
+            rows = []
+            for issue in issues[number::mailboxes]:
+                # Older than the tracker rows, so the first page holds asks.
+                ask = dict(envelope, id="%s-%d" % (stem, len(rows) // 2 + 1), at="2026-10-31T00:00:00Z",
+                           issue=issue, text="Asked on " + issue)
+                rows += [ask, {"id": ask["id"] + "-tracker", "kind": "tracker-posted", "at": ask["at"], "from": ask["from"],
+                               "re": ask["id"], "issue": issue, "tracker_label": "owner-waiting",
+                               "tracker_comment": "mirror-" + issue, "text": ""}]
+            path.write_text("".join(json.dumps(record) + "\n" for record in rows))
+        self.register(self.registry, self.home, *roots)
+        pages = -(-posted // 50) + -(-assigned // 50)
+        for view in ("active", "snoozed"):
+            with self.subTest(view=view), patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True):
+                log.write_text("")
+                session = Session(str(self.home))
+                session.path = session.path.with_name("owner-asks.json")
+                session.deadline = owner_asks.time.monotonic() + 600
+                owner = owner_asks.OwnerAsks(session, owner_asks.Sources(session, owner_asks.watch.config(BASH, str(self.home))))
+                try:
+                    with session.locked():
+                        page = owner.page(owner.read(), view, None)
+                except owner_asks.Unavailable as error:
+                    self.fail("unavailable after %d tracker requests: %s" % (len(log.read_text().splitlines()), error))
+                operations = log.read_text().splitlines()
+                # Two collects, each one bulk read per 50 issues and no read per issue.
+                self.assertLessEqual(len(operations), limit)
+                self.assertEqual(sum(operation.startswith("IssueRefs") for operation in operations), 2 * pages)
+                self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
+                self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
+                self.assertEqual(bool(page["rows"]), view == "active")
+                # Each ask links the mirror comment on its own issue.
+                self.assertEqual({row["what"]: row["link"]["url"] for row in page["rows"]},
+                                 {row["what"]: request_comment("mirror-" + row["what"].split()[-1])["url"]
+                                  for row in page["rows"]})
 
     def test_satellite_uses_the_same_main_receipt_without_local_state(self):
         satellite = make_project(self.root / "satellite", overseer=False)

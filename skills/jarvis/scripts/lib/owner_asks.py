@@ -1,6 +1,7 @@
 """The main home's owner-ask pages and action deltas, never a source replica."""
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import hashlib
 import json
@@ -150,6 +151,11 @@ def http(value):
     return isinstance(value, str) and urlsplit(value).scheme in ("http", "https") and bool(urlsplit(value).netloc)
 
 
+def mirrored(ask):
+    """An outward row that names the tracker comment mirroring its ask."""
+    return ask.get("tracker_posted") is True and bool(ask.get("tracker_comment"))
+
+
 class Sources:
     """The one owner of every owner-ask source read.
 
@@ -160,7 +166,7 @@ class Sources:
 
     def __init__(self, session, settings):
         self.session, self.settings = session, settings
-        # Encoded once; a host read sends it once per destination and collect.
+        # Encoded at the first host read; a host read sends it once per destination and collect.
         self.closure = None
 
     def call(self, target, root, package, script, args=(), shell_args=()):
@@ -237,41 +243,55 @@ class Sources:
             raise Unavailable("The original mailbox read is incomplete.")
         return {"header": lines[0], "rows": [json.loads(line) for line in lines[1:] if line]}
 
-    def collect(self):
+    def posted(self, issues):
+        """The comments of each of ISSUES, in one read however many there are:
+        the call's one deadline holds a fixed number of reads, not one per issue."""
+        if not issues:
+            return {}
+        read = self.caller("linear", "linear.sh", ["comments", "bulk-list", "--format=safe", *issues])
+        # bulk-list keys each issue by its identifier upper-cased.
+        return {issue: read[issue.upper()] for issue in issues}
+
+    def tracker(self):
+        """The owner tracker settings and, where they are set, the owner-requests view."""
         config = self.caller("mailbox", "owner-tracker-settings")
-        tracker = None
         if config["configured"]:
-            tracker = self.caller("linear", "linear.sh",
-                                  ["comments", "owner-requests", "--email", config["email"], "--label", config["label"]])
-        elif config["cause"] != "settings-unset":
+            return config, self.caller("linear", "linear.sh",
+                                       ["comments", "owner-requests", "--email", config["email"], "--label", config["label"]])
+        if config["cause"] != "settings-unset":
             raise Unavailable("The owner tracker settings could not be read.")
-        workspace, mailboxes = None, []
-        for target in watch.destinations(self.settings):
-            roots = self.registered(target)
-            if not target.host and self.session.home not in roots:
-                roots.append(self.session.home)
-            for record in self.mailboxes(target, roots):
-                asks = [json.loads(line) for line in record["pending"].split("\n") if line]
-                outward = self.events(record["outward"])
-                posted, links = {}, {}
-                # Retained closed asks still own their exact tracker mirror;
-                # a delayed label update must not resurrect that mirror.
-                for ask in outward["rows"]:
-                    if ask.get("tracker_posted") is not True or not ask.get("tracker_comment"):
-                        continue
-                    issue = ask["issue"]
-                    if issue not in posted:
-                        if workspace is None:
-                            workspace = self.caller("linear", "linear.sh", ["teams", "keys"])["urlKey"]
-                        item = self.caller("linear", "linear.sh", ["issues", "get", issue, "--format=safe"])
-                        comments = self.caller("linear", "linear.sh", ["comments", "list", issue, "--format=safe"])
-                        posted[issue] = {"workspace": workspace, "uuid": item["uuid"], "comments": comments}
-                    comment = next((row for row in posted[issue]["comments"] if row["id"] == ask["tracker_comment"]), None)
+        return config, None
+
+    def destination(self, target):
+        """Every overseer mailbox the destination's registered roots hold, read."""
+        roots = self.registered(target)
+        if not target.host and self.session.home not in roots:
+            roots.append(self.session.home)
+        return [{"destination": target.key, "root": record["root"],
+                 "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
+                 "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
+
+    def collect(self):
+        targets = watch.destinations(self.settings)
+        # The tracker and each destination are read side by side, so the
+        # call's one deadline holds the longest chain of reads, not their sum.
+        with ThreadPoolExecutor(max_workers=1 + len(targets)) as pool:
+            tracker = pool.submit(self.tracker)
+            reads = [pool.submit(self.destination, target) for target in targets]
+            mailboxes = [mailbox for read in reads for mailbox in read.result()]
+            # Retained closed asks still own their exact tracker mirror; a
+            # delayed label update must not resurrect that mirror.
+            posted = self.posted(list(dict.fromkeys(ask["issue"] for mailbox in mailboxes
+                                                    for ask in mailbox["outward"]["rows"] if mirrored(ask))))
+            config, tracker = tracker.result()
+        for mailbox in mailboxes:
+            mailbox["links"] = {}
+            for ask in mailbox["outward"]["rows"]:
+                if mirrored(ask):
+                    comment = next((row for row in posted[ask["issue"]] if row["id"] == ask["tracker_comment"]), None)
                     if comment is not None:
-                        links[ask["id"]] = {"url": comment["url"]}
-                mailboxes.append({"destination": target.key, "root": record["root"], "asks": asks,
-                                  "outward": outward, "posted": posted, "links": links})
-        return {"config": config, "tracker": tracker, "mailboxes": mailboxes}
+                        mailbox["links"][ask["id"]] = {"url": comment["url"]}
+        return {"config": config, "tracker": tracker, "mailboxes": mailboxes, "posted": posted}
 
     def stable(self):
         first, second = self.collect(), self.collect()
@@ -281,7 +301,12 @@ class Sources:
 
 
 def source_rows(source):
-    rows, mirrors = {}, set()
+    rows = {}
+    # Linear's GraphQL schema gives each comment an `id`, "the unique
+    # identifier of the entity", and every read runs the caller's one Linear
+    # credential: a comment id alone names its mirror.
+    mirrors = {ask["tracker_comment"] for mailbox in source["mailboxes"]
+               for ask in mailbox["outward"]["rows"] if mirrored(ask)}
 
     def add(identity, kind, what, author, at, link, thread):
         instant(at)
@@ -296,10 +321,6 @@ def source_rows(source):
 
     for mailbox in source["mailboxes"]:
         destination, root = mailbox["destination"], mailbox["root"]
-        for ask in mailbox["outward"]["rows"]:
-            if ask.get("tracker_posted") is True and ask.get("tracker_comment"):
-                posted = mailbox["posted"][ask["issue"]]
-                mirrors.add((posted["workspace"], posted["uuid"], ask["tracker_comment"]))
         for ask in mailbox["asks"]:
             # An ask with no confirmed tracker mirror has no conversation link.
             link = mailbox["links"].get(ask["id"])
@@ -311,11 +332,11 @@ def source_rows(source):
     if tracker is not None:
         for request in tracker["requests"]:
             comment = request["comment"]
-            identity = (tracker["workspace"], request["issueUuid"], comment["id"])
-            if identity in mirrors:
+            if comment["id"] in mirrors:
                 continue
-            add(["linear", *identity], "tracker-item", comment["body"], {"id": comment["user_id"], "name": comment["user"]},
-                comment["created_at"], {"label": request["issue"], "url": comment["url"]},
+            add(["linear", tracker["workspace"], request["issueUuid"], comment["id"]], "tracker-item", comment["body"],
+                {"id": comment["user_id"], "name": comment["user"]}, comment["created_at"],
+                {"label": request["issue"], "url": comment["url"]},
                 ["linear", tracker["workspace"], request["issueUuid"], request["thread"]])
     return rows
 
