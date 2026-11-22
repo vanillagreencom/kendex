@@ -853,6 +853,10 @@ jobs:
       # folder, and a placed binary is never rebuilt. The cold build measured
       # 46 s for agent-runtime on macOS (run 43100964025); orch-runtime's is
       # unmeasured.
+      # The input hash sits in `shared-key`, with no `key`: rust-cache reads
+      # `key` only where `shared-key` is unset (src/config.ts at the pinned
+      # commit), so a `key` beside it would leave one entry that a changed
+      # input still hits exactly and never replaces.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'guards-tools' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack' || matrix.shard == 'worktree' || matrix.shard == 'worktree-restack' || matrix.shard == 'node'
         with:
@@ -861,8 +865,7 @@ jobs:
             skills/orch/runtime
           cache-targets: false
           cache-directories: ${{ runner.temp }}/agent-runtime/bin
-          shared-key: package-runtimes-${{ runner.os }}
-          key: ${{ hashFiles('skills/agent-runtime/runtime/Cargo.toml', 'skills/agent-runtime/runtime/Cargo.lock', 'skills/agent-runtime/runtime/src/**', 'skills/orch/runtime/Cargo.toml', 'skills/orch/runtime/Cargo.lock', 'skills/orch/runtime/src/**', 'skills/agent-runtime/scripts/setup', 'skills/agent-runtime/scripts/lib/key.sh', 'skills/orch/scripts/setup') }}
+          shared-key: package-runtimes-${{ runner.os }}-${{ hashFiles('skills/agent-runtime/runtime/Cargo.toml', 'skills/agent-runtime/runtime/Cargo.lock', 'skills/agent-runtime/runtime/src/**', 'skills/orch/runtime/Cargo.toml', 'skills/orch/runtime/Cargo.lock', 'skills/orch/runtime/src/**', 'skills/agent-runtime/scripts/setup', 'skills/agent-runtime/scripts/lib/key.sh', 'skills/orch/scripts/setup') }}
           save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       # The runtimes' Rust targets below build into each runtime's own target
       # folder, on this one leg.
