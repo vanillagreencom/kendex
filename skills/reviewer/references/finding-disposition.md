@@ -70,7 +70,7 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 - **Decision revisits** — a recorded decision the finding argues should change.
 - **Unexplained anomalies with evidence** — observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
 
-A review-born finding clears the bar only where what reaches it is a user or a shipped run, and files at priority 2 carrying the symptom that showed it (project-management SKILL.md § Disposition, which every filing goes through). Below that, a pre-existing defect this diff neither introduces nor arms is declined with its reason; a review-born P3 does not file. Step 1 keeps its exception for a defect that blocks this change from working.
+A review-born finding clears the bar only where what reaches it is a user or a shipped run, and files at priority 2 carrying the symptom that showed it (project-management references/filing.md § Name what reaches it, which every filing goes through). Below that, a pre-existing defect this diff neither introduces nor arms is declined with its reason; a review-born P3 does not file. Step 1 keeps its exception for a defect that blocks this change from working.
 
 Never for a finding that asks for a product decision the issue does not carry — a new command, a parity feature, a behavior nobody specified: that is declined. A product question that does reach the user is one [communication-modes.md](../../orch/references/communication-modes.md) § Ask set names, asked through that section's wording route and nowhere else. Every candidate runs through Step 0 before the bar judges it, whichever door it arrived by — a `category: "issue"` suggestion, an item escalated at a cap, a Discovered Work or deliberately-left-out bullet from a dev return — and one Step 0 excludes is declined there. Step 0 is the only place the classes are written.
 
@@ -78,11 +78,11 @@ A finding that does reach a fix round names, per delegated item, the shipped pro
 
 A recurring finding class the diff introduces or arms never files: § Recurrence closes its generator in this PR. A recurring class the diff neither introduces nor arms files once where it clears this bar — as the class issue a `freeze` reply names (§ Recurrence says what a `freeze` becomes when it does not), or through the pre-PR loop's issue audit.
 
-The audit pipeline applies [project-management's creation bar](../../project-management/SKILL.md#disposition) to what reaches it, which is what Step 0 and this bar have already passed; a candidate Step 0 or this bar refused is never filed on that bar's say-so.
+The audit pipeline applies [project-management's creation bar](../../project-management/references/filing.md#creation-bar) to what reaches it, which is what Step 0 and this bar have already passed; a candidate Step 0 or this bar refused is never filed on that bar's say-so.
 
 Everything else follows the Done-when test in Steps 3 and 4. P4 polish never files: absorb it only when it is est-1, related, and work the Done-when needs; otherwise decline it with its reason. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?"), which [communication-modes.md](../../orch/references/communication-modes.md) § Ask set keeps out of the set whatever the mode.
 
-Residue files in the project its surface routes to, with a `related` relation to an open issue on the same surface where one exists. It becomes a child only of a parent whose one deliverable it is a part of, per [project-management's grouping rule](../../project-management/SKILL.md#disposition).
+Residue files in the project its surface routes to, with a `related` relation to an open issue on the same surface where one exists. It becomes a child only of a parent whose one deliverable it is a part of, per [project-management's grouping rule](../../project-management/references/filing.md#group-by-project-or-label-never-by-parent).
 
 ## Review pipeline
 

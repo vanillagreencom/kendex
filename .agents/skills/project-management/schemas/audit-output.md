@@ -164,7 +164,7 @@ In a map repository a `create` whose item routes to no map project has `project.
 
 `approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6): the top-level flag binds the file to a same-session plan-gate approval, and `reapprove: true` marks an entry changed since; a normalizer that drops one must drop both. Both default false/absent outside roadmap-create. Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
 
-A `Post-merge:` box in `create_fields.description` follows [SKILL.md](../SKILL.md) § Disposition and writes its deadline as `Deadline: +Nh`, the form both `issues create` and `issues complete` accept.
+A `Post-merge:` box in `create_fields.description` follows [filing.md](../references/filing.md) § Done when and writes its deadline as `Deadline: +Nh`, the form both `issues create` and `issues complete` accept.
 
 ### Hierarchy Field
 
@@ -175,7 +175,7 @@ A `Post-merge:` box in `create_fields.description` follows [SKILL.md](../SKILL.m
 | `make_child` | `#N` | Sub-issue of issue #N in this batch |
 | `make_child` | null | Sub-issue of the input's `parent_issue` |
 
-A parent created or promoted this way is a container: no requirements, no pull request, and the one Done-when box of [parent-issue-template.md](../templates/parent-issue-template.md). A run files a parent, a `create` with `create_fields.is_bundle_parent: true`, only for the parts of one deliverable accepted as one thing ([SKILL.md](../SKILL.md) § Disposition), never for a run's subject. Which creates are children, of an existing issue or of a bundle parent in the same batch, is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
+A parent created or promoted this way is a container: no requirements, no pull request, and the one Done-when box of [parent-issue-template.md](../templates/parent-issue-template.md). A run files a parent, a `create` with `create_fields.is_bundle_parent: true`, only for the parts of one deliverable accepted as one thing ([filing.md](../references/filing.md) § Group by project or label, never by parent), never for a run's subject. Which creates are children, of an existing issue or of a bundle parent in the same batch, is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
 
 ## PROJECT-ORDER Mode
 

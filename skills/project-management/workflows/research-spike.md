@@ -22,7 +22,7 @@ Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxo
 .agents/skills/linear/scripts/linear.sh issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
 ```
 
-On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_PATH]` being the research directory [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) defines, and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
+On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_PATH]` being the research directory [planning-artifacts.md](../references/planning-artifacts.md) defines, and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [planning-artifacts.md](../references/planning-artifacts.md).
 
 Carry this search's rows, actual search terms and proposed dispositions as `prior_work` to research-issue § 1.2. Include each matched identifier, title, scope evidence and reason. A proposal to replace or transfer scope carries the existing [audit-output.md](../schemas/audit-output.md) `supersedes[]` shape and its `when`; a covering match carries its identifier as `target`. These are recommendations until that writer obtains authorization and applies them; this search performs no disposition.
 

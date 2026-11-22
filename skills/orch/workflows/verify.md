@@ -23,7 +23,7 @@ A `verifying-merge-unread` item is one the reconciliation's search found no merg
 
 The verb reads each named pull request's merge from GitHub and judges the item's boxes from the latest one. Take their due or overdue boxes through the same evidence and completion steps. Keep waiting and blocked boxes open. Where the item has no linked merged pull request, or the reply refuses a named read, report the item, its open boxes and the failed read. Do not repeat the watch's repository search.
 
-For acceptance and failed checks, apply [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results. It governs a scheduled session's reading too. Read the evidence `Where:` names. Never run `Where:` text as a command line.
+For acceptance and failed checks, apply [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results. It governs a scheduled session's reading too. A merged item never returns to In Progress, also after a failed check: never select that state with `linear.sh issues update`. Read the evidence `Where:` names. Never run `Where:` text as a command line.
 
 **Completion.** Complete a proved box, a merged item and a container through the steps of [oversee-events.md § Verification](../references/oversee-events.md#verification): the evidence comment and file, `linear.sh issues complete` with the merge's `--post-merge-at`, `orch-runtime container-close` for a container, and the parent's close. Run them from the base checkout, outside any confined lane. In a confined lane `container-close` writes nothing; the overseer's route owns the close.
 

@@ -150,7 +150,7 @@ Then report once that the early open failed, with the line submit-pr or the read
 
 **Linear only.** Before submit-pr can arm the pull request, move the development item to In Review. Read the item live first. A Done or Verifying item skips the move; with `pr` delivery it continues through merge-pr's merged-PR route.
 
-In the same step, read the item's Done-when boxes against the accepted development return. A post-merge box is one whose named evidence only a deployment, installation or live use can give, such as a real create or relaunch sample. An empty listing or other branch output does not stand in for it. Before submit-pr arms, rewrite each post-merge box on the item in the form of the project-management skill's SKILL.md § Disposition (`Post-merge:`, `Where:`, `Why after merge:`, `Trigger:` and `Deadline:`), so the merged item reads Verifying. Leave branch-provable boxes unticked. Their proof stands in the pull request body's `## Done-when evidence` section before arming.
+In the same step, read the item's Done-when boxes against the accepted development return. A post-merge box is one whose named evidence only a deployment, installation or live use can give, such as a real create or relaunch sample. An empty listing or other branch output does not stand in for it. Before submit-pr arms, rewrite each post-merge box on the item in the form of the project-management skill's references/filing.md § Done when (`Post-merge:`, `Where:`, `Why after merge:`, `Trigger:` and `Deadline:`), so the merged item reads Verifying. Leave branch-provable boxes unticked. Their proof stands in the pull request body's `## Done-when evidence` section before arming.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]

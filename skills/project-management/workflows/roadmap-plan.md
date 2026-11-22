@@ -14,7 +14,7 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 1. Extract `FEATURE`, `RESEARCH_PATH`, `SOURCE_ISSUE`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). `SOURCE_ISSUE` comes from `--source-issue` or source context passed by the caller.
 
-2. Resolve the `@[path]` input under [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts), using `SOURCE_ISSUE` for attachment lookup. Keep `RESEARCH_PATH` as its repository reference and `RESEARCH_READ_PATH` as the readable file in this checkout. Read that file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. When it is a SPEC, `SPEC_PATH` is the same reference and `SPEC_READ_PATH` is the same readable file.
+2. Resolve the `@[path]` input under [planning-artifacts.md](../references/planning-artifacts.md), using `SOURCE_ISSUE` for attachment lookup. Keep `RESEARCH_PATH` as its repository reference and `RESEARCH_READ_PATH` as the readable file in this checkout. Read that file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. When it is a SPEC, `SPEC_PATH` is the same reference and `SPEC_READ_PATH` is the same readable file.
 
 3. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate.
 
@@ -44,7 +44,7 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 With no match, ask the user:
 
-- **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `tmp/plans/[FEATURE]-research.md`, and continue with it as `RESEARCH_PATH`. No tracker issue; the file reaches the issues the plan creates under § Planning artifacts.
+- **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `tmp/plans/[FEATURE]-research.md`, and continue with it as `RESEARCH_PATH`. No tracker issue; the file reaches the issues the plan creates under [planning-artifacts.md](../references/planning-artifacts.md).
 - **Delegate a research spike** — standalone tracked research. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4` passing `auto_execute` explicitly: `true` has the researcher run it now, `false` leaves the issue ready for later pickup — never omit the value. Capture the returned `RESEARCH_ISSUE_ID` and re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH] --source-issue [RESEARCH_ISSUE_ID]` once findings exist.
 - **Skip research** — set `RESEARCH_PATH` = null → § 2.
 

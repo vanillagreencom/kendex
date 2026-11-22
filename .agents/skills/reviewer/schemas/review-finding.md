@@ -77,7 +77,7 @@ Every item requires the fields marked Yes; one missing base field rejects the wh
 | `description` | Yes | Problem statement. A finding in the classes [code-quality § Finding Evaluation](../../code-quality/SKILL.md#finding-evaluation) names ends it with that section's evaluation line |
 | `recommendation` | Yes | Actionable fix/improvement steps |
 | `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low). There is no P5 — a finding below P4 is not worth reporting |
-| `estimate` | Yes | 1-5 points, a relative size class from 1, smallest, through 5, largest ([project-management § Disposition](../../project-management/SKILL.md#disposition)) |
+| `estimate` | Yes | 1-5 points, a relative size class from 1, smallest, through 5, largest ([project-management references/filing.md § Estimate](../../project-management/references/filing.md#estimate)) |
 | `category` | Suggestions only | `fix` (this PR's concern) or `issue` (track separately) — the orchestrator routes on this field; orch [review-pr.md § 4](../../orch/workflows/review-pr.md#4-handle-review-items) says what reaches a fix round |
 
 `category: "issue"` items become tracked issue candidates: `description` 2-3 sentences, before any evaluation line; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. Apply [finding-disposition.md § Filing bar](../references/finding-disposition.md#filing-bar) to the impact.

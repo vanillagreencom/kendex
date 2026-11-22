@@ -38,7 +38,7 @@ Returned inline by `tpm-roadmap-plan.md` and written by the caller to `tmp/roadm
 
 `context.plan_path` is filled by the caller when it saves the plan (null in the initial output). `declined[]` lists proposals that failed the creation bar, one line each.
 
-`context.research_source_issue` carries the input's attachment source issue, or null. At save time, the caller keeps a set value, since the input already sits on that issue, and sets a null one to the issue the input is uploaded to with the plan, per roadmap-plan § 6. All output path fields keep repository references. The input's `research_read_path` is local analysis context and is not copied into this output, per [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
+`context.research_source_issue` carries the input's attachment source issue, or null. At save time, the caller keeps a set value, since the input already sits on that issue, and sets a null one to the issue the input is uploaded to with the plan, per roadmap-plan § 6. All output path fields keep repository references. The input's `research_read_path` is local analysis context and is not copied into this output, per [planning-artifacts.md](../references/planning-artifacts.md).
 
 ## hierarchy_recommendation
 

@@ -79,7 +79,7 @@ Read the issue description, `.description` from the read above, or `gh issue vie
 
 Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and the principle docs; a doc whose claim the change makes false is updated in the change. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`, and `decisions search "[KEYWORDS]"` for the area) rather than duplicating it, reading the full record and its status before treating it as binding; record a new one only under the decider bar.
 
-For a missing planning or research path in a brief, find it by the route the project-management skill's SKILL.md § Planning artifacts gives for the work item's tracker before classifying the context as missing.
+For a missing planning or research path in a brief, find it by the route the project-management skill's references/planning-artifacts.md gives for the work item's tracker before classifying the context as missing.
 
 ### 2.3 Evaluate Feasibility
 
@@ -91,7 +91,7 @@ Blocked → **§ 3**, then STOP. No change needed → § 9.1, then § 10. Clear 
 
 ### 2.4 Plan Approach
 
-- Linear only, when scope differs from the estimate: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N`, a relative size class from 1, smallest, through 5, largest (project-management SKILL.md § Disposition).
+- Linear only, when scope differs from the estimate: `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --estimate N`, a relative size class from 1, smallest, through 5, largest (project-management references/filing.md § Estimate).
 - **If bundled**: order sub-issues by dependency and overlap.
 - A required command the delegation names runs in the shape orch's SKILL.md § Harness-Safe Shell admits. A command whose environment this session cannot satisfy is a blocker to report, never a license to run it under the wrong environment.
 
