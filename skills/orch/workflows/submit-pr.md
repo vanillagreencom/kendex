@@ -337,6 +337,7 @@ Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto
    - Take decision paths only from `decisions search --issue [ISSUE_ID]`.
    - Check each decision path with `test -f [DECISION_FILE_PATH]`, one command per path. Omit a path that fails.
    - Include qualified started bundle children in the child `Closes` lines: this pull request carries their implementation.
+   - For a GitHub item, read its body live with `gh issue view [N] --repo [OWNER/REPO] --json body` on every body build. With an open post-merge box, the line reads `Refs` ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)).
 
 4. **Create or update the pull request.**
 
@@ -938,7 +939,7 @@ Post a summary comment when the run made fixes or created issues:
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
 ```
 
-A Linear item also gets it on the issue. The PR body's `Closes` line links a GitHub item:
+A Linear item also gets it on the issue. The PR body's `Closes` or `Refs` line names a GitHub item:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"

@@ -1,6 +1,6 @@
 # Verify
 
-Run one verification pass over the items in Verifying, from the consumer's base checkout. A scheduler can start an agent session for `/orch verify` with no overseer or lane running. The package supplies no scheduler.
+Run one verification pass over the items in Verifying and the GitHub items in verification, from the consumer's base checkout. A scheduler can start an agent session for `/orch verify` with no overseer or lane running. The package supplies no scheduler.
 
 ## 1. Read open checks
 
@@ -48,6 +48,49 @@ For every item:
 
 - Complete a proved box, a merged item and a container through the steps of [oversee-events.md § Verification](../references/oversee-events.md#verification): the evidence comment and file, `linear.sh issues complete` with the merge's `--post-merge-at`, `orch-runtime container-close` for a container, and the parent's close.
 - Run them from the base checkout, outside any confined lane. In a confined lane `container-close` writes nothing; the overseer's route owns the close.
+
+### GitHub items
+
+`reconcile-items` and the watch read no GitHub item, so every pass reads them here. A GitHub item is in verification while all three hold:
+
+- The issue is open.
+- Its Done-when holds an open post-merge box, in the form the project-management skill's references/filing.md § Done when states.
+- A pull request from its branch `issue-[N]` merged.
+
+`[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` answers from the base checkout.
+
+1. Read every open issue:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate "repos/[OWNER/REPO]/issues?state=open&per_page=100" --jq '.[] | select(.pull_request == null) | {number, body}'
+   ```
+
+   A failed read leaves the pass's GitHub items unread: report it, never as none.
+
+2. For each issue whose body holds an open post-merge box, read its merges:
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --repo [OWNER/REPO] --state merged --head issue-[N] --json number,mergedAt
+   ```
+
+   - An empty list is a development item: leave it.
+   - The latest `mergedAt` is `[MERGED_AT]`, the merge a box's trigger and deadline count from.
+
+3. Judge each open post-merge box's trigger and deadline against `[MERGED_AT]` under filing.md § Done when. Read each due or overdue box under § 1's acceptance, and keep a box whose trigger has not come open.
+4. For each proved box:
+   1. Post the evidence comment with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`.
+   2. Tick the box in the body, with an indented `Evidence:` line under it citing that comment.
+   3. Save the full body under `tmp/` and write it with `gh issue edit [N] --repo [OWNER/REPO] --body-file [FILE]`.
+5. Once no open post-merge box remains, close the issue:
+
+   ```bash
+   gh issue close [N] --repo [OWNER/REPO] --reason completed
+   ```
+
+§ 2 and § 3 write a GitHub item through the same commands: the body through `gh issue edit`, comments through `gh issue comment`.
+
+- A drop keeps the box in the body as `- Waived: …` with its `Reason:` line.
+- With no overseer, report an owner-only box on a GitHub item as a blocked ask in § 4: § 3's tracker route is Linear's.
 
 ## 2. Resolve missing evidence
 

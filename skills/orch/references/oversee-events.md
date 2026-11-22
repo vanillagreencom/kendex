@@ -56,6 +56,10 @@ At each `heartbeat` and before fleet close, run § Lane proposals over every fle
 
 At each `heartbeat`, apply [heartbeat-audit.md](heartbeat-audit.md), apart from the proposal sweep and the `triage` verifier.
 
+### Heartbeat GitHub verification
+
+The watch prints no box line for a GitHub item. At each `heartbeat`, run [verify.md § GitHub items](../workflows/verify.md#github-items) for each GitHub repository a fleet item belongs to.
+
 ### Heartbeat design review
 
 At each `heartbeat`, apply [design-review.md](design-review.md)'s `heartbeat` entry to every `running` lane.

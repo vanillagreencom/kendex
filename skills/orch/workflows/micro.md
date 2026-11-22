@@ -194,7 +194,7 @@ Create the record unless it stands, by [start-worktree.md § 1](start-worktree.m
 - Its refusal of a wider tier takes § Escape condition 3.
 - On a successful direct delivery, restore the main checkout as below and report `[PUSHED_SHA]` and `[BASE]` in place of the pull request and merge rows. Skip § 4 and go to § 5.
 
-On the pull-request route, the body is the three lines below, in place of step 3's template, with no heading and no other section. A directed change has no item to close; its third line is `Directive [ID]`.
+On the pull-request route, the body is the three lines below, in place of step 3's template, with no heading and no other section. A directed change has no item to close; its third line is `Directive [ID]`. A GitHub item with an open post-merge box writes `Refs` in place of `Closes` ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)).
 
 ```markdown
 [What the change does, in one sentence.]

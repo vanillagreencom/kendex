@@ -220,6 +220,7 @@ Then:
 
 - Resolve once per workflow into `TRACKER` and `ISSUE_REF`: `#N` for GitHub, the Linear identifier otherwise.
 - A `Closes` line renders only that form.
+- A GitHub item whose Done-when holds an open post-merge box, in the form the project-management skill's references/filing.md § Done when states, takes `Refs [ISSUE_REF]` in place of `Closes`. `Refs` is no GitHub closing keyword, so the issue stays open at merge until [verify.md § GitHub items](workflows/verify.md#github-items) closes it.
 - Run **Linear only** and **GitHub only** steps only for that tracker.
 - Never run `linear.sh` against a GitHub item.
 
