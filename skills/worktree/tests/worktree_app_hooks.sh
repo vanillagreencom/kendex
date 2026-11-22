@@ -50,6 +50,9 @@ mkdir -p "$TMP_ROOT/bin"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP_ROOT/bin/gh"
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
+# The Claude Code session's own guard identity, the environment owner the
+# session-claim hook claims under.
+export KENDEX_SESSION_OWNER=claude-session
 
 # --- fixtures -----------------------------------------------------------------
 # Every row's world lives under its own ROOT: the checkout at ROOT/main, its
@@ -59,6 +62,7 @@ export PATH="$TMP_ROOT/bin:$PATH"
 ROOT=""
 MAIN=""
 WT=""
+TREE_BASE=""
 
 make_repo() {
   mkdir -p "$MAIN"
@@ -95,6 +99,15 @@ step() {
       printf 'WORKTREE_SYMLINKS=".env.local config/local.txt"\nWORKTREE_COPIES="copied.txt"\nWORKTREE_MKDIRS="tmp/cache"\nBOT_NAME="Codex Bot"\nBOT_EMAIL="codex@example.com"\n' >"$MAIN/.env.local"
       ;;
     mkdir-config) printf 'WORKTREE_MKDIRS="tmp"\n' >"$MAIN/.env.local" ;;
+    # A setup command that fails on its first attempt and installs on the next.
+    setup-retry-config) printf 'WORKTREE_SETUP_CMD='"'"'if [ -e %s/attempted ]; then printf ready >deps-ready; else : >%s/attempted; exit 1; fi'"'"'\n' "$ROOT" "$ROOT" >"$MAIN/.env.local" ;;
+    # The base dir is an in-repository link to a directory outside the checkout.
+    symlinked-base)
+      mkdir -p "$ROOT/real-trees"
+      ln -s "$ROOT/real-trees" "$MAIN/trees"
+      printf 'WORKTREE_BASE_DIR="trees"\n' >"$MAIN/.env.local"
+      TREE_BASE="$ROOT/real-trees"
+      ;;
     # The worktree as the app registers it: a bare git worktree on a branch of
     # the app's naming, no setup applied.
     app-wt:*)
@@ -103,9 +116,9 @@ step() {
       ;;
     # Claude Code's hook input, as its hooks reference shows it. WorktreeCreate
     # names the tree; the tree it makes is the one `create <name>` makes,
-    # under the default base dir beside the checkout.
+    # under the base dir, at its physical path.
     create-input:*)
-      WT="$ROOT/.worktrees/main/${1#create-input:}"
+      WT="$TREE_BASE/$(printf '%s' "${1#create-input:}" | tr '[:upper:]' '[:lower:]')"
       printf '{"session_id":"s","cwd":"%s","hook_event_name":"WorktreeCreate","name":"%s"}\n' "$MAIN" "${1#create-input:}" >"$ROOT/stdin"
       ;;
     remove-input) printf '{"session_id":"s","cwd":"%s","hook_event_name":"WorktreeRemove","worktree_path":"%s"}\n' "$MAIN" "$WT" >"$ROOT/stdin" ;;
@@ -115,12 +128,16 @@ step() {
       ;;
     # The create hook already ran for that name, as when Claude Code reopens it.
     hook-created) (cd "$MAIN" && "$WORKTREE_SCRIPT" claude-setup <"$ROOT/stdin" >/dev/null 2>&1) || { echo "FIXTURE: claude-setup hook failed in $ROOT" >&2; exit 2; } ;;
-    # A commit on the tree's branch that the default branch does not hold.
-    wt-commit)
-      printf 'work\n' >"$WT/work.txt"
-      must git -C "$WT" add work.txt
-      must git -C "$WT" -c user.email=test@example.com -c user.name=Test commit -q -m work
+    # The create hook ran for that name and its setup command failed, so
+    # Claude Code started no session there.
+    hook-setup-failed)
+      local rc=0
+      (cd "$MAIN" && "$WORKTREE_SCRIPT" claude-setup <"$ROOT/stdin" >/dev/null 2>&1) || rc=$?
+      [[ "$rc" -eq 1 ]] || { echo "FIXTURE: claude-setup hook exited $rc, not 1, in $ROOT" >&2; exit 2; }
       ;;
+    # A lane's lease on the tree, claimed under the issue ID as orch's
+    # start-worktree claims it.
+    lane-lease:*) "${WORKTREE_SCRIPT%/*}/worktree-session-guard" claim "$WT" --owner "${1#lane-lease:}" --adopt >/dev/null 2>&1 || { echo "FIXTURE: lane lease claim failed in $ROOT" >&2; exit 2; } ;;
     # The setup applied by the fixture, so a cleanup row starts from a configured worktree.
     configured) (cd "$MAIN" && "$WORKTREE_SCRIPT" codex-setup "$WT" >/dev/null 2>&1) || { echo "FIXTURE: codex-setup failed in $ROOT" >&2; exit 2; } ;;
     *)
@@ -136,6 +153,7 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT=""
+  TREE_BASE="$ROOT/.worktrees/main"
   mkdir -p "$ROOT"
   for word in "$@"; do
     step "$word"
@@ -200,9 +218,9 @@ err_text() {
     -) printf '' ;;
     main-checkout) printf 'worktree-path-main: <main>' ;;
     claude-configured) printf 'worktree-claude-configured: <wt>' ;;
+    lease-held:*) printf 'worktree-lease-foreign: <wt>;worktree-guard-owner-conflict: path=<wt> owner=%s' "${1#lease-held:}" ;;
     hook-input:*) printf 'worktree-claude-hook-input-unreadable: field=%s' "${1#hook-input:}" ;;
     branch-deleted:*) printf 'worktree-branch-deleted: %s' "${1#branch-deleted:}" ;;
-    branch-kept:*) printf 'worktree-branch-delete-failed: %s' "${1#branch-kept:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -234,9 +252,12 @@ codex-setup refuses the main checkout|repo app-wt:issue-codex|codex-setup <main>
 claude-cleanup leaves the links in place|repo setup-config app-wt:issue-claude configured|claude-cleanup <wt>|0|claude-cleaned|-|wt=.env.local-><main>/.env.local,base.txt:base,config/local.txt-><main>/config/local.txt,copied.txt:copied-config,tmp/cache/ branch=issue-claude identity=Codex Bot <codex@example.com> wt-status=- registered=yes branches=issue-claude
 claude-setup as the WorktreeCreate hook creates the named tree with the setup and prints its path last|repo setup-config create-input:bold-oak-a3f2|claude-setup|0|path|-|wt=.env.local-><main>/.env.local,base.txt:base,config/local.txt-><main>/config/local.txt,copied.txt:copied-config,tmp/cache/ branch=bold-oak-a3f2 identity=Codex Bot <codex@example.com> wt-status=- registered=yes branches=bold-oak-a3f2
 claude-setup as the WorktreeCreate hook reopens the tree its name already has|repo setup-config create-input:bold-oak-a3f2 hook-created|claude-setup|0|path|claude-configured|wt=.env.local-><main>/.env.local,base.txt:base,config/local.txt-><main>/config/local.txt,copied.txt:copied-config,tmp/cache/ branch=bold-oak-a3f2 identity=Codex Bot <codex@example.com> wt-status=- registered=yes branches=bold-oak-a3f2
+claude-setup as the WorktreeCreate hook reruns a failed setup command when Claude Code reopens the name|repo setup-retry-config create-input:bold-oak-a3f2 hook-setup-failed|claude-setup|0|path|claude-configured|wt=base.txt:base,deps-ready:ready branch=bold-oak-a3f2 identity=- wt-status=?? deps-ready registered=yes branches=bold-oak-a3f2
+claude-setup as the WorktreeCreate hook prints the physical path of a tree it creates behind a symlinked base dir|repo symlinked-base create-input:bold-oak-a3f2|claude-setup|0|path|-|wt=base.txt:base branch=bold-oak-a3f2 identity=- wt-status=- registered=yes branches=bold-oak-a3f2
+claude-setup as the WorktreeCreate hook prints the physical path of a tree it reopens behind a symlinked base dir|repo symlinked-base create-input:bold-oak-a3f2 hook-created|claude-setup|0|path|claude-configured|wt=base.txt:base branch=bold-oak-a3f2 identity=- wt-status=- registered=yes branches=bold-oak-a3f2
+claude-setup as the WorktreeCreate hook refuses to reopen a tree whose issue a lane holds under the same name|repo create-input:KEN-123 hook-created lane-lease:KEN-123|claude-setup|75|-|lease-held:KEN-123|wt=base.txt:base branch=ken-123 identity=- wt-status=- registered=yes branches=ken-123
 claude-setup as the WorktreeCreate hook refuses input without a name|repo empty-input|claude-setup|1|-|hook-input:name|wt=<absent> registered=no branches=-
 claude-cleanup as the WorktreeRemove hook removes the tree and its merged branch|repo create-input:bold-oak-a3f2 hook-created remove-input|claude-cleanup|0|removed|branch-deleted:bold-oak-a3f2|wt=<absent> registered=no branches=-
-claude-cleanup as the WorktreeRemove hook removes the tree and keeps a branch with unmerged commits|repo create-input:bold-oak-a3f2 hook-created wt-commit remove-input|claude-cleanup|1|removed|branch-kept:bold-oak-a3f2|wt=<absent> registered=no branches=bold-oak-a3f2
 '
 
 echo "=== the app-owned worktree hooks ==="

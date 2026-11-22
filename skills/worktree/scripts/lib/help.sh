@@ -1026,7 +1026,10 @@ With no PATH, claude-setup and claude-cleanup are Claude Code's
 WorktreeCreate and WorktreeRemove command hooks and read the hook's JSON
 input on stdin (jq required). claude-setup creates the worktree for the
 input's name as 'create <name>' does, or reopens the one that name already
-has, and prints its path as the last stdout line. claude-cleanup runs
+has, and prints its physical path as the last stdout line. A reopen
+reapplies the setup, WORKTREE_SETUP_CMD included, and refuses with exit 75
+a tree another session's lease or a live lane run holds, as create --reuse
+does. claude-cleanup runs
 'remove' on the input's worktree_path: the tree goes with any uncommitted
 work, as the removal Claude Code asked for, and a branch remove cannot
 prove merged stays, with a non-zero exit. With a PATH,

@@ -36,7 +36,7 @@ A `WorktreeCreate` hook replaces Claude Code's own `git worktree add` wherever C
 ```
 
 - Keep this in **project-level** settings. `CLAUDE_CONFIG_DIR` only relocates user-level config.
-- Wire `WorktreeRemove` beside `WorktreeCreate`. Without it, Claude Code removes a hook-created worktree as `git worktree remove --force` does and never deletes its branch. `claude-cleanup` removes both through `worktree remove`.
+- Wire `WorktreeRemove` beside `WorktreeCreate`. Without it, Claude Code removes a hook-created worktree as `git worktree remove --force` does and never deletes its branch. `claude-cleanup` removes the tree through `worktree remove`, which deletes its branch only when it can prove the branch merged.
 - Claude Code keeps a subagent's hook-created worktree when the subagent ends. Remove it with `worktree remove`.
 - Claude Code skips `.worktreeinclude` when the hook is wired. Name the files a worktree needs in `WORKTREE_SYMLINKS` and `WORKTREE_COPIES`.
 

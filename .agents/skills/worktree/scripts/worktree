@@ -1727,10 +1727,11 @@ materialize_worktree_claim() {
   git -C "$wt" config --worktree kendex-worktree.checkoutMode checkout
 }
 
-# Provisioning applied to a worktree that some OTHER tool created — Codex
-# Desktop Environments, or Claude Code's WorktreeCreate hook. Nothing here is
-# app-specific; it is the same setup `create` applies once git has made the
-# worktree, which is why both entry points share it.
+# The project-local setup a worktree takes once git has made it. create and
+# restack apply it to their own trees; codex-setup, codex-branch and the
+# claude-setup PATH form apply it to a tree Codex Desktop made; and the
+# no-PATH claude-setup applies it again when Claude Code reopens a tree that
+# hook already created. Nothing here is app-specific.
 setup_app_worktree() {
   local wt="$1" checkout="${2:-true}" command_requested="${3:-false}" issue="${4:-}"
 
@@ -4901,21 +4902,37 @@ case "${1:-}" in
     # configured hook replaces Claude Code's own `git worktree add`, so the
     # hook creates the tree and its last stdout line is the path the session
     # enters. Claude Code calls it again for a name it already made, so an
-    # existing tree is reopened rather than refused as active work. With a
-    # PATH it applies setup_app_worktree, as codex-setup does, to a worktree
-    # that already exists.
+    # existing tree is reopened rather than refused as active work, unless
+    # another session's lease or a live lane run holds it. With a PATH it
+    # applies setup_app_worktree, as codex-setup does, to a worktree that
+    # already exists.
     ARG="${2:-}"
     if [[ -z "$ARG" ]]; then
       read_claude_hook_field name CLAUDE_WORKTREE_NAME || exit 1
       WT_PATH="$(worktree_path_for_issue "$CLAUDE_WORKTREE_NAME")" || exit 1
       if [[ ! -e "$WT_PATH" && ! -L "$WT_PATH" ]]; then
-        exec "$0" create "$CLAUDE_WORKTREE_NAME"
+        # create prints the tree it made as its only stdout line.
+        CLAUDE_CREATED="$("$0" create "$CLAUDE_WORKTREE_NAME")" || exit $?
+        WT_PATH="${CLAUDE_CREATED##*$'\n'}"
+        CLAUDE_REOPEN=false
+      else
+        require_non_main_project_worktree "$WT_PATH" "configure it" || exit 1
+        CLAUDE_REOPEN=true
       fi
-      require_non_main_project_worktree "$WT_PATH" "configure it" || exit 1
       # Claude Code refuses a returned path that passes through a symlink.
-      canonical_existing_dir "$WT_PATH" WT_PATH || exit 1
-      setup_app_worktree "$WT_PATH" true true || exit 1
-      worktree_message claude-configured "$WT_PATH" "Configured Claude worktree: $WT_PATH" >&2
+      if ! canonical_existing_dir "$WT_PATH" WT_PATH; then
+        worktree_message claude-path-unresolved "$WT_PATH" "Error: could not resolve the worktree's physical path, which Claude Code needs as the hook's last stdout line." >&2
+        exit 1
+      fi
+      if [[ "$CLAUDE_REOPEN" == true ]]; then
+        # The name is Claude Code's, not an issue claim: probing with it as the
+        # issue identity would admit a lane's lease on the issue of that name
+        # as this session's own. The session's own identity is the guard's
+        # environment owner, which the session-claim hook claims under.
+        reuse_respects_session_lease "$WT_PATH" "" || exit "$ACTIVE_WORK_EXIT"
+        setup_app_worktree "$WT_PATH" true true || exit 1
+        worktree_message claude-configured "$WT_PATH" "Configured Claude worktree: $WT_PATH" >&2
+      fi
       printf '%s\n' "$WT_PATH"
       exit 0
     elif [[ "$ARG" == */* ]]; then
@@ -4933,9 +4950,10 @@ case "${1:-}" in
   claude-cleanup)
     # With no PATH this is Claude Code's WorktreeRemove command hook. Claude
     # Code counts exit 0 as removed and deletes neither the tree its
-    # WorktreeCreate hook returned nor that tree's branch, so the hook removes
-    # both through remove's guards. With a PATH it stays non-destructive, as
-    # codex-cleanup is.
+    # WorktreeCreate hook returned nor that tree's branch, so the hook runs
+    # remove, which removes the tree and deletes the branch only when it can
+    # prove it merged. With a PATH it stays non-destructive, as codex-cleanup
+    # is.
     ARG="${2:-}"
     if [[ -z "$ARG" ]]; then
       read_claude_hook_field worktree_path WT_PATH || exit 1
