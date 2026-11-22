@@ -1056,6 +1056,19 @@ pub(super) fn expand(
     expand_read(env, scope, manifest, held, state, None)
 }
 
+/// Each package `manifest` declares with a pin that leaves out tools a
+/// requirer switched on requires it on, with those tools (`DesiredState::pins_short`),
+/// read off the declaration walk alone.
+pub(super) fn pins_short_of_requirers(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+) -> BTreeMap<(ItemKind, String), BTreeSet<HarnessId>> {
+    let mut state = DesiredState::default();
+    expand(env, scope, manifest, None, &mut state);
+    state.pins_short
+}
+
 /// Same declaration walk, restricted to installed read-only catalog evidence.
 pub(super) fn expand_installed(
     env: &Env,

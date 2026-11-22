@@ -367,6 +367,9 @@ fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
     for ((kind, name), found) in wanted {
         state.warnings.extend(found.findings);
         state.warnings.extend(found.answered);
+        for (companion, tools) in found.pins_short {
+            state.pins_short.entry(companion).or_default().extend(tools);
+        }
         state.withheld.extend(
             found
                 .withheld
@@ -409,6 +412,10 @@ struct Wanted {
     /// companion and the pass judges pins: each asked again with the pin
     /// dropped ([`withheld_past_pin`]).
     left_out: Vec<HarnessId>,
+    /// Each companion whose own declaration's pin leaves out tools the
+    /// parent, switched on, requires it on, with those tools
+    /// (`DesiredState::pins_short`).
+    pins_short: Vec<(Node, Vec<HarnessId>)>,
     /// For an agent, assigned skills held on at least one tool
     /// ([`held_elsewhere`]). [`walk`] switches them on while the agent is
     /// on, even when its edge must still derive them on another tool.
@@ -801,7 +808,7 @@ fn orphaned_finding(
 }
 
 /// The tools a finding names, in display order.
-fn named(tools: &[HarnessId]) -> String {
+pub(super) fn named(tools: &[HarnessId]) -> String {
     tools
         .iter()
         .map(|harness| harness.display_name())
@@ -1005,9 +1012,11 @@ fn wanted_by(
     // it brings that will not install, kept removed or out of reach of
     // the tool, leaves the declarations complete, and the agent pass
     // warns for it (`agent_skills::warn_uninstalled`). Its names are this
-    // catalog's own, so `resolve` misses none of them.
+    // catalog's own, so `resolve` misses none of them. For the same
+    // reason no pin it meets is short.
     if kind == ItemKind::Agent {
         wanted.findings.truncate(resolved);
+        wanted.pins_short.clear();
     }
     Some(wanted)
 }
@@ -1475,6 +1484,13 @@ fn companion(
         }
     }
     for (reason, tools) in refused {
+        // A parent that is off runs nowhere, parked where it would run,
+        // so no pin is short of it.
+        if reason == NotWritten::OtherTools && armed {
+            wanted
+                .pins_short
+                .push(((dep_kind, dep.clone()), tools.clone()));
+        }
         // A parent that is off arms nothing, so a companion switched off
         // beside it is missing nowhere and says nothing.
         let quiet = reason == NotWritten::SwitchedOff && !armed;

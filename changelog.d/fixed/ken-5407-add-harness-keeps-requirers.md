@@ -1,0 +1,1 @@
+- `kendex add --harness` no longer narrows a package another installed package that is switched on requires below the tools that requirer runs on: the added pin keeps those tools, and the add says so, so the next refresh keeps the requirer and every hook that needs it, such as the lane-mail hooks after `kendex add --hook lane-mail-prompt --harness copilot`.

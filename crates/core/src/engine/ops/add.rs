@@ -3,7 +3,7 @@
 //! Every check runs before anything is persisted, so a request that cannot
 //! be satisfied leaves the manifest exactly as it was.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{ensure_manifest_persisted, manifest_for_mutation};
 use crate::engine::{EngineReport, Held, PlanOptions, plan_scope};
@@ -235,6 +235,9 @@ impl PreparedAddition {
                 member_hold_at,
             )?);
         }
+        if request.harnesses.is_some() {
+            keep_requirers_tools(env, scope, manifest, &declaring, notes);
+        }
         // A choice naming an optional dependency nothing offers is an error
         // that leaves the manifest exactly as it was — never a silently
         // ignored flag.
@@ -287,6 +290,62 @@ impl PreparedAddition {
         report.asked = crate::engine::Asked::Named(self.declaring);
         ensure_manifest_persisted(env, &self.scope, &self.manifest, &mut report)?;
         Ok(report)
+    }
+}
+
+/// The pin `--harness` writes on each package this request declares,
+/// widened by every tool a requirer switched on requires it on. A pin
+/// leaving one out leaves that requirer without it there, and a hook is
+/// withheld for it with every hook requiring it after, so a dependency
+/// never narrows below what needs it. An agent's assignment never needs
+/// the skill it loads, so it widens nothing. A widened
+/// package runs on new tools, where it can require another package this
+/// request pins, so the walk is asked again until no pin of this request
+/// is short.
+fn keep_requirers_tools(
+    env: &Env,
+    scope: &Scope,
+    manifest: &mut Manifest,
+    declaring: &BTreeSet<Held>,
+    notes: &mut Vec<String>,
+) {
+    let mut kept: BTreeMap<(ItemKind, String), Vec<HarnessId>> = BTreeMap::new();
+    loop {
+        let mut grew = false;
+        for ((kind, name), tools) in
+            crate::engine::expansion::pins_short_of_requirers(env, scope, manifest)
+        {
+            if !declaring.contains(&Held::Item {
+                kind,
+                name: name.clone(),
+            }) {
+                continue;
+            }
+            let Some(pin) = manifest
+                .declared_mut(kind)
+                .get_mut(&name)
+                .and_then(|decl| decl.harnesses.as_mut())
+            else {
+                unreachable!("the walk read {name}'s pin off its declaration in this manifest");
+            };
+            for tool in tools {
+                if !pin.contains(&tool) {
+                    pin.push(tool);
+                    kept.entry((kind, name.clone())).or_default().push(tool);
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    for ((kind, name), tools) in kept {
+        notes.push(format!(
+            "{} {name} is also declared for {}, where what requires it runs",
+            kind.name(),
+            crate::engine::deps::named(&tools)
+        ));
     }
 }
 

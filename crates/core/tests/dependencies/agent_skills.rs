@@ -193,6 +193,34 @@ fn an_assigned_skill_turned_away_leaves_the_declarations_complete() {
     }
 }
 
+/// An assignment never needs the skill it loads, so a skill `add
+/// --harness` pins to another tool keeps the person's list, and the agent
+/// pass warns that the agent goes without it where that list leaves it
+/// out.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn pinning_an_assigned_skill_keeps_the_tools_the_add_names() {
+    let f = scout_fixture("", "[\"github\", \"linear\"]");
+    apply_now(&f);
+    let report = ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["linear".into()],
+            harnesses: Some(vec![HarnessId::Codex]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert_eq!(
+        manifest_of(&f).skills["linear"].harnesses,
+        Some(vec![HarnessId::Codex])
+    );
+    assert_eq!(not_installed(&audit(&f.env, &f.scope).unwrap()), ["linear"]);
+}
+
 /// Holding a skill satisfies an assignment only on that installation's
 /// tool. Consumer restrictions still win, with one soft warning even
 /// when the agent lacks the skill on several tools.
