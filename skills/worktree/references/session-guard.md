@@ -43,8 +43,8 @@ The env ladder (`$KENDEX_SESSION_OWNER`, else `$HT_SESSION_OWNER`, else `$USER`)
 
 ## Session processes
 
-A claim with `--session` or `--adopt` records in the lease the harness session process it runs under. `scripts/lib/process-identity.sh` owns the reads of that process.
+A claim with `--session` or `--adopt` records in the lease the harness session process it runs under. A session-bound claim that cannot read its process records nothing and says `guard-session-unidentified`. `scripts/lib/process-identity.sh` owns the reads of that process.
 
 A write adds the caller's process and drops only processes that read dead, so sessions sharing one lease keep each other's records.
 
-The guard reads each recorded process as live, dead or unknown, as `worktree-session-guard --help` defines. A lease holds while any recorded process is live or unknown, without another prompt, start or timer.
+The guard reads each recorded process as live, dead or unknown, as `worktree-session-guard --help` defines. A lease holds while any recorded process is live or unknown, without another prompt, start or timer. The caller's own process does not hold the lease, so a lane can remove its own worktree.
