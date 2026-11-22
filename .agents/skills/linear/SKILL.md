@@ -73,7 +73,7 @@ Schema reference over ctx7: `/websites/studio_apollographql_public_linear-api_va
 ## Read when
 
 - Before a multi-step change built from these commands, such as a cancel, an absorb, a parent rebuild, a label update from a workflow or a held write: [patterns/workflow-actions.md](patterns/workflow-actions.md).
-- Before changing a shared label definition: [patterns/workflow-actions.md § Shared label maintenance](patterns/workflow-actions.md#shared-label-maintenance).
+- Before changing a label definition: [patterns/workflow-actions.md § Shared label maintenance](patterns/workflow-actions.md#shared-label-maintenance).
 - When a brief cites a repository path that does not exist: [patterns/workflow-actions.md § Resolve a cited artifact](patterns/workflow-actions.md#resolve-a-cited-artifact).
 - When selecting, checking or renewing the credential a command uses, or when a write's attribution matters: [references/authentication.md](references/authentication.md).
 - When starting, stopping or reading the request journal: [references/request-journal.md](references/request-journal.md).
