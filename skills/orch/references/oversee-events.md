@@ -592,7 +592,7 @@ For the overseer, the watch tells the owner on its next pass, once per unread st
 1. Run `.agents/skills/orch/scripts/orch-runtime report render --state [OVERSEE_STATE] --repo [REPO]`, one `--repo` per watch `--repo` value. It reads the `ORCH_CONNECTED_REPOS` repositories after them. The rendered body is the report's whole read of the fleet. Read a record from its home by item only where a row needs explaining, and print no state file.
 2. Write the work's outcomes to `[PATH]` with the communication skill's [summary template](../../communication/references/reports.md#summary-template).
 3. Run `.agents/skills/orch/scripts/orch-runtime report write --state [OVERSEE_STATE] --repo [REPO] --summary-file [PATH]` with the same values.
-4. Paste the reply's `result.body` into the chat unchanged. `write` sends the summary to the owner as the report's notice: never send it as a separate notice.
+4. Give the chat the summary in `[PATH]`. Never paste the reply's `result.body` into the chat: the rendered body stays in the report file at `result.path`, which the owner's notice attaches. `write` sends the summary to the owner as the report's notice: never send it as a separate notice.
 
 During `ORCH_REPORT_QUIET_HOURS`, in `ORCH_OWNER_TIME_ZONE`, `write` writes the file and sends no notice. The first due report after the window is the morning brief. Its summary covers the work since the last report sent to the owner, including overnight merges. Decisions needed and critical notices go out at any hour.
 
