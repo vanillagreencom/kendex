@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a shell or interpreter runs as its program, piped to it or through a substitution, naming the form; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host, and one an assignment before the program can route; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository, a push in a command whose git remote or git config can change a remote included. A command those checks pass with a stage that holds curl, wget, scp, rsync or git push and is not plain literal argv in a plain pipeline is reported with a would= line. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command with a word that names it refuses, except as an argument of grep, rg or cat.
 # summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support leaves both project checks unavailable. An optional selected Git history policy requires its native fetch fence. Refuses a download piped or fed into a shell, an upload to a host the project has not listed, and a push to a remote the repository does not have; the owner allows one exact command by starting the session with it in COMMAND_SAFETY_OWNER_COMMAND.
-# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage that runs its input, any stage of a subshell or the first command of a brace group included, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option, an assignment before the program word, NAME= or NAME+=, or an expanding or substituted host unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, an expanding or substituted operand, an unread Git global word whose first later literal word that is no option or option argument is push, and Git configuration, a GIT_ variable or an alias its command sets, or a git remote or git config anywhere in the command that can change a remote, unresolved, for every push of the command; a cd or -C operand's unquoted leading ~ read against HOME unless a word of the command names HOME. Each literal curl, wget, scp, rsync or git word after an unresolved launcher is judged as that program's head, and an interpreter's script operand counts only after no option. The plain-stage rule reports and does not refuse: a command these checks pass with a stage holding such a word, or git with a later push, that is not plain, literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages, gets a report=plain-stage notice with one would= line per check naming its program and cause. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg or cat argument. Not reached: a receiver behind an unresolved launcher, a sender in a brace group or compound command, a later command of a brace group that reads the pipe, a push behind an unread Git global word that takes the next literal word as its argument, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, Git configuration an earlier command or a file write sets, variables or aliases an earlier command or file sets, an export, declare -x or typeset -x earlier in the same command, other upload programs, a program that makes its own network calls, and runtime-built names.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage that runs its input, any stage of a subshell or the first command of a brace group included, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option, an assignment before the program word, NAME= or NAME+=, or an expanding or substituted host unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, an expanding or substituted operand, an unread Git global word whose first later literal word that is no option or option argument is push, and Git configuration, a GIT_ variable or an inline alias its command sets, or a git remote or git config anywhere in the command that can change a remote, unresolved, for every push of the command; a cd or git -C operand with an unquoted leading ~ leaves the push's repository unresolved. Each literal curl, wget, scp, rsync or git word after an unresolved launcher is judged as that program's head, and an interpreter's script operand counts only after no option. The plain-stage rule reports and does not refuse: a command these checks pass with a stage holding such a word, or git with a later push, that is not plain, literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages, gets a report=plain-stage notice with one would= line per check naming its program and cause. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg or cat argument. Not reached: a receiver behind an unresolved launcher, a sender in a brace group or compound command, a later command of a brace group that reads the pipe, a push behind an unread Git global word that takes the next literal word as its argument, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, Git configuration an earlier command or a file write sets, variables or aliases an earlier command or file sets, an export, declare -x or typeset -x earlier in the same command, an alias a git config in the same command writes, an assignment before exec, builtin exec, eval, a shell's -c or a sourced script that runs the sender or git, other upload programs, a program that makes its own network calls, and runtime-built names.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -32,7 +32,7 @@ set -euo pipefail
 # past it finds push as the subcommand.
 # git_walk selects the history judgment, the push or both.
 history_git_argv() { # START [launched]
-  local cursor=$1 launched=${2:-} value fenced="" reason="" state=relative words=() tildes=() dirs=() assigned_name tilde_value
+  local cursor=$1 launched=${2:-} value fenced="" reason="" state=relative words=() tildes=() dirs=() assigned_name tilde_push=""
   local push_at="" push_reason="" push_state setting="" unread="" unread_push=""
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
@@ -111,16 +111,26 @@ history_git_argv() { # START [launched]
     done
   fi
   [ -n "$reason$push_at" ] || return 0
-  # The shell expands a tilde, and a glob or brace word, before Git sees it;
-  # any other expanding form leaves the chain unknown.
+  # The shell expands an unquoted leading ~ or ~/, and a glob or brace word,
+  # before Git sees it; any other tilde or expanding form leaves the chain
+  # unknown. The ~ expands against HOME as it stands when the shell reaches
+  # it, which any statement of the command can set first, one a sourced
+  # heredoc runs included. A history read outside a work tree is judged only
+  # where its chain resolves, so the hook's HOME can only add a refusal
+  # there; a push judged in the wrong repository can pass, so the tilde
+  # leaves its repository unresolved.
   for ((cursor=0; cursor<${#words[@]}; cursor++)); do
-    tilde_word "${words[$cursor]}" "${tildes[$cursor]}" || state=unknown
-    value=$tilde_value
+    value=${words[$cursor]}
+    case "$value" in
+      '~' | '~/'*) if [ -n "${tildes[$cursor]}" ] && [ -n "${HOME:-}" ]; then value=$HOME${value#\~}; tilde_push=1; else state=unknown; fi ;;
+      '~'*) state=unknown ;;
+    esac
     case "$value" in *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'*) state=unknown ;; esac
     [ "$state" != relative ] || [[ $value != /* ]] || state=absolute
     dirs[cursor]=$value
   done
   push_state=$state
+  [ -z "$tilde_push" ] || push_state=unknown
   [ "$push_reason" != repository ] || [ -z "$unread" ] || push_state=unknown
   [ -z "$push_at" ] || push_argv "$push_at" "$push_state" "$push_reason" ${dirs[@]+"${dirs[@]}"}
   [ -z "$unread" ] || state=unknown
@@ -358,28 +368,18 @@ load_reader_context() {
   source_reader_dirs_unresolved=${reader_context_uncertain[$1]}
 }
 
+# The reader walk takes a cd destination only where the shell does not
+# expand it: an unquoted leading ~ expands against a HOME the command can
+# set first, as history_git_argv states for -C, so it leaves the push's
+# repository unresolved. The targeting check needs only the cd.
 literal_cd_operand() {
-  local cursor=$pos options_ended="" tilde_value
+  local cursor=$pos options_ended=""
   [ "${args[$cursor]:-}" != -- ] || { cursor=$((cursor + 1)); options_ended=1; }
   [ "$((cursor + 1))" -eq "${#args[@]}" ] && [ -n "${args[$cursor]}" ] &&
     [ "${arg_kinds[$cursor]}" = literal ] && [ "${args[$cursor]}" != - ] &&
     { [ -n "$options_ended" ] || [[ ${args[$cursor]} != -* ]]; } || return 1
-  tilde_word "${args[$cursor]}" "${arg_unquoted[$cursor]%%:*}" || return 1
-  cd_operand=$tilde_value
-}
-
-# The shell expands an unquoted leading ~, alone or before /, against HOME as
-# it stands when the shell reaches the word, and any statement of the command
-# can set HOME first, a later one in a loop included; ~user names a home this
-# hook does not look up. So a tilde is read against the hook's HOME only in a
-# command where no word names HOME, which environment_dump records.
-tilde_word() { # WORD UNQUOTED -> tilde_value; returns 1 when unknown
-  tilde_value=$1
-  [ -n "$2" ] || return 0
-  case "$1" in
-    '~' | '~/'*) [ -z "$home_named" ] && [ -n "${HOME:-}" ] || return 1; tilde_value=$HOME${1#\~} ;;
-    '~'*) return 1 ;;
-  esac
+  cd_operand=${args[$cursor]}
+  case "${arg_unquoted[$cursor]%%:*}:$cd_operand" in ?*:'~'*) cd_destination="" ;; *) cd_destination=$cd_operand ;; esac
 }
 
 remember_reader_directory() {
@@ -1874,7 +1874,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local reader_dirs=(${source_reader_dirs[@]+"${source_reader_dirs[@]}"}) reader_dirs_unresolved=${source_reader_dirs_unresolved:-}
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
   local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
-  local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand
+  local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand cd_destination
   local shell_forwarder shell_forwarded_pos selected_forwarder selected_operand next_candidate
   local stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
@@ -2140,13 +2140,6 @@ environment_dump() { # command kind; arguments are already decoded data
     kinds[${#kinds[@]}]=${appended_kinds[$j]}
     unquoted_words[${#unquoted_words[@]}]=${appended_unquoted[$j]}
   done
-  # A word that names HOME other than as an expansion, such as HOME=dir,
-  # export HOME=dir, read HOME or for HOME in, can set it before the shell
-  # expands a tilde; the substitutions and the source eval runs are words
-  # here too.
-  for ((j=0; j<${#tokens[@]}; j++)); do
-    [[ ! ${tokens[$j]} =~ (^|[^A-Za-z0-9_\$\{])HOME([^A-Za-z0-9_]|$) ]] || home_named=1
-  done
   # A shell can end a submission before a registered body is read. Evidence
   # must exist before its identifier reaches either expansion or input checks.
   [ -z "$heredoc_op" ] || return 0
@@ -2266,12 +2259,12 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     environment_producer "$1"
     [ -n "${transfer_ignored:-}" ] || owner_word
-    cd_operand=""
+    cd_operand=""; cd_destination=""
     if [ "$program" = cd ] && [ "$head_start" -eq 0 ] && [ "$program_pos" = 0 ]; then
       literal_cd_operand || :
     fi
     # The reader directories record only a literal cd destination.
-    case "$program" in cd | pushd | popd) [ -n "$cd_operand" ] || push_dir_unknown=1 ;; esac
+    case "$program" in cd | pushd | popd) [ -n "$cd_destination" ] || push_dir_unknown=1 ;; esac
     [ -z "$targeting_eligible" ] || relative_targeting collect
     # A /proc environ input only these readers' arms can classify. Any other
     # program, such as a shell reading its descriptors, can print it.
@@ -2414,8 +2407,8 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
     decisions[stage]=$mode
-    if [ -n "$cd_operand" ]; then
-      case "${separators[$stage]}" in '|' | '&') ;; *) remember_reader_directory "$cd_operand" ;; esac
+    if [ -n "$cd_destination" ]; then
+      case "${separators[$stage]}" in '|' | '&') ;; *) remember_reader_directory "$cd_destination" ;; esac
     fi
     piped_source=$data_source
     # Echo's plain operands define its output without another shell parser.
@@ -2592,7 +2585,7 @@ refuse() { # KEY VALUE [CAUSE]
             echo "the command can choose where git push goes: a Git setting, a GIT_ variable, an abbreviated or unknown option, or a form this check does not read, an expansion, a substitution, a glob, a line continuation, a group or a compound command, so the push cannot be compared with the repository's remotes" ;;
           repository:*)
             echo 'command-safety: reason=unresolved-repository'
-            echo "the repository this git push runs in is not known: a directory change, -C, --git-dir or GIT_DIR the check cannot follow, a ~ in a command that also names HOME, or a directory that is not in a Git work tree yet" ;;
+            echo "the repository this git push runs in is not known: a directory change, -C, --git-dir or GIT_DIR the check cannot follow, an unquoted leading ~, or a directory that is not in a Git work tree yet" ;;
           unreadable:*)
             echo 'command-safety: reason=unreadable-repository'
             echo "git could not list the remotes of the repository at $push_repository; repair what git names below, then retry" ;;
@@ -2730,8 +2723,6 @@ upload_programs=(); upload_hosts=(); upload_assigned=(); upload_program=""; uplo
 push_remotes=(); push_reasons=(); push_states=(); push_bases=(); push_base_ends=(); push_dirs=(); push_dir_ends=(); push_dir_unknown=""
 push_seen=""; push_config_changed=""
 push_reason=""; push_remote=""; push_repository=""; push_cause=""
-# Set when a word of the command names HOME; tilde_word reads it.
-home_named=""
 history_roots=(); history_root_reasons=(); outside=""
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
