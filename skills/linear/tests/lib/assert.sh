@@ -317,6 +317,19 @@ SH
 	chmod +x "$project/bin/curl"
 }
 
+# plant_dispatch_only_commands SKILL_COPY — the macOS world: the Bash a
+# command script's shebang names refuses, as /bin/bash 3.2 does, so a command
+# in the copy runs only under the Bash linear.sh dispatched with, and a command
+# that executes a sibling directly fails.
+plant_dispatch_only_commands() {
+	local script
+	for script in "$1/scripts/commands/"*.sh; do
+		[[ "$(head -n 1 "$script")" == '#!'*bash ]] ||
+			assert_stop "plant_dispatch_only_commands: no bash shebang: $script"
+		printf '#!/usr/bin/false\n%s\n' "$(tail -n +2 "$script")" >"$script"
+	done
+}
+
 # Each request has its own payload log and failure input. The configured team
 # is the recorded issue's team by its key, KEN, while the recording names that
 # team by its name, kendex.

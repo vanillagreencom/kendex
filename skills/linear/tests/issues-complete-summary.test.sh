@@ -14,6 +14,7 @@ assert_tmpdir TMP_ROOT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+plant_dispatch_only_commands "$TMP_ROOT/.agents/skills/linear"
 # The CLI resolves its project from git rev-parse --show-toplevel, so the
 # fixture is a repository of its own.
 git -C "$TMP_ROOT" init -q -b main
@@ -80,10 +81,10 @@ Implemented the thing.
 MD
 
 file_payload="$TMP_ROOT/file-payloads.jsonl"
-out="$(run_complete ok "$file_payload" CC-720 --summary-file "$summary_file" 2>"$TMP_ROOT/file.err")"
+run_output out complete_rc run_complete ok "$file_payload" CC-720 --summary-file "$summary_file" 2>"$TMP_ROOT/file.err"
 
 assert "complete --summary-file reports the summary as posted" \
-  jq -e '.success == true and .action == "completed" and .summary_posted == true' >/dev/null <<<"$out"
+  jq -e --argjson rc "$complete_rc" '$rc == 0 and .success == true and .action == "completed" and .summary_posted == true' >/dev/null <<<"$out"
 
 posted_body="$(jq -s -r '[.[] | select(.query | contains("commentCreate"))][0].variables.input.body' "$file_payload")"
 assert_contains "the posted comment carries the summary file's heading" \
@@ -105,9 +106,9 @@ assert "the issueUpdate targets the Done state" \
 
 # --- inline --summary without a marker gets the canonical heading prefixed
 inline_payload="$TMP_ROOT/inline-payloads.jsonl"
-out="$(run_complete ok "$inline_payload" CC-720 --summary "Shipped it" 2>"$TMP_ROOT/inline.err")"
+run_output out complete_rc run_complete ok "$inline_payload" CC-720 --summary "Shipped it" 2>"$TMP_ROOT/inline.err"
 assert "complete --summary reports the summary as posted" \
-  jq -e '.success == true and .summary_posted == true' >/dev/null <<<"$out"
+  jq -e --argjson rc "$complete_rc" '$rc == 0 and .success == true and .summary_posted == true' >/dev/null <<<"$out"
 inline_body="$(jq -s -r '[.[] | select(.query | contains("commentCreate"))][0].variables.input.body' "$inline_payload")"
 assert_eq "an inline summary is prefixed with the canonical heading, under the attribution line" \
   "$inline_body" "> Posted by Agent: unknown, Model: unknown, Effort: unknown"$'\n\n'"## Completion Summary"$'\n\n'"Shipped it"

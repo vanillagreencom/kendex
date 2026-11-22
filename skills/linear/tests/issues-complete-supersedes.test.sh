@@ -10,6 +10,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 assert_tmpdir TMP_ROOT
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+plant_dispatch_only_commands "$TMP_ROOT/.agents/skills/linear"
 git -C "$TMP_ROOT" init -q -b main
 git -C "$TMP_ROOT" config gc.auto 0
 git -C "$TMP_ROOT" config maintenance.auto false

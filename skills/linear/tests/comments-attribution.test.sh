@@ -28,13 +28,7 @@ git -C "$PROJECT" init -q -b main
 git -C "$PROJECT" config gc.auto 0
 git -C "$PROJECT" config maintenance.auto false
 cp -R "$SKILL_DIR" "$PROJECT/.agents/skills/linear"
-# The macOS world: the Bash a command script's shebang names refuses, as
-# /bin/bash 3.2 does, so a command only runs under the Bash linear.sh
-# dispatched with.
-for command_script in "$PROJECT/.agents/skills/linear/scripts/commands/"*.sh; do
-  [[ "$(head -n 1 "$command_script")" == '#!'*bash ]] || { echo "no bash shebang: $command_script" >&2; exit 1; }
-  printf '#!/usr/bin/false\n%s\n' "$(tail -n +2 "$command_script")" >"$command_script"
-done
+plant_dispatch_only_commands "$PROJECT/.agents/skills/linear"
 printf '[env]\nLINEAR_TEAM = "KEN"\n' >"$PROJECT/kendex.settings.toml"
 
 LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"

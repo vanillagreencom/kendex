@@ -12,3 +12,13 @@ control_expect "a safe read gives back the body its caller posted"
 control_replace scripts/lib/formatters.sh 1 \
     '    body: ((.body // "") | unattributed),' \
     '    body: (.body // ""),'
+
+# Execute comments.sh directly from block and unblock. Under a Bash its
+# shebang names that refuses, as macOS /bin/bash 3.2 does, the comment is
+# never posted. The two sites are one line, so one mutation reverts both; each
+# row runs only its own command, so each answers for its own site.
+control_expect "block posts its comment under the line"
+control_expect "unblock posts its comment under the line"
+control_replace scripts/commands/issues.sh 2 \
+    '    "$BASH" "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$comment_body" >/dev/null 2>&1 || true' \
+    '    "$SCRIPT_DIR/comments.sh" create "$issue_id" --body "$comment_body" >/dev/null 2>&1 || true'
