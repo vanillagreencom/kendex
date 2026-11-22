@@ -563,16 +563,19 @@ fn a_companion_follows_its_parent_only_where_the_parent_runs() {
 /// requirer's tools and no further: a requirer on one tool adds only that
 /// one, never the scope's others, and one switched off adds none. Two
 /// hooks pinned together, where the second is required only where the
-/// first is widened to, both keep their requirers' tools.
+/// first is widened to, both keep their requirers' tools. Only what the
+/// request names is pinned: every other declaration keeps the pin it had,
+/// so each row states the whole manifest's pins after the add.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn pinning_a_required_hook_keeps_every_tool_its_requirers_run_on() {
     use HarnessId::{Claude, Codex, Copilot};
+    use std::collections::BTreeMap;
     type Row<'a> = (
         &'a str,
         &'a [&'a str],
         HarnessId,
-        &'a [HarnessId],
+        &'a [(&'a str, Option<&'a [HarnessId]>)],
         &'a [(&'a str, [bool; 2])],
     );
     let pair = "[hooks.deliver]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n";
@@ -585,31 +588,56 @@ fn pinning_a_required_hook_keeps_every_tool_its_requirers_run_on() {
         ("halt", [true, true]),
     ];
     let rows: [Row; 5] = [
-        (pair, &["judge"], Copilot, &[Claude, Codex, Copilot], &set),
-        (pair, &["judge"], Claude, &[Claude, Codex], &set),
+        (
+            pair,
+            &["judge"],
+            Copilot,
+            &[
+                ("deliver", Some(&[Claude, Codex])),
+                ("judge", Some(&[Claude, Codex, Copilot])),
+            ],
+            &set,
+        ),
+        (
+            pair,
+            &["judge"],
+            Claude,
+            &[
+                ("deliver", Some(&[Claude, Codex])),
+                ("judge", Some(&[Claude, Codex])),
+            ],
+            &set,
+        ),
         (
             one_way,
             &["plain"],
             Copilot,
-            &[Claude, Copilot],
+            &[
+                ("caller", Some(&[Claude])),
+                ("plain", Some(&[Claude, Copilot])),
+            ],
             &[("caller", [true, false]), ("plain", [true, false])],
         ),
         (
             halt,
             &["judge", "deliver"],
             Copilot,
-            &[Claude, Codex, Copilot],
+            &[
+                ("deliver", Some(&[Claude, Codex, Copilot])),
+                ("halt", Some(&[Claude, Codex])),
+                ("judge", Some(&[Claude, Codex, Copilot])),
+            ],
             &set,
         ),
         (
             off,
             &["plain"],
             Claude,
-            &[Claude],
+            &[("caller", None), ("plain", Some(&[Claude]))],
             &[("plain", [true, false])],
         ),
     ];
-    for (declarations, added, asked, pin, lands) in rows {
+    for (declarations, added, asked, pins, lands) in rows {
         let f = hook_fixture(declarations);
         fs::write(f.source.join("hooks/plain.sh"), PLAIN).unwrap();
         fs::write(f.source.join("hooks/caller.sh"), CALLER).unwrap();
@@ -627,19 +655,29 @@ fn pinning_a_required_hook_keeps_every_tool_its_requirers_run_on() {
         .unwrap();
         apply::execute(&f.env, &report.plan).unwrap();
         let manifest = manifest_of(&f);
-        for name in added {
-            let declared: BTreeSet<HarnessId> = manifest.hooks[*name]
-                .harnesses
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .collect();
-            assert_eq!(
-                declared,
-                pin.iter().copied().collect(),
-                "{added:?} --harness {asked:?}: {name}"
-            );
-        }
+        let declared: BTreeMap<(ItemKind, &str), Option<BTreeSet<HarnessId>>> = ItemKind::ALL
+            .into_iter()
+            .flat_map(|kind| {
+                manifest.declared(kind).iter().map(move |(name, decl)| {
+                    (
+                        (kind, name.as_str()),
+                        decl.harnesses
+                            .as_ref()
+                            .map(|pin| pin.iter().copied().collect()),
+                    )
+                })
+            })
+            .collect();
+        let expected: BTreeMap<(ItemKind, &str), Option<BTreeSet<HarnessId>>> = pins
+            .iter()
+            .map(|(name, pin)| {
+                (
+                    (ItemKind::Hook, *name),
+                    pin.map(|tools| tools.iter().copied().collect()),
+                )
+            })
+            .collect();
+        assert_eq!(declared, expected, "{added:?} --harness {asked:?}: pins");
         let refresh = audit(&f.env, &f.scope).unwrap();
         apply::execute(&f.env, &refresh.plan).unwrap();
         for (name, on) in lands {
