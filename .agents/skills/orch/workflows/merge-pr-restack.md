@@ -184,7 +184,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    - If the reply's `stage` names that run folder, repeat `read-proof` with the same head, tree, base and any exception file. Resume only on `complete`.
    - An import refusal, an unrecorded stage or a failed proof recheck hands back with its reply and keeps the PR unarmed.
 
-   For every reply the block prints:
+   Then, for the block's result:
 
    - Any other nonzero exit hands back with the printed reply and keeps the PR unarmed. This holds on submit-pr's steps 1-3 route too, before its create or update can arm the queue.
    - Keep the reader's reply, its `proof` word and the rows it names with the merge decision.
