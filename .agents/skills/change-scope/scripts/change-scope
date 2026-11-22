@@ -16,16 +16,18 @@
 # and a body with neither a valid delta nor an estimate is standard; --floor
 # is a class already held, at or above micro; --path is classified by the
 # shared path rules' launch phase, no render proved, and an unmatched path
-# changes nothing; --base and --head classify the range's changed paths, a
-# names-only inventory change under rendered roots left out, a range that
-# removes test protection, read as the size path below reads it, small with
+# changes nothing; --base and --head classify the range's changed paths, the
+# inventory and the lock among them, so a range that adds rendered files is
+# standard, as the classifier answers it; a range that removes test
+# protection, read as the size path below reads it, small with
 # cause=protection-removed (standard, measured=false,
-# cause=protection-unreadable where that read fails), and the range itself at
+# cause=protection-unreadable where that read fails); and the range itself at
 # the class this script's classifier answers for it through
 # change_scope_read, its production lines included, render and trivial read
 # as micro: cause=branch-class class=C rule=R, R the classifier's cause and
 # fields, measured=false where the classifier's answer was, and standard,
-# measured=false, cause=branch-class-unreadable where it could not be read.
+# measured=false, cause=branch-class-unreadable with the classifier's stderr
+# repeated where it could not be read.
 # HARNESS_CI_STANDARD_PATHS comes from the main checkout of --repo
 # (default .), never from a linked worktree's own settings. A list, ceiling
 # or settings file the arm cannot read answers standard, measured=false.
@@ -428,17 +430,21 @@ ceiling() { # KEY
 # The range's class as this script's own classifier reads it, the reading
 # review depth takes through the same reader, so the range's production lines
 # decide its cycle as they decide its review. A work item runs at micro or
-# wider, so render and trivial read as micro.
+# wider, so a ranked class below micro reads as micro; an unranked one reaches
+# launch_consider, which refuses it.
 launch_range_class() { # BASE HEAD REPO STDERR_FILE
   local class rule
   if ! change_scope_read "$1" "$2" "$3" "$4"; then
+    # The classifier's own cause, which the detail cannot carry.
+    [ ! -s "$4" ] || cat -- "$4" >&2
     launch_consider standard "branch-class-unreadable detail=$CHANGE_SCOPE_CAUSE" unmeasured
     return 0
   fi
-  rule="$(sed -n 's/^class: class=[^ ]* measured=[^ ]* //p' "$4" | tail -1)" || rule=""
-  rule="branch-class class=$CHANGE_SCOPE_CLASS rule=${rule#cause=}"
+  rule="branch-class class=$CHANGE_SCOPE_CLASS rule=${CHANGE_SCOPE_RULE#cause=}"
   class="$CHANGE_SCOPE_CLASS"
-  case "$class" in render | trivial) class=micro ;; esac
+  if change_scope_rank "$class" && ! change_scope_floor "$class"; then
+    class=micro
+  fi
   if [ "$CHANGE_SCOPE_MEASURED" = true ]; then
     launch_consider "$class" "$rule"
   else
@@ -537,10 +543,6 @@ launch_class() { # ARG...
     else
       while IFS= read -r -d '' path; do
         change_class_path "$path" launch
-        if [ "$path" = .kendex-generated.json ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = excluded-path\ * ]] &&
-          change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then
-          continue
-        fi
         [ -z "$CHANGE_CLASS_PATH" ] || launch_consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
       done <"$launch_work/paths"
       if ! branch_protection_removed "$repo" "$base" "$head" "$NARROW_CONF"; then

@@ -14,6 +14,26 @@ CONF="$CHANGE_SCOPE_PACKAGE/references/narrow-change.conf"
 WORK="$(new_repo work)"
 
 conf_value() { sed -n "s/^$1=//p" "$CONF"; }
+
+# kendex as the arm's classifier meets it: a verify that passes and names the
+# positions a real run names, the render tree and the two bookkeeping files,
+# never a catalog source. No row runs the host's kendex.
+STUB_BIN="$SANDBOX/stub-bin"
+mkdir -p "$STUB_BIN"
+cat >"$STUB_BIN/kendex" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  --version) echo 'kendex 0.0.0-stub' ;;
+  'verify --help') echo '  --scope <SCOPE> --json' ;;
+  'verify '*)
+    printf '%s\n' '{"version":1,"checked":3,"failed":0,"rows":[
+{"kind":"skill","name":"x","harness":"claude","state":"ok","positions":[{"path":".agents/skills/x","owns":"tree"}]},
+{"kind":"record","name":".kendex-lock.json","state":"ok","positions":[{"path":".kendex-lock.json","owns":"file"}]},
+{"kind":"inventory","name":".kendex-generated.json","state":"ok","positions":[{"path":".kendex-generated.json","owns":"file"}]}]}' ;;
+  *) exit 2 ;;
+esac
+STUB
+chmod +x "$STUB_BIN/kendex"
 MICRO_MAX="$(conf_value micro_max_production)"
 SMALL_MAX="$(conf_value small_max_production)"
 [[ "$MICRO_MAX" =~ ^[0-9]+$ && "$SMALL_MAX" =~ ^[0-9]+$ ]] || {
@@ -25,7 +45,7 @@ SMALL_MAX="$(conf_value small_max_production)"
 # the whole class line instead of the key.
 run_arm() { # ARG...
   local out rc=0 line
-  out="$(env -i GIT_CEILING_DIRECTORIES="${CEILING:-$SANDBOX}" PATH="$PATH" HOME="$SANDBOX" \
+  out="$(env -i GIT_CEILING_DIRECTORIES="${CEILING:-$SANDBOX}" PATH="$STUB_BIN:$PATH" HOME="$SANDBOX" \
     TMPDIR="$SANDBOX" "${ARM_BIN:-$ARM}" launch --repo "$WORK" "$@" 2>"$SANDBOX/arm.err")" || rc=$?
   line="$(sed -n 's/^class: //p' "$SANDBOX/arm.err")"
   if [ "${ARM_RAW:-false}" != true ]; then
@@ -358,19 +378,29 @@ ARM_BIN="$(mutant no-range-class change-scope \
   '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"' \
   '      launch_consider micro branch-class')" \
   control no-range-class assert_sized_ranges
-ARM_BIN="$(mutant narrow-unfloored change-scope '  case "$class" in render | trivial) class=micro ;; esac' -)" \
+ARM_BIN="$(mutant narrow-unfloored change-scope '    class=micro' '    true')" \
   control narrow-unfloored assert_sized_ranges
 
 # A classifier that cannot answer, here one whose harness-only is gone,
-# leaves the range standard, unmeasured.
+# leaves the range standard, unmeasured, and its own cause reaches the arm's
+# stderr, where the tier verb carries it as a note.
 assert_unread_class() { # ARM
   assert_eq "a classifier that cannot answer is standard, unmeasured" \
     "change_class=standard class=standard measured=false delta=- cause=branch-class-unreadable detail=classifier-exit-2 rc=0" \
     "$(ARM_BIN="$1" ARM_RAW=true run_arm --base "$SIZED_BASE" --head micro --repo "$SIZED")"
 }
+assert_class_err_replayed() {
+  run_arm --base "$SIZED_BASE" --head micro --repo "$SIZED" >/dev/null
+  assert_eq "the arm repeats the classifier's cause" "wiring-error: cause=harness-only-failed" \
+    "$(grep -o '^wiring-error: cause=[a-z-]*' "$SANDBOX/arm.err" || true)"
+}
 cp -R "$LAYOUT" "$SANDBOX/no-reader"
 rm -- "$SANDBOX/no-reader/change-scope/scripts/harness-only"
 assert_unread_class "$SANDBOX/no-reader/change-scope/scripts/change-scope"
+ARM_BIN="$SANDBOX/no-reader/change-scope/scripts/change-scope" assert_class_err_replayed
+DROPPED_ARM="$(mutant class-err-dropped change-scope '    [ ! -s "$4" ] || cat -- "$4" >&2' -)"
+rm -- "$SANDBOX/class-err-dropped/change-scope/scripts/harness-only"
+ARM_BIN="$DROPPED_ARM" control class-err-dropped assert_class_err_replayed
 UNREAD_ARM="$(mutant class-unread-continues change-scope \
   '    launch_consider standard "branch-class-unreadable detail=$CHANGE_SCOPE_CAUSE" unmeasured' '    true')"
 rm -- "$SANDBOX/class-unread-continues/change-scope/scripts/harness-only"
@@ -488,7 +518,9 @@ ARM_BIN="$(mutant range-read-continues change-scope \
   '        launch_consider standard protection-unreadable unmeasured' '        true')" \
   control range-read-continues assert_range_unreadable
 
-# Catalog additions carry their render and its inventory name in the same diff.
+# Catalog additions carry their render and its inventory name in the same diff,
+# and the inventory is a changed path like any other: the classifier, whose
+# render proof owns no catalog source, answers the range standard too.
 INVENTORY_RANGE="$(new_repo inventory-range)"
 printf '[".kendex-generated.json",{"path":".agents/skills/x/scripts/kept","template":"x","templateHash":"sha256:%064d"}]\n' 0 \
   >"$INVENTORY_RANGE/.kendex-generated.json"
@@ -527,7 +559,7 @@ assert_inventory_ranges() {
     assert_eq "inventory range: $edit" "$expected" \
       "$(run_arm --floor small --base "$INVENTORY_BASE" --head HEAD --repo "$INVENTORY_RANGE")"
   done <<'INVENTORY'
-added|standard cause=branch-class class=standard rc=0
+added|standard cause=excluded-path rc=0
 hash-edited|standard cause=excluded-path rc=0
 kept-unlisted|standard cause=excluded-path rc=0
 unrendered-root|standard cause=excluded-path rc=0
@@ -535,8 +567,5 @@ repository-standard|standard cause=repository-standard-path rc=0
 INVENTORY
 }
 assert_inventory_ranges
-ARM_BIN="$(mutant no-inventory-exception change-scope \
-  '          change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then' \
-  '          false; then')" INVENTORY_ONLY=added control no-inventory-exception assert_inventory_ranges
 
 report launch

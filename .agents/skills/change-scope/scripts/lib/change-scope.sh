@@ -18,9 +18,6 @@
 # change_scope_location_load REPO loads the narrow-phase lists and
 # CHANGE_CLASS_STANDARD_PATHS from REPO's main checkout, returning 1 with
 # CHANGE_CLASS_CAUSE on an unreadable list or settings file.
-# change_scope_inventory_rendered BASE HEAD REPO STDERR_FILE returns 0 where
-# harness-only proves the range's inventory change names-only under render
-# roots the main checkout's settings name; it needs lib/branch-growth.sh.
 #
 # The helpers after the path rules are the classifier's own, shared with the
 # harness-ci wrapper that judges the queue-only class on the same base commit.
@@ -34,10 +31,11 @@
 #
 # change_scope_read BASE HEAD REPO STDERR_FILE runs the classifier beside this
 # library over REPO's pull-request range BASE...HEAD, appends its stderr to
-# STDERR_FILE and sets CHANGE_SCOPE_CLASS to the class it printed and
-# CHANGE_SCOPE_MEASURED to the `measured=` value of the last `class:` line,
-# empty where it carries none. Returns 1 with CHANGE_SCOPE_CAUSE set to
-# classifier-absent, classifier-exit-N or classifier-unreadable.
+# STDERR_FILE and sets CHANGE_SCOPE_CLASS to the class it printed, and from
+# the last `class:` line CHANGE_SCOPE_MEASURED to its `measured=` value and
+# CHANGE_SCOPE_RULE to the cause fields after it, each empty where that line
+# carries none. Returns 1 with CHANGE_SCOPE_CAUSE set to classifier-absent,
+# classifier-exit-N or classifier-unreadable.
 # change_scope_rank CLASS sets CHANGE_SCOPE_RANK to CLASS's place in the order
 # render < trivial < micro < small < standard, returning 1 for another word.
 # change_scope_floor CLASS returns 0 when CLASS ranks at or above micro, the
@@ -192,7 +190,6 @@ change_scope_location_load() { # REPO
   fi
   CHANGE_CLASS_CAUSE=base-settings-unreadable
   root="$(change_scope_main_root "$1")" || return 1
-  CHANGE_CLASS_SETTINGS_ROOT="$root"
   # A lane and its inherited settings cannot choose their own standard paths.
   CHANGE_CLASS_STANDARD_PATHS="$(
     unset HARNESS_CI_STANDARD_PATHS
@@ -205,21 +202,6 @@ change_scope_location_load() { # REPO
     [ "${#globs[@]}" -eq 0 ] || printf '%s\n' "${globs[@]}"
   )" || return 1
   CHANGE_CLASS_CAUSE=""
-}
-
-# An unreadable or absent verdict keeps the inventory under the path rules.
-change_scope_inventory_rendered() { # BASE HEAD REPO STDERR_FILE
-  local reader="$CHANGE_SCOPE_LIB_DIR/../harness-only" inventory_change
-  [ -x "$reader" ] || return 1
-  "$reader" --mode harness --event pull_request --base "$1" --head "$2" --repo "$3" \
-    --output /dev/null >/dev/null 2>"$4" || return 1
-  inventory_change="$(sed -n 's/^inventory-change: //p' "$4" | tail -1)" || return 1
-  case "$inventory_change" in
-    names-only\ *\ roots=*)
-      names_only_roots_rendered "${inventory_change##* roots=}" \
-        branch_growth_render_roots "$CHANGE_CLASS_SETTINGS_ROOT" ;;
-    *) return 1 ;;
-  esac
 }
 
 # Splitting a blank-separated list leaves each word open to pathname
@@ -400,6 +382,7 @@ private_checkout() { # DIR REV ERR
 CHANGE_SCOPE_CLASS=""
 CHANGE_SCOPE_CAUSE=""
 CHANGE_SCOPE_MEASURED=""
+CHANGE_SCOPE_RULE=""
 CHANGE_SCOPE_RANK=""
 
 change_scope_rank() { # CLASS
@@ -421,10 +404,11 @@ change_scope_floor() { # CLASS
 }
 
 change_scope_read() { # BASE HEAD REPO STDERR_FILE
-  local classifier="$CHANGE_SCOPE_LIB_DIR/../change-scope" answer status=0
+  local classifier="$CHANGE_SCOPE_LIB_DIR/../change-scope" answer line status=0
   CHANGE_SCOPE_CLASS=""
   CHANGE_SCOPE_CAUSE=""
   CHANGE_SCOPE_MEASURED=""
+  CHANGE_SCOPE_RULE=""
   if [ ! -x "$classifier" ]; then
     CHANGE_SCOPE_CAUSE=classifier-absent
     return 1
@@ -442,7 +426,11 @@ change_scope_read() { # BASE HEAD REPO STDERR_FILE
     change_class=*) CHANGE_SCOPE_CLASS="${answer#change_class=}" ;;
     *) CHANGE_SCOPE_CAUSE=classifier-unreadable; return 1 ;;
   esac
-  CHANGE_SCOPE_MEASURED="$(sed -n 's/^class: class=[^ ]* measured=\([^ ]*\).*/\1/p' "$4")" ||
+  line="$(sed -n '/^class: class=[^ ]* measured=[^ ]*/p' "$4")" ||
     { CHANGE_SCOPE_CAUSE=classifier-unreadable; return 1; }
-  CHANGE_SCOPE_MEASURED="${CHANGE_SCOPE_MEASURED##*$'\n'}"
+  line="${line##*$'\n'}"
+  [ -n "$line" ] || return 0
+  line="${line#class: class=* measured=}"
+  CHANGE_SCOPE_MEASURED="${line%% *}"
+  [ "$line" = "$CHANGE_SCOPE_MEASURED" ] || CHANGE_SCOPE_RULE="${line#* }"
 }

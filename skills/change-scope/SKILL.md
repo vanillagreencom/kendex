@@ -66,14 +66,14 @@ Every setting comes from the caller's environment or the commit `--base` names, 
 
 `change-scope launch` classifies a work item from the inputs that name a class: a production estimate, the item body's `Expected delta` line, the paths it names, a class the item already holds and a range. It reads them in that order. The widest class wins. The first input that names it is the cause.
 
-The range input takes the class the classifier answers for the range through `change_scope_read`, the reading review depth takes. The range's production lines count, so a range past `small_max_production` is `standard`. `render` and `trivial` read as `micro`. The cause is `branch-class class=C rule=R`, with the classifier's class and cause.
+The range input takes the class the classifier answers for the range through `change_scope_read`, the reading review depth takes. The range's production lines count, so a range past `small_max_production` is `standard`. `render` and `trivial` read as `micro`. The cause is `branch-class class=C rule=R`, with the classifier's class and cause. A classifier that cannot answer reads `standard`, `measured=false`, cause `branch-class-unreadable`, and the arm repeats the classifier's stderr. The inventory and the lock are changed paths like any other, so a range that adds rendered files is `standard`, as the classifier also answers for it.
 
 `HARNESS_CI_STANDARD_PATHS` comes from the main checkout of `--repo`, never from a linked worktree's own settings. stdout is `change_class=micro|small|standard`. The arm prints no `quick-proof:` line.
 
 ## Rules
 
 - Consume the class and keep the mapping. harness-ci maps the class to lane selection and the queue-only route, reviewer to review depth, orch to a work tier. This package decides none of those.
-- Read the class through `scripts/lib/change-scope.sh`. `change_scope_read BASE HEAD REPO STDERR_FILE` sets `CHANGE_SCOPE_CLASS` and `CHANGE_SCOPE_MEASURED`. `change_scope_rank` and `change_scope_floor` own the class order.
+- Read the class through `scripts/lib/change-scope.sh`. `change_scope_read BASE HEAD REPO STDERR_FILE` sets `CHANGE_SCOPE_CLASS`, `CHANGE_SCOPE_MEASURED` and `CHANGE_SCOPE_RULE`, the cause fields of the last `class:` line. `change_scope_rank` and `change_scope_floor` own the class order.
 - Never read a class from a label, branch name, title or flag.
 - A caller that acts on the class without review runs the default branch's copy of the classifier against the pull request's tree. The branch can change this package too.
 - Change a path rule, ceiling or threshold in `references/narrow-change.conf` alone.
