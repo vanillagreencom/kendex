@@ -36,7 +36,7 @@ Do not hand-copy code-owned inventories or defaults.
 - Use plain words. Basic technical terms are fine: CLI, API, repo, PR, hook, lock, glob.
 - Use one term per thing, the same term every time.
 - State each fact once. In a reference read by section, state the fact in its home section and point to it from elsewhere. In other documents, point at the first statement instead of repeating it. A rule's "never" clause is part of the rule, not a second statement of it.
-- Write a heading that names the subject. A heading never makes a claim. A heading or rule name that other files cite stays as written.
+- Write a heading that names the subject. A heading never makes a claim. A heading or rule name that other files cite stays as written, unless the same change updates every citer.
 - Write in the present tense. A rule states what holds.
 - Delete sales language, quips, metaphors, and hedges.
 - Delete a sentence nothing acts on.
