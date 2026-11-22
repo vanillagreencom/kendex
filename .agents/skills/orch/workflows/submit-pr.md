@@ -932,7 +932,7 @@ On `MERGE_READY = false`, record the unmet gate here, so § 7 returns a named st
 Post a summary comment when the run made fixes or created issues:
 
 1. Take fix SHAs from workflow state. Resolve SHAs taken from artifacts through `.rebase_map` first.
-2. Write the summary to a file and bind it as `SUMMARY_FILE`.
+2. Write the summary to a file in the session-summary form of [post-summary.md § 1](post-summary.md#1-post-the-summary), its opening stating the current merge state. Bind it as `SUMMARY_FILE`.
 3. Post it:
 
 ```bash
@@ -943,19 +943,6 @@ A Linear item also gets it on the issue. The PR body's `Closes` or `Refs` line n
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
-```
-
-```markdown
-## Recommendations Processed
-
-### Fixed in PR
-- [SOURCE]: [ITEM] — [SHA]
-
-### Issues Created
-- [ISSUE_ID] - [TITLE] — [PROJECT]
-
-### Skipped
-- [SOURCE]: [ITEM] — [REASON]
 ```
 
 Output: [skill-rules.md § Lane Output](../references/skill-rules.md#lane-output).

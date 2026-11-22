@@ -54,39 +54,56 @@ With no `pr_number`, post no pull-request comment.
 ```
 
 ```markdown
+[What landed or stopped, and its effect for the person. Work awaiting merge reads as awaiting merge.]
+
 ## Completed Issues
+
 - Closes [ISSUE_REF] - [TITLE]
   - Closes [SUB_ISSUE_REF] - [SUB_TITLE]
 
-## Created Issues
-- [ISSUE_ID] - [TITLE] — [PROJECT]
+## Evidence
 
-## QA Metrics
-[Results from the QA agents that ran — project-configurable.]
+- [Acceptance or QA result with its source. Link the completion summaries for their files, decisions, screenshots and measured Domain Metrics.]
 
 ## Validation Routes
+
 [Each actual round/run's fixed-field row from dev-implement.md § 9.1, including fix and restack runs.]
 
 ## Orchestration stopped
+
 - Stop: `[POST_PR_STOP.name]`
 - Gate: `[POST_PR_STOP.gate]`
 - Remaining: [POST_PR_STOP.remaining]
 
+## Created Issues
+
+- [ISSUE_ID] - [TITLE] — [PROJECT]
+
 ## Recommendations Processed
 
 ### Fixed in PR
+
 - [SOURCE]: [ITEM] — [SHA]
 
 ### Skipped
+
 - [SOURCE]: [ITEM] — [REASON]
 
 **Fix rounds**: [N] | [STATUS_SUMMARY]
+
+## Handoff Notes
+
+- [Changed contract the next session needs, and its downstream action]
 ```
 
-- Omit empty sections.
+- Omit empty sections. A summary submit-pr or review-pr-comments posts always keeps `## Recommendations Processed` with its `**Fix rounds**` line, its subsections empty or not: the Baseline for re-runs in [review-pr-comments.md § 1](review-pr-comments.md#1-fetch-and-parse) finds that run's prior summary by that heading.
+- List an issue under Completed Issues only after reading its result from the source service in this session. Implemented work awaiting merge stays in the opening.
+- Put QA results under Evidence with their source.
+- Link the completion summaries instead of copying their files, decisions, screenshots or measures.
 - Render Orchestration stopped only when `post_pr_stop` is non-null.
 - Created Issues comes from `audit_issues_created` and `pr_comment_review.issues_created`, with project names.
 - Deduplicate Recommendations Processed by description across cycles.
+- This is the one session-summary form. submit-pr and review-pr-comments write their standalone summaries in it.
 
 **Commit SHAs.**
 
@@ -102,7 +119,7 @@ With no `pr_number`, post no pull-request comment.
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
-Read `.blocks`. Post a handoff comment to a downstream issue only when:
+Read `.blocks` and each downstream issue's comments. Where a `Handoff from [ISSUE_ID]:` comment already names the same change, reuse it and post nothing. Otherwise post a handoff comment to a downstream issue only when:
 
 - its description names files this change touched;
 - this change created a decision it should know; or
@@ -110,12 +127,7 @@ Read `.blocks`. Post a handoff comment to a downstream issue only when:
 
 Being unblocked alone earns no comment.
 
-Write the handoff body with the harness file-write tool to `[WORKTREE_PATH]/tmp/handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md`. Bind that path as `[BODY_FILE]`:
-
-```markdown
-Handoff from [ISSUE_ID]:
-- [RELEVANT_CONTEXT]
-```
+Write the handoff body in the [dev-implement.md § 9.2](../../dev/workflows/dev-implement.md#92-downstream-handoff) form with the harness file-write tool to `[WORKTREE_PATH]/tmp/handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md`. Bind that path as `[BODY_FILE]`:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [BODY_FILE]

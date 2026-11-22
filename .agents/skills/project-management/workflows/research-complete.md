@@ -252,9 +252,11 @@ For each blocked issue, keeping the Research, Artifacts, and Decision references
 
 ### 6.6 Close Out
 
-Comment on the research issue, omitting empty sections:
+Comment on the research issue, omitting empty sections. Its opening states what the research decided or learned for the person. A finished research read does not claim its proposed implementation shipped.
 
 ```markdown
+[What the research decided or learned, and what it changes for the person.]
+
 ## Research Complete
 
 ### Decision

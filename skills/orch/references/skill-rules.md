@@ -456,6 +456,7 @@ A lane records a proposal as a tracker comment:
    - It also carries `Source: [SOURCE]`, either `Source PR: [OWNER/REPO#N]` or `Source commit: [LANDED_SHA]` for a direct push, `Priority: [1-4]`, `Reached by: [BEHAVIOR]`, `Reason: [WHY TRACKED WORK IS NEEDED]` and `Evidence: [REPOSITORY_PATH]`.
    - A `review`, `pr-comments` or `local-review` source at priority 2 also carries `Symptom: [OBSERVED_FAILURE]`.
    - The evidence path uses a semantic anchor, never a line number.
+   - After those lines, one plain paragraph states the person's problem and what the tracked work buys. Leave the machine fields unquoted and in place.
 3. Post it. Linear: `.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file [PATH]`. GitHub: `gh issue comment [NUMBER] --repo [OWNER/REPO] --body-file [PATH]`.
 4. Send one `lane-mail notice` whose text is `Proposal comment: [TRACKER] [REPOSITORY|-] [ISSUE_ID] [COMMENT_ID_OR_URL]`. The overseer records that binding in the fleet log; an unbound comment is not a proposal.
 

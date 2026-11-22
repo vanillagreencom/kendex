@@ -98,7 +98,7 @@ Read it without `--actionable`, which drops the outdated threads the Filter belo
 
 **Baseline for re-runs.**
 
-1. Find the prior summary comment this run's GitHub identity posted, whether a person or a GitHub App installation:
+1. Find the prior summary comment this run's GitHub identity posted, whether a person or a GitHub App installation, by the `## Recommendations Processed` heading [post-summary.md § 1](post-summary.md#1-post-the-summary) keeps in every summary § 7 and submit-pr post:
 
    ```bash
    .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --pattern "Recommendations.*Processed" --self
@@ -761,21 +761,8 @@ Under `ask` only: awaiting your response to ask questions, override skipped item
 
 **Standalone only.** When the triage fixed anything or created issues:
 
-1. Write the cumulative summary to a file and post it as a PR comment.
-2. When `TRACKER` is `linear`, post it on the Linear issue too:
-
-```markdown
-## Recommendations Processed
-
-### Fixed in PR
-- [SOURCE]: [ITEM] — [SHA]
-
-### Issues Created
-- [ISSUE_ID] - [TITLE] — [PROJECT]
-
-### Not Addressed
-- [SOURCE]: [ITEM] — [REASON]
-```
+1. Write the cumulative summary to a file in the session-summary form of [post-summary.md § 1](post-summary.md#1-post-the-summary), and post it as a PR comment. Items not addressed go under its Skipped subsection with their reason.
+2. When `TRACKER` is `linear`, post it on the Linear issue too.
 
 ## 8. Update State And Return
 

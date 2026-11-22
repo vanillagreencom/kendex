@@ -142,19 +142,25 @@ Linear only, when an existing issue blocks this one:
 When the prerequisite issue does not exist yet, label the issue `blocked` (`linear.sh issues update [ISSUE_ID] --labels "agent:[AGENT_TYPE],[COMPONENT],blocked"`), then write `tmp/blocked-[ISSUE_ID].md` and post it with `linear.sh comments create [ISSUE_ID] --body-file tmp/blocked-[ISSUE_ID].md`:
 
 ```markdown
+[What stays stopped until the prerequisite lands, and what that delays for the person.]
+
 BLOCKED: Cross-domain prerequisite needed.
 
 **Required Domain**: [DOMAIN]
+
 **Suggested Labels**: agent:[DOMAIN], [COMPONENT]
+
 **Prerequisite Issue**: [One-line description]
 
-**Why Blocking**:
-[What this issue needs, why it cannot proceed, what the prerequisite must provide]
+**Why Blocking**: [What this issue needs, why it cannot proceed, what the prerequisite must provide]
 
 **Suggested Scope**:
+
 - [Deliverable 1]
 
-Requesting orchestrator create prerequisite issue.
+**Evidence**: [Where the blocker was read]
+
+**Next**: Requesting orchestrator create prerequisite issue.
 ```
 
 Your return states the blocker, the domain and labels for the new issue, and that the description is ready for creation. When a blocker later resolves: `linear.sh issues unblock [ISSUE_ID]`.
@@ -405,38 +411,57 @@ A validation-routing check reads these durable comments on the originating item.
 ```markdown
 ## Completion Summary
 
+[What the implemented change does for the person, and whether acceptance is complete, failed or still pending.]
+
 **Agent**: [AGENT_NAME]
+
 **Branch**: `[BRANCH]`
 
+**Revision**: [COMMIT_SHA] from base [ROUND_BASE]
+
+### Evidence
+
+- Box [N]: [Proving artifact link at the revision, with its conditions. Pending CI and live acceptance stay explicit.]
+
 ### Validation Routes
+
 - round=[ORIGINAL_ROUND_ID_OR_UNKNOWN] kind=[implement|fix|restack] run-dir=[RUN_DIR_OR_UNKNOWN] head=[RECORDED_HEAD_OR_UNKNOWN] start=[RECORDED_START_OR_UNKNOWN] source=[NATIVE_START_AND_RECORD_REFERENCES] validate-mode=[VALUE_OR_UNKNOWN] selection=[VALUE_OR_UNKNOWN] ci-fallback=[VALUE_OR_UNKNOWN] scoped=[VALUE_OR_UNKNOWN] seconds=[VALUE_OR_UNKNOWN] quiet-secs=[ACTUAL_QUIET_SECS_OR_UNKNOWN] verdict=[VALUE_OR_UNKNOWN] outcome=[NATIVE_CLASSIFICATION_OR_UNKNOWN]
 
-### Files Created/Modified
-- `path/to/file` - Description
-
 ### Key Decisions
-1. Decision and reasoning (DXXX if recorded)
 
-### Skills/Docs/Rules Updated
-- `skill-name`: Updated X
+1. Decision and reasoning (link DXXX if recorded)
+
+### Files Created/Modified
+
+- `path/to/file` - One meaningful change, skill, doc and rule changes included
 
 ### Domain Metrics
-[Agent-specific: frame time, latency, etc.]
+
+- [Actual reading beside its target, with scope, observation time and source]
 
 ### Screenshots
+
 - `tmp/ui-shots/[FILE]` - [View], [before|after], [THEME]
 
 ### Discovered Work
+
 - [Type]: Description (estimate: N)
 
 ### Handoff Notes
+
 [What the next agent in this bundle needs for its current-scope work: struct changes, API contracts, file locations]
 
 ### Proposed Rules
+
 - [Rule the validation list is missing]
 ```
 
-Omit any section that has nothing in it. Discovered Work is backlog work beyond this scope; Handoff Notes are for the next agent only, with no aspirational suggestions.
+- Keep `## Completion Summary` as the first line. Orch's acceptance finds the item's summary comment by that heading. The opening paragraph follows it.
+- Do not repeat the issue's Story or Why this matters.
+- Omit any section that has nothing in it.
+- Link each proof once under Evidence. In a bundled round, a sub-issue box § 10 ticks cites this posted comment in its Evidence line rather than a copy of the proof. A single round's boxes take their Evidence lines at merge from the PR body's `## Done-when evidence` ([merge-pr.md § 5](../../orch/workflows/merge-pr.md#5-execute-the-merge)).
+- Discovered Work is backlog work beyond this scope.
+- Handoff Notes are for the next agent only, with no aspirational suggestions.
 
 **Discovered Work marker prefixes.** A bullet belonging to a later stage of THIS PR rather than to the backlog carries a marker as the first token of the bullet text, before `[Type]`. Unmarked bullets go through the TPM audit as backlog work.
 
@@ -449,8 +474,18 @@ Omit any section that has nothing in it. Discovered Work is backlog work beyond 
 **Skip if** the tracker is not Linear, this issue blocks nothing, or completion alone unblocks the downstream work.
 
 1. Read `.blocks` from `linear.sh issues get [ISSUE_ID]`.
-2. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on. Write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` naming what changed and what downstream needs to know, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`.
-3. Never post it to the completed issue.
+2. Post to a downstream issue **only if** this work changed an API, interface, file, or contract it depends on.
+3. Read the downstream issue's comments first. Where a `Handoff from [ISSUE_ID]:` comment already names the same change, post nothing.
+4. Write `tmp/downstream-handoff-[ISSUE_ID]-to-[DOWNSTREAM_ISSUE_ID].md` in the form below, then post it with `linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body-file [THAT_FILE]`.
+5. Never post it to the completed issue.
+
+```markdown
+Handoff from [ISSUE_ID]: [The changed API, file, interface or decision, in one sentence.]
+
+**Source**: [Commit, file or decision that changed it]
+
+**Next**: [What the downstream work does differently]
+```
 
 ---
 
@@ -490,7 +525,7 @@ The writer refuses it where the item's description does not hold the sentence, H
 
 - A bundled Linear sub-issue stays In Progress through the dev round; make no tracker state write here.
 - Read its current description, tick each branch-provable Done-when box verified by this round, and add a nonblank indented `Evidence:` line directly below each ticked box.
-- Cite the proving artifact at its revision and conditions.
+- Cite the sub-issue's Completion Summary comment § 9.1 posted, which carries the proving artifact at its revision and conditions.
 - Save the updated description under `tmp/` and run `linear.sh issues update [SUB_ISSUE_ID] --description-file [DESCRIPTION_FILE]` with no state flag.
 - Leave unproved boxes open.
 - Its proof also stays in its completion summary and the bundle artifact's `--item` result (§ 11).
@@ -525,20 +560,27 @@ Summary: [ISSUE_ID] ✓
 
    ```markdown
    ## Bundle Complete
+
+   [The combined effect for the person, and each child's acceptance state, pending proof included.]
+
    **Agent**: [NAME] | **Branch**: [BRANCH]
 
    Sub-issues (tree):
-   ↳ [SUB_ISSUE_1] ✓ | blocks: [SUB_ISSUE_2]
-   ↳ [SUB_ISSUE_2] ✓ | blocked by: [SUB_ISSUE_1]
-      ↳ [SUB_ISSUE_3] ✓  ← nested
+   ↳ [SUB_ISSUE_1] ✓ | blocks: [SUB_ISSUE_2] | [CHILD_SUMMARY_LINK]
+   ↳ [SUB_ISSUE_2] ✓ | blocked by: [SUB_ISSUE_1] | [CHILD_SUMMARY_LINK]
+      ↳ [SUB_ISSUE_3] ✓ | [CHILD_SUMMARY_LINK]  ← nested
    Files: N | Commits: N | QA: [LABELS]
 
    ### Screenshots
+
    - `tmp/ui-shots/[FILE]` - [SUB_ISSUE], [View], [before|after], [THEME]
 
    ### Proposed Rules
+
    - [Rule the validation list is missing]
    ```
+
+   - Link each child's summary for its files, decisions, metrics and proof. File and commit counts do not replace that proof.
 
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 

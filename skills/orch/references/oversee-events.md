@@ -67,6 +67,11 @@ A deterministic check beats prose where it stays simple. Complex or brittle mach
 
 Send a ruling that answers one lane's question to every lane in the same situation, and record it in the fleet log.
 
+- The ruling's text names the decision, its cause, its source and the next action or blocker.
+- A required text prefix, such as `filed ` or `design-review`, stays first.
+- A ruling whose text another section fixes, such as `filed `, `design-review` or `long-reason`, keeps every field that form names: [design-review.md](design-review.md)'s dedup reads them.
+- Any other ruling keeps an item-specific decision's detail on the issue and names that record.
+
 ### Lanes merge their own pull requests
 
 A lane whose gates read met merges its own head by [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1. The overseer runs no normal merge for a lane.
@@ -950,7 +955,7 @@ The watch itself completes a box that reads `met`, with its Evidence line. It co
 
 For each proved box:
 
-1. Post an evidence comment on the item.
+1. Post an evidence comment on the item in the [verification comment](#verification-comment) form.
 2. Write one `N: text` line per proved box to `[EVIDENCE_FILE]` under the checkout's `tmp/`, the text citing the evidence comment. Include an already-ticked box whose Evidence line is missing, citing the comment already posted for it.
 3. A merged item:
    1. Read `[MERGED_AT]` from the item's linked merged pull request with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [MERGED_PR_URL] --json mergedAt --jq .mergedAt`. An absent or unreadable time is a completion failure.
@@ -966,3 +971,29 @@ For each proved box:
    - Its holder completes it with `linear.sh issues complete [CHILD] --summary-file [SUMMARY_FILE] --done-when-met [N] --evidence-file [EVIDENCE_FILE]`.
    - Remove the box from the parent. The open child keeps the parent open.
 6. After either route sets the item Done, close its parent through [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 2, and repeat for container ancestors. Record the closures and diagnostics in the evidence comment.
+
+### Verification comment
+
+A verification comment records one reading of an item's post-merge boxes. It is an observation record, not a second checklist. Open with the result and its consequence:
+
+```markdown
+[Whether the intended outcome passed, failed or remains unread, and what that means for the person.]
+
+## Verification
+
+**Reader**: [Who read the evidence]
+
+**Observed at**: [UTC time of the reading]
+
+### Box [N]
+
+- **Result**: [pass | fail | unread | waiting]
+- **Evidence**: [Source link, artifact revision and the conditions or sample read. A measure stands beside its target and its before reading. Missing or unread evidence is named.]
+- **Decision**: [What the reader accepted, rejected or kept open, and why]
+- **Next**: [Who acts, what they do, and the box's existing trigger or deadline. Omit when nothing remains.]
+```
+
+- Repeat `### Box [N]` for each box read.
+- A delegate's reading opens with `Delegate checks ([DATE]): [result and effect]` and names whose reading or ruling it is. It cites evidence another comment holds instead of copying it.
+- A first missing-evidence rewrite keeps its own line, [verify.md § 2](../workflows/verify.md#2-resolve-missing-evidence) step 1.
+- The watch reads the item's boxes and their trigger and deadline fields, never these comment labels.

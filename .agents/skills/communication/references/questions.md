@@ -13,7 +13,8 @@ Read when requesting a decision or action. The caller decides whether to ask and
 ## Today and After
 
 - Show Today and After side by side in the words of the screen or app the person uses.
-- Put this comparison first in work-item descriptions, comments and completion summaries.
+- A work-item description carries this comparison in its Story.
+- A comment or completion summary states only the changed result, with its comparison where a decision needs it.
 - A goal statement alone never replaces the Today and After picture.
 - For a folder change, show the folders today and where each moves.
 

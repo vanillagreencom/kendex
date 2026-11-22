@@ -290,7 +290,13 @@ On `rerun run=[RUN_ID]`, record the run. Repeat the wait after submit-pr.md § 5
 **Linear only**, where the state key is a Linear issue. Write the status body to `[WORKTREE_PATH]/tmp/ci-fix-status-[STATE_KEY].md` with the harness file tool, then post it:
 
 ```markdown
+[What the correction restores for the person, and what proof remains.]
+
 CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]
+
+**Evidence**: [The check or run that read the failure and its verdict]
+
+**Next**: [Remaining proof, such as the required merge-group run, or nothing]
 ```
 
 ```bash
