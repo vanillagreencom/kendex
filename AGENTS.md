@@ -4,22 +4,34 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 
 ## Commands
 
-- `tools/setup`: arms the commit chain in a fresh clone, beside the commit-guards commit-msg gate. A stray commit-msg hook in the git hooks directory calling a repo-local lane this repository lacks blocks every commit; delete it and run `tools/setup` again.
-- `tools/guard`: the last lane of the pre-commit chain, named by `COMMIT_GUARDS_PRE_COMMIT_LOCAL`; read the script, it is the list of repo-specific rules.
+- `tools/setup`: arms the commit chain in a fresh clone, beside the commit-guards commit-msg gate.
+  - A stray commit-msg hook in the git hooks directory calling a repo-local lane this repository lacks blocks every commit.
+  - Delete such a hook and run `tools/setup` again.
+- `tools/guard`: the last lane of the pre-commit chain, named by `COMMIT_GUARDS_PRE_COMMIT_LOCAL`.
+  - Read the script: it is the list of repo-specific rules.
 - `npm ci --prefix ui`: installs the UI, in the main checkout only.
-- `KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli`: the self-install; copy the binary to `~/.cargo/bin/kendex` before running `kendex apply` or `kendex verify` on this tree.
+- `KENDEX_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build --release -p kendex-cli`: the self-install.
+  - Copy the binary to `~/.cargo/bin/kendex` before running `kendex apply` or `kendex verify` on this tree.
 - `cargo test -p kendex-app -- --ignored regenerate_bindings`: regenerates `ui/src/bindings.ts` after a command-surface change.
 
 ## Conventions
 
 - Before writing or changing code, load the code-quality skill.
-- Open work lives in Linear (team KEN); scratch goes to `tmp/` (gitignored), never `/tmp`. A plan, a research report or a measurement is an attachment on its Linear issue or a file under `tmp/`, never a tracked file under `docs/`.
+- Open work lives in Linear (team KEN).
+- Scratch goes to `tmp/` (gitignored), never `/tmp`.
+- A plan, a research report or a measurement is an attachment on its Linear issue or a file under `tmp/`, never a tracked file under `docs/`.
 - A lane or research run that records another repository's data writes it to that repository's own tracker, never into the kendex tree.
-- A change under `crates/` or `ui/` ships a changelog fragment, one consumer-facing list item in `changelog.d/<section>/<name>.md` per `changelog.d/README.md`, or says `[no-changelog]` in the subject; the commit-guards commit-msg gate holds it, and `changelog-entries --collate` folds the fragments in at release. Compatible catalog content writes no kendex fragment and causes no kendex release. Released execution code and engine compatibility requirements follow `changelog.d/README.md`.
-- A source with a tracked render (`skills/`, `agents/<n>.md`, `hooks/<n>`) lands the render in the same commit; the rule is in `skills/AGENTS.md`.
-- `kendex-local.toml` is this repository's own manifest. A rule for kendex alone, not for every install of a catalog skill, goes in its `[skill-instructions]`, which the render writes into `.agents/skills/<name>/SKILL.md`; `skills/` ships to every install.
-- Review bots follow `.github/instructions/code-review.md`, which Code Review Rules below points them at, and `.github/instructions/*.instructions.md`; engineering rules are the code-quality skill, round scope the dev skill, finding dispositions `skills/reviewer/references/finding-disposition.md`.
-- A doc under `docs/architecture/` is one principle; update it when a change makes a claim in it false, never beside a code change that falsifies nothing. A decision record exists only under the decider skill's bar.
+- A change under `crates/` or `ui/` ships a changelog fragment, or says `[no-changelog]` in the subject.
+  - A fragment is one consumer-facing list item in `changelog.d/<section>/<name>.md`, per `changelog.d/README.md`.
+  - The commit-guards commit-msg gate holds this rule.
+  - `changelog-entries --collate` folds the fragments in at release.
+- Compatible catalog content writes no kendex fragment and causes no kendex release.
+- Released execution code and engine compatibility requirements follow `changelog.d/README.md`.
+- `kendex-local.toml` is this repository's own manifest.
+  - A rule for kendex alone, not for every install of a catalog skill, goes in its `[skill-instructions]`, which the render writes into `.agents/skills/<name>/SKILL.md`.
+  - `skills/` ships to every install.
+- Review bots follow `.github/instructions/code-review.md`, which Code Review Rules below points them at, and `.github/instructions/*.instructions.md`.
+  - Their engineering rules are the code-quality skill, round scope the dev skill, and finding dispositions `skills/reviewer/references/finding-disposition.md`.
 - `docs/legal/` (`privacy.md`, `terms.md`) is product content shipped to users: the Terms of Service and Privacy Policy the first-run accept step records. It takes no "Read when" line.
 
 ## Read when
