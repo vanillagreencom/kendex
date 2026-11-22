@@ -14,6 +14,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - `JARVIS_UNATTENDED_HARNESSES`, in the home's `kendex.settings.toml` `[env]`, lists comma-separated the start harnesses whose managed session runs with nobody at its pane.
   - The setting is read only when `jarvis-session start` builds a fresh launch. That launch gives each named harness the full-bypass permission words orch writes for overseers: `--dangerously-skip-permissions` on Claude Code, `--dangerously-bypass-approvals-and-sandbox` on Codex and `--allow-all` on Copilot CLI. Every other start keeps the recorded posture.
   - Pi has no such word.
+  - Until KEN-5553, an adopted start, one with `--adopt-pane`, records no posture: its successor takes `AGENT_RUNTIME_LAUNCH_PERMISSION`, `bypass` when unset.
   - Succession does not read the setting. A successor carries its predecessor's recorded posture.
   - After a bypass start, a successor on another harness launches under the full bypass. After a native start, succession's walk over `AGENT_RUNTIME_CONTROLLER_PREFERENCE` skips every entry of another harness.
   - After a bypass start, per-account setup, such as Claude Code bypass consent, applies to every account that preference's harnesses can pick.
