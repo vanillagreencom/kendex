@@ -31,7 +31,7 @@ Write a value both readers read alike: a bare word or a quoted string with no `$
 | `RECONCILE_GH_CLI` | The `gh` program `reconcile-items` runs. | `gh` |
 | `WORKTREE_CLI` | The worktree program the runtime drives. | `.agents/skills/worktree/scripts/worktree` |
 | `ORCH_AGENT_RUNTIME` | The agent-runtime wrapper the wake duty delivers through. | `.agents/skills/agent-runtime/scripts/agent-runtime` |
-| `LANE_MAIL_CLI` | The mailbox program a lane close asks for unanswered asks. | `.agents/skills/mailbox/scripts/lane-mail` |
+| `LANE_MAIL_CLI` | The mailbox program a lane close asks for unanswered asks and for a hosted lane's last mail before its sandbox goes. | `.agents/skills/mailbox/scripts/lane-mail` |
 | `CHANGE_SCOPE_PATHS_CLI` | The program the lane admission reads a range's changed paths through. | `.agents/skills/change-scope/scripts/harness-only` |
 | `OVERSEE_WATCH_TRACKER` | The tracker program the watch's tracker duty reads through. | `.agents/skills/linear/scripts/linear.sh` |
 | `OVERSEE_WATCH_PR_WATCH` | The reducer the watch's GitHub duty runs per repository. | `.agents/skills/github/scripts/pr-watch.sh` |

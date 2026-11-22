@@ -564,10 +564,27 @@ fn names_item(name: &str, item: &str) -> bool {
     })
 }
 
+/// Whether a direct entry of the state directory named `name` that names
+/// `item` is one of the item's records rather than a caller's own: a file
+/// that does not begin with the key and a `-` or `_`, or a directory that
+/// begins with the key and a `.`. The item's records there are files named
+/// `ITEM.<kind>` or after their kind (`lane-status-ITEM.md`), and a run
+/// directory `ITEM.<kind>`; a folder a person saved a lane's last mail in,
+/// `ITEM-final/` or `final-ITEM/`, is theirs.
+fn items_record(name: &str, item: &str, directory: bool) -> bool {
+    let rest = name.strip_prefix(item);
+    if directory {
+        rest.is_some_and(|rest| rest.starts_with('.'))
+    } else {
+        !rest.is_some_and(|rest| rest.starts_with('-') || rest.starts_with('_'))
+    }
+}
+
 /// The entries of the state directory that are `item`'s: each entry of its
 /// own folder, each direct entry named for it and each file under
-/// `handoffs/` named for it, but the mailbox and the fleet's and the
-/// runner's own records (the runner's share the log's stem).
+/// `handoffs/` named for it, but the mailbox, the fleet's and the runner's
+/// own records (the runner's share the log's stem) and a caller's own
+/// entries ([`items_record`]).
 fn lane_paths(paths: &Paths, item: &str) -> Result<Vec<PathBuf>> {
     let fleet_name = name_of(&paths.state);
     let fleet_lock = format!("{fleet_name}.lock");
@@ -599,7 +616,12 @@ fn lane_paths(paths: &Paths, item: &str) -> Result<Vec<PathBuf>> {
             continue;
         }
         if names_item(&name, item) {
-            out.push(entry);
+            let directory = std::fs::symlink_metadata(&entry)
+                .map_err(|e| io("read", &entry, e))?
+                .is_dir();
+            if items_record(&name, item, directory) {
+                out.push(entry);
+            }
         }
     }
     out.sort();
@@ -714,6 +736,29 @@ mod tests {
         ];
         for (name, item, want) in rows {
             assert_eq!(names_item(name, item), want, "{name} {item}");
+        }
+    }
+
+    /// A direct entry named for the item is its record by its kind: a file
+    /// named after its kind or `ITEM.<kind>`, a run directory
+    /// `ITEM.<kind>`; a caller's file or folder beginning with the key and
+    /// a `-`, or a folder with the key elsewhere, is not.
+    #[test]
+    fn an_entry_named_for_the_item_is_its_record_by_its_kind() {
+        let rows = [
+            ("lane-status-KEN-1.md", false, true),
+            ("wall-relaunch-KEN-1.close.json", false, true),
+            ("KEN-1.notice", false, true),
+            ("KEN-1", false, true),
+            ("KEN-1.run", true, true),
+            ("KEN-1-final", true, false),
+            ("final-KEN-1", true, false),
+            ("KEN-1", true, false),
+            ("KEN-1-final.md", false, false),
+            ("KEN-1_saved.json", false, false),
+        ];
+        for (name, directory, want) in rows {
+            assert_eq!(items_record(name, "KEN-1", directory), want, "{name}");
         }
     }
 }

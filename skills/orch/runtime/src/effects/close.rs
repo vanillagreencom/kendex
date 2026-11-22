@@ -39,7 +39,8 @@ use agent_runtime::intent::Intent;
 use agent_runtime::journal::Env;
 use agent_runtime::observe::WallKind;
 
-use super::{Effected, lane_operation};
+use super::Effected;
+use super::lane_operation::{self, Unread};
 
 /// How the close ended, by the record it left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -571,10 +572,13 @@ impl Close<'_> {
     }
 
     /// A record an earlier keep or a failed park left stopped: no pane, no
-    /// harness; the mailbox is read only for an item its tracker holds open.
-    /// A park the record already owes reads its sandbox for nothing: its
-    /// mailbox was read when the mark was written, and no session has run
-    /// since to add an ask.
+    /// harness; its asks are read only for an item its tracker holds open,
+    /// and a sandbox its provider no longer lists has none to read. A park
+    /// the record already owes reads its sandbox for nothing: its mailbox
+    /// was read when the mark was written, and no session has run since to
+    /// add an ask. Nor does a failed relaunch from a park
+    /// ([`Lane::park_unresumed`]): its sandbox is still stopped, as the
+    /// park that read its mailbox left it.
     fn stopped(self) -> Result<Closed> {
         if let Some(wait) = self.park() {
             let owed = self.owed(wait);
@@ -593,8 +597,8 @@ impl Close<'_> {
         } else {
             self.by_verdict(Ground::Exited, &mut notes)?
         };
-        if !matches!(ground, Ground::Terminal(_)) {
-            self.refuse_ask()?;
+        if !matches!(ground, Ground::Terminal(_)) && !self.lane.park_unresumed() {
+            self.refuse_ask_unless_gone(&mut notes)?;
         }
         if self.keep() {
             return Ok(self.word(Word::Stopped, Some(LaneStatus::Stopped)));
@@ -730,24 +734,20 @@ impl Close<'_> {
             ground
         };
         let acts = !matches!(judged, LaneState::Exited) && self.hosted();
-        let mut host_absent = false;
-        if acts {
-            match self.refuse_ask() {
-                Ok(()) => {}
-                Err(e) if matches!(ground, Ground::Terminal(_)) && self.host_absent(&e)? => {
-                    notes.push(format!("host-absent mail-status={}", cause_word(&e)));
-                    host_absent = true;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        let host_absent = acts && self.refuse_ask_unless_gone(&mut notes)?;
         let landing = self.landing(&ground, boxes_cause(&ground, host_absent))?;
-        let ground = if host_absent {
-            Ground::Ended(state::HOST_ABSENT)
-        } else {
+        // A sandbox gone asks no provider stop. An ended item's asks the
+        // provider nothing more; an open item's keeps its ground, the
+        // provider's close answering its sandbox absent and the item's files
+        // staying.
+        let ground = if !host_absent {
             if acts {
                 self.host_stop(&mut notes)?;
             }
+            ground
+        } else if matches!(ground, Ground::Terminal(_)) {
+            Ground::Ended(state::HOST_ABSENT)
+        } else {
             ground
         };
         let mut closed = self.persist(ground, landing)?;
@@ -1045,51 +1045,72 @@ impl Close<'_> {
 
     /// An ask the lane holds unanswered refuses the close: the answer would
     /// reach the session the close ends. A mailbox that cannot be read
-    /// refuses too. A park on the lane's own ask passes: its judge reads
-    /// that ask, and the answer reaches the relaunched session.
+    /// refuses too ([`Self::unread`]).
     fn refuse_ask(&self) -> Result<()> {
+        self.ask_read()?.map_err(|unread| self.unread(unread))
+    }
+
+    /// [`Self::refuse_ask`]'s read: an unanswered ask refuses, a box that
+    /// did not read is the inner `Err`. A park on the lane's own ask passes:
+    /// its judge reads that ask, and the answer reaches the relaunched
+    /// session.
+    fn ask_read(&self) -> Result<std::result::Result<(), Unread>> {
         if self.park().is_some_and(|wait| wait.ask.is_some()) {
-            return Ok(());
+            return Ok(Ok(()));
         }
-        match self.open_ask()? {
-            None => Ok(()),
-            Some(ask) => Err(refused(
+        match lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
+            Ok(None) => Ok(Ok(())),
+            Ok(Some(ask)) => Err(refused(
                 "ask-unanswered",
                 &[("item", self.item()), ("ask", &ask)],
             )),
+            Err(unread) => Ok(Err(unread)),
+        }
+    }
+
+    /// [`Self::refuse_ask`] on a full close, passed for a mailbox in a
+    /// sandbox its provider no longer lists ([`Unread::listed`]), which no
+    /// session can answer from: `true`, with its `host-absent mail-status=`
+    /// note.
+    fn refuse_ask_unless_gone(&self, notes: &mut Vec<String>) -> Result<bool> {
+        let Err(unread) = self.ask_read()? else {
+            return Ok(false);
+        };
+        let unread = if self.keep() {
+            unread
+        } else {
+            unread.listed(|| hosted::lists_item(self.scripts, self.host, self.item()))
+        };
+        match unread {
+            Unread::Gone { cause } => {
+                let status = cause.split_whitespace().next().unwrap_or_default();
+                notes.push(format!("host-absent mail-status={status}"));
+                Ok(true)
+            }
+            unread @ (Unread::Busy { .. } | Unread::Failed { .. }) => Err(self.unread(unread)),
         }
     }
 
     /// The oldest ask the lane's mailbox holds unanswered; a mailbox that
     /// cannot be read refuses.
     fn open_ask(&self) -> Result<Option<String>> {
-        match lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
-            Ok(ask) => Ok(ask),
-            Err(cause) if cause.starts_with(hosted::BUSY) => Err(refused(
-                hosted::BUSY,
-                &[("item", self.item()), ("step", "mail-read")],
-            )),
-            Err(cause) => Err(refused(
-                "mail-read-failed",
-                &[("item", self.item()), ("cause", &cause)],
-            )),
-        }
+        lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane)
+            .map_err(|unread| self.unread(unread))
     }
 
-    /// Whether a mailbox read that failed on a terminal item's full close is
-    /// a sandbox the provider no longer holds: its list names no row for
-    /// the item. A list that fails keeps the mailbox's refusal.
-    fn host_absent(&self, error: &Error) -> Result<bool> {
-        if error.key() != "mail-read-failed" || self.keep() {
-            return Ok(false);
-        }
-        match hosted::lists_item(self.scripts, self.host, self.item()) {
-            Ok(listed) => Ok(listed.is_none()),
-            Err(cause) if cause.starts_with(hosted::BUSY) => Err(refused(
-                hosted::BUSY,
-                &[("item", self.item()), ("step", "list")],
-            )),
-            Err(_) => Ok(false),
+    /// The refusal of a box that did not read: `host-busy` with its step,
+    /// which the caller asks again, else `mail-read-failed` with the cause.
+    /// A sandbox gone is the caller's to pass where it can; one that cannot
+    /// refuses it as a failed read.
+    fn unread(&self, unread: Unread) -> Error {
+        match unread {
+            Unread::Busy { step } => {
+                refused(hosted::BUSY, &[("item", self.item()), ("step", step)])
+            }
+            Unread::Gone { cause } | Unread::Failed { cause } => refused(
+                "mail-read-failed",
+                &[("item", self.item()), ("cause", &cause)],
+            ),
         }
     }
 

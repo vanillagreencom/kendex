@@ -1478,7 +1478,10 @@ fn timeline_seven() -> Value {
 /// - a local stopped lane, its merge found in its repository;
 /// - a released Linear lane, whose record names no `repo` (`main`'s launch
 ///   recorded none for it), read ended first: its merge is found in the
-///   watch's `--repo` names, the repositories the GitHub duty reads.
+///   watch's `--repo` names, the repositories the GitHub duty reads;
+/// - a hosted stopped lane holding a last notice no pass read: the close
+///   reads it from the host before the provider's close and the duty says
+///   it as its `lane-notice` line before the close's lines.
 #[test]
 fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
     if !isolated_row("an_ended_lanes_merge_cycle_is_recorded_before_its_close") {
@@ -1521,9 +1524,32 @@ fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
             false,
             false,
         ),
+        (
+            "a hosted stopped lane's last notice",
+            true,
+            None,
+            seven,
+            false,
+            false,
+        ),
     ] {
         let mut world = World::new();
         let mut lane = cycle_lane(&world, hosted);
+        let notice = case == "a hosted stopped lane's last notice";
+        if notice {
+            lane["status"] = json!("stopped");
+            lane.as_object_mut().unwrap().remove("parked");
+            let mailbox = world
+                .dir
+                .path()
+                .join("host-disk/remote/KEN-1/tmp/lane-mail/KEN-1/to-overseer.jsonl");
+            std::fs::create_dir_all(mailbox.parent().unwrap()).unwrap();
+            std::fs::write(
+                &mailbox,
+                "{\"kind\":\"notice\",\"id\":\"n-last\",\"text\":\"result: done\"}\n",
+            )
+            .unwrap();
+        }
         if cycle {
             lane["cycle"] = json!({"pr": 7, "item": "KEN-1"});
         }
@@ -1573,7 +1599,15 @@ fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
             ));
         }
         let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
-        let said = rendered(&first);
+        let mut said = rendered(&first);
+        if notice {
+            let mail: Vec<String> = said.drain(..2.min(said.len())).collect();
+            assert_eq!(
+                mail,
+                ["EVENT lane-notice KEN-1 n-last", "  result: done"],
+                "{case}: {said:?}"
+            );
+        }
         let timeline_reads = || {
             world
                 .gh_calls()

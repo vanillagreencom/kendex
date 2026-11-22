@@ -85,14 +85,18 @@ case "$1" in
   # prints, LANE_HOST_STUB_CLOSE_LINE in its place when set (empty: none).
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
     || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; }
+    : > "$LANE_HOST_STUB_LOG.closed"
     line="${LANE_HOST_STUB_CLOSE_LINE-kept=/srv/archive/$3}"
     [ -z "$line" ] || printf '%s\n' "$line"
     exit 0 ;;
   # The shipped provider's list rows: TEST-1 hosted, else LANE_HOST_STUB_LIST
-  # as given, empty for none; _LIST_STATUS fails it.
+  # as given, empty for none, and LANE_HOST_STUB_LIST_CLOSED in its place once
+  # a close succeeded when set; _LIST_STATUS fails it.
   list)
     [[ "${LANE_HOST_STUB_LIST_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_LIST_STATUS"
     rows="${LANE_HOST_STUB_LIST-$(printf 'owner/repo/TEST-1\thosted\t-\tlane.example')}"
+    [[ -z "${LANE_HOST_STUB_LIST_CLOSED+set}" || ! -e "$LANE_HOST_STUB_LOG.closed" ]] \
+      || rows="$LANE_HOST_STUB_LIST_CLOSED"
     [ -z "$rows" ] || printf '%s\n' "$rows"
     exit 0 ;;
   # The sandbox pair's stop and its check, confirmed by their lines;

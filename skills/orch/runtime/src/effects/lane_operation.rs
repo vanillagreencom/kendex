@@ -451,7 +451,21 @@ impl<'a> LaneOperation<'a> {
         &self,
         lane: &Lane,
     ) -> std::result::Result<Option<String>, String> {
-        pending_ask(&self.run.engine.reach.mail_program, lane)
+        pending_ask(&self.run.engine.reach.mail_program, lane).map_err(|unread| unread.to_string())
+    }
+
+    /// [`last_mail`] through this run's reach's mailbox program.
+    pub(super) fn last_mail(
+        &self,
+        lane: &Lane,
+    ) -> std::result::Result<Option<crate::watch::mail::ClosingMail>, Unread> {
+        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
+        last_mail(
+            &self.run.engine.reach.mail_program,
+            &scripts,
+            self.run.engine.path,
+            lane,
+        )
     }
 
     /// End every validation run in a local lane's worktree before the
@@ -871,33 +885,125 @@ fn apply_lane_store(run: &Run, request: &Request) -> Result<Applied> {
     ops::apply(run.engine.path, request, run.engine.env, run.engine.locking)
 }
 
+/// Why a hosted lane's box did not read: the one judgement every close that
+/// reads the box acts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Unread {
+    /// The provider's call pool refused the call at `step` (`mail-read`, or
+    /// `list` for the presence read after it): nothing ran, and the same
+    /// read asked again can answer.
+    Busy { step: &'static str },
+    /// The provider lists no sandbox for the item, or one torn down: the box
+    /// went with it, and nothing is left to read.
+    Gone { cause: String },
+    /// Any other failure, its sandbox standing or its list failed.
+    Failed { cause: String },
+}
+
+impl Unread {
+    /// A box read's refusal: one at the provider-call bound is busy,
+    /// anything else failed until the provider's list judges it.
+    fn of(refusal: &Refusal) -> Unread {
+        match refusal {
+            Refusal::Exit {
+                status: Some(crate::mailbox::HOST_BUSY_EXIT),
+                ..
+            } => Unread::Busy { step: "mail-read" },
+            Refusal::NotStarted { .. }
+            | Refusal::Unanswered { .. }
+            | Refusal::Exit { .. }
+            | Refusal::Reply { .. } => Unread::Failed {
+                cause: refusal.to_string(),
+            },
+        }
+    }
+
+    /// A failed read judged by the provider's list (`hosted::lists_item`):
+    /// no row for the item is the sandbox gone; a row standing keeps the
+    /// read's failure with its state, a list refused at the bound is busy,
+    /// and a list that fails keeps the read's failure with its cause.
+    pub(super) fn listed(
+        self,
+        list: impl FnOnce() -> std::result::Result<Option<String>, String>,
+    ) -> Unread {
+        let Unread::Failed { cause } = self else {
+            return self;
+        };
+        match list() {
+            Ok(None) => Unread::Gone { cause },
+            Ok(Some(state)) => Unread::Failed {
+                cause: format!("listed={state} {cause}"),
+            },
+            Err(list) if list.starts_with(crate::watch::hosted::BUSY) => {
+                Unread::Busy { step: "list" }
+            }
+            Err(list) => Unread::Failed {
+                cause: format!("{cause} list={list}"),
+            },
+        }
+    }
+}
+
+/// Leads with the stable key a caller reads: `host-busy step=STEP`,
+/// `host-absent` or `mail-read-failed`, the cause after it.
+impl std::fmt::Display for Unread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unread::Busy { step } => write!(f, "{} step={step}", crate::watch::hosted::BUSY),
+            Unread::Gone { cause } => write!(f, "{} {cause}", crate::state::HOST_ABSENT),
+            Unread::Failed { cause } => write!(f, "mail-read-failed {cause}"),
+        }
+    }
+}
+
 /// The oldest unanswered ask the lane's mailbox holds, read through the
 /// mailbox client (`lane-mail pending --item ITEM --root ROOT [--host]`): the
 /// first envelope of kind `ask`. A hosted lane's mailbox is read under its
-/// record's host, never the caller's. `Err` is a read that did not answer,
-/// or a lane with no recorded root; a host's per-home cap refusal leads
-/// with `host-busy`, the word the close refuses by.
-pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option<String>, String> {
+/// record's host, never the caller's. `Err` is a read that did not answer
+/// ([`Unread::of`]), or a lane with no recorded root.
+pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option<String>, Unread> {
     let Some(root) = lane.mail_root.as_deref() else {
-        return Err("mail-root-unrecorded".to_owned());
+        return Err(Unread::Failed {
+            cause: "mail-root-unrecorded".to_owned(),
+        });
     };
     let hosted = lane.host.as_deref().filter(|h| !h.is_empty());
     let envelopes = Mailbox::new(cli.to_path_buf())
         .pending(&lane.item, Path::new(root), hosted)
-        .map_err(|refusal| match refusal {
-            Refusal::Exit {
-                status: Some(crate::mailbox::HOST_BUSY_EXIT),
-                ..
-            } => format!("{} step=mail-read {refusal}", crate::watch::hosted::BUSY),
-            Refusal::NotStarted { .. }
-            | Refusal::Unanswered { .. }
-            | Refusal::Exit { .. }
-            | Refusal::Reply { .. } => refusal.to_string(),
-        })?;
+        .map_err(|refusal| Unread::of(&refusal))?;
     Ok(envelopes
         .iter()
         .find(|e| e.kind() == "ask")
         .map(|e| e.id().to_owned()))
+}
+
+/// A hosted lane's box past the watch's cursor (`watch::mail::last_mail`),
+/// read from its host once before a provider's close takes its sandbox,
+/// since nothing reads it after: the provider keeps no archive an overseer
+/// can read. `None` is a lane with no hosted box, a box with nothing past
+/// the cursor, or a sandbox the provider no longer lists, whose box is gone
+/// with it.
+fn last_mail(
+    cli: &Path,
+    scripts: &Path,
+    fleet: &Path,
+    lane: &Lane,
+) -> std::result::Result<Option<crate::watch::mail::ClosingMail>, Unread> {
+    let (Some(host), Some(root)) = (lane.mail_host(), lane.mail_root.as_deref()) else {
+        return Ok(None);
+    };
+    let mailbox = Mailbox::new(cli.to_path_buf());
+    match crate::watch::mail::last_mail(&mailbox, fleet, &lane.item, Path::new(root), host) {
+        Ok(mail) => Ok(mail),
+        Err(refusal) => {
+            match Unread::of(&refusal)
+                .listed(|| crate::watch::hosted::lists_item(scripts, host, &lane.item))
+            {
+                Unread::Gone { .. } => Ok(None),
+                unread @ (Unread::Busy { .. } | Unread::Failed { .. }) => Err(unread),
+            }
+        }
+    }
 }
 
 #[cfg(test)]

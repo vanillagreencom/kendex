@@ -735,6 +735,39 @@ impl Lane {
         self.host.as_deref().is_some_and(|h| !h.is_empty())
             && self.kind.as_deref() != Some(crate::ops::CLOUD_KIND)
     }
+
+    /// Whether the lane's last pause is a park: its sandbox was stopped with
+    /// its disk kept, and no launch has brought it back for certain since.
+    pub fn parked_last(&self) -> bool {
+        self.extra
+            .get("pauses")
+            .and_then(Value::as_array)
+            .and_then(|pauses| pauses.last())
+            .and_then(|pause| pause.get("cause"))
+            .and_then(Value::as_str)
+            == Some("parked")
+    }
+
+    /// Whether the lane is a relaunch from its last park that failed
+    /// (`stopped`) and names no sandbox standing ([`SANDBOX`]): its provider
+    /// answered no start or create, so its sandbox is still stopped and no
+    /// session has run there since the park read its mailbox. A relaunch
+    /// still `preparing` is not one: its sandbox may have come back.
+    pub fn park_unresumed(&self) -> bool {
+        self.status == LaneStatus::Stopped
+            && self.parked_last()
+            && self.extra.get(SANDBOX).and_then(Value::as_str) != Some(STANDING)
+    }
+
+    /// Whether the lane's box is in a sandbox a park stopped, holding
+    /// nothing the park did not read: a parked record, one that owes a park,
+    /// or a failed relaunch from a park ([`Self::park_unresumed`]). Such a
+    /// sandbox answers no read.
+    pub fn mail_parked(&self) -> bool {
+        self.status == LaneStatus::Parked
+            || self.extra.contains_key(PARK_OWED)
+            || self.park_unresumed()
+    }
 }
 
 /// What the tracker judged the lane's item: shipped, or ended any other

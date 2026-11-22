@@ -190,7 +190,7 @@ A local relaunch on the same harness and account resumes the session the record 
 - Standing, as the `no_landing` close of § Recovery relaunch step 2 keeps it: the launch asks the provider's `start`, then `create --relaunch`.
 - Gone: the launch asks no `start` and goes straight to `create --relaunch`.
 
-A list that fails refuses the launch `host-list-failed`.
+A list that fails refuses the launch `host-list-failed`. A hosted relaunch whose provider's `start` answers it holds no sandbox for the item gets a fresh sandbox, with no kept worktree, session or mailbox: its observation reads `host_start: item-unknown` and `route_cause` `sandbox-absent`.
 
 A fresh start continues through the handoff record: its brief is the `start` brief ([start.md § 0](../workflows/start.md#0-resume-from-a-handoff)), and a harness switch's brief also carries the transcript sentence of [handoff.md § 2](../workflows/handoff.md#2-launch). The brief carries the continuation either way, so paste nothing into the pane after a relaunch.
 

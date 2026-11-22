@@ -7391,7 +7391,8 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
 /// reconcile holds the launch `host-create-unknown`, the lane `preparing`
 /// and its slot charged, since the provider may hold a sandbox for it; the
 /// next launch request meets that held launch and asks no create; a close
-/// supersedes it, its provider close confirmed by `list`, and ends the
+/// supersedes it, its provider close answering the sandbox absent, or
+/// confirmed by `list` where it answers any other line, and ends the
 /// record. A create the provider's lock then refuses fails
 /// `host-create-busy`, the create's own refusal, which charges nothing; the
 /// next create reuses what the provider holds and opens.
@@ -7444,9 +7445,12 @@ fn a_hosted_create_whose_answer_is_lost_holds_its_launch_until_a_close_confirms_
     assert_eq!(lane()["status"], "done");
     let after = calls();
     let close = after.iter().position(|l| l == "close --item KEN-H");
+    let absent = closed["intent"]["observation"]["host_close"]
+        .as_str()
+        .is_some_and(|line| line.starts_with("closed=absent "));
     assert!(
-        close.is_some_and(|at| after[at + 1..].iter().any(|l| l == "list")),
-        "the provider's close confirmed by its list: {after:?}"
+        close.is_some_and(|at| absent || after[at + 1..].iter().any(|l| l == "list")),
+        "the provider's close answered absent or confirmed by its list: {closed} {after:?}"
     );
 
     // The provider's lock beside the clone, held as an earlier create of
@@ -8339,7 +8343,10 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
 /// A relaunch of a lane whose last pause is its park brings its stopped
 /// sandbox back through the provider's start before `create --relaunch`;
 /// a start the provider refuses, or answers without its `sandbox-started`
-/// line, fails the launch with no create asked.
+/// line, fails the launch with no create asked. A start that answers the
+/// item unknown, a sandbox the provider no longer holds, creates a fresh
+/// one: `create` with no `--relaunch`, the outcome naming the start's
+/// answer and its route fresh for the sandbox absent.
 #[test]
 fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
     for (case, start, outcome) in [
@@ -8350,6 +8357,11 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
         ),
         ("refused", json!({"exit": 1}), "failed"),
         ("unparsed", json!({"stdout": "started\n"}), "failed"),
+        (
+            "item unknown",
+            json!({"exit": 1, "stderr": "lane-host-daytona: item-unknown item=KEN-H fix=\"lane-host-daytona list\"\n"}),
+            "confirmed",
+        ),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -8376,9 +8388,12 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
             .to_owned();
         answers["capabilities"]["stdout"] = json!(line.replace("park=none", "park=verb"));
         answers["start --item KEN-H"] = start;
-        answers[format!(
-            "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
-        )] = json!({"stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\n")});
+        let created = json!({"stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\n")});
+        let create = format!("create --item KEN-H --repo o/r --harness claude --account {account}");
+        answers[format!("{create} --relaunch")] = created.clone();
+        if case == "item unknown" {
+            answers[create.as_str()] = created;
+        }
         std::fs::write(
             world.scripts.join("lane-host.json"),
             serde_json::to_string(&answers).unwrap(),
@@ -8393,8 +8408,32 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
                 .position(|c| c.contains(&format!(" {verb} --item KEN-H")))
         };
         assert!(at("start").is_some(), "{case}: {calls:?}");
+        let fresh = calls
+            .iter()
+            .any(|c| c.contains(" create --item KEN-H") && !c.ends_with(" --relaunch"));
+        assert_eq!(fresh, case == "item unknown", "{case}: {calls:?}");
+        let observation = &report["intent"]["observation"];
         match outcome {
-            "confirmed" => assert!(at("start") < at("create"), "{case}: {calls:?}"),
+            "confirmed" => {
+                assert!(at("start") < at("create"), "{case}: {calls:?}");
+                if case == "item unknown" {
+                    assert_eq!(
+                        (
+                            &observation["host_start"],
+                            &observation["route"],
+                            &observation["route_cause"]
+                        ),
+                        (
+                            &json!("item-unknown"),
+                            &json!("fresh"),
+                            &json!("sandbox-absent")
+                        ),
+                        "{case}: {report}"
+                    );
+                } else {
+                    assert_eq!(observation["host_start"], Value::Null, "{case}: {report}");
+                }
+            }
             _ => {
                 assert_eq!(at("create"), None, "{case}: no create: {calls:?}");
                 assert!(
