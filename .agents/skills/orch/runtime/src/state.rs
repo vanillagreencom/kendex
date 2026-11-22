@@ -773,13 +773,13 @@ pub enum CloseGround {
     },
     /// The close judged the lane ended while its item stays open: its merge
     /// cycle stands and its work is over (its worktree gone, its item
-    /// closed out, or its tracker reading the item Verifying with no
-    /// branch-provable box open), or its host kind declares no
-    /// stop this machine can make (a cloud session). The lane ends done
-    /// whatever its harness reads, the item's files kept. `source` names the
-    /// reading; [`HOST_ABSENT`] is the one that ends an item its tracker
-    /// ended, whose sandbox its provider no longer holds: its files leave
-    /// and no provider close is asked.
+    /// closed out, or, for a lane its launch confined, its tracker reading
+    /// the item Verifying with no branch-provable box open), or its host
+    /// kind declares no stop this machine can make (a cloud session). The
+    /// lane ends done whatever its harness reads, the item's files kept.
+    /// `source` names the reading; [`HOST_ABSENT`] is the one that ends an
+    /// item its tracker ended, whose sandbox its provider no longer holds:
+    /// its files leave and no provider close is asked.
     Ended { source: String },
 }
 

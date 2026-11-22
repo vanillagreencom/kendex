@@ -5076,32 +5076,36 @@ fn a_close_releases_a_worktree_of_the_repository_its_row_records() {
     }
 }
 
-/// An idle local lane whose merge landed, its item still open on its
-/// tracker, its live state record and its worktree standing: while the
-/// tracker holds a branch-provable box open the lane may be at work on the
-/// merged item, so `close-lane` refuses `lane-live state=idle` and touches
-/// neither the harness nor the worktree. Once the tracker reads the item
-/// Verifying with only its post-merge box open, the close ends the lane on
-/// its merge with the record still standing, its harness stopped before
-/// the worktree is released, so the session never runs on in a removed
-/// directory; the post-merge box stays open for the verification duty and
-/// the open item's record stays.
+/// An idle confined local lane whose merge landed, its item still open on
+/// its tracker, its live state record and its worktree standing. A confined
+/// lane leaves its record to the close, so the record says nothing of its
+/// close-out; the tracker does. Each row the close refuses
+/// `lane-live state=idle`, touching neither the harness nor the worktree:
+/// a branch-provable box open or the item back In Progress, as a lane
+/// resumed on the merged item holds it; a launch recorded unconfined, whose
+/// standing record is its own close-out unfinished, failed or refused; and
+/// a cycle merged before this attempt began, which proves nothing of this
+/// attempt's close-out. Once the tracker reads the item Verifying with only
+/// its post-merge box open, the close ends the lane on its merge with the
+/// record still standing, its harness stopped before the worktree is
+/// released, so the session never runs on in a removed directory; the
+/// post-merge box stays open for the verification duty and the open item's
+/// record stays.
 #[test]
 fn a_merged_lane_waiting_on_post_merge_checks_is_stopped_before_its_worktree_is_released() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = Runner::new(&server, "stub-confirm");
     let replies = runner.state_dir().join("linear.json");
-    let plant = |description: &str| {
+    let plant = |state: &str, description: &str| {
         let item = json!({
             "issues bulk-get": {"body": {"issues": {"nodes": [
                 {"identifier": "KEN-W", "state": {"type": "started"}, "description": description, "children": {"nodes": []}}
             ]}}},
-            "graphql BoxItem": {"body": {"issue": {"description": description, "state": {"name": "Verifying", "type": "started"}}}},
+            "graphql BoxItem": {"body": {"issue": {"description": description, "state": {"name": state, "type": "started"}}}},
         });
         std::fs::write(&replies, item.to_string()).unwrap();
     };
-    plant(BRANCH_BOX_OPEN);
     runner.env = vec![
         (
             "OVERSEE_WATCH_TRACKER".to_owned(),
@@ -5123,12 +5127,32 @@ fn a_merged_lane_waiting_on_post_merge_checks_is_stopped_before_its_worktree_is_
     let (repo, wt) = worktree_fixture(dir.path());
     let launched = effect_report(&runner.op_fleet(&launch_request("KEN-W", runner.state_dir())));
     assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+    let confined = json!({"state": "confined"});
+    assert_eq!(
+        launched["intent"]["observation"]["confinement"], confined,
+        "{launched}"
+    );
     let pid = launched["lane"]["launch"]["pid"].as_u64().unwrap() as u32;
-    let mut fleet = runner.fleet();
-    fleet["lanes"][0]["mail_root"] = json!(wt.display().to_string());
-    fleet["lanes"][0]["cycle"] = json!({"pr": 7});
-    fleet["lanes"][0]["repo"] = json!("o/r");
-    runner.write_fleet(&fleet);
+    let base = runner.fleet();
+    let began = base["lanes"][0]["session_since"]
+        .as_str()
+        .or(base["lanes"][0]["launched_at"].as_str())
+        .unwrap()
+        .to_owned();
+    // The fleet as each row plants it: the lane's merge cycle stamped at
+    // `merged`, and the confinement its launch intent records.
+    let plant_fleet = |merged: &str, confinement: &Value| {
+        let mut fleet = base.clone();
+        fleet["lanes"][0]["mail_root"] = json!(wt.display().to_string());
+        fleet["lanes"][0]["cycle"] = json!({"pr": 7, "stamps": {"merged": merged}});
+        fleet["lanes"][0]["repo"] = json!("o/r");
+        for intent in fleet["intents"].as_array_mut().unwrap() {
+            if intent["op"] == "launch-session" && intent["target"] == "KEN-W" {
+                intent["observation"]["confinement"] = confinement.clone();
+            }
+        }
+        runner.write_fleet(&fleet);
+    };
     let record = support::item_record(runner.state_dir(), "KEN-W");
     std::fs::write(&record, "{}\n").unwrap();
     let close = json!({"op": "close-lane", "item": "KEN-W"});
@@ -5147,8 +5171,80 @@ fn a_merged_lane_waiting_on_post_merge_checks_is_stopped_before_its_worktree_is_
     let cli = cli.display().to_string();
     let worktree = [("WORKTREE_CLI", cli.as_str())];
 
-    let answer = reply(&runner.op_fleet_env(&close, &worktree));
+    let unconfined = json!({"state": "unconfined", "cause": "token-on-session-bus"});
+    for (case, state, description, merged, confinement) in [
+        (
+            "a branch box open",
+            "Verifying",
+            BRANCH_BOX_OPEN,
+            began.as_str(),
+            &confined,
+        ),
+        (
+            "its item back In Progress",
+            "In Progress",
+            POST_MERGE_ONLY,
+            began.as_str(),
+            &confined,
+        ),
+        (
+            "an unconfined launch",
+            "Verifying",
+            POST_MERGE_ONLY,
+            began.as_str(),
+            &unconfined,
+        ),
+        (
+            "an earlier attempt's merge",
+            "Verifying",
+            POST_MERGE_ONLY,
+            "2000-01-01T00:00:00Z",
+            &confined,
+        ),
+    ] {
+        plant(state, description);
+        plant_fleet(merged, confinement);
+        let answer = reply(&runner.op_fleet_in(&repo, &close, &worktree));
+        assert_eq!(answer["refusal"]["key"], "lane-live", "{case}: {answer}");
+        assert_eq!(
+            refusal_field(&answer, "state"),
+            Some("idle".to_owned()),
+            "{case}: {answer}"
+        );
+        assert!(live(pid), "{case}: a refused close stops nothing");
+        assert!(wt.exists(), "{case}: a refused close removes nothing");
+    }
+
+    // A rate-limit choice list drawn over the composer, as one can stand in
+    // the middle of the lane's close-out: the stub echoes what is typed.
+    plant("Verifying", POST_MERGE_ONLY);
+    plant_fleet(&began, &confined);
+    let pane = launched["lane"]["launch"]["pane"].as_str().unwrap();
+    let screen = |wanted: &dyn Fn(&str) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let cap = tmux(&server.socket, &["capture-pane", "-p", "-t", pane]);
+            if wanted(&String::from_utf8_lossy(&cap.stdout)) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "the screen was never drawn");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    for line in [
+        "  Switch to gpt-6-luna for lower credit usage?",
+        "› 1. Switch to gpt-6-luna",
+    ] {
+        let typed = tmux(&server.socket, &["send-keys", "-t", pane, "-l", line]);
+        assert!(typed.status.success());
+        let typed = tmux(&server.socket, &["send-keys", "-t", pane, "Enter"]);
+        assert!(typed.status.success());
+    }
+    screen(&|s| s.contains("› 1. Switch"));
+    let answer = reply(&runner.op_fleet_in(&repo, &close, &worktree));
     assert_eq!(answer["refusal"]["key"], "lane-live", "{answer}");
+    // The judge's reading of the list: an asking screen would refuse
+    // `state=asking`, an idle one would close.
     assert_eq!(
         refusal_field(&answer, "state"),
         Some("idle".to_owned()),
@@ -5156,8 +5252,15 @@ fn a_merged_lane_waiting_on_post_merge_checks_is_stopped_before_its_worktree_is_
     );
     assert!(live(pid), "a refused close stops nothing");
     assert!(wt.exists(), "a refused close removes nothing");
+    let reset = tmux(&server.socket, &["send-keys", "-R", "-t", pane]);
+    assert!(reset.status.success());
+    let typed = tmux(
+        &server.socket,
+        &["send-keys", "-t", pane, "-l", "\u{276f}\u{a0}"],
+    );
+    assert!(typed.status.success());
+    screen(&|s| !s.contains("credit usage") && s.contains('\u{276f}'));
 
-    plant(POST_MERGE_ONLY);
     let answer = reply(&runner.op_fleet_in(&repo, &close, &worktree));
     let result = &answer["result"];
     assert_eq!(result["word"], "closed", "{answer}");
