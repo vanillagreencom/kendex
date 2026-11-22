@@ -208,10 +208,11 @@ fn awaiting_reset(doc: &serde_json::Map<String, Value>, item: &str) -> Option<Va
 
 /// A launched lane's account mark at its turn end, once its context mark
 /// held nothing: the account its credential bills, judged by the one account
-/// judge, this binary's `lane pick`, asked as one child under the ceiling. A
-/// hosted lane's account is the controller's to measure. An account at its
-/// mark is refused with the handoff; every other answer but room is told and
-/// passed, never read as room.
+/// judge, this binary's `lane pick`, asked as one child under the ceiling.
+/// The turn end reads the judge's reply and counts a `rate_limited` record
+/// it judged room or walled as at the mark. A hosted lane's account is the controller's to measure. An
+/// account at its mark is refused with the handoff; every other answer but
+/// room is told and passed, never read as room.
 pub(super) fn account_mark(
     turn: &mut Turn,
     judge: &marks::Judge<'_>,

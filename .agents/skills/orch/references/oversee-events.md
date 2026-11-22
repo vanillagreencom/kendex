@@ -147,6 +147,7 @@ The overseer judges the same marks between turn ends, and for a lane whose hook 
 3. Read the account mark with `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --lane [ACCOUNT] --harness [HARNESS] --min-headroom-pct [ORCH_HANDOFF_HEADROOM_PCT]`, with `[ACCOUNT]` the lane record's `account`.
    - A Claude or Pi lane adds `--native-model [MODEL]`, the lane record's `model`.
    - In the reply's `answer`, `lane` is room and `walled` is the mark reached.
+   - A `lane` or `walled` answer whose `record.status` is `rate_limited` is a usage read the provider refused: the mark is reached, as at the turn end.
    - `reserved`, `retired` or `excluded` means its owner's setting refused the account: tell the owner.
    - Any other answer leaves the mark unknown.
 4. Treat no record, another session's record, an unreadable or stale one, and an unknown mark as unknown, never as room.
