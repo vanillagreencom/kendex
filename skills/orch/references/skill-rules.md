@@ -178,6 +178,10 @@ The lane's notice to the overseer says "confirmed in the dev agent's transcript 
 
 A brief or workflow names a setting and its reader, `orch-env NAME DEFAULT` ([scripts/orch-env](../scripts/orch-env)), never the private env file. An agent never opens, prints, greps or sources the private env file: `.env.local` or the file `KENDEX_ENV_FILE` names. The one exception is a setup workflow that writes one named secret into it.
 
+### File searches
+
+A lane, or a dev, fix, review or QA agent, searches files only inside its worktree or under a path it names, with a shell command or with the harness's own search tool. It never searches from `/` or the home folder. A source from outside the worktree, such as another project's code, comes from that project's repository at the installed version: `gh api` on the repository at the installed tag, or a shallow clone under the worktree's `tmp/`; a review or QA agent clones under a `mktemp -d` of its own, outside the reviewed worktree, never under the worktree's `tmp/`. An installed header or package file is read at the path its installation names. A source none of these reaches is reported as unread, never sought by a wider search.
+
 ### Voice requests
 
 Follow [communication-modes.md § Voice requests](communication-modes.md#voice-requests) for the owner's plain-yes approval, the explicit confirmation of destructive and money steps, and the voice wording to read before the spoken reply.
