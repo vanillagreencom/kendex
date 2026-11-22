@@ -172,7 +172,11 @@ impl World {
             if !stage["end"].is_null() {
                 return stage;
             }
-            assert!(Instant::now() < deadline, "the run never closed: {stage}");
+            assert!(
+                Instant::now() < deadline,
+                "the run never closed: {stage}\n{}",
+                run_files(run_dir)
+            );
             std::thread::sleep(Duration::from_millis(100));
         }
     }
@@ -192,7 +196,8 @@ impl World {
             }
             assert!(
                 Instant::now() < deadline,
-                "the notice was never marked: {stage}"
+                "the notice was never marked: {stage}\n{}",
+                run_files(run_dir)
             );
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -229,6 +234,24 @@ fn refusal(out: &Output) -> String {
 }
 fn run_file(dir: &str, name: &str) -> String {
     fs::read_to_string(Path::new(dir).join(name)).unwrap_or_default()
+}
+/// Every file of a run that a wait gave up on: which of the job's writes
+/// stand (`execution`, `exit`) and what its standard error (`job.err`)
+/// holds tell a job that ended before its close from one still at work.
+fn run_files(dir: &str) -> String {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+        .iter()
+        .map(|name| format!("--- {name}\n{}\n", run_file(dir, name)))
+        .collect()
 }
 impl World {
     fn entry(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
