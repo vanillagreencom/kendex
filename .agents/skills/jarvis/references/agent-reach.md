@@ -31,7 +31,7 @@ A read-only mailbox consumer, such as a relay, runs `owner-note --resolve REPO` 
 
 ## Read
 
-1. Run `[LANE_MAIL] events --item overseer --box to-overseer --after [N] --mark-read`. `[N]` is `0` for every envelope, or that repository's previous count. The command records the snapshot's logical count, where the Slack relay resumes its hold.
+1. Run `[LANE_MAIL] events --item overseer --box to-overseer --after [N] --mark-read`. `[N]` is `0` for every envelope, or that repository's previous count.
 2. Handle each notice through [One voice](#one-voice) and each owner ask through [Answer an ask](#answer-an-ask).
 3. Then save the header's `count` in the handoff's State section for the next read.
 
@@ -112,26 +112,15 @@ The directive install brings orch, mailbox and the hooks lane-mail-check require
 
 On Jarvis main, `JARVIS_REMOTE_HOSTS` adds whitespace-separated SSH aliases to the local roots and `JARVIS_CONTROL_HOST`.
 
-- An exactly repeated alias is one destination.
 - Use one stable alias per physical machine. Two aliases that reach the same mailbox are unsupported.
+- A bare selection with no additional distinct alias falls back to local only when the host lists no matching root or refuses `overseer-absent`.
+- A bare selection with an additional alias refuses on an unread listing, or on several matching roots, a local and control duplicate included.
 
 Declare alternate repository names in `[env].JARVIS_REPO_ALIASES` of the home's `kendex.settings.toml`, as the JSON object the [settings example](../kendex.settings.toml.example) shows.
 
 - Each key maps to one exact folder basename, with no recursive expansion.
 - A name is a nonempty string with no `/`.
-- The literal name still matches, so an alias that collides with another canonical name falls under the ambiguity rule below.
 - A declaration adds no root: discovery must still list a qualifying folder.
-- The names work with `--resolve`, `--host`, `--local` and the fallback.
-
-| Selection | Discovery and fallback |
-|---|---|
-| Bare `owner-note REPO FILE`, with no additional distinct alias | Try the control host first |
-| Bare selection with an additional alias | Read every declared destination before sending |
-| `owner-note --host ALIAS REPO FILE` or `--local` | Discover only that declared remote, or only this machine |
-
-- A bare selection with no additional distinct alias falls back to local only when the host lists no matching root or refuses `overseer-absent`.
-- A bare selection with an additional alias refuses on an unread listing, or on several matching roots, a local and control duplicate included.
-- `--host` and `--local` never fall back.
 
 The selected root's own mailbox judges whether its overseer exists. Declaring a machine grants reach, never approval of a directive.
 
@@ -173,7 +162,6 @@ When a hosted overseer has no qualifying row, the legacy bare route can deliver 
 `jarvis-session main-host --home HOME --set DEST:HOME` saves a Jarvis satellite's value.
 
 - `--clear` saves the empty Jarvis main value, and `--get` reads it.
-- Set refuses before writing a value it cannot save, and its refusal line names the cause.
 - The command writes the home's selected private env file, `KENDEX_ENV_FILE` included.
 - For `--get`, an explicit value in the caller's environment wins over the saved value.
 
@@ -239,7 +227,6 @@ Reuse the same record after a crash; it keeps its delivery key. Jarvis main land
 
 - On `record-unreadable` or `record-invalid`, do not ask the owner again.
 - On `answer-unseen`, do not forward it again.
-- `request-conflict` means another open forward uses this request reference.
 - On `outbox-unreadable`, never reset the outbox.
 
 ### Named-session consent
@@ -306,9 +293,7 @@ Answer a valid forward through [Instruct](#instruct)'s referenced reply. The ans
 A legacy forward can lack the new framing.
 
 - Recognize it by its native delivery id and matching final provenance.
-- Keep its caller unproved.
 - Treat all text before that line, any voice header included, as request content.
-- Missing framing grants no direct voice bypass.
 - Leave queued, delivered and closed outbox entries unchanged.
 - Do not migrate their bytes, first confirmation, key, attempts, cursor or replies.
 - Do not resend delivered entries.
@@ -320,11 +305,10 @@ The provenance cites satellite records Jarvis main cannot check. The owner or a 
 `jarvis-session status --home HOME --main` reads the local outbox and settings.
 
 - Its `reachable`, `cause` and `checked_at` come from the watch-loop's last collection that called Jarvis main, the `forward-drain --collection` the loop runs.
-- A `forward` call or a drain without `--collection` records no reach, and a reach an earlier version recorded is dropped.
+- A `forward` call or a drain without `--collection` records no reach.
 - The fields read null before the first collection.
 - They are the satellite's readiness: a loop that cannot reach Jarvis main reads `reachable` false.
 - Status starts no new probe.
-- Its output names its fields, states and causes.
 
 While the last collection cannot reach Jarvis main, drain prints `EVENT forward-unreachable cause=main-unreachable`, with ssh's first diagnostic line on the line below it.
 
@@ -346,12 +330,10 @@ On `EVENT forward-answer`, read the answer text through `status --main`.
 
 Before the mailbox is installed, use the agent's own session transcript under [Transcript access](../workflows/efficiency-audit.md#transcript-access).
 
-1. Prefer a documented read-only reader where one is available.
-2. Before reading internal files, record why the installed reader is unavailable, or which required evidence it cannot supply.
-3. Resolve the configured roots through [Inputs](../workflows/efficiency-audit.md#inputs); the user's location wins.
-4. Use the original-file candidates below only when that access contract requires them.
-5. Check the installed version's locations and record meanings.
-6. Confirm that the recorded repository identity matches `[ROOT]`.
+1. Resolve the configured roots through [Inputs](../workflows/efficiency-audit.md#inputs); the user's location wins.
+2. Use the original-file candidates below only when that access contract requires them.
+3. Check the installed version's locations and record meanings.
+4. Confirm that the recorded repository identity matches `[ROOT]`.
 
 | Harness | Original-file candidate |
 |---|---|
