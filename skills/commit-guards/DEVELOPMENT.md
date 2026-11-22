@@ -11,17 +11,26 @@ bash skills/commit-guards/tests/install-git-hooks-check.test.sh
 bash skills/commit-guards/tests/terminal-paths.test.sh
 ```
 
-New suites source `tests/lib/harness.bash` immediately after their shell options. It isolates Git configuration and scratch files so the invoking repository's hooks, templates and identity do not decide fixture results. Installer fixtures use `tests/lib/install-hooks.bash`.
+- New suites source `tests/lib/harness.bash` immediately after their shell options. It isolates Git configuration and scratch files so the invoking repository's hooks, templates and identity do not decide fixture results.
+- Installer fixtures use `tests/lib/install-hooks.bash`.
 
 ## Git hook install contract
 
-Before diagnosing an installation, read `scripts/install-git-hooks --help`. It owns install, repair, removal and read-only check results, including `core.hooksPath` and linked-worktree limits. Run installation cases in fixture repositories, not against the developer's own hooks.
-
-When changing the installer, use `tests/install-git-hooks-check.test.sh` for the status predicate and `tests/lib/install-hooks.bash` for shared fixtures. Inspect `scripts/lib/helper-body.sh` and `scripts/lib/hook-check.sh` together: the installed helper's bytes and the checker that accepts them must agree. Keep the helper's stamp check and byte check distinct; a current stamp alone does not prove the helper matches.
+- Before diagnosing an installation, read `scripts/install-git-hooks --help`. It owns install, repair, removal and read-only check results, including `core.hooksPath` and linked-worktree limits.
+- Run installation cases in fixture repositories, not against the developer's own hooks.
+- When changing the installer, run the suite that holds the behaviour, by its header comment:
+  - `tests/install-git-hooks.test.sh`: arming a repository, what an install writes and refuses, what a commit meets once armed, what an uninstall gives back, and `--check` answering armed from a linked worktree that carries its own render.
+  - `tests/install-git-hooks-check.test.sh`: the `--check` verdicts over the shims, and the install refusals that keep an install from reporting what the next `--check` would contradict.
+  - `tests/install-git-hooks-hookspath.test.sh`: the `core.hooksPath` stand-down, in both modes.
+  - `tests/install-git-hooks-scope.test.sh`: which scripts the shim reaches, rediscovery, and the doc-limits and preflight lanes the chain runs beside its own checks.
+- Installer suites share their fixtures through `tests/lib/install-hooks.bash`.
+- Inspect `scripts/lib/helper-body.sh` and `scripts/lib/hook-check.sh` together: the installed helper's bytes and the checker that accepts them must agree.
+- Keep the helper's stamp check and byte check distinct; a current stamp alone does not prove the helper matches.
 
 ## The pre-push lane
 
-Before investigating a push refusal, read [Pre-push scope](references/hooks-and-settings.md#pre-push-scope). It states which refs and scopes are judged and the limits of local tracking-ref evidence. `scripts/pre-push` owns ref collection; `scripts/commit-guards` owns check selection. Inspect those owners instead of inferring push coverage from a successful commit.
+- Before investigating a push refusal, read [Pre-push scope](references/hooks-and-settings.md#pre-push-scope). It states which refs and scopes are judged and the limits of local tracking-ref evidence.
+- `scripts/pre-push` owns ref collection; `scripts/commit-guards` owns check selection. Inspect those owners instead of inferring push coverage from a successful commit.
 
 ## The pre-commit chain
 
@@ -29,9 +38,9 @@ Before changing hook order or diagnosing a missing check, read [Commit chain](re
 
 ## Markdown checks
 
-When changing Markdown parsing, inspect the shared block and shape parsers in `scripts/lib/md-blocks.awk` and `scripts/lib/md-shapes.awk` before changing an individual lane. Their callers run POSIX awk under `LC_ALL=C`. Keep portability checks against that dialect.
-
-Use `tests/md-type.test.sh` to check the shipped docs-writing route contract, `tests/md-refs.test.sh` for reference resolution and `tests/md-reflow.test.sh` for reflow and fixed-point checks. These suites exercise different guarantees; a passing reflow check does not establish that references resolve.
+- When changing Markdown parsing, inspect the shared block and shape parsers in `scripts/lib/md-blocks.awk` and `scripts/lib/md-shapes.awk` before changing an individual lane.
+- Their callers run POSIX awk under `LC_ALL=C`. Keep portability checks against that dialect.
+- Use `tests/md-type.test.sh` to check the shipped docs-writing route contract, `tests/md-refs.test.sh` for reference resolution and `tests/md-reflow.test.sh` for reflow and fixed-point checks. A passing reflow check does not establish that references resolve.
 
 ## Probing a terminal-only code path
 

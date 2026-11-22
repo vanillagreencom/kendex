@@ -29,12 +29,14 @@ Requires Git, awk, jq 1.7 or newer and standard POSIX tools. Bash 3.2 is support
 
 Obtain the repository owner’s consent before setup runs repository scripts. In each fresh clone, run `kendex guard install`, or `bash .agents/skills/commit-guards/scripts/install-git-hooks` without kendex. Check the installation with `kendex guard check` or the installer's `--check` option. Git does not clone hooks; commits run no Git checks until setup is armed. Hook layering and setup limits: [hooks and settings](references/hooks-and-settings.md#hook-layering).
 
-Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Set keys under `[env]` in committed `kendex.settings.toml`. Resolution order and the settings-file grammar: [references/hooks-and-settings.md](references/hooks-and-settings.md).
+The keys a project usually sets, with their meanings: [kendex.settings.toml.example](kendex.settings.toml.example). Each check's own keys: its section in [CHECKS.md](CHECKS.md). Set keys under `[env]` in committed `kendex.settings.toml`. Resolution order and the settings-file grammar: [references/hooks-and-settings.md](references/hooks-and-settings.md). Each check's defaults: its `--help`, such as `bash .agents/skills/commit-guards/scripts/byte-ceiling --help`.
+
+`COMMIT_GUARDS_CHECKS` replaces the default check set; the template's value is that set. This example keeps the default checks, adds the optional binary-size check, and raises its ceiling from the default 200 KB to 500 KB:
 
 ```toml
 [env]
+COMMIT_GUARDS_CHECKS = "conflict-markers changelog-entries md-type md-refs py-names secrets byte-ceiling"
 COMMIT_GUARDS_BYTE_CEILING_KB = "500"
-COMMIT_GUARDS_CHECKS = "conflict-markers"
 ```
 
 `COMMIT_GUARDS_PRE_COMMIT_LOCAL` names a project check the pre-commit hook runs last. Writing that check: [references/hooks-and-settings.md § Repo-local check](references/hooks-and-settings.md#repo-local-check).
