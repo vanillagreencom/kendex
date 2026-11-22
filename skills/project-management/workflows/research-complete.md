@@ -247,7 +247,7 @@ For each blocked issue, keeping the Research, Artifacts, and Decision references
   2. Add `## Requirements` with one bullet per deliverable.
   3. Add `## Context` with the key constraints and cross-references.
 
-- Adjust the estimate when the research materially changed the size of the work.
+- For an issue with no children, adjust the estimate when the research materially changed the size of the work.
 - Add domain labels for any cross-domain work it revealed.
 
 ### 6.6 Close Out
