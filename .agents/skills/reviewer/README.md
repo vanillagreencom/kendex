@@ -9,7 +9,7 @@ Review workflows and finding formats for AI review agents. Projects using orch c
 - Record verified findings with their causes and effects.
 - Return a structured report to the primary agent.
 - Apply the [finding conduct](references/finding-disposition.md) shared by reviewers and implementers.
-- Select review depth for a change range with `scripts/review-depth`. GitHub keeps its approval requirements.
+- Select how deeply a change range is reviewed. GitHub keeps its approval requirements.
 
 ## Install
 
