@@ -10,11 +10,6 @@
   - `op-broker` starts through `/usr/bin/env -S python3 -I`; on Linux `env -S` needs GNU coreutils 8.30 or later.
   - Read each script's `--help` for command syntax.
 - Give the broker an absolute directory path through `--directory` or `JARVIS_OP_DIRECTORY`, dedicated to the broker.
-  - The broker creates a private directory and listens on a mode-600 Unix socket, `requests.sock`, in it; one connection carries one request and its reply.
-  - After a restart it reuses an existing mode-700 directory only when the directory holds nothing but the broker's `lock` file and `requests.sock`; any other entry refuses `directory=foreign` before the broker changes anything.
-  - It also reuses a directory that the earlier FIFO broker left, and removes that broker's `requests` pipe and its clients' reply pipes.
-  - It refuses `directory=busy` while another broker serves that directory.
-  - On macOS the socket path, the directory with `/requests.sock`, must be shorter than 104 bytes, the Unix socket address limit; a longer one refuses `directory=path-too-long` before the broker creates anything. Linux has no such limit.
 - Select the intended account with `--account` or `OP_ACCOUNT`.
 - Keep directory paths, account identifiers, vault names and item references in the consumer's private settings or account ledger.
 - Supply an approved session through `OP_SESSION`.
@@ -23,10 +18,6 @@
 - A CLI that the 1Password desktop app integration alone registers has no session to supply: set `JARVIS_OP_APP_INTEGRATION=1` instead.
   - Calls then go through the desktop app and keep their native approval route. [1Password scopes authorization to a terminal session and account](https://www.1password.dev/cli/app-integration-security/).
   - On Linux each broker call leads its own terminal session and needs its own authorization.
-- The broker refuses a session setting it cannot use:
-  - With no `OP_SESSION`, no `JARVIS_OP_APP_INTEGRATION=1` and no terminal on stdin, the broker exits with `session=OP_SESSION-required`.
-  - With both `OP_SESSION` and `JARVIS_OP_APP_INTEGRATION=1`, it exits with `session=route-conflict`.
-  - Any value other than `1` or empty refuses `setting=JARVIS_OP_APP_INTEGRATION`.
 - The broker writes the session token to no file. The token is in the environment of every `op` call and script that the broker starts, and, under the [Broker service](#broker-service) unit, in the broker's own environment and the unit's `EnvironmentFile=`.
 - Give the broker an [allow list](#allow-list). Without one, it serves every request from any process of the user, and its readiness and request lines say `protection=none`.
 - Wait for the broker's `state=ready` message before a client request.
@@ -36,7 +27,7 @@
   - `op -- ARG...` runs `op` with those arguments inside the broker's session.
   - `@/absolute/script` runs a script that the caller owns, with mode 700, inside the session. The script's environment carries `OP_SESSION`, or `OP_BIOMETRIC_UNLOCK_ENABLED=true` under the app integration, and `OP_ACCOUNT` when the broker has one. A value with spaces or a secret stays inside the script.
   - An `op` or `@SCRIPT` request writes one JSON record, `{"exit": N, "stdout": BASE64}`, with the exit status and output of `op` or the script.
-  - The client exits 0 when it writes the record, and 2 with an `op-client: key=value` line when it refuses. A missing script refuses `script=not-found`.
+  - The client exits 0 when it writes the record, and 2 with an `op-client: key=value` line when it refuses.
   - After the request was sent, `request=timeout` or `request=cancelled` leaves the outcome of an `op` or `@SCRIPT` request unknown: the broker can still complete it. Check the result before retrying a write such as `op item create`.
 - The broker runs the script's checked file descriptor, so the script sees `$0` as `/dev/fd/N`.
   - It cannot find sibling files through `dirname "$0"`, and it cannot live on a `noexec` mount.
@@ -47,7 +38,6 @@
   - The work still has no stdin; work that reads `/dev/tty` waits until the 30-second deadline.
   - The `OP_SESSION` route never asks the app, so it starts its calls without the helper: an `op` or `@SCRIPT` request leads a new session with no terminal, and `read` and the renewal run as direct children of the broker.
 - When the 30-second deadline or a failed start ends an `op` or `@SCRIPT` request, or, under the app integration on Linux, a `read`, the broker logs `op-broker: run=failed cause=deadline seconds=30` or `op-broker: run=failed cause=spawn errno=NAME` to its stderr, the unit's journal.
-  - For that `read` the last 4 KiB of `op`'s stderr follows, one `op-broker: stderr=` line per line.
   - The client receives only `run=failed`, or `read=failed` for `read`.
   - An `op` that exits nonzero returns its record and logs nothing.
 - Apply [Secret transfer](#secret-transfer) to the output file.
@@ -56,8 +46,6 @@
 ### Allow list
 
 - Name the list with `--allow-list` or `JARVIS_OP_ALLOW_LIST`: an absolute path outside the broker directory.
-  - Unset or empty, the broker serves every request and still names each caller in its log.
-  - Inside the directory, the broker exits with `allow-list=inside-directory`.
 - The list is a regular JSON file owned by the broker's user, with mode 600. The broker reads it again for each request, so an edit takes effect at the next request.
 
   ```json
@@ -70,14 +58,11 @@
   ```
 
 - On Linux each key names a caller: `jarvis-session` or a service unit name.
-  - The broker reads the peer's process id and user from the socket, and a peer of another user refuses.
-  - From the peer it walks the parent chain in `/proc`, and reads each process again after its parent, so a link that changes during the walk refuses.
   - The first rule that matches names the caller:
     1. `jarvis-session`: the chain holds the live controller process that the controller record of the broker's home names, by its process id and start time.
        - Name the home with `--home` or `JARVIS_OP_HOME`. Unset, no caller is `jarvis-session`.
        - The broker finds the record with `orch-runtime state path --fleet` run in the home and reads it with `agent-runtime controller status`, so it needs the same orch settings and runtime cache as `jarvis-session`.
        - A record with no controller, a controller that no longer runs, or one whose process was never read names no `jarvis-session` caller.
-       - A home it cannot resolve refuses `home=unreadable`, and a record or a runtime answer it cannot read refuses `record=unreadable`.
     2. A unit: the first process in the chain whose cgroup v2 path ends in a `.service` unit names that unit. `systemd-run --scope` leaves a helper agent the child of the wrapper shell in its `jarvis-NAME.service`, so the helper and every process it starts are `jarvis-NAME.service`.
     3. Otherwise the caller is unverified and refuses `caller=unverified`. A Jarvis `task launch` window is a child of the Jarvis tmux server, not of the session process, and that server runs in a scope. So while a list is set, every request from a task is `caller=unverified`.
 - A unit key may hold one `*` for a generated part of the name, which matches at least one character, such as `jarvis-auditor-*.service`. An exact key wins over a pattern. A caller that two patterns match and no exact key names refuses `caller=ambiguous`.
@@ -85,7 +70,6 @@
   - Any other request replies `not-allowed` with no value, and the client exits 2 with `read=not-allowed`, `op=not-allowed` or `script=not-allowed`.
 - A missing, unreadable, non-private or malformed list refuses every request, logged as `list=missing`, `list=unreadable`, `list=not-private` or `list=invalid`.
   - A symlink is non-private.
-  - An unknown key in the file is malformed.
 - macOS proves no caller. There the broker serves a `read` of a reference that any entry lists, to every caller, and refuses other references.
 - The readiness line names the protection: `op-broker: state=ready protection=unit` on Linux, `protection=listed-any-caller` on macOS, and `protection=none` on either without a list.
 - Each request writes one line to the broker's stderr, the unit's journal. It never carries a value or a reply body:
@@ -94,7 +78,7 @@
   op-broker: request time=2026-11-19T21:52:02Z protection=unit caller=jarvis-neon.service verb=read reference="op://Vault/Neon/credential" outcome=ok cause=listed
   ```
 
-  - `reference` is JSON: the reference, the script path or the `op` arguments, with each space written `\u0020`, so every field stays one token. A request the broker cannot parse logs `verb=invalid reference=null`.
+  - `reference` is JSON: the reference, the script path or the `op` arguments, with each space written `\u0020`, so every field stays one token.
   - `outcome` is the reply's status. `cause` is `listed` for a served request, `list=unset` for one served without a list, the refusal key for `not-allowed`, such as `reference=unlisted`, `caller=unlisted`, `caller=unverified` or `list=missing`, and the client's key for any other status, such as `read=failed`.
 
 ### Trust boundary
@@ -174,12 +158,9 @@ Restart=on-failure
 - Set `OP_ACCOUNT` with another `Environment=` line when the desktop app holds more than one account.
 - The unit needs no terminal setting: the broker gives each call its own terminal.
 - The broker makes no `op` call at startup, so `state=ready` does not show that the desktop app will approve a call.
-  - Each call keeps the desktop app's native approval route; on Linux each call has its own terminal session and authorization.
   - The home supplies its own approval route, such as a helper that answers the prompt at the lock screen; the package ships none.
   - Such a helper approves every `op` call that any process of the user makes, outside the broker directory too, and unlocks the 1Password app.
 - Leave `JARVIS_OP_KEEPALIVE_SECS` unset for app integration.
-  - Selecting a valid interval refuses at startup with `keepalive=unsupported cause=per-terminal-authorization`, before readiness or renewal.
-  - Each Linux call has its own terminal session, so renewal cannot keep another call's authorization alive and can raise an unattended approval prompt.
 
 ## Secret transfer
 

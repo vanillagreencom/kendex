@@ -4,7 +4,6 @@
 
 - Before a browser step, run `agent-browser skills get core`.
 - Read the guide that the installed CLI returns.
-- Use kendex to manage the Jarvis package. The browser guide comes from the CLI and needs no separate skill installation.
 
 ## Profile and tabs
 
@@ -20,13 +19,10 @@
   - Set `JARVIS_BROWSER_CLASS` to the window's app id when the home needs it.
   - Keep profile paths and machine-specific settings in the consumer's local configuration.
 - For concurrent profiles, set `JARVIS_BROWSER_PORT=0` so `jarvis-browser` allocates a free loopback debugging port before starting Chromium for each profile.
-  - Chromium receives an explicit nonzero port.
   - `task launch --browser` supplies this setting and the task's profile together.
-  - Explicit static port settings remain supported.
 - With no configured executable, the driver detects Chromium, Chrome, Brave or Edge.
   - Use the plain invocation as the service form: the browser replaces the driver as the unit's main process.
   - Pass `--detach` from a terminal when the task must continue there: the driver checks the request, starts the browser in its own session and returns.
-  - Use the plain form in a service unit.
 - Connect to the browser:
   1. Launch the browser.
   2. Follow the installed browser guide for the connection command.
@@ -35,12 +31,9 @@
 - Keep the same profile and port setting for launch and readback.
 - For a vendor CLI's browser sign-in, put the directory `jarvis-browser --shim` prints first on that CLI's `PATH`. Platform: Linux.
   - Its `xdg-open`, `x-www-browser` and `www-browser` open the sign-in page in the assistant profile and return at once.
-  - A refused request prints the driver's `jarvis-browser: key=value` line and exits with its status.
 - Open only the tabs needed for the delegated task.
 - Close them when the work ends.
 - After a vendor CLI's browser sign-in, remove query strings from every URL in a tab list, including URLs used as titles, before logging or reporting it.
-  - Sign-in URLs can contain `state` and `code` parameters.
-  - Sanitize the list before any raw tool output reaches a log.
 - Apply [computer-use.md:Desktop and terminal](computer-use.md#desktop-and-terminal) if browser work needs the user's input devices.
 
 ## Forms and captures
@@ -67,7 +60,6 @@
 - For an approved mouse, keyboard or capture action, use the packaged [human-input](../scripts/human-input). Platform: Linux Wayland.
 - Read its `--help` for command syntax and the tools each action requires.
 - Apply [computer-use.md:Desktop and terminal](computer-use.md#desktop-and-terminal) before using the user's input devices.
-- Check the target window before sending input.
 - Supply text through standard input to the `type` action, which prints nothing.
   - To type a secret, run `human-input type < FILE` on a mode-600 file from [accounts-and-secrets.md:Secret transfer](accounts-and-secrets.md#secret-transfer).
 - Give `shot` an absolute path under the home's scratch folder. It creates a protected capture file and refuses to overwrite an existing file.
