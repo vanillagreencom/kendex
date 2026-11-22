@@ -1,6 +1,6 @@
 # GitHub platform checks
 
-Read before running the read-only GitHub report or migrating its settings.
+Read before running the read-only GitHub report, migrating its settings from review-gate, or finding which package renders the review files.
 
 1. Set the report keys in the `[env]` table of [kendex.settings.toml](../kendex.settings.toml.example).
 2. Run the report from the repository checkout. It needs GitHub CLI authentication and jq.
@@ -84,6 +84,6 @@ A setup is recorded only in the clone that ran it. To set this package up:
 
 Where this package arrives only as review-gate's dependency, a scripted `add --commit` or `apply --commit` without that flag, in a checkout where bot-instructions is set up, commits nothing, names the setup and exits 1.
 
-In a linked work tree, or in a repository where neither package is set up, an `add` can commit before the setup prompt. The setup then rewrites the review files after that commit. Commit those changes after the setup.
+In a linked worktree, or in a repository where neither package is set up, an `add` can commit before the setup prompt. The setup then rewrites the review files after that commit. Commit those changes after the setup.
 
 The old path and keys remain supported until 2.0. Remove the ignored keys `REVIEW_GATE_STANDARD_APP`, `REVIEW_GATE_STANDARD_ENVIRONMENT` and `REVIEW_GATE_STANDARD_SECRETS` without replacing them.

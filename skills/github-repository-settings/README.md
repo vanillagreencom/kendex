@@ -1,6 +1,6 @@
 # GitHub repository settings
 
-Selects local review instructions or the enabled GitHub review files for a repository. To report live rulesets, required checks and merge settings, opt in to [platform checks](references/platform-checks.md).
+github-repository-settings is a kendex package for repository owners who use AI code review. It renders the repository's local review instructions, or the review files of the GitHub review bots the owner enables. To report live rulesets, required checks and merge settings, opt in to [platform checks](references/platform-checks.md).
 
 ## Features
 
@@ -14,27 +14,21 @@ Selects local review instructions or the enabled GitHub review files for a repos
 
 ## Install
 
-Install this package with its required `bot-instructions` and `review-gate` dependencies. Use kendex 1.23.0 or later. bot-instructions requires Python 3.11 or later.
+```bash
+kendex add vanillagreencom/kendex --skill github-repository-settings
+```
+
+Needs kendex 1.23.0 or later. bot-instructions, which kendex installs with this package, needs Python 3.11 or later.
 
 ## How it works
 
-Set up retires the previous owner, runs this package's installer and transfers the arming record. Ordinary write commands refuse until the package is set up, and name Set up.
-
-The installer keeps the renderer's marker gate on setup and on later refreshes, so it refuses unmanaged content. Armed `adopt` is the takeover. Run `render` after it.
-
-Removing the package runs core's declared cleanup, and core revokes the arming record:
-
-- While bot-instructions remains armed, the cleanup keeps the shared marked files, so core can render the old owner after a failure.
-- Otherwise it removes the marked review files and region content, in an unarmed clone too.
-- Recovery renders the old owner's full output from current inputs, and replaces earlier edits to marked content.
-
-A direct `retire` leaves the arming record for core.
+Set up takes the review files over from bot-instructions. Until Set up runs, the write commands refuse and name Set up. Removing the package removes its marked review files and the review region, unless bot-instructions is still set up. Edits to marked content do not survive removal.
 
 ## Setup
 
-1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION`.
-2. Remote review defaults to `off`. To render the bots the existing `[bot-instructions]` manifest table enables, set `GITHUB_STANDARD_BOT_REVIEW` to `on`.
-3. Put these settings under `[env]`, as [the settings example](kendex.settings.toml.example) shows.
+1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION`. It has no default. `check` reports the value. Adoption and setup refuse while it is empty. No other command reads it.
+2. `GITHUB_STANDARD_BOT_REVIEW` defaults to `off`, which selects local output. To render the bots the existing `[bot-instructions]` manifest table enables, set it to `on`.
+3. Put these settings in the `[env]` table of `kendex.settings.toml` at the repository root, as [the settings example](kendex.settings.toml.example) shows.
 4. Use Set up on this package's desktop page, or the CLI's disclosed install with `--allow-repo-effects`.
 
 Local output writes the `AGENTS.md` review pointer region. It needs the manifest's `codex` flag and an installed bot-instructions package inside the checkout. It leaves remote review files alone. This package installs no hosted CI.

@@ -44,6 +44,8 @@ repo-effects:
 ```
 
 - `adopt --dry-run` previews a takeover without writes.
+  - It needs `GITHUB_STANDARD_CHECK_LOCATION`, as armed `adopt` does. A process value, such as `GITHUB_STANDARD_CHECK_LOCATION=local` before the command, serves with no file write.
+  - The value does not change the preview.
 - Keep the existing [bot-instructions manifest](../bot-instructions/schemas/repo-toml.md).
 - `render` writes the selected outputs.
 - `check` compares them without writes.
@@ -51,16 +53,20 @@ repo-effects:
   - Process and private-file settings keep their working values and normal precedence.
   - A nested settings file keeps its working values only when it is absent from HEAD and the index.
   - A staged deletion stays absent, even if its working file remains.
+  - For staged review-file checker selection, follow `commit-guards/SKILL.md` § Git hooks.
 - `scripts/github-repository-settings --help` gives the options and the check report contract.
 
 ## Setup
 
-1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` in the settings `[env]` table. It has no default.
-2. Choose `GITHUB_STANDARD_BOT_REVIEW`. It defaults to `off`, which selects the library's local output. `on` selects its full output and the bots the manifest enables. Local output requires the manifest's `codex` flag and an installed bot-instructions package inside the checkout. The [settings example](kendex.settings.toml.example) declares both settings.
+1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` in the `[env]` table of `kendex.settings.toml` at the repository root. It has no default. `check` reports the value. `adopt` and setup refuse while it is empty. No other command reads it.
+2. Choose `GITHUB_STANDARD_BOT_REVIEW`: `off`, the default, selects the library's local output, and `on` selects its full output and the bots the manifest enables.
 3. Use Set up on this package's desktop page, or the CLI's disclosed install with `--allow-repo-effects`, with kendex 1.23.0 or later.
 
+- Local output requires the manifest's `codex` flag and an installed bot-instructions package inside the checkout.
+- The [settings example](kendex.settings.toml.example) declares both settings.
 - When `GITHUB_STANDARD_CHECK_LOCATION` and `GITHUB_STANDARD_BOT_REVIEW` are both empty or absent, `check` reports not adopted and exits 0 without judging review files.
 - This package installs no hosted CI.
+- Core selects one owner and never falls back from an unarmed new owner, with one exception. If this package is installed only as another package's dependency, an installed bot-instructions stays the owner until this package's setup runs here or in the main checkout.
 
 ## Takeover and removal
 
@@ -71,8 +77,6 @@ repo-effects:
   - Otherwise it removes only the shared library's marked outputs and region, partial writes made before arming included.
   - The recovery render regenerates the old owner's full output from current inputs. It does not keep earlier edits to marked content.
 - A direct `retire` does not change the arming record.
-- Core selects one owner and never falls back from an unarmed new owner, with one exception. If this package is installed only as another package's dependency, an installed bot-instructions stays the owner until this package's setup runs here or in the main checkout.
-- For staged review-file checker selection, follow `commit-guards/SKILL.md` § Git hooks.
 
 ## Read when
 
