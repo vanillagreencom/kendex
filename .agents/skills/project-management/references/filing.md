@@ -78,7 +78,7 @@ Write each post-merge box on one line:
 ```
 
 - `Post-merge:` states the check's pass condition. The absence of an event passes only when the check states absence as its pass condition.
-- `Trigger:` takes one of three forms: `merge`, a UTC time at or after merge, or `release OWNER/REPO TAG-GLOB`, the first matching GitHub release published after merge that contains the item's merge commit, where the item merged in OWNER/REPO.
+- `Trigger:` takes one of three forms: `merge`, a UTC time at or after merge, or `release OWNER/REPO TAG-GLOB`, the first matching GitHub release published after merge whose tag contains the item's latest merge commit, where the item merged in OWNER/REPO.
 - `Deadline:` is `+Nh`, with N from 1 through 72, counted from the trigger: the merge, the stated time, or the release publication. Write a merge trigger's deadline as `+Nh`, because the merge time is unknown when the box is written. A merge or time trigger also takes a real UTC deadline after its trigger and at most 72 hours later. A release trigger takes only `+Nh`.
 - Example: `Trigger: release example/widget v*; Deadline: +24h`.
 
