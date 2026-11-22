@@ -7,7 +7,7 @@ Read when a console lists owner asks or sends Later through `jarvis-session`.
 .agents/skills/jarvis/scripts/jarvis-session owner-asks later --home HOME --id ID
 ```
 
-Later reads one JSON object from stdin with `requestId`, `expectedRevision` and `until`, a future absolute ISO time with an offset. Pass the page's opaque row identity and revision unchanged. Every row reports Reply and Done as not allowed, with a reason; KEN-5390 adds them.
+Later reads one JSON object from stdin with `requestId`, `expectedRevision` and `until`, a future absolute ISO time with an offset. Pass the page's opaque row identity and revision unchanged. Every row reports Reply and Done as not allowed, with a reason.
 
 ## Sources and authority
 

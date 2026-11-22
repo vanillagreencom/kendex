@@ -118,7 +118,10 @@ kendex inserts no package text into `AGENTS.md`. The persona lives at `persona.m
 
 ### Plain folder
 
-On first load, look in the folder's `AGENTS.md` for a line that routes to [persona.md](persona.md). If none does, offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`. The harness's instruction-loading settings then load the route on every turn. Check that the harness loaded those instructions.
+1. On first load, look in the folder's `AGENTS.md` for a line that routes to [persona.md](persona.md).
+2. If none does, offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes.
+3. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`.
+4. The harness's instruction-loading settings then load the route on every turn. Check that the harness loaded those instructions.
 
 ### App-managed home
 
@@ -136,9 +139,9 @@ Report both lists in one message, with each unreachable folder's cause.
 
 ## Cleanup and backups
 
-In the same change, remove every unused code, file, key, secret-store entry, database, record and setting from every holder.
-
-Back up only when a step can lose the only copy. Delete the backup after checking the result.
+- In the same change, remove every unused code, file, key, secret-store entry, database, record and setting from every holder.
+- Back up only when a step can lose the only copy.
+- Delete the backup after checking the result.
 
 ## Reading routes
 
@@ -146,11 +149,12 @@ Read the linked workflow or reference for the task before acting.
 
 | Task | Read first |
 |---|---|
-| Draft product videos, posts or outreach | Launch `publicist` with a task file or an attached prompt. Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). Carry the approval record and named publisher selections in the setup task file. |
+| Draft product videos, posts or outreach | The `publicist` agent, by the steps below the table |
 | Read mail, pages or files, choose an action, request approval or wait for a future condition | [references/decisions.md](references/decisions.md) |
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
+| Start, stop or attach to the managed session, launch a Jarvis task, or read a `jarvis-session` or `task` answer | [references/session-command.md](references/session-command.md) |
 | Report committed Markdown growth and shape for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
 | Add an agent or skill, or change an installed agent | [Home contract: Personal additions](references/home-contract.md#personal-additions) and [home layout](references/home-layout.md) |
@@ -166,3 +170,9 @@ Read the linked workflow or reference for the task before acting.
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |
 | Use Jarvis Voice on a Jarvis satellite, or forward a request to Jarvis main | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |
 | List shared owner asks or send Later from a console | [Owner asks](references/owner-asks.md) |
+
+To draft product videos, posts or outreach:
+
+1. Launch `publicist` with a task file or an attached prompt.
+2. Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types).
+3. Carry the approval record and named publisher selections in the setup task file.

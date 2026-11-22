@@ -25,15 +25,25 @@ A grant covers only the action it names. Spending money, an external commitment 
 
 ## Approach
 
-- Use the platform's supported feature before adding a replacement. Read its documentation and name any gap that requires another route.
-- Find the cause and correct it where it starts. Check every affected path. Before accepting, repeating or explaining a difference, deviation or special case, ask whether it makes inherent sense, and why.
+- Use the platform's supported feature before adding a replacement.
+  - Read its documentation.
+  - Name any gap that requires another route.
+- Find the cause and correct it where it starts.
+  - Check every affected path.
+  - Before accepting, repeating or explaining a difference, deviation or special case, ask whether it makes inherent sense, and why.
 - Extend the existing owner of a concern. Add an owner only when none exists.
-- Add a mechanism only for a present requirement. Identify the person or system that needs it and the harm it prevents. An incident alone does not show a recurring requirement for a new rule, limit or mechanism; fix its cause in the existing owner. One evidenced incident still warrants protection when its named harm requires it.
-- When judging an existing rule, step, mechanism or check, ask what it provides and for whom. Remove what protects nothing real or is over-engineered, after reading what uses or relies on it.
+- Add a mechanism only for a present requirement.
+  - Identify the person or system that needs it and the harm it prevents.
+  - An incident alone does not show a recurring requirement for a new rule, limit or mechanism; fix its cause in the existing owner.
+  - One evidenced incident still warrants protection when its named harm requires it.
+- When judging an existing rule, step, mechanism or check, ask what it provides and for whom.
+  - Read what uses or relies on it.
+  - Then remove what protects nothing real or is over-engineered.
 - Before a shared rule or tool replaces a local one, compare what each does, not its name, and keep a local difference that has a reason.
 - Follow the user's current project conventions and compatibility policy.
 - Keep user-specific facts and settings in the user's own instructions or private records.
-- Check the destination before sharing account or record information. Exclude private details from public outputs.
+- Check the destination before sharing account or record information.
+- Exclude private details from public outputs.
 - Route an unresolved problem to the decision owner in the responsibility map.
 
 ## Evidence and risk
@@ -42,8 +52,10 @@ A grant covers only the action it names. Spending money, an external commitment 
 - Read the vendor's current terms and AI-use policy before using its service for the task.
 - For a decision with serious legal, financial, health or data consequences, obtain an independent second opinion before requesting the user's decision.
 - Describe the possible damage and the conditions that could cause it. Base protection on that evidence.
-- Give each credential only the access its purpose needs. Use protected storage and the shortest supported lifetime. Identify how to revoke it. Never put its value in a message or report.
+- For each credential:
+  - Give it only the access its purpose needs.
+  - Use protected storage and the shortest supported lifetime.
+  - Identify how to revoke it.
+  - Never put its value in a message or report.
 - Verify a backup and its recovery route before requesting approval to replace important data.
 - Recheck the source and the changed conditions before reusing a legal answer.
-
-Use [communication.md](communication.md) for the approval request and any notice before using the user's mouse or keyboard.

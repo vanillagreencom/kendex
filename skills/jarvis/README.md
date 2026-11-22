@@ -94,13 +94,22 @@ Run `kendex refresh` in your Jarvis home. It updates the package and leaves your
 
 ## Uninstall
 
-1. If VGS starts Jarvis when you log in, turn off its Session at boot setting. Remove any login entry of your own that runs `jarvis-session start --origin boot`.
+1. Turn off each start at login:
+   - If VGS starts Jarvis when you log in, turn off its Session at boot setting.
+   - Remove any login entry of your own that runs `jarvis-session start --origin boot`.
 2. On Pi or Copilot CLI, ask Jarvis to stop its event loop. There it runs as a separate background job.
-3. Stop the session with `.agents/skills/jarvis/scripts/jarvis-session stop --home .` from your Jarvis home. Run `.agents/skills/jarvis/scripts/jarvis-session status --home .` until it reads `stopped` or `off` before removing anything; stop and report if it reads `blocked` or `failed`.
+3. Stop the session with `.agents/skills/jarvis/scripts/jarvis-session stop --home .` from your Jarvis home.
+   - Run `.agents/skills/jarvis/scripts/jarvis-session status --home .` until it reads `stopped` or `off` before removing anything.
+   - If it reads `blocked` or `failed`, stop and report.
 4. Stop and disable each service you set up that runs a script from this home's `.agents/skills/`, such as the 1Password broker.
-5. If the Slack relay on this computer also serves other checkouts, run `.agents/skills/slack/scripts/slack install` again from one of them, with one `--root` for each remaining checkout. If this home is its only checkout, run `systemctl --user disable --now slack-listen.service` and delete `~/.config/systemd/user/slack-listen.service`.
+5. Release the Slack relay:
+   - If the Slack relay on this computer also serves other checkouts, run `.agents/skills/slack/scripts/slack install` again from one of them, with one `--root` for each remaining checkout.
+   - If this home is its only checkout, run `systemctl --user disable --now slack-listen.service` and delete `~/.config/systemd/user/slack-listen.service`.
 6. Run `kendex remove jarvis --sweep` to remove the package and the packages only it needed. kendex turns off the commit checks before it removes commit-guards.
-7. Delete this home's local state on each computer. Its session record and queued forwards are in `~/.local/state/kendex/jarvis/KEY/`, where `KEY` is what `python3 -c 'import hashlib, os; print(hashlib.sha256(os.fsencode(os.path.realpath("."))).hexdigest())'` prints in the Jarvis home. Its event log is in `JARVIS_LOG_DIR`, by default `~/.local/state/jarvis/`. Delete only that `KEY` folder, and the log folder only when no other Jarvis home uses it.
+7. Delete this home's local state on each computer.
+   - Its session record and queued forwards are in `~/.local/state/kendex/jarvis/KEY/`, where `KEY` is what `python3 -c 'import hashlib, os; print(hashlib.sha256(os.fsencode(os.path.realpath("."))).hexdigest())'` prints in the Jarvis home.
+   - Its event log is in `JARVIS_LOG_DIR`, by default `~/.local/state/jarvis/`.
+   - Delete only that `KEY` folder, and the log folder only when no other Jarvis home uses it.
 8. Keep the Jarvis home to start again later, or delete it. Deleting it deletes your instructions, memory and handoffs, apart from any copy in its remote.
 
 ## Licence
