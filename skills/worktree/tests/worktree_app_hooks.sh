@@ -115,7 +115,13 @@ step() {
       ;;
     # Claude Code's hook input, as its hooks reference shows it. WorktreeCreate
     # names the tree; the tree it makes is the one `create <name>` makes,
-    # under the base dir, at its physical path.
+    # under the base dir, at its physical path. `create-input:NAME=TREE`
+    # names the tree a NAME outside the issue-ID alphabet maps to.
+    create-input:*=*)
+      local spec="${1#create-input:}"
+      WT="$TREE_BASE/${spec#*=}"
+      printf '{"session_id":"s","cwd":"%s","hook_event_name":"WorktreeCreate","name":"%s"}\n' "$MAIN" "${spec%%=*}" >"$ROOT/stdin"
+      ;;
     create-input:*)
       WT="$TREE_BASE/$(printf '%s' "${1#create-input:}" | tr '[:upper:]' '[:lower:]')"
       printf '{"session_id":"s","cwd":"%s","hook_event_name":"WorktreeCreate","name":"%s"}\n' "$MAIN" "${1#create-input:}" >"$ROOT/stdin"
@@ -216,6 +222,7 @@ err_text() {
     claude-configured) printf 'worktree-claude-configured: <wt>' ;;
     setup-failed) printf 'worktree-setup-command-failed: path=<wt> status=1' ;;
     hook-input:*) printf 'worktree-claude-hook-input-unreadable: field=%s' "${1#hook-input:}" ;;
+    name-unmappable:*) printf 'worktree-claude-name-unmappable: %s' "${1#name-unmappable:}" ;;
     branch-deleted:*) printf 'worktree-branch-deleted: %s' "${1#branch-deleted:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -252,6 +259,15 @@ claude-setup as the WorktreeCreate hook reruns a failed setup command when Claud
 claude-setup as the WorktreeCreate hook fails when the setup command fails again on reopen|repo setup-fail-config create-input:bold-oak-a3f2 hook-setup-failed|claude-setup|1|-|setup-failed|wt=base.txt:base branch=bold-oak-a3f2 identity=- wt-status=- registered=yes branches=bold-oak-a3f2
 claude-setup as the WorktreeCreate hook prints the physical path of a tree it creates behind a symlinked base dir|repo symlinked-base create-input:bold-oak-a3f2|claude-setup|0|path|-|wt=base.txt:base branch=bold-oak-a3f2 identity=- wt-status=- registered=yes branches=bold-oak-a3f2
 claude-setup as the WorktreeCreate hook prints the physical path of a tree it reopens behind a symlinked base dir|repo symlinked-base create-input:bold-oak-a3f2 hook-created|claude-setup|0|path|claude-configured|wt=base.txt:base branch=bold-oak-a3f2 identity=- wt-status=- registered=yes branches=bold-oak-a3f2
+claude-setup as the WorktreeCreate hook maps a slashed name onto a tree it creates|repo create-input:feature/auth=feature-auth|claude-setup|0|path|-|wt=base.txt:base branch=feature-auth identity=- wt-status=- registered=yes branches=feature-auth
+claude-setup as the WorktreeCreate hook maps a slashed name onto the tree it reopens|repo create-input:feature/auth=feature-auth hook-created|claude-setup|0|path|claude-configured|wt=base.txt:base branch=feature-auth identity=- wt-status=- registered=yes branches=feature-auth
+claude-setup as the WorktreeCreate hook maps a name that starts with a dot onto a tree it creates|repo create-input:.hidden=hidden|claude-setup|0|path|-|wt=base.txt:base branch=hidden identity=- wt-status=- registered=yes branches=hidden
+claude-setup as the WorktreeCreate hook maps a name that starts with a dot onto the tree it reopens|repo create-input:.hidden=hidden hook-created|claude-setup|0|path|claude-configured|wt=base.txt:base branch=hidden identity=- wt-status=- registered=yes branches=hidden
+claude-setup as the WorktreeCreate hook maps a name that starts with an underscore onto a tree it creates|repo create-input:_scratch=scratch|claude-setup|0|path|-|wt=base.txt:base branch=scratch identity=- wt-status=- registered=yes branches=scratch
+claude-setup as the WorktreeCreate hook maps a name that starts with an underscore onto the tree it reopens|repo create-input:_scratch=scratch hook-created|claude-setup|0|path|claude-configured|wt=base.txt:base branch=scratch identity=- wt-status=- registered=yes branches=scratch
+claude-setup as the WorktreeCreate hook maps a name with two dots onto a tree it creates|repo create-input:v1..2=v1-2|claude-setup|0|path|-|wt=base.txt:base branch=v1-2 identity=- wt-status=- registered=yes branches=v1-2
+claude-setup as the WorktreeCreate hook maps a name with two dots onto the tree it reopens|repo create-input:v1..2=v1-2 hook-created|claude-setup|0|path|claude-configured|wt=base.txt:base branch=v1-2 identity=- wt-status=- registered=yes branches=v1-2
+claude-setup as the WorktreeCreate hook refuses a name with no letter or digit|repo create-input:_=-|claude-setup|1|-|name-unmappable:_|wt=<absent> registered=no branches=-
 claude-setup as the WorktreeCreate hook refuses input without a name|repo empty-input|claude-setup|1|-|hook-input:name|wt=<absent> registered=no branches=-
 claude-cleanup as the WorktreeRemove hook removes the tree and its merged branch|repo create-input:bold-oak-a3f2 hook-created remove-input|claude-cleanup|0|removed|branch-deleted:bold-oak-a3f2|wt=<absent> registered=no branches=-
 '
