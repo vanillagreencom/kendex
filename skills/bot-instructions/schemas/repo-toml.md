@@ -284,7 +284,7 @@ Two classes are worth an entry in most repos, each with its own reason:
 
 - A vendored tree this repo pins byte for byte. Its reason names the upstream where the fix lands.
 - Lock files (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml` and the rest), wherever they sit. Their reason is that a package manager writes them.
-  - A pattern with no wildcard matches from the repo root only, so write `**/Cargo.lock` to match at any depth.
+  - This package's matcher, which `exclusion-consistency` decides with, reads a pattern with no `/` from the repo root only, while Macroscope reads one at any depth (`references/limits.md` § Macroscope), so write `**/Cargo.lock` to match at any depth.
   - Exclude a lock file, not the manifest beside it.
 
 `exclusion-consistency`'s dead-exclusion clause names an entry this repo does not need.
