@@ -124,17 +124,19 @@ permissions:
 env:
   APT_ACQUIRE_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
 
-# A push to a pull request's branch cancels the run its previous head started,
-# which could only report on a head the pull request no longer has. A merge
-# group or a nightly run keys its group to its own run and cancels nothing:
-# cancelling a queue run would eject its entry. Every push to main shares one
-# group keyed to the ref and cancels nothing: GitHub runs one and holds one
-# pending, and a newer push replaces the pending run, so the merges that land
-# while a push run goes share the next one, which proves the newest head; no
-# merge waits for it.
+# No run cancels another. A pull request, merge group or nightly run keys its
+# group to its own run, so no later run cancels it or replaces it pending. A
+# cancelled pull-request run leaves a cancelled check that blocks the pull
+# request though nothing in the change failed, and the run reports `CI`
+# alone, so cancelling saves little (skills/harness-ci/references/wiring.md
+# § The CI template). Cancelling a queue run would eject its entry. Every
+# push to main shares one group keyed to the ref and cancels nothing: GitHub
+# runs one and holds one pending, and a newer push replaces the pending run,
+# so the merges that land while a push run goes share the next one, which
+# proves the newest head; no merge waits for it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   # THE ONE READ OF THE CHANGE CLASS. Every gated lane below answers to a line
@@ -885,8 +887,13 @@ jobs:
       # `<name>-<key>` holds the binary under that name and its sha256 beside
       # it as `<name>-<key>.sha256`, the key lib/key.sh gives. A lane-host
       # provider in another repository of this organization (Fleet) fetches
-      # these by name to fill a shared runtime cache, so a change to the name,
-      # the files or the leg's event is told to its overseer before it lands.
+      # these by name to fill a shared runtime cache. It counts only an
+      # unexpired artifact whose workflow_run.head_branch is main and whose
+      # head_repository_id equals its repository_id, the filter
+      # runtime_publish applies: a fork's pull-request run can upload any
+      # name, and the bundled sha256 checks the transfer, not who made the
+      # artifact. A change to the name, the files, the filter or the leg's
+      # event is told to its overseer before it lands.
       # They publish before the suites, so a suite's failure keeps no build
       # from the machines that run main.
       - name: the runtime builds main has no artifact for, staged

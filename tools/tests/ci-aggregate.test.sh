@@ -965,9 +965,9 @@ workflow_dispatch|false
 ROWS
 
 # --- 2a'. Superseded runs ---------------------------------------------------
-# A push to a pull request cancels the run its previous head started; a merge
-# group or a nightly run never shares a group with another run, so nothing
-# cancels or queues it behind one; every push to main shares the ref's group
+# No run cancels another. A pull request, a merge group or a nightly run never
+# shares a group with another run, so nothing cancels it, replaces it pending
+# or queues it behind one; every push to main shares the ref's group
 # and cancels nothing, so a newer push waits and replaces only the pending
 # run. Each `${{ }}` of the workflow's concurrency values is evaluated and
 # spliced back into its text.
@@ -980,7 +980,7 @@ while IFS='|' read -r event group cancel; do
   check "a $event run's concurrency group and cancel" "$group $cancel" \
     "$(concurrency_value "$WORKFLOW" group "$concurrency_ctx") $(concurrency_value "$WORKFLOW" cancel-in-progress "$concurrency_ctx")"
 done <<'ROWS'
-pull_request|fixture-ci-pull_request-42|true
+pull_request|fixture-ci-pull_request-7|false
 merge_group|fixture-ci-merge_group-7|false
 push|fixture-ci-push-refs/heads/main|false
 schedule|fixture-ci-schedule-7|false
