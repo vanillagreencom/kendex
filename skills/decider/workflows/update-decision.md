@@ -37,21 +37,21 @@ Set `**Status**:` to the value above. Then, by update:
 Set the Status column of that decision's row to the same value. Then, by update:
 
 - **Revisit.** Rewrite the Decision, Rationale and Revisit When cells with the file.
-- **Remove.** Write where the reason now lives in the Rationale cell: the code path or the principle doc.
 - **Retire.** Keep the document link. State the withdrawal reason in the Rationale cell.
+- **Remove.** Write where the reason now lives in the Rationale cell: the code path or the principle doc.
 - **Remove, deleting the document.** Rewrite the Link cell to the backticked filename, `[Full](D0NN-x.md)` becoming `` `D0NN-x.md` ``.
 
 Never remove a row: it keeps the ID reserved.
 
 ## 3. Citations
 
+Skip this section for a revisit.
+
 For a rename:
 
 1. Change the existing row's Link cell and every citation of the old filename to the new filename in the same change.
 2. Keep the ID.
 3. Run `decisions check`.
-
-Skip for a revisit.
 
 For a supersession, repoint `REVISIT([DECISION_ID])` comments at the new ID. For a partial supersession, repoint only those covering the superseded components.
 
