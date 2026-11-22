@@ -98,10 +98,10 @@ pub(super) struct Granted {
     /// so its bind stands.
     item_dir: PathBuf,
     /// The folders made where absent so their binds stand: the read-only
-    /// ones a lane could otherwise plant (the shared runtime cache, the
-    /// launch records' under the common git folder and a Codex seat's
-    /// command rules), and a read-only seat's session folders, which the
-    /// harness could not make there.
+    /// ones a lane could otherwise plant (kendex's folder under the cache
+    /// folder, the shared runtime cache, the launch records' under the
+    /// common git folder and a Codex seat's command rules), and a read-only
+    /// seat's session folders, which the harness could not make there.
     kept: Vec<PathBuf>,
     /// The folders `ORCH_LANE_WRITABLE` granted.
     lane_writable: Vec<PathBuf>,
@@ -291,15 +291,15 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 /// what the seat's harness writes there ([`Harness::home_writes`]): a
 /// read-only seat's session folders, or a seat whole with its settings file
 /// and the code entries that stand, or that it writes empty, read-only; the
-/// folders `ORCH_LANE_WRITABLE` names, the shared runtime cache read-only
-/// wherever they would hold it; the user's runtime folder hidden; the
-/// display where the record holds `desktop`. A confined launch also takes
-/// the `gh` token the operator's login answers now, handed through the
-/// lane's private folder, and a runtime cache and tool caches of its own in
-/// its tree, never the operator's. A confined launch whose worktree's `tmp`
-/// leads outside it is refused `grant-tmp-linked`: the link's target is
-/// shared, the state directory or another lane's folder among what it can
-/// hold. A Codex lane whose home holds a link leading outside these grants
+/// folders `ORCH_LANE_WRITABLE` names, kendex's folder under the cache
+/// folder and the shared runtime cache read-only wherever they would hold
+/// it; the user's runtime folder hidden; the display where the record holds
+/// `desktop`. A confined launch also takes the `gh` token the operator's
+/// login answers now, handed through the lane's private folder, and a
+/// runtime cache and tool caches of its own in its tree, never the
+/// operator's. A confined launch whose worktree's `tmp` leads outside it is
+/// refused `grant-tmp-linked`: the link's target is shared, the state
+/// directory or another lane's folder among what it can hold. A Codex lane whose home holds a link leading outside these grants
 /// runs unconfined under `linked-seat` ([`linked_seat`]).
 #[allow(
     clippy::disallowed_methods,
@@ -463,18 +463,24 @@ pub(super) fn of(
         &seat_paths,
     )?;
     writable.extend(lane_writable.iter().cloned());
-    // The shared runtime cache holds the binaries the overseer, the hooks
-    // and every other lane run: read-only wherever a writable grant would
-    // hold it, and made where absent so a lane cannot plant it.
+    // kendex's folder under the cache folder holds what kendex installs
+    // from (`crates/core/src/env.rs` `source_cache_dir`,
+    // `registry_cache_dir`, the app update) and, where
+    // `AGENT_RUNTIME_CACHE` names none, the shared runtime cache, whose
+    // binaries the overseer, the hooks and every other lane run. Each is
+    // read-only wherever a writable grant would hold it, an
+    // `ORCH_LANE_WRITABLE` cache folder among them, and made where absent
+    // so a lane cannot plant it.
     let shared_cache = shared_runtime_cache(home.as_deref());
-    if let Some(shared) = &shared_cache
-        && writable
+    for protected in kendex_cache(home.as_deref()).iter().chain(&shared_cache) {
+        if writable
             .iter()
             .chain(&seat_paths)
-            .any(|grant| shared.starts_with(grant))
-    {
-        read_only.push(shared.clone());
-        kept.push(shared.clone());
+            .any(|grant| protected.starts_with(grant))
+        {
+            read_only.push(protected.clone());
+            kept.push(protected.clone());
+        }
     }
     let linked = answer == Answer::Confined
         && harness == Harness::Codex
@@ -674,6 +680,12 @@ fn shared_runtime_cache(home: Option<&Path>) -> Option<PathBuf> {
     let dir = env_dir(RUNTIME_CACHE_VAR).or_else(|| {
         cache_folder(home).map(|cache| cache.join(KENDEX_CACHE).join(RUNTIME_CACHE_DEFAULT))
     })?;
+    Some(resolved(&dir).unwrap_or(dir))
+}
+
+/// kendex's folder under the cache folder, where it stands.
+fn kendex_cache(home: Option<&Path>) -> Option<PathBuf> {
+    let dir = cache_folder(home)?.join(KENDEX_CACHE);
     Some(resolved(&dir).unwrap_or(dir))
 }
 

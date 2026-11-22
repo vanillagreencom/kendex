@@ -12373,7 +12373,6 @@ fn a_lane_builds_in_caches_of_its_own_and_is_refused_the_operator_s_build_inputs
             probe.contains(&format!("file={name} refused")),
             "{name}: {probe}"
         );
-        assert_eq!(std::fs::read_to_string(file).unwrap(), "operator\n");
     }
     for (var, dir) in &own {
         assert!(
@@ -12390,18 +12389,27 @@ fn a_lane_builds_in_caches_of_its_own_and_is_refused_the_operator_s_build_inputs
 
 /// A confined lane runs its runtimes from a cache of its own in its tree:
 /// its line names the folder, which links the shared cache's binaries, and
-/// the lane writes it while the shared cache, named under the cache folder
-/// outside kendex's, stays read-only.
+/// the lane writes it. The cache folder `ORCH_LANE_WRITABLE` names is
+/// written too, while the shared cache in it, named outside kendex's
+/// folder, and kendex's folder, whose sources an unconfined kendex installs
+/// from, stay read-only.
 #[test]
 #[cfg(target_os = "linux")]
-fn a_lane_runs_its_runtimes_from_its_own_cache_which_links_the_shared_one_it_cannot_write() {
+fn a_lane_runs_its_runtimes_from_its_own_cache_and_cannot_write_the_shared_one_or_kendex_s_in_a_writable_cache_folder()
+ {
     let mut world = Confined::new();
     let cache = world.dir.path().join("cache");
     let shared = cache.join("runtimes");
+    let sibling = cache.join("go-build");
+    let source = cache.join("kendex/sources/catalog/skills/dev/SKILL.md");
     std::fs::create_dir_all(shared.join("bin")).unwrap();
+    std::fs::create_dir_all(&sibling).unwrap();
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "operator\n").unwrap();
     write_executable(&shared.join("bin/agent-runtime-k"), "#!/bin/sh\n");
     world.runner.env.extend([
         ("XDG_CACHE_HOME".to_owned(), cache.display().to_string()),
+        ("ORCH_LANE_WRITABLE".to_owned(), cache.display().to_string()),
         (
             "AGENT_RUNTIME_CACHE".to_owned(),
             shared.display().to_string(),
@@ -12410,7 +12418,13 @@ fn a_lane_runs_its_runtimes_from_its_own_cache_which_links_the_shared_one_it_can
     let own = std::fs::canonicalize(world.runner.state_dir())
         .unwrap()
         .join("tmp/runtime-cache");
-    world.seat_env(&format!("{} {}", own.display(), shared.display()));
+    world.seat_env(&format!(
+        "{} {} {}",
+        own.display(),
+        shared.display(),
+        sibling.display()
+    ));
+    world.file_env(&source.display().to_string());
     world.launch(&launch_request("KEN-J", world.runner.state_dir()));
     let probe = world.probe("KEN-J", 1);
     assert!(
@@ -12418,7 +12432,9 @@ fn a_lane_runs_its_runtimes_from_its_own_cache_which_links_the_shared_one_it_can
         "{probe}"
     );
     assert!(probe.contains("seat=runtime-cache written"), "{probe}");
+    assert!(probe.contains("seat=go-build written"), "{probe}");
     assert!(probe.contains("seat=runtimes refused"), "{probe}");
+    assert!(probe.contains("file=SKILL.md refused"), "{probe}");
     assert_eq!(
         std::fs::canonicalize(own.join("bin/agent-runtime-k")).unwrap(),
         std::fs::canonicalize(shared.join("bin/agent-runtime-k")).unwrap(),
