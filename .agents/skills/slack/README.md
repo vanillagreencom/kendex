@@ -35,12 +35,15 @@ Requires Python 3.8 or newer. Installation adds the required skills, including o
 - Tokens go in its private env file or process environment.
 - Installation writes no required settings.
 - [kendex.settings.toml.example](kendex.settings.toml.example) describes the keys.
+- The command is `.agents/skills/slack/scripts/slack`, written `slack` on this page.
 - `slack --help` gives commands, defaults and diagnostics.
 - Set `SLACK_OWNERS` to the owners' comma-separated email addresses, or use `KENDEX_USER_EMAIL` for one owner.
 - Set `KENDEX_USER_HANDLE` for the person in the default channel name; otherwise setup uses that email's local part.
 - Setup keeps an existing channel binding and purpose.
 - Use `--name` to choose a name, or `--take` to adopt a private channel the app has joined.
-- Run `slack setup` for each checkout, then serve the checkouts with one relay.
+- Run `slack setup` for each checkout.
+- Then serve the checkouts with one relay: `slack install --root CHECKOUT_A --root CHECKOUT_B`. It also restarts a running relay.
+- On a host without systemd, run `slack listen` with the same roots.
 - Two checkouts cannot share one bound channel.
 - After changing `SLACK_OWNERS`, run setup for each bound checkout: a plain restart does not invite an added owner.
 - Restart after changing tokens or other process-wide settings.
