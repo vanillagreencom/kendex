@@ -4,7 +4,12 @@ Read before you add or change a mode, a tracker read or a tracker route in a wor
 
 ## GitHub runs
 
-A workflow that supports GitHub resolves the tracker once per run, as [audit-issues § 1.2](../workflows/audit-issues.md#12-resolve-tracker) does, and routes every preflight, read and write through it. A GitHub-tracked run never requires a Linear installation or authentication. Where GitHub lacks a Linear concept, the workflow degrades in a documented note, never silently.
+A workflow that supports GitHub:
+
+- Resolves the tracker once per run, as [audit-issues § 1.2](../workflows/audit-issues.md#12-resolve-tracker) does.
+- Routes every preflight, read and write through it.
+- Never requires a Linear installation or authentication for a GitHub-tracked run.
+- Degrades in a documented note, never silently, where GitHub lacks a Linear concept.
 
 ## Team scope
 
@@ -12,21 +17,52 @@ A Linear list read with no `--team` returns the whole workspace, with two except
 
 ## Scope by Path
 
-Because a Linear list read is workspace-wide unless it passes `--team`, each path states whether it resolves the team scope (tpm-audit § 1.1.1) and what it filters. TPM comparison `issues list` reads pass `--team` on the server. Closed comparison rows come only from per-input `--state "Done,Canceled" --search` reads without `--max`; tpm-audit § 1.5 owns the comparison and truncation rules. Silence is not inheritance: a new mode adds its row.
+A Linear list read is workspace-wide unless it passes `--team`.
 
-| Path | Resolves | Filters |
-|------|----------|---------|
-| tpm-audit `project`, `team` | yes | § 1.3 projects; § 1.4 input and § 1.5 active/closed issue lists pass `--team`; § 1.4.1 comments cover inputs and candidates |
-| tpm-audit `issues`, Linear | yes | § 1.5 active/closed issue lists pass `--team`; § 1.4.1 comments cover inputs and candidates; a § 1.4 input issue outside scope halts |
-| tpm-audit `issues`, GitHub | n/a, reads nothing from Linear | n/a |
-| tpm-audit `single`, Linear | yes | § 1.3 projects; § 14 title list passes `--team` |
-| tpm-audit `single`, GitHub | n/a, reads nothing from Linear | n/a |
-| tpm-audit `project-order` | yes | § 11 initiatives and projects; per-project issue lists pass `--team` |
-| tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects; § 1.5 active/closed issue lists pass `--team` and comments cover inputs and candidates |
-| tpm-cycle-plan | **no** | **no**. § 1 picks the active project from `session-status`'s workspace-wide started projects, and every issue read is scoped to that pick. The § 1 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)) |
-| audit-issues §§ 7.2-7.5 | n/a, executes an artifact tpm-audit produced under its scope | reads rooted at an in-scope project or an issue this run mutated |
-| audit-issues § 1.2.1, § 3 | **no** | **no**. `session-status` selects projects workspace-wide. The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)) |
-| cycle-plan, roadmap-plan, roadmap-create | **no** | **no**. Project, initiative, and label reads span the workspace. roadmap-create's map read is scoped to the team it creates in |
-| research-spike | **no** | **no**. Project and label reads span the workspace. The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)) |
-| research-complete | n/a | reads are rooted at the caller's issue identifier |
-| research-issue | n/a | reads rooted at the caller's identifiers; the project it creates into is the caller's pick |
+- Each path states whether it resolves the team scope (tpm-audit § 1.1.1) and what it filters.
+- TPM comparison `issues list` reads pass `--team` on the server.
+- Closed comparison rows come only from per-input `--state "Done,Canceled" --search` reads without `--max`. tpm-audit § 1.5 owns the comparison and truncation rules.
+- Silence is not inheritance: a new mode adds its entry.
+
+The paths:
+
+- **tpm-audit `project`, `team`.** Resolves the scope.
+  - § 1.3 projects are filtered to it.
+  - § 1.4 input and § 1.5 active/closed issue lists pass `--team`.
+  - § 1.4.1 comments cover inputs and candidates.
+- **tpm-audit `issues`, Linear.** Resolves the scope.
+  - § 1.5 active/closed issue lists pass `--team`.
+  - § 1.4.1 comments cover inputs and candidates.
+  - A § 1.4 input issue outside the scope halts.
+- **tpm-audit `issues`, GitHub.** Not applicable: it reads nothing from Linear.
+- **tpm-audit `single`, Linear.** Resolves the scope.
+  - § 1.3 projects are filtered to it.
+  - The § 14 title list passes `--team`.
+- **tpm-audit `single`, GitHub.** Not applicable: it reads nothing from Linear.
+- **tpm-audit `project-order`.** Resolves the scope.
+  - § 11 initiatives and projects are filtered to it.
+  - Per-project issue lists pass `--team`.
+- **tpm-roadmap-plan.** Resolves the scope, in § 1.1.
+  - § 1.4 projects are filtered to it.
+  - § 1.5 active/closed issue lists pass `--team`.
+  - § 1.5 comments cover inputs and candidates.
+- **tpm-cycle-plan.** **Does not** resolve the scope, and **does not** filter.
+  - § 1 picks the active project from `session-status`'s workspace-wide started projects.
+  - Every issue read is scoped to that pick.
+  - The § 1 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
+- **audit-issues §§ 7.2-7.5.** Not applicable: it executes an artifact tpm-audit produced under its scope.
+  - Reads are rooted at an in-scope project or an issue this run mutated.
+- **audit-issues § 1.2.1, § 3.** **Does not** resolve the scope, and **does not** filter.
+  - `session-status` selects projects workspace-wide.
+  - The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
+- **cycle-plan, roadmap-plan, roadmap-create.** **Do not** resolve the scope, and **do not** filter.
+  - Project, initiative, and label reads span the workspace.
+  - roadmap-create's map read is scoped to the team it creates in.
+- **research-spike.** **Does not** resolve the scope, and **does not** filter.
+  - Project and label reads span the workspace.
+  - The § 3 map read is scoped to `LINEAR_TEAM` ([project-map.md § Audit](project-map.md#audit)).
+- **research-complete.** Not applicable.
+  - Reads are rooted at the caller's issue identifier.
+- **research-issue.** Not applicable.
+  - Reads are rooted at the caller's identifiers.
+  - The project it creates into is the caller's pick.

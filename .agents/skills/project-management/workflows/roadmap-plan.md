@@ -14,9 +14,19 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 1. Extract `FEATURE`, `RESEARCH_PATH`, `SOURCE_ISSUE`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). `SOURCE_ISSUE` comes from `--source-issue` or source context passed by the caller.
 
-2. Resolve the `@[path]` input under [planning-artifacts.md](../references/planning-artifacts.md), using `SOURCE_ISSUE` for attachment lookup. Keep `RESEARCH_PATH` as its repository reference and `RESEARCH_READ_PATH` as the readable file in this checkout. Read that file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. When it is a SPEC, `SPEC_PATH` is the same reference and `SPEC_READ_PATH` is the same readable file.
+2. Resolve the `@[path]` input under [planning-artifacts.md](../references/planning-artifacts.md), using `SOURCE_ISSUE` for attachment lookup.
+   1. Keep `RESEARCH_PATH` as its repository reference and `RESEARCH_READ_PATH` as the readable file in this checkout.
+   2. Read that file and classify it:
+      - Research findings inform planning.
+      - A **finished plan**, a design document the user has reviewed that already settles approach and workstreams, is the SPEC.
+   3. When it is a SPEC, `SPEC_PATH` is the same reference and `SPEC_READ_PATH` is the same readable file.
 
-3. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate.
+3. With a SPEC:
+   - § 1 is satisfied.
+   - § 2 runs in slicing mode.
+   - The § 5 report presents the derived issues against it.
+   - The spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue, unconditionally. The § 6 research question offers the reference to pre-existing issues only.
+   - The spec skips no approval and no creation gate.
 
 4. With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
 
@@ -24,7 +34,10 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
    .agents/skills/linear/scripts/linear.sh issues get [ORIGIN_ISSUE_ID]
    ```
 
-5. With `--planner-handoff`, read the file and keep its plan path, recommended approach, proposed phases or issue candidates, any TPM handoff recommendation, and referenced issue or project names. Never run `planner` from here. A handoff skips no gate, no TPM step, no approval, and no creation confirmation.
+5. With `--planner-handoff`:
+   - Read the file and keep its plan path, recommended approach, proposed phases or issue candidates, any TPM handoff recommendation, and referenced issue or project names.
+   - Never run `planner` from here.
+   - A handoff skips no gate, no TPM step, no approval, and no creation confirmation.
 
 ---
 
@@ -34,27 +47,51 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 1. Search existing artifacts first — the tracker's issues and their attachments, and this session's `tmp/plans/` and `tmp/roadmaps/`, by `FEATURE` keywords.
 
-2. Then classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies; a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --max --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2; do not query a hard-coded fallback label.
+2. Then classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument.
+   - When several match, ask the user which applies.
+   - A selected artifact ends this gate → § 2.
+   - Only when the disk search finds nothing, query the tracker:
+     1. Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --max --format=safe`).
+     2. Then query it.
+     3. If no unambiguous assignable label exists, skip the lookup and continue to § 2. Do not query a hard-coded fallback label.
 
    ```bash
    .agents/skills/linear/scripts/linear.sh issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
    ```
 
-3. Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` and its issue ID as `SOURCE_ISSUE`. Resolve and classify it under the Inputs rule before § 2. An inline or local-disk selection uses the same rule to set the readable path; skipped research leaves the path fields null.
+3. Filter for `FEATURE` keywords.
+   - A match supplies `RESEARCH_PATH` and its issue ID as `SOURCE_ISSUE`.
+   - Resolve and classify it under the Inputs rule before § 2.
+   - An inline or local-disk selection uses the same rule to set the readable path.
+   - Skipped research leaves the path fields null.
 
 With no match, ask the user:
 
-- **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `tmp/plans/[FEATURE]-research.md`, and continue with it as `RESEARCH_PATH`. No tracker issue; the file reaches the issues the plan creates under [planning-artifacts.md](../references/planning-artifacts.md).
-- **Delegate a research spike** — standalone tracked research. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4` passing `auto_execute` explicitly: `true` has the researcher run it now, `false` leaves the issue ready for later pickup — never omit the value. Capture the returned `RESEARCH_ISSUE_ID` and re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH] --source-issue [RESEARCH_ISSUE_ID]` once findings exist.
+- **Research inline (recommended)**:
+  1. Gather what the plan needs now (code, vendor docs, web).
+  2. Write findings to `tmp/plans/[FEATURE]-research.md`.
+  3. Continue with it as `RESEARCH_PATH`.
+  - No tracker issue. The file reaches the issues the plan creates under [planning-artifacts.md](../references/planning-artifacts.md).
+- **Delegate a research spike**, standalone tracked research:
+  1. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4` passing `auto_execute` explicitly: `true` has the researcher run it now, `false` leaves the issue ready for later pickup. Never omit the value.
+  2. Capture the returned `RESEARCH_ISSUE_ID`.
+  3. Re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH] --source-issue [RESEARCH_ISSUE_ID]` once findings exist.
 - **Skip research** — set `RESEARCH_PATH` = null → § 2.
 
 ---
 
 ## 2. Consult Specialists
 
-**Slicing mode (SPEC in hand):** delegate one slicing pass per repo or domain the spec touches — at most one specialist each; the template's `Spec:` line carries the binding constraint, and they cut the spec's phases into PR-sized issues with real estimates and conflicts read from the code. Slicing delegates receive the same `<delegation_format>` below and answer in its table.
+**Slicing mode (SPEC in hand):**
 
-Otherwise, match `FEATURE` keywords and component paths to domain agents (project-configurable) to get `RELEVANT_AGENTS[]`, then delegate to each in parallel.
+- Delegate one slicing pass per repo or domain the spec touches, at most one specialist each.
+- The template's `Spec:` line carries the binding constraint. They cut the spec's phases into PR-sized issues with real estimates and conflicts read from the code.
+- Slicing delegates receive the same `<delegation_format>` below and answer in its table.
+
+Otherwise:
+
+1. Match `FEATURE` keywords and component paths to domain agents (project-configurable) to get `RELEVANT_AGENTS[]`.
+2. Delegate to each in parallel.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the caller's own checkout, main checkout included.
 
@@ -88,7 +125,10 @@ Build `PROPOSED_ISSUES[]` per [roadmap-plan-input.md](../schemas/roadmap-plan-in
 
 ## 3. TPM Analysis
 
-Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `research_read_path` from `RESEARCH_READ_PATH`, `research_source_issue` from `SOURCE_ISSUE`, `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent; `spec_path` is set exactly when the artifact in hand — the `@[path]` input or the § 1 disk match — classified as a SPEC). Delegate to a one-shot `[TPM]` sub-agent.
+1. Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `research_read_path` from `RESEARCH_READ_PATH`, `research_source_issue` from `SOURCE_ISSUE`, `origin_issue`, `planner_handoff`, and `spec_path`.
+   - Each is null when absent.
+   - `spec_path` is set exactly when the artifact in hand, the `@[path]` input or the § 1 disk match, classified as a SPEC.
+2. Delegate to a one-shot `[TPM]` sub-agent.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the caller's own checkout, main checkout included.
 
@@ -99,7 +139,8 @@ Arguments: --input [INPUT_FILE_PATH]
 Worktree: [WORKTREE_PATH]
 </delegation_format>
 
-Materialize the returned artifact the same way as audit-issues § 4.2. Read `hierarchy_recommendation`, `cross_project_findings`, `architecture_gaps[]`, `organized_issues[]`, and `project_placement`.
+1. Materialize the returned artifact the same way as audit-issues § 4.2.
+2. Read `hierarchy_recommendation`, `cross_project_findings`, `architecture_gaps[]`, `organized_issues[]`, and `project_placement`.
 
 ---
 
@@ -135,17 +176,30 @@ Report as JSON:
 
 1. Keep the result as `ARCH_FINDINGS` (`validated_findings[]`, `deprecated_code[]`, `breaking_changes[]`, `required_refactors[]`, `risk_assessment`, `out_of_spec[]`).
 
-2. Fold verified findings into the TPM JSON before presenting: scope additions go into the issues they belong to, ordering fixes into relations, and any standalone addition — a `required_refactors[]` prerequisite, a second-opinion finding, or a needed `out_of_spec[]` entry — re-enters § 2's delegation table for its domain and § 3; the fold never invents issue fields.
+2. Fold verified findings into the TPM JSON before presenting:
+   - Scope additions go into the issues they belong to.
+   - Ordering fixes go into relations.
+   - Any standalone addition, a `required_refactors[]` prerequisite, a second-opinion finding, or a needed `out_of_spec[]` entry, re-enters § 2's delegation table for its domain and § 3.
+   - The fold never invents issue fields.
 
-3. In spec mode the fold stops at the spec's boundary, with the same exception the TPM applies: an `out_of_spec[]` entry the spec's own deliverables need re-enters planning like any standalone addition; every other entry becomes an `architecture_gaps[]` row with `recommendation: out_of_scope` — never `defer` — naming the spec in `reason`, rendered under ARCHITECTURE GAPS in § 5.
+3. In spec mode the fold stops at the spec's boundary, with the same exception the TPM applies:
+   - An `out_of_spec[]` entry the spec's own deliverables need re-enters planning like any standalone addition.
+   - Every other entry becomes an `architecture_gaps[]` row with `recommendation: out_of_scope`, never `defer`, naming the spec in `reason`, rendered under ARCHITECTURE GAPS in § 5.
 
-4. For a major feature — any of: ten or more creation entries, entries spanning two or more `agent:*` domains, a listed breaking change, or `risk_assessment.level: high` — planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode) on the plan here and fold verified findings in the same way. When the skill is not installed, or is installed but cannot complete (no eligible target, missing external CLI, timeout, nonzero exit), the § 5 report's `Cross-model review` field reads `unavailable — <reason>` and the workflow continues. A SPEC that already passed external review skips this (`skipped — reviewed spec`); a non-major plan records `skipped — not required`.
+4. For a major feature planned without an already-reviewed spec, also run the `second-opinion` skill (challenge mode) on the plan here and fold verified findings in the same way.
+   - A major feature is any of: ten or more creation entries, entries spanning two or more `agent:*` domains, a listed breaking change, or `risk_assessment.level: high`.
+   - When the skill is not installed, or is installed but cannot complete (no eligible target, missing external CLI, timeout, nonzero exit), the § 5 report's `Cross-model review` field reads `unavailable — <reason>` and the workflow continues.
+   - A SPEC that already passed external review skips this (`skipped — reviewed spec`).
+   - A non-major plan records `skipped — not required`.
 
 ---
 
 ## 5. Present and Approve
 
-Render ISSUES from `organized_issues[]` creation-bearing entries only — `action: "create"` and `"supersede"` (the replacement; its cancellation also appears under EXISTING WORK AFFECTED) — `skip` entries (TPM duplicates, creation-bar failures, user removals) render under DECLINED, and `project: "Deferred"` entries under ARCHITECTURE GAPS with Recommendation `defer`. Render every `cross_project_findings.conflicts[]` entry in the Conflicts table.
+- Render ISSUES from `organized_issues[]` creation-bearing entries only: `action: "create"` and `"supersede"` (the replacement; its cancellation also appears under EXISTING WORK AFFECTED).
+- Render `skip` entries (TPM duplicates, creation-bar failures, user removals) under DECLINED.
+- Render `project: "Deferred"` entries under ARCHITECTURE GAPS with Recommendation `defer`.
+- Render every `cross_project_findings.conflicts[]` entry in the Conflicts table.
 
 <output_format>
 
@@ -191,25 +245,45 @@ Research: [RESEARCH_PATH or "None — less informed planning"] · Origin: [ORIGI
 - [TITLE] — [which creation-bar test it fails]
 </output_format>
 
-Ask: `Approve` | `Adjust` | `Cancel`. `Cancel` discards the plan and ends the workflow. **`Approve` authorizes the presented creation set** — the ISSUES table, which never contains `Deferred`-project entries — **and the EXISTING WORK AFFECTED actions as presented**: `roadmap create` § 2 executes unchanged actions and as-presented conflict resolutions without re-asking, and audit-issues § 6 re-asks only items that changed after it. `Adjust` takes free text, updates the in-memory TPM JSON, and re-presents:
+Ask: `Approve` | `Adjust` | `Cancel`.
 
-| Adjustment | JSON update |
-|------------|-------------|
-| Remove an issue | `action: "skip"`, recompute dependent priorities |
-| Change priority / estimate | Update the field |
-| Change agent | Update `agent`, recompute the bundle parent's agent label, recompute affected `labels[]` through the taxonomy |
-| Add an issue | Re-run `roadmap plan` |
+- `Cancel` discards the plan and ends the workflow.
+- **`Approve` authorizes the presented creation set** (the ISSUES table, which never contains `Deferred`-project entries) **and the EXISTING WORK AFFECTED actions as presented**:
+  - `roadmap create` § 2 executes unchanged actions and as-presented conflict resolutions without re-asking.
+  - audit-issues § 6 re-asks only items that changed after it.
+- `Adjust` takes free text, updates the in-memory TPM JSON, and re-presents. The JSON update per adjustment:
+  - **Remove an issue:**
+    1. Set `action: "skip"`.
+    2. Recompute dependent priorities.
+  - **Change priority / estimate:** update the field.
+  - **Change agent:**
+    1. Update `agent`.
+    2. Recompute the bundle parent's agent label.
+    3. Recompute affected `labels[]` through the taxonomy.
+  - **Add an issue:** re-run `roadmap plan`.
 
 ---
 
 ## 6. Save the Plan
 
-Write both files. Keep a set `context.research_source_issue`: the research/spec input already sits on that issue. When the plan is published to an origin issue and the field is null, the input is uploaded there with the plan: set the field to the origin issue before saving.
+Write both files.
+
+- Keep a set `context.research_source_issue`: the research/spec input already sits on that issue.
+- When the plan is published to an origin issue and the field is null, the input is uploaded there with the plan: set the field to the origin issue before saving.
+
+The two files:
 
 - `tmp/roadmaps/roadmap-[FEATURE].json` — the TPM JSON with § 5 adjustments applied and `context.plan_path` set to the markdown path.
 - `tmp/roadmaps/roadmap-[FEATURE].md` — the § 5 report, plus a `**Plan data**: tmp/roadmaps/roadmap-[FEATURE].json` line and the creation date.
 
-Set `CREATE_COMMAND` to `roadmap create @tmp/roadmaps/roadmap-[FEATURE].md`. Apply [publish-artifacts.md](publish-artifacts.md) to both files and the research/spec inputs. With an origin issue, reconcile and publish both files there, uploading a research/spec input only when its `context.research_source_issue` was null and otherwise linking the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on its source issue; only after success, append `--source-issue [ORIGIN_ISSUE.id]`. Without one, carry the repository files and command into roadmap-create, whose § 5 publishes them. Return `CREATE_COMMAND` unchanged in the report and to the managed caller.
+1. Set `CREATE_COMMAND` to `roadmap create @tmp/roadmaps/roadmap-[FEATURE].md`.
+2. Apply [publish-artifacts.md](publish-artifacts.md) to both files and the research/spec inputs.
+   - With an origin issue:
+     1. Reconcile and publish both files there.
+     2. Upload a research/spec input only when its `context.research_source_issue` was null. Otherwise link the `url` that [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) selects for its path on its source issue.
+     3. Only after success, append `--source-issue [ORIGIN_ISSUE.id]`.
+   - Without one, carry the repository files and command into roadmap-create, whose § 5 publishes them.
+3. Return `CREATE_COMMAND` unchanged in the report and to the managed caller.
 
 <output_format>
 
@@ -223,4 +297,5 @@ Set `CREATE_COMMAND` to `roadmap create @tmp/roadmaps/roadmap-[FEATURE].md`. App
 
 ## 7. Return State
 
-**If managed**: return to the parent workflow's next section. **If standalone**: session complete.
+- **If managed**: return to the parent workflow's next section.
+- **If standalone**: session complete.

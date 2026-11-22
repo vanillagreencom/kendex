@@ -15,15 +15,26 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 }
 ```
 
-`tracker` echoes the resolved execution tracker; `repository` is github-only. In github mode `projects_analyzed` is empty and every project-placement field is null or omitted.
+- `tracker` echoes the resolved execution tracker. `repository` is github-only.
+- In github mode `projects_analyzed` is empty and every project-placement field is null or omitted.
 
 ## Label Contract
 
-`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels. `create_fields.reach`, `create_fields.supersession` and `create_fields.review_born` are required on every `create`, and `create_fields.symptom` on a `review_born` create at priority 2 — an output missing one is invalid. A proposal-backed create also requires `create_fields.source`, which must agree with `review_born`. Where each value comes from is [tpm-audit](../workflows/tpm-audit.md) § 10 or [proposal-sweep](../workflows/proposal-sweep.md) § 2.
+- `create_fields.labels[]` is the complete set to pass to create after preflight.
+- A label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement).
+- `agent` and `agent_label` are derived fields, never sufficient for mutation.
+- All labels are issue labels.
+- `create_fields.reach`, `create_fields.supersession` and `create_fields.review_born` are required on every `create`, and `create_fields.symptom` on a `review_born` create at priority 2. An output missing one is invalid.
+- A proposal-backed create also requires `create_fields.source`, which must agree with `review_born`.
+- Where each value comes from is [tpm-audit](../workflows/tpm-audit.md) § 10 or [proposal-sweep](../workflows/proposal-sweep.md) § 2.
 
 ## PROJECT Mode
 
-Mode `team` uses this same shape with `project: null` — its input set is the whole team rather than one project. A per-issue findings row carries its issue and no project. The project-scoped arrays name their own: `wrong_project[]` in `from`/`to`, `project_dependency_issues[]` in `from_project`/`to_project`, `project_recommendations[]` in its project fields, and `architecture_gaps[].project_placement` for a gap. A consumer needing a project for a per-issue finding reads it from the issue.
+Mode `team` uses this same shape with `project: null`: its input set is the whole team rather than one project.
+
+- A per-issue findings row carries its issue and no project.
+- The project-scoped arrays name their own: `wrong_project[]` in `from`/`to`, `project_dependency_issues[]` in `from_project`/`to_project`, `project_recommendations[]` in its project fields, and `architecture_gaps[].project_placement` for a gap.
+- A consumer needing a project for a per-issue finding reads it from the issue.
 
 ```json
 {
@@ -49,22 +60,29 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
 | `add_relations[]` | `from`, `rel`, `to`, `reason` |
 | `remove_relations[]` | `from`, `rel`, `to`, `uuid`, `reason` |
 | `priority_misalignment[]` | `id`, `title`, `current`, `should_be`, `reason` |
-| `agent_mismatch[]` | `id`, `title`, `current`, `should_be`, `reason`, `signals[]` (`replace_category: agent` implied) |
-| `label_cooccurrence[]` | `id`, `title`, `present`, `missing`, `reason` (`add` implied) |
+| `agent_mismatch[]` | `id`, `title`, `current`, `should_be`, `reason`, `signals[]` |
+| `label_cooccurrence[]` | `id`, `title`, `present`, `missing`, `reason` |
 | `duplicates[]` | `keep`, `remove`, `reason` |
 | `obsolete[]` | `issue`, `reason`, `confidence`, `evidence` = `{completed_by[], files_verified[], deliverables_checked[]}` or `{decision_eliminated: true, decision_ref, eliminated_pattern}` or `{below_bar: true, test, who_hits_it}` |
 | `wrong_project[]` | `issue`, `title`, `from`, `to`, `to_id`, `reason` |
-| `hierarchy[]` | `action` (`make_parent`\|`make_child`\|`bundle`\|`update_parent_desc`\|`close_parent`), `issue`\|`issues[]`, `parent`\|`children[]`\|`new_parent_title`, `reason`. `close_parent` names a non-terminal parent whose children are all Done or Canceled; a parent with an open child never takes it |
+| `hierarchy[]` | `action` (`make_parent`\|`make_child`\|`bundle`\|`update_parent_desc`\|`close_parent`), `issue`\|`issues[]`, `parent`\|`children[]`\|`new_parent_title`, `reason` |
 | `combine[]` | `target`, `absorb[]`, `reason` |
 | `ready_to_schedule[]` | `id`, `title`, `cleared_blockers[]`, `reason` |
-| `declined[]` | `title`, `reason` — one line naming the creation-bar test it failed |
+| `declined[]` | `title`, `reason` |
 | `project_dependency_issues[]` | `from_project`, `to_project`, `current_relation`, `should_be`, `reason` |
-| `project_needed[]` | `issue`\|`index`, `title`, `name`, `kind`, `initiative`, `ends_when`\|`role`, `reason` — the project an item needs when [project-map.md § Routing](../references/project-map.md#routing) routes it to none |
-| `map_findings[]` | A `projects audit` finding, as that command prints it, that maps to no other array ([project-map.md § Audit](../references/project-map.md#audit)) |
+| `project_needed[]` | `issue`\|`index`, `title`, `name`, `kind`, `initiative`, `ends_when`\|`role`, `reason` |
+| `map_findings[]` | A `projects audit` finding, as that command prints it |
+
+- `agent_mismatch[]` implies `replace_category: agent`.
+- `label_cooccurrence[]` implies `add`.
+- `hierarchy[]`: `close_parent` names a non-terminal parent whose children are all Done or Canceled. A parent with an open child never takes it.
+- `declined[]`: `reason` is one line naming the creation-bar test it failed.
+- `project_needed[]` names the project an item needs when [project-map.md § Routing](../references/project-map.md#routing) routes it to none.
+- `map_findings[]` holds each finding that maps to no other array ([project-map.md § Audit](../references/project-map.md#audit)).
 
 In a map repository, `wrong_project[].to` is a map project and `to_id` its id from `projects audit`'s `projects[]`; a `from` of null is an item with no project.
 
-**`ready_to_schedule[]`** is a scheduling signal only — an active issue whose blockers are all Done or Cancelled. A completed-blocker relation is satisfied history, never stale metadata (the owning rule: linear SKILL.md § Blocked Label vs Issue Relations).
+**`ready_to_schedule[]`** is a scheduling signal only — an active issue whose blockers are all Done or Cancelled.
 
 **`analysis[]`** holds non-actionable observations only; anything actionable must use a structured field.
 
@@ -87,11 +105,17 @@ In a map repository, `wrong_project[].to` is a map project and `to_id` its id fr
 
 `recommended_issue.labels[]` is the full issue-label set, not just an agent label.
 
-**`project_recommendations[]`**: `create_project` with `name`, `description`, `rationale`, `gaps_to_include[]`, `suggested_state`, `priority`, `initiative{}`, `dependencies{}`; or `reopen_project` with `project`, `project_id`, `current_state`, `target_state`, `rationale`, `gaps_requiring_reopen[]`.
+**`project_recommendations[]`** holds one of:
+
+- `create_project` with `name`, `description`, `rationale`, `gaps_to_include[]`, `suggested_state`, `priority`, `initiative{}`, `dependencies{}`.
+- `reopen_project` with `project`, `project_id`, `current_state`, `target_state`, `rationale`, `gaps_requiring_reopen[]`.
 
 ## ISSUE Mode
 
-Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` row, whose action is `create` or `skip` ([tpm-audit](../workflows/tpm-audit.md) § 14). A `create` populates `supersedes[]` with the filing's confirmed entries; an identifier absent from the open-titles read is reported as not touched in `reason` and omitted from that array.
+Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` row, whose action is `create` or `skip` ([tpm-audit](../workflows/tpm-audit.md) § 14).
+
+- A `create` populates `supersedes[]` with the filing's confirmed entries.
+- An identifier absent from the open-titles read is reported as not touched in `reason` and omitted from that array.
 
 ```json
 {
@@ -142,13 +166,31 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
 }
 ```
 
-`supersedes[].when` is `now`, `partial`, or `at-completion`, with execution owned by [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations). An entry without `when` retains the existing full-supersession behavior (`now`). A partial entry's `reason` names the scope transferred and the remainder to retain.
+`supersedes[].when` is `now`, `partial`, or `at-completion`, with execution owned by [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations).
 
-`create_fields.supersession` is the filing's supersession record, written from the comparison that admitted it ([tpm-audit](../workflows/tpm-audit.md) § 6.1 and § 14). It holds one entry per open item the filing supersedes, duplicates or re-scopes: the action, then the identifier, as `superseded [ISSUE_ID]`, `duplicate [ISSUE_ID]` or `re-scoped [ISSUE_ID]`, entries separated by `;`, each optionally followed by a short note without `;`. With no such item it is `none found; searched: [TERMS]`, naming the terms that comparison searched. audit-issues § 7.2 writes it as the body's `**Supersession**:` line, and `issues create` refuses a body without one.
+- An entry without `when` retains the existing full-supersession behavior (`now`).
+- A partial entry's `reason` names the scope transferred and the remainder to retain.
 
-`proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to its authorized tracker comment, preserved author, original `Source:` value, and merged source PR or landed source commit. `source` must match `create_fields.source`. `repository` and `comment_url` are required for GitHub and null for Linear. Linear receives a parent reply. GitHub receives a new issue comment that cites `comment_url`. Cancellation-sweep rows have no proposal source.
+`create_fields.supersession` is the filing's supersession record, written from the comparison that admitted it ([tpm-audit](../workflows/tpm-audit.md) § 6.1 and § 14).
 
-`source_repository` is required for both trackers and echoes the brief's `Source repository`. Each entry carries exactly one non-null source reference: `source_pr` from `Source PR:` for a merged PR, or `source_commit` from `Source commit:` for a commit verified on the fetched base branch. The other field is null or omitted. The source PR or commit belongs to `source_repository`.
+- It holds one entry per open item the filing supersedes, duplicates or re-scopes: the action, then the identifier, as `superseded [ISSUE_ID]`, `duplicate [ISSUE_ID]` or `re-scoped [ISSUE_ID]`.
+- Entries are separated by `;`, each optionally followed by a short note without `;`.
+- With no such item it is `none found; searched: [TERMS]`, naming the terms that comparison searched.
+- audit-issues § 7.2 writes it as the body's `**Supersession**:` line, and `issues create` refuses a body without one.
+
+`proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to its authorized tracker comment, preserved author, original `Source:` value, and merged source PR or landed source commit.
+
+- `source` must match `create_fields.source`.
+- `repository` and `comment_url` are required for GitHub and null for Linear.
+- Linear receives a parent reply.
+- GitHub receives a new issue comment that cites `comment_url`.
+- Cancellation-sweep rows have no proposal source.
+
+`source_repository` is required for both trackers and echoes the brief's `Source repository`.
+
+- Each entry carries exactly one non-null source reference: `source_pr` from `Source PR:` for a merged PR, or `source_commit` from `Source commit:` for a commit verified on the fetched base branch.
+- The other field is null or omitted.
+- The source PR or commit belongs to `source_repository`.
 
 | Action | Meaning |
 |--------|---------|
@@ -162,7 +204,19 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
 
 In a map repository a `create` whose item routes to no map project has `project.recommended: null` and a top-level `project_needed[]` row, in the PROJECT mode shape, keyed by its `index`; audit-issues holds that create.
 
-`approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6): the top-level flag binds the file to a same-session plan-gate approval, and `reapprove: true` marks an entry changed since; a normalizer that drops one must drop both. Both default false/absent outside roadmap-create. Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed. `create_fields.labels[]` is required for `create`; `label_updates[].final_labels[]` is required when `mode` is `replace_all`. A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
+`approved_at_plan_gate` and `reapprove` travel together (roadmap-create § 4.2, audit-issues § 6):
+
+- The top-level flag binds the file to a same-session plan-gate approval.
+- `reapprove: true` marks an entry changed since.
+- A normalizer that drops one must drop both.
+- Both default false/absent outside roadmap-create.
+
+Other row rules:
+
+- Every `skip` carries a one-line `reason` naming the duplicate, the covering issue, or the creation-bar test it failed.
+- `create_fields.labels[]` is required for `create`.
+- `label_updates[].final_labels[]` is required when `mode` is `replace_all`.
+- A `label_cooccurrence.missing` with no `label_updates[]` entry is treated as `mode: add` for that label's category.
 
 A `Post-merge:` box in `create_fields.description` follows [filing.md](../references/filing.md) § Done when and writes its deadline as `Deadline: +Nh`, the form both `issues create` and `issues complete` accept.
 
@@ -175,7 +229,9 @@ A `Post-merge:` box in `create_fields.description` follows [filing.md](../refere
 | `make_child` | `#N` | Sub-issue of issue #N in this batch |
 | `make_child` | null | Sub-issue of the input's `parent_issue` |
 
-A parent created or promoted this way is a container: no requirements, no pull request, and the one Done-when box of [parent-issue-template.md](../templates/parent-issue-template.md). A run files a parent, a `create` with `create_fields.is_bundle_parent: true`, only for the parts of one deliverable accepted as one thing ([filing.md](../references/filing.md) § Group by project or label, never by parent), never for a run's subject. Which creates are children, of an existing issue or of a bundle parent in the same batch, is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
+- A parent created or promoted this way is a container: no requirements, no pull request, and the one Done-when box of [parent-issue-template.md](../templates/parent-issue-template.md).
+- A run files a parent, a `create` with `create_fields.is_bundle_parent: true`, only for the parts of one deliverable accepted as one thing ([filing.md](../references/filing.md) § Group by project or label, never by parent), never for a run's subject.
+- Which creates are children, of an existing issue or of a bundle parent in the same batch, is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates).
 
 ## PROJECT-ORDER Mode
 
@@ -208,10 +264,16 @@ A parent created or promoted this way is a container: no requirements, no pull r
 }
 ```
 
-`layer` is the architectural position: 0 foundation (no dependencies), 1 core infrastructure, 2 features, 3 integration and testing, 4 polish and release. `sort_order` is relative **within one state column only**; compute positions and spacing per column.
+- `layer` is the architectural position: 0 foundation (no dependencies), 1 core infrastructure, 2 features, 3 integration and testing, 4 polish and release.
+- `sort_order` is relative **within one state column only**. Compute positions and spacing per column.
 
 `recommended_order[]` is diagnostic: it records the § 11 step 3 ordering in full. The caller executes `reorder[]`, `complete_candidates[]`, and `recommended_next` — never this array.
 
-`ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`. `complete_candidates[]` and `complete_held[]` hold started projects with no open item left ([project-map.md § Project kinds](../references/project-map.md#project-kinds)). `complete_held[]` lists each such map deliverable without that evidence, with the map's `ends_when` (null when the map states none); the caller reports it and never completes it ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
+- `ends_when_evidence` states what shows a map deliverable's `ends_when` holds, and is null for a project off the map or under `map-absent`.
+- `complete_candidates[]` and `complete_held[]` hold started projects with no open item left ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
+- `complete_held[]` lists each such map deliverable without that evidence, with the map's `ends_when` (null when the map states none). The caller reports it and never completes it ([project-map.md § Project kinds](../references/project-map.md#project-kinds)).
 
-`recommended_next.blocked_by_active` is the started project that holds activation, the active project of [project-map.md § Project kinds](../references/project-map.md#project-kinds) that this run does not complete, and null when none does. A standing map project is never in it. The caller activates `recommended_next` only when this field is null.
+`recommended_next.blocked_by_active` is the started project that holds activation, the active project of [project-map.md § Project kinds](../references/project-map.md#project-kinds) that this run does not complete, and null when none does.
+
+- A standing map project is never in it.
+- The caller activates `recommended_next` only when this field is null.

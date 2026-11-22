@@ -4,15 +4,28 @@ Analyze proposed issues for cross-project conflicts, architecture coverage, and 
 
 **Do NOT modify the tracker.** Return recommendations only.
 
-**Hold the creation bar** ([filing.md](../references/filing.md) § Creation bar). A proposed issue survives only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and it is finishable as written. Everything else gets `action: "skip"` with a one-line reason.
+**Hold the creation bar** ([filing.md](../references/filing.md) § Creation bar).
+
+- A proposed issue survives only when it changes what a user or operator experiences (or blocks work that does), nothing open already covers it, and it is finishable as written.
+- Everything else gets `action: "skip"` with a one-line reason.
 
 ## Input
 
 `--input [file_path]` per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md). Extract `FEATURE`, `RESEARCH_PATH`, `RESEARCH_READ_PATH`, `RESEARCH_SOURCE_ISSUE`, `SPEC_PATH`, `ORIGIN_ISSUE`, `PLANNER_HANDOFF`, `PROPOSED_ISSUES[]`.
 
-**Spec mode** (`SPEC_PATH` set): the plan's decisions are binding. Organize, dedupe, order, and bundle its work and check it against the tracker, but never change its approach, drop a workstream it names, or add scope beyond its phases — an architecture gap is `include` only when the spec's own deliverables need it; anything outside the spec's phases is `out_of_scope` — never `defer` — with the spec named in `reason`. Disagreement with the spec is a `declined`/`reason` note for the caller, never a silent reorganization.
+**Spec mode** (`SPEC_PATH` set): the plan's decisions are binding.
 
-A `PLANNER_HANDOFF` is technical context, not a project-management decision. Preserve its plan path, proposed phases, and explicit TPM questions; let it inform placement, grouping, dependency order, and the roadmap-vs-child-issue call, and verify every claim against current issue and project state.
+- Organize, dedupe, order, and bundle its work and check it against the tracker.
+- Never change its approach, drop a workstream it names, or add scope beyond its phases.
+- An architecture gap is `include` only when the spec's own deliverables need it.
+- Anything outside the spec's phases is `out_of_scope`, never `defer`, with the spec named in `reason`.
+- Disagreement with the spec is a `declined`/`reason` note for the caller, never a silent reorganization.
+
+A `PLANNER_HANDOFF` is technical context, not a project-management decision.
+
+- Preserve its plan path, proposed phases, and explicit TPM questions.
+- Let it inform placement, grouping, dependency order, and the roadmap-vs-child-issue call.
+- Verify every claim against current issue and project state.
 
 ---
 
@@ -20,7 +33,12 @@ A `PLANNER_HANDOFF` is technical context, not a project-management decision. Pre
 
 ### 1.1 Team Scope
 
-Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read. Pass `--team` on every comparison `issues list` to filter on the server. Drop out-of-scope rows from the § 1.4 project list and the § 1.5 comparison set before comparison. § 2 proposes changes only to active rows; closed rows remain historical comparison evidence per tpm-audit § 1.1. roadmap-create executes the recommendations.
+1. Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before any Linear read.
+2. Pass `--team` on every comparison `issues list` to filter on the server.
+3. Drop out-of-scope rows from the § 1.4 project list and the § 1.5 comparison set before comparison.
+
+- § 2 proposes changes only to active rows. Closed rows remain historical comparison evidence per tpm-audit § 1.1.
+- roadmap-create executes the recommendations.
 
 ### 1.2 Label Policy
 
@@ -28,7 +46,12 @@ Resolve `TEAM` and `TEAM_PREFIX` per [tpm-audit](tpm-audit.md) § 1.1.1 before a
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
 ```
 
-Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)). A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules) — never work around it with a partial read. Every issue emitted must carry a `labels[]` set valid against that inventory. Select each issue's set by [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set), deriving the agent label when only `agent` was supplied; flag the gap in `reason` rather than inventing a label when a required category cannot be determined. Never emit a parent/group label.
+- Load the project taxonomy and `PM_LABEL_RULES` alongside it ([labels.md § Preflight](../references/labels.md#preflight)).
+- A failed Linear read on this or any later step halts the analysis with its diagnostic ([SKILL.md](../SKILL.md) § Execution Rules). Never work around it with a partial read.
+- Every issue emitted must carry a `labels[]` set valid against that inventory.
+- Select each issue's set by [labels.md § Creates Carry the Full Set](../references/labels.md#creates-carry-the-full-set), deriving the agent label when only `agent` was supplied.
+- When a required category cannot be determined, flag the gap in `reason` rather than inventing a label.
+- Never emit a parent/group label.
 
 ### 1.3 Origin Issue
 
@@ -44,7 +67,9 @@ Decide whether the proposed issues decompose the origin issue's scope (`children
 
 ### 1.4 Projects
 
-Fetch every project in ONE command. `projects list --state` matches one state type exactly and never a comma list, so omit it and read each row's own `state`; ignore `canceled` rows and every row § 1.1 scopes out.
+- Fetch every project in ONE command.
+- `projects list --state` matches one state type exactly and never a comma list, so omit it and read each row's own `state`.
+- Ignore `canceled` rows and every row § 1.1 scopes out.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects list --max
@@ -68,35 +93,68 @@ For each proposed issue, read closed comparison evidence with its title, target,
 .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --all-projects --state "Done,Canceled" --search "[TERMS]"
 ```
 
-Use the comparison and truncation rules in [tpm-audit](tpm-audit.md) § 1.5: no `--max` on closed searches, no whole-history read, and no disposition on closed rows. Retain closed results and any truncation notice per proposed issue. A truncated search limits that issue's findings to returned evidence and never proves no match. Verifying rows retain their live checks on the merged item (tpm-audit § 1.1).
+Use the comparison and truncation rules in [tpm-audit](tpm-audit.md) § 1.5: no `--max` on closed searches, no whole-history read, and no disposition on closed rows.
 
-Before § 2, select candidate duplicate, relation, and supersession rows from the fetched bodies and select active cancellation candidates. Read comments once per tpm-audit § 1.4.1: one `comments bulk-list` for the existing input issues from § 1.3 and the candidate rows, including closed candidates and every active row proposed for cancellation. When that set is empty, because § 1.3 was skipped and no row is a candidate, make no call, per the same section. Do not read every comparison row's comments. Use the comments to verify recommendations before assigning an action.
+- Retain closed results and any truncation notice per proposed issue.
+- A truncated search limits that issue's findings to returned evidence and never proves no match.
+- Verifying rows retain their live checks on the merged item (tpm-audit § 1.1).
+
+Before § 2:
+
+1. Select candidate duplicate, relation, and supersession rows from the fetched bodies.
+2. Select active cancellation candidates.
+3. Read comments once per tpm-audit § 1.4.1: one `comments bulk-list` for the existing input issues from § 1.3 and the candidate rows, including closed candidates and every active row proposed for cancellation.
+   - When that set is empty, because § 1.3 was skipped and no row is a candidate, make no call, per the same section.
+   - Do not read every comparison row's comments.
+4. Use the comments to verify recommendations before assigning an action.
 
 ### 1.6 Research
 
-**Skip if** `RESEARCH_PATH` is null. Read `RESEARCH_READ_PATH` and extract the technical findings, recommendations, and constraints; in spec mode, also its phases and per-phase deliverables, which bound § 3 and § 4. Keep `RESEARCH_PATH` and `RESEARCH_SOURCE_ISSUE` for output under [planning-artifacts.md](../references/planning-artifacts.md).
+**Skip if** `RESEARCH_PATH` is null.
+
+1. Read `RESEARCH_READ_PATH` and extract the technical findings, recommendations, and constraints.
+2. In spec mode, also extract its phases and per-phase deliverables, which bound § 3 and § 4.
+3. Keep `RESEARCH_PATH` and `RESEARCH_SOURCE_ISSUE` for output under [planning-artifacts.md](../references/planning-artifacts.md).
 
 ---
 
 ## 2. Cross-Project Analysis
 
-Compare each proposed issue against the active comparison set and its own closed search results. Same title and scope is an exact duplicate (`skip`, reference the existing one); overlapping scope with a different approach means `expand` an active existing issue or descope the proposal; a proposal that entirely replaces an active existing issue means `cancel` the old one. Done and Canceled rows are evidence only: never expand, cancel, or supersede them. Record in `cross_project_findings.duplicates[]` and state any limit from that proposal's closed search.
+Compare each proposed issue against the active comparison set and its own closed search results.
 
-For each `conflicts_with` entry, search existing issues and code for the target and assess whether the proposal breaks existing work, collides with work in progress, or can coexist with modification. Record in `cross_project_findings.conflicts[]`.
+- Same title and scope is an exact duplicate: `skip`, and reference the existing one.
+- Overlapping scope with a different approach means `expand` an active existing issue or descope the proposal.
+- A proposal that entirely replaces an active existing issue means `cancel` the old one.
+- Done and Canceled rows are evidence only: never expand, cancel, or supersede them.
+- Record in `cross_project_findings.duplicates[]`, and state any limit from that proposal's closed search.
 
-Then place the roadmap: use an existing planned or backlog project when its scope matches, otherwise recommend a new one. For a new project, set relations from dependency direction — consuming another project's output is `blocked-by`, enabling one is `blocks`, no dependency means no relation:
+For each `conflicts_with` entry:
+
+1. Search existing issues and code for the target.
+2. Assess whether the proposal breaks existing work, collides with work in progress, or can coexist with modification.
+3. Record in `cross_project_findings.conflicts[]`.
+
+Then place the roadmap:
+
+- Use an existing planned or backlog project when its scope matches. Otherwise recommend a new one.
+- For a new project, set relations from dependency direction: consuming another project's output is `blocked-by`, enabling one is `blocks`, no dependency means no relation:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh projects list-dependencies [PROJECT_ID]
 ```
 
-Store in `project_placement`. Retain each proposal's comparison result and actual title, target and component terms for its `organized_issues[].supersession` record, as [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues defines. Use the rows and searches already read in § 1.5; write no tracker disposition here.
+- Store in `project_placement`.
+- Retain each proposal's comparison result and actual title, target and component terms for its `organized_issues[].supersession` record, as [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues defines.
+- Use the rows and searches already read in § 1.5.
+- Write no tracker disposition here.
 
 ---
 
 ## 3. Architecture Coverage
 
-Read the architecture docs relevant to `FEATURE` and the proposed agents, and extract module paths, named components, interfaces, and performance targets. For each in-scope component, check whether a proposed issue covers it, an existing issue covers it, or it is already implemented:
+1. Read the architecture docs relevant to `FEATURE` and the proposed agents.
+2. Extract module paths, named components, interfaces, and performance targets.
+3. For each in-scope component, check whether a proposed issue covers it, an existing issue covers it, or it is already implemented:
 
 ```bash
 ls "[MODULE_PATH]"
@@ -104,37 +162,77 @@ rg -n "pub struct|pub fn|pub trait|export class|export function" "[MODULE_PATH]"
 rg -n "TODO|unimplemented|todo|FIXME" "[MODULE_PATH]"
 ```
 
-Record uncovered components in `architecture_gaps[]`: `include` when the gap blocks proposed work or the feature needs it (add to `organized_issues[]`), `defer` when it is nice-to-have (add with `project: "Deferred"`), `out_of_scope` when unrelated to the feature (record the gap only). A gap that clears none of the creation-bar tests is `out_of_scope`, not a deferred issue.
+Record uncovered components in `architecture_gaps[]`:
+
+- `include` when the gap blocks proposed work or the feature needs it. Add it to `organized_issues[]`.
+- `defer` when it is nice-to-have. Add it with `project: "Deferred"`.
+- `out_of_scope` when unrelated to the feature. Record the gap only.
+- A gap that clears none of the creation-bar tests is `out_of_scope`, not a deferred issue.
 
 ---
 
 ## 4. Organize
 
-1. **Dependencies.** Map `depends_on_proposed` title references to concrete issues, identify chains, and error on a cycle.
+1. **Dependencies.**
+   - Map `depends_on_proposed` title references to concrete issues.
+   - Identify chains.
+   - Error on a cycle.
 
-2. **Bundles.** Related items share the roadmap's project, or one label where no project says what they share, under the grouping rule of [filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent). Give a bundle a parent only when its items are the parts of one deliverable accepted as one thing, titled for that deliverable and built from [parent-issue-template.md](../templates/parent-issue-template.md). Work that would naturally be one PR/CI run is one leaf item with an internal checklist, not a parent. The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
+2. **Bundles.**
+   - Related items share the roadmap's project, or one label where no project says what they share, under the grouping rule of [filing.md § Group by project or label, never by parent](../references/filing.md#group-by-project-or-label-never-by-parent).
+   - Give a bundle a parent only when its items are the parts of one deliverable accepted as one thing, titled for that deliverable and built from [parent-issue-template.md](../templates/parent-issue-template.md).
+   - Work that would naturally be one PR/CI run is one leaf item with an internal checklist, not a parent.
+   - The parent takes the shared agent label, or the project's multi-agent label when children span 2+ agents, plus a full `labels[]` set that passes the label policy.
 
-3. **Relation level.** Keep each valid relation under linear SKILL.md § Blocked Label vs Issue Relations. Repair only a relation that rule refuses; see [dependencies.md](../references/dependencies.md).
+3. **Relation level.**
+   - Keep each valid relation under linear SKILL.md § Blocked Label vs Issue Relations.
+   - Repair only a relation that rule refuses; see [dependencies.md](../references/dependencies.md).
 
-4. **Order.** Assign a layer (L0 foundation → L1 infrastructure → L2 features → L3 integration → L4 testing and polish) and compute `position = (layer x 100) + (enables_count x -10) + (estimate x 1)`. Lower is earlier.
+4. **Order.**
+   - Assign a layer (L0 foundation → L1 infrastructure → L2 features → L3 integration → L4 testing and polish).
+   - Compute `position = (layer x 100) + (enables_count x -10) + (estimate x 1)`. Lower is earlier.
 
-5. **Priority.** L0 on the critical path, or L0/L1 enabling 2+ issues → P1; L1/L2 → P2; L3 → P3; L4 → P4. An issue blocking a P1 becomes P1; apply transitively until stable. `critical_path: true` when an issue blocks 2+ others.
+5. **Priority.**
+   - L0 on the critical path, or L0/L1 enabling 2+ issues → P1; L1/L2 → P2; L3 → P3; L4 → P4.
+   - An issue blocking a P1 becomes P1. Apply transitively until stable.
+   - `critical_path: true` when an issue blocks 2+ others.
 
-Store in `organized_issues[]` sorted by `position`, each with `priority`, full `labels[]`, and `agent_label` for bundle parents. Include the comparison record on generated bundle parents and architecture-gap entries too: compare their scope and actual title/component terms against the same already-read rows before finalizing their action; make no new search or inventory read.
+Store in `organized_issues[]` sorted by `position`, each with `priority`, full `labels[]`, and `agent_label` for bundle parents. Include the comparison record on generated bundle parents and architecture-gap entries too:
+
+1. Compare their scope and actual title/component terms against the same already-read rows before finalizing their action.
+2. Make no new search or inventory read.
 
 ---
 
 ## 5. Validate
 
-For each organized issue, use its § 1.5 closed search results to find Done-state work covering the same scope. Match on title similarity plus description overlap, verify against the code that the implementation exists, and mark the proposal `obsolete` only at ≥90% confidence with evidence `{completed_by[], files_verified[]}`. Keep each finding within that issue's returned evidence and record any truncation. The completed issue takes no disposition.
+For each organized issue:
 
-Assign the action: obsolete → `cancel`; exact duplicate → `skip`; partial overlap recommending expansion → `expand`; replaces an existing issue → `supersede`; fails the creation bar → `skip` with the failing test named; otherwise `create`. Store `action`, `target` (the existing issue for `expand`/`supersede` or an exact-duplicate `skip`, else null), `reason`, and the matching `supersession` record per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues. The returned JSON retains this record on every entry so a later session needs no inferred search provenance.
+1. Use its § 1.5 closed search results to find Done-state work covering the same scope.
+2. Match on title similarity plus description overlap.
+3. Verify against the code that the implementation exists.
+4. Mark the proposal `obsolete` only at ≥90% confidence with evidence `{completed_by[], files_verified[]}`.
+5. Keep each finding within that issue's returned evidence and record any truncation.
+
+The completed issue takes no disposition.
+
+Assign the action:
+
+- Obsolete → `cancel`.
+- Exact duplicate → `skip`.
+- Partial overlap recommending expansion → `expand`.
+- Replaces an existing issue → `supersede`.
+- Fails the creation bar → `skip` with the failing test named.
+- Otherwise `create`.
+
+Store `action`, `target` (the existing issue for `expand`/`supersede` or an exact-duplicate `skip`, else null), `reason`, and the matching `supersession` record per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues. The returned JSON retains this record on every entry so a later session needs no inferred search provenance.
 
 ---
 
 ## 6. Return Output
 
-Build the JSON per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) and return it inline; do not write the file.
+1. Build the JSON per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md).
+2. Return it inline. Do not write the file.
 
 <output_format>
 File: tmp/roadmap-plan-YYYYMMDD-HHMMSS.json
