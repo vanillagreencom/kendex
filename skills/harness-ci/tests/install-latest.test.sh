@@ -13,6 +13,8 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$SKILL_DIR/tests/lib/workflow-edit.sh"
 # The install suite supplies its recording curl in TMP/bin. Each run starts
 # with an explicit environment and empty records, including for controls.
+# INSTALL_ARGS holds the installer's command-line arguments, empty by default.
+INSTALL_ARGS=()
 run_install_latest() { # SCRIPT RELEASE COMMIT FAIL_AT INSTALL_RC [GITHUB_ASSIGNMENT GH_ASSIGNMENT PIN TAGS]
   local script="$1" release="$2" commit="$3" fail_at="$4" install_rc="$5"
   local github_env="${6:-}" gh_env="${7:-}" token_env=()
@@ -37,11 +39,13 @@ run_install_latest() { # SCRIPT RELEASE COMMIT FAIL_AT INSTALL_RC [GITHUB_ASSIGN
   : >"$TMP/transport"
   : >"$TMP/github-path"
   rm -f "$TMP/install-log" "$TMP/install-env"
+  rm -rf -- "${TMP:?}/.local"
   OUT="" RC=0
   OUT="$(env -i PATH="$TMP/bin:$PATH" HOME="$TMP" \
     CALLS="$TMP/calls" TRANSPORT_LOG="$TMP/transport" INSTALL_LOG="$TMP/install-log" INSTALL_ENV="$TMP/install-env" \
     GITHUB_PATH="$TMP/github-path" RELEASE="$release" COMMIT="$commit" TAGS="$tags" FAIL_AT="$fail_at" INSTALL_RC="$install_rc" \
-    ${token_env[@]+"${token_env[@]}"} bash "$checkout/.agents/skills/$entry/scripts/install-latest.sh" 2>&1)" || RC=$?
+    ${token_env[@]+"${token_env[@]}"} bash "$checkout/.agents/skills/$entry/scripts/install-latest.sh" \
+    ${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"} 2>&1)" || RC=$?
 }
 
 # One assertion holds the transport, installer arguments, environment and
@@ -193,6 +197,41 @@ multiple stable tags on caller commit|{"tag_name":"v1.16.0"}|{"sha":"0123456789a
 caller tag read fails|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}|tags|0|1|kendex-install: cause=tags-read||||v1|0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0
 caller needs major tag|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|1|kendex-install: cause=caller-ref||||main|
 CASES
+
+# Asking for usage reads no network and writes nothing; any other argument
+# refuses before the first read. Every row runs against release fixtures a
+# full install would succeed on.
+arguments_hold() { # SCRIPT ARGS EXPECTED_RC KEY
+  read -r -a INSTALL_ARGS <<<"$2"
+  run_install_latest "$1" '{"tag_name":"v7.8.9"}' \
+    '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0
+  INSTALL_ARGS=()
+  [ "$RC" = "$3" ] && [ -n "$OUT" ] && [ ! -s "$TMP/calls" ] && [ ! -s "$TMP/github-path" ] &&
+    [ ! -e "$TMP/install-log" ] && [ ! -e "$TMP/.local" ] || return 1
+  [ -z "$4" ] || grep -qxF -- "$4" <<<"$OUT"
+}
+ARGUMENT_ROWS='help|--help|0|
+short help|-h|0|
+unknown argument|--version|1|kendex-install: cause=invalid-arguments
+help with another argument|--help v7.8.9|1|kendex-install: cause=invalid-arguments'
+while IFS='|' read -r name args expected key; do
+  if arguments_hold "$installer" "$args" "$expected" "$key"; then
+    ok "arguments: $name changes nothing"
+  else
+    bad "arguments: $name (exit=$RC)" "$OUT"
+  fi
+done <<<"$ARGUMENT_ROWS"
+# Control: without the argument check every row runs the full install.
+sandbox
+file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 1 '^if \[ "\$#" -gt 0 \]; then' \
+  's/^if .*; then/if false; then/'
+while IFS='|' read -r name args expected key; do
+  if ! arguments_hold "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" "$args" "$expected" "$key"; then
+    ok "control: ignored arguments fail the $name row"
+  else
+    bad "control: ignored arguments passed the $name row" "$OUT"
+  fi
+done <<<"$ARGUMENT_ROWS"
 
 # Existing external callers retain the old public entry point until 2.0.
 run_install_latest "$SKILL_DIR/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
