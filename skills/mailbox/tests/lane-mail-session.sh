@@ -216,6 +216,12 @@ assert_eq "rc=$RC called=$(called) lines=$(wc -l < "$CHECKOUT/tmp/lane-mail/CC-2
   "a local lane's directive is appended to its mailbox"
 
 echo "=== a hosted send goes to the provider its caller names ==="
+# The lane's worktree on the host DISK: the `.git` file git writes into a
+# linked worktree it registers, which a hosted send requires at its root.
+host_worktree() { # DISK
+  mkdir -p -- "$1$HOST_ROOT"
+  printf 'gitdir: /srv/clone/.git/worktrees/ssh-1\n' > "$1$HOST_ROOT/.git"
+}
 # LABEL|caller provider|send option|exit|refusal key
 for row in \
   "a named provider takes a directive|$HOST_PROVIDER|--directive|0|" \
@@ -225,6 +231,7 @@ for row in \
   IFS='|' read -r label provider opt want_rc key <<<"$row"
   rm -rf -- "$HOST_DISK" "$OTHER_HOST_DISK" "$CHECKOUT/tmp/lane-mail/SSH-1"
   rm -f -- "$TMP_ROOT/host.log" "$TMP_ROOT/other-host.log"
+  [[ -z "$provider" ]] || host_worktree "$HOST_DISK"
   read -r -a opts <<<"$opt"
   envs=()
   [[ -z "$provider" ]] || envs=(ORCH_LANE_HOST="$provider")
@@ -285,6 +292,7 @@ assert_eq "called=$(called)" "called=yes" "control: without the route check a se
 # shellcheck disable=SC2016
 mutant host-route '[ -n "${ORCH_LANE_HOST:-}" ] || refuse host-route-missing "$ITEM"' ':'
 rm -rf -- "$HOST_DISK" "$OTHER_HOST_DISK"
+host_worktree "$OTHER_HOST_DISK"
 lm -- send --item SSH-1 --directive --file "$TMP_ROOT/directive" --root "$HOST_ROOT" --host
 assert_eq "rc=$RC lines=$(wc -l < "$OTHER_HOST_DISK$HOST_ROOT/tmp/lane-mail/SSH-1/to-lane.jsonl" | tr -d ' ')" \
   "rc=0 lines=1" "control: without the route check a hosted send lands at the settings' provider"

@@ -138,7 +138,11 @@ Overseer side:
               the caller's environment, refused as host-route-missing where
               it names none. A recorded hosted mailbox refuses a local send
               as host-root-required. An unreadable fleet route refuses as
-              state-unreadable. With --session ID --account DIR, a Claude cloud
+              state-unreadable. A send to a lane whose worktree is not
+              there yet, a local --root that does not exist or a hosted
+              --root holding no `.git`, refuses as `worktree-absent=<item>
+              root=<root>` before it writes anything: send again after the
+              launch completes. With --session ID --account DIR, a Claude cloud
               session. A session route refuses as lane-foreign where --root
               is no checkout of this repository, and queues a --directive
               into the session through `claude -p --cloud SESSION
@@ -574,7 +578,8 @@ and refuses with its id. A mailbox read failure refuses the write as
 `write-failed` locally or `host-append` on a provider, never as an empty mailbox.
 
 A local --root used to append mailbox envelopes must be a checkout's physical
-top-level directory; another value refuses as `root-not-checkout`. Reads,
+top-level directory; another value refuses as `root-not-checkout`, but a
+lane send's root that does not exist is `worktree-absent`. Reads,
 including their cursor and watcher records, keep their existing root behavior.
 A send writes a mailbox of the caller's own repository alone, its own lanes
 and its own overseer mailbox: a checkout whose common root is not the caller's
@@ -599,7 +604,7 @@ command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
-host-root-required, host-route-missing, state-unreadable, channel-session,
+host-root-required, host-route-missing, state-unreadable, worktree-absent, channel-session,
 session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
 value follows ` id=` rather than `=`, so it names the earlier envelope through
 the same field the receipt above prints; `resolved-already`,
@@ -723,6 +728,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     not-owner-ask) text='reserve keeps an owner ask open past its deadline, and the id names another message, of the kind above: a notice, an answer, a directive, a private record, or an ask a peer or nobody is to answer. None of them has a deadline a default would close.' ;;
     cursor-lowered) text='to-lane.cursor stood past the complete lines the mailbox holds, a count an --ack wrote before it was clamped, so it moved down to the count above. Every line up to that count stays read, and every line after it, the next line written included, is handed over.' ;;
     ack-clamped) text='The --ack count is past the complete lines the mailbox holds, so the count acknowledged is the one above: those lines, or fewer where an unread halt stands among them. A line written later stays unread for the next read.' ;;
+    worktree-absent) text='No worktree stands at the lane root named above: the launch has not created it yet, or a close removed it. Nothing was written, since a mailbox made there first takes the path the launch'"'"'s worktree create needs and the lane cannot start. Send again after the launch completes.' ;;
     host-root-required) text='Send to the recorded mailbox with --host --root and set ORCH_LANE_HOST to the provider named above.' ;;
     state-unreadable) text='The fleet record could not give a mailbox route for this lane. Check the fleet record and send again.' ;;
     host-route-missing) text='A hosted send goes to the provider its caller names, and ORCH_LANE_HOST is empty in this environment, so nothing says which host holds the lane'"'"'s mailbox. Nothing was sent. Run it with ORCH_LANE_HOST set to the host the lane record names, as orch passes it.' ;;
@@ -1602,6 +1608,15 @@ lm_root_own() { # ROOT own|checkout
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
 }
+# A lane's mailbox sits in its worktree, and the launch's `worktree create`
+# refuses an item path that stands and is not a registered worktree, so a send
+# that made the mailbox first would keep the lane from starting. A local root
+# that is not there is refused here; one that stands must be a checkout, which
+# lm_root_own judges. The hosted root is judged in the send verb, on its host.
+if [ "$VERB" = send ] && [ "$ITEM" != overseer ] && [ "$HOST" -eq 0 ] && [ "$SESSION_GIVEN" -eq 0 ] &&
+   [ ! -e "$ROOT" ] && [ ! -L "$ROOT" ]; then
+  REFUSE_EXTRA="root=$ROOT" refuse worktree-absent "$ITEM"
+fi
 if [ "$HOST" -eq 0 ]; then
   if [ "$VERB" = peer ] || { [[ "$OPTS_GIVEN" == *"--root$NL"* ]] && [ "$SESSION_GIVEN" -eq 0 ]; }; then
     lm_root_own "$ROOT" checkout
@@ -2694,6 +2709,13 @@ case "$VERB" in
     # The delivery-id check runs under the lock on the disk that holds the
     # file; a provider's append takes no guard, so a hosted send carries none.
     [ -z "$DELIVERY_ID" ] || [ "$HOST" -eq 0 ] || refuse option-conflict '--host,--delivery-id'
+    # The provider's append makes the mailbox's directories, the root among
+    # them, so a hosted lane root is judged first by the `.git` file git writes
+    # into a linked worktree it registers: every hosted lane runs in one.
+    if [ "$HOST" -eq 1 ] && [ "$ITEM" != overseer ]; then
+      lm_fetch "$ROOT/.git" "$WORK_DIR/root.git"
+      [ "$LM_FETCH_ABSENT" -eq 0 ] || REFUSE_EXTRA="root=$ROOT" refuse worktree-absent "$ITEM"
+    fi
     # The envelope is built first and judged whole; lm_envelope writes the id
     # into the work directory and prints the line, so a refusal below leaves
     # nothing in any mailbox.
