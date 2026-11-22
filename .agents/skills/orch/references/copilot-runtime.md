@@ -8,27 +8,28 @@ A Copilot account is a directory the CLI runs under as `COPILOT_HOME`, such as `
 
 | File in the account | What reads it | Without it |
 |---|---|---|
-| `config.json` with a stored login | The CLI signs in with it. The account listing reads the login's token for GitHub's usage endpoint: from `config.json`, or from the Linux Secret Service through `secret-tool` where the CLI keeps the token in a keyring. It reads no other platform's store, such as the macOS Keychain. | The launch has no identity. |
-| `settings.json` with `statusLine` | `"statusLine": {"type": "command", "command": "<repo>/.agents/skills/orch/scripts/copilot-statusline", "refreshInterval": 30}`: the command an executable file, the interval a whole number of seconds under 120. The command writes the session record the turn end reads where the context extension recorded no reading. That record is also the one that carries `allow_all_enabled` (§ Allow-all blocked by policy). The header of `scripts/copilot-statusline` states the record. | No fallback reading, and no reader can report an allow-all block. |
-| `extensions/kendex-lane-context/extension.mjs` and `enabledFeatureFlags.EXTENSIONS` in `settings.json` | The context extension, which hands each `session.usage_info` reading to the turn end. The launch preparation installs it and sets the flag true where the flag is absent, for every local or hosted lane and controller. | A launch whose `settings.json` sets `EXTENSIONS` false is admitted only where the status line above writes the record. |
+| `config.json` with a stored login | The CLI signs in with it, and the account listing reads its token. | The launch has no identity. |
+| `settings.json` with `statusLine` | The status-line command, which writes the session record. | No fallback reading, and no reader can report an allow-all block. |
+| `extensions/kendex-lane-context/extension.mjs` and `enabledFeatureFlags.EXTENSIONS` in `settings.json` | The context extension, which hands each `session.usage_info` reading to the turn end. | A launch whose `settings.json` sets `EXTENSIONS` false is admitted only where the status line above writes the record. |
 | The three lane-mail hooks | `lane-mail-check`, `lane-mail-compact` and `lane-mail-start`, in the worktree's `.github/hooks` or the account's `hooks`. | The launch fails as `unsupported-for-oversee harness=copilot` ([lane-directive.md § Launch gate](lane-directive.md#launch-gate)). |
+
+- **The login's token.** The account listing reads the login's token for GitHub's usage endpoint: from `config.json`, or from the Linux Secret Service through `secret-tool` where the CLI keeps the token in a keyring. It reads no other platform's store, such as the macOS Keychain.
+- **The status line.** Set `"statusLine": {"type": "command", "command": "<repo>/.agents/skills/orch/scripts/copilot-statusline", "refreshInterval": 30}`. The command is an executable file, and the interval a whole number of seconds under 120.
+- **The session record.** The status-line command writes the session record the turn end reads where the context extension recorded no reading. That record is also the one that carries `allow_all_enabled` (§ Allow-all blocked by policy). The header of `scripts/copilot-statusline` states the record.
+- **The context extension.** The launch preparation installs it and sets `enabledFeatureFlags.EXTENSIONS` true where the flag is absent, for every local or hosted lane and controller.
 
 A Copilot lane uses the `copilot-home` the provider's `create` supplies. The default `.copilot` is available on a provider that supports home-relative transfers, and a confined provider needs a usable named home. See [Launch on a provider](../schemas/lane-host.md#launch-on-a-provider). The launch installs the context reader there through the provider's files (agent-runtime `trust.rs` `hosted_copilot_reader`), then reads the three lane-mail hooks on the host. It judges no settings layer on the host.
 
 Each hook refusal reads `unsupported-for-oversee harness=copilot reason=[REASON]` (agent-runtime `effects/prepare/gate.rs`):
 
-| Reason | Repair |
-|---|---|
-| `no-context-hooks` | Neither the worktree's `.github/hooks` nor the home's `hooks` holds all three hooks, each a `.sh` beside its `.json`. Install them: add `copilot` to `[install] harnesses` in `kendex.toml` and run `kendex apply`. |
-| `hooks-unreadable` | The hook file `file=` names could not be read, and `cause=` says why. Make that file readable. |
-| `hooks-disabled` | A settings layer or a registration `file=` names switches the hooks off (`kendex hooks-off`). Remove that switch. |
-| `hooks-unjudged` | `kendex hooks-off` could not answer, with its `exit=` and `cause=`. Repair the `kendex` install. |
+| Reason | Meaning | Repair |
+|---|---|---|
+| `no-context-hooks` | Neither the worktree's `.github/hooks` nor the home's `hooks` holds all three hooks, each a `.sh` beside its `.json`. | Install them: add `copilot` to `[install] harnesses` in `kendex.toml` and run `kendex apply`. |
+| `hooks-unreadable` | The hook file `file=` names could not be read, and `cause=` says why. | Make that file readable. |
+| `hooks-disabled` | A settings layer or a registration `file=` names switches the hooks off (`kendex hooks-off`). | Remove that switch. |
+| `hooks-unjudged` | `kendex hooks-off` could not answer, with its `exit=` and `cause=`. | Repair the `kendex` install. |
 
 A local launch whose Copilot home cannot be resolved fails `home-unresolved harness=copilot`. Name an `account` in the `launch-lane` request, or run the overseer with `COPILOT_HOME` or `HOME` set.
-
-## Confinement
-
-A Copilot lane runs unconfined on every host under the cause `token-on-session-bus` ([agent-runtime SKILL.md § Confinement](../../agent-runtime/SKILL.md#confinement)).
 
 ## Session store
 
@@ -126,4 +127,11 @@ No live session has proved these:
 | A Copilot overseer succession | Follow [Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption) with a Copilot successor; confirm its publication and a fresh context reading. |
 | Allow-all takes effect on the first fleet lane | Launch the first fleet lane with `--allow-all`; a tool call runs with no prompt, and the record under `<account>/lane-status/` reads `allow_all_enabled: true`. |
 | A policy block reaches the record, and the record stays fresh at a waiting prompt | On an account whose policy blocks allow-all, launch with `--allow-all`; the record reads `allow_all_enabled: false` and its `written_at` keeps moving while the prompt waits. |
-| A built-in task-tool subagent's calls carry their own session id, not the lead's. The hooks tell the lead by the call's session id alone (orch `turnend/mod.rs` `caller`). A call from a session no lead record names is handed no mail and marks none read. A call carrying the lead's session id is read as the lead's: it is handed the lead's mail after its tool call, which marks it read, and under a halt it is shown the read that clears it. Until this is proved, do not assume that mail the hooks marked read while a built-in subagent ran reached the lead. | In a lane whose lead starts a built-in task-tool subagent, the subagent's tool-call payloads carry a session id that no record under `~/.cache/lane-mail/copilot-leads` names. |
+| A built-in task-tool subagent's calls carry their own session id, not the lead's. | In a lane whose lead starts a built-in task-tool subagent, the subagent's tool-call payloads carry a session id that no record under `~/.cache/lane-mail/copilot-leads` names. |
+
+The hooks tell the lead by the call's session id alone (orch `turnend/mod.rs` `caller`):
+
+- A call from a session no lead record names is handed no mail and marks none read.
+- A call carrying the lead's session id is read as the lead's: it is handed the lead's mail after its tool call, which marks it read, and under a halt it is shown the read that clears it.
+
+Until the built-in subagent row is proved, do not assume that mail the hooks marked read while a built-in subagent ran reached the lead.

@@ -15,13 +15,6 @@ Read when an orch session decides whether a question reaches the owner, asks the
 
 The default and any other value: [settings.md](settings.md).
 
-## Standing rulings
-
-| Ruling | What it means for a session |
-|--------|------------------------------|
-| Technical decisions belong to the session | The session selects the mechanism |
-| A question is asked only where § Ask set puts it | Everything else is decided and recorded per § Recording |
-
 ## Ask set
 
 These questions reach the user in both modes, and nothing else does. Word them with communication's [questions](../../communication/references/questions.md) for the mode.
@@ -35,7 +28,13 @@ These questions reach the user in both modes, and nothing else does. Word them w
 | The way forward after a stopped review of a plan or design document | [oversee-events.md § End spirals](oversee-events.md#end-spirals) |
 | An action spending the owner's standing outside this repository | A lane's question about filing or commenting in another repository's tracker, or about retiring a reviewer |
 
-A gate outside the set keeps its own option list in both modes and asks only where its autonomy key is `ask`: `ORCH_MERGE_AUTONOMY` for merge consent, `PM_CREATE_AUTONOMY` for the audit's creations and every row of its Cancel section, `ORCH_DECISION_MODE` for the post-PR choices. Under a composed `auto`, those creations and cancellations are recorded per § Recording instead of asked. An overseer's heartbeat audit uses [heartbeat-audit.md](heartbeat-audit.md)'s authorization limits in both modes. Other audits ask under their own key alone, so a composed `auto` covers their filings wherever their tracker resolves. The last row above is a lane's question.
+A gate outside the set keeps its own option list in both modes and asks only where its autonomy key is `ask`:
+
+- `ORCH_MERGE_AUTONOMY` for merge consent.
+- `PM_CREATE_AUTONOMY` for the audit's creations and every row of its Cancel section. Under a composed `auto`, those creations and cancellations are recorded per § Recording instead of asked.
+- `ORCH_DECISION_MODE` for the post-PR choices.
+
+An overseer's heartbeat audit uses [heartbeat-audit.md](heartbeat-audit.md)'s authorization limits in both modes. Other audits ask under their own key alone, so a composed `auto` covers their filings wherever their tracker resolves. The last row above is a lane's question.
 
 ## Composition
 
@@ -69,7 +68,10 @@ An item ask requires `--do [TEXT]`, worded as communication's [action requests](
 
 ### Answers
 
-The person answers with one comment on the issue and changes no state. `ok`, `yes` or `done`, alone and in any case, accepts the recommendation or approves the action a reserved ask proposes. Any other text is a change request: the overseer acts on it and answers on the same issue. Each long watch pass reads that person's new comments after the ask's comment.
+- The person answers with one comment on the issue and changes no state.
+- `ok`, `yes` or `done`, alone and in any case, accepts the recommendation or approves the action a reserved ask proposes.
+- Any other text is a change request: the overseer acts on it and answers on the same issue.
+- Each long watch pass reads that person's new comments after the ask's comment.
 
 The owner can answer more than once. Each answer lands as `lane-mail send --item overseer --re [ASK_ID] --file [PATH]` with its own delivery id. The ask stays open in `lane-mail pending --item overseer --to owner`. The watch in [oversee.md](../workflows/oversee.md) § 4 reports each answer as `owner-ask-resolved` with its answer id.
 
@@ -86,13 +88,19 @@ For an owner request the relay delivered, `--ref [ENVELOPE_ID]` on the reply bin
 
 ### Reserved and draft asks
 
-A decision the owner's authority reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, anything sent as the owner, and an x.0 release of kendex or an app. A send as the owner on Slack or by email is a draft ask, below. Every other send as the owner, such as a GitHub or Linear comment, is a reserved ask. No deadline closes a reserved ask: close it once you hold the owner's answer.
+A decision the owner's authority reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, anything sent as the owner, and an x.0 release of kendex or an app.
+
+- A send as the owner on Slack or by email is a draft ask, below. Every other send as the owner, such as a GitHub or Linear comment, is a reserved ask.
+- No deadline closes a reserved ask: close it once you hold the owner's answer.
 
 ```bash
 .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --reserved --file [PATH]
 ```
 
-A request for the owner to approve a Slack message or an email sent as the owner is a draft ask: `--draft [PATH]` in place of `--options` and `--recommend`, the draft file in the shape `lane-mail --help` gives. Send the message only when the approval for that ask id names the `text_hash` that `lane-mail pending --item overseer --to owner` prints. An edited draft is a new ask.
+A request for the owner to approve a Slack message or an email sent as the owner is a draft ask: `--draft [PATH]` in place of `--options` and `--recommend`, the draft file in the shape `lane-mail --help` gives.
+
+- Send the message only when the approval for that ask id names the `text_hash` that `lane-mail pending --item overseer --to owner` prints.
+- An edited draft is a new ask.
 
 ## Opening question
 
@@ -102,7 +110,10 @@ A session that starts with no item to work, no handoff file, no owner note and n
 .agents/skills/mailbox/scripts/lane-mail ask --item overseer --to owner --options idle,tracker --recommend idle --effect none --file [PATH]
 ```
 
-`idle` stands at the deadline and launches nothing. The overseer keeps its watch running until the owner writes. That empty queue is not [oversee.md § 5](../workflows/oversee.md#5-stop)'s Stop. `tracker` takes work as [oversee.md § 2](../workflows/oversee.md#2-select-work) selects it. A reply naming issue ids or describing the work is an answer. Close the ask with `resolve` once you hold the ruling. A reply after the deadline arrives as an owner note.
+- `idle` stands at the deadline and launches nothing. The overseer keeps its watch running until the owner writes. That empty queue is not [oversee.md § 5](../workflows/oversee.md#5-stop)'s Stop.
+- `tracker` takes work as [oversee.md § 2](../workflows/oversee.md#2-select-work) selects it.
+- A reply naming issue ids or describing the work is an answer. Close the ask with `resolve` once you hold the ruling.
+- A reply after the deadline arrives as an owner note.
 
 ## Status report
 
@@ -147,11 +158,16 @@ Progress reports and scheduled messages go to every open text medium (Slack and 
 
 | Message | Where | When | Mention |
 |---|---|---|---|
-| Decision needed | Slack and chat | When the question exists, through § Owner asks. A question only in the chat has not been asked. | Yes |
-| Critical notice | Slack and chat | A failure that stops work, loses data or money, or needs the owner within the hour. | Yes |
-| Progress report | Slack and chat | The Jarvis session every hour. An overseer every `ORCH_REPORT_EVERY_MINUTES` where that is set ([guide](../kendex.settings.toml.example)), while the session runs. Whether a succession writes one: [oversee.md § Succession](../workflows/oversee.md#succession). The quiet hours and the morning brief after them: [oversee-events.md, `report-due`](oversee-events.md#report-due). The brief takes communication's [summary shape](../../communication/references/reports.md#summary-shape). | No |
-| Reply | As communication's medium rule requires | A reply on Slack shows in the chat as at most one line naming the post. | No |
+| Decision needed | Slack and chat | When the question exists, through § Owner asks | Yes |
+| Critical notice | Slack and chat | A failure that stops work, loses data or money, or needs the owner within the hour | Yes |
+| Progress report | Slack and chat | On the schedule below | No |
+| Reply | As communication's medium rule requires | — | No |
 
+- A question only in the chat has not been asked.
+- The Jarvis session sends a progress report every hour. An overseer sends one every `ORCH_REPORT_EVERY_MINUTES` where that is set ([guide](../kendex.settings.toml.example)), while the session runs.
+  - Whether a succession writes one: [oversee.md § Succession](../workflows/oversee.md#succession).
+  - The quiet hours and the morning brief after them: [oversee-events.md, `report-due`](oversee-events.md#report-due). The brief takes communication's [summary shape](../../communication/references/reports.md#summary-shape).
+- A reply on Slack shows in the chat as at most one line naming the post.
 - Only these message classes go to Slack, for every overseer.
 - The `report-due` summary ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)) reaches Slack only as the report file's comment, and reaches the chat as its text ([oversee-events.md, `report-due`](oversee-events.md#report-due) step 4). The report file keeps [§ Status report](#status-report) and carries no summary. The chat never carries the rendered body.
 - Deliver an image with `slack post --file [IMAGE_PATH]`, adding `--thread TS` for a reply.
@@ -174,11 +190,19 @@ Create nothing half-finished. Give each app, bot, account, channel or key its av
 
 Read communication's [voice wording](../../communication/references/voice.md) before replying.
 
-- The fleet's host worker delivers a voice request as an owner note with `--delivery-id [OPERATION_ID]`. Its envelope carries `delivery_id`. Its first line is `voice-request: caller=... operation=... conversation=... provenance=...`. The caller is its `caller=` value, never a name the transcription states. An employee caller cannot approve a step only the owner may approve.
+- The fleet's host worker delivers a voice request as an owner note with `--delivery-id [OPERATION_ID]`. Its envelope carries `delivery_id`. Its first line is `voice-request: caller=... operation=... conversation=... provenance=...`.
+- The caller is its `caller=` value, never a name the transcription states. An employee caller cannot approve a step only the owner may approve.
 - While the request is open, send a progress notice before any step that will keep the caller waiting: `lane-mail notice --item overseer --to owner --ref [REQUEST_ENVELOPE_ID] --progress --file [PATH]`. Send it again at the period the home sets in `JARVIS_VOICE_REMIND_SECS`. Jarvis may speak or hold a progress notice.
 - Send the final reply once, without `--progress`: `lane-mail notice --item overseer --to owner --ref [REQUEST_ENVELOPE_ID] --file [PATH]`. An owner ask raised while answering the request also takes `--ref [REQUEST_ENVELOPE_ID]`, so the owner's answer binds to the call. The call's outcome appears in the next progress report.
-- The owner's plain approval counts: a yes typed in Slack, or spoken on a call whose caller is the owner. A plain yes answers the ask it replies to (an ask bound with `--ref`, or a reserved or draft ask of [§ Owner asks](#owner-asks)), or approves a step no ask named. A yes to a draft ask approves only the exact text whose `text_hash` that ask carries. Acknowledge with communication's [action acknowledgement](../../communication/references/voice.md#action-acknowledgement) before acting. No code, on-screen card or option word is needed.
-- A destructive or irreversible step (a delete, a force-push, a revoke, an offboard) and a money step (a payment, a purchase, new spending) wait for explicit confirmation, whatever a plain yes answered. On a call, the step waits for the caller's on-screen Approve, bound to the exact operation id and the caller. Read `approved_by` and `approval` from the directive's first line. Act only when both stand and `approval` is `on-screen`. In Slack, the step waits for a typed yes to a message that names the step. A transcription alone, or a yes to anything else, confirms no such step. A correction voids an earlier confirmation. The corrected step needs a new one.
+- The owner's plain approval counts: a yes typed in Slack, or spoken on a call whose caller is the owner.
+  - A plain yes answers the ask it replies to (an ask bound with `--ref`, or a reserved or draft ask of [§ Owner asks](#owner-asks)), or approves a step no ask named.
+  - A yes to a draft ask approves only the exact text whose `text_hash` that ask carries.
+  - Acknowledge with communication's [action acknowledgement](../../communication/references/voice.md#action-acknowledgement) before acting. No code, on-screen card or option word is needed.
+- A destructive or irreversible step (a delete, a force-push, a revoke, an offboard) and a money step (a payment, a purchase, new spending) wait for explicit confirmation, whatever a plain yes answered.
+  - On a call, the step waits for the caller's on-screen Approve, bound to the exact operation id and the caller. Read `approved_by` and `approval` from the directive's first line. Act only when both stand and `approval` is `on-screen`.
+  - In Slack, the step waits for a typed yes to a message that names the step.
+  - A transcription alone, or a yes to anything else, confirms no such step.
+  - A correction voids an earlier confirmation. The corrected step needs a new one.
 
 ## Handoff
 
@@ -208,7 +232,10 @@ The handoff is a current snapshot. Its two sections carry what no other record h
 3. Write it with `.agents/skills/orch/scripts/orch-runtime handoff --fleet --body [BODY]`. Add `--handoff [PATH]` where the fleet uses another destination than `tmp/handoffs/OVERSEER-HANDOFF.md`. The writer replaces the whole snapshot and writes the fleet's current generation and the UTC time. It adds one State line naming every open lane ask the running lanes' mailboxes hold, each with its id and lane. It refuses a body that is the installed handoff, links to it or holds a Start here line.
 4. A failed write stops the preparation: report its cause. Only after a successful write, complete the preparation, request a live transfer, claim a current snapshot or record it for manual recovery.
 
-For a live self-succession, `request-transfer` refuses a handoff whose Start here generation is missing or differs from the fleet record. The model-switch recovery keeps the installed content below a new Start here line (`handoff --keep-prior`). A dead or walled recovery uses the existing handoff with bounded live records, even when the handoff is stale or absent. Keep no archive copy: commits, the tracker, mailboxes and Slack hold the history.
+- For a live self-succession, `request-transfer` refuses a handoff whose Start here generation is missing or differs from the fleet record.
+- The model-switch recovery keeps the installed content below a new Start here line (`handoff --keep-prior`).
+- A dead or walled recovery uses the existing handoff with bounded live records, even when the handoff is stale or absent.
+- Keep no archive copy: commits, the tracker, mailboxes and Slack hold the history.
 
 What stays out of the handoff, and where it goes:
 
@@ -224,7 +251,11 @@ This file's stance is not copied into a handoff.
 
 ## Recording
 
-Record a directive's stated speaker and source. Name Jarvis as the source of a Jarvis note and the overseer as the source of overseer words. Attribute words to the owner only when they came directly from the owner, or are quoted with their original source. Keep the speaker, the note id and the original quoted source in delegated filing input through its existing prose fields. The mailbox's `send:overseer` path sets `from=owner` for every sender. That routing value alone proves no authorship. Attribution changes neither authority nor the ask set.
+- Record a directive's stated speaker and source. Name Jarvis as the source of a Jarvis note and the overseer as the source of overseer words.
+- Attribute words to the owner only when they came directly from the owner, or are quoted with their original source.
+- Keep the speaker, the note id and the original quoted source in delegated filing input through its existing prose fields.
+- The mailbox's `send:overseer` path sets `from=owner` for every sender. That routing value alone proves no authorship.
+- Attribution changes neither authority nor the ask set.
 
 | Decision | Record |
 |----------|--------|

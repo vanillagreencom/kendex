@@ -34,37 +34,75 @@ The optional `finding_occurrences` holds the `result` of the pre-stamp `orch-run
 | Field | Required | Writer flag | Meaning |
 |-------|----------|-------------|---------|
 | `schema_version` | Yes | constant `2` | Record schema version |
-| `round_id` | Yes | `--round-id` | The round's token; equals the name's token and the round's `dev_round_id` |
+| `round_id` | Yes | `--round-id` | The round's token |
 | `issue` | Yes | `--issue` | The normalized workflow-state key |
-| `base_sha` | Yes | read from `HEAD` | The commit at delegation: exactly 40 lowercase hex characters. A reader refuses anything else, since the value reaches `git diff` as a revision argument |
-| `delegated_at` | Yes | read from the clock | The epoch second of the round's first stamp. An identical retry keeps it; identity compares every other field |
-| `adds` | Yes | `--adds "PATH [PATH...]"` | The exact protected additions the round may make; an empty array allows none |
-| `cut` | Yes | `--cut`, or the `round cut` verb | Whether the round was declared a branch cut. A reader takes a missing or `null` `cut` as `false` and refuses any other non-boolean |
-| `source` | Yes | `--source NAME` | The brief's `Source:` value; `null` without the flag |
-| `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation; `false` by default. A reader takes an absent field as `false` and refuses a non-boolean. It is a recorded fact, read only for a receipt whose run has no admitted entry ([dev-return.md § Fix-round run binding](dev-return.md#fix-round-run-binding)) |
-| `items` | Yes, at least one | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number, a unique integer. `text` is the item's formatted block verbatim. `reach` is the shipped producer, user action or fixture that reaches the finding |
+| `base_sha` | Yes | read from `HEAD` | The commit at delegation |
+| `delegated_at` | Yes | read from the clock | The epoch second of the round's first stamp |
+| `adds` | Yes | `--adds "PATH [PATH...]"` | The exact protected additions the round may make |
+| `cut` | Yes | `--cut`, or the `round cut` verb | Whether the round was declared a branch cut |
+| `source` | Yes | `--source NAME` | The brief's `Source:` value |
+| `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation |
+| `items` | Yes, at least one | `--items-file` or `--item N TEXT REACH` | The delegated items |
+
+- `round_id` equals the name's token and the round's `dev_round_id`.
+- `base_sha` is exactly 40 lowercase hex characters. A reader refuses anything else.
+- `delegated_at`: an identical retry keeps it; identity compares every other field.
+- `adds`: an empty array allows none.
+- `cut`: a reader takes a missing or `null` `cut` as `false` and refuses any other non-boolean.
+- `source` is `null` without the flag.
+- `pr_open`:
+  - It is `false` by default.
+  - A reader takes an absent field as `false` and refuses a non-boolean.
+  - It is a recorded fact, read only for a receipt whose run has no admitted entry ([dev-return.md § Fix-round run binding](dev-return.md#fix-round-run-binding)).
+- `items`:
+  - `n` is the delegated item number, a unique integer.
+  - `text` is the item's formatted block verbatim.
+  - `reach` is the shipped producer, user action or fixture that reaches the finding.
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent where every item's text is plain and `N` is a canonical integer. The writer takes one of the two. `orch-runtime round --text stamp --help` is the flag reference.
 
 ## Item text
 
-Stored `text` starts with `#[N] | [AGENT] | [LOCATION]` on its first line. Copy the header and that item's fields verbatim. Where the finding has an `owner`, put `Owner: [OWNER]` after `Recommendation:`; otherwise leave the line out. Leave out outer `---` separators, leading blank lines, code fences and delegation headings. The rule holds for `--items-file` and inline `--item` text alike.
+The rules below hold for `--items-file` and inline `--item` text alike:
+
+1. Stored `text` starts with `#[N] | [AGENT] | [LOCATION]` on its first line.
+2. Copy the header and that item's fields verbatim.
+3. Where the finding has an `owner`, put `Owner: [OWNER]` after `Recommendation:`; otherwise leave the line out.
+4. Leave out outer `---` separators, leading blank lines, code fences and delegation headings.
 
 Every item needs a `reach`, on both routes. It names what reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix.
 
-An item has two keys: its location, the text after the second `|` on the first line of `text`; and its optional owner, the text after `Owner:` on the first later line that starts with it. A ledger entry's keys are its `location` and optional `owner`. The runtime's `cause_keys` (`skills/orch/runtime/src/watch/lanes.rs`) reads them for the repeated-class count. It trims blanks at both ends. An empty, `TBD` or `general` value is no key. Case, path and symbol stay as written. An item matches an entry where they share any key, an owner equal to a location included.
+An item has two keys:
+
+- Its location: the text after the second `|` on the first line of `text`.
+- Its optional owner: the text after `Owner:` on the first later line that starts with it.
+
+A ledger entry's keys are its `location` and optional `owner`. The runtime's `cause_keys` (`skills/orch/runtime/src/watch/lanes.rs`) reads them for the repeated-class count:
+
+- It trims blanks at both ends.
+- An empty, `TBD` or `general` value is no key.
+- Case, path and symbol stay as written.
+- An item matches an entry where they share any key, an owner equal to a location included.
 
 An item that prescribes a mechanism tells the delegate to measure it first and to report a mismatch instead of complying.
 
-The writer refuses an empty reach, a review-thread node id and a short list of placeholder values, such as `the finding`, as `reach-refused`. That list is not a scan: the writer records any other value, and recording is not approval. The classes [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated.
+The writer refuses an empty reach, a review-thread node id and a short list of placeholder values, such as `the finding`, as `reach-refused`. That list is not a scan: the writer records any other value, and recording is not approval. The orchestrator judges the classes [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) excludes at Step 0 at disposition time, before any round is delegated.
 
-The brief's `Adds:` line and `--adds` carry the same blank-separated path list. A blank or a tab separates paths, so a path holding whitespace cannot be authorized. The writer and the reader refuse a path that is absolute, starts with `-`, holds whitespace, has an empty, `.` or `..` component, or repeats. Where the round may add nothing, leave out both the line and the flag.
+The brief's `Adds:` line and `--adds` carry the same blank-separated path list:
+
+- A blank or a tab separates paths, so a path holding whitespace cannot be authorized.
+- The writer and the reader refuse a path that is absolute, starts with `-`, holds whitespace, has an empty, `.` or `..` component, or repeats.
+- Where the round may add nothing, leave out both the line and the flag.
 
 ## Immutability and the live round
 
 The record is immutable per round. A second stamp of the round with any other field changed refuses `record-conflict`; an identical retry stands. Mint a new round instead, and never fall back to an unbound item list.
 
-The live round is the record of the round workflow state names as `dev_round_id`, while no receipt of that round stands beside it, bare or keyed by its run. During it, `record-push` refuses to push as `live-round`. Its `check-live-round` mode answers exit 3, which refuses the restack: a rebase would move the branch off the commit that round works from. The receipt landing ends the live round. So does a fresh `dev_round_id` whose token names no stamped record.
+The live round is the record of the round workflow state names as `dev_round_id`, while no receipt of that round stands beside it, bare or keyed by its run.
+
+- During it, `record-push` refuses to push as `live-round`.
+- Its `check-live-round` mode answers exit 3, which refuses the restack: a rebase would move the branch off the commit that round works from.
+- The receipt landing ends the live round. So does a fresh `dev_round_id` whose token names no stamped record.
 
 ## Declared cuts
 
@@ -72,7 +110,9 @@ A reviewer or the orchestrator chooses a cut, and the work it cuts, to bring the
 
 A cut item names work, not a finding, so its reach is the branch the round shrinks. The reach is still required, and the writer still refuses an empty or placeholder one.
 
-`--cut` records `"cut": true`. Acceptance checks the item set, the reach, the protected additions and immutability. A fresh retry repeats `--cut` and delegates the remaining work. Branch line counts do not decide acceptance.
+- `--cut` records `"cut": true`.
+- Acceptance checks the item set, the reach, the protected additions and immutability. Branch line counts do not decide acceptance.
+- A fresh retry repeats `--cut` and delegates the remaining work.
 
 ## Readers
 
@@ -87,9 +127,24 @@ The record is input, never a receipt. It proves what was delegated, not that any
 
 The gate checks additions only. Git's rename detection keeps moves and renames outside it.
 
-`base_sha` records the round's starting tree. A file already there is not this round's, so a later round does not refuse an addition an earlier round authorized. Where a rebase moved that commit off the branch, the receipt check projects it to a rewritten commit in `HEAD`'s ancestry. It reads the worktree-private ordered `kendex-rebase-map` whole, through the runtime's one map reader. Where no map file stands, it follows the item record's `rebase_map` hop by hop. It then compares that commit's tree, which already holds upstream additions, with `HEAD`. It changes neither the record nor the map. A missing, unresolved, malformed, incomplete, dropped or unrelated projection answers `reason: "additions_unattributable"` with empty `files`.
+`base_sha` records the round's starting tree. A file already there is not this round's, so a later round does not refuse an addition an earlier round authorized.
 
-That answer is not a deferral. A fresh round starts at the current `HEAD`, which already carries the earlier round's additions, so the fresh round's gate cannot derive them again. Settle them first: read the earlier round's own commits against the scope below. Then mint a fresh round, name each deliberate path in `Adds:`, and cut the rest before delegating it. That line authorizes those standing paths. A map correspondence proves no validation result; the writer still binds the actual run to the round's base and the receipt's tree.
+Where a rebase moved that commit off the branch, the receipt check projects it to a rewritten commit in `HEAD`'s ancestry:
+
+1. It reads the worktree-private ordered `kendex-rebase-map` whole, through the runtime's one map reader.
+2. Where no map file stands, it follows the item record's `rebase_map` hop by hop.
+3. It then compares that commit's tree, which already holds upstream additions, with `HEAD`.
+
+It changes neither the record nor the map. A missing, unresolved, malformed, incomplete, dropped or unrelated projection answers `reason: "additions_unattributable"` with empty `files`.
+
+That answer is not a deferral. A fresh round starts at the current `HEAD`, which already carries the earlier round's additions, so the fresh round's gate cannot derive them again. Settle them first:
+
+1. Read the earlier round's own commits against the scope below.
+2. Mint a fresh round.
+3. Name each deliberate path in `Adds:`. That line authorizes those standing paths.
+4. Cut the rest before delegating it.
+
+A map correspondence proves no validation result; the writer still binds the actual run to the round's base and the receipt's tree.
 
 Protected additions are:
 

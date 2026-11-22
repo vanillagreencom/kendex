@@ -15,7 +15,11 @@ Prepare one work item from the main checkout and hand it to its worktree session
 .agents/skills/orch/scripts/orch-runtime host resolve
 ```
 
-Any answer but `local` refuses the run here: resume no handoff, and read, activate or create nothing ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes). Report `start-control-host host=[HOST]` as the first line. As the next line, report the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief. For `start new`, create the issue first, then launch it that way.
+Any answer but `local` refuses the run here:
+
+1. Resume no handoff, and read, activate or create nothing ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes).
+2. Report `start-control-host host=[HOST]` as the first line.
+3. As the next line, report the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief. For `start new`, create the issue first, then launch it that way.
 
 ## 0. Resume From A Handoff
 
@@ -29,13 +33,15 @@ This verb answers whether a lane's handoff record ([oversee-events.md § Hand of
 
 - `none` → § 1.
 - `unreadable`, or a non-zero exit → stop and report, naming the item and what the reader wrote.
-- `stands` → `result.record` holds the record. Print it and stamp it resumed in every place it stands. Then continue from the first entry of its `remaining` list instead of § 1-5, or, on the start-worktree.md § 1 step 3 route, from the continuation that step names:
+- `stands` → `result.record` holds the record.
+  1. Print it.
+  2. Stamp it resumed in every place it stands. A refusal stops and reports the same way.
 
-  ```bash
-  .agents/skills/orch/scripts/orch-runtime state handoff-resume --item [ISSUE_ID]
-  ```
+     ```bash
+     .agents/skills/orch/scripts/orch-runtime state handoff-resume --item [ISSUE_ID]
+     ```
 
-  A refusal stops and reports the same way.
+  3. Continue from the first entry of its `remaining` list instead of § 1-5, or, on the start-worktree.md § 1 step 3 route, from the continuation that step names.
 
 ## 1. Route
 
@@ -114,7 +120,7 @@ Exit 75 means a branch or an open pull request already owns the item: inspect it
 
 Run `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context. Ask no question.
 
-An `orch start` run is complete when its merge work is complete and the tracker issue is Done, or is handed to the overseer in Verifying under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge). The issue reaches Done only after every post-merge box has proof. An opened or armed pull request is not complete. A run outside a lane removes its worktree in [merge-pr.md](merge-pr.md) § 5. A lane leaves its worktree standing for the overseer's close of the lane.
+An `orch start` run is complete when its merge work is complete and the tracker issue is Done, or is handed to the overseer in Verifying under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge). The issue reaches Done only after every post-merge box has proof. An opened or armed pull request is not complete.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 

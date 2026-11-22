@@ -2,8 +2,6 @@
 
 Check the merge conditions of one or more pull requests, merge them, and close out their items.
 
-Run every review wait, every `queue-watch` and every `verify-pr` call of [merge-attempt.md](../references/merge-attempt.md) through [Waiter launch](../references/waiter-launch.md). A review call that reads only the mode or the request runs directly. Route each reply as this workflow says. merge-attempt.md routes `verify-pr`'s replies.
-
 | Command | Flow |
 |---------|------|
 | `merge-pr` | List ready PRs, user selects |
@@ -18,7 +16,8 @@ A step that differs for a lane ([skill-rules.md § Lane Output](../references/sk
 .agents/skills/github/scripts/github.sh pr-list-ready
 ```
 
-With no argument, present the list and ask which to merge. With `all`, take every ready PR in turn.
+- With no argument, present the list and ask which to merge.
+- With `all`, take every ready PR in turn.
 
 Read the decision mode once. It governs every choice below. An unset key reads `ask`. Named stops follow [SKILL.md § The Cycle](../SKILL.md#the-cycle).
 
@@ -32,7 +31,11 @@ Bind the main checkout's root as `[MAIN_REPO_ROOT]`:
 .agents/skills/orch/scripts/git-context common-root .
 ```
 
-**No hand-back leaves an armed PR.** Every route that ends this run without a merged PR first takes [merge-pr-restack.md § Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop) for the PR it stops. `[STOP_DIR]` is that PR's `[ITEM_DIR]` (§ 3). The rule covers each `records [STOP_NAME]` route, each hand-back, the recovery-cycle cap, an `ask` answer that skips the merge, and the `closed` verdict. On the `merge-pr all` route, it covers every PR in scope.
+**No hand-back leaves an armed PR.** Every route that ends this run without a merged PR first takes [merge-pr-restack.md § Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop) for the PR it stops.
+
+- `[STOP_DIR]` is that PR's `[ITEM_DIR]` (§ 3).
+- The rule covers each `records [STOP_NAME]` route, each hand-back, the recovery-cycle cap, an `ask` answer that skips the merge, and the `closed` verdict.
+- On the `merge-pr all` route, it covers every PR in scope.
 
 **Stop routes.** A `records [STOP_NAME]` route records the stop against the PR's `[STATE_KEY]` (§ 3). It renders the stop's comment into the PR's `[ITEM_DIR]` and posts it on the PR:
 
@@ -48,19 +51,30 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh post
 
 **Skip if** fewer than two PRs are in scope.
 
-A stop here needs a PR to record against. Run § 3's per-PR state for the first PR in the reported order. Record and post both stops below against that PR.
+A stop here needs a PR to record against:
+
+- Run § 3's per-PR state for the first PR in the reported order.
+- Record and post both stops below against that PR.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-cross-check [PR_NUMBERS] --quick --json
 ```
 
-Show any high-severity findings (conflicts). On them, `auto-recommended` records `batch-cross-check-failed`, and `ask` stops. Otherwise verify:
+Show any high-severity findings (conflicts). On them:
+
+- `auto-recommended` records `batch-cross-check-failed`.
+- `ask` stops.
+
+Otherwise verify:
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-cross-check [PR_NUMBERS] --verify --json
 ```
 
-`can_batch_merge: true` → § 3, in the reported `merge_order`. `false` → show the merge, build and test failures with their suggested remediation. Then `auto-recommended` records `batch-cross-check-failed`, and `ask` presents `Abort` | `Force anyway`, recommending `Abort`.
+- `can_batch_merge: true` → § 3, in the reported `merge_order`.
+- `false` → show the merge, build and test failures with their suggested remediation. Then:
+  - `auto-recommended` records `batch-cross-check-failed`.
+  - `ask` presents `Abort` | `Force anyway`, recommending `Abort`.
 
 ## 3. Check Merge Readiness
 
@@ -74,7 +88,9 @@ Show any high-severity findings (conflicts). On them, `auto-recommended` records
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
 ```
 
-`[STATE_KEY]` is the extracted issue where there is one, else `pr-[PR_NUMBER]`. § 4 reuses this `[ISSUE]` and `[PR_BRANCH]`. Run `init` only where `exists` reads `false`:
+- `[STATE_KEY]` is the extracted issue where there is one, else `pr-[PR_NUMBER]`.
+- § 4 reuses this `[ISSUE]` and `[PR_BRANCH]`.
+- Run `init` only where `exists` reads `false`:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state exists --item [STATE_KEY]
@@ -96,7 +112,13 @@ Bind `[ITEM_DIR]` to the folder that holds the record path this command prints a
 
 Stop comments, review requests and notices this workflow writes go in `[ITEM_DIR]`.
 
-**The merge's review call.** Bind `[REVIEW_BASE_CHECKOUT]` by [gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing). Every review call in this workflow is [the review call](../references/gates.md#the-review-call). Run it from `[MAIN_REPO_ROOT]`, with `[MARK_READY]` `false` and its request file in `[ITEM_DIR]`. `[OWNER/REPO]` is what `env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner` answers there. gates.md owns the reply's fields, verdicts and refusals.
+**The merge's review call.**
+
+- Bind `[REVIEW_BASE_CHECKOUT]` by [gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing).
+- Every review call in this workflow is [the review call](../references/gates.md#the-review-call).
+- Run it from `[MAIN_REPO_ROOT]`, with `[MARK_READY]` `false` and its request file in `[ITEM_DIR]`.
+- `[OWNER/REPO]` is what `env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner` answers there.
+- gates.md owns the reply's fields, verdicts and refusals.
 
 ```bash
 jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] --arg base "[REVIEW_BASE_CHECKOUT]" --argjson ready false \
@@ -105,7 +127,12 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] --arg base "[REVIEW_BA
 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[ITEM_DIR]/verify-review-request-[STATE_KEY].json"
 ```
 
-**Ready-head review call.** Before each readiness check, run the merge's review call once on an open ready head. This includes a cloud PR whose lane requested no review. Under `approval`, the call settles the head's Copilot request ([gates.md § Copilot requests](../references/gates.md#copilot-requests)). Never close and reopen a PR to request review. Read whether the PR is open and ready:
+**Ready-head review call.**
+
+- Before each readiness check, run the merge's review call once on an open ready head. This includes a cloud PR whose lane requested no review.
+- Under `approval`, the call settles the head's Copilot request ([gates.md § Copilot requests](../references/gates.md#copilot-requests)).
+- Never close and reopen a PR to request review.
+- Read whether the PR is open and ready:
 
 ```bash
 if ! MERGE_PR_OPEN_READY="$(env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json state,isDraft --jq '.state == "OPEN" and .isDraft == false')"; then
@@ -113,7 +140,8 @@ if ! MERGE_PR_OPEN_READY="$(env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_N
 fi
 ```
 
-Run the call only where `MERGE_PR_OPEN_READY` reads `true`, never on a draft, closed or merged PR. Route its `request` by Copilot requests before any review wait.
+- Run the call only where `MERGE_PR_OPEN_READY` reads `true`, never on a draft, closed or merged PR.
+- Route its `request` by Copilot requests before any review wait.
 
 **The Copilot hold.** Bind the time of the readiness check's first call as `[HOLD_START]`. Read the bound once:
 
@@ -121,13 +149,22 @@ Run the call only where `MERGE_PR_OPEN_READY` reads `true`, never on a draft, cl
 .agents/skills/orch/scripts/orch-env ORCH_COPILOT_HOLD_SECS 600
 ```
 
-Repeat the call on a `pending` reply whose `reason` opens `copilot-pending`. Repeat it too on a verdict `approved`, `proceeded` or `off` whose `copilot.state` is `expired`. Run each repeat through Waiter launch, at most once every 30 seconds. Stop repeating when the call answers otherwise, or when that many seconds have passed since `[HOLD_START]`. Then route its last answer as any other. Any other `pending` reply goes on to the readiness check. A refusal or an `unreadable` reply stops this pass. A `blocked` verdict is never a met gate, under either gate mode. Record `review-regression-open`, gate `review`, naming the location its `reason` reads, and hand back.
+1. Repeat the call on a `pending` reply whose `reason` opens `copilot-pending`.
+2. Repeat it too on a verdict `approved`, `proceeded` or `off` whose `copilot.state` is `expired`.
+3. Run each repeat through [Waiter launch](../references/waiter-launch.md), at most once every 30 seconds.
+4. Stop repeating when the call answers otherwise, or when that many seconds have passed since `[HOLD_START]`.
+5. Then route its last answer as any other:
+   - Any other `pending` reply goes on to the readiness check.
+   - A refusal or an `unreadable` reply stops this pass.
+   - A `blocked` verdict is never a met gate, under either gate mode. Record `review-regression-open`, gate `review`, naming the location its `reason` reads, and hand back.
 
-Read the head the readiness check judges as `[CHECK_HEAD]`. Then run the check. Its JSON is `CHECK`:
+Read the head the readiness check judges as `[CHECK_HEAD]`:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
 ```
+
+Then run the check. Its JSON is `CHECK`:
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-merge [PR_NUMBER] --check
@@ -137,29 +174,35 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --j
 
 `CHECK.transient == true` → before any user prompt, route on each issue's prefix, then continue to § 3.2. Each re-check repeats § 3's head read.
 
-| Prefix | Wait |
-|--------|------|
-| `unknown:` | No wait of its own. Re-check once, then continue to § 3.2 with the latest `CHECK` |
-| `ci_pending:` | No wait here. Continue to § 3.2's gates, then to § 5 step 1's CI wait and its pending bound |
-| `ci_fetch_failed:`, `ci_unconfigured:` | Re-check, at most three checks in all, then continue with the latest `CHECK` |
+- `unknown:`: no wait of its own. Re-check once, then continue to § 3.2 with the latest `CHECK`.
+- `ci_pending:`: no wait here. Continue to § 3.2's gates, then to § 5 step 1's CI wait and its pending bound.
+- `ci_fetch_failed:`, `ci_unconfigured:`: re-check, at most three checks in all, then continue with the latest `CHECK`.
 
 ### 3.2 Act On The Result
 
-`CHECK.state` routes first. `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 without § 4.1, then § 5 step 1, which goes straight to step 2. `CLOSED` → records `pr-closed-unmerged`.
+`CHECK.state` routes first:
 
-`can_merge: true` → § 4 once the gates below are met. Show any warnings. `can_merge: false` with `transient: true` takes the same route after § 3.1 in two cases only:
+- `MERGED` → set `[ALREADY_MERGED]=true`, run § 4 without § 4.1, then § 5 step 1, which goes straight to step 2.
+- `CLOSED` → records `pr-closed-unmerged`.
 
-- Every remaining issue is `ci_pending:`. Pending CI takes § 5 step 1's direct attempt and its CI wait.
-- `unknown:` is the only issue. It takes § 5 step 1's explicit queue arm.
+Then `can_merge` routes:
 
-Any other `false`, `ci_fetch_failed:` included → show the issues and their suggested fixes. `auto-recommended` takes `Fix and retry` once. The same blocker then records `merge-check-blocked`. `ask` presents `Skip` | `Fix and retry`, recommending `Fix and retry`.
+- `can_merge: true` → § 4 once the gates below are met. Show any warnings.
+- `can_merge: false` with `transient: true` takes the same route after § 3.1 in two cases only:
+  - Every remaining issue is `ci_pending:`. Pending CI takes § 5 step 1's direct attempt and its CI wait.
+  - `unknown:` is the only issue. It takes § 5 step 1's explicit queue arm.
+- Any other `false`, `ci_fetch_failed:` included → show the issues and their suggested fixes. Then:
+  - `auto-recommended` takes `Fix and retry` once. The same blocker then records `merge-check-blocked`.
+  - `ask` presents `Skip` | `Fix and retry`, recommending `Fix and retry`.
 
 These conditions are merge gates:
 
 - **Open review threads.** No `CHECK` field reports them: run § 3.3 before the `not_approved` wait.
-- **`not_approved`.** Read the gate mode through the merge's review call. Its `mode` is the item's recorded one ([gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing)). A refusal, or an `unreadable` reply with no `mode`, reads no mode: report it and stop. Route on the `mode`:
-  - `off`: no approval wait. Go on to § 4. A `pending copilot-pending` answer goes on too, and § 5 step 1's call holds the merge call on it.
-  - `approval`: a GitHub-native approval is required. Wait through the review wait ([gates.md § The review call](../references/gates.md#the-review-call)), and repeat the call while it answers `pending`. At a `timeout`, `auto-recommended` records `review-gate-unmet`, and `ask` offers to wait again or stop.
+- **`not_approved`.** Read the gate mode through the merge's review call. Its `mode` is the item's recorded one ([gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing)).
+  - A refusal, or an `unreadable` reply with no `mode`, reads no mode: report it and stop.
+  - Route on the `mode`:
+    - `off`: no approval wait. Go on to § 4. A `pending copilot-pending` answer goes on too, and § 5 step 1's call holds the merge call on it.
+    - `approval`: a GitHub-native approval is required. Wait through the review wait ([gates.md § The review call](../references/gates.md#the-review-call)), and repeat the call while it answers `pending`. At a `timeout`, `auto-recommended` records `review-gate-unmet`, and `ask` offers to wait again or stop.
 
 Route the wait's answers:
 
@@ -170,9 +213,16 @@ Route the wait's answers:
 - `blocked`: a regression-against-main blocker stands open on the item, under either mode ([gates.md § Which waiter answers which state](../references/gates.md#which-waiter-answers-which-state)). Record `review-regression-open`, gate `review`, naming the location its `reason` reads, and hand back.
 - `unreadable`: run the call once more. A second `unreadable` records `review-gate-read-failed`.
 
-Stop waiting for a missing verdict while the item's state carries `pr_approval.forced`. The `Force merge` choice of [submit-pr.md § 4. Review Gate](submit-pr.md#4-review-gate) sets it for the item. No push clears it. The prepared head then takes § 5 step 1's `--auto --queue` arm.
+Stop waiting for a missing verdict while the item's state carries `pr_approval.forced`:
 
-Bot-specific signals are never merge gates: emoji reactions, sticky-comment prose and checklist text. The one exception is a review body's findings section under `Suppressed comments (N)` or `Previously missed (N)`. The reply check `pr-merge` runs (`review_replies:`) reads it. Only GitHub-native review state, the open-thread count and that reply check count.
+- The `Force merge` choice of [submit-pr.md § 4. Review Gate](submit-pr.md#4-review-gate) sets it for the item.
+- No push clears it.
+- The prepared head then takes § 5 step 1's `--auto --queue` arm.
+
+Bot-specific signals are never merge gates: emoji reactions, sticky-comment prose and checklist text.
+
+- The one exception is a review body's findings section under `Suppressed comments (N)` or `Previously missed (N)`. The reply check `pr-merge` runs (`review_replies:`) reads it.
+- Only GitHub-native review state, the open-thread count and that reply check count.
 
 ### 3.3 Thread Read
 
@@ -190,9 +240,13 @@ Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 read for this PR. Run the worktree co
 .agents/skills/worktree/scripts/worktree path [ISSUE]
 ```
 
-Bind the printed path as `[WORKTREE_PATH]`. Where no issue worktree exists, `[WORKTREE_PATH]` is `[MAIN_REPO_ROOT]`, and § 5 has no issue worktree to remove.
+- Bind the printed path as `[WORKTREE_PATH]`.
+- Where no issue worktree exists, `[WORKTREE_PATH]` is `[MAIN_REPO_ROOT]`, and § 5 has no issue worktree to remove.
 
-A [micro.md](micro.md) § 4 entry starts here. The entry itself binds `[ISSUE]`, `[PR_BRANCH]`, `[STATE_KEY]`, § 1's run-level bindings and § 3's `[ITEM_DIR]` read. A § 5 step 1 return to § 3.2 makes that entry escape, since § 3 produced no `CHECK` for it.
+A [micro.md](micro.md) § 4 entry starts here:
+
+- The entry itself binds `[ISSUE]`, `[PR_BRANCH]`, `[STATE_KEY]`, § 1's run-level bindings and § 3's `[ITEM_DIR]` read.
+- A § 5 step 1 return to § 3.2 makes that entry escape, since § 3 produced no `CHECK` for it.
 
 Read the identity the merge lands under:
 
@@ -200,7 +254,10 @@ Read the identity the merge lands under:
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-`.configured: false` is an identity decision: the merge would land under the human's name. Then `auto-recommended` records `bot-auth-missing`. `ask` presents `Merge as current user` | `Abort`, recommending `Abort`.
+`.configured: false` is an identity decision: the merge would land under the human's name. Then:
+
+- `auto-recommended` records `bot-auth-missing`.
+- `ask` presents `Merge as current user` | `Abort`, recommending `Abort`.
 
 ### 4.1 Detach Orphaned Children
 
@@ -210,11 +267,19 @@ Read the identity the merge lands under:
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE]
 ```
 
-For the review audit's in-PR bundle, first run `issues validate-completion [ISSUE] --include-children-of [ISSUE]`. A started child whose result has `ok: true` stays attached for this PR's post-merge completion. Leave it out of the orphan split. An unreadable validation result or tracker read stops the merge. A container child stays a separate PR unit.
+For the review audit's in-PR bundle, first run `issues validate-completion [ISSUE] --include-children-of [ISSUE]`.
+
+- A started child whose result has `ok: true` stays attached for this PR's post-merge completion. Leave it out of the orphan split.
+- An unreadable validation result or tracker read stops the merge.
+- A container child stays a separate PR unit.
 
 Split the remaining `.children` rows by `state_type`. `backlog` and `unstarted` are **safe** (`[SAFE_IDS]`); anything else is **active**. Both empty → § 5.
 
-An active child pauses the merge. Ask the user, per child, whether this PR landed its work. Yes closes it Done. No appends it to `[SAFE_IDS]`. Abort stops § 4.1.
+An active child pauses the merge. Ask the user, per child, whether this PR landed its work:
+
+- Yes closes it Done.
+- No appends it to `[SAFE_IDS]`.
+- Abort stops § 4.1.
 
 `[SAFE_IDS]` still empty → § 5. Otherwise detach each safe child, so the merge does not cascade it to Done. A detached child keeps its project and takes no new parent: the project-management skill's references/filing.md groups related items by project or label, never by parent. Each detach, one pair per safe id:
 
@@ -234,9 +299,13 @@ Pending children detached before merge to avoid cascade-Done; each keeps its pro
 
 ## 5. Execute The Merge
 
-Some harnesses reset the working directory on every shell call. Use `-C` and absolute paths, never `cd &&` chains.
+Use `-C` and absolute paths, never `cd &&` chains.
 
-**Clear `GH_REPO` and `GITHUB_REPOSITORY` on every command in this section that reaches GitHub, fenced or inline.** The `github.sh` router and `worktree` call `gh` inside, so they reach GitHub too. The orch runtime's verbs name the repository on every call, and `container-close` clears both variables for the `gh` it starts. Their fences carry no `env -u`. Before adding a command here, read the script it names.
+**Clear `GH_REPO` and `GITHUB_REPOSITORY` on every command in this section that reaches GitHub, fenced or inline.**
+
+- The `github.sh` router and `worktree` call `gh` inside, so they reach GitHub too.
+- The orch runtime's verbs name the repository on every call, and `container-close` clears both variables for the `gh` it starts. Their fences carry no `env -u`.
+- Before adding a command here, read the script it names.
 
 1. **Merge**, before any cleanup.
 
@@ -258,7 +327,10 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefOid,headRefOid --jq '[.baseRefOid,.headRefOid]|@tsv'
    ```
 
-   The head is `[PREPARED_HEAD]` and the base `[PREPARED_BASE]`. Except on a `[MICRO_ENTRY]` run, require `[PREPARED_HEAD]` to equal `[CHECK_HEAD]`. A mismatch returns to § 3 for a fresh readiness check and approval. `[PREPARED_BASE]` is the recorded base, which can trail the base branch's tip (the harness-ci skill's `wiring.md` reference, § The endpoint expressions). A `[MICRO_ENTRY]` run fetches both commits, then classifies the range:
+   - The head is `[PREPARED_HEAD]` and the base `[PREPARED_BASE]`.
+   - Except on a `[MICRO_ENTRY]` run, require `[PREPARED_HEAD]` to equal `[CHECK_HEAD]`. A mismatch returns to § 3 for a fresh readiness check and approval.
+   - `[PREPARED_BASE]` is the recorded base, which can trail the base branch's tip (the harness-ci skill's `wiring.md` reference, § The endpoint expressions).
+   - A `[MICRO_ENTRY]` run fetches both commits, then classifies the range:
 
    ```bash
    git -C [WORKTREE_PATH] fetch --quiet --no-tags --no-write-fetch-head origin [PREPARED_BASE] [PREPARED_HEAD]
@@ -268,7 +340,15 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    .agents/skills/orch/scripts/orch-runtime tier --base [PREPARED_BASE] --head [PREPARED_HEAD] --repo [WORKTREE_PATH]
    ```
 
-   **The review call before a merge call.** Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base by Gate-mode routing. Run the merge's review call (§ 3). Under `approval`, it also settles `[PREPARED_HEAD]`'s Copilot request. Every merge call, the direct attempt's and the `--auto` arm's, re-enters this step, so this call runs before each of them. Hold as § 3's Copilot hold does. `[HOLD_START]` is the time of the first call before this merge call. This hold is the one before a merge call, never the triage's `orch-runtime copilot-wait`. Route the call's last answer:
+   **The review call before a merge call.**
+
+   - Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base by Gate-mode routing.
+   - Run the merge's review call (§ 3). Under `approval`, it also settles `[PREPARED_HEAD]`'s Copilot request.
+   - Every merge call, the direct attempt's and the `--auto` arm's, re-enters this step, so this call runs before each of them.
+   - Hold as § 3's Copilot hold does. `[HOLD_START]` is the time of the first call before this merge call.
+   - This hold is the one before a merge call, never the triage's `orch-runtime copilot-wait`.
+
+   Route the call's last answer:
 
    - `blocked`, under either mode: § 3.2's `blocked` route.
    - `comments`: § 3.3, then this step again.
@@ -280,11 +360,21 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
    A `[MICRO_ENTRY]` run goes on only where the `tier` line reads `tier=micro`, the reply's `mode` is `approval`, and `[MICRO_HEAD]` equals `[PREPARED_HEAD]`. Any other answer arms nothing and escapes by micro.md condition 8.
 
-   **Restack proof.** Before either merge route, run the proof block of [merge-pr-restack.md step 3](merge-pr-restack.md#merge-pr-restack-cycle) with this step's `[WORKTREE_PATH]`, `[STATE_KEY]` and `[PREPARED_HEAD]`. Keep its reply as that step says. A nonzero exit records `validation-proof-missing` and takes § 1's unarm and stop routes.
+   **Restack proof.** Before either merge route, run the proof block of [merge-pr-restack.md step 3](merge-pr-restack.md#merge-pr-restack-cycle) with this step's `[WORKTREE_PATH]`, `[STATE_KEY]` and `[PREPARED_HEAD]`.
 
-   **Merge route.** `pr-merge` picks the route, and no step here judges it. It either merges past the queue with `--admin` bound to the prepared head and exits `0`, or takes the queue and exits `75`. Its `merge-route:` line names the cause (`pr-merge --help` § Merge route). Take the direct attempt below first. [submit-pr.md](submit-pr.md) § 2 step 5 arms at creation only a PR this route takes through the queue. Where GitHub has already queued a PR, the attempt exits `75`. Two cases take the explicit `--auto --queue` arm below instead, which never passes `--admin`: an item whose state carries `pr_approval.forced`, and a PR on § 3.2's `unknown:` route.
+   - Keep its reply as that step says.
+   - A nonzero exit records `validation-proof-missing` and takes § 1's unarm and stop routes.
 
-   **Who acts.** The lane merges its own PR under the token the `github.sh` router selects (`github.sh --help` names the order). An emergency merge exists only in a consumer whose ruleset lists the consumer's own overseer GitHub App as a bypass actor. Only that app makes it. A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in the review-gate skill's `SKILL.md` § 4. Operations.
+   **Merge route.** `pr-merge` picks the route, and no step here judges it. It either merges past the queue with `--admin` bound to the prepared head and exits `0`, or takes the queue and exits `75`. Its `merge-route:` line names the cause (`pr-merge --help` § Merge route).
+
+   - Take the direct attempt below first.
+   - [submit-pr.md](submit-pr.md) § 2 step 5 arms at creation only a PR this route takes through the queue. Where GitHub has already queued a PR, the attempt exits `75`.
+   - Two cases take the explicit `--auto --queue` arm below instead, which never passes `--admin`: an item whose state carries `pr_approval.forced`, and a PR on § 3.2's `unknown:` route.
+
+   **Who acts.** The lane merges its own PR under the token the `github.sh` router selects (`github.sh --help` names the order).
+
+   - An emergency merge exists only in a consumer whose ruleset lists the consumer's own overseer GitHub App as a bypass actor. Only that app makes it.
+   - A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in the review-gate skill's `SKILL.md` § 4. Operations.
 
    **The direct attempt.** Follow [merge-attempt.md § Direct attempt](../references/merge-attempt.md#direct-attempt) for the CI wait on the approved head, its pending bound, the exact-head attempt and its exit routing. Its exit `75` enters the `queue-watch` wait below.
 
@@ -296,9 +386,13 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto --queue --expected-head [PREPARED_HEAD]
    ```
 
-   Exit `0` merged the prepared head: continue to step 2. Exit `1` with a line starting `arm: no-merge-gate=<condition>` armed nothing and names why, with or without a `merge-route:` line before it. On § 3.2's `unknown:` route, record `merge-readiness-unresolved`. Otherwise take the direct attempt above; its exit `75` routes a base that still queues the PR. Never fall back to a raw `gh pr merge --auto`. Any other exit but `0` or `75` is an exact-head arm failure: report it and return to § 3.2.
-
-   Exit `75` means queued or armed. Run the queue wait below through Waiter launch, under every gate mode. Keep the lane active while polling the completion file, then route the recorded exit and reply.
+   - Exit `0` merged the prepared head: continue to step 2.
+   - Exit `1` with a line starting `arm: no-merge-gate=<condition>` armed nothing and names why, with or without a `merge-route:` line before it.
+     - On § 3.2's `unknown:` route, record `merge-readiness-unresolved`.
+     - Otherwise take the direct attempt above; its exit `75` routes a base that still queues the PR.
+     - Never fall back to a raw `gh pr merge --auto`.
+   - Any other exit but `0` or `75` is an exact-head arm failure: report it and return to § 3.2.
+   - Exit `75` means queued or armed. Run the queue wait below through [Waiter launch](../references/waiter-launch.md), under every gate mode. Keep the lane active while polling the completion file, then route the recorded exit and reply.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime queue-watch --item [STATE_KEY] --repo [MERGE_REPO_SLUG] --pr [PR_NUMBER] --poll 180 --max-wait 540
@@ -312,15 +406,41 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    |-----------|-------|
    | `merged` | Step 2 |
    | `conflicting` | The Restack cycle below |
-   | `ejected` | `reach: within` or `reach: unread` takes the Recovery cycle below, with the resolved gate mode and `[RECOVERY_COUNT]`. `reach: outside` means the consumer's reach command answered every failed check outside the change's paths. It re-arms the same head once under the re-queue rule, after sending the failure to the overseer. Write `[ITEM_DIR]/queue-reach-[STATE_KEY].md` with the harness file tool, naming the head and each of `failed_checks` with its `reach` and its `url`. Send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [STATE_KEY] --file [ITEM_DIR]/queue-reach-[STATE_KEY].md`. The overseer files it as [oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone) states. A second `outside` ejection at the same head hands back naming both runs |
-   | `disarmed` | `cause: merge_hold`: a person, `disarmed_by`, disabled the automatic merge on purpose, and the wait opened the item's merge hold. Take no Recovery cycle and never re-arm: the merge waits on that person. Ask for their answer through the run's question route (in a lane, `lane-mail ask`, [skill-rules.md § Lane mail](../references/skill-rules.md#lane-mail)). When it arrives, first close the hold with `.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"merge-answered"}'`. Then follow the answer: a merge returns to step 1, and anything else hands back. Any other cause takes the Recovery cycle below |
-   | `armed_blocked` | Armed and not enqueued when the wait ended. `cause: check_failed` takes the Recovery cycle below. `cause: not_mergeable` is the wait's last check read before its deadline, no check verdict ([gates.md](../references/gates.md#which-waiter-answers-which-state)). Read the head's CI afresh with merge-attempt.md's `verify-pr` call. `fail` takes the Recovery cycle. `pending` waits again as `armed_awaiting_checks` does. `pass` or `none` returns to § 3 for a fresh readiness check, spending no recovery cycle; that check names what keeps the PR out of the queue. A readiness check that passes on the same head arms and waits again under the wall-clock budget below. One that names a blocker routes it by § 3.2 |
-   | `dequeued` | Late-findings triage below. On `cause: late_findings_dequeue_failed`, first confirm the dequeue or the disarm |
-   | `queued` | Unconfirmed at the deadline. With an entry, under every cause but `exit_unconfirmed`, the PR is still armed. `cause: still_progressing`: the merge is live. Run the wait again, and repeat until a verdict ends it. `cause: progress_unobservable`: the wait could not read the entry's head, which is no evidence of an idle queue. Run the wait again on the same head under the bound below. `cause: blocked_by_entry_ahead`: take the Entry-ahead wait below, spending no recovery cycle. `cause: stalled`: the Recovery cycle below. `cause: exit_unconfirmed`: not armed. The last poll saw the PR out of the queue and unarmed, short of the confirmation count. Do not wait for it to merge. Run the wait once more, which reads the arm afresh, and route its verdict |
-   | `armed_awaiting_checks` | Armed, not yet enqueued, and no check failed. Run the wait again on the same head under the wall-clock budget below, spending no recovery cycle |
-   | `not_queued` | `cause: never_armed`: no poll saw an arm or entry on this head within `QUEUE_WAIT_ARM_GRACE`, though exit `75` reported one. Take the Recovery cycle below. Never re-arm here |
+   | `ejected` | By `reach`, in the list below |
+   | `disarmed` | By `cause`, in the list below |
+   | `armed_blocked` | By `cause`, in the list below |
+   | `dequeued` | Late-findings triage below |
+   | `queued` | By `cause`, in the list below |
+   | `armed_awaiting_checks` | Wait again, in the list below |
+   | `not_queued` | By `cause`, in the list below |
    | `closed` | Hand back with the verdict; no replay |
-   | `unknown` | Unrecognized, or `status: error`: a read failed and says nothing about the arm. Unarm by § 1's rule, then hand back with the `error` and `cause` fields. Never re-arm |
+   | `unknown` | Unarm and hand back, in the list below |
+
+   - `ejected`:
+     - `reach: within` or `reach: unread` takes the Recovery cycle below, with the resolved gate mode and `[RECOVERY_COUNT]`.
+     - `reach: outside` means the consumer's reach command answered every failed check outside the change's paths. It re-arms the same head once under the re-queue rule, after sending the failure to the overseer.
+       - Write `[ITEM_DIR]/queue-reach-[STATE_KEY].md` with the harness file tool, naming the head and each of `failed_checks` with its `reach` and its `url`. Send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [STATE_KEY] --file [ITEM_DIR]/queue-reach-[STATE_KEY].md`. The overseer files it as [oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone) states.
+       - A second `outside` ejection at the same head hands back naming both runs.
+   - `disarmed`:
+     - `cause: merge_hold`: a person, `disarmed_by`, disabled the automatic merge on purpose, and the wait opened the item's merge hold. Take no Recovery cycle and never re-arm: the merge waits on that person.
+       - Ask for their answer through the run's question route (in a lane, `lane-mail ask`, [skill-rules.md § Lane mail](../references/skill-rules.md#lane-mail)).
+       - When it arrives, first close the hold with `.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"merge-answered"}'`. Then follow the answer: a merge returns to step 1, and anything else hands back.
+     - Any other cause takes the Recovery cycle below.
+   - `armed_blocked`: armed and not enqueued when the wait ended.
+     - `cause: check_failed` takes the Recovery cycle below.
+     - `cause: not_mergeable` is the wait's last check read before its deadline, no check verdict ([gates.md](../references/gates.md#which-waiter-answers-which-state)). Read the head's CI afresh with merge-attempt.md's `verify-pr` call.
+       - On that read, `fail` takes the Recovery cycle, and `pending` waits again as `armed_awaiting_checks` does.
+       - `pass` or `none` returns to § 3 for a fresh readiness check, spending no recovery cycle; that check names what keeps the PR out of the queue. A readiness check that passes on the same head arms and waits again under the wall-clock budget below. One that names a blocker routes it by § 3.2.
+   - `dequeued`: on `cause: late_findings_dequeue_failed`, first confirm the dequeue or the disarm.
+   - `queued`: unconfirmed at the deadline. With an entry, under every cause but `exit_unconfirmed`, the PR is still armed.
+     - `cause: still_progressing`: the merge is live. Run the wait again, and repeat until a verdict ends it.
+     - `cause: progress_unobservable`: the wait could not read the entry's head, which is no evidence of an idle queue. Run the wait again on the same head under the bound below.
+     - `cause: blocked_by_entry_ahead`: take the Entry-ahead wait below, spending no recovery cycle.
+     - `cause: stalled`: the Recovery cycle below.
+     - `cause: exit_unconfirmed`: not armed. The last poll saw the PR out of the queue and unarmed, short of the confirmation count. Do not wait for it to merge. Run the wait once more, which reads the arm afresh, and route its verdict.
+   - `armed_awaiting_checks`: armed, not yet enqueued, and no check failed. Run the wait again on the same head under the wall-clock budget below, spending no recovery cycle.
+   - `not_queued`: `cause: never_armed`: no poll saw an arm or entry on this head within `QUEUE_WAIT_ARM_GRACE`, though exit `75` reported one. Take the Recovery cycle below. Never re-arm here.
+   - `unknown`: unrecognized, or `status: error`: a read failed and says nothing about the arm. Unarm by § 1's rule, then hand back with the `error` and `cause` fields. Never re-arm.
 
    A `still_progressing` repeat has no limit. Keep the lane active until a verdict ends the wait. After a merge, run steps 2-6.
 
@@ -330,21 +450,39 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    .agents/skills/orch/scripts/orch-env QUEUE_WAIT_ARMED_MINUTES 90
    ```
 
-   Repeat the wait until that many minutes have passed since the recorded time. A new head, or any verdict but those two, clears the record. Past the budget, skip steps 2-6 and hand back with the last result's `pending_checks` and the minutes waited. Under `cause: checks_unread` there are no pending checks: say the checks were never read within the wait's budget. Under `cause: not_mergeable` there are none either: say the last check read settled as `pass` or `none` with no entry. This budget, not `CI_FIX_MAX_CYCLES`, bounds a wait on checks that have not failed. No wait past the budget starts until the overseer has appended one `ruling` row for the item through `orch-runtime state log append --fleet [RULING_FILE]`, judging with the minutes waited ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
+   - Repeat the wait until that many minutes have passed since the recorded time.
+   - A new head, or any verdict but those two, clears the record.
+   - Past the budget, skip steps 2-6 and hand back with the last result's `pending_checks` and the minutes waited.
+     - Under `cause: checks_unread` there are no pending checks: say the checks were never read within the wait's budget.
+     - Under `cause: not_mergeable` there are none either: say the last check read settled as `pass` or `none` with no entry.
+   - This budget, not `CI_FIX_MAX_CYCLES`, bounds a wait on checks that have not failed.
+   - No wait past the budget starts until the overseer has appended one `ruling` row for the item through `orch-runtime state log append --fleet [RULING_FILE]`, judging with the minutes waited ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
 
-   **Entry-ahead wait.** Save `queue_ahead_pr` as `[AHEAD_PR]`. Repeat the same `queue-watch` command through Waiter launch. Route `merged`, `closed`, `dequeued` and `status: error` at once by the table. For every other result, read whether the saved entry is still queued:
+   **Entry-ahead wait.**
+
+   - Save `queue_ahead_pr` as `[AHEAD_PR]`.
+   - Repeat the same `queue-watch` command through Waiter launch.
+   - Route `merged`, `closed`, `dequeued` and `status: error` at once by the table.
+   - For every other result, read whether the saved entry is still queued:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { mergeQueueEntry { position } } } }' -F owner=[MERGE_REPO_OWNER] -F repo=[MERGE_REPO_NAME] -F number=[AHEAD_PR]
    ```
 
-   A failed or unreadable response proves no departure. Follow § 1's unarm rule, then hand back with that read failure. While `mergeQueueEntry` is non-null, repeat the wait and this read, and route none of these results to Recovery. Once it reads null, the saved entry has left. Read this PR:
+   - A failed or unreadable response proves no departure. Follow § 1's unarm rule, then hand back with that read failure.
+   - While `mergeQueueEntry` is non-null, repeat the wait and this read, and route none of these results to Recovery.
+   - Once it reads null, the saved entry has left. Read this PR:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --repo [MERGE_REPO_SLUG] --json state,mergeable
    ```
 
-   Read `state` first. `MERGED` continues to step 2, and `CLOSED` hands back. On an open PR, `mergeable: CONFLICTING` takes the Restack cycle. Any other value repeats the original wait and routes its fresh verdict by the table. This cause never enters the Recovery cycle.
+   Read `state` first:
+
+   - `MERGED` continues to step 2, and `CLOSED` hands back.
+   - On an open PR, `mergeable: CONFLICTING` takes the Restack cycle.
+   - Any other value repeats the original wait and routes its fresh verdict by the table.
+   - This cause never enters the Recovery cycle.
 
    For `progress_unobservable`, repeat once on the same head. A second `progress_unobservable` in a row takes the Recovery cycle, as `stalled` does. The reply's progress counts route nothing.
 
@@ -354,9 +492,17 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    .agents/skills/orch/scripts/orch-runtime state cap CI_FIX_MAX_CYCLES
    ```
 
-   Its reply's `limit` is `[MAX_CYCLES]`, the recovery cycles one merge-pr run may spend. At the cap, report the failing check names, ci-fix's last error summary and what each cycle attempted, never a bare "persistent failure". Then skip steps 2-6 and hand back. No cycle starts past the cap until the overseer has appended one `ruling` row for the item through `orch-runtime state log append --fleet [RULING_FILE]`, judging with `[RECOVERY_COUNT]` and that `limit`. A gate or CI behaviour change needs a fresh head.
+   - Its reply's `limit` is `[MAX_CYCLES]`, the recovery cycles one merge-pr run may spend.
+   - At the cap, report the failing check names, ci-fix's last error summary and what each cycle attempted, never a bare "persistent failure". Then skip steps 2-6 and hand back.
+   - No cycle starts past the cap until the overseer has appended one `ruling` row for the item through `orch-runtime state log append --fleet [RULING_FILE]`, judging with `[RECOVERY_COUNT]` and that `limit`.
+   - A gate or CI behaviour change needs a fresh head.
 
-   **The re-queue rule**, which every other workflow points to: after a merge-group run concludes `failure` or `timed_out`, re-arm only a new head, the fix ci-fix pushes. A cancelled merge-group run, or one the infrastructure lost, may re-arm the same head once. So may a red run whose `queue-watch` ejection reads `reach: outside`. A second such red at the same head hands back naming both runs. No other unchanged head re-enters the queue after a red run.
+   **The re-queue rule**, which every other workflow points to:
+
+   - After a merge-group run concludes `failure` or `timed_out`, re-arm only a new head, the fix ci-fix pushes.
+   - A cancelled merge-group run, or one the infrastructure lost, may re-arm the same head once. So may a red run whose `queue-watch` ejection reads `reach: outside`.
+   - A second such red at the same head hands back naming both runs.
+   - No other unchanged head re-enters the queue after a red run.
 
    1. `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5 step 1` with context `worktree`, `lifecycle: "managed"`, `issue_id`. For a queue ejection, the failing run is the **merge-group** run (event `merge_group`), not necessarily the PR-head run. Find it through the ejection's `failed_checks[].url`, which names each failed check's run, or `gh run list --event merge_group --limit 10`. Point ci-fix at it.
    2. Under the gate mode ci-fix returned, re-confirm the gate at the head about to be re-armed. Skip this under the `off` gate mode. Write the merge's review call's request (§ 3), then run it as the review wait with the shorter period:
@@ -365,7 +511,12 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
       env PR_REVIEW_WAIT_SECS=300 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[ITEM_DIR]/verify-review-request-[STATE_KEY].json"
       ```
 
-      `copilot-error` takes [gates.md § Copilot requests](../references/gates.md#copilot-requests), then this wait again before re-arming. `comments` takes § 3.3, then this wait again. `blocked` takes § 3.2's `blocked` route. `approved`, `proceeded` or `timeout` goes on to step 3, where step 1's call routes the head. `changes_requested` returns to § 3. `unreadable` runs the call once more, and a second `unreadable` records `review-gate-read-failed`.
+      - `copilot-error` takes [gates.md § Copilot requests](../references/gates.md#copilot-requests), then this wait again before re-arming.
+      - `comments` takes § 3.3, then this wait again.
+      - `blocked` takes § 3.2's `blocked` route.
+      - `approved`, `proceeded` or `timeout` goes on to step 3, where step 1's call routes the head.
+      - `changes_requested` returns to § 3.
+      - `unreadable` runs the call once more, and a second `unreadable` records `review-gate-read-failed`.
 
    3. Return to step 1 and wait.
 
@@ -378,15 +529,28 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
 2. **Post the merge comment, complete the issue and close a finished container.** **Skip if** `TRACKER=none`, a directed change ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)), which has no tracker item to post to or complete.
 
-   Before tracker completion or worktree cleanup, post the merge summary through [post-summary.md § 1](post-summary.md#1-post-the-summary), with this PR and item's caller context. A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) passes no `pr_number`, so the summary goes on the Linear item alone. A direct delivery of a GitHub-tracked item posts no summary. Include every actual round's and run's Validation Routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file), among them the fix and restack runs since the previous summary. After the merge-group CI passes, keep the original pending, failed and no-verdict rows. Record that CI proof separately by its run reference. Post each bundled child's rows on its own item through the same comment interface. A validation-routing Done-when box reads these comments on that item.
+   Before tracker completion or worktree cleanup, post the merge summary through [post-summary.md § 1](post-summary.md#1-post-the-summary), with this PR and item's caller context.
+
+   - A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) passes no `pr_number`, so the summary goes on the Linear item alone. A direct delivery of a GitHub-tracked item posts no summary.
+   - Include every actual round's and run's Validation Routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file), among them the fix and restack runs since the previous summary.
+   - After the merge-group CI passes, keep the original pending, failed and no-verdict rows. Record that CI proof separately by its run reference.
+   - Post each bundled child's rows on its own item through the same comment interface. A validation-routing Done-when box reads these comments on that item.
 
    **Linear only from here**, under [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution): the rest of this step runs for a Linear item alone.
 
    The lane owns completion after merge. Where its sandbox is gone, or its item reads Done with the lane ended, the runtime's close completes the item from the PR body's `## Done-when evidence` section. The overseer owns the remaining post-merge checks on the same item.
 
-   Before completion, give every development remainder from a cut its own issue. Prove every branch-provable Done-when box before merge. Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's `references/filing.md` § Done when states. Each box names its reading, its location, why the branch cannot prove it, and a deadline in that section's form.
+   Before completion:
 
-   Linear's GitHub integration can set `[ISSUE]` Done when the PR merges. Read the item live and complete it with the command below, even where the integration already set Done. The merge lane never writes In Review or In Progress. Box acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results. For a failed post-merge check, follow [oversee-events.md](../references/oversee-events.md) § Verification.
+   - Give every development remainder from a cut its own issue.
+   - Keep post-merge boxes on `[ISSUE]` in the form the project-management skill's `references/filing.md` § Done when states.
+
+   Linear's GitHub integration can set `[ISSUE]` Done when the PR merges.
+
+   - Read the item live and complete it with the command below, even where the integration already set Done.
+   - The merge lane never writes In Review or In Progress.
+   - Box acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), The overseer reads results.
+   - For a failed post-merge check, follow [oversee-events.md](../references/oversee-events.md) § Verification.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues get [ISSUE]
@@ -404,17 +568,39 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json body --jq .body
    ```
 
-   Write `[EVIDENCE_FILE]` under the checkout's `tmp/`: one `N: text` line per selected box, the text citing the recorded proof. On a pull-request delivery, take `[MET_BOXES]` and those lines from the body's `## Done-when evidence` section. A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) creates no pull request and reads no body. Include an already-ticked box whose Evidence line needs adding from the existing evidence comment. Select `[MET_BOXES]` under the acceptance rule. Write `all` only where that rule accepts every box. Otherwise list the box numbers in section order from 1, comma-separated. Where no box needs a tick or an Evidence line, omit both `--done-when-met` and `--evidence-file`. A section of plain bullets with no checkbox takes `all`, which ticks nothing and sets Done.
+   Write `[EVIDENCE_FILE]` under the checkout's `tmp/`: one `N: text` line per selected box, the text citing the recorded proof.
+
+   - On a pull-request delivery, take `[MET_BOXES]` and those lines from the body's `## Done-when evidence` section.
+   - A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) creates no pull request and reads no body.
+   - Include an already-ticked box whose Evidence line needs adding from the existing evidence comment.
+   - Select `[MET_BOXES]` under the acceptance rule. Write `all` only where that rule accepts every box. Otherwise list the box numbers in section order from 1, comma-separated.
+   - Where no box needs a tick or an Evidence line, omit both `--done-when-met` and `--evidence-file`.
+   - A section of plain bullets with no checkbox takes `all`, which ticks nothing and sets Done.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --post-merge-at [MERGED_AT] --done-when-met [MET_BOXES] --evidence-file [EVIDENCE_FILE]
    ```
 
-   Hold a rate-limited completion under the linear skill's `patterns/workflow-actions.md` § Quota Holds. Never record it as a failed step. A required supersession that fails stays a tracker-completion failure after Done. Keep the transition and its structured `supersession-incomplete` diagnostic. Then retry through the same completion command with the action and options it gives, without summary flags. That retry succeeds only after an open child's disposition. Done alone does not prove these effects completed. A canceled or unreadable issue is a tracker failure, not a merge record: carry the diagnostic into § 6 and claim no tracker completion.
+   - Hold a rate-limited completion under the linear skill's `patterns/workflow-actions.md` § Quota Holds. Never record it as a failed step.
+   - A required supersession that fails stays a tracker-completion failure after Done. Keep the transition and its structured `supersession-incomplete` diagnostic. Then retry through the same completion command with the action and options it gives, without summary flags. That retry succeeds only after an open child's disposition.
+   - Done alone does not prove these effects completed.
+   - A canceled or unreadable issue is a tracker failure, not a merge record: carry the diagnostic into § 6 and claim no tracker completion.
 
-   **Complete the in-PR bundle's children.** This step alone selects each child's proved boxes and completes the child at merge. The `issues get [ISSUE]` read above lists the children as `.children` rows, each with its `.id` and `.state_type`. Include children the GitHub integration already set Done. Take each non-canceled child that this PR's child `Closes` lines name. Repeat the live read and the `issues complete` command for it, with its id, its own box selection and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent, and keep post-merge boxes on each child. The call moves a qualified started child to Verifying while post-merge boxes remain open, and to Done otherwise. Record each child still Verifying in § 6 for the overseer. A child read or completion failure is a tracker-completion failure. Reconciliation's key search finds a child closed on its parent's `Closes` line. It can report `verifying-merge-unread` for a shared child's release-triggered or `+Nh` merge box. Then `orch-runtime reconcile-items --merged [CHILD]=[OWNER/REPO]#[PR_NUMBER]` judges the box from this merge ([verify.md § 1](verify.md#1-read-open-checks)). Name that command in the child handoff.
+   **Complete the in-PR bundle's children.** This step alone selects each child's proved boxes and completes the child at merge.
 
-   **The container closes when its last child closes.** Read `.parent_id` from the live issue. Empty → step 3. Fetch the parent with its bundle. Children, or an `agent:multi` label, make the parent a container, unless its read reports `in_pr_bundle` true ([skill-rules.md § Coordination](../references/skill-rules.md#coordination)). Not a container → step 3. An unreadable parent is a tracker failure. Close the container through the runtime's serialized close, which keeps it open while a child is open:
+   - The `issues get [ISSUE]` read above lists the children as `.children` rows, each with its `.id` and `.state_type`. Include children the GitHub integration already set Done.
+   - Take each non-canceled child that this PR's child `Closes` lines name.
+   - Repeat the live read and the `issues complete` command for it, with its id, its own box selection and evidence file, and the same `[MERGED_AT]`. Keep `[ISSUE]` bound to the parent, and keep post-merge boxes on each child.
+   - The call moves a qualified started child to Verifying while post-merge boxes remain open, and to Done otherwise. Record each child still Verifying in § 6 for the overseer.
+   - A child read or completion failure is a tracker-completion failure.
+   - Reconciliation's key search finds a child closed on its parent's `Closes` line. It can report `verifying-merge-unread` for a shared child's release-triggered or `+Nh` merge box. Then `orch-runtime reconcile-items --merged [CHILD]=[OWNER/REPO]#[PR_NUMBER]` judges the box from this merge ([verify.md § 1](verify.md#1-read-open-checks)). Name that command in the child handoff.
+
+   **The container closes when its last child closes.**
+
+   - Read `.parent_id` from the live issue. Empty → step 3.
+   - Fetch the parent with its bundle. Children, or an `agent:multi` label, make the parent a container, unless its read reports `in_pr_bundle` true ([skill-rules.md § Coordination](../references/skill-rules.md#coordination)). Not a container → step 3.
+   - An unreadable parent is a tracker failure.
+   - Close the container through the runtime's serialized close, which keeps it open while a child is open:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime container-close [MAIN_REPO_ROOT] [PARENT_ID]
@@ -434,7 +620,9 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/sync-base [MAIN_REPO_ROOT]
    ```
 
-   Its stdout is `[BASE_BRANCH]`. On success, read `refs/heads/[BASE_BRANCH]` as `[NEW_SHA]` and report it in § 6. On a non-zero exit, the base stays unsynchronized. Carry the script's diagnostic into § 6's warning. Then, before cleanup, read the branch and the two SHAs:
+   - Its stdout is `[BASE_BRANCH]`.
+   - On success, read `refs/heads/[BASE_BRANCH]` as `[NEW_SHA]` and report it in § 6.
+   - On a non-zero exit, the base stays unsynchronized. Carry the script's diagnostic into § 6's warning. Then, before cleanup, read the branch and the two SHAs:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/resolve-base-branch [MAIN_REPO_ROOT]
@@ -450,7 +638,12 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
 
    The outputs are `[BASE_BRANCH]`, `[LOCAL_SHA]` and `[ORIGIN_SHA]`. A failed ref read stays in the warning as its cause. Never record the sync as done.
 
-4. **Prepare branch and worktree cleanup.** In a lane, the overseer's close owns branch and worktree cleanup. The lane still runs step 6's close-out. A local close keeps a dirty or unmerged worktree and records the reason. The static SSH provider can remove a clean detached worktree without checking whether another ref reaches its HEAD. Preserve needed commits before handing back a hosted lane for close. A run outside a lane cleans up only the PR's own branch and worktree, never unrelated branches or sibling worktrees:
+4. **Prepare branch and worktree cleanup.**
+
+   - In a lane, the overseer's close owns branch and worktree cleanup. The lane still runs step 6's close-out.
+   - A local close keeps a dirty or unmerged worktree and records the reason.
+   - The static SSH provider can remove a clean detached worktree without checking whether another ref reaches its HEAD. Preserve needed commits before handing back a hosted lane for close.
+   - A run outside a lane cleans up only the PR's own branch and worktree, never unrelated branches or sibling worktrees:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
@@ -466,7 +659,11 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    git -C [WORKTREE_PATH] branch --show-current
    ```
 
-   It holds on empty output from the first and `[PR_BRANCH]` from the second. Otherwise the cause is `dirty tree` or `branch moved`. A command that exits non-zero fails its fact as `tree unreadable` or `branch unreadable`. The predicate answers only where it proves a fact, never from absent output. Step 6 runs it again, whole, just before the removal, and removes only where every part holds. Anything else keeps the worktree and its branch, and the cause goes on § 6's worktree line. A worktree kept on another branch leaves the merged branch to the branch delete below.
+   - It holds on empty output from the first and `[PR_BRANCH]` from the second. Otherwise the cause is `dirty tree` or `branch moved`.
+   - A command that exits non-zero fails its fact as `tree unreadable` or `branch unreadable`.
+   - The predicate answers only where it proves a fact, never from absent output.
+   - Step 6 runs it again, whole, just before the removal, and removes only where every part holds. Anything else keeps the worktree and its branch, and the cause goes on § 6's worktree line.
+   - A worktree kept on another branch leaves the merged branch to the branch delete below.
 
    **The merged predicate is `worktree cleanup`'s.** A branch carrying commits past its merged PR is unmerged work. `worktree remove` applies this predicate when it deletes the branch. A nonzero exit after the tree is gone means the branch survived, and its diagnostic names the lookup's answer. Report that as `kept` in § 6's `Branch` row.
 
@@ -476,7 +673,8 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    git -C [MAIN_REPO_ROOT] worktree list --porcelain
    ```
 
-   A `branch refs/heads/[PR_BRANCH]` line means a worktree still has the branch checked out: keep it, and note it in § 6. Where no such line stands, and the branch is present locally and not current, compare the PR's head with the branch's tip:
+   - A `branch refs/heads/[PR_BRANCH]` line means a worktree still has the branch checked out: keep it, and note it in § 6.
+   - Where no such line stands, and the branch is present locally and not current, compare the PR's head with the branch's tip:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
@@ -486,9 +684,17 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    git -C [MAIN_REPO_ROOT] rev-parse "refs/heads/[PR_BRANCH]"
    ```
 
-   Equal → `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"`. Different → the branch carries commits the merge did not take: keep it and report it `kept` in § 6's `Branch` row. Never `git branch -d` here.
+   - Equal → `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"`.
+   - Different → the branch carries commits the merge did not take: keep it and report it `kept` in § 6's `Branch` row.
+   - Never `git branch -d` here.
 
-   For `merge-pr all`, or on the user's request, also sweep the project. Check each local branch with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`. Delete without asking only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs. That is the predicate `worktree cleanup` applies. Neither state alone nor a merge into another base passes. Leave every other branch. Ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` with `worktree list --porcelain` for orphan folders, and ask before removing any.
+   For `merge-pr all`, or on the user's request, also sweep the project:
+
+   - Check each local branch with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`.
+   - Delete without asking only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs. That is the predicate `worktree cleanup` applies. Neither state alone nor a merge into another base passes.
+   - Leave every other branch.
+   - Ask before removing a stale worktree or a branch with no PR.
+   - Compare `ls [TREES_DIR]/` with `worktree list --porcelain` for orphan folders, and ask before removing any.
 
 5. **Answer the threads the wait's guard did not catch.** Read the merged PR's unresolved threads once and answer each. Resolve the merge commit first:
 
@@ -500,9 +706,17 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved
    ```
 
-   That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions of [finding-disposition.md](../../reviewer/references/finding-disposition.md): `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]`. For `Tracked`, first create the issue under [skill-rules.md § Coordination](../references/skill-rules.md#coordination). Reply and resolve through `github.sh post-reply` and `github.sh resolve-thread`. Clear the two variables and pass `-C [MAIN_REPO_ROOT]`, as the read above does. This read happens once: nothing reads a merged PR's threads after it.
+   - That oid is `[MERGE_SHA]`.
+   - Each reply is one of the three dispositions of [finding-disposition.md](../../reviewer/references/finding-disposition.md): `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]`.
+   - For `Tracked`, first create the issue under [skill-rules.md § Coordination](../references/skill-rules.md#coordination).
+   - Reply and resolve through `github.sh post-reply` and `github.sh resolve-thread`. Clear the two variables and pass `-C [MAIN_REPO_ROOT]`, as the read above does.
+   - This read happens once: nothing reads a merged PR's threads after it.
 
-6. **Verify the project and close the item out.** Run the build, install and verification work the project's own instructions require after a merge. This workflow defines no generic command and infers none. The route the project's own instructions name records its install record (`.kendex-lock.json`). The lane never records it after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree.
+6. **Verify the project and close the item out.**
+
+   - Run the build, install and verification work the project's own instructions require after a merge. This workflow defines no generic command and infers none.
+   - The route the project's own instructions name records its install record (`.kendex-lock.json`). The lane never records it after a merge or a restack.
+   - On failure, report the command and its diagnostic in § 6 and keep the worktree.
 
    **The close-out in a confined lane.** Skip the copy and the archived close-out below. Where the verification passed, run the close-out with no `--archive` pair:
 
@@ -510,23 +724,44 @@ Some harnesses reset the working directory on every shell call. Use `-C` and abs
    .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY]
    ```
 
-   It stamps the item's record and answers `state-remove: left cause=confined owner=overseer`. The overseer's close reads the stamp as this step's end and ends the lane on its merge, keeping the item's files with the open item ([schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)). § 6's `tmp/ close-out` line reads `left to the overseer's close`. A refusal keeps the worktree, and its key goes on that line.
+   - It stamps the item's record and answers `state-remove: left cause=confined owner=overseer`.
+   - The overseer's close reads the stamp as this step's end and ends the lane on its merge, keeping the item's files with the open item ([schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)).
+   - § 6's `tmp/ close-out` line reads `left to the overseer's close`.
+   - A refusal keeps the worktree, and its key goes on that line.
 
-   **The close-out elsewhere.** In an unconfined lane, save the item's record for the overseer's cycle row before the close-out. Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`. Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed. Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is. Where an earlier close-out already removed the record, keep the saved copy. Where neither reads as a JSON object, report the failure and keep the worktree.
+   **The close-out elsewhere.** In an unconfined lane, save the item's record for the overseer's cycle row before the close-out:
 
-   Close the item out before any worktree removal, whatever the item's tracker state: Done, Verifying, or In Review with a box still open. A hosted lane is unconfined and runs this close-out itself. It removes the item's records alone, never the sandbox, the worktree or the branch, so a hold on stopping or removing the lane's host does not cover it. The overseer's close never runs it for an open item: it refuses `lane-live` while the record stands. Pass no `--state-dir`: the runtime resolves the state folder the run's launch names. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive. Otherwise drop the `--archive` pair:
+   - Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`.
+   - Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed.
+   - Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is.
+   - Where an earlier close-out already removed the record, keep the saved copy.
+   - Where neither reads as a JSON object, report the failure and keep the worktree.
+
+   Close the item out before any worktree removal, whatever the item's tracker state: Done, Verifying, or In Review with a box still open.
+
+   - A hosted lane is unconfined and runs this close-out itself. It removes the item's records alone, never the sandbox, the worktree or the branch, so a hold on stopping or removing the lane's host does not cover it.
+   - The overseer's close never runs it for an open item: it refuses `lane-live` while the record stands.
+   - Pass no `--state-dir`: the runtime resolves the state folder the run's launch names.
+   - Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive. Otherwise drop the `--archive` pair:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY] --archive [WORKTREE_PATH]/tmp
    ```
 
-   [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out) states what it takes, archives and keeps, and the reply's `result.kept`. That value goes on § 6's `tmp/ close-out` line. A refusal keeps the worktree, since the worktree's records may be in no archive. The refusal's key goes on that line, and the worktree line reads `standing — close-out refused`.
+   - [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out) states what it takes, archives and keeps, and the reply's `result.kept`. That value goes on § 6's `tmp/ close-out` line.
+   - A refusal keeps the worktree, since the worktree's records may be in no archive. The refusal's key goes on that line, and the worktree line reads `standing — close-out refused`.
 
-   **The worktree.** A lane leaves its worktree: the overseer's close stops the session, then releases the worktree (step 4). § 6's worktree line reads `standing — left to the overseer's close`. A run outside a lane removes the worktree once the project verification passed and the close-out is done. First run step 4's disposal predicate again, whole: step 5's replies and this step's build can each dirty the tree or move the branch. `worktree remove` refuses nothing itself. Uncommitted content, untracked content and a worktree moved to another branch all leave with the folder. The predicate is the only guard. Where every part holds, remove the worktree from `[MAIN_REPO_ROOT]`:
+   **The worktree.**
 
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
-   ```
+   - A lane leaves its worktree: the overseer's close stops the session, then releases the worktree (step 4). § 6's worktree line reads `standing — left to the overseer's close`.
+   - A run outside a lane removes the worktree once the project verification passed and the close-out is done.
+     - First run step 4's disposal predicate again, whole: step 5's replies and this step's build can each dirty the tree or move the branch.
+     - `worktree remove` refuses nothing itself. Uncommitted content, untracked content and a worktree moved to another branch all leave with the folder. The predicate is the only guard.
+     - Where every part holds, remove the worktree from `[MAIN_REPO_ROOT]`:
+
+       ```bash
+       env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove [ISSUE]
+       ```
 
    A foreign-lease refusal keeps the worktree. Carry its diagnostic onto § 6's worktree line. Where § 4 found an issue worktree, read its path last, whichever way the removal went:
 
@@ -557,13 +792,12 @@ Worktree `[WORKTREE_PATH]` gone / standing — [cause]
 
 </output_format>
 
-The `Container` row appears only where § 5 step 2 found a container parent. In a lane, the `Branch` and `Base sync` rows read `left to the overseer's close`. Where § 5 step 3 failed, `Base sync` carries the warning in place of a SHA: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`.
-
-The worktree line closes the block with step 6's reading: `gone`, or `standing — [cause]`. The cause is the one step 4's disposal predicate named, `foreign lease`, `project verification failed`, `close-out refused` or `left to the overseer's close`. Omit the line only where § 4 found no issue worktree.
-
-The `tmp/ close-out` line carries the archive step 6's close-out reported, its refusal key, or, in a confined lane, `left to the overseer's close`. Omit it where that step never ran.
-
-Add a `Review gate` row only where the merge did not proceed on a plain `approved` verdict: `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+- The `Container` row appears only where § 5 step 2 found a container parent.
+- In a lane, the `Branch` and `Base sync` rows read `left to the overseer's close`.
+- Where § 5 step 3 failed, `Base sync` carries the warning in place of a SHA: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`.
+- The worktree line closes the block with step 6's reading: `gone`, or `standing — [cause]`. The cause is the one step 4's disposal predicate named, `foreign lease`, `project verification failed`, `close-out refused` or `left to the overseer's close`. Omit the line only where § 4 found no issue worktree.
+- The `tmp/ close-out` line carries the archive step 6's close-out reported, its refusal key, or, in a confined lane, `left to the overseer's close`. Omit it where that step never ran.
+- Add a `Review gate` row only where the merge did not proceed on a plain `approved` verdict: `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 
@@ -587,4 +821,6 @@ Legend: ✅ merged  ⏭️ skipped (user)  ❌ skipped (error)
 
 ## 7. Return
 
-The merge is complete once § 5 steps 1-6 have run. A run outside a lane whose issue worktree still stands, with no cause on § 6's worktree line, has not finished. A run that handed back at a verdict other than a merge reports that verdict and ends. It does not resume.
+- The merge is complete once § 5 steps 1-6 have run.
+- A run outside a lane whose issue worktree still stands, with no cause on § 6's worktree line, has not finished.
+- A run that handed back at a verdict other than a merge reports that verdict and ends. It does not resume.

@@ -13,9 +13,9 @@ Run every reviewer over a whole repository and present the findings. This workfl
 .agents/skills/orch/scripts/git-context repo-root [PATH_OR_PWD]
 ```
 
-Not a git worktree: report `review-codebase requires a git worktree` and **END**. Otherwise the output is `WT_PATH`. Run `mkdir -p "$WT_PATH/tmp"`.
-
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, where `[DIR]` is `[PATH_OR_PWD]`.
+1. Not a git worktree: report `review-codebase requires a git worktree` and **END**.
+2. Otherwise the output is `WT_PATH`. Run `mkdir -p "$WT_PATH/tmp"`.
+3. Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, where `[DIR]` is `[PATH_OR_PWD]`.
 
 ## 2. Delegate
 
@@ -27,7 +27,11 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`, where `[DIR]` 
    .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
    ```
 
-4. `0` delegates to every reviewer in one parallel batch. A positive value below the reviewer count runs bounded waves: retire each finished session before the next wave. A thread-limit spawn failure under an unlimited budget continues in waves the size of the reviewers that spawned. This workflow runs no re-review.
+4. Launch by the budget:
+   - `0` delegates to every reviewer in one parallel batch.
+   - A positive value below the reviewer count runs bounded waves: retire each finished session before the next wave.
+   - A thread-limit spawn failure under an unlimited budget continues in waves the size of the reviewers that spawned.
+   - This workflow runs no re-review.
 5. On Codex, spawn each canonical reviewer name by [codex-runtime.md § Spawning Codex collaboration agents](../references/codex-runtime.md#spawning-codex-collaboration-agents), under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse).
 
 <delegation_format>
@@ -40,7 +44,10 @@ Exclusions: generated artifacts, dependency and vendor directories, build output
 
 ## 3. Present Findings
 
-Wait for every reviewer, then read the returned JSON files. List a reviewer that returns another format as `unresponsive`, and continue. Never synthesize a finding. The overall verdict is `action_required` when any reviewer returned a blocker, else `pass`.
+1. Wait for every reviewer, then read the returned JSON files.
+2. List a reviewer that returns another format as `unresponsive`, and continue.
+3. Never synthesize a finding.
+4. The overall verdict is `action_required` when any reviewer returned a blocker, else `pass`.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -67,4 +74,5 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 </output_format>
 
-Omit an empty Blockers or Suggestions section. Offer no automatic fix.
+- Omit an empty Blockers or Suggestions section.
+- Offer no automatic fix.
