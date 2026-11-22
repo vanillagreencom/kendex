@@ -1,25 +1,37 @@
 # GitHub repository settings
 
-Select local review instructions or enabled GitHub review files for a repository. To report live rulesets, required checks and merge settings, opt in to [platform checks](references/platform-checks.md).
+github-repository-settings is a kendex package for repository owners who use AI code review. It renders the repository's local review instructions, or the review files of the GitHub review bots the owner enables. To report live rulesets, required checks and merge settings, opt in to [platform checks](references/platform-checks.md).
 
-## Operations
+## Features
 
-- `adopt --dry-run` previews takeover without writes and reports hand edits. Armed `adopt` takes unmanaged content over; follow it with `render`.
-- `retire` removes marked review files and the owned review region while preserving unrelated content.
-- `render` writes the selected files through bot-instructions.
-- `check [--staged]` compares files without writes and reports the check location. With `--staged`, it reads tracked settings and review files from the index. Process and private-file settings keep their working values and normal precedence. A nested settings file keeps its working values only when it is absent from HEAD and the index. A staged deletion stays absent even if its working file remains.
+- Previews a takeover of existing review files without writes, and reports hand edits.
+- Takes unmanaged review content over, once the package is set up.
+- Renders the selected review files through bot-instructions.
+- Checks the review files without writes, from the working tree or from the index, and reports the check location.
+- Removes its marked review files and the owned review region, and keeps unrelated content.
+
+[The skill](SKILL.md) lists the commands.
+
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill github-repository-settings
+```
+
+Needs kendex 1.23.0 or later. bot-instructions, which kendex installs with this package, needs Python 3.11 or later.
+
+## How it works
+
+Set up takes the review files over from bot-instructions. Until Set up runs, the write commands refuse and name Set up. Removing the package removes its marked review files and the review region, unless bot-instructions is still set up. Edits to marked content do not survive removal.
 
 ## Setup
 
-Install this package with its required `bot-instructions` and `review-gate` dependencies. Python 3.11 or later is required by bot-instructions. Use kendex 1.23.0 or later.
+1. Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION`. It has no default. `check` reports the value. Adoption and setup refuse while it is empty. `adopt`, `render`, `check` and setup refuse any value other than `hosted`, `local` or empty.
+2. `GITHUB_STANDARD_BOT_REVIEW` defaults to `off`, which selects local output. To render the bots the existing `[bot-instructions]` manifest table enables, set it to `on`.
+3. Put these settings in the `[env]` table of `kendex.settings.toml` at the repository root, as [the settings example](kendex.settings.toml.example) shows.
+4. Use Set up on this package's desktop page, or run the `kendex add` or `kendex apply` that installs this package with `--allow-repo-effects`.
 
-Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` before adoption. Remote review defaults to `off`. Set `GITHUB_STANDARD_BOT_REVIEW` to `on` to render the bots enabled in the existing `[bot-instructions]` manifest table. Put these settings under `[env]` as shown in [the settings example](kendex.settings.toml.example).
-
-Local output writes the `AGENTS.md` review pointer region. It needs the manifest's `codex` flag and an installed bot-instructions package inside the checkout. It leaves remote files outside this operation. This package installs no hosted CI.
-
-Adopt the repository effect through Set up on this package's desktop page, or the CLI's disclosed installation with `--allow-repo-effects`, after choosing hosted or local. Core retires the previous owner, runs this package's installer and transfers the arming record. Ordinary unarmed write commands refuse and name Set up. The installer preserves the renderer's marker gate on both setup and later refreshes. It refuses personal content; explicit armed `adopt` is the takeover operation. Remove the package to run core's declared cleanup and let core revoke its arming record. Cleanup preserves the shared marked files while bot-instructions remains armed, so core can render the old owner after failure. Otherwise it removes marked review files and region content, including in an unarmed clone. Recovery produces the old owner's full render from current inputs and replaces earlier edits to marked content. Direct `retire` leaves the record for core to manage.
-
-The bot-instructions renderer, schemas and validators remain a temporary dependency. KEN-2362 removes that dependency after the ownership transition. See [the skill](SKILL.md) for commands.
+Local output writes the `AGENTS.md` review pointer region. It needs the manifest's `codex` flag and an installed bot-instructions package inside the checkout. It leaves remote review files alone. This package installs no hosted CI.
 
 ## Licence
 
