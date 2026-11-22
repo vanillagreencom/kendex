@@ -62,6 +62,22 @@ setup without --detach is the remedy, and its success clears the record.
 Every answer exits 0, except with --hold PATH while PATH exists: a running
 build exits 3 every time, and an unbuilt key exits 3 once per PATH and
 cause, then 0. With PATH absent nothing is printed.
+
+After a build, setup removes every other key of <name> that nothing uses:
+its <cache>/bin/<name>-<key>, its <cache>/build/<name>/<key> folder and the
+key's .lock, .log, .failed and .told-* files. A key is in use while a
+running process's arguments name it, or while a checkout on this computer
+resolves to it: the home directory, and each folder `kendex project list
+--json` names with every worktree of its repository, each read through its
+.agents/skills/*/runtime and skills/*/runtime sources. Setup also keeps a
+key whose build holds its claim, a build folder with neither a binary nor a
+.failed record (a build in flight), and a binary with no build folder
+(installed from elsewhere). Where it cannot read the processes, the project
+list, a repository's worktrees or a source's key, it removes nothing and
+prints on stderr:
+  <name>-setup: prune-skipped cause=<cause> [field=value ...]
+Causes: processes-unread, kendex-missing, jq-missing, projects-unread,
+project-unreadable, git-missing, worktrees-unread, key-unread.
 USAGE
 }
 
@@ -87,6 +103,130 @@ refuse() { # KEY FIELD=VALUE...
   printf '%s-setup: %s%s\n' "$name" "$key" "${*:+ $*}" >&2
   exit 1
 }
+
+# claim_lost LOCK: 0 where the build that made the claim at LOCK is gone:
+# its process has ended, or it never took a claim CLAIM_GRACE seconds old.
+# Sets claim_start, claim_cap and claim_pid from the claim's numbers.
+claim_lost() { # LOCK
+  local claim
+  claim="$(readlink -- "$1" 2>/dev/null)" || claim=""
+  # shellcheck disable=SC2086 # the claim's numbers, split on purpose
+  set -- $claim
+  claim_start="${1:-}" claim_cap="${2:-}" claim_pid="${3:-}"
+  case "$#" in
+    3) ! kill -0 "$3" 2>/dev/null ;;
+    2) [ "$(($(date +%s) - $1))" -ge "$CLAIM_GRACE" ] ;;
+    *) return 0 ;;
+  esac
+}
+
+# prune: usage()'s removal after a build, run in a subshell so no read in it
+# can end the setup. It removes only what it proved unused; every read it
+# cannot finish removes nothing.
+prune() (
+  skip() { printf '%s-setup: prune-skipped cause=%s\n' "$name" "$*" >&2; exit 0; }
+  is_key() { [ "${#1}" -eq 64 ] && case "$1" in *[!0-9a-f]*) return 1 ;; esac; }
+  candidates=""
+  for path in "$cache/bin/$name-"* "$builds/"*; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    base="${path##*/}"
+    case "$path" in
+      "$cache/bin/"*) base="${base#"$name-"}" ;;
+      *) base="${base%%.*}" ;;
+    esac
+    is_key "$base" && [ "$base" != "$key" ] || continue
+    case " $candidates " in *" $base "*) ;; *) candidates="$candidates $base" ;; esac
+  done
+  [ -n "$candidates" ] || exit 0
+
+  # A placed program runs with its own path as argv[0] (the wrappers exec
+  # it, and the runtime's own exec passes its path), so its key is in the
+  # arguments ps prints for every process; ps prints itself at the least.
+  procs="$(ps -A -o args= 2>/dev/null)" && [ -n "$procs" ] || skip processes-unread
+
+  # The checkouts: the home directory's global skills, and each project
+  # kendex records with every worktree of its repository, since a lane's
+  # worktree resolves its own key.
+  command -v kendex >/dev/null 2>&1 || skip kendex-missing
+  command -v jq >/dev/null 2>&1 || skip jq-missing
+  list="$(kendex project list --json 2>/dev/null)" || skip projects-unread
+  rows="$(printf '%s\n' "$list" | jq -r 'if type == "array" then .[] | [.state, .folder] | @tsv else error("not an array") end' 2>/dev/null)" ||
+    skip projects-unread
+  unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+  # Each root once: every worktree of a repository lists them all.
+  roots=""
+  add_root() {
+    case "
+$roots
+" in *"
+$1
+"*) ;; *) roots="$roots
+$1" ;; esac
+  }
+  add_root "${HOME:-}"
+  tab="$(printf '\t')"
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    state="${row%%"$tab"*}"
+    folder="${row#*"$tab"}"
+    case "$state" in
+      ok) ;;
+      folder-not-found | not-a-folder) continue ;;
+      *) skip project-unreadable "folder=$folder" ;;
+    esac
+    case "$folder" in /*) ;; *) skip project-unreadable "folder=$folder" ;; esac
+    [ -d "$folder" ] || skip project-unreadable "folder=$folder"
+    add_root "$folder"
+    # A folder in no repository has no other worktree.
+    up="$folder"
+    while [ -n "$up" ] && [ ! -e "$up/.git" ]; do up="${up%/*}"; done
+    [ -n "$up" ] || [ -e /.git ] || continue
+    command -v git >/dev/null 2>&1 || skip git-missing
+    prefix="$(git -C "$folder" rev-parse --show-prefix 2>/dev/null)" || skip worktrees-unread "folder=$folder"
+    trees="$(git -C "$folder" worktree list --porcelain 2>/dev/null)" || skip worktrees-unread "folder=$folder"
+    while IFS= read -r line; do
+      case "$line" in "worktree "*) ;; *) continue ;; esac
+      tree="${line#worktree }/$prefix"
+      [ ! -d "$tree" ] || add_root "${tree%/}"
+    done <<EOF
+$trees
+EOF
+  done <<EOF
+$rows
+EOF
+  keep=" "
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    for source in "$root"/.agents/skills/*/runtime "$root"/skills/*/runtime; do
+      [ -f "$source/Cargo.toml" ] || continue
+      used="$(agent_runtime_key "$source" 2>/dev/null)" || skip key-unread "runtime=$source"
+      keep="$keep$used "
+    done
+  done <<EOF
+$roots
+EOF
+
+  for candidate in $candidates; do
+    case "$keep" in *" $candidate "*) continue ;; esac
+    case "$procs" in *"$candidate"*) continue ;; esac
+    if [ -L "$builds/$candidate.lock" ]; then claim_lost "$builds/$candidate.lock" || continue; fi
+    program="$cache/bin/$name-$candidate"
+    if [ -d "$builds/$candidate" ]; then
+      # A setup without --detach builds under no claim.
+      [ -e "$program" ] || [ -f "$builds/$candidate.failed" ] || continue
+    else
+      # A binary built elsewhere and installed here, as a lane-host provider
+      # installs its workers' builds (lib/key.sh). Its .log and .told-* are
+      # no build: a host without cargo writes them for its installed keys.
+      [ ! -e "$program" ] || continue
+    fi
+    # The build folder goes first: one left over would hold its gigabytes,
+    # a binary left over is kept as an installed one.
+    rm -rf -- "${builds:?}/$candidate" || continue
+    rm -f -- "$builds/$candidate".lock "$builds/$candidate".log "$builds/$candidate".failed \
+      "$builds/$candidate".told-* "$program" || :
+  done
+)
 
 offline=0
 while [ "$#" -gt 0 ]; do
@@ -203,18 +343,11 @@ if [ "$detach" -eq 1 ]; then
   # not passed; a claim whose build never took it is given CLAIM_GRACE
   # seconds. A claim whose build is gone without a record was lost (a
   # reboot, a kill): it is recorded so, and started again only when asked.
-  claim="$(readlink -- "$lock" 2>/dev/null)" || claim=""
-  # shellcheck disable=SC2086 # the claim's numbers, split on purpose
-  set -- $claim
-  case "$#" in
-    3)
-      if kill -0 "$3" 2>/dev/null; then
-        [ "$(($(date +%s) - $1))" -ge "$2" ] || answer runtime-building "key=$key" "log=$log"
-        unbuilt build-capped
-      fi
-      ;;
-    2) [ "$(($(date +%s) - $1))" -ge "$CLAIM_GRACE" ] || answer runtime-building "key=$key" "log=$log" ;;
-  esac
+  if ! claim_lost "$lock"; then
+    [ -n "$claim_pid" ] && [ "$(($(date +%s) - claim_start))" -ge "$claim_cap" ] ||
+      answer runtime-building "key=$key" "log=$log"
+    unbuilt build-capped
+  fi
   [ ! -x "$binary" ] || answer "key=$key" "binary=$binary"
   [ -f "$failed" ] || { printf 'build-lost\n' >"$failed.$$" && mv -f -- "$failed.$$" "$failed"; } ||
     refuse cache-unwritable "path=$failed"
@@ -271,4 +404,5 @@ mv -f -- "$tmp" "$binary" || refuse place-failed "path=$binary"
 trap - EXIT
 # A detached build of this key that ended unbuilt is answered by this build.
 rm -f -- "$failed" "$builds/$key".told-*
+prune || :
 printf '%s-setup: key=%s binary=%s\n' "$name" "$key" "$binary"

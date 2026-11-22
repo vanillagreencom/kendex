@@ -33,6 +33,22 @@ ln -s "$SRC/tests/setup/rustup" "$TMP_ROOT/bin/rustc"
 export FAKE_TOOLCHAINS=1.96.1
 # A caller under `rustup run` would otherwise choose the planted toolchain.
 unset RUSTUP_TOOLCHAIN
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+# Setup reads the home directory's skills after a build: a scratch home.
+export HOME="$TMP_ROOT/home"
+export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+mkdir -p "$HOME"
+# The planted kendex answers `project list --json` from FAKE_KENDEX_REGISTRY,
+# or exits FAKE_KENDEX_EXIT.
+cat >"$TMP_ROOT/bin/kendex" <<'SHIM'
+#!/bin/sh
+[ "$*" = 'project list --json' ] || exit 97
+[ "${FAKE_KENDEX_EXIT:-0}" -eq 0 ] || exit "$FAKE_KENDEX_EXIT"
+cat "$FAKE_KENDEX_REGISTRY"
+SHIM
+chmod 755 "$TMP_ROOT/bin/kendex"
+export FAKE_KENDEX_REGISTRY="$TMP_ROOT/registry.json"
+printf '[]\n' >"$FAKE_KENDEX_REGISTRY"
 
 # chmod as BSD reads its arguments, first on PATH for every row, so a Linux
 # run fails the placement a macOS one fails: getopt(3) stops at the first
@@ -238,6 +254,120 @@ RC=0
 env -u AGENT_RUNTIME_CACHE XDG_CACHE_HOME="$TMP_ROOT/xdg" "$SETUP" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || RC=$?
 assert_eq "$RC" 0 'setup under XDG_CACHE_HOME exits 0' "$TMP_ROOT/err"
 assert_eq "$(cat "$TMP_ROOT/out")" "agent-runtime-setup: key=$KEY binary=$TMP_ROOT/xdg/kendex/agent-runtime/bin/agent-runtime-$KEY" 'the default cache is kendex/agent-runtime under XDG_CACHE_HOME'
+
+# --- after a build, setup removes the keys nothing uses ---------------------
+# One cache holding a key of each kind setup tells apart, then a build of the
+# package's key. The checkouts: a registered repository and its linked
+# worktree, a registered folder in no repository (a source catalog's
+# skills/ layout) and the home directory's global skills, each with the
+# package's runtime one comment off, so each resolves to a key of its own.
+PC="$TMP_ROOT/cache-prune"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+hex() { printf '%064d' 0 | tr 0 "$1"; }
+placed() { printf '#!/bin/sh\n' >"$PC/bin/agent-runtime-$1" && chmod -- 755 "$PC/bin/agent-runtime-$1"; }
+built() { mkdir -p "$PB/$1/release" && : >"$PB/$1.log" && placed "$1"; }
+runtime_copy() { # DEST MARK
+  mkdir -p "$1"
+  cp -p "$PKG/runtime/Cargo.toml" "$PKG/runtime/Cargo.lock" "$1/"
+  cp -R "$PKG/runtime/src" "$1/src"
+  printf '// %s\n' "$2" >>"$1/src/lib.rs"
+}
+key_at() { bash -c 'refuse() { exit 1; }; . "$1"; agent_runtime_key "$2"' _ "$SRC/scripts/lib/key.sh" "$1"; }
+REPO="$TMP_ROOT/checkouts/repo"
+LANE="$TMP_ROOT/checkouts/lane"
+PLAIN="$TMP_ROOT/checkouts/plain"
+mkdir -p "$REPO"
+git -C "$REPO" init -q
+git -C "$REPO" config gc.auto 0
+git -C "$REPO" config maintenance.auto false
+runtime_copy "$REPO/.agents/skills/agent-runtime/runtime" repo
+git -C "$REPO" add -A
+git -C "$REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m fixture
+git -C "$REPO" worktree add -q -b lane "$LANE"
+printf '// lane\n' >>"$LANE/.agents/skills/agent-runtime/runtime/src/lib.rs"
+runtime_copy "$PLAIN/skills/agent-runtime/runtime" plain
+runtime_copy "$HOME/.agents/skills/agent-runtime/runtime" home
+printf '[{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"ok","worktree":null},{"folder":"%s","state":"folder-not-found","worktree":null}]\n' \
+  "$REPO" "$PLAIN" "$TMP_ROOT/gone" >"$FAKE_KENDEX_REGISTRY"
+REPO_KEY="$(key_at "$REPO/.agents/skills/agent-runtime/runtime")"
+LANE_KEY="$(key_at "$LANE/.agents/skills/agent-runtime/runtime")"
+PLAIN_KEY="$(key_at "$PLAIN/skills/agent-runtime/runtime")"
+HOME_KEY="$(key_at "$HOME/.agents/skills/agent-runtime/runtime")"
+assert_eq "$(printf '%s\n' "$KEY" "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY" | grep -c -E '^[0-9a-f]{64}$' | tr -d ' ')|$(printf '%s\n' "$KEY" "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY" | sort -u | wc -l | tr -d ' ')" '5|5' 'premise: each checkout resolves to a key of its own'
+for checkout_key in "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY"; do built "$checkout_key"; done
+UNUSED="$(hex a)"
+built "$UNUSED"
+: >"$PB/$UNUSED.told-0-build-failed"
+FAILED="$(hex 1)"
+mkdir -p "$PB/$FAILED"
+printf 'build-failed\n' >"$PB/$FAILED.failed"
+: >"$PB/$FAILED.log"
+STALE="$(hex 2)"
+built "$STALE"
+ln -s '1 1200' "$PB/$STALE.lock"
+LOCKED="$(hex b)"
+built "$LOCKED"
+sleep 30 &
+holder=$!
+ln -s "$(date +%s) 1200 $holder" "$PB/$LOCKED.lock"
+RUNNING="$(hex c)"
+built "$RUNNING"
+# A placed program runs with its path as argv[0], as the wrapper's exec
+# leaves it.
+bash -c 'exec -a "$1" sleep 30' _ "$PC/bin/agent-runtime-$RUNNING" &
+runner=$!
+n=0
+until [[ "$(ps -p "$runner" -o args= 2>/dev/null || :)" == "$PC/bin/agent-runtime-$RUNNING"* ]]; do
+  n=$((n + 1))
+  [ "$n" -lt 100 ] || fail 'premise: the running program shows its path as argv[0]'
+  [ "$n" -lt 100 ] || break
+  sleep 0.1
+done
+# Installed from elsewhere on a host with no cargo: a binary, and only the
+# .log and .told-* its detached setup leaves under build/.
+FLEET="$(hex d)"
+placed "$FLEET"
+printf 'agent-runtime-setup: cargo-missing key=%s\n' "$FLEET" >"$PB/$FLEET.log"
+: >"$PB/$FLEET.told-0123-cargo-missing"
+FLIGHT="$(hex e)"
+mkdir -p "$PB/$FLIGHT/release"
+
+run "$PC" "$SETUP"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|" 'prune: the build passes with its one line and no diagnostic'
+expected_bin=""
+for k in "$KEY" "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY" "$LOCKED" "$RUNNING" "$FLEET"; do
+  expected_bin="$expected_bin
+agent-runtime-$k"
+done
+assert_eq "$(ls -A "$PC/bin" | sort)" "$(printf '%s\n' "$expected_bin" | sed '/^$/d' | sort)" 'prune: bin/ keeps the built, checkout, claimed, running and installed keys alone'
+expected_build="$KEY
+$FLIGHT
+$FLEET.log
+$FLEET.told-0123-cargo-missing
+$LOCKED
+$LOCKED.log
+$LOCKED.lock
+$RUNNING
+$RUNNING.log"
+for k in "$REPO_KEY" "$LANE_KEY" "$PLAIN_KEY" "$HOME_KEY"; do
+  expected_build="$expected_build
+$k
+$k.log"
+done
+assert_eq "$(ls -A "$PB" | sort)" "$(printf '%s\n' "$expected_build" | sort)" 'prune: build/ loses the unused, failed and lost-claim keys whole, the build in flight kept'
+kill "$holder" "$runner" 2>/dev/null || :
+wait "$holder" "$runner" 2>/dev/null || :
+
+# A project list that does not read proves nothing unused: nothing goes.
+PC="$TMP_ROOT/cache-prune-unread"
+PB="$PC/build/agent-runtime"
+mkdir -p "$PB" "$PC/bin"
+built "$UNUSED"
+FAKE_KENDEX_EXIT=1 run "$PC" "$SETUP"
+assert_eq "$RC|$OUT|$ERR" "0|agent-runtime-setup: key=$KEY binary=$PC/bin/agent-runtime-$KEY|agent-runtime-setup: prune-skipped cause=projects-unread" 'prune: an unread project list passes the build and names the skip'
+assert_eq "$(ls -A "$PC/bin" | sort | tr '\n' ' ')|$(ls -A "$PB" | sort | tr '\n' ' ')" "$(printf '%s\n' "agent-runtime-$KEY" "agent-runtime-$UNUSED" | sort | tr '\n' ' ')|$(printf '%s\n' "$KEY" "$UNUSED" "$UNUSED.log" | sort | tr '\n' ' ')" 'prune: an unread project list removes nothing'
+printf '[]\n' >"$FAKE_KENDEX_REGISTRY"
 
 # --- --detach: the build a caller that must answer starts beside itself ----
 # A turn end on a computer whose runtime is unbuilt (a pull, a cleared
