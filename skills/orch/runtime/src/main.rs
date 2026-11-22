@@ -3397,7 +3397,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
         StateOp::Remove { item, archive } => {
             let env = Env::system()?;
             // A confined lane's close-out stamps its own record, the one
-            // write of the item's folder its grants hold, so the overseer's
+            // close-out write its grants hold, so the overseer's
             // close can tell that merge-pr's verification passed and this
             // step ran: the archive and removals lie outside those grants.
             if confined() {

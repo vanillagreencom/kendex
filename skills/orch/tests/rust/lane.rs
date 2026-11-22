@@ -2400,10 +2400,10 @@ fn age(path: &Path, secs: u64) {
 
 /// A confined lane's `state remove` is the overseer's close-out: under the
 /// wrapper's marker the command says so, stamps its record's
-/// `closed_out_at` with the time it ran, the one write its grants hold, and
-/// removes and archives nothing; the same remove unmarked, the close-out
-/// the overseer's terminal close runs, takes the item's files after their
-/// archive.
+/// `closed_out_at` with the time it ran, the one close-out write its grants
+/// hold, and removes and archives nothing; the same remove unmarked, the
+/// close-out the overseer's terminal close runs, takes the item's files
+/// after their archive.
 #[test]
 fn a_confined_state_remove_stamps_its_record_and_an_unconfined_one_takes_its_files() {
     let archive_root = tempfile::tempdir().unwrap();

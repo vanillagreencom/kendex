@@ -779,8 +779,9 @@ pub enum CloseGround {
         park: Option<crate::ops::OwedPark>,
     },
     /// The close judged the lane ended while its item stays open: its merge
-    /// cycle stands and its work is over (its worktree gone, or a local
-    /// lane's item closed out), or its host kind declares no
+    /// cycle stands and its work is over (its worktree gone, or its item
+    /// closed out: the record removed, or, for a confined lane, stamped
+    /// `closed_out_at` at its current attempt), or its host kind declares no
     /// stop this machine can make (a cloud session). The lane ends done
     /// whatever its harness reads, the item's files kept. `source` names the
     /// reading; [`HOST_ABSENT`] is the one that ends an item its tracker
