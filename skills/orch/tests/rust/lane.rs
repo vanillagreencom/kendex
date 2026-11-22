@@ -3034,15 +3034,23 @@ fn a_hosted_lanes_last_mail_reaches_the_overseer_on_each_route_its_sandbox_goes(
 }
 
 /// A stopped or parked record whose sandbox its provider no longer holds,
-/// its mailbox unreadable and no row listed for the item, closes on an item
-/// its tracker holds open too: nothing on the host is left to read or ask,
-/// the provider's close answers the sandbox absent, and the open item's
-/// files stay. A running record whose merge stands and whose worktree is
-/// gone, the host answering the probe that reads it gone, closes the same
-/// way, asking its provider no stop.
+/// its mailbox unreadable and no row listed for the item or only one torn
+/// down (`destroyed`, `exited`), closes on an item its tracker holds open
+/// too: nothing on the host is left to read or ask, the provider's close
+/// answers the sandbox absent, and the open item's files stay. A running
+/// record whose merge stands and whose worktree is gone, the host answering
+/// the probe that reads it gone, closes the same way, asking its provider
+/// no stop.
 #[test]
 fn a_stopped_or_parked_record_whose_sandbox_is_gone_closes_on_an_open_item() {
-    for status in ["stopped", "parked", "running"] {
+    let rows = [
+        ("stopped", ""),
+        ("stopped", "o/r/KEN-1\tdestroyed\t-\tlane.example"),
+        ("stopped", "o/r/KEN-1\texited\t-\tlane.example"),
+        ("parked", ""),
+        ("running", ""),
+    ];
+    for (status, listed) in rows {
         let mut fleet = Fleet::hosted(4);
         let unreachable = if status == "running" {
             &MAIL_UNREACHABLE[..2]
@@ -3052,7 +3060,7 @@ fn a_stopped_or_parked_record_whose_sandbox_is_gone_closes_on_an_open_item() {
         for (name, value) in unreachable {
             fleet.answer(name, value);
         }
-        fleet.answer("LIST", "");
+        fleet.answer("LIST", listed);
         fleet.answer("CLOSE_LINE", "closed=absent item=KEN-1");
         let mut lane = hosted_lane("KEN-1");
         lane["status"] = json!(status);
@@ -3701,12 +3709,11 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
 
 /// A merged hosted lane whose item stays in Verifying, its record in its
 /// worktree's `tmp`, the state directory its launch names, closes on one
-/// close once merge-pr § 5 step 6 has run: the close-out, pointed at the
-/// clone's state directory with the worktree's `tmp` as its `--archive`,
-/// takes the item's record from that `tmp` too, its lock staying, and the
-/// close that follows reads the record gone and ends the lane done,
-/// asking no `list` after the provider's close though the provider still
-/// lists the sandbox `started` while its teardown runs.
+/// close once merge-pr § 5 step 6 has run there: the close-out takes the
+/// record, its lock staying, and the close that follows reads the record
+/// gone and ends the lane done, asking no `list` after the provider's
+/// close though the provider still lists the sandbox `started` while its
+/// teardown runs.
 #[test]
 fn a_merged_hosted_lane_in_verifying_closes_once_after_its_close_out() {
     let archive_root = tempfile::tempdir().unwrap();
@@ -3728,11 +3735,9 @@ fn a_merged_hosted_lane_in_verifying_closes_once_after_its_close_out() {
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     std::fs::write(&record, "{}\n").unwrap();
     let lock = plant(&worktree, "tmp/items/KEN-1/workflow-state-KEN-1.json.lock");
-    let clone_tmp = disk.join("w/clone/tmp");
-    std::fs::create_dir_all(&clone_tmp).unwrap();
     let mut remove = isolated();
     remove
-        .args(["--state-dir", &clone_tmp.display().to_string()])
+        .args(["--state-dir", &worktree.join("tmp").display().to_string()])
         .args(["state", "remove", "--item", "KEN-1", "--archive"])
         .arg(worktree.join("tmp"))
         .current_dir(fleet.state_dir());
@@ -3743,7 +3748,7 @@ fn a_merged_hosted_lane_in_verifying_closes_once_after_its_close_out() {
     assert_eq!(removed["ok"], true, "{removed}");
     assert!(
         std::fs::symlink_metadata(&record).is_err(),
-        "the close-out took the record from the worktree's tmp: {removed}"
+        "the close-out took the record: {removed}"
     );
     assert!(std::fs::symlink_metadata(&lock).is_ok(), "the lock stays");
 

@@ -446,8 +446,7 @@ pub struct CloseOut {
 /// leaves, whatever its age, but the record's lock file
 /// ([`without_record_locks`]); the archive holds them, the lane mailbox,
 /// which no close-out removes, and each `extra` path that stands, which the
-/// caller removes after, but the item's own folder `items/ITEM/` under an
-/// `extra` directory, which leaves with the rest. The archive's `records.json` declares each path
+/// caller removes after. The archive's `records.json` declares each path
 /// it packs as `members`, role `state` for the item's record and `along`
 /// for the rest, so its reader never chooses among nested copies of the
 /// record. Nothing is removed until the archive stands. A
@@ -466,14 +465,12 @@ pub fn close_out(
     locking: Locking,
     now: u64,
 ) -> Result<CloseOut> {
-    let mut held = Vec::new();
-    for record in std::iter::once(state::item_path(state_dir, item))
-        .chain(extra.iter().map(|dir| state::item_path(dir, item)))
-    {
-        if stands(&record)? || stands(&agent_runtime::record::lock_path(&record))? {
-            held.push(record);
-        }
-    }
+    let record = state::item_path(state_dir, item);
+    let held = if stands(&record)? || stands(&agent_runtime::record::lock_path(&record))? {
+        vec![record.clone()]
+    } else {
+        Vec::new()
+    };
     records_locked(&held, locking, |unlocked| {
         match unlocked.into_iter().next() {
             Some((_, cause)) => Err(cause),
@@ -548,14 +545,6 @@ pub fn without_record_locks(paths: Vec<PathBuf>, records: &[PathBuf]) -> Vec<Pat
         })
         .collect();
     paths.into_iter().filter(|p| !locks.contains(p)).collect()
-}
-
-fn is_dir(path: &Path) -> Result<bool> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) => Ok(meta.is_dir()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(io("read", path, e)),
-    }
 }
 
 fn stands(path: &Path) -> Result<bool> {
@@ -668,18 +657,6 @@ fn close_out_held(
             evidence.push(path.clone());
             standing += 1;
         }
-    }
-    // An `--archive` directory laid out as a state directory holds the
-    // item's folder where the close reads the item's record (a hosted
-    // lane's worktree `tmp`); it leaves with the state directory's, packed
-    // already inside that directory's archive member.
-    for dir in extra {
-        let folder = state::item_dir(dir, item);
-        if !is_dir(dir)? || resolve(&folder) == resolve(&state::item_dir(state_dir, item)) {
-            continue;
-        }
-        let record = state::item_path(dir, item);
-        targets.extend(without_record_locks(read_dir(&folder)?, &[record]));
     }
     let archive = if targets.is_empty() && standing == 0 {
         None
