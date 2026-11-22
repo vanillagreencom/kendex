@@ -50,7 +50,9 @@ Do not hand-copy code-owned inventories or defaults. A reference may define a co
 
 ## Agent-read files
 
-An agent reads every Markdown file except the files people read: `README.md`, `CHANGELOG.md` and `changelog.d/` fragments, a package's `documentation/` pages, `THIRD_PARTY_NOTICES.md`, and the product content directory a repository names in its `AGENTS.md`, such as a help site or legal pages. A file whose type section names a person and an agent as its readers, such as `DEVELOPMENT.md`, is agent-read. A template is agent-read; the text it produces follows the rules for that text's reader. A file people read follows its type's section.
+An agent reads every Markdown file except the files people read alone: `CHANGELOG.md` and its `changelog.d/` fragments, a package's `documentation/` pages, a licence or notice file such as `THIRD_PARTY_NOTICES.md`, the product content directory a repository names in its `AGENTS.md`, and a `README.md` that no `AGENTS.md` route, skill or workflow sends an agent to. A file people read follows its type's section where the route table has one. A licence or notice file keeps the text its licence requires.
+
+People and agents both read a `DEVELOPMENT.md`, a runbook, a README that an agent is routed to, and a page that a README or a product page sends a person to. In such a file, a passage stays if either reader needs it, the agent by the test below. A template is agent-read; the text it produces follows the rules for that text's reader.
 
 A passage stays in an agent-read file only if the agent that reads the file needs it for its task. A rule is needed only when the mistake it prevents is real and costly, and nothing else already prevents it: a command that refuses the wrong input, a rule the same agent already loads, a step of the workflow it runs, or ordinary competence. Move a passage that another reader needs to that reader's file under § Layout, and delete the rest.
 
