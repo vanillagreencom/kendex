@@ -39,7 +39,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | `pr-merge <N> [--check\|--auto]` | Merge a PR, or report its readiness. |
 | `merge-queue-mutation <disablePullRequestAutoMerge\|dequeuePullRequest> <PR_NODE_ID>` | Run one merge-queue mutation. |
 | `ci-classify-refusal <N>` | Name the cause of a pr-merge refusal. |
-| `check-review-replies <N>` | Judge what the PR's review replies say, read live and read-only. |
+| `check-review-replies <N>` | Judge what the PR's review replies say. |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. |
 | `pr-issue <N> [--format=safe\|text]` | Extract the issue ID from the PR branch. |
 | `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. |
@@ -69,7 +69,9 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 - `pr-cross-check --verify` runs a full build and test, detecting the build system.
 - `pr-issue` reads its issue pattern from `GH_ISSUE_PATTERN`.
 - `label-add --help` gives its mode semantics and exit codes.
-- `ci-rerun` reruns only when the failed log names a transient runner failure. It prints `rerun run=ID pattern=P` or `no-rerun cause=...`. The caller keeps the once-per-head rule: `ci-rerun --help`.
+- `ci-rerun` reruns only when the failed log names a transient runner failure.
+- `ci-rerun` prints `rerun run=ID pattern=P` or `no-rerun cause=...`.
+- The caller keeps the once-per-head rule: `ci-rerun --help`.
 - `bot-token` names the selected variable as `source`.
 - The exit status of `dismiss-review`, `resolve-thread` and `unresolve-thread` reports whether their mutations landed: each command's `--help`.
 - `resolve-thread` works on threads the UI cannot render. See § PR blocked with no visible conversations.
@@ -77,7 +79,10 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 - `edit-comment --help` gives the endpoint order and the unknown-id refusal.
 - `sticky-comment --verdict` gives a quick pass or fail. `--analysis` gives the deep recommendation.
 
-CI waiting is the orch skill's: its workflows repeat the orch runtime's `verify-pr` operation on one pull request's current head, and its runtime's `queue-watch` reads that verdict on an armed pull request before the merge queue takes it, then the queue entry's progress.
+CI waiting is the orch skill's:
+
+- Its workflows repeat the orch runtime's `verify-pr` operation on one pull request's current head.
+- Its runtime's `queue-watch` reads that verdict on an armed pull request before the merge queue takes it, then the queue entry's progress.
 
 Contracts: `git-https-auth --help`, `git-diff-summary --help`.
 
@@ -106,23 +111,29 @@ The readiness check:
 Outcomes and routes:
 
 - Full contract: `pr-merge --help`.
-- Exit `75` is volatile. The caller arms one exact head and waits on that head with the orch runtime's `queue-watch`. Orch's `merge-pr.md` § 5 step 1 maps its verdicts to routes. An unrecognized verdict is never re-armed.
+- Exit `75` is volatile:
+  - The caller arms one exact head and waits on that head with the orch runtime's `queue-watch`.
+  - Orch's `merge-pr.md` § 5 step 1 maps its verdicts to routes.
+  - An unrecognized verdict is never re-armed.
 - If `can_merge` is false with no `issues`, read `state`.
 - `pr-merge` resolves no review thread.
 - The readiness check each call runs (`--check`, the merge and the `--auto` arm) runs the reply check below. That check holds at that moment and no later:
   - `--auto` arms nothing while the check fails.
-  - `pr-merge` does not read again a PR armed before its replies existed while it stays armed or queued.
+  - A PR armed before its replies existed stays unread: `pr-merge` does not check it again while it stays armed or queued.
 - `--auto` queues a currently-blocked PR. It arms only where the base branch's rulesets require at least 1 approval and thread resolution and dismiss stale approvals on push.
 - Otherwise `--auto` refuses with `arm: no-merge-gate=required_approval`, `required_thread_resolution` or `dismiss_stale_reviews`. The rule is `pr-merge --help` § Approvals and review threads.
-- On a base that requires a merge queue, `--auto` enrolls the PR and exits `75`.
-- On an admin route, `--auto` without `--queue` arms nothing. It exits `1` with `merge-route: admin cause=queue-bypass-safe` as its first stderr line. `--queue` explicitly requests a queue arm.
-- The immediate merge first reads its route under the merge's own token, and names it on a `merge-route:` line.
-- It merges with `--admin`, bound to the verified head, and exits `0` only where both hold:
+- On a base that requires a merge queue, `--auto` enrolls the PR and exits `75`, except on an admin route without `--queue`, where it arms nothing and exits `1` with `merge-route: admin cause=queue-bypass-safe` as its first stderr line.
+- `--queue` explicitly requests a queue arm.
+- On a base whose rules hold a merge queue, the immediate merge first reads its route under the merge's own token, and names it on a `merge-route:` line.
+- Where both hold, it merges with `--admin`, bound to the verified head, and exits `0`:
   - The merge queue is all `--admin` would skip.
   - The harness-ci skill's `change-class` reads the PR not queue-only at the base branch's tip, the PR's recorded base being that tip.
-- On any other answer it passes `--auto`, which enrolls the PR, and exits `75`. GitHub refuses a merge on a queue base that passes neither `--auto` nor `--admin`.
+- On any other answer it passes `--auto`, which enrolls the PR, and exits `75`.
+- GitHub refuses a merge on a queue base that passes neither `--auto` nor `--admin`.
 - Each condition of the admin route and each queue `cause=`: `pr-merge --help` § Merge route.
-- The merge method is the one the base branch allows, read from GitHub. The admin route merges past the queue, so it takes a method a direct merge allows, and takes the queue where there is none.
+- The merge method is the one the base branch allows, read from GitHub.
+- The admin route merges past the queue, so it takes a method a direct merge allows.
+- Where a direct merge allows none of the accepted methods, the merge takes the queue.
 - `--delete-branch` deletes the head only where the repository's `delete_branch_on_merge` is off and the head is not a fork's: `pr-merge --help` § Merge method and § Branch deletion.
 
 ### Review reply check
@@ -131,14 +142,15 @@ Outcomes and routes:
 .agents/skills/github/scripts/github.sh check-review-replies <N>
 ```
 
-- The command reads the pull request's replies live, through the same PR API readers, project env and token selection as the commands above.
+- The command is read-only.
+- It reads the pull request's replies live, through the same PR API readers, project env and token selection as the commands above.
 - It fails on four rules:
   - `untracked-claim`: a tracking reply that names no issue.
   - `unreasoned-decline`: a decline that names no mechanism.
   - `thread-replies`: a thread holding more comments than one read returns.
   - `suppressed-findings`: findings a review lists only in its body at the current head, with no head-bound answer.
 - A review body counts only from a bot, or from an `OWNER`, `MEMBER` or `COLLABORATOR` who is not the PR author.
-- A reply counts only from the PR author (an app author included), the identity the check runs as, such a member, or a declared automation account (below).
+- A reply counts only from the PR author (an app author included), the identity the check runs as, an `OWNER`, `MEMBER` or `COLLABORATOR`, or a declared automation account (below).
 - A thread's first comment is the finding it opens, never a reply.
 - Exit `0` passes.
 - Exit `1` fails. It prints a `review-replies: fail head=<sha>` line, a line per failing rule and a `suppressed-entry` line per unanswered body finding.
@@ -199,4 +211,6 @@ On a **stale-token `HTTP 401`**, clear both environment tokens:
 env -u GH_TOKEN -u GITHUB_TOKEN gh pr list
 ```
 
-`github.sh` falls back when keyring auth succeeds. A long-running reader selects its credential once, before it starts, through `scripts/gh-auth-ladder --project ROOT`. That script runs the same ladder and prints the `GH_TOKEN` and `GITHUB_TOKEN` it leaves (`gh-auth-ladder --help`).
+- When `GH_TOKEN` or `GITHUB_TOKEN` fails `gh` auth, `github.sh` unsets both and uses `gh` keyring auth, where keyring auth succeeds.
+- A long-running reader selects its credential once, before it starts, through `.agents/skills/github/scripts/gh-auth-ladder --project ROOT`.
+- That script runs the same ladder and prints the `GH_TOKEN` and `GITHUB_TOKEN` it leaves (`gh-auth-ladder --help`).

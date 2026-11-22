@@ -35,8 +35,10 @@ The target set is per-repo configuration. A ruleset whose `conditions.ref_name.i
 - If the base is outside the target set:
   - When orch manages the pull request, under `approval` its runtime's `verify-review` settles the pull request's Copilot request as orch's `references/gates.md` § Copilot requests says. Request nothing by hand.
   - Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target.
-- If a direct request draws nothing, close the pull request and open a fresh one against the default branch. Under orch, follow orch's `references/gates.md` § Copilot requests instead.
-- If the reviewer already reviewed this pull request once and a new review is needed, reopen it, which re-arms the reviewer.
-- If the reviewer never reviewed this pull request, reopening does nothing. Only the manual request, or a new pull request against a targeted base, draws one.
+- If a direct request draws nothing:
+  - Without orch, close the pull request and open a fresh one against the default branch.
+  - Under orch, follow orch's `references/gates.md` § Copilot requests instead.
+- If the reviewer already reviewed this pull request once and a new review is needed, close the pull request and reopen it, which re-arms the reviewer.
+- If the reviewer never reviewed this pull request, closing and reopening it does nothing. Only the manual request, or a new pull request against a targeted base, draws one.
 
 Evidence for the manual route: probe pull request `vanillagreencom/kendex#2527`, based on `ken-1329-probe-base`, which the ruleset does not target. `gh pr edit 2527 --add-reviewer @copilot` was accepted, and `copilot_work_started` followed 36 seconds later.

@@ -9,12 +9,16 @@
 - Parse arguments with an explicit `while`/`shift` loop that rejects unknown flags and surplus positionals.
 - Emit JSON with `jq -n`, never string interpolation: API error text routinely contains quotes.
 - Send a `{error}` refusal on stderr through `github_error` in `scripts/lib/json-error.sh`, which `github-api.sh` sources.
-- `tests/json-error.test.sh` drives each refusal that echoes a caller's argument, path or `GH_REPO` value with a double quote in it. `tests/edit-comment.test.sh` holds edit-comment's non-numeric id.
+- `tests/json-error.test.sh` drives each refusal that echoes a caller's argument, path or `GH_REPO` value with a double quote in it.
+- `tests/edit-comment.test.sh` holds edit-comment's non-numeric id.
 - Subprocess time bounds go through `scripts/lib/bounded.sh`, the one portable wall-clock bound.
 - Token resolution and the keyring fallback are `scripts/lib/gh-auth.sh`, shared with `scripts/gh-auth-ladder`, which the orch runtime runs for its GitHub reads.
 - Check-rollup run scoping and the required set are `scripts/lib/ci-run-correlation.sh`, sourced by `pr-merge`, `ci-classify-refusal`, `ci-rerun` and `pr-timeline`. Orch's `approve-head` request, which runs the overseer's approvals, reads Copilot's check runs in the runtime.
 - The process-group leader prefix every bounded child forks through is `scripts/lib/group-leader.sh`. The second-opinion runtime, reviewer's `mutation-stability` and the orch runtime's attached validation run share it.
-- Second-opinion, reviewer and orch require `github`. Jarvis and worktree declare `github` optional. Jarvis needs the helper for detached sessions without `setsid`. Worktree needs it for configured setup commands.
+- Second-opinion, reviewer and orch require `github`.
+- Jarvis and worktree declare `github` optional.
+- Jarvis needs `group-leader.sh` for detached sessions without `setsid`.
+- Worktree needs `group-leader.sh` for configured setup commands.
 
 ## Pull-request watcher
 
