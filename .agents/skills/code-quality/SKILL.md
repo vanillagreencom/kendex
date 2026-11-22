@@ -33,7 +33,7 @@ From 1.0, kendex keeps a retired consumer-visible form reading, with one warning
 
 # Code Quality
 
-Repo-specific standards live in each repo's `## Project Instructions` section and add to these rules, winning where they conflict. Before changing code, load the reference for each affected stack under § Language Discipline.
+Repo-specific standards live in each repo's `## Project Instructions` section and add to these rules, winning where they conflict.
 
 ## Core Principle
 
@@ -65,7 +65,7 @@ Build only what the current callers need. Add no speculative abstraction, extens
 
 One owner makes each decision: classification, validation, parsing of external input and state detection. Compute it once, in one module, and let callers consume the typed result instead of repeating casts or matches; a classification of upstream text lives in one table, tested on real examples. Before adding a script, background watcher, setting or rule, find and extend the existing owner; if none exists, state that in the commit message. A check that compares a declaration with its implementation checks consistency; it is not a second implementation of the decision, and its expected contract stays independent of the implementation.
 
-A new gate, check or guard names the failure it prevents, a run that failed or a shipped producer that reaches it, and who it is against: ordinary code calling by accident, untrusted input crossing a trust boundary, or a developer bypassing it on purpose, which review holds, not the guard. Weigh its upkeep against that harm; with no failure to name, it is not added. A guard over source code claims only what the platform's own enforcement holds, such as the type system, the compiler or a lint on resolved calls; past that line, review holds the rule. A guard over source that needs a second enumerator, a parser of its own source or a second build to prove itself complete has left its goal: narrow the claim.
+A new gate, check or guard names the failure it prevents, a run that failed or a shipped producer that reaches it, and who it is against: ordinary code calling by accident, untrusted input crossing a trust boundary, or a developer bypassing it on purpose, which review holds, not the guard. With no failure to name, it is not added. A guard over source code claims only what the platform's own enforcement holds, such as the type system, the compiler or a lint on resolved calls; past that line, review holds the rule. A guard over source that needs a second enumerator, a parser of its own source or a second build to prove itself complete has left its goal: narrow the claim.
 
 Integrate through the system's documented interface: read its current documentation before building on it, and among its documented extension points, an SDK or plugin API, events or RPC, hooks or settings, use the one that holds the need with the least code to carry. Documented text output is an interface. Name the interface used and why. An indirect read of screen text, internal files or undocumented output names the interface it replaces and why that interface cannot serve.
 
@@ -104,7 +104,7 @@ A must-fail control ([§ Tests](#tests)) proves that an instrument detects the d
 
 ## Language Discipline
 
-Load only the references for the code being changed:
+Before changing code, load only the references for the code being changed:
 
 - Rust, Cargo or Rust benchmarks: [references/rust.md](references/rust.md).
 - Bash or shell suites: [references/bash.md](references/bash.md).
@@ -115,7 +115,7 @@ Load only the references for the code being changed:
 
 A comment states why, or a constraint the code cannot show: no history, review notes, code restatements or change logs. History includes a citation of an old script by line, a round, a session, an incident, a review or a past issue: the reason a reader needs now stays, its origin goes. A doc comment is a comment: it states a why or a constraint, never what the item's name and signature already say, and no rule requires one on every item. Header help a script prints is CLI documentation, not narration. Delete a comment that adds nothing, and keep a claim within what the adjacent code establishes.
 
-Markdown follows [docs-writing](../docs-writing/SKILL.md) and carries no history either. Commit bodies explain intent, not the diff.
+Commit bodies explain intent, not the diff.
 
 ## Cleanup
 

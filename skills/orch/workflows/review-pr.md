@@ -597,7 +597,7 @@ Signals empty: § 7. Otherwise § 6.
 
 Delegate each recorded signal to the agent `qa_decision.agents` names for it, and wait. A project may override the mapping in its instructions.
 
-- The `needs-ui-review` agent judges the screenshots the dev summary lists against the design-system doc `QA_UI_DESIGN_DOC` names. Its delegation's Dev summary carries a Screenshots list: each changed view's set, as `.agents/skills/code-quality/references/ui.md` § Screenshots defines it. On a QA re-check, each view's entries come from the latest dev round whose summary lists that view: a fix round that recaptured it, else the implement round.
+- The `needs-ui-review` agent judges the screenshots the dev summary lists against the design-system doc `QA_UI_DESIGN_DOC` names. Its delegation's Dev summary carries a Screenshots list: each changed view's set, as `.agents/skills/reviewer/references/ui-screenshots.md` § Screenshots defines it. On a QA re-check, each view's entries come from the latest dev round whose summary lists that view: a fix round that recaptured it, else the implement round.
 - Fill `Worktree:` by the rule at the top of this workflow. Omit `[OWNER/REPO]` when `TRACKER=linear`.
 
 <delegation_format>

@@ -12,7 +12,7 @@ Standard practice for a changed view and its copy, in any UI stack. The project'
 These rules hold for every string a view shows. A string that breaks one is a finding to fix, and the fix can be to delete it.
 
 - Write only the text a user needs to act or to understand what happened; leave a slot empty rather than fill it. Under the heading "Projects", delete "Manage all your projects in one place." Replace a separate "Last checked" line with the time beside the summary.
-- Say each thing once. No body text or hint repeats what a title, label, button or icon already says, or explains how to use a control that shows what it does. Beside a "Confirm" button, delete "Use the button or key to confirm." After a count of updates, delete "waiting". Delete a sub-line on every row that repeats its state: "x updates", "a new version is out" or "The AUR updates include this version. Select update."
+- Say each thing once. No body text or hint repeats what a title, label, button or icon already says, or explains how to use a control that shows what it does. Beside a "Confirm" button, delete "Use the button or key to confirm." After a count of updates, delete "waiting".
 - Use plain, short, specific words, in the user's terms. Write "Turn on notifications", not "Enable webhook delivery". Write "Update all", not "Update everything".
 - Put a changing status in one short phrase. Lead with the state or count, and append the time only when it helps the user judge the status. For example, "2 checks failed · 1m ago".
 
@@ -28,7 +28,3 @@ These rules hold for every string a view shows. A string that breaks one is a fi
 | Hint | One short sentence that answers a question most users have and the label does not answer; otherwise none. | Under "Date of birth": "For example, 27 3 2007" |
 | Empty state | One next action, and only what the screen does not already show. | Under the heading "Projects": a "Connect repository" button, not "No projects yet." |
 | Error | What failed and how to fix it, with no blame, apology or guessed cause. | "That name is already in use. Choose another.", not "Invalid name" |
-
-## Screenshots
-
-The screenshot set a UI review judges a changed view from is the reviewer skill's, in its `references/ui-screenshots.md` § Screenshots.
