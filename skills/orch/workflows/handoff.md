@@ -21,7 +21,9 @@ An explicit user choice wins. Otherwise, with several items and `codex_app.creat
    .agents/skills/linear/scripts/linear.sh issues get [ITEM]
    ```
 
-2. Apply the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to each item. Replace a container in the launch list with its unblocked direct children (`depth == 0`); each child takes step 1 again. Drop a blocked item from the list, naming its live blockers.
+2. Apply the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to each item.
+   - Replace a container in the launch list with its unblocked direct children (`depth == 0`); each child takes step 1 again.
+   - Drop a blocked item from the list, naming its live blockers.
 3. Keep one entry per issue id, and apply the Ancestor gate to each final launch item.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
@@ -47,14 +49,12 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 1. Read `orch-env ORCH_LANE_PREFERENCE ""` for the program's default harness, model and effort. Select the model class and effort through [Model class](../references/skill-rules.md#model-class), and keep a model the brief names.
 2. Choose each item's account through the preference walk or the account judge, under [oversee.md](oversee.md) § Lane directive step 3. The permission posture is `AGENT_RUNTIME_LAUNCH_PERMISSION` ([settings.md § Fleet lanes](../references/settings.md#fleet-lanes)), or a `permission` word in the request.
-3. Where `orch-runtime state exists --fleet` answers false, run `orch-runtime state init --fleet`. The launch records every lane in the fleet state, `orch-runtime state path --fleet`, so that state must exist first.
+3. Where `orch-runtime state exists --fleet` answers false, run `orch-runtime state init --fleet`.
 4. Launch each item with one `launch-lane` request, composed as [oversee.md](oversee.md) § Lane directive step 4 composes it. Its brief is a file ([lane-directive.md § Brief file](../references/lane-directive.md#brief-file)):
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime op --fleet --effect-exit --request [REQUEST_FILE]
    ```
-
-A handoff starts no watch.
 
 A refresh lane is an item whose brief authorizes a project-scope `kendex refresh` or `kendex apply` in its lane. Its request takes `refresh: true` at its launch and at every relaunch. The lane's session-start drift notice then says those commands run there with the CLI's own `--lane-refresh`.
 

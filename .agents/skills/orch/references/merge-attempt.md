@@ -24,11 +24,17 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
 [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[ITEM_DIR]/verify-pr-request-[STATE_KEY].json"
 ```
 
-`[CI_PENDING_COUNT]` and `[MERGE_RETRY_COUNT]` start at `0` for `[PREPARED_HEAD]`. A re-entry on the same head keeps both. The lane owns this wait on the approved head. Read its completion file:
+`[CI_PENDING_COUNT]` and `[MERGE_RETRY_COUNT]` start at `0` for `[PREPARED_HEAD]`. A re-entry on the same head keeps both.
+
+The lane owns this wait on the approved head. Read its completion file:
 
 - `status=complete` with `verdict=pass`: take the attempt below, with no overseer direction.
 - A `pr-not-open` refusal: the PR is closed or merged. Stop and report its `state`.
-- `status=pending` or `status=unreadable` at the budget: re-read the head with merge-pr.md § 5 step 1's endpoint read. A moved head returns to § 3 for a fresh readiness check and approval. Otherwise add one to `[CI_PENDING_COUNT]`. While it is below `[CI_PENDING_LIMIT]=3`, relaunch through Waiter launch. At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, the pending checks and the wait logs. Then unarm by § 1 and hand back. Never attempt the merge on that pending bound.
+- `status=pending` or `status=unreadable` at the budget: re-read the head with merge-pr.md § 5 step 1's endpoint read.
+  - A moved head returns to § 3 for a fresh readiness check and approval.
+  - Otherwise add one to `[CI_PENDING_COUNT]`. While it is below `[CI_PENDING_LIMIT]=3`, relaunch through Waiter launch.
+  - At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, the pending checks and the wait logs. Then unarm by § 1 and hand back.
+  - Never attempt the merge on that pending bound.
 - `status=complete` with `verdict=fail`: rerun a transient runner failure once per head before the attempt. [submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key.
 
 **One rerun per head.** Where the item's recorded `ci_rerun.head` is not the verdict's `result.head` (`[HEAD]`), record the rerun, then request it:
@@ -55,17 +61,32 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 ## Record the merge decision
 
-Record the decision after each attempt, here or in submit-pr.md § 2 step 5, before routing its exit. Keep the attempt's exit, its `--expected-head` value and its `merge-route: admin|queue cause=...` line. A lane ([skill-rules.md § Lane Output](skill-rules.md#lane-output)) stores them in the lane status file under [oversee.md § 3 Lane directive](../workflows/oversee.md#lane-directive). A session outside a lane keeps the durable record in the PR body alone and reports failures in that section's output mode.
+Record the decision after each attempt, here or in submit-pr.md § 2 step 5, before routing its exit.
 
-On exit `1`, first apply [merge-pr-restack.md § Unarm at a stop](../workflows/merge-pr-restack.md#unarm-at-a-stop) with `[STATE_KEY]` and `[STOP_DIR]=[WORKTREE_PATH]/tmp`. Do this before any read or update of the PR body. Confirm that any earlier arm or queue entry is gone before going on. An unconfirmed removal ends the run by that section.
+- Keep the attempt's exit, its `--expected-head` value and its `merge-route: admin|queue cause=...` line.
+- A lane ([skill-rules.md § Lane Output](skill-rules.md#lane-output)) stores them in the lane status file under [oversee.md § 3 Lane directive](../workflows/oversee.md#lane-directive).
+- A session outside a lane keeps the durable record in the PR body alone and reports failures in that section's output mode.
 
-Then read the current PR body. Keep its other sections and the user's decisions. Put the head and the route line in `## Merge decision`, replacing pending text. Append the section where it is absent. Write the whole body to `[WORKTREE_PATH]/tmp/pr-body-[STATE_KEY]-merge.md` and publish it:
+On exit `1`, first apply [merge-pr-restack.md § Unarm at a stop](../workflows/merge-pr-restack.md#unarm-at-a-stop) with `[STATE_KEY]` and `[STOP_DIR]=[WORKTREE_PATH]/tmp`.
+
+- Do this before any read or update of the PR body.
+- Confirm that any earlier arm or queue entry is gone before going on.
+- An unconfirmed removal ends the run by that section.
+
+Then write the body:
+
+1. Read the current PR body.
+2. Keep its other sections and the user's decisions.
+3. Put the head and the route line in `## Merge decision`, replacing pending text. Append the section where it is absent.
+4. Write the whole body to `[WORKTREE_PATH]/tmp/pr-body-[STATE_KEY]-merge.md` and publish it:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-edit-body [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/pr-body-[STATE_KEY]-merge.md
 ```
 
-Report a failed body read or update in the status file, with the exit and the route. Publish no partial body. Where the attempt returned no route line, keep any earlier record for that head. Otherwise record the route as absent (`pr-merge --help`).
+- Report a failed body read or update in the status file, with the exit and the route.
+- Publish no partial body.
+- Where the attempt returned no route line, keep any earlier record for that head. Otherwise record the route as absent (`pr-merge --help`).
 
 ## Exit routing
 
@@ -79,6 +100,10 @@ Exit `1` (`BLOCKED`): classify the refusal.
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]
 ```
 
-`ci-classify-refusal --help` states its output and retry contract. Where it prints `retry: same-head`, add one to `[MERGE_RETRY_COUNT]`. While it is below `[MERGE_RETRY_LIMIT]=3`, re-enter merge-pr.md § 5 step 1. Its thread read and review call run before each new attempt, and its endpoint read routes a moved head. At the limit, record `merge-refusal-retry-limit`, gate `merge`. Put the last attempt's `BLOCKED` or `pr-merge:` stderr line first, then the head, each attempt's exit and stderr, and each classifier output. Unarm by § 1 and hand back. Such a refusal never returns to § 3.2.
+`ci-classify-refusal --help` states its output and retry contract.
 
-Without that line, return to § 3.2 with the cause and its printed detail.
+- Where it prints `retry: same-head`, add one to `[MERGE_RETRY_COUNT]`.
+  - While it is below `[MERGE_RETRY_LIMIT]=3`, re-enter merge-pr.md § 5 step 1. Its thread read and review call run before each new attempt, and its endpoint read routes a moved head.
+  - At the limit, record `merge-refusal-retry-limit`, gate `merge`. Put the last attempt's `BLOCKED` or `pr-merge:` stderr line first, then the head, each attempt's exit and stderr, and each classifier output. Unarm by § 1 and hand back.
+  - Such a refusal never returns to § 3.2.
+- Without that line, return to § 3.2 with the cause and its printed detail.

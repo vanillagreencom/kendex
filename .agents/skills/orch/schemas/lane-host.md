@@ -14,51 +14,153 @@ orch-runtime host [--host HOST] capabilities
 orch-runtime host [--host HOST] VERB ARGS...
 ```
 
-`--host` overrides `ORCH_LANE_HOST`. `resolve` prints the host, and `capabilities` its capability line (§ Host kinds). Any other verb takes a slot of its pool (§ Call bound), then the process becomes the provider, with `ORCH_LANE_HOST` naming itself. A refusal before any provider starts is one stderr line `orch-runtime: KEY FIELD=VALUE...`. Tell it from a provider's answer by that line, never by the status: a provider also exits `2`.
+- `--host` overrides `ORCH_LANE_HOST`.
+- `resolve` prints the host, and `capabilities` its capability line (§ Host kinds).
+- Any other verb takes a slot of its pool (§ Call bound), then the process becomes the provider, with `ORCH_LANE_HOST` naming itself.
+- A refusal before any provider starts is one stderr line `orch-runtime: KEY FIELD=VALUE...`. Tell it from a provider's answer by that line, never by the status: a provider also exits `2`.
 
 ## Host kinds
 
-A host declares its kind in one capability line: tab-separated `key=value` fields, each of the twelve keys below exactly once, each value from its key's set. The runtime answers the line itself for `local` and `claude-cloud`; `orch-runtime host --host HOST capabilities` prints any host's line. For a provider, the runtime runs the `capabilities` verb, which takes no slot. It refuses a malformed line or a non-zero exit and guesses none; every read of a lane on that host is then unreadable.
+A host declares its kind in one capability line: tab-separated `key=value` fields, each of the twelve keys below exactly once, each value from its key's set.
 
-| Key | Values | What the runtime does with it |
-|---|---|---|
-| `kind` | `local`, `ssh`, `claude-cloud`, `codex-cloud` | Nothing: callers act on the other keys. |
-| `launch` | `window`, `ssh`, `cloud-session`, `cloud-task` | A provider launch runs only on `ssh`. The account judge admits an account on a `cloud-session` host only with access to this checkout's repository. The wake reaches a hosted lane only where `launch=ssh`. |
-| `channel` | `mailbox`, `session`, `task` | Declared, read by no caller. |
-| `files` | `local`, `verb`, `none` | `verb`: the watch and the close read lane files, session rows and their prompt digests among them, through `cat`. `none`: no lane file is read. |
-| `status` | `pane`, `verb`, `task`, `none` | `verb`: the watch, the wake and the close ask `status`. |
-| `pane` | `local`, `verb` | `local`: the lane's window on the control machine holds the ssh client its harness runs under. `verb`: the provider owns the harness's session; the runtime reads it through `capture` and types into it through `send`. |
-| `stop` | `window`, `verb`, `none` | The close's stop: `window` and `verb` end the harness by its record and its provider, `none` stops nothing. |
-| `relaunch` | `resume`, `fresh` | Declared, read by no caller. |
-| `park` | `verb`, `none` | `verb`: the provider holds the `stop-sandbox` and `start` pair. A relaunch that is not a park asks `list` and `start` only of a `verb` host. A park asks `stop-sandbox --check`. |
-| `accounts` | `verb`, `none` | Declared, read by no caller: the account listing asks the `accounts` verb and reads exit `2` as absent. |
-| `pool` | `plan`, `cloud-credit` | The account judge's tier: a Claude row on a `cloud-credit` host is judged on cloud credit. |
-| `land` | `lane`, `handoff` | The `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md). |
+- The runtime answers the line itself for `local` and `claude-cloud`; `orch-runtime host --host HOST capabilities` prints any host's line.
+- For a provider, the runtime runs the `capabilities` verb, which takes no slot.
+- It refuses a malformed line or a non-zero exit and guesses none; every read of a lane on that host is then unreadable.
+
+Each key, its values, and what the runtime does with it:
+
+- `kind`: `local`, `ssh`, `claude-cloud`, `codex-cloud`. Nothing: callers act on the other keys.
+- `launch`: `window`, `ssh`, `cloud-session`, `cloud-task`.
+  - A provider launch runs only on `ssh`.
+  - The account judge admits an account on a `cloud-session` host only with access to this checkout's repository.
+  - The wake reaches a hosted lane only where `launch=ssh`.
+- `channel`: `mailbox`, `session`, `task`. Declared, read by no caller.
+- `files`: `local`, `verb`, `none`.
+  - `verb`: the watch and the close read lane files, session rows and their prompt digests among them, through `cat`.
+  - `none`: no lane file is read.
+- `status`: `pane`, `verb`, `task`, `none`. `verb`: the watch, the wake and the close ask `status`.
+- `pane`: `local`, `verb`.
+  - `local`: the lane's window on the control machine holds the ssh client its harness runs under.
+  - `verb`: the provider owns the harness's session; the runtime reads it through `capture` and types into it through `send`.
+- `stop`: `window`, `verb`, `none`. The close's stop: `window` and `verb` end the harness by its record and its provider, `none` stops nothing.
+- `relaunch`: `resume`, `fresh`. Declared, read by no caller.
+- `park`: `verb`, `none`.
+  - `verb`: the provider holds the `stop-sandbox` and `start` pair.
+  - A relaunch that is not a park asks `list` and `start` only of a `verb` host.
+  - A park asks `stop-sandbox --check`.
+- `accounts`: `verb`, `none`. Declared, read by no caller: the account listing asks the `accounts` verb and reads exit `2` as absent.
+- `pool`: `plan`, `cloud-credit`. The account judge's tier: a Claude row on a `cloud-credit` host is judged on cloud credit.
+- `land`: `lane`, `handoff`. The `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md).
 
 ## Provider protocol
 
-Exit `0` is the verb done. Exit `2` is an absent verb, and for `cat` a missing file. Any other non-zero status is a failed verb, its cause on stderr, except the `item-unknown` answer of `start` and the `stop-worktree-removed` and `stop-unowned` answers of `stop`. A failed `capabilities`, `create`, `wait`, `start`, `cat`, `touch`, `put`, `status`, `capture`, `send`, `list`, `close`, `stop`, `stop-sandbox` or `viewer-prefix` records one stderr line as its cause: the last line carrying a `fix=` field, else the first non-blank line, else `stderr=empty`. A `create` that exits `75` without `state=preparing` records `item-owned exit=75` and no stderr line, unless its stderr holds `lane-host-ssh: ownership-busy`, the ssh provider's lock: that create records `host-create-busy create exit=75` and its cause line. A `close` that exits `3` records no stderr line, only the path its `close-refused path=` line names, `unknown` without one. Print any notice before a `fix=` refusal; a refusal without `fix=` that follows other stderr output is not recorded. The runtime reads a status of `128` or more, or no answer within its bound, as a call that may have acted. A launch that meets one on `create`, `wait` or `start` stays held at that step until a close supersedes it.
+Exit statuses:
 
-| Verb | Arguments | Answer |
-|---|---|---|
-| `capabilities` | none | The host kind's capability line on stdout, exit `0`. It reads no host state. |
-| `create` | `--item ID --repo OWNER/REPO --harness claude\|codex\|pi\|copilot --account CONFIG_DIR [--relaunch]` | One stdout line of tab-separated fields. Required and non-empty: `ssh-target=TARGET`, `path=WORKTREE`, `remote-prefix=PREFIX`. Optional: `state=preparing` where the create returns before its preparation ends; `pi-root=DIR` where a Pi lane runs under a Pi root other than `.pi/agent` under the host home; `copilot-home=DIR` where a Copilot lane runs under a Copilot home other than `.copilot` under the host home; `tree=unrebased` where a reused worktree stands on the item's own head because its rebase onto the base was aborted. On `--relaunch`, reuse the worktree the host holds for the item. Hold the item under a durable repository and item identity, so a retry reaches the same host. Exit `75` with `state=preparing` is an accepted preparation; exit `75` without it is an item another session owns. |
-| `wait` | `--item ID` | Blocks until the preparation of an accepted `create` ends. Exit `0` when the item is ready, with `tree=unrebased` on stdout where the reused tree was kept unrebased. Any other status is a failed preparation, its cause on stderr. |
-| `cat` | `--item ID PATH` | The file's exact bytes on stdout, exit `0`. A missing file exits `2`; any other failure exits non-zero and not `2`. The provider may confine transfers to its development root. |
-| `touch` | `--item ID` | Exit `0` when the host answers. The runtime asks it after a `cat` exits `2`, and reads that `2` as a missing file only once `touch` answers. |
-| `put` | `--item ID PATH` | Uses the same path policy as `cat`. Writes stdin to the file with private permissions, creating its parent directory. Stage the bytes beside the target and rename them over it only once the whole transfer has arrived. A provider that crosses a network compares the staged byte count with the count the sender declared. |
-| `append` | `--item ID PATH` | Adds stdin to the file under the lock every writer of that file on that host takes, creating the file with private permissions. A provider reaching a kendex checkout adds the bytes through that checkout's mailbox `scripts/lib/mailbox-append.sh`. Close an unterminated last line first. Count the staged bytes as `put` does. A repeated mail envelope exits `4` with `duplicate id=FIRST` on stderr and adds nothing. A failed append adds nothing. Only append to a file several machines write; never read it and `put` it back. |
-| `read-many` | none; stdin is a JSON array of `{"item": "ID", "path": "PATH"}` rows | One JSON array on stdout, one row per request, in request order. Each row holds the request's `item` and `path`, an integer `status` from `0` to `255` other than `69`, `data` with the file's bytes in padded standard base64, and an optional `error` string. `status` `0` is a read file, an empty one included; `2` is a missing file; any other status is a failed read with empty `data`. A failed transport to one host fails only that host's rows. Exit `0` only after every row is written. Read each path as `cat` does, under the mailbox rule below. |
-| `status` | `--item ID --harness claude\|codex\|pi\|copilot` | `running` on stdout while a process of the named harness of the item's lane runs, else `exited`, exit `0`, signalling nothing. An item the host holds nothing of answers `exited`. Exit `75` with `status-unowned item=ID` on stderr is a host whose sandbox for the item is not the lane's own. |
-| `stop` | `--item ID --harness claude\|codex\|pi\|copilot` | Ends the named harness's processes of the item's lane and prints `stopped item=ID processes=COUNT`; `processes=0` where none ran. Exit `4` with `stop-worktree-removed item=ID` on stderr is an item whose own close-out removed its worktree. Exit `75` with `stop-unowned item=ID` is an item whose sandbox the host does not hold for the lane. Never type a shell command into the lane's session. |
-| `close` | `--item ID [--merged]` | Ends the item's sandbox and removes its worktree. Exit `0` is the provider's word that the sandbox ends, even where its teardown has yet to show in `list`. The close asks no `list` after it. Exit `0` with `kept=PATH` on stdout names the archive of the lane's records the provider kept; no `kept=` line reads as `kept=none`. An item the host holds no sandbox for answers exit `0` with `closed=absent item=ID`. Exit `3` with `close-refused path=PATH` on stderr or stdout refuses and keeps the checkout at `PATH`. `--merged` is the caller's word that the item's pull request merged; a provider may then keep less of the archive, and every provider accepts the flag. |
-| `stop-sandbox` | `--item ID` or `--check --item ID` | Stops the sandbox's compute and keeps its disk whole: worktree, harness session store, mailbox and `tmp`. Print exactly `sandbox-stopped item=ID`. `--check` changes nothing and prints `sandbox-stoppable item=ID` where the provider implements `stop-sandbox` and `start` for the item; a provider without the pair exits `2`. `stop` has already stopped the lane's harness. |
-| `start` | `--item ID` | Brings a sandbox `stop-sandbox` stopped back up on the same disk and prints `sandbox-started item=ID`, also for a sandbox already up, as a relaunch asks of one a close kept up. It starts no harness: the relaunch's `create --relaunch` follows. An item the host holds no sandbox for exits non-zero with `item-unknown item=ID` on stderr, after any provider prefix. The relaunch then asks `create` without `--relaunch` for a fresh sandbox. |
-| `list` | none | One tab-separated row per host of this repository: `OWNER/REPO/ITEM`, state, age, name. State `available` marks a host holding no item. A provider can append fields. No row for an item is a sandbox gone, and so is a row in a teardown state, `destroying` or `destroyed`, or in `exited`. |
-| `capture` | `--item ID` | Asked only of a `pane=verb` host. The harness's visible screen as plain text on stdout, exit `0`. |
-| `send` | `--item ID --file PATH` or `--item ID --key KEY` | Asked only of a `pane=verb` host. `--file`: type the text of `PATH`, a file on the control machine, into the harness and submit it. `--key`: press the one key `KEY`; the runtime sends `C-c`. Exit `0` only after delivery. The runtime never resends input after another status. |
-| `viewer-prefix` | `--item ID` | Optional, asked only of a `pane=verb` host. One non-empty stdout line, exit `0`: the command that opens a person's viewer on the harness's session. Exit `2`: no viewer. |
-| `accounts` | none | Optional. One line per account the provider holds a credential for, in § Accounts rows. Exit `2`: the verb is absent. |
+- Exit `0` is the verb done.
+- Exit `2` is an absent verb, and for `cat` a missing file.
+- Any other non-zero status is a failed verb, its cause on stderr, except the `item-unknown` answer of `start` and the `stop-worktree-removed` and `stop-unowned` answers of `stop`.
+
+The recorded cause:
+
+- A failed `capabilities`, `create`, `wait`, `start`, `cat`, `touch`, `put`, `status`, `capture`, `send`, `list`, `close`, `stop`, `stop-sandbox` or `viewer-prefix` records one stderr line as its cause: the last line carrying a `fix=` field, else the first non-blank line, else `stderr=empty`.
+- A `create` that exits `75` without `state=preparing` records `item-owned exit=75` and no stderr line, unless its stderr holds `lane-host-ssh: ownership-busy`, the ssh provider's lock: that create records `host-create-busy create exit=75` and its cause line.
+- A `close` that exits `3` records no stderr line, only the path its `close-refused path=` line names, `unknown` without one.
+- Print any notice before a `fix=` refusal; a refusal without `fix=` that follows other stderr output is not recorded.
+
+The runtime reads a status of `128` or more, or no answer within its bound, as a call that may have acted. A launch that meets one on `create`, `wait` or `start` stays held at that step until a close supersedes it.
+
+Each verb, its arguments, and its answer:
+
+- `capabilities`, no arguments.
+  - The host kind's capability line on stdout, exit `0`.
+  - It reads no host state.
+- `create --item ID --repo OWNER/REPO --harness claude|codex|pi|copilot --account CONFIG_DIR [--relaunch]`.
+  - One stdout line of tab-separated fields.
+  - Required and non-empty: `ssh-target=TARGET`, `path=WORKTREE`, `remote-prefix=PREFIX`.
+  - Optional: `state=preparing` where the create returns before its preparation ends.
+  - Optional: `pi-root=DIR` where a Pi lane runs under a Pi root other than `.pi/agent` under the host home.
+  - Optional: `copilot-home=DIR` where a Copilot lane runs under a Copilot home other than `.copilot` under the host home.
+  - Optional: `tree=unrebased` where a reused worktree stands on the item's own head because its rebase onto the base was aborted.
+  - On `--relaunch`, reuse the worktree the host holds for the item.
+  - Hold the item under a durable repository and item identity, so a retry reaches the same host.
+  - Exit `75` with `state=preparing` is an accepted preparation; exit `75` without it is an item another session owns.
+- `wait --item ID`.
+  - Blocks until the preparation of an accepted `create` ends.
+  - Exit `0` when the item is ready, with `tree=unrebased` on stdout where the reused tree was kept unrebased.
+  - Any other status is a failed preparation, its cause on stderr.
+- `cat --item ID PATH`.
+  - The file's exact bytes on stdout, exit `0`.
+  - A missing file exits `2`; any other failure exits non-zero and not `2`.
+  - The provider may confine transfers to its development root.
+- `touch --item ID`.
+  - Exit `0` when the host answers.
+  - The runtime asks it after a `cat` exits `2`, and reads that `2` as a missing file only once `touch` answers.
+- `put --item ID PATH`.
+  - Uses the same path policy as `cat`.
+  - Writes stdin to the file with private permissions, creating its parent directory.
+  - Stage the bytes beside the target and rename them over it only once the whole transfer has arrived.
+  - A provider that crosses a network compares the staged byte count with the count the sender declared.
+- `append --item ID PATH`.
+  - Adds stdin to the file under the lock every writer of that file on that host takes, creating the file with private permissions.
+  - A provider reaching a kendex checkout adds the bytes through that checkout's mailbox `scripts/lib/mailbox-append.sh`.
+  - Close an unterminated last line first.
+  - Count the staged bytes as `put` does.
+  - A repeated mail envelope exits `4` with `duplicate id=FIRST` on stderr and adds nothing.
+  - A failed append adds nothing.
+  - Only append to a file several machines write; never read it and `put` it back.
+- `read-many`, no arguments; stdin is a JSON array of `{"item": "ID", "path": "PATH"}` rows.
+  - One JSON array on stdout, one row per request, in request order.
+  - Each row holds the request's `item` and `path`, an integer `status` from `0` to `255` other than `69`, `data` with the file's bytes in padded standard base64, and an optional `error` string.
+  - `status` `0` is a read file, an empty one included; `2` is a missing file; any other status is a failed read with empty `data`.
+  - A failed transport to one host fails only that host's rows.
+  - Exit `0` only after every row is written.
+  - Read each path as `cat` does, under the mailbox rule below.
+- `status --item ID --harness claude|codex|pi|copilot`.
+  - `running` on stdout while a process of the named harness of the item's lane runs, else `exited`, exit `0`, signalling nothing.
+  - An item the host holds nothing of answers `exited`.
+  - Exit `75` with `status-unowned item=ID` on stderr is a host whose sandbox for the item is not the lane's own.
+- `stop --item ID --harness claude|codex|pi|copilot`.
+  - Ends the named harness's processes of the item's lane and prints `stopped item=ID processes=COUNT`; `processes=0` where none ran.
+  - Exit `4` with `stop-worktree-removed item=ID` on stderr is an item whose own close-out removed its worktree.
+  - Exit `75` with `stop-unowned item=ID` is an item whose sandbox the host does not hold for the lane.
+  - Never type a shell command into the lane's session.
+- `close --item ID [--merged]`.
+  - Ends the item's sandbox and removes its worktree.
+  - Exit `0` is the provider's word that the sandbox ends, even where its teardown has yet to show in `list`. The close asks no `list` after it.
+  - Exit `0` with `kept=PATH` on stdout names the archive of the lane's records the provider kept; no `kept=` line reads as `kept=none`.
+  - An item the host holds no sandbox for answers exit `0` with `closed=absent item=ID`.
+  - Exit `3` with `close-refused path=PATH` on stderr or stdout refuses and keeps the checkout at `PATH`.
+  - `--merged` is the caller's word that the item's pull request merged; a provider may then keep less of the archive, and every provider accepts the flag.
+- `stop-sandbox --item ID` or `stop-sandbox --check --item ID`.
+  - Stops the sandbox's compute and keeps its disk whole: worktree, harness session store, mailbox and `tmp`.
+  - Print exactly `sandbox-stopped item=ID`.
+  - `--check` changes nothing and prints `sandbox-stoppable item=ID` where the provider implements `stop-sandbox` and `start` for the item; a provider without the pair exits `2`.
+  - `stop` has already stopped the lane's harness.
+- `start --item ID`.
+  - Brings a sandbox `stop-sandbox` stopped back up on the same disk and prints `sandbox-started item=ID`, also for a sandbox already up, as a relaunch asks of one a close kept up.
+  - It starts no harness: the relaunch's `create --relaunch` follows.
+  - An item the host holds no sandbox for exits non-zero with `item-unknown item=ID` on stderr, after any provider prefix. The relaunch then asks `create` without `--relaunch` for a fresh sandbox.
+- `list`, no arguments.
+  - One tab-separated row per host of this repository: `OWNER/REPO/ITEM`, state, age, name.
+  - State `available` marks a host holding no item.
+  - A provider can append fields.
+  - No row for an item is a sandbox gone, and so is a row in a teardown state, `destroying` or `destroyed`, or in `exited`.
+- `capture --item ID`.
+  - Asked only of a `pane=verb` host.
+  - The harness's visible screen as plain text on stdout, exit `0`.
+- `send --item ID --file PATH` or `send --item ID --key KEY`.
+  - Asked only of a `pane=verb` host.
+  - `--file`: type the text of `PATH`, a file on the control machine, into the harness and submit it.
+  - `--key`: press the one key `KEY`; the runtime sends `C-c`.
+  - Exit `0` only after delivery. The runtime never resends input after another status.
+- `viewer-prefix --item ID`.
+  - Optional, asked only of a `pane=verb` host.
+  - One non-empty stdout line, exit `0`: the command that opens a person's viewer on the harness's session.
+  - Exit `2`: no viewer.
+- `accounts`, no arguments.
+  - Optional.
+  - One line per account the provider holds a credential for, in § Accounts rows.
+  - Exit `2`: the verb is absent.
 
 A provider puts no bytes of a file it carries, a credential among them, in an argument list or a diagnostic. The bytes travel on stdin.
 
@@ -70,11 +172,22 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
 
 ## Who calls each verb
 
-- The launch (`launch-lane` request) asks `capabilities`; on a relaunch, `start` for a parked lane, and for any other one on a `park=verb` host `list`, then `start` where the list names the item's sandbox; then `create`, and `wait` after an accepted create. It asks `cat` and `put` for the host files of § Launch on a provider and § Launch record. On a `pane=verb` host it asks `status`, `capture`, `viewer-prefix` and, after a failure, `stop`.
-- The watch asks only of lanes in flight. Each pass reads each host's `capabilities` once and makes one `read-many` per host for the hosted lanes' mailbox files under `<lane root>/tmp/lane-mail/<item>/`. Its lane duty asks `cat`, `touch`, `status` on a `status=verb` host and `capture` on a `pane=verb` host. Before a hosted relaunch it asks `stop`.
-- The wake asks `status` of a lane on a `pane=local`, `status=verb` host, and sends a `pane=verb` lane its line through `send --file`. On a `files=verb` host for Claude Code, Codex or Copilot, it also reads `<root>/tmp/lane-mail/<item>/session-rows.jsonl` through `cat` and `touch`.
+- The launch (`launch-lane` request):
+  - It asks `capabilities`; on a relaunch, `start` for a parked lane, and for any other one on a `park=verb` host `list`, then `start` where the list names the item's sandbox; then `create`, and `wait` after an accepted create.
+  - It asks `cat` and `put` for the host files of § Launch on a provider and § Launch record.
+  - On a `pane=verb` host it asks `status`, `capture`, `viewer-prefix` and, after a failure, `stop`.
+- The watch asks only of lanes in flight.
+  - Each pass reads each host's `capabilities` once and makes one `read-many` per host for the hosted lanes' mailbox files under `<lane root>/tmp/lane-mail/<item>/`.
+  - Its lane duty asks `cat`, `touch`, `status` on a `status=verb` host and `capture` on a `pane=verb` host.
+  - Before a hosted relaunch it asks `stop`.
+- The wake:
+  - It asks `status` of a lane on a `pane=local`, `status=verb` host, and sends a `pane=verb` lane its line through `send --file`.
+  - On a `files=verb` host for Claude Code, Codex or Copilot, it also reads `<root>/tmp/lane-mail/<item>/session-rows.jsonl` through `cat` and `touch`.
 - `lane-mail` reads a hosted mailbox through `cat`, `touch` and `list`, and writes it through `append`.
-- The close (`close-lane` request) asks `stop`, `cat`, `list` and `close`; a park asks `stop-sandbox --check`, then `stop-sandbox`. A Copilot lane on a `pane=verb` host is first sent `C-c` and `/exit` through `send`. A Copilot lane on a `pane=local` host gets them in its window after the close transition, then is asked `stop` and `status`. [lane-reach.md § Lane close](../references/lane-reach.md#lane-close) is the close procedure.
+- The close (`close-lane` request), whose procedure is [lane-reach.md § Lane close](../references/lane-reach.md#lane-close):
+  - It asks `stop`, `cat`, `list` and `close`; a park asks `stop-sandbox --check`, then `stop-sandbox`.
+  - A Copilot lane on a `pane=verb` host is first sent `C-c` and `/exit` through `send`.
+  - A Copilot lane on a `pane=local` host gets them in its window after the close transition, then is asked `stop` and `status`.
 - The account listing asks `accounts`.
 
 ## Call bound
@@ -90,16 +203,23 @@ Every provider call except `capabilities` first takes a slot in one of two pools
 
 ## Launch on a provider
 
-The launch admits a provider host only on a `launch=ssh` line. Every create, a relaunch included, gets the account's config directory as `--account`. The launch adds no variable to the remote line: the provider's `remote-prefix` carries every variable the harness needs on the host, its credential among them.
+- The launch admits a provider host only on a `launch=ssh` line.
+- Every create, a relaunch included, gets the account's config directory as `--account`.
+- The launch adds no variable to the remote line: the provider's `remote-prefix` carries every variable the harness needs on the host, its credential among them.
 
 After `create`, and after `wait` for an accepted create, the launch reads and writes these host files through `cat` and `put`:
 
-| Harness | Host files |
-|---|---|
-| Claude, under full bypass | On a provider with home-relative transfers, set `skipDangerousModePermissionPrompt` to `true` in `.claude/settings.json` where absent and keep every other key. A recorded `false` refuses the launch. On a confined provider, the operator's bypass posture supplies consent through Claude's per-launch `--settings` overlay and leaves the account settings untouched. |
-| Pi | `settings.json` under the Pi root (`pi-root=`, else `.pi/agent`) and `.pi/settings.json` in the worktree, then the pi-hooks carrier they load ([pi-runtime.md](../references/pi-runtime.md)). A confined provider must supply an in-root `pi-root` for these checks. |
-| Copilot | Under the Copilot home (`copilot-home=`, else `.copilot`): the context reader extension `extensions/kendex-lane-context/extension.mjs` and `enabledFeatureFlags.EXTENSIONS` in `settings.json`; then the lane-mail hooks registered in the worktree or the home. A confined provider must supply an in-root `copilot-home` for these checks. |
-| Codex | None. Every Codex command the launch builds carries `--dangerously-bypass-hook-trust`. |
+- Claude, under full bypass:
+  - On a provider with home-relative transfers, set `skipDangerousModePermissionPrompt` to `true` in `.claude/settings.json` where absent and keep every other key.
+  - A recorded `false` refuses the launch.
+  - On a confined provider, the operator's bypass posture supplies consent through Claude's per-launch `--settings` overlay and leaves the account settings untouched.
+- Pi:
+  - `settings.json` under the Pi root (`pi-root=`, else `.pi/agent`) and `.pi/settings.json` in the worktree, then the pi-hooks carrier they load ([pi-runtime.md](../references/pi-runtime.md)).
+  - A confined provider must supply an in-root `pi-root` for these checks.
+- Copilot:
+  - Under the Copilot home (`copilot-home=`, else `.copilot`): the context reader extension `extensions/kendex-lane-context/extension.mjs` and `enabledFeatureFlags.EXTENSIONS` in `settings.json`; then the lane-mail hooks registered in the worktree or the home.
+  - A confined provider must supply an in-root `copilot-home` for these checks.
+- Codex: none. Every Codex command the launch builds carries `--dangerously-bypass-hook-trust`.
 
 The launch then verifies the launch record (§ Launch record) and builds the command:
 
@@ -107,10 +227,20 @@ The launch then verifies the launch record (§ Launch record) and builds the com
 ssh -t|-T -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET 'PREFIX LINE'
 ```
 
-`TARGET` is `ssh-target` and `PREFIX` is `remote-prefix`. `LINE` is the harness command for the worktree at `path`, shell-quoted as one word, with the brief inline. `SECS` is `AGENT_RUNTIME_TMUX_VERIFY_SECS`. The client answers no host-key, password or passphrase prompt.
+- `TARGET` is `ssh-target` and `PREFIX` is `remote-prefix`.
+- `LINE` is the harness command for the worktree at `path`, shell-quoted as one word, with the brief inline.
+- `SECS` is `AGENT_RUNTIME_TMUX_VERIFY_SECS`.
+- The client answers no host-key, password or passphrase prompt.
+
+Where the command runs:
 
 - On a `pane=local` host, the command runs with `-t` in the lane's window on the fleet's tmux server.
-- On a `pane=verb` host, the command runs with `-T` on the control machine; `PREFIX` starts the harness in a session the provider owns, and returns. The launch then confirms the harness through `status` and `capture`, asks `viewer-prefix`, and opens the lane's window with its option `@lane-viewer-command` set to the viewer line. Any failure from the exec onward asks `stop`.
+- On a `pane=verb` host, the command runs with `-T` on the control machine; `PREFIX` starts the harness in a session the provider owns, and returns.
+  1. The launch then confirms the harness through `status` and `capture`.
+  2. It asks `viewer-prefix`.
+  3. It opens the lane's window with its option `@lane-viewer-command` set to the viewer line.
+
+  Any failure from the exec onward asks `stop`.
 
 A Pi lane on a `github-copilot/` model copies these variables from the login shell into the pane's tmux session before the harness starts: each one the `github-copilot` provider in the Pi root's `models.json` names in its key or header values, and `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE` and `NODE_USE_ENV_PROXY`. A provider puts those variables in the host login profile.
 
@@ -125,7 +255,15 @@ Every hosted launch starts the harness fresh. The lane's context continues throu
 | `lane-mail/<item in lower case>` | The worktree path, one line: the lane's root. |
 | `lane-launch/<item in lower case>.json` | `runtime`, the absolute path of the orch runtime binary built for the clone's sources; `identity_file`, the absolute path of the record the prefix writes of the lane's process group. |
 
-The orch turn end reads `identity_file` to know the lane is hosted. The launch verifies, in order: that `<path>/.git` names a linked worktree's git directory under `<clone>/.git/worktrees/`; that the marker holds the worktree path, writing it through `put` where it does not; and that the launch fields record names an absolute `runtime`. For a refresh lane, it then writes the worktree path to `lane-refresh` in the worktree's git directory through `put`.
+The orch turn end reads `identity_file` to know the lane is hosted.
+
+The launch verifies, in order:
+
+1. That `<path>/.git` names a linked worktree's git directory under `<clone>/.git/worktrees/`.
+2. That the marker holds the worktree path, writing it through `put` where it does not.
+3. That the launch fields record names an absolute `runtime`.
+
+For a refresh lane, it then writes the worktree path to `lane-refresh` in the worktree's git directory through `put`.
 
 The first `append` that reaches the worktree makes its mailbox directory `tmp/lane-mail/<item>`.
 
@@ -137,16 +275,22 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 |---|---|
 | `account` | Required: the config directory `create --account` receives. |
 | `harness` | Required: `claude`, `codex`, `pi` or `copilot`. |
-| `status` | The listing's status word; `ok` when absent. Only `ok` and `rate_limited` rows are measured. A row whose usage read backs off says `rate_limited`, with its last reading's percentages while that reading is fresh. Any other word leaves the account unmeasured. |
-| `detail` | The provider's text for the status, carried into the record as written. A `detail` starting `api-credit-` marks a Pi row as an API grant. |
+| `status` | The listing's status word; `ok` when absent. |
+| `detail` | The provider's text for the status, carried into the record as written. |
 | `weekly-pct`, `model-pct`, `monthly-pct` | Whole numbers `0` to `100`. |
 | `model-label` | The model window's label. |
 | `weekly-resets`, `model-resets`, `monthly-resets` | Each window's reset timestamp. |
 | `plan-ends`, `reserved`, `seat` | Words the judge reads whatever the figures: the plan's end, a reservation, and `seat=1` for an account an overseer or Jarvis session holds on any machine. |
-| `credit-limit`, `credit-spent`, `credit-remaining`, `credit-expires` | A Pi API grant, on a `harness=pi` row with no `monthly-pct`: all four together, dollars as non-negative decimals with at most two places, a limit above zero, the expiry a timestamp. |
-| `credit-remaining`, `credit-available`, `credit-overage-limit-reached`, `credit-spend-control-reached` | A Codex credit, on a `harness=codex` row: all four together, the balance a non-negative decimal, each flag `1` or `0`. |
+| `credit-limit`, `credit-spent`, `credit-remaining`, `credit-expires` | A Pi API grant. |
+| `credit-remaining`, `credit-available`, `credit-overage-limit-reached`, `credit-spend-control-reached` | A Codex credit. |
 
-A credit field on any other row makes the line unreadable. A `harness=pi` row with `monthly-pct` is a Copilot pool; its `account` is the Pi root that a Pi lane on that pool receives as `create --account`. A provider can append fields.
+- Only `ok` and `rate_limited` rows are measured. A row whose usage read backs off says `rate_limited`, with its last reading's percentages while that reading is fresh. Any other `status` word leaves the account unmeasured.
+- A `detail` starting `api-credit-` marks a Pi row as an API grant.
+- A Pi API grant sits on a `harness=pi` row with no `monthly-pct`: all four fields together, dollars as non-negative decimals with at most two places, a limit above zero, the expiry a timestamp.
+- A Codex credit sits on a `harness=codex` row: all four fields together, the balance a non-negative decimal, each flag `1` or `0`.
+- A credit field on any other row makes the line unreadable.
+- A `harness=pi` row with `monthly-pct` is a Copilot pool; its `account` is the Pi root that a Pi lane on that pool receives as `create --account`.
+- A provider can append fields.
 
 ## Static SSH provider
 
