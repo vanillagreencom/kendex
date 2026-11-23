@@ -16,7 +16,7 @@
 //! (`<environment_context>` and the like) as `message` items that also
 //! repeat each user turn, and Pi an extension's as `custom_message`
 //! entries, which need not belong to the item before them; this reader
-//! leaves both out of the bytes.
+//! leaves both out of the bytes, and a Pi extension's text is no item's.
 //!
 //! A source's bytes are measured from the record, and unclear where a
 //! result's text is not its row's (a Copilot skill's body). Its tokens are
@@ -26,7 +26,9 @@
 //! between them added. That growth goes to a source only where everything
 //! between the two responses belongs to it, and to one item or section only
 //! where it is alone there, the call having run nothing else; any other
-//! share is unclear. The first response's prompt
+//! share is unclear. A gap that also holds text no item owns gives its
+//! growth only to turns; beside a result the share is unclear. The first
+//! response's prompt
 //! also holds the harness's own prompt and tools, which no record names
 //! apart, so the first delivery's tokens are unsupported.
 
@@ -246,6 +248,8 @@ struct Walk {
     open: Option<Open>,
     /// The items since the open response.
     gap: Vec<usize>,
+    /// Whether the gap also holds text that is no item's.
+    foreign: bool,
     items: Vec<Item>,
     calls: HashMap<String, Call>,
     sections: Vec<Section>,
@@ -266,6 +270,7 @@ impl Walk {
             },
             open: None,
             gap: Vec::new(),
+            foreign: false,
             items: Vec::new(),
             calls: HashMap::new(),
             sections: Vec::new(),
@@ -312,6 +317,7 @@ impl Walk {
                     self.push(self.turn_source(), Some(bytes), Share::Pending);
                 }
             },
+            Entry::Foreign => self.foreign = true,
             Entry::Call { id, action } => {
                 let rules = rule_reads(&action);
                 self.calls.insert(
@@ -385,6 +391,7 @@ impl Walk {
     /// response with `next` closes it.
     fn close(&mut self, next: Option<Split>) {
         let gap = std::mem::take(&mut self.gap);
+        let foreign = std::mem::take(&mut self.foreign);
         let pending: Vec<usize> = gap
             .into_iter()
             .filter(|&i| self.items[i].share == Share::Pending)
@@ -408,7 +415,15 @@ impl Walk {
             return;
         };
         let source = self.items[pending[0]].source;
-        if pending.len() == 1 {
+        let turn = |i: &usize| {
+            matches!(
+                self.items[*i].source,
+                Source::FirstDelivery | Source::LaterTurns
+            )
+        };
+        if foreign && !pending.iter().all(turn) {
+            self.settle(&pending, Share::Unclear);
+        } else if pending.len() == 1 {
             self.settle(&pending, Share::Whole(growth));
         } else if pending.iter().all(|&i| self.items[i].source == source) {
             *self.source_growth.entry(source).or_default() += growth;
@@ -553,9 +568,11 @@ struct Rules {
 /// `;`, `&`, `|` and newline, quoted or not, so a heading holding one reads
 /// as [`Read::Unreadable`]; `>&` and `&>` redirect and split nothing. An
 /// output redirection's target and a heredoc's or here-string's word are
-/// no operand; an input redirection's file is one. A segment that reads
-/// no rule, and a `cat` operand that is not Markdown, is more output;
-/// another printer's other operands are taken for its script or count.
+/// no operand; an input redirection's file is one. A printer whose
+/// standard output goes to a file reads nothing into the result; one sent
+/// to another descriptor (`>&2`) still does. A segment that reads no rule,
+/// and a `cat` operand that is not Markdown, is more output; another
+/// printer's other operands are taken for its script or count.
 fn rule_reads(action: &Action) -> Rules {
     let command = match action {
         Action::Read(path) if path.ends_with(".md") => {
@@ -597,13 +614,32 @@ fn rule_reads(action: &Action) -> Rules {
                     }))
             }
             name if PRINTERS.contains(&name) => {
-                let mut target = false;
+                // A file the printer's standard output goes to, after the
+                // rewrite above leaves `>&2` as `>2`.
+                let away = |stdout: bool, target: &str| {
+                    stdout && !target.bytes().all(|b| b.is_ascii_digit())
+                };
+                let (mut reads, mut moved) = (Vec::new(), false);
+                // Some(stdout) while the next word is a redirection's target.
+                let mut target: Option<bool> = None;
                 for word in words.map(|word| word.trim_matches(['\'', '"'])) {
-                    if std::mem::take(&mut target) || word.starts_with('-') {
+                    if let Some(stdout) = target.take() {
+                        moved |= away(stdout, word);
                         continue;
                     }
-                    if word.contains('>') || word.contains("<<") {
-                        target = word.ends_with(['<', '>']);
+                    if word.starts_with('-') {
+                        continue;
+                    }
+                    if let Some((fd, rest)) = word.split_once('>') {
+                        let stdout = matches!(fd, "" | "1");
+                        match rest.trim_start_matches('>') {
+                            "" => target = Some(stdout),
+                            rest => moved |= away(stdout, rest),
+                        }
+                        continue;
+                    }
+                    if word.contains("<<") {
+                        target = word.ends_with('<').then_some(false);
                         continue;
                     }
                     let word = word.strip_prefix('<').unwrap_or(word);
@@ -611,12 +647,15 @@ fn rule_reads(action: &Action) -> Rules {
                         continue;
                     }
                     if word.ends_with(".md") {
-                        rules.reads.push(Read::File {
+                        reads.push(Read::File {
                             file: word.to_owned(),
                         });
                     } else if name == "cat" {
                         rules.more = true;
                     }
+                }
+                if !moved {
+                    rules.reads.extend(reads);
                 }
             }
             _ => {}
@@ -676,8 +715,10 @@ mod tests {
             ),
             (shell("cat b.md c.txt"), vec![file("b.md")], true),
             (shell("cat a.md 2>/dev/null"), vec![file("a.md")], false),
-            (shell("cat a.md &>/dev/null"), vec![file("a.md")], false),
-            (shell("cat a.md > b.md"), vec![file("a.md")], false),
+            (shell("cat a.md &>/dev/null"), vec![], true),
+            (shell("cat a.md > b.md"), vec![], true),
+            (shell("cat a.md >> b.md"), vec![], true),
+            (shell("cat a.md >&2"), vec![file("a.md")], false),
             (shell("cat < a.md"), vec![file("a.md")], false),
             (
                 shell("sed -n '1,80p' <docs/a.md"),

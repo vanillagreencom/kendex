@@ -142,8 +142,32 @@ const ROWS: &[Row] = &[
     Row {
         harness: "pi",
         fixture: "load/pi.jsonl",
-        start: 10070,
-        more: Vec::new,
+        // e4, after the read's result and the wake event.
+        start: 10520,
+        more: || {
+            vec![
+                // The turn alone: the extension's text after it is no item's.
+                (
+                    "/context/0/bytes",
+                    json!({"basis": "measured", "value": 18}),
+                ),
+                // e4's growth holds the read's result and the wake event
+                // a steer delivers after it, which is not the read's.
+                (
+                    "/sections/0/read",
+                    json!({"kind": "file", "file": "a/SKILL.md"}),
+                ),
+                ("/sections/0/tokens", json!({"basis": "unclear"})),
+                ("/context/2/source", json!("rule-reads")),
+                ("/context/2/tokens", json!({"basis": "unclear"})),
+                // e6's prompt less e4's prompt and output: a turn takes the
+                // extension's text beside it.
+                (
+                    "/context/1/tokens",
+                    json!({"basis": "attributed", "value": 30}),
+                ),
+            ]
+        },
     },
 ];
 

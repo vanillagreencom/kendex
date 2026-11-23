@@ -582,6 +582,10 @@ pub enum Entry {
     /// such as a skill body a slash command expands to, marked `isMeta`
     /// (measured on Claude Code 2.1.330).
     Text { bytes: u64 },
+    /// Text that enters the context and belongs to no item beside it: a Pi
+    /// `custom_message`, an extension's message, which a steer delivers
+    /// after whatever tool result came last.
+    Foreign,
     /// A tool call the model made.
     Call { id: String, action: Action },
     /// A tool result sent back: its bytes, `None` where the text it added
@@ -660,7 +664,7 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 /// - Pi (Pi 1.6.0's session format and message type documentation):
 ///   a turn's entry `id`; an assistant message's `toolCall` blocks,
 ///   `read` naming `path` and `bash` `command`; a `toolResult` message's
-///   text by `toolCallId`.
+///   text by `toolCallId`; a `custom_message`, as no item's text.
 pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
     fn text(value: Option<&Value>) -> &str {
         value.and_then(Value::as_str).unwrap_or_default()
@@ -798,6 +802,9 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
         Harness::Pi => {
             if let Some(turn) = turn(row.get("id")) {
                 return vec![turn];
+            }
+            if kind == "custom_message" {
+                return vec![Entry::Foreign];
             }
             let Some(message) = row.get("message").filter(|_| kind == "message") else {
                 return Vec::new();
