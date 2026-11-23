@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -275,11 +276,23 @@ class SuiteStop(unittest.TestCase):
         scope = Path(os.environ[SCOPE])
         env = {key: value for key, value in os.environ.items() if key not in (SCOPE, "TMUX_TMPDIR", "TMUX", "TMUX_PANE")}
         env["PATH"] = os.pathsep.join(entry for entry in env["PATH"].split(os.pathsep) if Path(entry).parent != scope)
+        tmux = shutil.which("tmux", path=env["PATH"])
         with tempfile.TemporaryDirectory() as scratch:
             run = Path(scratch).resolve()
             env |= {"TMPDIR": str(run), "JARVIS_TEST_NATIVE": str(session_test.HARNESS)}
             suite = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), self.ROW], env=env,
                                      start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # The child's session is outside this suite's group: a TERM that
+            # ends this suite stops the child first, then takes its own route.
+            previous = signal.getsignal(signal.SIGTERM)
+
+            def stopped(signum, frame):
+                if suite.poll() is None:
+                    os.killpg(suite.pid, signal.SIGTERM)
+                    suite.wait(timeout=60)
+                signal.signal(signum, previous)
+                os.kill(os.getpid(), signum)
+            signal.signal(signal.SIGTERM, stopped)
             try:
                 deadline = time.monotonic() + 120
                 while not self.launches(run):
@@ -288,24 +301,34 @@ class SuiteStop(unittest.TestCase):
                     time.sleep(0.1)
                 os.killpg(suite.pid, signal.SIGTERM)
                 self.assertEqual(suite.wait(timeout=60), -signal.SIGTERM)
+                # A process of the run names its folder, a harness session id or
+                # its home's tmux server label. The runtime's own controller job
+                # ends by itself once its server is gone, hence the wait.
+                marks = [str(run)] + [mark for row in self.launches(run) for mark in (row["id"], self.label(row))]
+                deadline = time.monotonic() + 30
+                while True:
+                    table = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,args="], capture_output=True, text=True,
+                                           check=True).stdout
+                    left = [line for line in table.splitlines() if any(mark in line for mark in marks)]
+                    if not left:
+                        break
+                    self.assertLess(time.monotonic(), deadline, "left running:\n" + "\n".join(left))
+                    time.sleep(0.2)
             finally:
+                signal.signal(signal.SIGTERM, previous)
                 if suite.poll() is None:
                     os.killpg(suite.pid, signal.SIGKILL)
                     suite.wait()
-            # A process of the run names its folder, a harness session id or
-            # its home's tmux server label. The runtime's own controller job
-            # ends by itself once its server is gone, hence the wait.
-            marks = [str(run)] + [mark for row in self.launches(run) for mark in (
-                row["id"], "jarvis-" + hashlib.sha256(os.fsencode(row["cwd"])).hexdigest()[:32])]
-            deadline = time.monotonic() + 30
-            while True:
-                table = subprocess.run(["ps", "-A", "-o", "pid=,args="], capture_output=True, text=True, check=True).stdout
-                left = [line for line in table.splitlines() if any(mark in line for mark in marks)]
-                if not left:
-                    break
-                self.assertLess(time.monotonic(), deadline, "left running:\n" + "\n".join(left))
-                time.sleep(0.2)
+                # A failed row stops what the child left before its scratch
+                # goes: a server outside any scope, and any in the child's own.
+                for row in self.launches(run):
+                    subprocess.run([tmux, "-L", self.label(row), "kill-server"], env=env, capture_output=True, timeout=10)
+                for server in run.glob("jarvis-tmux-*/sockets/tmux-*/*"):
+                    subprocess.run([tmux, "-S", str(server), "kill-server"], env=env, capture_output=True, timeout=10)
 
+    @staticmethod
+    def label(row):
+        return "jarvis-" + hashlib.sha256(os.fsencode(row["cwd"])).hexdigest()[:32]
 
 if __name__ == "__main__":
     with native_launcher() as native:
