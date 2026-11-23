@@ -71,9 +71,11 @@ const OWN_RUNTIME_CACHE: &str = "runtime-cache";
 /// How long `gh auth token` may take.
 const GH_BOUND: Duration = Duration::from_secs(30);
 
-/// The second-opinion roster where the setting names none: the script's
-/// own default.
-const DEFAULT_REVIEW_TARGETS: &str = "claude codex";
+/// The second-opinion roster where the setting names none: `DEFAULT_MODELS`
+/// in `skills/second-opinion/scripts/second-opinion`, copied because the
+/// runtime cannot read the script's shell variable. The
+/// `the_default_roster_is_second_opinion_s` test keeps the two equal.
+const DEFAULT_REVIEW_TARGETS: &str = "claude codex pi-copilot pi-copilot-gpt";
 
 /// The lane's private folder: its mailbox under its root, made before the
 /// window, written by the lane and its overseer alone.
@@ -953,12 +955,35 @@ mod tests {
     fn the_review_names_the_roster_s_other_harnesses() {
         assert_eq!(
             review_harnesses(None, Harness::Codex),
-            vec![Harness::Claude]
+            vec![Harness::Claude, Harness::Copilot]
+        );
+        assert_eq!(
+            review_harnesses(None, Harness::Pi),
+            vec![Harness::Claude, Harness::Codex, Harness::Copilot]
         );
         assert_eq!(
             review_harnesses(Some("codex, pi-copilot-gpt opencode"), Harness::Pi),
             vec![Harness::Codex, Harness::Copilot]
         );
         assert!(review_harnesses(Some(""), Harness::Claude).is_empty());
+    }
+
+    #[test]
+    fn the_default_roster_is_second_opinion_s() {
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../second-opinion/scripts/second-opinion");
+        let text = std::fs::read_to_string(&script)
+            .unwrap_or_else(|err| panic!("read {}: {err}", script.display()));
+        let defaults: Vec<&str> = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("DEFAULT_MODELS=\""))
+            .filter_map(|rest| rest.strip_suffix('"'))
+            .collect();
+        assert_eq!(
+            defaults,
+            [DEFAULT_REVIEW_TARGETS],
+            "DEFAULT_MODELS in {}",
+            script.display()
+        );
     }
 }

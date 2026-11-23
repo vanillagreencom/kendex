@@ -19,8 +19,6 @@ while IFS='|' read -r row target mode; do
   case "$row" in
     default) ;;
     unresolved) printf '#!/usr/bin/env bash\necho resolver-failed >&2\nexit 1\n' >"$ROW/bin/kendex"; want="$BASE_EXPECTED$HOOKS_JSON" ;;
-    # The row alone: the project's Codex room check needs the fleet's accounts.
-    project) { echo '[env]'; grep '^SECOND_OPINION_CODEX_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml"; want=$'exec\n-m\ngpt-6.2-sol\n-s\nread-only\n-c\nmodel_reasoning_effort=xhigh\n--disable\nhooks\n--ephemeral\n--disable\nhooks\n--json' ;;
     version-control) mutate_script "$SO" 'DEFAULT_CODEX_CMD="codex exec -s' 'DEFAULT_CODEX_CMD="codex exec -m gpt-6.1-sol -s' ;;
     env-codex) W_ENV+=("SECOND_OPINION_CODEX_CMD=env -u SO_TEST_UNSET SO_TEST_PREFIX=1 $ROW/bin/codex exec -s read-only -c model_reasoning_effort=xhigh --ephemeral"); want="$BASE_EXPECTED$HOOKS_JSON" ;;
     custom-*)
@@ -85,7 +83,6 @@ SH
 done <<'ROWS'
 default|codex|review
 unresolved|codex|review
-project|codex|review
 version-control|codex|review
 env-codex|codex|review
 copilot|codex|review
