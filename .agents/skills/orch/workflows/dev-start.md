@@ -476,7 +476,7 @@ The write replaces the key: state describes the branch as the last recorded roun
 
 ### Validation status
 
-A lane under an overseer rewrites its status file's validation line from `.validate_rounds` per [oversee.md § Lane directive](oversee.md#lane-directive). It also lists each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes.
+A lane under an overseer rewrites its status file's validation line from `.validate_rounds` per [lane-launch.md § Lane directive](../references/lane-launch.md#lane-directive). It also lists each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes.
 
 ### Store QA State
 

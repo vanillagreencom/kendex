@@ -1,6 +1,6 @@
 # Small Workflow
 
-The tier for a change inside one subsystem and within the `small` ceiling, `small_max_production` in [change-scope's narrow-change.conf](../../change-scope/references/narrow-change.conf). It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review and publication under the bounds in § 3 and § 4. [oversee.md](oversee.md) § Item Tier assigns the tier through `orch-runtime tier`. A `micro` item runs [micro.md](micro.md); every other item runs [start.md](start.md).
+The tier for a change inside one subsystem and within the `small` ceiling, `small_max_production` in [change-scope's narrow-change.conf](../../change-scope/references/narrow-change.conf). It runs [start-worktree.md](start-worktree.md)'s session, dev implementation, review and publication under the bounds in § 3 and § 4. [lane-launch.md](../references/lane-launch.md) § Item Tier assigns the tier through `orch-runtime tier`. A `micro` item runs [micro.md](micro.md); every other item runs [start.md](start.md).
 
 | Command | Flow |
 |---------|------|

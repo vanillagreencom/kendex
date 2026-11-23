@@ -68,7 +68,7 @@ The owner remedies the block. Tell the owner the account and the cause: an enter
 
 1. Where a lane of another Copilot account, launched with allow-all, runs on this machine, read that session's fresh record under its `<account>/lane-status/`. A record for that session and account with `allow_all_enabled: false` shows a block on both accounts, from this machine or from an enterprise that licenses both. Another account does not help then. A missing, stale or mismatched record settles nothing about the machine. Tell the owner both accounts and both possible administrators, and stop. A relaunched lane that reports the same cause shows the same: stop it and wait for the owner.
 2. Stop the blocked lane first, by [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver) step 1, so two sessions never run in one worktree.
-3. Relaunch the item with a `launch-lane` request whose `account` names the other account ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A relaunch on another account starts fresh on the item's branch as `account-switched`, and does not resume the blocked session.
+3. Relaunch the item with a `launch-lane` request whose `account` names the other account ([lane-launch.md § Lane directive](lane-launch.md#lane-directive)). A relaunch on another account starts fresh on the item's branch as `account-switched`, and does not resume the blocked session.
 
 ## Session record reasons
 
@@ -86,7 +86,7 @@ The reason a `session-record=` note names (agent-runtime `context.rs` `copilot_r
 
 ## Recovery
 
-A relaunch is the item's `launch-lane` request sent again ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). It resumes the session the lane record binds by explicit id, `copilot --resume=<id> -i <brief>`. It never uses bare `--resume`, which opens a picker. The route reads the lane record, the item's standing handoff and the bound session's own files under its id, never a session found by its age (orch `effects/launch.rs` `relaunch_route`, `route_of`). The rows apply in order, and the first that matches decides.
+A relaunch is the item's `launch-lane` request sent again ([lane-launch.md § Lane directive](lane-launch.md#lane-directive)). It resumes the session the lane record binds by explicit id, `copilot --resume=<id> -i <brief>`. It never uses bare `--resume`, which opens a picker. The route reads the lane record, the item's standing handoff and the bound session's own files under its id, never a session found by its age (orch `effects/launch.rs` `relaunch_route`, `route_of`). The rows apply in order, and the first that matches decides.
 
 | Case | What the relaunch does |
 |---|---|

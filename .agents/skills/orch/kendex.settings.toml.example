@@ -500,7 +500,7 @@ ORCH_OVERSEER_CLOUD_LANES = "10"
 
 # External triage: whether the watch lists issues and pull requests from
 # outside contributors for the overseer. "off" leaves them unlisted. How the
-# overseer handles each: workflows/oversee.md § Outside contributions.
+# overseer handles each: references/oversee-events.md § Outside contributions.
 # values: on | off
 ORCH_EXTERNAL_TRIAGE = "on"
 
@@ -571,7 +571,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
 # provider executable path for that entry. Overseer preferences keep the
 # grammar above. When the overseer walks these entries:
-# workflows/oversee.md § 3 Lane directive, step 3.
+# references/lane-launch.md § Lane directive, step 3.
 # Which entry the walk takes, and how an entry without @host is judged:
 # references/lane-directive.md § Lane preference.
 # A lane entry names an exact id or a claude class, since a codex or copilot

@@ -48,9 +48,9 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 **Skip if** `harness == codex-app`.
 
 1. Read `orch-env ORCH_LANE_PREFERENCE ""` for the program's default harness, model and effort. Select the model class and effort through [Model class](../references/skill-rules.md#model-class), and keep a model the brief names.
-2. Choose each item's account through the preference walk or the account judge, under [oversee.md](oversee.md) § Lane directive step 3. The permission posture is `AGENT_RUNTIME_LAUNCH_PERMISSION` ([settings.md § Fleet lanes](../references/settings.md#fleet-lanes)), or a `permission` word in the request.
+2. Choose each item's account through the preference walk or the account judge, under [lane-launch.md](../references/lane-launch.md) § Lane directive step 3. The permission posture is `AGENT_RUNTIME_LAUNCH_PERMISSION` ([settings.md § Fleet lanes](../references/settings.md#fleet-lanes)), or a `permission` word in the request.
 3. Where `orch-runtime state exists --fleet` answers false, run `orch-runtime state init --fleet`.
-4. Launch each item with one `launch-lane` request, composed as [oversee.md](oversee.md) § Lane directive step 4 composes it. Its brief is a file ([lane-directive.md § Brief file](../references/lane-directive.md#brief-file)):
+4. Launch each item with one `launch-lane` request, composed as [lane-launch.md](../references/lane-launch.md) § Lane directive step 4 composes it. Its brief is a file ([lane-directive.md § Brief file](../references/lane-directive.md#brief-file)):
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime op --fleet --effect-exit --request [REQUEST_FILE]

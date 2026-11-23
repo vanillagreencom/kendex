@@ -19,7 +19,7 @@ Any answer but `local` refuses the run here:
 
 1. Resume no handoff, and read, activate or create nothing ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes).
 2. Report `start-control-host host=[HOST]` as the first line.
-3. As the next line, report the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief. For `start new`, create the issue first, then launch it that way.
+3. As the next line, report the fix: launch the item as a hosted lane through [lane-launch.md](../references/lane-launch.md) § Lane directive, Placement, with its `/orch start [ISSUE_ID]` brief. For `start new`, create the issue first, then launch it that way.
 
 ## 0. Resume From A Handoff
 
