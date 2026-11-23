@@ -172,7 +172,7 @@ Read when a head is about to re-enter the merge queue after a red merge-group ru
 
 ### Steps
 
-1. Run `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5 step 1` with context `worktree`, `lifecycle: "managed"` and `issue_id`.
+1. Run `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → merge-pr.md § 5 step 1` with context `worktree`, `lifecycle: "managed"` and `issue_id`.
    - For a queue ejection, the failing run is the merge-group run (event `merge_group`), not necessarily the PR-head run.
    - Find it through the ejection's `failed_checks[].url`, which names each failed check's run, or through `gh run list --event merge_group --limit 10`.
    - Point ci-fix at that run.
