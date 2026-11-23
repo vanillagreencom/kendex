@@ -18,7 +18,8 @@ control_replace scripts/lib/formatters.sh 1 \
     '                blocked_by_launch: issue_blocked_by_launch_ids($node.inverseRelations.nodes)' \
     '                blocked_by_launch_dropped: null'
 
-# The list loses its launch field, the one selection reads.
+# The safe list, the overseer's list read, loses its launch field. The
+# heartbeat's owed selection has its own control in issues-list-filters.
 control_expect "safe list launch blockers for Verifying"
 control_replace scripts/lib/formatters.sh 1 \
     '        blocked_by_launch: issue_blocked_by_launch_ids(.inverseRelations.nodes),' \

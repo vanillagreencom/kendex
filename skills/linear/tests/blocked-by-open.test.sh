@@ -93,7 +93,7 @@ assert_issue() {
 
 
 # Verifying remains open to existing readers. Only the launch field differs,
-# on the get the launch gate reads and the list selection reads.
+# on the get the launch gate reads and the safe list the overseer reads.
 while IFS='|' read -r state state_type expected_launch; do
   verifying_raw="$(jq -cn --argjson issue "$main" --arg name "$state" --arg type "$state_type" \
     '{issue:($issue | .inverseRelations.nodes[0].issue.state = {name:$name,type:$type})}')"
