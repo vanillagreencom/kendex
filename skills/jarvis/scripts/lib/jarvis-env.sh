@@ -24,14 +24,15 @@ jarvis_load() {
   export JARVIS_TECHNICAL JARVIS_STYLE
 }
 
-# Presence: the session the native turn end last stamped into the overseer
-# mailbox's context record is the fleet record's controller, live, bound to
-# that pane on its server's recorded start, of that harness, under the
-# native id the record names. agent-runtime's status read answers all of it;
-# a read it cannot make is never presence.
-jarvis_live() {
-  local root="$1" runtime="$JARVIS_LIB/../../../agent-runtime/scripts/agent-runtime"
-  local box harness server pane session at record status
+# The bound session: the one the native turn end last stamped into the
+# overseer mailbox's context record is the fleet record's controller, live,
+# bound to that pane on its server's recorded start, of that harness, under
+# the native id the record names. agent-runtime's status read answers all of
+# it; a read it cannot make binds nothing. Sets the caller's locals runtime,
+# box, server, pane, at and status.
+jarvis_bound() {
+  local root="$1" harness session record
+  runtime="$JARVIS_LIB/../../../agent-runtime/scripts/agent-runtime"
   [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; return 1; }
   [[ -x "$runtime" ]] || { echo 'jarvis: dependency=agent-runtime-missing' >&2; return 1; }
   source "$MAILBOX_LIB/common-root.sh"
@@ -47,9 +48,28 @@ jarvis_live() {
     --harness="$harness" --session="$session")" || return 1
   jq -e '.result | .live and .binding == "bound" and .native_match
     and (.recorded.session_id | type == "string" and length > 0)' <<<"$status" >/dev/null || return 1
+}
+
+# Presence: the bound session, with its context stamp.
+jarvis_live() {
+  local runtime box server pane at status
+  jarvis_bound "$1" || return 1
   # No native route exposes an external health acknowledgement here. Fresh
   # context is sufficient, including work that only invokes existing hooks.
   printf '%s\n' "$at"
+}
+
+# The bound session's own last word on its turns: agent-runtime's session
+# verdict of the rows file its hooks write for that pane, whatever the
+# context stamp's age, with the recorded session and account. The file is
+# the one the stop-failure-row hook names, the pane number without its `%`.
+jarvis_wall() {
+  local runtime box server pane at status verdict
+  jarvis_bound "$1" || return 1
+  verdict="$("$runtime" rows verdict --kind session \
+    --file "$box/tmp/lane-mail/overseer/session-$server-${pane#%}.jsonl")" || return 1
+  jq -c --argjson status "$status" '{session: $status.result.recorded.session_id,
+    account: $status.result.recorded.account, rows: .result}' <<<"$verdict"
 }
 
 case "${1:-}" in
@@ -63,4 +83,5 @@ case "${1:-}" in
     mailbox_common_root "$2"
     ;;
   live) jarvis_live "$2" ;;
+  wall) jarvis_wall "$2" ;;
 esac

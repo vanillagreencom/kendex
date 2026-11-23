@@ -395,6 +395,10 @@ def pass_output(side, roots, events):
     return "".join(body) + "cursor: " + json.dumps(record, separators=(",", ":")) + "\n"
 
 
+def replaced(account):
+    return "A replacement Jarvis runs on " + (account or "its default account") + "."
+
+
 def lane_mail():
     """The producer's own mailbox code; a target's installed copy is never run."""
     return LIB.parents[2] / "mailbox/scripts/lane-mail"
@@ -747,6 +751,10 @@ class Watch:
         self.next_forward = 0
         self.collection = None
         self.mail_pending = {}
+        # ("read" or "succession", future): one wall pass at a time, so a
+        # succession in flight is never read for again.
+        self.wall_pending = None
+        self.next_wall = 0
 
     def initial_cursors(self, paths):
         # Explicit adoption cannot enter ordinary migration or log recovery.
@@ -987,6 +995,98 @@ class Watch:
             return 0 <= now - at < 300
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             return False
+
+    def wall(self):
+        """The bound controller's wall: (session, account, kind), kind None for
+        a session its rows do not read walled; None with no bound controller,
+        as presence reads it; a Failure where the reading was not judged."""
+        try:
+            result = run([self.bash, LIB / "jarvis-env.sh", "wall", self.home], operation="controller-wall")
+            if result.returncode:
+                error = child_failure("controller-wall", result)
+                return error if error.record["key"][1:] == ["refusal", "dependency"] else None
+            reading = json.loads(result.stdout)
+            rows = reading["rows"]
+            if rows["reading"] == "unreadable":
+                raise Failure("controller-wall", "rows", "unreadable", rows["cause"])
+            walled = rows["reading"] == "live" and rows["verdict"] == "walled"
+            return reading["session"], reading["account"], rows["kind"] if walled else None
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
+            return failure("controller-wall", error)
+
+    def accept_wall(self, reading):
+        """One wall reading judged: the wall kind a succession starts for, or None.
+
+        The notice the last succession owes goes first, and a new wall waits for it."""
+        if isinstance(reading, Failure):
+            self.failed_pass("wall", reading.record)
+            return None
+        self.state.pop("wall_failure", None)
+        memory = self.state.get("wall")
+        if memory is not None and not memory["noticed"]:
+            if memory["outcome"] is None and reading is not None:
+                # The loop that started the succession ended before its answer,
+                # as one under the predecessor's harness does once the
+                # predecessor ends: another session in control is its proof.
+                memory["outcome"] = (replaced(reading[1]) if reading[0] != memory["session"] else
+                                     "The replacement's outcome was not read; jarvis-session status shows it.")
+            if memory["outcome"] is not None:
+                self.notify(memory)
+        session, account, kind = reading or (None, None, None)
+        if kind is None or memory is not None and (session == memory["session"] or not memory["noticed"]):
+            self.save()
+            return None
+        # Durable before the succession starts: a restarted loop owes this
+        # wall its notice and never starts a second succession for it.
+        self.state["wall"] = {"session": session, "account": account, "kind": kind, "outcome": None, "noticed": False}
+        self.save()
+        return kind
+
+    def succeed(self, kind):
+        """jarvis-session succeed for a wall of KIND: its answer, or a Failure."""
+        argv = [self.bash, LIB.parent / "jarvis-session", "succeed", "--home", self.home]
+        try:
+            # The session command bounds each wait it makes, the hand-over's too.
+            result = run(argv + (["--account-walled"] if kind == "usage" else []), self.home,
+                         operation="succeed", timeout=None)
+            answer = json.loads(result.stdout.splitlines()[-1])
+            if not isinstance(answer, dict):
+                raise ValueError("answer-unread")
+            return answer
+        except (OSError, ValueError, IndexError, RuntimeError, subprocess.SubprocessError) as error:
+            return failure("succeed", error)
+
+    def accept_succession(self, answer):
+        memory = self.state["wall"]
+        if isinstance(answer, Failure):
+            memory["outcome"] = "No replacement started: " + answer.record["detail"][:200] + "."
+        elif answer.get("state") == "running":
+            memory["outcome"] = replaced(answer.get("account"))
+        elif answer.get("state") == "handing-over":
+            memory["outcome"] = "A replacement Jarvis is starting."
+        else:
+            memory["outcome"] = ("No replacement started (" + str(answer.get("reason")) + ")"
+                                 + (": " + str(answer["detail"]) if answer.get("detail") else "."))
+        self.save()
+        self.notify(memory)
+
+    def notify(self, memory):
+        """The owner's one notice of a wall: its cause, its account and the succession's outcome."""
+        cause = {"auth": "Jarvis is signed out on %s", "usage": "Jarvis has no room left on %s"}[memory["kind"]]
+        text = cause % (memory["account"] or "its default account") + ": every turn it tries fails. " + memory["outcome"]
+        with tempfile.NamedTemporaryFile(mode="w", dir=self.directory) as payload:
+            payload.write(text + "\n")
+            payload.flush()
+            try:
+                checked([self.bash, lane_mail(), "notice", "--item", "overseer", "--to", "owner",
+                         "--file", payload.name], self.home, operation="wall-notice")
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                self.failed_pass("wall-notice", failure("wall-notice", error).record)
+                return
+        # A stop between the notice and this save repeats the notice once.
+        memory["noticed"] = True
+        self.state.pop("wall-notice_failure", None)
+        self.save()
 
     def remote_command(self, args):
         # Carry exact dependency bytes, never target-local code or settings.
@@ -1269,6 +1369,16 @@ class Watch:
             self.next_unanswered = now + min(UNANSWERED_EVERY_SECS,
                                              int(self.settings["JARVIS_VOICE_REMIND_SECS"]) or UNANSWERED_EVERY_SECS)
             self.unanswered_pending = passes.submit(self.unanswered, list(waiting))
+        wall = self.wall_pending
+        if wall is not None and wall[1].done():
+            self.wall_pending = None
+            if wall[0] == "succession":
+                self.accept_succession(wall[1].result())
+            elif (kind := self.accept_wall(wall[1].result())) is not None:
+                self.wall_pending = ("succession", passes.submit(self.succeed, kind))
+        if self.wall_pending is None and now >= self.next_wall:
+            self.next_wall = now + 30
+            self.wall_pending = ("read", passes.submit(self.wall))
         if self.satellite:
             # A satellite renews no fleet presence and owes no checkpoint;
             # it drains its forward outbox on the same executor instead.
@@ -1401,7 +1511,7 @@ def main():
                 return
             # Slow SSH and mailbox reads cannot extend an already-started
             # settle. Only this thread appends results or commits batch state.
-            with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 3) as passes:
+            with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 4) as passes:
                 pending = passes.submit(watch.acquire, epoch())
                 while True:
                     pending = watch._poll(passes, pending, epoch())

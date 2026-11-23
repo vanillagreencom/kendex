@@ -94,11 +94,15 @@ class SuccessionContract(SessionContract):
                 before = after
 
     def test_successor_setup_readiness(self):
+        # A walled succession, the one the watch loop starts for a usage
+        # wall, briefs its successor with the home's stored Start brief.
+        brief = self.root / "brief.md"
+        brief.write_text("Watch the release.\n")
         for runner_up in (False, True):
             with self.subTest(runner_up=runner_up):
                 pending = self.plant_account("pending-" + str(runner_up), 1)
                 ready = self.plant_account("ready-" + str(runner_up), 20) if runner_up else self.account
-                self.call("start")
+                self.call("start", brief=brief)
                 self.wait()
                 before = self.controller()
                 config = pending / ".claude.json"
@@ -110,6 +114,10 @@ class SuccessionContract(SessionContract):
                     self.assertEqual(self.controller()["pane"], before["pane"])
                 else:
                     self.assertEqual((answer["state"], answer["account"], code), ("running", str(ready), 0), self.stderr)
+                    successor = self.started()[-1]
+                    prompts = [json.loads(line) for line in self.rows.read_text().splitlines() if "prompt" in json.loads(line)]
+                    self.assertEqual([row["prompt"] for row in prompts if row["id"] == successor["id"]],
+                                     [START_BRIEF + " Watch the release."])
                 self.assertIn("reason=harness-setup-pending", self.stderr)
                 self.assertIn("fix=", self.stderr)
                 self.assertEqual(config.read_text(), "{}")

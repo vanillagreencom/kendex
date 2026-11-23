@@ -18,6 +18,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+import uuid
 from mail_world import control_account, make_project
 
 REPO = Path(__file__).resolve().parents[3]
@@ -2070,9 +2071,108 @@ with open(sys.argv[1], "ab") as out:
         self.assertTrue((self.home / "tmp/lane-mail/overseer/to-overseer.seen").exists())
         self.assertFalse((self.peer / "tmp/lane-mail/overseer/to-overseer.seen").exists())
         self.assertFalse(ssh_log.exists())
-        self.assertEqual(passes.names, ["relay_status", "forward"])
+        self.assertEqual(passes.names, ["relay_status", "wall", "forward"])
         self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
                          [block.split("\n")[0]])
+
+    def controller(self, session, account, row):
+        """The home's live, bound controller SESSION on ACCOUNT, its context
+        stamp a day old: agent-runtime's status read is planted, and the real
+        rows verdict judges ROW as the session's last row."""
+        runtime = self.packages / "agent-runtime"
+        if runtime.is_symlink():
+            runtime.unlink()
+            self.status = self.root / "status.json"
+            script = runtime / "scripts/agent-runtime"
+            script.parent.mkdir(parents=True)
+            script.write_text('#!/bin/sh\nif [ "$1 $2" = "controller status" ]; then cat ' + shlex.quote(str(self.status))
+                              + '; exit 0; fi\nexec ' + shlex.quote(str(REPO / "skills/agent-runtime/scripts/agent-runtime"))
+                              + ' "$@"\n')
+            script.chmod(0o755)
+        self.status.write_text(json.dumps({"protocol": "agent-runtime-v1", "ok": True, "result": {
+            "live": True, "binding": "bound", "native_match": True, "open_intents": [],
+            "recorded": {"session_id": session, "account": account, "harness": "claude"}}}))
+        box = self.home / "tmp/lane-mail/overseer"
+        box.mkdir(parents=True, exist_ok=True)
+        box.joinpath("context.json").write_text(json.dumps(
+            {"harness": "claude", "session_id": session, "at": "1970-01-02T00:00:00Z", "pane_key": "4242 %3"}))
+        box.joinpath("session-4242-3.jsonl").write_text(json.dumps(dict(row, harness="claude", session_id=session, at=1)) + "\n")
+
+    def session_command(self, answer, code):
+        """jarvis-session as the loop runs it: each succeed's arguments logged, ANSWER printed."""
+        log = self.root / ("succeed-" + uuid.uuid4().hex)
+        self.scripts.joinpath("jarvis-session").write_text(
+            '#!/bin/sh\n[ "$1" = succeed ] || exit 97\nprintf "%s\\n" "$*" >> ' + shlex.quote(str(log)) + '\n'
+            'printf "%s\\n" ' + shlex.quote(json.dumps(answer)) + '\nexit ' + str(code) + '\n')
+        return log
+
+    def owner_notices(self):
+        path = self.home / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        return [row["text"] for row in rows if row.get("kind") == "notice" and row.get("to") == "owner"]
+
+    def wall_passes(self, watch, now, succeeding=True):
+        """One wall pass through the loop: the read, the succession it starts, its answer."""
+        class Inline:
+            def submit(self, work, *args):
+                future = Future()
+                if work.__name__ == "wall" or work.__name__ == "succeed" and succeeding:
+                    future.set_result(work(*args))
+                return future
+        for offset in range(3):
+            watch._poll(Inline(), Future(), now + offset)
+
+    def test_a_walled_controller_tells_the_owner_once_and_starts_one_succession(self):
+        # The failure it stops: a controller whose every turn fails reads only
+        # as a quiet one, so no one is told and no successor starts; or a wall
+        # that pages and hands over on every pass. The notice is the owner's
+        # own reading of the outage, delivered through the relay: it names the
+        # cause, the account and the succession's outcome.
+        refusal = "No account is left to take over: /accounts/a (successor-not-signed-in). Jarvis keeps running."
+        for name, row, answer, code, flags, words in (
+                ("auth", {"event": "StopFailure", "error": "authentication_failed"},
+                 {"state": "running", "account": "/accounts/b"}, 0, [], ["signed out", "/accounts/a", "/accounts/b"]),
+                ("usage", {"event": "StopFailure", "error": "rate_limit"},
+                 {"state": "running", "account": "/accounts/b"}, 0, ["--account-walled"],
+                 ["no room", "/accounts/a", "/accounts/b"]),
+                ("refused", {"event": "StopFailure", "error": "authentication_failed"},
+                 {"state": "failed", "reason": "handover-failed", "detail": refusal}, 1, [],
+                 ["signed out", "/accounts/a", refusal]),
+                ("unwalled", {"event": "Stop"}, None, 0, None, None)):
+            with self.subTest(row=name), patch.dict(os.environ, self.env, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / ("log-" + name))
+                self.controller("s-" + name, "/accounts/a", row)
+                log = self.session_command(answer, code)
+                before = self.owner_notices()
+                watch = self.watch()
+                for now in (0, 30):
+                    self.wall_passes(watch, now)
+                    notices = self.owner_notices()[len(before):]
+                    succeeded = log.read_text().splitlines() if log.exists() else []
+                    if flags is None:
+                        self.assertEqual((notices, succeeded), ([], []))
+                        continue
+                    self.assertEqual(succeeded, [" ".join(["succeed", "--home", str(self.home), *flags])])
+                    self.assertEqual(len(notices), 1, notices)
+                    for word in words:
+                        self.assertIn(word, notices[0])
+
+    def test_a_loop_that_ends_during_its_succession_leaves_the_notice_owed(self):
+        # The failure it stops: the predecessor's end takes its own loop with
+        # it before the succession answers, and the owner is never told.
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "authentication_failed"})
+            log = self.session_command({"state": "running", "account": "/accounts/b"}, 0)
+            self.wall_passes(self.watch(), 0, succeeding=False)
+            self.assertEqual(self.owner_notices(), [])
+            self.controller("s2", "/accounts/b", {"event": "Stop"})
+            self.wall_passes(self.watch(), 30)
+            notices = self.owner_notices()
+            self.assertEqual(len(notices), 1, notices)
+            for word in ("signed out", "/accounts/a", "/accounts/b"):
+                self.assertIn(word, notices[0])
+            self.assertFalse(log.exists())
 
     def test_forward_cadence_and_answer_event_restart(self):
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
@@ -2313,6 +2413,15 @@ with open(sys.argv[1], "ab") as out:
                 ("test_owner_unanswered_reminder", unlisted, "alone = False"),
                 # That home's read takes its to-lane alone.
                 ("test_owner_unanswered_reminder", 'boxes = ("to-lane",) if', 'boxes = ("to-lane", "to-overseer") if'),
+                # The loop reads its controller's wall.
+                ("test_a_walled_controller_tells_the_owner_once_and_starts_one_succession",
+                 'self.wall_pending = ("read", passes.submit(self.wall))', "self.wall_pending = None"),
+                # A wall already reported starts nothing until a successor runs.
+                ("test_a_walled_controller_tells_the_owner_once_and_starts_one_succession",
+                 '(session == memory["session"] or', "(False or"),
+                # A successor in control settles the notice its predecessor's loop owed.
+                ("test_a_loop_that_ends_during_its_succession_leaves_the_notice_owed",
+                 'if memory["outcome"] is None and reading is not None:', "if False:"),
                 # A satellite reads no other root.
                 ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()"),
                 # The control host's presence pass runs as JARVIS_CONTROL_USER.
