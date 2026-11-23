@@ -2832,6 +2832,83 @@ fn a_launch_under_a_waiting_shell_records_the_harness_itself() {
     );
 }
 
+/// `agent-runtime launch` of a Claude intent naming its home alone signs in
+/// as that home whatever the tmux server's environment holds: the server's
+/// token never reaches the harness, and the token file the setting declares
+/// for the home does. A home the setting declares nothing for signs in by
+/// its stored login, no token in the environment. Each row: whether the
+/// setting declares the home, and the token the harness holds.
+#[test]
+fn a_launch_naming_a_claude_home_signs_in_as_that_home_alone() {
+    for (declared, holds) in [(true, Some("file-token")), (false, None)] {
+        let dir = tempfile::tempdir().unwrap();
+        let pane = PrivatePane::start(dir.path());
+        pane.tmux(&[
+            "set-environment",
+            "-g",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "inherited",
+        ]);
+        let seen = dir.path().join("seen-token");
+        let program = dir.path().join("bin").join("claude");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        write_executable(
+            &program,
+            format!(
+                "#!/bin/bash\nprintf '%s\\n' \"${{CLAUDE_CODE_OAUTH_TOKEN-unset}}\" > '{seen}.part' && mv '{seen}.part' '{seen}'\nread -r _\n",
+                seen = seen.display()
+            ),
+        );
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let token = dir.path().join("home.token");
+        std::fs::write(&token, "file-token\n").unwrap();
+        let intent = dir.path().join("intent.json");
+        std::fs::write(
+            &intent,
+            serde_json::json!({"harness": "claude", "home": home, "cwd": dir.path(), "program": program})
+                .to_string(),
+        )
+        .unwrap();
+        let setting = if declared {
+            format!("{}={}", home.display(), token.display())
+        } else {
+            String::new()
+        };
+        let out = Command::new(binary())
+            .current_dir(dir.path())
+            .args(["launch", "--intent"])
+            .arg(&intent)
+            .arg("--record")
+            .arg(dir.path().join("record.json"))
+            .arg("--socket")
+            .arg(&pane.socket)
+            .args(["--session", &pane.session, "--window-name", "lane"])
+            .env("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|_| panic!("no reply: {}", String::from_utf8_lossy(&out.stderr)));
+        assert_eq!(reply["ok"], true, "declared={declared}: {reply}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let text = loop {
+            if let Ok(text) = std::fs::read_to_string(&seen) {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the harness never ran"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert_eq!(
+            text.trim_end(),
+            holds.unwrap_or("unset"),
+            "declared={declared}"
+        );
+    }
+}
+
 /// An adoption records the harness identity read in the pane's foreground,
 /// never the caller's word for it; a record of another, live controller
 /// refuses `overseer-live`; a pane holding no harness refuses

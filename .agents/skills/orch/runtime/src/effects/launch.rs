@@ -471,10 +471,9 @@ struct LaunchPrep {
 }
 
 /// The sign-in of the named Claude account a local lane bills, a Pi
-/// `pi-claude/` seat among them: its declared token file, exported over
-/// whatever the window inherits, since the walk counts a home that file
-/// signs in as eligible. A lane billing no named Claude account signs in as
-/// it did.
+/// `pi-claude/` seat among them: its declared token file, else its stored
+/// login, so the window's inherited credentials never sign it in. A lane
+/// billing no named Claude account signs in as it did.
 fn lane_sign_in(
     settings: &Settings,
     harness: Harness,
@@ -489,9 +488,13 @@ fn lane_sign_in(
         return Ok(None);
     };
     let files = agent_runtime::accounts::usage::token_files(&settings.controller.account_tokens)?;
-    Ok(files
-        .declared(account)
-        .map(|file| ClaudeSignIn::TokenFile(file.to_path_buf())))
+    Ok(Some(
+        files
+            .declared(account)
+            .map_or(ClaudeSignIn::StoredLogin, |file| {
+                ClaudeSignIn::TokenFile(file.to_path_buf())
+            }),
+    ))
 }
 
 /// Resolve everything a local launch can refuse before it opens a window:
@@ -1792,7 +1795,15 @@ fn cloud_launch(
             session_id: None,
             extra_args: &[],
             opener: &super::opener_env(Harness::Claude, r.model.as_deref()),
-            claude_sign_in: None,
+            // A cloud session always uses the subscription's own login, and
+            // a `setup-token` can only make model requests
+            // (https://code.claude.com/docs/en/authentication § Authentication
+            // precedence and § Generate a long-lived token), so the session
+            // signs in by the folder's stored login whatever the token
+            // setting declares: the inherited credentials are cleared
+            // (`cloud_create` carries the clear as `env -u` words) and no
+            // file is exported.
+            claude_sign_in: Some(ClaudeSignIn::StoredLogin),
         },
     )?;
     let answer_by = operation.stamp_after(CLOUD_BOUND);

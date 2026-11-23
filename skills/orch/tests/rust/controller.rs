@@ -851,7 +851,8 @@ fn a_named_account_the_token_setting_does_not_sign_in_opens_nothing() {
 
 /// The transfer reads the walk's one sign-in answer: a Claude account
 /// whose stored login nothing here reads opens, its note naming the cause
-/// for the first turn to judge, and a token setting naming the account
+/// for the first turn to judge, signed in by that login and never by the
+/// token the tmux server holds, and a token setting naming the account
 /// twice in two spellings refuses before any window opens, the predecessor
 /// running. Each row: the case, the credential file's text, whether the
 /// setting declares the account twice, and the outcome with its note.
@@ -874,7 +875,7 @@ fn a_transfer_judges_the_successor_by_the_walks_sign_in_answer() {
     for (case, credential, twice, (outcome, note)) in rows {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let runner = suite_runner(&server, "stub-confirm");
+        let runner = suite_runner(&server, "stub-record");
         runner.init_fleet();
         let account = runner.state_dir().join("6claude");
         std::fs::create_dir_all(&account).unwrap();
@@ -897,11 +898,19 @@ fn a_transfer_judges_the_successor_by_the_walks_sign_in_answer() {
             &runner,
             &account,
             &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
-            &[],
+            &[("CLAUDE_CODE_OAUTH_TOKEN", "inherited")],
         );
         assert_eq!(intent["outcome"], outcome, "{case}: {intent}");
         match outcome {
-            "confirmed" => assert_eq!(intent["observation"]["sign_in"], note, "{case}: {intent}"),
+            "confirmed" => {
+                assert_eq!(intent["observation"]["sign_in"], note, "{case}: {intent}");
+                let launched = launch_record(runner.state_dir());
+                assert_eq!(
+                    launched["sign_in"]["CLAUDE_CODE_OAUTH_TOKEN"],
+                    Value::Null,
+                    "{case}: {launched}"
+                );
+            }
             _ => {
                 assert_eq!(intent["observation"]["note"], note, "{case}: {intent}");
                 assert_eq!(server.panes(), panes, "{case}: nothing opened");

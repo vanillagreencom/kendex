@@ -435,7 +435,10 @@ impl Successor {
                         Some(json!({"token_file": file.display().to_string()})),
                         claude(ClaudeSignIn::TokenFile(file)),
                     ),
-                    SignIn::Unjudged { cause } => (Some(json!({"unjudged": cause})), None),
+                    SignIn::Unjudged { cause } => (
+                        Some(json!({"unjudged": cause})),
+                        claude(ClaudeSignIn::StoredLogin),
+                    ),
                     SignIn::Missing { cause } => {
                         let file = files.declared(account).map(|f| f.display().to_string());
                         let mut fields = vec![("account", account), ("cause", cause)];

@@ -66,7 +66,12 @@ enum Verb {
     /// Open a tmux window on the named socket and session, start the
     /// harness the intent file describes in it, and write the launch record.
     /// An intent naming its account and no home runs under the home that
-    /// account names, its trust record for the directory written first.
+    /// account names, its trust record for the directory written first. A
+    /// launch billing a named Claude home (a Claude intent's home or
+    /// account, a Pi `pi-claude/` intent's account) signs in as that home
+    /// alone: by the token file `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`
+    /// declares for it, else its stored login, the inherited Claude
+    /// credentials cleared.
     Launch {
         #[arg(long)]
         intent: PathBuf,
@@ -1839,6 +1844,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     path: intent.clone(),
                     source,
                 })?;
+            intent.claude_sign_in = claude_sign_in(&intent)?;
             prepare_home(&mut intent)?;
             let command = launch::build(&intent)?;
             if let Some(brief) = &command.brief_path
@@ -2372,6 +2378,43 @@ impl HandOverSettings {
 /// A launch that names its account and no home runs, before its window
 /// opens, under the home that account names with the trust record its
 /// directory needs, as a lane's and a controller's do.
+/// The sign-in of the named Claude home `intent` bills, `None` for an intent
+/// billing none: the setting is read from the current directory's project
+/// only then, so a value that does not read refuses no other launch.
+fn claude_sign_in(intent: &LaunchIntent) -> Result<Option<launch::ClaudeSignIn>> {
+    let named = match intent
+        .harness
+        .billed(intent.model.as_deref().unwrap_or_default())
+    {
+        Some(Harness::Claude) if intent.harness == Harness::Claude => {
+            intent.home.as_ref().or(intent.account.as_ref())
+        }
+        Some(Harness::Claude) => intent.account.as_ref(),
+        Some(Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
+    };
+    let Some(home) = named else {
+        return Ok(None);
+    };
+    let cwd = std::env::current_dir().map_err(|e| Error::io("read", ".", e))?;
+    let roots = settings::roots(&cwd)?;
+    let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let keys = settings::Keys {
+        read: &[settings::ENGINE_KEYS],
+        load: &[],
+    };
+    let values = settings::layered(&roots.project, &environment, true, &keys)?;
+    let files = agent_runtime::accounts::usage::token_files(
+        &settings::ControllerSettings::read(&values).account_tokens,
+    )?;
+    Ok(Some(
+        files
+            .declared(&home.display().to_string())
+            .map_or(launch::ClaudeSignIn::StoredLogin, |file| {
+                launch::ClaudeSignIn::TokenFile(file.to_path_buf())
+            }),
+    ))
+}
+
 fn prepare_home(intent: &mut LaunchIntent) -> Result<()> {
     let (Some(account), None) = (intent.account.as_deref(), intent.home.as_ref()) else {
         return Ok(());
