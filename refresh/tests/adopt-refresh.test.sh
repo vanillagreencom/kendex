@@ -26,6 +26,11 @@ ADOPT='refresh/adopt-refresh.sh'
 REFRESH='.github/workflows/kendex-refresh.yml'
 # The release copy's caller: the template the adopter reads by default.
 TEMPLATE='refresh/kendex-refresh.yml'
+# Adoption keeps every inventory entry but its own: a path entry and another
+# workflow's record, which sorts before the caller's.
+printf 'name: other\n' >"$PRISTINE/.github/workflows/ci.yml"
+printf '["docs/guide.md"]\n' >"$PRISTINE/.kendex-generated.json"
+record_adoption "$PRISTINE" .github/workflows/ci.yml .agents/skills/harness-ci/templates/ci.yml
 commit "$PRISTINE"
 
 
@@ -43,7 +48,6 @@ while IFS='|' read -r key value mutation expected; do
   run_refresh_command "$DIR" "$DIR/$ADOPT"
   [ "$RC" -eq 0 ] || exit 1
   rm -- "${DIR:?}/$REFRESH"
-  printf '[]\n' >"$DIR/.kendex-generated.json"
   cp "$BIN/gh" "$BIN/gh-environment-base"
   api_calls="$TMP/api-environment-calls"
   : >"$api_calls"
@@ -406,7 +410,7 @@ while IFS='|' read -r location mutation; do
   run_refresh_command "$DIR" "$adopter" --templates-dir "$release_templates"
   matched=no
   if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
-      jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then matched=yes; fi
+      adoption_inventory "$DIR" "$REFRESH"; then matched=yes; fi
   case "$mutation:$matched" in
     none:yes) ok "$location release-tree adoption writes the caller and drops its record" ;;
     record:no | history:no) ok "control: $mutation turns the release-tree adoption assertion red" ;;
@@ -437,7 +441,7 @@ cp "$TMP/caller-no-secrets" "$DIR/$REFRESH"
 commit "$DIR"
 run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
 if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
-    jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
+    adoption_inventory "$DIR" "$REFRESH"; then
   ok 'a consumer holding the v1.8.0 caller bytes takes the current caller'
 else bad "v1.8.0 caller re-adoption (rc=$RC)" "$OUT"; fi
 # A shipped caller on the earlier secret names needs no new declaration.
@@ -609,7 +613,7 @@ RESTORE_FIXED_SECRETS
     cp "$DIR/$REFRESH" "$TMP/neutral-workflow"
     run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
     if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/neutral-workflow" && \
-        jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then
+        adoption_inventory "$DIR" "$REFRESH"; then
       ok 'refresh keeps the selected environment without a byte-identical render record'
     else bad 'selected environment preservation' "$OUT"; fi
     file_edit "$DIR" refresh/lib/caller.py 1 '^    if replacement is None or config is None:' \

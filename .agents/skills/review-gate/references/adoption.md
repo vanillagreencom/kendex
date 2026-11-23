@@ -296,7 +296,7 @@ Deprecated caller fields:
 - Unreadable metadata uses `cause=read` and names the API operation.
 - `refresh-error=workflow-edited` stops adoption before any workflow or inventory change.
 
-Adoption accepts an absent workflow, or a validated declaration whose other bytes match shipped template history. Existing declarations survive later adoption from a new release template. Inventory recording follows the template-byte rule in [§ Adoption and file ownership](#adoption-and-file-ownership).
+Adoption accepts an absent workflow, or a validated declaration whose other bytes match shipped template history. Existing declarations survive later adoption from a new release template.
 
 The landing pair, `KENDEX_LAND_APP_ID` / `KENDEX_LAND_APP_PRIVATE_KEY`, is a third fixed pair, and it is optional.
 

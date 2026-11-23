@@ -638,18 +638,31 @@ inventory.write_text(json.dumps(entries) + "\n")
 PY
 }
 
-# Adoption leaves the template's bytes at PATH and no inventory record for it.
-adoption_metadata() { # ROOT PATH TEMPLATE
+# Adoption leaves the committed inventory less only PATH's record, sorted by
+# path. The committed inventory must hold another path entry and another
+# record, so a row that loses either goes red.
+adoption_inventory() { # ROOT PATH
   python3 - "$@" <<'PY'
 import json
 from pathlib import Path
+import subprocess
 import sys
 root = Path(sys.argv[1])
-path, template = sys.argv[2:]
-assert (root / path).read_bytes() == (root / template).read_bytes(), "adoption=workflow-bytes value=" + path
-entries = json.loads((root / ".kendex-generated.json").read_text())
-assert [e for e in entries if isinstance(e, dict) and e["path"] == path] == [], "adoption=inventory value=" + path
+path = sys.argv[2]
+committed = json.loads(subprocess.check_output(["git", "-C", str(root), "show", "HEAD:.kendex-generated.json"]))
+expected = sorted((e for e in committed if not (isinstance(e, dict) and e["path"] == path)),
+                  key=lambda e: e if isinstance(e, str) else e["path"])
+assert any(isinstance(e, str) for e in expected) and any(isinstance(e, dict) for e in expected), \
+    "adoption=inventory-witness value=" + json.dumps(committed)
+actual = json.loads((root / ".kendex-generated.json").read_text())
+assert actual == expected, "adoption=inventory value=" + json.dumps(actual)
 PY
+}
+
+# Adoption leaves the template's bytes at PATH and the inventory above.
+adoption_metadata() { # ROOT PATH TEMPLATE
+  cmp -s "$1/$2" "$1/$3" || { printf 'adoption=workflow-bytes value=%s\n' "$2" >&2; return 1; }
+  adoption_inventory "$1" "$2"
 }
 
 # The engine's refusal is the refresh runner's schema-number interface.
