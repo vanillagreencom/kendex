@@ -107,6 +107,7 @@ format_issues_list() {
         blocks: issue_blocks_ids(.relations.nodes),
         blocked_by: issue_blocked_by_ids(.inverseRelations.nodes),
         blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes),
+        blocked_by_launch: issue_blocked_by_launch_ids(.inverseRelations.nodes),
         related: issue_related_ids(.relations.nodes; .inverseRelations.nodes),
         url: (.url // "")
     }]'
