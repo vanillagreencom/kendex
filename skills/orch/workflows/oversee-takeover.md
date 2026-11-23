@@ -54,7 +54,7 @@ The overseer mailbox carries owner and delegate notes, and data notices a progra
    - Write the result as [oversee-events.md § Keep the report's inputs current](../references/oversee-events.md#keep-the-reports-inputs-current) does. Then launch under [oversee.md § 3](oversee.md#3-launch) where the cap has room.
 8. Read the overseer's readiness with `.agents/skills/orch/scripts/orch-runtime ready --duty overseer`.
    - Each `unready duty=overseer setting=[KEY]` line names a key that `lane-mail ask --issue` refuses an ask without.
-   - Report each such key to the owner, and send each owner ask without `--issue` until the key is set.
+   - Report each such key to the owner, and send each owner ask without `--issue` and `--do` until the key is set.
 
 - With no handoff, start from the tracker.
 - With no item, handoff, note or pending owner ask, send the [§ Opening question](../references/communication-modes.md#opening-question).
