@@ -464,6 +464,26 @@ pub struct OwnerTracker {
     pub label: String,
 }
 
+/// The owner-ask keys as `owner_tracker_settings` judges them: both set, or
+/// the keys left unset, in its order, the owner account named
+/// `ORCH_OWNER_EMAIL` though `KENDEX_USER_EMAIL` also sets it, as
+/// `lane-mail ask --issue` names them in its refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerAsks {
+    Configured(OwnerTracker),
+    Unset(Vec<&'static str>),
+}
+
+impl OwnerAsks {
+    /// The account and the label, where both are set.
+    pub fn configured(&self) -> Option<&OwnerTracker> {
+        match self {
+            OwnerAsks::Configured(owner) => Some(owner),
+            OwnerAsks::Unset(_) => None,
+        }
+    }
+}
+
 /// What the tracker and GitHub read duties consume.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadSettings {
@@ -475,7 +495,7 @@ pub struct ReadSettings {
     pub security_alert_token_file: Option<PathBuf>,
     /// Lowercased, deduplicated, in the order given.
     pub connected_repos: Vec<String>,
-    pub owner_tracker: Option<OwnerTracker>,
+    pub owner_asks: OwnerAsks,
 }
 
 impl ReadSettings {
@@ -1098,22 +1118,24 @@ pub fn load(
             connected_repos.push(entry);
         }
     }
-    let owner_tracker = match (
+    let owner_asks = match (
         get(OWNER_EMAIL_KEY).or_else(|| get(USER_EMAIL_KEY)),
         get(OWNER_ASK_LABEL_KEY),
     ) {
-        (Some(email), Some(label)) => Some(OwnerTracker {
+        (Some(email), Some(label)) => OwnerAsks::Configured(OwnerTracker {
             email: email.to_owned(),
             label: label.to_owned(),
         }),
-        (None, _) | (_, None) => None,
+        (Some(_), None) => OwnerAsks::Unset(vec![OWNER_ASK_LABEL_KEY]),
+        (None, Some(_)) => OwnerAsks::Unset(vec![OWNER_EMAIL_KEY]),
+        (None, None) => OwnerAsks::Unset(vec![OWNER_ASK_LABEL_KEY, OWNER_EMAIL_KEY]),
     };
     let reads = ReadSettings {
         tracker_cli: program(TRACKER_CLI_KEY, TRACKER_CLI_DEFAULT),
         pr_watch_cli: program(PR_WATCH_CLI_KEY, PR_WATCH_CLI_DEFAULT),
         security_alert_token_file: get(SECURITY_ALERT_TOKEN_FILE_KEY).map(PathBuf::from),
         connected_repos,
-        owner_tracker,
+        owner_asks,
     };
     let progress_report_dir =
         PathBuf::from(get(PROGRESS_REPORT_DIR_KEY).unwrap_or(DEFAULT_PROGRESS_REPORT_DIR));
@@ -1701,7 +1723,7 @@ mod tests {
     }
 
     /// The read duties' keys: each default and shape, and the owner tracker
-    /// configured only by both its halves.
+    /// configured only by both its halves, each half left unset named.
     #[test]
     fn the_read_duties_keys_take_their_defaults_and_shapes() {
         let dir = tempfile::tempdir().unwrap();
@@ -1714,7 +1736,7 @@ mod tests {
                 pr_watch_cli: roots.project.join(PR_WATCH_CLI_DEFAULT),
                 security_alert_token_file: None,
                 connected_repos: Vec::new(),
-                owner_tracker: None,
+                owner_asks: OwnerAsks::Unset(vec!["ORCH_OWNER_ASK_LABEL", "ORCH_OWNER_EMAIL"]),
             }
         );
         let settings = load(
@@ -1737,14 +1759,15 @@ mod tests {
                 pr_watch_cli: PathBuf::from("/opt/pr-watch.sh"),
                 security_alert_token_file: Some(PathBuf::from("/run/token")),
                 connected_repos: vec!["owner/repo".to_owned(), "other/one".to_owned()],
-                owner_tracker: Some(OwnerTracker {
+                owner_asks: OwnerAsks::Configured(OwnerTracker {
                     email: "user@example.com".to_owned(),
                     label: "owner-ask".to_owned(),
                 }),
             }
         );
         // The owner's own key outranks the user email; a label alone or an
-        // email alone configures nothing.
+        // email alone configures nothing and names the other half, the
+        // account by the owner's key whichever email key stands.
         let both = load(
             &roots,
             &env(&[
@@ -1756,15 +1779,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            both.reads.owner_tracker.map(|o| o.email),
-            Some("owner@example.com".to_owned())
+            both.reads.owner_asks.configured().map(|o| o.email.as_str()),
+            Some("owner@example.com")
         );
-        for half in [
-            (OWNER_EMAIL_KEY, "owner@example.com"),
-            (OWNER_ASK_LABEL_KEY, "l"),
+        for (half, unset) in [
+            (
+                (OWNER_EMAIL_KEY, "owner@example.com"),
+                "ORCH_OWNER_ASK_LABEL",
+            ),
+            ((USER_EMAIL_KEY, "user@example.com"), "ORCH_OWNER_ASK_LABEL"),
+            ((OWNER_ASK_LABEL_KEY, "l"), "ORCH_OWNER_EMAIL"),
         ] {
             let one = load(&roots, &env(&[half]), &FLAGS).unwrap();
-            assert_eq!(one.reads.owner_tracker, None, "{half:?}");
+            assert_eq!(
+                one.reads.owner_asks,
+                OwnerAsks::Unset(vec![unset]),
+                "{half:?}"
+            );
         }
     }
 

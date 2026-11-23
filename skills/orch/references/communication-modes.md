@@ -67,7 +67,7 @@ An overseer's question to the owner is one owner ask through the mailbox skill's
 
 `--issue [ITEM]` puts the ask on the tracker item as well as in chat. What `lane-mail` writes on the item: `lane-mail --help`.
 
-The item write needs `ORCH_OWNER_ASK_LABEL` and `ORCH_OWNER_EMAIL` ([settings.md](settings.md)). If either is unset, `lane-mail` refuses the ask `item-ask-unconfigured`, names each unset key and appends nothing. Set the key and send the ask again.
+The item write needs `ORCH_OWNER_ASK_LABEL` and `ORCH_OWNER_EMAIL` ([settings.md](settings.md)). If either is unset, `lane-mail` refuses the ask `item-ask-unconfigured`, names each unset key and appends nothing. Set the key and send the ask again. The overseer reads the same unset keys at takeover ([oversee-takeover.md § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff), step 8).
 
 An item ask requires `--do [TEXT]`, worded as communication's [action requests](../../communication/references/questions.md#action-requests). An ask with no item stays in chat and creates no issue.
 

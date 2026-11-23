@@ -8,7 +8,8 @@
 # builds; `setup --help` there is the contract. Without --detach a failed
 # build ends the setup with its exit, and once both stand the setup prints
 # `orch-runtime ready`'s lines on stderr (`ready duty=D`, or `unready duty=D
-# program=P cause=C fix=F`), its exit still the builds'; with --detach both
+# program=P cause=C fix=F`, `setting=K` in place of `program=P` for an unset
+# key), its exit still the builds'; with --detach both
 # builds start and the setup answers the worse exit (a refusal, then a held
 # build, then 0).
 # agent-runtime is the required sibling beside this package
