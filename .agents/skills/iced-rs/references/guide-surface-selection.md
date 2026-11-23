@@ -74,7 +74,7 @@ See `guide-custom-widgets.md`.
 | Modal dialog | `stack![base, opaque(modal)]` — see `examples/modal` |
 | Drag ghost | `pin` or `float` |
 | Context menu | `mouse_area` opening a `stack` layer / `float` |
-| Complex popover | `iced::widget::float` |
+| Popover under a button | `iced::widget::float`, or the anchored template: `guide-custom-overlays.md` § Built-ins says which |
 
 Only implement `iced::advanced::overlay::Overlay` when none fit. See `guide-custom-overlays.md`.
 

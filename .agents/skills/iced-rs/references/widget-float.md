@@ -30,6 +30,33 @@ float(content).translate(|bounds, viewport| {
 
 This formula uses unscaled edges. For a scaled child, account for its visible extent after scaling around its center. During overlay construction, Float passes child bounds with the overlay offset applied and adds that offset to the returned displacement. Other phases can evaluate the closure on layout bounds without that offset; do not depend on a single call or identical inputs across phases.
 
+## Anchoring to a trigger
+
+`translate` receives no other widget's bounds. A trigger's position reaches the closure only through the float's own bounds, so the float's place in the layout is its anchor.
+
+- Put the float where the popover belongs in the layout: for a popover under a button, the next child of a `column` that holds the button. Its `bounds` then start at the button's lower edge.
+- Push the float after the trigger only while the popover is open. The trigger keeps its child index and its tree state.
+- Return a nonzero displacement. At scale 1, a zero displacement leaves the child drawn in place in the ordinary layout, not floating above the window.
+- The float keeps its ordinary footprint (§ Usage), so the open popover moves the column's later siblings down.
+- Inside a `scrollable`, the `viewport` argument is the scrollable's visible bounds, and Float clips its floating layer to that viewport.
+- A `stack` lays out each layer above its base within the base's size, so a float in a layer over the button gets at most the button's size.
+
+```rust
+use iced::widget::{button, column, float};
+use iced::Vector;
+
+let mut anchor = column![button("Options").on_press(Message::TogglePopover)];
+
+if popover_open {
+    anchor = anchor.push(float(popover).translate(|bounds, viewport| {
+        let overflow = (bounds.x + bounds.width - viewport.x - viewport.width).max(0.0);
+        Vector::new(-overflow, 4.0)
+    }));
+}
+```
+
+The closure keeps the popover inside the viewport's right edge and leaves a 4-unit gap under the button, which also keeps the displacement nonzero. The closure cannot flip the popover above the button, since it never receives the button's height. [Custom overlays](guide-custom-overlays.md) § Built-ins names when the anchored overlay template replaces Float.
+
 ## Scaling
 
 Float activates its transformed overlay when the scale is greater than 1 or the translation is nonzero. Otherwise it delegates ordinary rendering and descendant overlays to the child.
