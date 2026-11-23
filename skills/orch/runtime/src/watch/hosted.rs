@@ -2131,9 +2131,19 @@ pub fn cloud_start_stall(lane: &Lane, pass: &Pass, out: &mut Produced) {
 // --- the hosted files -------------------------------------------------------
 
 /// The lane's root on its host, the record's `mail_root`; none for a record
-/// naming no root.
+/// naming no root, or one whose host has not named it yet ([`root_pending`]).
 fn root_of(lane: &Lane) -> Option<&str> {
-    lane.mail_root.as_deref().filter(|r| !r.is_empty())
+    lane.mail_root
+        .as_deref()
+        .filter(|r| !r.is_empty() && !root_pending(lane))
+}
+
+/// Whether the record's `mail_root` is still the checkout the launch ran
+/// from (`checkout`): the launch moves it to the lane's root on its host
+/// only once the host answers, so no path under it is the host's.
+pub fn root_pending(lane: &Lane) -> bool {
+    lane.mail_root.is_some()
+        && lane.mail_root.as_deref() == lane.extra.get("checkout").and_then(Value::as_str)
 }
 
 /// The lane's status file through the provider, under its root on its host.
@@ -2309,6 +2319,12 @@ fn clone_of(gitfile: &str) -> Option<PathBuf> {
 /// same places the handoff reads. A record in either means the close-out
 /// may still be running. Absence must be confirmed in both places.
 pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
+    // A root the host has not named proves nothing gone.
+    if root_pending(lane) {
+        return Answer::Unreadable {
+            cause: "root-pending".to_owned(),
+        };
+    }
     let Some(root) = root_of(lane) else {
         return Answer::Gone;
     };

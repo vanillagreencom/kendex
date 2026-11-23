@@ -7392,6 +7392,92 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
     }
 }
 
+/// A hosted lane's files are asked of its provider only under the root its
+/// host named. A launch still preparing holds the checkout it ran from as
+/// `mail_root` (equal to `checkout`), which the host does not have: the
+/// pass asks nothing under it and says no `handoff-read-failed`. Once the
+/// launch moved `mail_root` to the host's root, the handoff there is read.
+/// The provider refuses any path outside its root, as `lane-host-daytona`
+/// does.
+#[test]
+fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
+    for (case, preparing) in [("preparing", true), ("running", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let claude = named_sleep(dir.path(), "claude");
+        let line = format!("printf 'working\\n'; exec {} 600", claude.display());
+        let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
+        let identity = await_named(&server, &pane, "claude");
+        let checkout = dir.path().join("overseer");
+        let host_root = dir.path().join("host");
+        let lane_root = host_root.join("KEN-4");
+        let clone = host_root.join("clone");
+        let handoff =
+            r#"{"merged":[],"remaining":["review"],"branch":"b","open_pr":null,"traps":[]}"#;
+        for (path, text) in [
+            (
+                lane_root.join(".git"),
+                format!("gitdir: {}/.git/worktrees/KEN-4\n", clone.display()),
+            ),
+            (
+                clone.join("tmp/items/KEN-4/workflow-state-KEN-4.json"),
+                format!("{{\"handoff\":{handoff}}}\n"),
+            ),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let log = dir.path().join("provider.log");
+        let provider = dir.path().join("provider");
+        write_executable(
+            &provider,
+            format!(
+                "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{log}'\nroot='{root}'\ncase \"$1\" in\n  capabilities) printf '{SSH_LINE}\\n' ;;\n  cat) case \"$4\" in \"$root\"/*) [ -f \"$4\" ] || exit 2; exec cat -- \"$4\" ;; esac\n       echo \"lane-host-fake: cat-path-outside-root item=$3 path=$4 root=$root\" >&2; exit 1 ;;\n  touch) exit 0 ;;\n  status) echo running ;;\n  *) exit 64 ;;\nesac\n",
+                log = log.display(),
+                root = host_root.display(),
+            ),
+        );
+        let mut record = lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            &checkout,
+        );
+        record["host"] = json!(provider.display().to_string());
+        record["kind"] = json!("ssh");
+        record["checkout"] = json!(checkout.display().to_string());
+        if preparing {
+            record["status"] = json!("preparing");
+            record["running_at"] = Value::Null;
+        } else {
+            record["mail_root"] = json!(lane_root.display().to_string());
+        }
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        let produced = driver.pass(&state);
+        let failed = produced.failed.clone().unwrap_or_default();
+        assert!(!failed.contains("handoff-read-failed"), "{case}: {failed}");
+        let calls = std::fs::read_to_string(&log).unwrap_or_default();
+        let outside: Vec<&str> = calls
+            .lines()
+            .filter(|l| l.starts_with("cat ") && !l.contains(&host_root.display().to_string()))
+            .collect();
+        assert_eq!(outside, Vec::<&str>::new(), "{case}");
+        let handed = event_lines(&produced).contains(&"EVENT handoff KEN-4".to_owned());
+        assert_eq!(
+            handed,
+            !preparing,
+            "{case}: {:?} {failed}",
+            lines(&produced)
+        );
+    }
+}
+
 /// A hosted lane with no recorded pane keys its exit row on the empty pane
 /// key, which an absent row must not read as, so the row standing is the
 /// first pass's record: the lane the provider reads exited is `lane-exited`
