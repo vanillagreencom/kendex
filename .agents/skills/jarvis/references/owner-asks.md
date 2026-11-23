@@ -15,7 +15,7 @@ Every row reports Reply and Done as not allowed, with a reason.
 
 ## Sources and authority
 
-The [main and satellite binding](agent-reach.md#main-and-satellites) selects the authority. The main alone reads the canonical sources and owns action deltas and receipts in its home runtime directory. A selected main configured as a satellite refuses the call.
+The [main and satellite binding](agent-reach.md#main-and-satellites) selects the authority. A satellite gives the main its own remaining deadline less `TRANSPORT_SECONDS`, so the main answers first with its own page or cause. If the call times out after the main printed its reached line, the failure's key is `main-slow`. If it times out before that line, the key is `main-unreachable`. The main alone reads the canonical sources and owns action deltas and receipts in its home runtime directory. A selected main configured as a satellite refuses the call.
 
 The main reads the registered projects on its declared destinations from `kendex project list --json`. A registration whose folder is missing, is not a folder or cannot be read makes the list unavailable.
 

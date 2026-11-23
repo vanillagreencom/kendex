@@ -1,7 +1,8 @@
 """Request identity, source evidence and the actual page/action operations."""
+import argparse
 import base64
 import copy
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import itertools
 import json
@@ -21,7 +22,7 @@ LIB = Path(os.environ.get("JARVIS_TEST_SKILLS", str(REPO / "skills"))) / "jarvis
 os.environ["JARVIS_BASH"] = BASH
 sys.path.insert(0, str(LIB))
 import owner_asks
-from session import Session
+from session import Refusal, Session
 
 
 def request_comment(key="request-1", text="Question"):
@@ -453,6 +454,11 @@ class OwnerAsksContract(unittest.TestCase):
                 # One chain waits for a worker until another chain ends.
                 ("jarvis/scripts/lib/owner_asks.py", "max_workers=1 + len(targets)", "max_workers=2",
                  "OwnerAsksContract.test_tracker_and_destinations_are_read_side_by_side", None),
+                # The main runs its own full deadline inside the satellite's.
+                ("jarvis/scripts/lib/owner_asks.py", 'JARVIS_OWNER_ASK_BUDGET="$budget" ', "",
+                 "PublicOwnerAsks.test_satellite_returns_the_main_answer_given_inside_its_budget", None),
+                ("jarvis/scripts/lib/forward.py", 'reached is not None and reached in partial.split("\\n")', "False",
+                 "PublicOwnerAsks.test_satellite_names_a_slow_main_apart_from_an_unreachable_one", "(main='reached')"),
                 ("slack/scripts/lib/settings.py", 'exec "$reader" -I -c', 'exec "$reader" -c',
                  "PublicOwnerAsks.test_carried_presence_preserves_root_settings_and_permission", "(name='renew')"),
             ]
@@ -823,10 +829,57 @@ print(json.dumps(owner._presence('ssh:fixture')))
                                  {row["what"]: request_comment("mirror-" + row["what"].split()[-1])["url"]
                                   for row in page["rows"]})
 
+    # ssh -o BatchMode=yes -o ConnectTimeout=N DEST COMMAND, as forward.host_call spells it, run here.
+    SSH = '#!' + BASH + '\nset -euo pipefail\nshift 4\nshift\nexec ' + BASH + ' -c "$1"\n'
+
+    def satellite_list(self, main, seconds):
+        """`owner-asks list` in this process on a satellite of MAIN whose CALL_SECONDS is SECONDS:
+        its exit, its answer and its failure records."""
+        satellite = self.root / "satellite"
+        if not satellite.exists():
+            make_project(satellite, overseer=False)
+        (satellite / "kendex.settings.toml").write_text('[env]\nJARVIS_MAIN_HOST="main:' + str(main) + '"\n')
+        args = argparse.Namespace(action="list", view="active", cursor=None, home=str(satellite))
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True), patch.object(owner_asks, "CALL_SECONDS", seconds):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = owner_asks.main(args, Session, Refusal)
+        records = [json.loads(line.split("=", 1)[1]) for line in stderr.getvalue().splitlines()
+                   if line.startswith("jarvis-session: owner-asks-failure=")]
+        return code, json.loads(stdout.getvalue()), records
+
+    def test_satellite_returns_the_main_answer_given_inside_its_budget(self):
+        # The main's registry read never answers, so the main spends the
+        # whole budget it holds and answers with that read's own cause. Real
+        # time decides only which deadline comes first: the main's is three
+        # seconds short of the satellite's.
+        self.executable("kendex", "#!/bin/sh\nexec sleep 10\n")
+        self.executable("ssh", self.SSH)
+        with patch.object(owner_asks, "TRANSPORT_SECONDS", 3):
+            code, answer, records = self.satellite_list(self.home, 5)
+        self.assertEqual((code, answer["kind"]), (1, "unavailable"))
+        self.assertEqual([(record["key"][:2], record["destination"]) for record in records],
+                         [(["project-list", "timeout"], "local")])
+
+    def test_satellite_names_a_slow_main_apart_from_an_unreachable_one(self):
+        # A main past every deadline of its own, and a host whose connect never completes.
+        slow = self.root / "slow-main"
+        script = slow / ".agents/skills/jarvis/scripts/jarvis-session"
+        script.parent.mkdir(parents=True)
+        script.write_text("exec sleep 10\n")
+        rows = [("reached", self.SSH, "main-slow"),
+                ("unreached", "#!/bin/sh\nexec sleep 10\n", "main-unreachable")]
+        for name, ssh, cause in rows:
+            with self.subTest(main=name):
+                self.executable("ssh", ssh)
+                code, answer, records = self.satellite_list(slow, 3)
+                self.assertEqual((code, answer["kind"]), (1, "unavailable"))
+                self.assertEqual([record["key"] for record in records], [["main-home", "transport", cause]])
+
     def test_satellite_uses_the_same_main_receipt_without_local_state(self):
         satellite = make_project(self.root / "satellite", overseer=False)
         (satellite / "kendex.settings.toml").write_text('[env]\nJARVIS_MAIN_HOST="main:' + str(self.home) + '"\n')
-        self.executable("ssh", '#!' + BASH + '\nset -euo pipefail\nshift 4\nshift\nexec ' + BASH + ' -c "$1"\n')
+        self.executable("ssh", self.SSH)
         result, main = self.run_cli()
         result, remote = self.run_cli(home=satellite)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
