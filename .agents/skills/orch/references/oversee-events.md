@@ -697,7 +697,7 @@ A merge hold is a person who disabled a pull request's automatic merge, never a 
 - A `Proposal comment:` notice takes § Lane proposals.
 - A `copilot-*` notice takes [copilot-head-notices.md](copilot-head-notices.md).
   - A `copilot-fallback` notice whose first line carries `cause=` comes from the lane's review call, and can arrive twice.
-  - One with no `cause=` is the lane's own, from its triage's `timeout` row ([review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route)).
+  - One with no `cause=` is the lane's own, from its head route's `timeout` row ([copilot-head-route.md § The wait on a moved head](copilot-head-route.md#the-wait-on-a-moved-head)).
 - A notice may name a merge-group ejection that `queue-watch` read as `reach: outside`, with the failed checks, their reach, the run links and the head. Those red checks are ones the item's change does not select: a defect outside the item.
   1. Apply [design-review.md](design-review.md)'s filing entry.
   2. Then file the defect once through § File one item alone, naming the failed checks and the run links.

@@ -13,7 +13,7 @@ Read when launching a waiter for a review wait, a `verify-pr` call (`orch-runtim
 2. Run the launch below as one foreground shell-tool command.
    - Replace `[WAITER_COMMAND_AND_ARGS]` with the workflow's complete command, its `env -u` prefixes included, and keep its polling interval, budget and output flags.
    - Run the form below for the launching session. Only the lane session's form carries `--owner`, which names the lane's item.
-   - No launch caps the waiter's time: a `verify-pr` or review call ends when the operation answers, `queue-watch` at its `--max-wait`, and `copilot-wait` at the bound [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse) states.
+   - No launch caps the waiter's time: a `verify-pr` or review call ends when the operation answers, `queue-watch` at its `--max-wait`, and `copilot-wait` at the bound [copilot-head-route.md § Current-head Copilot wait](copilot-head-route.md#current-head-copilot-wait) states.
 3. Read the exit.
    - 0: the waiter started, and the JSON reply carries its runner line and record.
    - 75: it may have started; keep `[RUN_DIR]`, wait on its completion by § Completion, and launch no second waiter for it.

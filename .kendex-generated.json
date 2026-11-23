@@ -737,6 +737,7 @@
   ".agents/skills/orch/references/codex-runtime.md",
   ".agents/skills/orch/references/communication-modes.md",
   ".agents/skills/orch/references/copilot-head-notices.md",
+  ".agents/skills/orch/references/copilot-head-route.md",
   ".agents/skills/orch/references/copilot-runtime.md",
   ".agents/skills/orch/references/design-review.md",
   ".agents/skills/orch/references/directed-change.md",
