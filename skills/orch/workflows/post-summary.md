@@ -30,7 +30,7 @@ Read the counts the summary needs:
 STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles, post_pr_stop: .post_pr_stop}' <<<"$STATE_READ"
 ```
 
-- Collect each round's Validation Routes from its completion or fix artifact, and each later restack run's own evidence, per [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file).
+- Collect each implement or fix round's Validation Routes from its evidence file, where [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file) **Where the records live** places it, and each later restack run's from its own evidence.
 - Carry the rows into the comment with their original identities and outcomes.
 - In a bundle, put each child's rows on the child's item; the parent summary may carry them too.
 - Never fill a field the original sources lack from a state projection or a final verdict.
@@ -63,7 +63,7 @@ With no `pr_number`, post no pull-request comment.
 
 ## Evidence
 
-- [Acceptance or QA result with its source. Link the completion summaries for their files, decisions, screenshots and measured Domain Metrics.]
+- [Acceptance or QA result with its source. Link the completion summaries for their files, decisions, screenshots and measured Domain Metrics, and the evidence files for their proof.]
 
 ## Validation Routes
 

@@ -382,13 +382,26 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ### 9.1 Completion Summary File
 
-Always required.
+Always required. The summary carries the outcome only: what changed, each check that ran with its verdict, and what is still open. It links the round's evidence file, which holds the proof.
 
-- On § 2.3's no-change route it holds the comparison: what was compared, against what, and the finding that no change is needed. Its Validation Routes section holds one line, `none: no check ran (no-change route)`.
+- On § 2.3's no-change route it holds the comparison: what was compared, against what, and the finding that no change is needed. The round writes no evidence file, and its Checks section holds one line, `none: no check ran (no-change route)`.
 - Write `tmp/completion-summary-[ISSUE_ID].md`, in a bundled round `tmp/completion-summary-[SUB_ISSUE_ID].md` for the current sub-issue. A single round's artifact carries it via `--summary-file` (§ 10).
 - A single round posts nothing: on Linear, orch's acceptance of the round posts this file to the issue as the item's one Completion Summary comment, with the screenshots § 10 names attached, and updates that comment on every later round.
-- A bundled round's acceptance posts no summary, since its request names no `summary_file`. So on Linear, post each sub-issue's summary yourself once its commit stands: `linear.sh comments create [SUB_ISSUE_ID] --body-file tmp/completion-summary-[SUB_ISSUE_ID].md`, with one `--attach` per screenshot § 8 captured for it. § 11 posts the parent's.
-- GitHub and ad-hoc rounds return the same content to the orchestrator.
+- A bundled round's acceptance posts no summary, since its request names no `summary_file`. So on Linear, post each sub-issue's summary yourself once its commit stands and its evidence file is attached: `linear.sh comments create [SUB_ISSUE_ID] --body-file tmp/completion-summary-[SUB_ISSUE_ID].md`, with one `--attach` per screenshot § 8 captured for it. § 11 posts the parent's.
+- GitHub and ad-hoc rounds attach nothing. They return the summary to the orchestrator with the evidence file's sections appended after it.
+
+**Evidence file.** Write `tmp/evidence-[ISSUE_ID]-[DEV_ROUND_ID].md`, in a bundled round `tmp/evidence-[SUB_ISSUE_ID]-[DEV_ROUND_ID].md`, in the evidence template below. It holds each Done-when box's proof and the full Validation Routes record.
+
+- On Linear, attach it once its commit stands, in an attach-only call: `linear.sh issues update [ISSUE_ID] --attach tmp/evidence-[ISSUE_ID]-[DEV_ROUND_ID].md`, the sub-issue's ID and file in a bundled round.
+- Each round attaches its own file. Earlier rounds' files stay on the item.
+- Put the URL of the returned `attachments[0]` in the summary's `**Evidence file**` line. On a GitHub or ad-hoc round, that line names the path with no link.
+- If the attach fails, stop the round with its diagnostic.
+
+**Where the records live.** This is the one statement of where each round's Validation Routes rows live, for every reader:
+
+- On a Linear item, a dev round's rows are in its evidence file, attached to the item the round served: the sub-issue for a bundled implement round, the workflow item for a fix round. `linear.sh attachments list [ITEM_ID]` lists the files and `linear.sh attachments fetch [URL] --output [PATH]` reads one. While the worktree holds it, the round's local `tmp/evidence-[ITEM_ID]-[DEV_ROUND_ID].md` is the same file.
+- On a GitHub or ad-hoc item, a dev round's rows are in the orchestrator's session and merge comments, which orch's post-summary workflow § 1 fills from each round's local `tmp/evidence-[ITEM_ID]-[DEV_ROUND_ID].md`.
+- A restack run's rows, which no dev round writes, are in those session and merge comments.
 
 **Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `orch-runtime validate entry --record --run-dir [RUN_DIR]` evidence while available.
 
@@ -397,7 +410,7 @@ Always required.
 - Keep implementation, fix and restack runs separate; a restack has no dev round id.
 - Preserve earlier attempts and recovery or reused-run references rather than replacing their outcomes with the final verdict.
 
-Print every field in the Validation Routes template below.
+Print every field of the Validation Routes row in the evidence template below.
 
 - Each field a record does not carry, or a source left unread, is `unknown`, including absent `scoped` or `ci-fallback`.
 - Retain reported values such as `selection=unreported` and `verdict=unfinished`.
@@ -406,7 +419,7 @@ Print every field in the Validation Routes template below.
 - Keep native `cause=stalled` and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel. Never infer fallback, scope or a stall from prose or elapsed seconds: the run's `--record` line and its sentinel own those classifications.
 - A refused start is recorded as such and creates no validation run or verdict.
 
-A validation-routing check reads these durable comments on the originating item. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
+A validation-routing check reads the rows where **Where the records live** above places them. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
 
 ```markdown
 ## Completion Summary
@@ -419,13 +432,15 @@ A validation-routing check reads these durable comments on the originating item.
 
 **Revision**: [COMMIT_SHA] from base [ROUND_BASE]
 
-### Evidence
+**Evidence file**: [`tmp/evidence-[ISSUE_ID]-[DEV_ROUND_ID].md`]([ATTACHMENT_URL])
 
-- Box [N]: [Proving artifact link at the revision, with its conditions. Pending CI and live acceptance stay explicit.]
+### Checks
 
-### Validation Routes
+- [CHECK]: [pass|FAILING|no-verdict|pending in required CI]
 
-- round=[ORIGINAL_ROUND_ID_OR_UNKNOWN] kind=[implement|fix|restack] run-dir=[RUN_DIR_OR_UNKNOWN] head=[RECORDED_HEAD_OR_UNKNOWN] start=[RECORDED_START_OR_UNKNOWN] source=[NATIVE_START_AND_RECORD_REFERENCES] validate-mode=[VALUE_OR_UNKNOWN] selection=[VALUE_OR_UNKNOWN] ci-fallback=[VALUE_OR_UNKNOWN] scoped=[VALUE_OR_UNKNOWN] seconds=[VALUE_OR_UNKNOWN] quiet-secs=[ACTUAL_QUIET_SECS_OR_UNKNOWN] verdict=[VALUE_OR_UNKNOWN] outcome=[NATIVE_CLASSIFICATION_OR_UNKNOWN]
+### Open
+
+- [An unproved box, a pending CI check or a post-merge check]
 
 ### Key Decisions
 
@@ -456,10 +471,28 @@ A validation-routing check reads these durable comments on the originating item.
 - [Rule the validation list is missing]
 ```
 
+The evidence template:
+
+```markdown
+# Evidence: [ISSUE_ID], round [DEV_ROUND_ID]
+
+**Revision**: [COMMIT_SHA] from base [ROUND_BASE]
+
+## Done-when proof
+
+- Box [N]: [Proving artifact link at the revision, with its conditions. Pending CI and live acceptance stay explicit.]
+
+## Validation Routes
+
+- round=[ORIGINAL_ROUND_ID_OR_UNKNOWN] kind=[implement|fix|restack] run-dir=[RUN_DIR_OR_UNKNOWN] head=[RECORDED_HEAD_OR_UNKNOWN] start=[RECORDED_START_OR_UNKNOWN] source=[NATIVE_START_AND_RECORD_REFERENCES] validate-mode=[VALUE_OR_UNKNOWN] selection=[VALUE_OR_UNKNOWN] ci-fallback=[VALUE_OR_UNKNOWN] scoped=[VALUE_OR_UNKNOWN] seconds=[VALUE_OR_UNKNOWN] quiet-secs=[ACTUAL_QUIET_SECS_OR_UNKNOWN] verdict=[VALUE_OR_UNKNOWN] outcome=[NATIVE_CLASSIFICATION_OR_UNKNOWN]
+```
+
 - Keep `## Completion Summary` as the first line. Orch's acceptance finds the item's summary comment by that heading. The opening paragraph follows it.
 - Do not repeat the issue's Story or Why this matters.
 - Omit any section that has nothing in it.
-- Link each proof once under Evidence. In a bundled round, a sub-issue box § 10 ticks cites this posted comment in its Evidence line rather than a copy of the proof. A single round's boxes take their Evidence lines at merge from the PR body's `## Done-when evidence` ([merge-pr.md § 5](../../orch/workflows/merge-pr.md#5-execute-the-merge)).
+- Link each proof once, under the evidence file's Done-when proof. The summary states no proof.
+- Name each check once under Checks, with its verdict. The Validation Routes row behind it stays in the evidence file.
+- In a bundled round, a sub-issue box § 10 ticks names its proof in a one-line `Evidence:` line. A single round's boxes take their Evidence lines at merge from the PR body's `## Done-when evidence` ([merge-pr.md § 5](../../orch/workflows/merge-pr.md#5-execute-the-merge)).
 - Discovered Work is backlog work beyond this scope.
 - Handoff Notes are for the next agent only, with no aspirational suggestions.
 
@@ -525,11 +558,11 @@ The writer refuses it where the item's description does not hold the sentence, H
 
 - A bundled Linear sub-issue stays In Progress through the dev round; make no tracker state write here.
 - Read its current description, tick each branch-provable Done-when box verified by this round, and add a nonblank indented `Evidence:` line directly below each ticked box.
-- Cite the sub-issue's Completion Summary comment § 9.1 posted, which carries the proving artifact at its revision and conditions.
+- The `Evidence:` line is one short line that names its proof: a commit, a run, a test name or the evidence file § 9.1 attached. The proof itself stays in that file.
 - Save the updated description under `tmp/` and run `linear.sh issues update [SUB_ISSUE_ID] --description-file [DESCRIPTION_FILE]` with no state flag.
 - Leave unproved boxes open.
-- Its proof also stays in its completion summary and the bundle artifact's `--item` result (§ 11).
-- Orch's merge-pr workflow § 5 alone owns the completion-time box selections, writes its evidence file and completes the child at merge.
+- Its proof also stays in its evidence file and the bundle artifact's `--item` result (§ 11).
+- Orch's merge-pr workflow § 5 alone owns the completion-time box selections, writes the `--evidence-file` its completion reads and completes the child at merge.
 - The worktree's top-level managed issue stays In Progress or In Review until the PR merges.
 - GitHub and ad-hoc issues close through the PR body or merge, never here.
 
@@ -580,7 +613,7 @@ Summary: [ISSUE_ID] ✓
    - [Rule the validation list is missing]
    ```
 
-   - Link each child's summary for its files, decisions, metrics and proof. File and commit counts do not replace that proof.
+   - Link each child's summary for its files, decisions and metrics, and the evidence file its `**Evidence file**` line links for its proof. File and commit counts do not replace that proof.
 
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 

@@ -130,11 +130,12 @@ Reflection is complete in § 2.1. Make no repository edit here.
 
 Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round-contract):
 
-- Write `tmp/fix-summary-[ISSUE_ID].md` with this round's `### Validation Routes` section per [dev-implement.md § 9.1](./dev-implement.md#91-completion-summary-file), for the orchestrator's existing session and merge comments.
+- Write `tmp/fix-summary-[ISSUE_ID].md` with the `**Evidence file**` line and the Checks list a completion summary carries under [dev-implement.md § 9.1](./dev-implement.md#91-completion-summary-file).
+- Write this round's Validation Routes rows, one per run, to its evidence file, `tmp/evidence-[ISSUE_ID]-[DEV_ROUND_ID].md`, in that section's evidence template, with a Done-when proof section only where this round proves a box. Attach it by the [dev-implement.md § 9.1](./dev-implement.md#91-completion-summary-file) **Evidence file** rule. An ad-hoc round writes it too, with its `Artifact Key:` value as `[ISSUE_ID]`, and attaches nothing.
 - When a fix changed a view the [dev-implement.md § 8](./dev-implement.md#8-record-qa-signals) screenshot rule covers, list that view's screenshot set under a `### Screenshots` heading by [reviewer references/ui-screenshots.md § Screenshots](../../reviewer/references/ui-screenshots.md#screenshots), which says what a later round recaptures and what it carries.
 - If the validation list misses a rule, add a `### Proposed Rules` heading with the proposal as one bullet.
 - Always append `--summary-file tmp/fix-summary-[ISSUE_ID].md` to the command below.
-- Retain each round's section in its artifact before a later fix uses the same filename.
+- Retain each round's summary in its artifact before a later fix uses the same filename.
 
 `[BASE_BRANCH]` is what `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` reports; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because the local branch may sit behind the remote, and in a fresh clone may not exist at all.
 

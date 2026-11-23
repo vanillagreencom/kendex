@@ -101,7 +101,7 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 - `location`: **never line numbers**. Name the function or struct.
 - `description`:
   - It becomes the issue body.
-  - For an owner directive, add `## Owner directive (verbatim)` and copy the owner's text byte for byte below it, to the next `##` heading or the end.
+  - For an owner directive, add `## Owner directive (verbatim)` and below it the template's quote line: the one sentence of the owner's text that states the ask, byte for byte, and its source ([issue-description-template.md](../templates/issue-description-template.md) `[DIRECTIVE_SOURCE]`). A GitHub filing whose full text no message holds also carries the fenced full text that note names.
   - Fence literal text containing `##` lines so they remain content, not the next heading.
 - `impact`: the reviewer skill's `review-finding` field on a `category: "issue"` suggestion. On a blocker, an escalated item, or a Discovered Work bullet no artifact carries it, and the caller writes it from the finding.
 - `symptom`:

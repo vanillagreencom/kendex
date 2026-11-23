@@ -42,7 +42,7 @@
 
 ## Owner directive (verbatim)
 
-[OWNER_DIRECTIVE]
+> "[OWNER_DIRECTIVE]" ([DIRECTIVE_SOURCE])
 
 ## Evidence
 
@@ -64,7 +64,8 @@
 | Story / Why this matters | `items[].description`, or `create_fields.description` in analyzed mode |
 | `[OBSERVABLE_ACCEPTANCE]` | Description and requirements |
 | `[REQUIREMENT_*]` | `items[].recommendation` |
-| `[OWNER_DIRECTIVE]` | The marked block in `items[].description` |
+| `[OWNER_DIRECTIVE]` | The quoted sentence in the marked block of `items[].description` |
+| `[DIRECTIVE_SOURCE]` | The source the marked block names |
 | `[FILE_PATH]` | `items[].location` |
 | `--project` (create flag, not body text) | `project.recommended` in the audit output, or the caller |
 | `[RESEARCH_REF]` / `[DXXX]` / `[DECISION_PATH]` | Input `research_ref` / `decision_ref`, else inherited from the parent's description |
@@ -103,8 +104,13 @@ Notes per placeholder:
 - `[REQUIREMENT_*]`: use as written, already a `* bullet` list, less what [filing.md](../references/filing.md) § Requirements cuts before filing.
 - `[OWNER_DIRECTIVE]`:
   - Include this section after Context when present, copied unchanged.
+  - It is one sentence of the owner's text, the one that states the ask, quoted byte for byte.
   - The `[REQUIREMENT_*]` cuts never apply to it.
   - Omit the section when absent.
+- `[DIRECTIVE_SOURCE]`: where the owner's full text is.
+  - It is the source message's id, a mailbox or Slack id, when that message holds the full text.
+  - Otherwise, on Linear, it is the repository path of a file holding the full text, which the filer attaches to the created issue with `linear.sh issues update [ISSUE_ID] --attach [PATH]`. The description never holds the full text.
+  - Otherwise, on GitHub, where this route attaches nothing, the body keeps the full text in a fenced block below the quote line, and `[DIRECTIVE_SOURCE]` reads `full text below`.
 - `[FILE_PATH]`: a backticked path.
   - **Never line numbers.**
   - Name the function or struct.

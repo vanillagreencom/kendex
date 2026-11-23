@@ -534,7 +534,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
    - A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) passes no `pr_number`, so the summary goes on the Linear item alone. A direct delivery of a GitHub-tracked item posts no summary.
    - Include every actual round's and run's Validation Routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file), among them the fix and restack runs since the previous summary.
    - After the merge-group CI passes, keep the original pending, failed and no-verdict rows. Record that CI proof separately by its run reference.
-   - Post each bundled child's rows on its own item through the same comment interface. A validation-routing Done-when box reads these comments on that item.
+   - Post each bundled child's rows on its own item through the same comment interface. A validation-routing Done-when box reads the rows where [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file) **Where the records live** places them.
 
    **Linear only from here**, under [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution): the rest of this step runs for a Linear item alone.
 
@@ -572,7 +572,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    - On a pull-request delivery, take `[MET_BOXES]` and those lines from the body's `## Done-when evidence` section.
    - A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) creates no pull request and reads no body.
-   - Include an already-ticked box whose Evidence line needs adding from the existing evidence comment.
+   - Include an already-ticked box whose Evidence line needs adding from the attached evidence file that holds its proof.
    - Select `[MET_BOXES]` under the acceptance rule. Write `all` only where that rule accepts every box. Otherwise list the box numbers in section order from 1, comma-separated.
    - Where no box needs a tick or an Evidence line, omit both `--done-when-met` and `--evidence-file`.
    - A section of plain bullets with no checkbox takes `all`, which ticks nothing and sets Done.
