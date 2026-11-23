@@ -1,5 +1,6 @@
 """The shipped producer with real mailbox writes and explicit step barriers."""
 import contextlib
+import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 import errno
 import hashlib
@@ -1919,6 +1920,13 @@ with open(sys.argv[1], "ab") as out:
                 watch.tick(0, self.acquire_all(watch, 0))
                 self.assertIn("delivery after "+type(error).__name__, self.inbox()[-1]["text"])
 
+    def test_a_refused_status_read_denies_presence_without_a_report(self):
+        # The wall check reports the runtime's refusal of the status read;
+        # presence renews nothing for it and reports nothing, as before.
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            self.controller("s1", "/accounts/a", {"event": "Stop"}, setup=False)
+            self.assertEqual(self.watch().presence("local"), [(None, "skipped", None)])
+
     def test_dependency_failure_denies_presence_with_cause(self):
         self.packages.joinpath("agent-runtime").unlink()
         expected = ["presence-live", "refusal", "dependency"]
@@ -2078,13 +2086,15 @@ with open(sys.argv[1], "ab") as out:
         self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
                          [block.split("\n")[0]])
 
-    def controller(self, session, account, row, pane="%3", verdict=None, runtime=True):
+    def controller(self, session, account, row, pane="%3", verdict=None, runtime=True, setup=True):
         """The home's live, bound controller SESSION on ACCOUNT in PANE, its
         context stamp a day old: agent-runtime's status read is planted, and
         the real rows verdict judges ROW, an object or a raw line, as the
         session's last row. VERDICT is the stderr line of a runtime that
         answers the status read and then refuses the verdict read with the
-        wrapper's exit 69; RUNTIME false leaves no runtime installed."""
+        wrapper's exit 69; RUNTIME false leaves no runtime installed; SETUP
+        false runs the real wrapper with no binary built, which refuses
+        every command, the status read first."""
         directory = self.packages / "agent-runtime"
         if directory.is_symlink():
             directory.unlink()
@@ -2092,12 +2102,16 @@ with open(sys.argv[1], "ab") as out:
         script.parent.mkdir(parents=True, exist_ok=True)
         script.unlink(missing_ok=True)
         status = self.root / "status.json"
-        if runtime:
+        wrapper = shlex.quote(str(REPO / "skills/agent-runtime/scripts/agent-runtime"))
+        if runtime and not setup:
+            script.write_text('#!/bin/sh\nAGENT_RUNTIME_CACHE=' + shlex.quote(str(self.root / "unbuilt"))
+                              + ' exec ' + wrapper + ' "$@"\n')
+            script.chmod(0o755)
+        elif runtime:
             refusal = ('if [ "$1 $2" = "rows verdict" ]; then echo ' + shlex.quote(verdict) + ' >&2; exit 69; fi\n'
                        if verdict else "")
             script.write_text('#!/bin/sh\nif [ "$1 $2" = "controller status" ]; then cat ' + shlex.quote(str(status))
-                              + '; exit 0; fi\n' + refusal + 'exec '
-                              + shlex.quote(str(REPO / "skills/agent-runtime/scripts/agent-runtime")) + ' "$@"\n')
+                              + '; exit 0; fi\n' + refusal + 'exec ' + wrapper + ' "$@"\n')
             script.chmod(0o755)
         status.write_text(json.dumps({"protocol": "agent-runtime-v1", "ok": True, "result": {
             "live": True, "binding": "bound", "native_match": True, "open_intents": [],
@@ -2125,6 +2139,15 @@ with open(sys.argv[1], "ab") as out:
         rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
         return [row["text"] for row in rows if row.get("kind") == "notice" and row.get("to") == "owner"]
 
+    def age_owner_notices(self, seconds):
+        """Every owner notice in the home's mailbox stamped SECONDS earlier."""
+        path = self.home / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for row in rows:
+            at = self.module.instant(row["at"]) - datetime.timedelta(seconds=seconds)
+            row["at"] = at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.write_text("".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows))
+
     def wall_passes(self, watch, now, succeeding=True):
         """One wall pass through the loop: the read, the succession it starts, its answer."""
         class Inline:
@@ -2148,14 +2171,17 @@ with open(sys.argv[1], "ab") as out:
         auth = dict(session="s1", account="/accounts/a", row={"event": "StopFailure", "error": "authentication_failed"})
         usage = dict(auth, row={"event": "StopFailure", "error": "rate_limit"})
         quiet = dict(auth, row={"event": "Stop"})
-        signed_out = ["signed out", "/accounts/a"]
+        signed_out = ["s1", "signed out", "/accounts/a"]
+        other = dict(auth, session="s2", account="/accounts/b", pane="%4")
         # Each row: the session command's answer and exit, its world, then
         # one check per step. The world names how many notices lane-mail
-        # refuses first, and the step whose loop ends before its succession
-        # answers; a new loop runs the steps after it. A step plants the
-        # controller (None keeps the last) and counts what that check adds:
-        # succeed runs, owner notices by the words each names, and
-        # root-unreachable events.
+        # refuses first, the step whose loop ends before its succession
+        # answers, the step whose loop ends after its notice lands but before
+        # it records it, optionally with that notice made hours old, and a
+        # word every root-unreachable event names; a new loop runs the steps
+        # after an ending. A step plants the controller (None keeps the last)
+        # and counts what that check adds: succeed runs, owner notices by the
+        # words each names, and root-unreachable events.
         for name, (answer, code), world, steps in (
                 ("auth", running, {}, [(auth, 1, [signed_out + ["/accounts/b"]], 0), (None, 0, [], 0)]),
                 ("usage", running, {}, [(usage, 1, [["no room", "/accounts/a", "/accounts/b"]], 0), (None, 0, [], 0)]),
@@ -2167,6 +2193,18 @@ with open(sys.argv[1], "ab") as out:
                 # once it recovers in place, its next wall is another one.
                 ("recovered", refused, {}, [(auth, 1, [signed_out + [refusal]], 0), (None, 0, [], 0),
                                                (quiet, 0, [], 0), (usage, 1, [["no room", refusal]], 0)]),
+                # Two episodes of one cause on one account are two notices,
+                # and another controller's wall after them is a third.
+                ("walled twice", refused, {}, [(auth, 1, [signed_out + [refusal]], 0), (quiet, 0, [], 0),
+                                                  (auth, 1, [signed_out + [refusal]], 0),
+                                                  (other, 1, [["s2", "signed out", "/accounts/b"]], 0)]),
+                # A notice that landed before its loop recorded it is sent:
+                # the mailbox refuses the resend as a repeat, within the
+                # minute and within the day.
+                ("notice landed", running, dict(landed=0),
+                 [(auth, 1, [signed_out + ["/accounts/b"]], 0), (None, 0, [], 0), (other, 1, [["s2"]], 0)]),
+                ("notice landed hours ago", running, dict(landed=0, aged=True),
+                 [(auth, 1, [signed_out + ["/accounts/b"]], 0), (None, 0, [], 0), (other, 1, [["s2"]], 0)]),
                 # A session resumed in another pane is another controller.
                 ("resumed", refused, {}, [(auth, 1, [signed_out], 0), (dict(usage, pane="%4"), 1, [["no room"]], 0)]),
                 # The successor's own wall is its own episode.
@@ -2174,10 +2212,13 @@ with open(sys.argv[1], "ab") as out:
                  [(auth, 1, [signed_out + ["/accounts/c"]], 0),
                   (dict(usage, session="s2", account="/accounts/b"), 1, [["no room", "/accounts/b", "/accounts/c"]], 0)]),
                 ("unreadable row", running, {}, [(dict(auth, row='{"event": "StopFail'), 0, [], 1), (None, 0, [], 0)]),
+                # The wrapper with no binary for its sources refuses the
+                # status read, as after a refresh before its setup runs.
+                ("status read refused", running, dict(cause="setup-required"),
+                 [(dict(auth, setup=False), 0, [], 1), (None, 0, [], 0)]),
                 # A runtime that answers the status read and then refuses the
                 # verdict read, as the wrapper does once its setup goes stale
-                # between the two. One that refuses the status read binds no
-                # controller, as presence reads it.
+                # between the two.
                 ("verdict read refused", running, {},
                  [(dict(auth, verdict="agent-runtime: setup-required key=abc run=/x/setup"), 0, [], 1),
                   (None, 0, [], 0)]),
@@ -2197,8 +2238,8 @@ with open(sys.argv[1], "ab") as out:
                 ("ended resumed", running, dict(ends=0),
                  [(auth, 0, [], 0), (dict(quiet, pane="%4"), 0, [signed_out + ["not read"]], 0)])):
             with self.subTest(row=name):
-                # Each row's own home: the mailbox refuses an equal notice
-                # within a minute, as a retry.
+                # Each row's own home: the mailbox refuses an owner notice
+                # whose text it delivered within the last 24 hours.
                 self.home = self.project("home-" + name.replace(" ", "-"))
                 with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
                     # The log keeps every event: no batch settles and takes it.
@@ -2217,7 +2258,12 @@ with open(sys.argv[1], "ab") as out:
                                 self.controller(**plant)
                             ended = world.get("ends") == index
                             self.wall_passes(watch, 30 * index, succeeding=not ended)
-                            if ended:
+                            if world.get("landed") == index:
+                                watch.state["wall"]["noticed"] = False
+                                watch.save()
+                                if world.get("aged"):
+                                    self.age_owner_notices(5 * 3600)
+                            if ended or world.get("landed") == index:
                                 watch = self.watch()
                             runs, alerts = runs + ran, alerts + alerted
                             told += named
@@ -2229,7 +2275,10 @@ with open(sys.argv[1], "ab") as out:
                                 for word in words:
                                     self.assertIn(word, notice)
                             events = watch.log.read_text() if watch.log.exists() else ""
-                            self.assertEqual(len(re.findall(r"^EVENT root-unreachable", events, re.M)), alerts, events)
+                            alerted = re.findall(r"^EVENT root-unreachable.*", events, re.M)
+                            self.assertEqual(len(alerted), alerts, events)
+                            for line in alerted:
+                                self.assertIn(world.get("cause", ""), line)
                     finally:
                         shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
 
@@ -2500,6 +2549,15 @@ with open(sys.argv[1], "ab") as out:
                 (walled, 'if memory["outcome"] is None and reading is not None:', "if False:"),
                 # A successor is another session; the walled one in another pane is not.
                 (walled, 'reading[0] != memory["session"]', 'reading[:2] != (memory["session"], memory["pane"])'),
+                # Each episode's notice text is its own.
+                (walled, '+ " (read at " + at + "): every turn', '+ ": every turn'),
+                # The mailbox's refusal of a resent text, in the minute or the day, is its receipt.
+                (walled, "(?:duplicate|owner-notice-repeated=overseer)", "(?:owner-notice-repeated=overseer)"),
+                (walled, "(?:duplicate|owner-notice-repeated=overseer)", "(?:duplicate)"),
+                # A status read the runtime refuses reports, and presence stays silent on it.
+                (walled, "|| code=$?", "|| return 1", "jarvis/scripts/lib/jarvis-env.sh"),
+                ("test_a_refused_status_read_denies_presence_without_a_report",
+                 '\n                    and not error.record["detail"].startswith(RUNTIME_REFUSED + " ")):', "):"),
                 # A satellite reads no other root.
                 ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()"),
                 # The control host's presence pass runs as JARVIS_CONTROL_USER.

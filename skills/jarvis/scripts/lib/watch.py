@@ -395,6 +395,10 @@ def pass_output(side, roots, events):
     return "".join(body) + "cursor: " + json.dumps(record, separators=(",", ":")) + "\n"
 
 
+# The first stderr word jarvis-env.sh gives a status read the runtime refused.
+RUNTIME_REFUSED = "jarvis: dependency=agent-runtime-refused"
+
+
 def replaced(account):
     return "A replacement Jarvis runs on " + (account or "its default account") + "."
 
@@ -990,7 +994,10 @@ class Watch:
             return False
         if result.returncode:
             error = child_failure("presence-live", result)
-            if error.record["key"][1:] == ["refusal", "dependency"]:
+            # A status read the runtime refuses denies renewal without a
+            # report: the wall check is the one that reports it.
+            if (error.record["key"][1:] == ["refusal", "dependency"]
+                    and not error.record["detail"].startswith(RUNTIME_REFUSED + " ")):
                 raise error
             return False
         try:
@@ -1004,9 +1011,9 @@ class Watch:
     def wall(self):
         """The bound controller's wall: (session, pane, account, kind), kind
         None for a session its rows do not read walled; None with no bound
-        controller, as presence reads it, a refused status read included; a
-        Failure where the bound controller's rows were not judged, the
-        runtime's refusal of the verdict read included."""
+        controller; a Failure where the controller or its rows were not read:
+        a missing package, or the runtime's refusal of the status or the
+        verdict read."""
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "wall", self.home], operation="controller-wall")
             if result.returncode:
@@ -1025,8 +1032,8 @@ class Watch:
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("controller-wall", error)
 
-    def accept_wall(self, reading):
-        """One wall reading judged: the wall kind a succession starts for, or None.
+    def accept_wall(self, reading, now):
+        """One wall reading judged at NOW: the wall kind a succession starts for, or None.
 
         The notice the last succession owes goes first, and a new wall waits
         for it. A wall is one episode of one controller, its session in its
@@ -1059,7 +1066,7 @@ class Watch:
             return None
         # Durable before the succession starts: a restarted loop owes this
         # wall its notice and never starts a second succession for it.
-        self.state["wall"] = {"session": session, "pane": pane, "account": account, "kind": kind,
+        self.state["wall"] = {"session": session, "pane": pane, "account": account, "kind": kind, "at": now,
                               "outcome": None, "noticed": False}
         self.save()
         return kind
@@ -1097,19 +1104,29 @@ class Watch:
         self.notify(memory)
 
     def notify(self, memory):
-        """The owner's one notice of a wall: its cause, its account and the succession's outcome."""
-        cause = {"auth": "Jarvis is signed out on %s", "usage": "Jarvis has no room left on %s"}[memory["kind"]]
-        text = cause % (memory["account"] or "its default account") + ": every turn it tries fails. " + memory["outcome"]
+        """The owner's one notice of a wall: its session, its time, its cause, its
+        account and the succession's outcome.
+
+        The mailbox refuses an owner notice whose text it delivered within the
+        day, so the session and the time make each episode's text its own; a
+        refusal of that same text is the receipt of the notice that landed, as
+        after a stop before this save."""
+        cause = {"auth": "is signed out on %s", "usage": "has no room left on %s"}[memory["kind"]]
+        at = datetime.datetime.fromtimestamp(memory["at"], datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        text = ("Jarvis session " + memory["session"] + " " + cause % (memory["account"] or "its default account")
+                + " (read at " + at + "): every turn it tries fails. " + memory["outcome"])
         with tempfile.NamedTemporaryFile(mode="w", dir=self.directory) as payload:
             payload.write(text + "\n")
             payload.flush()
             try:
-                checked([self.bash, lane_mail(), "notice", "--item", "overseer", "--to", "owner",
-                         "--file", payload.name], self.home, operation="wall-notice")
+                result = run([self.bash, lane_mail(), "notice", "--item", "overseer", "--to", "owner",
+                              "--file", payload.name], self.home, operation="wall-notice")
+                if result.returncode and not re.search(
+                        r"^lane-mail: (?:duplicate|owner-notice-repeated=overseer) id=\S", result.stderr, re.M):
+                    raise child_failure("wall-notice", result)
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 self.failed_pass("wall-notice", failure("wall-notice", error).record)
                 return
-        # A stop between the notice and this save repeats the notice once.
         memory["noticed"] = True
         self.state.pop("wall-notice_failure", None)
         self.save()
@@ -1400,7 +1417,7 @@ class Watch:
             self.wall_pending = None
             if wall[0] == "succession":
                 self.accept_succession(wall[1].result())
-            elif self.accept_wall(wall[1].result()) is not None:
+            elif self.accept_wall(wall[1].result(), now) is not None:
                 self.wall_pending = ("succession", passes.submit(self.succeed))
         if self.wall_pending is None and now >= self.next_wall:
             self.next_wall = now + 30
