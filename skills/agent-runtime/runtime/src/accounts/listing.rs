@@ -1155,6 +1155,7 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         "model_label": buckets.get("model_label").cloned().unwrap_or(Value::Null),
         "model_buckets": buckets.get("model_buckets").cloned().unwrap_or_else(|| json!([])),
         "monthly_pct": num("monthly_pct"),
+        "session_5h_pct": num(super::SESSION.field),
         "credits": credits,
         "unlimited": buckets.get("unlimited") == Some(&Value::Bool(true)),
         "headroom_pct": headroom,
@@ -1162,7 +1163,7 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         "binding_resets_at": binding_bucket.map_or(Value::Null, reset_of),
         "usage_age_s": age,
         "resets": {"weekly": reset_of("weekly"), "model": reset_of("model"),
-                   "monthly": reset_of("monthly")},
+                   "monthly": reset_of("monthly"), "session": reset_of(super::SESSION.bucket)},
         "detail": if detail.is_empty() { Value::Null } else { Value::from(detail.as_str()) },
         "excluded": excluded(ctx.accounts, e.alias, e.dir),
         "retired": retired,
@@ -1191,8 +1192,8 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
 
 /// The 5-hour window the harness's own session-limit report spent
 /// ([`wall::session_wall_path`]), held as `session_spent_until` while its
-/// reset is ahead, the later of it and the reading's own; an unreadable
-/// record is the error, as [`wall_overlay`]'s is.
+/// reset is ahead; an unreadable record is the error, as
+/// [`wall_overlay`]'s is.
 fn session_overlay(ctx: &Ctx, dir: &str, buckets: &mut Value) -> Result<(), String> {
     let path = wall::session_wall_path(&ctx.account_state, dir);
     let text = match std::fs::read_to_string(&path) {
@@ -1204,16 +1205,10 @@ fn session_overlay(ctx: &Ctx, dir: &str, buckets: &mut Value) -> Result<(), Stri
     if record.config_dir != wall::canon(dir) || record.resets_at <= ctx.now {
         return Ok(());
     }
-    let read = buckets
-        .get("session_spent_until")
-        .and_then(Value::as_str)
-        .and_then(clock::epoch_secs);
-    if read.is_none_or(|at| at < record.resets_at) {
-        if !buckets.is_object() {
-            *buckets = json!({});
-        }
-        buckets["session_spent_until"] = json!(clock::iso_utc(record.resets_at));
+    if !buckets.is_object() {
+        *buckets = json!({});
     }
+    buckets["session_spent_until"] = json!(clock::iso_utc(record.resets_at));
     Ok(())
 }
 

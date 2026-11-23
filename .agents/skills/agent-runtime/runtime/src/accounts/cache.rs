@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::usage::{ROUNDING_STEP, Rounding, parse_body, same_reset, utc_resets};
-use super::{MODEL, WINDOWS};
+use super::{MODEL, SESSION, WINDOWS};
 use crate::harness::Harness;
 
 /// How long a refused endpoint is left alone when its answer named no
@@ -216,11 +216,13 @@ pub fn figure(record: &Record, harness: Harness, max_age: Option<u64>, now: u64)
     }))
 }
 
-/// The reset stamp of a consumed plan window whose reset has arrived at
-/// `now`: a figure past such a reset cannot show current usage.
+/// The reset stamp of a consumed plan window, or 5-hour window, whose reset
+/// has arrived at `now`: a figure past such a reset cannot show current
+/// usage.
 pub fn consumed_reset(buckets: &Value, now: u64) -> Option<String> {
     let resets = buckets.get("resets");
-    let shared = WINDOWS.iter().filter(|w| w.bucket != MODEL).map(|w| {
+    let windows = WINDOWS.iter().filter(|w| w.bucket != MODEL);
+    let shared = windows.chain([&SESSION]).map(|w| {
         (
             buckets.get(w.field).and_then(Value::as_f64),
             resets

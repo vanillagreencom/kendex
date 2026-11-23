@@ -137,20 +137,10 @@ fn f64_value(n: Option<f64>) -> Value {
     n.map_or(Value::Null, Value::from)
 }
 
-/// The reset of a 5-hour window that is spent, its figure at or past 100
-/// before any rounding (99.6 is not spent), else null: no rate or room is
-/// read from that window, only that no session started on it until the
-/// reset can run.
-fn spent_until(used: Option<&Value>, resets_at: Value) -> Value {
-    match used.and_then(Value::as_f64) {
-        Some(used) if used >= 100.0 && resets_at.is_string() => resets_at,
-        Some(_) | None => Value::Null,
-    }
-}
-
 /// Claude: `.seven_day` carries utilization and resets_at; the 5-hour
-/// `.five_hour` is no plan window, read only for its reset where it is
-/// spent ([`spent_until`]);
+/// `.five_hour` is no plan window the listing rates, kept as
+/// `session_5h_pct`, which no judgement but a launch's reads
+/// (`accounts::SESSION`) and whose reset the usage cache reads;
 /// `.iguana_necktie`, the cloud credit in dollars, is kept as `credits`.
 /// The model-scoped weekly windows are the `limits[]` entries of kind
 /// `weekly_scoped`; the older `seven_day_sonnet` and `seven_day_opus`
@@ -212,9 +202,11 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
             })
         })
         .unwrap_or(Value::Null);
+    let session = body.get("five_hour").filter(|v| !v.is_null());
     let present: Vec<Option<&Value>> = weekly
-        .map(|w| w.get("utilization"))
         .into_iter()
+        .chain(session)
+        .map(|w| w.get("utilization"))
         .chain(scoped.iter().map(|s| s.get("percent")))
         .collect();
     let unread = present.iter().any(|p| pct(*p, rounding, round).is_none());
@@ -239,13 +231,11 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
             "resets_at": s.get("resets_at").cloned().unwrap_or(Value::Null),
         })).collect::<Vec<Value>>(),
         "credits": credit,
-        "session_spent_until": spent_until(
-            body.get("five_hour").and_then(|w| w.get("utilization")),
-            body.pointer("/five_hour/resets_at").cloned().unwrap_or(Value::Null),
-        ),
+        "session_5h_pct": f64_value(session.and_then(|w| read(w.get("utilization")))),
         "resets": {
             "weekly": weekly.map_or(Value::Null, |w| w.get("resets_at").cloned().unwrap_or(Value::Null)),
             "model": most.as_ref().map_or(Value::Null, |m| m.get("resets_at").cloned().unwrap_or(Value::Null)),
+            "session": session.map_or(Value::Null, |w| w.get("resets_at").cloned().unwrap_or(Value::Null)),
         },
     })
 }
@@ -254,8 +244,8 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
 /// position (a weekly-only account reports its 7-day limit as the primary
 /// window), so each is routed by its own `limit_window_seconds`: one longer
 /// than 150 percent of five hours, or unstated, is the weekly window; a
-/// shorter one is no plan window, read only for its reset where it is
-/// spent ([`spent_until`]). `credits`
+/// shorter one is the 5-hour window, kept as Claude's is. A window present
+/// whose figure does not read leaves the other unread too. `credits`
 /// is the balance spent past the plan windows with the body's
 /// `spend_control.reached` beside it; a flag or balance that does not
 /// parse is null, which the credit rule never reads as room.
@@ -285,8 +275,7 @@ pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
             })
         })
         .unwrap_or(Value::Null);
-    struct Window<'a> {
-        used: Option<&'a Value>,
+    struct Window {
         pct: Option<f64>,
         resets_at: Value,
         window_s: u64,
@@ -297,7 +286,6 @@ pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
         .filter_map(|key| body.pointer(&format!("/rate_limit/{key}")))
         .filter(|w| !w.is_null())
         .map(|w| Window {
-            used: w.get("used_percent"),
             pct: pct(w.get("used_percent"), rounding, round),
             resets_at: w
                 .get("reset_at")
@@ -318,16 +306,18 @@ pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
     let session = windows
         .iter()
         .find(|w| w.window_s != 0 && w.window_s <= bound);
+    let unread = long.into_iter().chain(session).any(|w| w.pct.is_none());
+    let read = |w: Option<&Window>| w.and_then(|w| w.pct).filter(|_| !unread);
     json!({
-        "weekly_pct": f64_value(long.and_then(|w| w.pct)),
+        "weekly_pct": f64_value(read(long)),
         "model_pct": Value::Null,
         "model_label": Value::Null,
         "credits": credits,
-        "session_spent_until": session
-            .map_or(Value::Null, |w| spent_until(w.used, w.resets_at.clone())),
+        "session_5h_pct": f64_value(read(session)),
         "resets": {
             "weekly": long.map_or(Value::Null, |w| w.resets_at.clone()),
             "model": Value::Null,
+            "session": session.map_or(Value::Null, |w| w.resets_at.clone()),
         },
     })
 }
@@ -460,12 +450,10 @@ pub fn utc_resets(buckets: &mut Value) {
             }
         }
     }
-    for pointer in ["/credits/resets_at", "/session_spent_until"] {
-        if let Some(reset) = buckets.pointer_mut(pointer)
-            && let Some(s) = reset.as_str()
-        {
-            *reset = Value::from(utc_stamp(s));
-        }
+    if let Some(reset) = buckets.pointer_mut("/credits/resets_at")
+        && let Some(s) = reset.as_str()
+    {
+        *reset = Value::from(utc_stamp(s));
     }
 }
 
@@ -1027,36 +1015,65 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_plan_percentage_unmeasures_the_reading_and_a_five_hour_window_is_never_read() {
+    fn an_unreadable_window_unmeasures_the_reading_and_the_five_hour_window_is_kept_beside_the_week()
+     {
         let body = json!({"seven_day": {"utilization": 20},
             "limits": [{"kind": "weekly_scoped", "percent": "30", "scope": {"model": {"display_name": "Opus"}}}]});
         let got = parse_claude(&body, Rounding::Rounded);
         assert_eq!(got["weekly_pct"], Value::Null);
         assert_eq!(got["model_buckets"][0]["pct"], Value::Null);
-        // The 5-hour window, unreadable or full, is no plan window: the
-        // week stands as read.
-        for five_hour in [
-            json!({"utilization": "12"}),
-            json!({"utilization": 100}),
-            Value::Null,
-        ] {
-            let body = json!({"five_hour": five_hour, "seven_day": {"utilization": 20}});
-            let got = parse_claude(&body, Rounding::Rounded);
-            assert_eq!(got["weekly_pct"], json!(20.0), "{five_hour}");
-            assert_eq!(got.get("session_5h_pct"), None, "{five_hour}");
+        let reset = "2027-01-15T05:00:00Z";
+        let epoch = crate::clock::epoch_secs(reset).unwrap();
+        // (case, Claude's `five_hour`, Codex's short window, the week, the
+        // 5-hour figure, the 5-hour reset)
+        let rows = [
+            (
+                "absent",
+                Value::Null,
+                Value::Null,
+                json!(30.0),
+                Value::Null,
+                Value::Null,
+            ),
+            (
+                "read",
+                json!({"utilization": 98.4, "resets_at": reset}),
+                json!({"used_percent": 98.4, "reset_at": epoch, "limit_window_seconds": 18_000}),
+                json!(30.0),
+                json!(98.0),
+                json!(reset),
+            ),
+            (
+                "unreadable",
+                json!({"utilization": "12", "resets_at": reset}),
+                json!({"used_percent": -1, "reset_at": epoch, "limit_window_seconds": 18_000}),
+                Value::Null,
+                Value::Null,
+                json!(reset),
+            ),
+        ];
+        for (case, claude, codex, week, session, session_reset) in rows {
+            let claude = parse_claude(
+                &json!({"five_hour": claude, "seven_day": {"utilization": 30}}),
+                Rounding::Rounded,
+            );
+            let codex = parse_codex(
+                &json!({"rate_limit": {"primary_window": codex,
+                    "secondary_window": {"used_percent": 30, "limit_window_seconds": 604_800}}}),
+                Rounding::Rounded,
+            );
+            for (harness, got) in [("claude", &claude), ("codex", &codex)] {
+                assert_eq!(
+                    (
+                        &got["weekly_pct"],
+                        &got["session_5h_pct"],
+                        &got["resets"]["session"]
+                    ),
+                    (&week, &session, &session_reset),
+                    "{case} {harness}: {got}"
+                );
+            }
         }
-        let codex = json!({"rate_limit": {"primary_window": {"used_percent": 44, "reset_at": 1_785_000_000, "limit_window_seconds": 604_800}, "secondary_window": null}});
-        assert_eq!(
-            parse_codex(&codex, Rounding::Rounded)["weekly_pct"],
-            json!(44.0)
-        );
-        // A 5-hour Codex window beside the weekly one: the week alone, even
-        // where the short one cannot be read.
-        let split = json!({"rate_limit": {"primary_window": {"used_percent": -1, "limit_window_seconds": 18_000}, "secondary_window": {"used_percent": 30, "limit_window_seconds": 604_800}}});
-        assert_eq!(
-            parse_codex(&split, Rounding::Rounded)["weekly_pct"],
-            json!(30.0)
-        );
         let short = json!({"rate_limit": {"primary_window": {"used_percent": 30, "limit_window_seconds": 18_000}, "secondary_window": null}});
         assert_eq!(
             parse_codex(&short, Rounding::Rounded)["weekly_pct"],
