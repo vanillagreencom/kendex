@@ -161,9 +161,13 @@ interface UserMessageLayout {
 	markdown: Markdown;
 	width?: number;
 	lines?: string[];
+	// The framed card drawn from `lines` at `framedWidth`.
+	framedLines?: string[];
+	framedWidth?: number;
+	framed?: string[];
 }
+// One layout per displayed message, released with the message: every frame redraws every message.
 let userMessageLayouts = new WeakMap<object, UserMessageLayout>();
-let userMessageLayoutCount = 0;
 
 function renderRawUserMessageLines(component: any, width: number, theme: any, cwd?: string): string[] | undefined {
 	const text = typeof component?.text === "string" ? component.text : undefined;
@@ -188,18 +192,22 @@ function renderRawUserMessageLines(component: any, width: number, theme: any, cw
 	if (text.length <= USER_LAYOUT_MAX_CHARS && lines.reduce((size, line) => size + line.length, 0) <= USER_LAYOUT_MAX_CHARS) {
 		layout.width = width;
 		layout.lines = lines;
-		if (!userMessageLayouts.has(component)) {
-			if (userMessageLayoutCount >= 256) {
-				userMessageLayouts = new WeakMap();
-				userMessageLayoutCount = 0;
-			}
-			userMessageLayoutCount++;
-		}
 		userMessageLayouts.set(component, layout);
-	} else if (userMessageLayouts.delete(component)) {
-		userMessageLayoutCount--;
+	} else {
+		userMessageLayouts.delete(component);
 	}
 	return lines;
+}
+
+function renderFramedUserMessage(component: object, rawLines: string[], width: number, draw: () => string[]): string[] {
+	const layout = userMessageLayouts.get(component);
+	if (layout?.lines !== rawLines) return draw();
+	if (layout.framedLines !== rawLines || layout.framedWidth !== width) {
+		layout.framed = draw();
+		layout.framedLines = rawLines;
+		layout.framedWidth = width;
+	}
+	return layout.framed!;
 }
 
 export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponent: any): void {
@@ -232,7 +240,8 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 				const frameWidth = stableRenderWidth(width, cwd);
 				const rawLines = renderRawUserMessageLines(this, Math.max(1, frameWidth - 2), theme, cwd);
 				if (rawLines) {
-					return appendUserMessageBreak(renderUserMessageBorder(rawLines, frameWidth, theme, cwd, true), width, cwd);
+					return renderFramedUserMessage(this, rawLines, width, () =>
+						appendUserMessageBreak(renderUserMessageBorder(rawLines, frameWidth, theme, cwd, true), width, cwd));
 				}
 			}
 
@@ -283,7 +292,6 @@ export function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponen
 			delete prototype[USER_MESSAGE_PATCH_SYMBOL];
 		}
 		userMessageLayouts = new WeakMap();
-		userMessageLayoutCount = 0;
 		state!.activeCtx = undefined;
 	});
 }

@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- With compact user messages on, a redraw of a long session takes less CPU. Each user message keeps its drawn card until its text, width, theme or settings change, and sessions with more than 256 user messages no longer redraw every message from scratch on each frame. Messages look the same.
+
 ### 2.0.13
 
 - With tool chrome on, the first render of a long transcript takes less CPU. A drawn tool row that already fits the terminal is no longer wrapped again; rows look the same. Thanks to @eaxeax.
