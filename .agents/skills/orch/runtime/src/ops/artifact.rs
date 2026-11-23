@@ -1954,25 +1954,15 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
     if id.is_some() && v["kind"] == "fix" && round.is_none() {
         return Err(refuse("expected-round-required", file.display()));
     }
-    if let (Some(round), Some(id)) = (&round, &id)
+    // A run no stage admitted keeps the mode its start recorded: a foreground
+    // record cannot record ci, and an ad-hoc start records it only where the
+    // CI admission took the change, so the check does not answer that again.
+    if round.is_some()
         && v["kind"] == "fix"
-        && !v["validate_mode"].is_null()
+        && let (Some(wanted), Some(recorded)) = (stage_mode, v["validate_mode"].as_str())
+        && mode(recorded)? != wanted
     {
-        let recorded = mode(v["validate_mode"].as_str().expect("receipt schema"))?;
-        // A round no stage admitted defers to CI only where the pull request
-        // runs CI: open at the stamp, or published first.
-        let admitted = match stage_mode {
-            Some(wanted) => recorded == wanted,
-            None => {
-                recorded != ValidateMode::Ci
-                    || round["pr_open"] == true
-                    || crate::validate::pr_order(settings, &id.worktree, &mut String::new())?
-                        == "push-first"
-            }
-        };
-        if !admitted {
-            return Ok(emit("mode_mismatch", None, None, &[]));
-        }
+        return Ok(emit("mode_mismatch", None, None, &[]));
     }
     let repo = id.as_ref().map(|id| id.worktree.clone()).or_else(|| {
         file.parent()

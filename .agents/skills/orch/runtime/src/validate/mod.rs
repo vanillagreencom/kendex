@@ -908,9 +908,8 @@ fn ci_admission(
         return Ok(CiAdmission::Fallback("base-unresolved".to_owned()));
     };
     // An open pull request's base, or the resolved base before one exists,
-    // is read for its rules. A closed or merged one runs no further CI, so
-    // the change goes on only where its class is covered, to name that
-    // cause.
+    // is read for its rules. A closed or merged one runs no further CI: it
+    // names class-uncovered where the class is uncovered, else pr-not-open.
     let base = match view {
         PrView::Open { base } => base,
         PrView::None => match base_branch(settings, worktree, log)? {

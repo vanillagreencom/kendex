@@ -18,9 +18,9 @@ DEV_VALIDATE_RANGE_CMD = ""
 
 # The status check context whose run covers DEV_VALIDATE_CMD, for example
 # "CI": the merge-group run for a queue-only change, the pull request run
-# otherwise. Covered fix rounds on an open pull request can defer to
-# that check. Explicit ORCH_PR_ORDER=push-first also permits covered
-# implementation and internal-fix rounds to defer before publication.
+# otherwise. Covered implementation and fix rounds leave validation to
+# that check, before publication too, under every ORCH_PR_ORDER: before a
+# pull request opens, the resolved base branch's rules decide.
 # Their receipts accept local edits with CI pending; the merge-group run
 # proves a queue-only change's head before merge. Uncovered work keeps local validation.
 # Empty validates locally. orch-runtime validate entry --help defines coverage.

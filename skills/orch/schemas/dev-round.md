@@ -53,7 +53,7 @@ The optional `finding_occurrences` holds the `result` of the pre-stamp `orch-run
 - `pr_open`:
   - It is `false` by default.
   - A reader takes an absent field as `false` and refuses a non-boolean.
-  - It is a recorded fact, read only for a receipt whose run has no admitted entry ([dev-return.md § Fix-round run binding](dev-return.md#fix-round-run-binding)).
+  - It is a recorded fact; no check reads it.
 - `items`:
   - `n` is the delegated item number, a unique integer.
   - `text` is the item's formatted block verbatim.

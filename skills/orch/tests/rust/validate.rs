@@ -3834,6 +3834,13 @@ fn every_start_asks_the_ci_admission_before_its_selection_and_scopes_an_all_ci_d
         (
             "full",
             "all",
+            "context-unrequired",
+            "",
+            ("full", "", "context-unrequired", "pass"),
+        ),
+        (
+            "full",
+            "all",
             "pr-not-open",
             "",
             ("full", "true", "pr-not-open", "pass"),

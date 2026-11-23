@@ -188,7 +188,7 @@ A `fix` receipt that names a run must bind it to its round record ([dev-round.md
 The check then holds the receipt's mode to the round:
 
 - A run the runtime started carries its mode on the round's admitted `validate` entry (`proof`); a receipt recording another mode answers `mode_mismatch`.
-- A receipt whose run has no admitted entry, an ad-hoc run or a foreground record, may record any mode but `ci`. It may record `ci` only on a round whose record carries `pr_open: true` or whose `pr-order` resolves `push-first`.
+- A receipt whose run has no admitted entry, an ad-hoc run or a foreground record, keeps the mode its run recorded. A foreground record cannot record `ci`, and an ad-hoc start records it only where the CI admission took the change.
 
 Submit's reuse of a pass is its own: [submit-pr.md](../workflows/submit-pr.md) § 1.1.
 

@@ -709,55 +709,35 @@ mod dev_artifacts {
         let outside = w.wt.join("other/receipt.json");
         fs::write(&outside, receipt.to_string()).unwrap();
         assert_eq!(by_file(&outside), "commit_unverifiable");
-        // A run-less ci receipt defers to CI only where the pull request runs
-        // it: open at the stamp, or published first.
+        // A run-less ci receipt keeps the mode its start's CI admission
+        // recorded: under review-first, on a round stamped with no pull
+        // request open, the check takes it rather than re-deriving CI from
+        // the order. An order the check cannot read is then no refusal.
         let mut ci = receipt.clone();
         ci["validate"] = json!("pass");
         ci["validate_mode"] = json!("ci");
         ci["validate_time"] = second.clone();
         w.plant_receipt("r1", &ci);
-        assert_eq!(w.check("r1")["reason"], "mode_mismatch");
-        let ordered = |order: &str| {
-            w.command()
-                .env("ORCH_PR_ORDER", order)
+        let pre_publication = w.check("r1");
+        assert_eq!(pre_publication["verdict"], "accept", "{pre_publication}");
+        let unread_order = result(
+            &w.command()
+                .env("ORCH_PR_ORDER", "bogus")
                 .args(["dev-return", "check"])
                 .args(w.identity("r1"))
                 .arg("--expect-items-from-round")
                 .output()
-                .unwrap()
-        };
-        let push_first = result(&ordered("push-first"));
-        assert_eq!(push_first["verdict"], "accept", "{push_first}");
-        // An order outside the three words is a choice the check cannot
-        // read: it refuses rather than judge the round under a default.
-        refused(&ordered("bogus"), "setting-invalid");
-        result(&w.call(
-            &["round", "stamp"],
-            "open",
-            &[
-                "--item",
-                "1",
-                "repair parser",
-                "app CLI",
-                "--pr-open",
-                "true",
-            ],
-        ));
-        w.plant_receipt("open", &{
-            let mut v = ci.clone();
-            v["round_id"] = json!("open");
-            v
-        });
-        assert_eq!(w.check("open")["verdict"], "accept");
+                .unwrap(),
+        );
+        assert_eq!(unread_order["verdict"], "accept", "{unread_order}");
         let parent = w.head();
         w.commit("later.txt");
-        w.plant_receipt("open", &{
+        w.plant_receipt("r1", &{
             let mut v = ci.clone();
-            v["round_id"] = json!("open");
             v["commit"] = json!(parent);
             v
         });
-        assert_eq!(w.check("open")["reason"], "ci_head_mismatch");
+        assert_eq!(w.check("r1")["reason"], "ci_head_mismatch");
         let mut bad = receipt.clone();
         bad["commit"] = json!("badbad");
         bad["items"] = json!([]);
