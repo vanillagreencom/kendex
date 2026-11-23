@@ -1032,12 +1032,10 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         };
         judged = true;
         let Some((account, record, kept_unmeasured)) = picked else {
-            let counted = left_unread(&answer);
-            if counted {
-                walked.unread.push(text.clone());
-            }
             // A refused entry before the marked one: whether it has room at
-            // the full bound, the one question the hold asks.
+            // the full bound, the one question the hold asks. Only this hold
+            // reads a no-room answer with unmeasured accounts as unread; a
+            // `none` walk's `unread` names entries no reset answers.
             if req.scope == Scope::Lane && preference.last_choice && room.is_none() && i < last {
                 let full = pick(&request(Some(100), named.clone(), req.exclude.clone()));
                 match &full {
@@ -1055,7 +1053,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     | PickAnswer::ProviderUnmeasured { .. }
                     | PickAnswer::Unbilled { .. }
                     | PickAnswer::CloudRepoUnset(_) => {
-                        if !counted && left_unread(&full) {
+                        if left_unread(&answer) || left_unread(&full) {
                             walked.unread.push(text.clone());
                         }
                     }

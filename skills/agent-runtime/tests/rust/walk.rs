@@ -405,6 +405,16 @@ fn the_last_choice_mark_is_held_back_while_an_earlier_entry_has_room_at_the_full
     let result = unmarked.answered(&args);
     assert_eq!(result["chosen"]["entry"], json!("codex:gpt-6.1-sol:high"));
     assert_eq!(result["room"], Value::Null);
+    // An unmarked walk holds nothing, so a pool with one walled account
+    // and one a 429 left unmeasured names no entry unread: a reset answers
+    // the walled one.
+    let mut pool = World::new(&[(PREFERENCE, "claude:fable:high")]);
+    pool.plant_listing(&[measured("aclaude", 96, 5), refused_429("bclaude")]);
+    let result = pool.answered(&args);
+    assert_eq!(result["answer"], json!("none"), "{result}");
+    assert_eq!(result["walled"], json!(1), "{result}");
+    assert_eq!(result["unmeasured"], json!(1), "{result}");
+    assert_eq!(result["unread"], json!([]), "{result}");
     // The mark off the final entry, and in an overseer walk, is a setting
     // to fix.
     let mut marked = World::new(&[
