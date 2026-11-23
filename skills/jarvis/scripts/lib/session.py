@@ -1036,7 +1036,7 @@ def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
     for verb in ("start", "status", "stop", "succeed", "update-brief", "report-due", "attach", "forward", "forward-drain",
-                 "main-host", "init"):
+                 "forward-wait", "main-host", "init"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "status":
@@ -1048,6 +1048,9 @@ def main():
         elif verb == "forward":
             # Text crosses this file, never argv.
             command.add_argument("--record", required=True)
+        elif verb == "forward-wait":
+            command.add_argument("--key", required=True)
+            command.add_argument("--timeout", type=int)
         elif verb == "main-host":
             operation = command.add_mutually_exclusive_group(required=True)
             operation.add_argument("--set")
@@ -1095,6 +1098,9 @@ def main():
         parser.error("adopt")
     if args.verb == "forward" and not (clean(args.record) and args.record):
         parser.error("record")
+    if args.verb == "forward-wait" and not (re.fullmatch(r"forward-[0-9a-f]{64}", args.key, re.ASCII)
+                                            and (args.timeout is None or args.timeout > 0)):
+        parser.error("wait")
     if args.verb == "main-host":
         return main_host(args)
     if args.verb == "init":
@@ -1107,7 +1113,7 @@ def main():
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import owner_asks
         return owner_asks.main(args, Session, Refusal)
-    if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
+    if args.verb in ("forward", "forward-drain", "forward-wait") or (args.verb == "status" and args.main):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import forward
         return forward.main(args, home_module().home_state)
