@@ -24,7 +24,6 @@ This package refreshes kendex installs in consumer repositories. GitHub rulesets
 
 ## Consumer refresh
 
-- A consumer that holds the retired gate package first runs [workflows/retire-consumer-writer.md](workflows/retire-consumer-writer.md). Automatic refresh runs only after that normally reviewed removal merges.
 - A fresh install runs `refresh/adopt-refresh.sh` from a kendex checkout at a release tag.
 - An organization managed by fleet uses `fleet repos kendex-refresh` for immediate refresh dispatch.
 
@@ -65,7 +64,6 @@ No lane runs a raw `--admin` merge. The repair gives no app token a merge path.
 
 - `scripts/validate-standard.sh` warns and forwards until 2.0.
 - `scripts/install-latest.sh` warns and forwards until the next major release.
-- `refresh/adopt-refresh.sh --retire-writer` opts into trusted retirement.
 - `refresh/refresh-consumer.sh` publishes, arms and lands under [references/adoption.md § Publication](references/adoption.md#publication).
 - `refresh/refresh-reviews.sh` follows the thread-resolution rules in [references/adoption.md § Automatic review threads](references/adoption.md#automatic-review-threads).
 

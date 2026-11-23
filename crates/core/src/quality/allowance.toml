@@ -11,18 +11,6 @@ ruleset = 9
 
 [[package]]
 kind = "skill"
-name = "review-gate"
-
-[[package.file]]
-path = "templates/review-gate-writer.yml"
-
-[[package.file.finding]]
-rule = "rce"
-line-hash = "618f4343fe7c8f11804fe06194842baf1a8df814e3e8bddbe55faa277cace1ed"
-message = "this line pipes a download straight into a shell from `https://raw.githubusercontent.com/$KENDEX_INSTALLER_REPO/$KE… c4e2972fc18a3f5a`, so whatever the far end serves is what runs"
-
-[[package]]
-kind = "skill"
 name = "agent-runtime"
 
 [[package.file]]

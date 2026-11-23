@@ -161,7 +161,7 @@ a hook package's markdown measures on its size|class=micro measured=true cause=p
 a hook body is excluded|class=standard measured=true cause=excluded-path|hooks/guard.sh=2
 a hook body a harness renders is excluded|class=standard measured=true cause=excluded-path|.claude/hooks/guard.sh=2
 a gate script is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/scripts/gate.sh=2
-a consumer refresh template is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/templates/kendex-refresh.yml=2
+a review-gate template is excluded|class=standard measured=true cause=excluded-path|skills/review-gate/templates/workflow.yml=2
 the installed organization standard is excluded|class=standard measured=true cause=excluded-path|.agents/skills/github-repository-settings/standard.json=2
 the Pi extension that runs every hook is excluded|class=standard measured=true cause=excluded-path|pi-extensions/pi-hooks/extensions/dispatch.ts=2
 a preflight script is excluded|class=standard measured=true cause=excluded-path|skills/preflight/scripts/run.sh=2

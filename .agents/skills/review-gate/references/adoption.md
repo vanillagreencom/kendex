@@ -54,17 +54,13 @@ GitHub's ruleset workflow contract:
 
 The report in [github-repository-settings](../../github-repository-settings/references/platform-checks.md) checks the resulting workflow rule. GitHub still applies its native automatic review where a ruleset carries that rule; the github skill's references/automatic-review.md covers routing. Refresh approval follows orch's references/copilot-head-notices.md § Consumer refresh approval.
 
-## Trusted removal for an existing consumer
-
-A consumer with the retired gate package needs a one-time trusted removal PR to remove its writer and required check. Automatic refresh keeps that writer. The shared workflow runs the adopter from its kendex release checkout and never performs retirement. Run the removal through [workflows/retire-consumer-writer.md](../workflows/retire-consumer-writer.md).
-
 ## Automatic consumer refresh
 
 Before enabling automatic refresh, wire the consumer's CI through harness-ci's references/wiring.md § Consumer refresh CI. A consumer with no required checks and an unprotected default branch needs no consumer CI or `change_class` wiring.
 
 ### Schedule and input check
 
-- After trusted removal, the shipped `templates/kendex-refresh.yml` requests update checks once a day.
+- The shipped caller, `refresh/kendex-refresh.yml` in the kendex release, requests update checks once a day.
 - Consumers take this schedule through `refresh/adopt-refresh.sh`. An existing workflow keeps its earlier schedule until adoption.
 - GitHub can delay, drop or disable scheduled runs.
 - A manual run uses the same path.
@@ -255,7 +251,7 @@ Provision the environment the caller selects before adoption:
 
 - It must allow deployments from the default branch only.
 - Store a complete `KENDEX_APP_ID` / `KENDEX_APP_PRIVATE_KEY` pair there, or the `FLEET_GH_APP_ID` / `FLEET_GH_APP_PRIVATE_KEY` pair. Free custom credential names are unsupported.
-- The [shipped caller](../templates/kendex-refresh.yml) passes those two fixed pairs and the optional landing pair by the same names. Configure only its `environment` input. The calling job has no environment.
+- The shipped caller passes those two fixed pairs and the optional landing pair by the same names. Configure only its `environment` input. The calling job has no environment.
 
 Outside copies of the fixed names:
 
@@ -300,7 +296,7 @@ Deprecated caller fields:
 - Unreadable metadata uses `cause=read` and names the API operation.
 - `refresh-error=workflow-edited` stops adoption before any workflow or inventory change.
 
-Adoption accepts an absent workflow, or a validated declaration whose other bytes match shipped template history. Existing declarations survive later adoption from a new release template. Inventory recording follows the template-byte rule in [§ Adoption and file ownership](#adoption-and-file-ownership).
+Adoption accepts an absent workflow, or a validated declaration whose other bytes match shipped template history. Existing declarations survive later adoption from a new release template.
 
 The landing pair, `KENDEX_LAND_APP_ID` / `KENDEX_LAND_APP_PRIVATE_KEY`, is a third fixed pair, and it is optional.
 
@@ -337,8 +333,6 @@ Every selected directory and its `kendex.toml` must resolve inside the checkout.
 
 `refresh-consumer.sh` reports the exact `kendex --version` output in the rolling pull request body on a new publication, or in `GITHUB_STEP_SUMMARY` when the consumer is current or retains an unchanged head. A failed version read stops publication. `refresh/tests/refresh-consumer.test.sh` in the kendex repository holds these report paths.
 
-The retained writer template also uses `install-latest.sh` for its release engine. Only its optional main-build installer keeps a fixed commit. `refresh/tests/refresh-workflow.test.sh` in the kendex repository checks that call, and `skills/harness-ci/tests/install-latest.test.sh` in the kendex repository checks immutable installer resolution.
-
 Run from the consumer root after installing the skill. Set `KENDEX_RELEASE` to a kendex checkout at the installed release tag:
 
 ```bash
@@ -349,25 +343,10 @@ git add -A
 
 Commit the workflow and the inventory removal with the installed skill.
 
-- Without `--retire-writer`, adoption keeps a recorded retired gate workflow and its inventory entry, and prints one `refresh-warning=legacy-writer` line. Retirement belongs to the [trusted removal](#trusted-removal-for-an-existing-consumer) route.
-- That route removes an unedited retired copy, proved by the committed adoption hash.
-- An edited, symlinked or unrecorded retired copy needs an owner decision. It stops adoption without changing the files.
+- Adoption writes no inventory record for `.github/workflows/kendex-refresh.yml`, and removes any earlier one, including when the release checkout sits inside the consumer.
+- The adopter reads `kendex-refresh.yml` beside itself. `--templates-dir DIR` reads `DIR/kendex-refresh.yml` instead.
 
-The adopter also accepts `--templates-dir DIR`, where DIR holds the installed review-gate templates. It reads `DIR/kendex-refresh.yml`. From the consumer root:
-
-```bash
-"$KENDEX_RELEASE/refresh/adopt-refresh.sh" --templates-dir .agents/skills/review-gate/templates
-```
-
-For a template listed as a rendered path in the consumer's `.kendex-generated.json`, adoption writes a record only when the adopted workflow bytes equal the template bytes.
-
-- A preserved configuration that changes those bytes gets no record, and removes any earlier workflow record.
-- The record's `path` is `.github/workflows/kendex-refresh.yml`.
-- Its `template` is the selected template path relative to the consumer root.
-- Its `templateHash` is `sha256:` followed by the SHA-256 digest of the template bytes.
-- The release-checkout route also removes the earlier workflow record, including when the checkout sits inside the consumer.
-
-The [caller adoption contract](#caller-adoption-contract) uses both template paths, `skills/review-gate/templates/kendex-refresh.yml` and `refresh/kendex-refresh.yml`, in kendex's default-branch ancestry as shipment evidence. The adopter fetches that history from `https://github.com/vanillagreencom/kendex.git` as data only. Consumer history and adoption records supply no replacement permission.
+The [caller adoption contract](#caller-adoption-contract) uses both paths kendex has shipped the caller template from, review-gate's former `templates/` copy and `refresh/kendex-refresh.yml`, in kendex's default-branch ancestry as shipment evidence. The adopter fetches that history from `https://github.com/vanillagreencom/kendex.git` as data only. Consumer history and adoption records supply no replacement permission.
 
 | File safety check | Refresh result |
 |---|---|
@@ -437,7 +416,7 @@ The shared workflow's last two steps request an Issues-write token scoped only t
 Each automatic review thread on a render-proven pull request has one of these outcomes:
 
 - The thread is outdated at the current head: the workflow prints a keyed skip, replies with `Not filed upstream: ` and the reason, and resolves the thread. It files nothing and does not hold the run.
-- The thread is live and no single package claims its path (including paths outside the inventory, the lock, the inventory and a Copilot `.github/agents/*.agent.md` render): the workflow prints `upstream-unfiled`, gives no reply and leaves the thread open. It files nothing. Review text about content kendex has not claimed is never published. The consumer must answer the finding through its trusted removal PR or a reply, then resolve the thread by hand.
+- The thread is live and no single package claims its path (including paths outside the inventory, the lock, the inventory and a Copilot `.github/agents/*.agent.md` render): the workflow prints `upstream-unfiled`, gives no reply and leaves the thread open. It files nothing. Review text about content kendex has not claimed is never published. The consumer must answer the finding through its own pull request or a reply, then resolve the thread by hand.
 - The thread is live and `kendex report` routes its one package to `vanillagreencom/kendex` with a package label: the workflow files the finding there for upstream confirmation, replies with the issue, and resolves the thread. The rules for that filing follow this list.
 - Other live findings are not filed when `kendex report` routes the package elsewhere, or the token or Issues access is missing. The error line gives the reason.
 

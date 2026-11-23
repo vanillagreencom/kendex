@@ -4,6 +4,8 @@
 . "$SKILL_DIR/tests/lib/workflow-edit.sh"
 # Shipment history is a data-only catalog. Only the transport in disposable
 # adopter copies changes; production has no fixture setting or acceptance path.
+# f7db7e89 shipped at the template path kendex once rendered into consumers;
+# the current caller ships at its release-tree path.
 CATALOG="$TMP/catalog"
 mkdir -p "$CATALOG/skills/review-gate/templates"
 git -C "$CATALOG" init -q -b main
@@ -13,8 +15,6 @@ git -C "$CATALOG" config user.name fixture
 git -C "$CATALOG" config user.email fixture@example.invalid
 git -C "$SKILL_DIR" show f7db7e89:skills/review-gate/templates/kendex-refresh.yml >"$TMP/shipped-historical"
 cp "$TMP/shipped-historical" "$CATALOG/skills/review-gate/templates/kendex-refresh.yml"
-commit "$CATALOG"
-cp "$SKILL_DIR/templates/kendex-refresh.yml" "$CATALOG/skills/review-gate/templates/kendex-refresh.yml"
 commit "$CATALOG"
 
 trust_refresh_transport() { # DISPOSABLE_ROOT [HISTORICAL_SCRIPT]
@@ -31,29 +31,22 @@ TRANSPORT
 }
 trust_refresh_transport "$PRISTINE"
 
-ship_refresh_template() { # TEMPLATE_FILE
-  cp "$1" "$CATALOG/skills/review-gate/templates/kendex-refresh.yml"
-  commit "$CATALOG"
-}
-
-# The shared workflow's caller ships at its own catalog path.
 CALLER="$REFRESH_DIR/kendex-refresh.yml"
 ship_caller_template() { # TEMPLATE_FILE
   mkdir -p "$CATALOG/refresh"
   cp "$1" "$CATALOG/refresh/kendex-refresh.yml"
   commit "$CATALOG"
 }
+ship_caller_template "$CALLER"
 
 snapshot_adoption() {
   cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
-  cp "$DIR/.github/workflows/review-gate-writer.yml" "$TMP/adoption-writer"
   cp "$DIR/.github/workflows/kendex-refresh.yml" "$TMP/adoption-workflow"
 }
 
 adoption_preserved() { # EXACT_ERROR_RECORD
   [ "$RC" -ne 0 ] && grep -qxF -- "$1" <<<"$OUT" &&
     cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json" &&
-    cmp -s "$TMP/adoption-writer" "$DIR/.github/workflows/review-gate-writer.yml" &&
     cmp -s "$TMP/adoption-workflow" "$DIR/.github/workflows/kendex-refresh.yml" &&
     ! grep -qE '^(ok|FAIL|note) check=workflow-' <<<"$OUT"
 }
@@ -90,10 +83,12 @@ run_refresh_command() {
   printf '#!/usr/bin/env bash\nset -euo pipefail\nexport GH_SHIM_FIXTURES=%q GH_SHIM_FAIL=%q\nexec %q "$@"\n' \
     "$FIXTURES" "${SHIM_FAIL:-}" "$BIN/gh-shim" >"$BIN/gh"
   chmod +x "$BIN/gh"
+  # The release copy's caller, which the current adopter reads by default,
+  # is named so a historical adopter copied elsewhere reads the same bytes.
   if [ "${script##*/}" = adopt-refresh.sh ]; then
     case " $* " in
       *' --templates-dir '*) ;;
-      *) set -- --templates-dir "$root/.agents/skills/review-gate/templates" "$@" ;;
+      *) set -- --templates-dir "$root/refresh" "$@" ;;
     esac
   fi
   RC=0
@@ -128,7 +123,7 @@ run_refresh() { # CONTENT VERIFY CLASS
   fi
   : >"$TMP/state/summary"
   : >"$TMP/state/outputs"
-  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" GITHUB_OUTPUT="$TMP/state/outputs" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} ${PROJECT_SETTING_ENV[@]+"${PROJECT_SETTING_ENV[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="${LEASE_REMOTE:-$TMP/remote}" TEST_HOSTILE="${HOSTILE:-}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
+  OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" GITHUB_OUTPUT="$TMP/state/outputs" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} ${PROJECT_SETTING_ENV[@]+"${PROJECT_SETTING_ENV[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="${LEASE_REMOTE:-$TMP/remote}" TEST_HOSTILE="${HOSTILE:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
   RC="$result"
 }
 
@@ -643,61 +638,31 @@ inventory.write_text(json.dumps(entries) + "\n")
 PY
 }
 
-# The committed writer and record are independent expected values for both
-# automatic preservation and explicit trusted retirement.
-retirement_matches() { # ROOT PATH TEMPLATE preserved|removed
-  [ "$RC" -eq 0 ] || return 1
+# Adoption leaves the committed inventory less only PATH's record, sorted by
+# path. The committed inventory must hold another path entry and another
+# record, so a row that loses either goes red.
+adoption_inventory() { # ROOT PATH
   python3 - "$@" <<'PY'
 import json
 from pathlib import Path
 import subprocess
 import sys
 root = Path(sys.argv[1])
-path, owner, disposition = sys.argv[2:]
-before = json.loads(subprocess.check_output(["git", "show", "HEAD:.kendex-generated.json"], cwd=root, text=True))
-expected = [e for e in before if isinstance(e, dict) and e["template"] == owner]
-assert len(expected) == 1 and expected[0]["path"] == path, "retirement=committed-record value=" + path
-after = json.loads((root / ".kendex-generated.json").read_text())
-actual = [e for e in after if isinstance(e, dict) and e["template"] == owner]
-if disposition == "preserved":
-    assert actual == expected, "retirement=record disposition=preserved value=" + path
-    assert (root / path).read_bytes() == subprocess.check_output(["git", "show", "HEAD:" + path], cwd=root), "retirement=writer-bytes disposition=preserved value=" + path
-elif disposition == "removed":
-    assert actual == [], "retirement=record disposition=removed value=" + path
-    assert not (root / path).exists(), "retirement=writer disposition=removed value=" + path
-else:
-    raise AssertionError("unknown retirement disposition: " + disposition)
+path = sys.argv[2]
+committed = json.loads(subprocess.check_output(["git", "-C", str(root), "show", "HEAD:.kendex-generated.json"]))
+expected = sorted((e for e in committed if not (isinstance(e, dict) and e["path"] == path)),
+                  key=lambda e: e if isinstance(e, str) else e["path"])
+assert any(isinstance(e, str) for e in expected) and any(isinstance(e, dict) for e in expected), \
+    "adoption=inventory-witness value=" + json.dumps(committed)
+actual = json.loads((root / ".kendex-generated.json").read_text())
+assert actual == expected, "adoption=inventory value=" + json.dumps(actual)
 PY
 }
 
+# Adoption leaves the template's bytes at PATH and the inventory above.
 adoption_metadata() { # ROOT PATH TEMPLATE
-  python3 - "$@" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-root = Path(sys.argv[1])
-path, template = sys.argv[2:]
-data = (root / template).read_bytes()
-assert (root / path).read_bytes() == data, "adoption=workflow-bytes value=" + path
-assert json.loads((root / ".kendex-generated.json").read_text()) == [template, {"path": path, "template": template, "templateHash": "sha256:" + hashlib.sha256(data).hexdigest()}], "adoption=inventory value=" + path
-PY
-}
-
-# kendex refresh updates the inventory's hash before workflow adoption.
-record_template_hash() {
-  python3 - "$DIR" "$TEMPLATE" "$REFRESH" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-root = Path(sys.argv[1])
-path = root / ".kendex-generated.json"
-entries = json.loads(path.read_text())
-record = next(e for e in entries if isinstance(e, dict) and e["path"] == sys.argv[3])
-record["templateHash"] = "sha256:" + hashlib.sha256((root / sys.argv[2]).read_bytes()).hexdigest()
-path.write_text(json.dumps(entries) + "\n")
-PY
+  cmp -s "$1/$2" "$1/$3" || { printf 'adoption=workflow-bytes value=%s\n' "$2" >&2; return 1; }
+  adoption_inventory "$1" "$2"
 }
 
 # The engine's refusal is the refresh runner's schema-number interface.

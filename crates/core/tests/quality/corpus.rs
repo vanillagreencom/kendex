@@ -186,8 +186,7 @@ fn orch_reads_its_fixtures_as_mentions() {
 /// review-gate decline corpus holds a reason written in Russian, the text
 /// a test feeds the gate; and the harness-ci workflow library defines a
 /// function named `gh_eval`. None of them is the package disguising or
-/// running anything, so none is a finding, and the rows kendex's own table
-/// accepts in review-gate cost the score nothing.
+/// running anything, so none is a finding.
 #[test]
 fn a_quoted_letter_a_corpus_and_a_function_named_for_eval_are_not_findings() {
     for name in ["iced-rs", "review-gate", "harness-ci"] {

@@ -84,7 +84,7 @@ The range input takes the class the classifier answers for the range through `ch
 
 - Render candidacy, `harness-only --mode render-candidate`, permits that path without an inventory entry, so CI can install the verifier. Candidacy grants no class.
 - The render proof first takes the caller's ownership from a passing verifier position.
-- Without one, the proof fetches `refs/tags/<pin>` from the public catalog into a private store. It runs that release's `refresh/lib/caller.py` with `python3 -I`. The module validates the caller's configuration and compares the normalized caller with the release template. Only the configuration blocks the release accepts may differ.
+- Without one, the proof fetches `refs/tags/<pin>` from the public catalog into a private store. It runs that release's `refresh/lib/caller.py` with `python3 -I`. The module validates the caller's configuration and compares the normalized caller with that release's `refresh/kendex-refresh.yml`. Only the configuration blocks the release accepts may differ.
 - None of these grants ownership: a commit pin, any other byte difference, an invalid configuration, an unavailable release, a missing caller module or a missing `python3`.
 - The fallback covers the caller alone. Every other excluded path still needs a passing verifier position.
 
