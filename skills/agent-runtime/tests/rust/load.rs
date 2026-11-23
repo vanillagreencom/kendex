@@ -1,7 +1,7 @@
-//! `agent-runtime session load` through the executable, over one session
-//! file per harness in the shape that harness records: Copilot CLI's a
-//! recorded 1.0.112 log with its values blanked, the others built from the
-//! sources `session::entries` names.
+//! `agent-runtime session load` through the executable, over session files
+//! in the shape each harness records: Copilot CLI's a recorded 1.0.112 log
+//! with its values blanked, the others built from the sources
+//! `session::entries` and `context::response` name.
 
 #[path = "isolation.rs"]
 mod isolation;
@@ -33,32 +33,115 @@ const ROWS: &[Row] = &[
                     "/context/1/tokens",
                     json!({"basis": "attributed", "value": 32}),
                 ),
+                // p-2's command record as written, not as typed, and p-3.
+                (
+                    "/context/1/bytes",
+                    json!({"basis": "measured", "value": 127 + 10}),
+                ),
                 // msg_4's growth holds the persona.md read and turn p-3
                 // together, so neither the read nor its source owns it.
                 ("/sections/0/tokens", json!({"basis": "unclear"})),
+                // msg_8's and msg_10's growth, each a call's alone.
                 ("/context/2/source", json!("rule-reads")),
-                ("/context/2/tokens", json!({"basis": "unclear"})),
+                (
+                    "/context/2/tokens",
+                    json!({"basis": "attributed", "value": 33 + 40}),
+                ),
+                ("/context/2/unattributed", json!(1)),
+                // msg_6's growth, shared by the two results of msg_5.
+                ("/context/3/source", json!("tool-results")),
+                (
+                    "/context/3/tokens",
+                    json!({"basis": "attributed", "value": 52}),
+                ),
+                // One `cat` of two files, then one beside an `ls`.
+                ("/sections/1/read", json!({"kind": "file", "file": "a.md"})),
+                ("/sections/1/tokens", json!({"basis": "unclear"})),
+                ("/sections/2/read", json!({"kind": "file", "file": "b.md"})),
+                ("/sections/2/bytes", json!({"basis": "unclear"})),
+                ("/sections/3/read", json!({"kind": "file", "file": "c.md"})),
+                ("/sections/3/tokens", json!({"basis": "unclear"})),
             ]
         },
     },
     Row {
         harness: "codex",
         fixture: "load/codex.jsonl",
-        start: 12080,
-        more: Vec::new,
+        // The turn's second response; the event between repeats the first.
+        start: 12540,
+        more: || {
+            vec![
+                (
+                    "/sections/0/read",
+                    json!({"kind": "file", "file": "a/SKILL.md"}),
+                ),
+                // The second response's prompt less the first's whole.
+                (
+                    "/sections/0/tokens",
+                    json!({"basis": "attributed", "value": 420}),
+                ),
+            ]
+        },
     },
     Row {
         harness: "copilot",
         fixture: "copilot-events.jsonl",
         // The last tool.execution_complete count in the one turn.
         start: 44644,
-        more: Vec::new,
+        more: || {
+            vec![
+                ("/sections/0/read", json!({"kind": "skill", "name": "x"})),
+                // A skill's result is not its body.
+                ("/sections/0/bytes", json!({"basis": "unclear"})),
+                ("/context/2/source", json!("rule-reads")),
+                ("/context/2/bytes", json!({"basis": "unclear"})),
+                ("/context/2/tokens", json!({"basis": "unsupported"})),
+                // The two results the CLI counted; the failure and the
+                // sub-agent's result carry no count.
+                ("/context/3/source", json!("tool-results")),
+                (
+                    "/context/3/tokens",
+                    json!({"basis": "measured", "value": 60 + 1973}),
+                ),
+                ("/context/3/unattributed", json!(2)),
+            ]
+        },
+    },
+    Row {
+        harness: "copilot",
+        fixture: "load/copilot.jsonl",
+        start: 20100,
+        more: || {
+            vec![
+                // The turn as the CLI sent it, its datetime included.
+                (
+                    "/context/0/bytes",
+                    json!({"basis": "measured", "value": 77}),
+                ),
+                (
+                    "/sections/0/read",
+                    json!({"kind": "file", "file": "/w/a/SKILL.md"}),
+                ),
+                (
+                    "/sections/0/tokens",
+                    json!({"basis": "measured", "value": 12}),
+                ),
+            ]
+        },
     },
     Row {
         harness: "pi",
         fixture: "load/pi.jsonl",
         start: 10070,
-        more: Vec::new,
+        more: || {
+            vec![
+                // The turn and the extension's text after it.
+                (
+                    "/context/0/bytes",
+                    json!({"basis": "measured", "value": 18 + 13}),
+                ),
+            ]
+        },
     },
 ];
 

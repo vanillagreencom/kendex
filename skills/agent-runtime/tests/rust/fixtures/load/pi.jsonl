@@ -1,3 +1,4 @@
 {"type":"session","version":3,"id":"s1","timestamp":"2026-11-23T00:00:00.000Z","cwd":"/w"}
 {"type":"message","id":"e1","parentId":null,"timestamp":"2026-11-23T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Start the session."}],"timestamp":1795392001000}}
-{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-11-23T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Ready."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-opus-5-5","usage":{"input":10,"output":60,"cacheRead":9000,"cacheWrite":1000,"totalTokens":10070},"stopReason":"stop","timestamp":1795392002000}}
+{"type":"custom_message","id":"c1","parentId":"e1","timestamp":"2026-11-23T00:00:01.500Z","customType":"hooks","content":"Hook context.","display":false}
+{"type":"message","id":"e2","parentId":"c1","timestamp":"2026-11-23T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Ready."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-opus-5-5","usage":{"input":10,"output":60,"cacheRead":9000,"cacheWrite":1000,"totalTokens":10070},"stopReason":"stop","timestamp":1795392002000}}

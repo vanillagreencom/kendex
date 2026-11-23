@@ -574,21 +574,24 @@ fn text_parts(content: &Value) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Entry {
     /// A user turn, the one [`user_turns`] counts, with the turn's native
-    /// id where the row carries one.
+    /// id where the row carries one. Its bytes are the text the row
+    /// records, not the text [`user_text`] reads from it.
     Turn { id: Option<String>, bytes: u64 },
-    /// Text the harness added to the context beside a turn or a result: a
-    /// Claude Code `user` row of text blocks marked `isMeta`, such as a
-    /// skill body a slash command expands to (measured on Claude Code
-    /// 2.1.330).
+    /// Text the harness added to the context beside a turn or a result:
+    /// each text block of a Claude Code `user` row that is not a turn,
+    /// such as a skill body a slash command expands to, marked `isMeta`
+    /// (measured on Claude Code 2.1.330), and a Pi `custom_message`, an
+    /// extension's text that enters the context.
     Text { bytes: u64 },
     /// A tool call the model made.
     Call { id: String, action: Action },
-    /// A tool result sent back: its bytes, the tokens the harness counted
-    /// for it where it counts them, and the name of what it loaded where
-    /// the harness names that only on the result (a Copilot skill).
+    /// A tool result sent back: its bytes, `None` where the text it added
+    /// is not the row's; the tokens the harness counted for it where it
+    /// counts them; and the name of what it loaded where the harness names
+    /// that only on the result (a Copilot skill).
     Result {
         call: String,
-        bytes: u64,
+        bytes: Option<u64>,
         tokens: Option<u64>,
         loaded: Option<String>,
     },
@@ -644,25 +647,29 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 ///   `exec_command` with its JSON `arguments`' `cmd`; its output by
 ///   `call_id`, a string or `input_text` items.
 /// - Copilot CLI (Copilot SDK `session-events.ts`, the CLI's reference
-///   tool table, and a recorded 1.0.112 log): a `user.message`'s
-///   `interactionId`; a `tool.execution_start` by `toolCallId`, `bash`
-///   naming `arguments.command` and `skill` its skill only on the result's
-///   `toolTelemetry.restrictedProperties.skillName`; a
+///   tool table, a recorded 1.0.112 log, and the tool-call classifier in
+///   1.0.114's `cli-main.js`): a `user.message`'s `interactionId`; a
+///   `tool.execution_start` by `toolCallId`, `bash` naming
+///   `arguments.command`, `view` (and `str_replace_editor` whose
+///   `command` is `view`) `arguments.path`, and `skill` its skill only on
+///   the result's `toolTelemetry.restrictedProperties.skillName`; a
 ///   `tool.execution_complete`'s `result.content`, or a failure's
-///   `error.message`. `view` reads a file, but under an argument name no
-///   source shows, so it reads as another tool.
+///   `error.message`. A skill's result is not its body: the log records
+///   `skillContentLength` 30809 beside `result_token_count` 27, so the
+///   body reaches the context apart from the result, and the result
+///   counts neither its bytes nor its tokens.
 /// - Pi (Pi 1.6.0's session format and message type documentation):
 ///   a turn's entry `id`; an assistant message's `toolCall` blocks,
 ///   `read` naming `path` and `bash` `command`; a `toolResult` message's
-///   text by `toolCallId`.
+///   text by `toolCallId`; a `custom_message`'s `content`.
 pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
     fn text(value: Option<&Value>) -> &str {
         value.and_then(Value::as_str).unwrap_or_default()
     }
     let turn = |id: Option<&Value>| {
-        user_text(harness, row).map(|said| Entry::Turn {
+        user_text(harness, row).map(|_| Entry::Turn {
             id: id.and_then(Value::as_str).map(str::to_owned),
-            bytes: said.len() as u64,
+            bytes: turn_bytes(harness, row),
         })
     };
     let kind = text(row.get("type"));
@@ -697,7 +704,7 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     }
                     ("user", "tool_result") => found.push(Entry::Result {
                         call: text(block.get("tool_use_id")).to_owned(),
-                        bytes: text_bytes(block.get("content"), "text"),
+                        bytes: Some(text_bytes(block.get("content"), "text")),
                         tokens: None,
                         loaded: None,
                     }),
@@ -733,7 +740,7 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                 }
                 "function_call_output" | "custom_tool_call_output" => vec![Entry::Result {
                     call,
-                    bytes: text_bytes(payload.get("output"), "input_text"),
+                    bytes: Some(text_bytes(payload.get("output"), "input_text")),
                     tokens: None,
                     loaded: None,
                 }],
@@ -749,10 +756,13 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
             let call = text(field("toolCallId")).to_owned();
             match kind {
                 "tool.execution_start" => {
+                    let argument = |key: &str| text(field("arguments").and_then(|a| a.get(key)));
                     let action = match text(field("toolName")) {
-                        "bash" => Action::Shell(
-                            text(field("arguments").and_then(|a| a.get("command"))).to_owned(),
-                        ),
+                        "bash" => Action::Shell(argument("command").to_owned()),
+                        "view" => Action::Read(argument("path").to_owned()),
+                        "str_replace_editor" if argument("command") == "view" => {
+                            Action::Read(argument("path").to_owned())
+                        }
                         "skill" => Action::Skill(None),
                         _ => Action::Other,
                     };
@@ -768,12 +778,18 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                         .and_then(|p| p.get("skillName"))
                         .and_then(Value::as_str)
                         .map(str::to_owned);
+                    let (bytes, tokens) = match loaded {
+                        Some(_) => (None, None),
+                        None => (
+                            Some(text(sent).len() as u64),
+                            row.as_object()
+                                .and_then(crate::context::copilot_result_tokens),
+                        ),
+                    };
                     vec![Entry::Result {
                         call,
-                        bytes: text(sent).len() as u64,
-                        tokens: row
-                            .as_object()
-                            .and_then(crate::context::copilot_result_tokens),
+                        bytes,
+                        tokens,
                         loaded,
                     }]
                 }
@@ -783,6 +799,11 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
         Harness::Pi => {
             if let Some(turn) = turn(row.get("id")) {
                 return vec![turn];
+            }
+            if kind == "custom_message" {
+                return vec![Entry::Text {
+                    bytes: text_bytes(row.get("content"), "text"),
+                }];
             }
             let Some(message) = row.get("message").filter(|_| kind == "message") else {
                 return Vec::new();
@@ -810,7 +831,7 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
                     .collect(),
                 "toolResult" => vec![Entry::Result {
                     call: text(message.get("toolCallId")).to_owned(),
-                    bytes: text_bytes(message.get("content"), "text"),
+                    bytes: Some(text_bytes(message.get("content"), "text")),
                     tokens: None,
                     loaded: None,
                 }],
@@ -818,6 +839,28 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
             }
         }
     }
+}
+
+/// The bytes a user turn's row records for the model: the content before
+/// [`user_text`] rewrites a Claude Code command record or unwraps pasted
+/// content, and on Copilot CLI the `transformedContent` the CLI sent, its
+/// augmentations included (the CLI's `schemas/session-events.schema.json`,
+/// 1.0.114), where the row carries it.
+fn turn_bytes(harness: Harness, row: &Value) -> u64 {
+    let content = match harness {
+        Harness::Claude | Harness::Pi => row.get("message").and_then(|m| m.get("content")),
+        Harness::Codex => row
+            .get("payload")
+            .and_then(|p| p.get("item"))
+            .and_then(|i| i.get("content")),
+        Harness::Copilot => {
+            let data = row.get("data");
+            data.and_then(|d| d.get("transformedContent"))
+                .filter(|sent| sent.is_string())
+                .or_else(|| data.and_then(|d| d.get("content")))
+        }
+    };
+    text_bytes(content, "text")
 }
 
 /// The bytes of a content value: a string whole, or the `text` of each part

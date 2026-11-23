@@ -1,0 +1,4 @@
+{"type":"session.start","data":{"sessionId":"s1","version":1,"producer":"copilot-agent","copilotVersion":"1.0.114"},"id":"e1","timestamp":"2026-11-23T00:00:00.000Z","parentId":null}
+{"type":"user.message","data":{"content":"Start the session.","transformedContent":"<current_datetime>2026-11-23T00:00:00Z</current_datetime>\n\nStart the session.","interactionId":"i-1"},"id":"e2","timestamp":"2026-11-23T00:00:01.000Z","parentId":"e1"}
+{"type":"tool.execution_start","data":{"toolCallId":"c1","toolName":"view","arguments":{"path":"/w/a/SKILL.md"},"interactionId":"i-1"},"id":"e3","timestamp":"2026-11-23T00:00:02.000Z","parentId":"e2"}
+{"type":"tool.execution_complete","data":{"toolCallId":"c1","interactionId":"i-1","success":true,"result":{"content":"# A\n\nRules."},"toolTelemetry":{"metrics":{"context_token_limit":952000.0,"context_current_tokens":20100.0,"result_token_count":12}}},"id":"e4","timestamp":"2026-11-23T00:00:03.000Z","parentId":"e3"}

@@ -129,9 +129,10 @@ pub enum Response {
 /// One response's figures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spent {
-    /// The response's own id where the harness writes it on every line of
-    /// the response: a Claude Code message spans one line per content
-    /// block, each carrying the message's usage.
+    /// What names the response on every line that records it: a Claude
+    /// Code message spans one line per content block, each carrying the
+    /// message's usage, and a Codex `token_count` event can repeat the
+    /// response before it, with the session's running total unchanged.
     pub id: Option<String>,
     /// The tokens the response left in the context.
     pub context: u64,
@@ -209,6 +210,11 @@ fn claude_response(line: &Map<String, Value>) -> Result<Option<Response>, String
 /// `codex-rs/protocol/src/protocol.rs`, rust-v0.171.0). An event with no
 /// `info` object records no response; one whose usage holds no total is
 /// unread. The model is the `turn_context`'s, which this line does not name.
+///
+/// The id is `info.total_token_usage.total_tokens`, the session's running
+/// total: an event whose total did not change repeats the response before
+/// it, the rule pi-codex-bridge's README § Usage records holds over the
+/// rollouts real Codex releases write in its fixture suite.
 fn codex_response(line: &Map<String, Value>) -> Option<Response> {
     if word(line, "type") != "event_msg" {
         return None;
@@ -228,8 +234,12 @@ fn codex_response(line: &Map<String, Value>) -> Option<Response> {
     let split = count("input_tokens")
         .zip(count("output_tokens"))
         .map(|(prompt, output)| Split { prompt, output });
+    let running = info
+        .get("total_token_usage")
+        .and_then(|u| u.get("total_tokens"))
+        .and_then(Value::as_u64);
     Some(Response::Spent(Spent {
-        id: None,
+        id: running.map(|total| total.to_string()),
         context,
         split,
         window: info.get("model_context_window").and_then(Value::as_u64),

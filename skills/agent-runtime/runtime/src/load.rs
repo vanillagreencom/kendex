@@ -10,15 +10,21 @@
 //! The four sources are the first user turn (the thread's first delivery),
 //! later user turns, rule reads (a tool call that reads a Markdown file, a
 //! `jarvis-section` section or a skill) and every other tool result.
-//! Harness-added text joins the item before it in the record.
+//! Harness-added text joins the item before it in the record where the
+//! record holds it apart, as [`Entry::Text`] names it on Claude Code and
+//! Pi; Copilot CLI's is inside the turn's own text. Codex records its own
+//! (`<environment_context>` and the like) as `message` items that also
+//! repeat each user turn, and this reader leaves them out of the bytes.
 //!
-//! A source's bytes are measured from the record. Its tokens are measured
-//! where the harness counts each result itself, and otherwise attributed
-//! from the responses around it: the prompt of a response, less the prompt
-//! and output of the response before it, is what the record between them
-//! added. That growth goes to a source only where everything between the
-//! two responses belongs to it, and to one item or section only where it is
-//! alone there; any other share is unclear. The first response's prompt
+//! A source's bytes are measured from the record, and unclear where a
+//! result's text is not its row's (a Copilot skill's body). Its tokens are
+//! measured where the harness counts each result itself, and otherwise
+//! attributed from the responses around it: the prompt of a response, less
+//! the prompt and output of the response before it, is what the record
+//! between them added. That growth goes to a source only where everything
+//! between the two responses belongs to it, and to one item or section only
+//! where it is alone there, the call having run nothing else; any other
+//! share is unclear. The first response's prompt
 //! also holds the harness's own prompt and tools, which no record names
 //! apart, so the first delivery's tokens are unsupported.
 
@@ -46,7 +52,8 @@ pub enum Figure {
     /// Derived from measured figures by this module's attribution rule.
     Attributed { value: u64 },
     /// The record holds the figure only inside a share this reader cannot
-    /// settle to one source, item or section: never zero.
+    /// settle to one source, item or section, or outside the row that
+    /// names its item: never zero.
     Unclear,
     /// The harness gives no reading of the figure: never zero.
     Unsupported,
@@ -203,14 +210,15 @@ enum Share {
 
 struct Item {
     source: Source,
-    bytes: u64,
+    /// `None` where the text the item added is not its row's.
+    bytes: Option<u64>,
     share: Share,
 }
 
 /// A call the record named: the turn it fell in and what it read.
 struct Call {
     turn: Option<String>,
-    reads: Vec<Read>,
+    rules: Rules,
 }
 
 /// A rule read's result, resolved once its item's share is known.
@@ -272,7 +280,7 @@ impl Walk {
         }
     }
 
-    fn push(&mut self, source: Source, bytes: u64, share: Share) -> usize {
+    fn push(&mut self, source: Source, bytes: Option<u64>, share: Share) -> usize {
         self.items.push(Item {
             source,
             bytes,
@@ -290,21 +298,25 @@ impl Walk {
                     self.start.turn.clone_from(&id);
                 }
                 self.turn = id;
-                self.push(self.turn_source(), bytes, Share::Pending);
+                self.push(self.turn_source(), Some(bytes), Share::Pending);
             }
             Entry::Text { bytes } => match self.gap.last() {
-                Some(&last) => self.items[last].bytes += bytes,
+                Some(&last) => {
+                    if let Some(held) = &mut self.items[last].bytes {
+                        *held += bytes;
+                    }
+                }
                 None => {
-                    self.push(self.turn_source(), bytes, Share::Pending);
+                    self.push(self.turn_source(), Some(bytes), Share::Pending);
                 }
             },
             Entry::Call { id, action } => {
-                let reads = rule_reads(&action);
+                let rules = rule_reads(&action);
                 self.calls.insert(
                     id,
                     Call {
                         turn: self.turn.clone(),
-                        reads,
+                        rules,
                     },
                 );
             }
@@ -315,9 +327,9 @@ impl Walk {
                 loaded,
             } => {
                 let share = tokens.map_or(Share::Pending, Share::Own);
-                let (turn, mut reads) = match self.calls.get(&call) {
-                    Some(named) => (named.turn.clone(), named.reads.clone()),
-                    None => (self.turn.clone(), Vec::new()),
+                let (turn, Rules { mut reads, more }) = match self.calls.get(&call) {
+                    Some(named) => (named.turn.clone(), named.rules.clone()),
+                    None => (self.turn.clone(), Rules::default()),
                 };
                 // A result that names what it loaded is that skill's read,
                 // whether or not the record kept its call.
@@ -331,7 +343,7 @@ impl Walk {
                     Source::RuleReads
                 };
                 let item = self.push(source, bytes, share);
-                let shared = reads.len() > 1;
+                let shared = reads.len() > 1 || more;
                 for read in reads {
                     self.sections.push(Section {
                         item,
@@ -425,10 +437,7 @@ impl Walk {
                 let (bytes, tokens) = if section.shared {
                     (Figure::Unclear, Figure::Unclear)
                 } else {
-                    (
-                        Figure::Measured { value: item.bytes },
-                        item_tokens(item.share),
-                    )
+                    (item_bytes(item.bytes), item_tokens(item.share))
                 };
                 SectionReading {
                     turn: section.turn.clone(),
@@ -451,7 +460,11 @@ impl Walk {
 
     fn source_reading(&self, source: Source) -> SourceReading {
         let items: Vec<&Item> = self.items.iter().filter(|i| i.source == source).collect();
-        let bytes = items.iter().map(|i| i.bytes).sum();
+        let bytes = items
+            .iter()
+            .map(|i| i.bytes)
+            .sum::<Option<u64>>()
+            .map_or(Figure::Unclear, |value| Figure::Measured { value });
         let (mut value, mut attributed, mut had) = (0u64, false, 0usize);
         let mut unsupported = false;
         for item in &items {
@@ -487,11 +500,15 @@ impl Walk {
         SourceReading {
             source,
             items: items.len(),
-            bytes: Figure::Measured { value: bytes },
+            bytes,
             tokens,
             unattributed: items.len() - had,
         }
     }
+}
+
+fn item_bytes(bytes: Option<u64>) -> Figure {
+    bytes.map_or(Figure::Unclear, |value| Figure::Measured { value })
 }
 
 /// One item's tokens, alone: a share of its source's growth is unclear for
@@ -520,58 +537,93 @@ static SECTION: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+/// What a call reads as rules, and whether its result may also hold the
+/// output of something else the call ran, which no read owns.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Rules {
+    reads: Vec<Read>,
+    more: bool,
+}
+
 /// The one table of what a call reads as rules: a read of a Markdown file,
 /// a skill load, and in a shell command each `jarvis-section` and each
 /// Markdown operand of a [`PRINTERS`] program. A command splits at each
 /// `;`, `&`, `|` and newline, quoted or not, so a heading holding one reads
-/// as [`Read::Unreadable`].
-fn rule_reads(action: &Action) -> Vec<Read> {
+/// as [`Read::Unreadable`]; `>&` and `&>` redirect and split nothing, and
+/// a redirection's target is no operand. A segment that reads no rule, and
+/// a `cat` operand that is not Markdown, is more output; another printer's
+/// other operands are taken for its script or count.
+fn rule_reads(action: &Action) -> Rules {
     let command = match action {
         Action::Read(path) if path.ends_with(".md") => {
-            return vec![Read::File { file: path.clone() }];
+            return Rules {
+                reads: vec![Read::File { file: path.clone() }],
+                more: false,
+            };
         }
-        Action::Skill(name) => return vec![Read::Skill { name: name.clone() }],
-        Action::Shell(command) => command,
-        Action::Read(_) | Action::Other => return Vec::new(),
+        Action::Skill(name) => {
+            return Rules {
+                reads: vec![Read::Skill { name: name.clone() }],
+                more: false,
+            };
+        }
+        Action::Shell(command) => command.replace(">&", ">").replace("&>", ">"),
+        Action::Read(_) | Action::Other => return Rules::default(),
     };
-    let mut reads = Vec::new();
+    let mut rules = Rules::default();
     for segment in command.split([';', '&', '|', '\n']) {
         let mut words = segment.split_whitespace();
         let Some(program) = words.next() else {
             continue;
         };
+        let before = rules.reads.len();
         match program.rsplit('/').next().unwrap_or(program) {
             "jarvis-section" => {
-                reads.push(SECTION.captures(segment).map_or(Read::Unreadable, |found| {
-                    let operand = |first: usize| {
-                        (first..first + 3)
-                            .find_map(|i| found.get(i))
-                            .map_or_else(String::new, |m| m.as_str().to_owned())
-                    };
-                    Read::Section {
-                        file: operand(1),
-                        heading: operand(4),
-                    }
-                }))
+                rules
+                    .reads
+                    .push(SECTION.captures(segment).map_or(Read::Unreadable, |found| {
+                        let operand = |first: usize| {
+                            (first..first + 3)
+                                .find_map(|i| found.get(i))
+                                .map_or_else(String::new, |m| m.as_str().to_owned())
+                        };
+                        Read::Section {
+                            file: operand(1),
+                            heading: operand(4),
+                        }
+                    }))
             }
-            name if PRINTERS.contains(&name) => reads.extend(
-                words
-                    .map(|word| word.trim_matches(['\'', '"']))
-                    .filter(|word| word.ends_with(".md") && !word.starts_with('-'))
-                    .map(|file| Read::File {
-                        file: file.to_owned(),
-                    }),
-            ),
+            name if PRINTERS.contains(&name) => {
+                // A redirection's target is no operand.
+                let mut target = false;
+                for word in words.map(|word| word.trim_matches(['\'', '"'])) {
+                    if std::mem::take(&mut target) || word.starts_with('-') {
+                        continue;
+                    }
+                    if word.contains(['<', '>']) {
+                        target = word.ends_with(['<', '>']);
+                    } else if word.ends_with(".md") {
+                        rules.reads.push(Read::File {
+                            file: word.to_owned(),
+                        });
+                    } else if name == "cat" {
+                        rules.more = true;
+                    }
+                }
+            }
             _ => {}
         }
+        rules.more |= rules.reads.len() == before;
     }
-    reads
+    rules
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Each row: the call, what it reads, and whether its result may hold
+    /// output no read owns.
     #[test]
     fn a_call_reads_as_rules_by_the_one_table() {
         let section = |file: &str, heading: &str| Read::Section {
@@ -582,29 +634,44 @@ mod tests {
             file: file.to_owned(),
         };
         let shell = |command: &str| Action::Shell(command.to_owned());
-        let rows: Vec<(Action, Vec<Read>)> = vec![
+        let rows: Vec<(Action, Vec<Read>, bool)> = vec![
             (
                 Action::Read("a/SKILL.md".to_owned()),
                 vec![file("a/SKILL.md")],
+                false,
             ),
-            (Action::Read("a/main.rs".to_owned()), vec![]),
+            (Action::Read("a/main.rs".to_owned()), vec![], false),
             (
                 shell(".agents/skills/jarvis/scripts/jarvis-section persona.md 'Conduct'"),
                 vec![section("persona.md", "Conduct")],
+                false,
             ),
             (
                 shell("jarvis-section a.md One && jarvis-section b.md \"Two words\" 2>&1"),
                 vec![section("a.md", "One"), section("b.md", "Two words")],
+                false,
             ),
-            (shell("jarvis-section \"$F\" 'One'"), vec![Read::Unreadable]),
+            (
+                shell("jarvis-section \"$F\" 'One'"),
+                vec![Read::Unreadable],
+                false,
+            ),
             (
                 shell("sed -n '1,40p' docs/a.md | head -5 && cat b.md c.txt"),
                 vec![file("docs/a.md"), file("b.md")],
+                true,
             ),
-            (shell("git log -1 -- notes.md"), vec![]),
+            (
+                shell("sed -n '1,200p' a/SKILL.md && ls -R"),
+                vec![file("a/SKILL.md")],
+                true,
+            ),
+            (shell("cat b.md c.txt"), vec![file("b.md")], true),
+            (shell("cat a.md 2>/dev/null"), vec![file("a.md")], false),
+            (shell("git log -1 -- notes.md"), vec![], true),
         ];
-        for (action, want) in rows {
-            assert_eq!(rule_reads(&action), want, "{action:?}");
+        for (action, reads, more) in rows {
+            assert_eq!(rule_reads(&action), Rules { reads, more }, "{action:?}");
         }
     }
 }
