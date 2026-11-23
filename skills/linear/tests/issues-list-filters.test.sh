@@ -111,12 +111,13 @@ for selection in triage owed; do
                            "inverseRelations.pageInfo.hasNextPage", "inverseRelations.pageInfo.endCursor",
                            "inverseRelations.nodes.id", "inverseRelations.nodes.type",
                            "inverseRelations.nodes.issue.identifier", "inverseRelations.nodes.issue.state.type",
+                           "inverseRelations.nodes.issue.state.name",
                            "labels.pageInfo.hasNextPage", "labels.pageInfo.endCursor", "labels.nodes.name"]
                           - $selected | length == 0)'
                 assert_jq 'owed: unused fields omitted upstream' "$(cat "$TMP_ROOT/calls")" \
                     'select(.query | contains("ListIssues")) | .query | test("assignee|project|estimate|sortOrder|updatedAt|archivedAt|trashed|url|relatedIssue") | not'
                 assert_jq 'owed: verification and container facts survive every blocker page' "$out" \
-                    '.[0] == {id:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",in_pr_bundle:true,priority:2,state:"Verifying",state_type:"started",parent_id:"KEN-parent",created_at:"2026-08-15T09:00:00Z",blocked_by_open:["KEN-open"],labels:["blocked"]}'
+                    '.[0] == {id:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",in_pr_bundle:true,priority:2,state:"Verifying",state_type:"started",parent_id:"KEN-parent",created_at:"2026-08-15T09:00:00Z",blocked_by_open:["KEN-open"],blocked_by:["KEN-open","KEN-done"],blocked_by_launch:["KEN-open"],labels:["blocked"]}'
             fi
         else
             assert_ne "$selection $mode: refuses incomplete discovery" "$rc" 0

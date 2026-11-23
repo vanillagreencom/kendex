@@ -138,15 +138,15 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
 1. Select unblocked, non-terminal development items from the tracker, read live through every page.
    - For a Linear tracker, run each line below in its own tool call. The first writes the whole read to ignored scratch storage, the second prints one row per item with no description, and the last removes the read.
-   - `[STATES]` names the team's open states but Verifying and Triage, comma-separated, as `linear.sh statuses list --team [TEAM]` lists them.
-   - An item with an id in `blocked_by_open` (the sixth column), or with the `blocked` label, is blocked.
-   - Leave out Verifying items: the verification pass owns their post-merge readings.
-   - Follow `start.md` for container selection. An item another row names as its parent (the fifth column) is a container, unless its `in_pr_bundle` (the fourth column) is true.
+   - If the read exits nonzero, stop the selection with its error and leave `launch_queue` as it is.
+   - `[STATES]` names the team's open states but Triage and Verifying, comma-separated, as `linear.sh statuses list --team [TEAM]` lists them. The verification pass owns a Verifying item's post-merge readings.
+   - Keep each row the heartbeat would owe: [oversee-events.md § `heartbeat`](../references/oversee-events.md#heartbeat) item 4 holds the lane-record, blocker, label, container and ancestor rules.
+   - Judge a container from the item's children of any state, as [start.md § 2](start.md#2-select-work-item) reads them.
    - A GitHub item labeled `blocked` is no candidate.
 
    ```bash
    .agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --state [STATES] --select owed --max > tmp/oversee-select-source.json
-   jq -r '.[] | [.id, .state, (.priority // 0), .in_pr_bundle, .parent_id, (.blocked_by_open | join(",")), (.labels | join(","))] | @tsv' tmp/oversee-select-source.json
+   jq -r '.[] | [.id, .state, (.priority // 0), .in_pr_bundle, .parent_id, (.blocked_by_launch | join(",")), (.blocked_by | length), (.labels | join(","))] | @tsv' tmp/oversee-select-source.json
    rm -f tmp/oversee-select-source.json
    ```
 

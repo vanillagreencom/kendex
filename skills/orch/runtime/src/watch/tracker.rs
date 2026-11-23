@@ -101,8 +101,8 @@ pub struct TrackerInventory {
     pub owed: Vec<OwedItem>,
     /// The Verifying items and the containers whose children all ended.
     pub verifying: Vec<VerifyingItem>,
-    /// The team's open items with no open blocker, relation or label, that
-    /// no lane holds and the launch queue does not name, sorted.
+    /// The team's open items no blocker holds (`OpenItem::blocked`) that no
+    /// lane holds and the launch queue does not name, sorted.
     pub open_unblocked: Vec<String>,
 }
 
@@ -411,17 +411,33 @@ struct OpenItem {
     parent_id: String,
     created_at: String,
     blocked_by_open: Vec<String>,
+    /// Every blocking relation's blocker, open or ended.
+    blocked_by: Vec<String>,
+    /// The blockers that hold dispatch (the Ancestor gate's field): open,
+    /// and not Verifying.
+    blocked_by_launch: Vec<String>,
     labels: Vec<String>,
 }
 
-/// The label the linear package's `issues block` sets for a blocker that is
-/// no tracker item.
+/// The label `issues block` sets beside its blocking relation and a person
+/// sets alone for a blocker that is no tracker item. Only `issues unblock`
+/// removes it, so it outlives a relation whose blocker ended.
 const BLOCKED_LABEL: &str = "blocked";
 
+/// The label that makes an item a container whatever its children.
+const MULTI_LABEL: &str = "agent:multi";
+
 impl OpenItem {
-    /// Held by an open blocking relation or by the `blocked` label.
+    fn labelled(&self, label: &str) -> bool {
+        self.labels.iter().any(|l| l == label)
+    }
+
+    /// Held by a blocker the launch gate counts, or by the `blocked` label
+    /// on an item with no blocking relation at all: the label beside a
+    /// relation stands for that relation, which judges it.
     fn blocked(&self) -> bool {
-        !self.blocked_by_open.is_empty() || self.labels.iter().any(|l| l == BLOCKED_LABEL)
+        !self.blocked_by_launch.is_empty()
+            || (self.blocked_by.is_empty() && self.labelled(BLOCKED_LABEL))
     }
 }
 
@@ -1183,8 +1199,7 @@ fn read_list(
             .values()
             .map(|(parent, kind)| (parent.as_str(), kind.as_str())),
     );
-    // Every item an open item or a child read names as its parent: a
-    // container, whose children are the work (`start.md`).
+    // Every item an open item or a child read names as its parent.
     let parents: BTreeSet<&str> = state_types
         .values()
         .map(|(parent, _)| parent.as_str())
@@ -1230,6 +1245,7 @@ fn inventory_of(
     read_at: u64,
 ) -> TrackerInventory {
     let last_lane = |item: &str| fleet.lanes.iter().rfind(|l| l.carries(item));
+    let by_id: BTreeMap<&str, &OpenItem> = items.iter().map(|i| (i.id.as_str(), i)).collect();
     let mut owed = Vec::new();
     let mut verifying = Vec::new();
     for item in items {
@@ -1258,9 +1274,7 @@ fn inventory_of(
         if fleet.launch_queue.contains(&item.id) {
             continue;
         }
-        if state.unstarted()
-            && (item.blocked() || (parents.contains(item.id.as_str()) && !item.in_pr_bundle))
-        {
+        if state.unstarted() && !startable(item, &by_id, parents) {
             continue;
         }
         let record = last_lane(&item.id);
@@ -1319,6 +1333,29 @@ fn inventory_of(
         verifying,
         open_unblocked,
     }
+}
+
+/// Whether work no lane has begun can start, as the launch's admission
+/// judges it on the rows this read holds: the item is unblocked and no
+/// container (`skill-rules.md` § Containers), and no open ancestor is
+/// blocked or an in-PR bundle root, whose own lane works its children. An
+/// ancestor the read does not hold, ended or in another team, is left to
+/// the admission's own read.
+fn startable(item: &OpenItem, by_id: &BTreeMap<&str, &OpenItem>, parents: &BTreeSet<&str>) -> bool {
+    let container =
+        !item.in_pr_bundle && (parents.contains(item.id.as_str()) || item.labelled(MULTI_LABEL));
+    if item.blocked() || container {
+        return false;
+    }
+    let mut seen = BTreeSet::from([item.id.as_str()]);
+    let mut parent = item.parent_id.as_str();
+    while let Some(row) = by_id.get(parent).filter(|_| seen.insert(parent)) {
+        if row.in_pr_bundle || row.blocked() {
+            return false;
+        }
+        parent = row.parent_id.as_str();
+    }
+    true
 }
 
 // --- the owner's tracker answers and the due tracker asks -----------------------

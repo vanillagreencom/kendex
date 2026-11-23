@@ -253,7 +253,8 @@ fn item(
 ) -> Value {
     json!({"id": id, "title": id, "description": "", "in_pr_bundle": false, "priority": priority,
         "state": state, "state_type": state_type, "parent_id": "", "created_at": created_at,
-        "blocked_by_open": blocked_by, "labels": []})
+        "blocked_by_open": blocked_by, "blocked_by": blocked_by, "blocked_by_launch": blocked_by,
+        "labels": []})
 }
 
 /// The triage world the recorded watch ran.
@@ -2015,48 +2016,228 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
     );
 }
 
-/// Work not yet begun that can start is owed: with an empty queue and no
-/// lane, the heartbeat names each Todo and Backlog item no open blocker
-/// holds, and leaves out one a relation or the `blocked` label holds, a
-/// container (its child is the work) and a Triage item.
+/// Which open items the heartbeat owes, with an empty queue and no lane: a
+/// Todo or Backlog item only where the launch's admission would take it, a
+/// started one whatever blocks or parents it. One row per case of the
+/// owner (`tracker::inventory_of`): the state, by type for work not yet
+/// begun; the blocker, launch-held or not; the `blocked` label, alone or
+/// beside a relation whose blocker ended; a container by children or
+/// `agent:multi`, and an in-PR bundle root; a held ancestor. The last
+/// column is the `open-unblocked` membership.
 #[test]
 fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
     let mut world = World::new();
-    let open = |id: &str, state: &str, state_type: &str, priority: Value, blocked_by: &[&str]| {
-        item(
-            id,
-            "2026-08-16T00:00:00Z",
-            state,
-            state_type,
-            priority,
-            blocked_by,
-        )
-    };
-    let mut labelled = open("KEN-4", "Backlog", "backlog", json!(2), &[]);
-    labelled["labels"] = json!(["skills", "blocked"]);
-    let mut child = open("KEN-6", "Todo", "unstarted", json!(2), &[]);
-    child["parent_id"] = json!("KEN-5");
-    let items = vec![
-        open("KEN-1", "Todo", "unstarted", json!(2), &[]),
-        open("KEN-2", "Backlog", "backlog", Value::Null, &[]),
-        open("KEN-3", "Todo", "unstarted", json!(1), &["KEN-1"]),
-        labelled,
-        open("KEN-5", "Todo", "unstarted", json!(1), &[]),
-        child,
-        open("KEN-7", "Triage", "triage", json!(1), &[]),
+    // id, state, state type, priority, then the row's other fields; the
+    // `owed` line expected, or none; whether `open-unblocked` lists it.
+    type Row<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        Value,
+        Value,
+        Option<&'a str>,
+        bool,
+    );
+    let rows: Vec<Row> = vec![
+        (
+            "KEN-1",
+            "Todo",
+            "unstarted",
+            json!(2),
+            json!({}),
+            Some("state=todo priority=2"),
+            true,
+        ),
+        (
+            "KEN-2",
+            "Backlog",
+            "backlog",
+            Value::Null,
+            json!({}),
+            Some("state=backlog priority=-"),
+            true,
+        ),
+        // A renamed unstarted state is Todo work by its type.
+        (
+            "KEN-3",
+            "Ready",
+            "unstarted",
+            json!(1),
+            json!({}),
+            Some("state=todo priority=1"),
+            true,
+        ),
+        (
+            "KEN-4",
+            "Todo",
+            "unstarted",
+            json!(1),
+            json!({"blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            None,
+            false,
+        ),
+        // The label alone: a blocker outside the tracker.
+        (
+            "KEN-5",
+            "Backlog",
+            "backlog",
+            json!(2),
+            json!({"labels": ["skills", "blocked"]}),
+            None,
+            false,
+        ),
+        // The label `issues block` left beside a relation whose blocker ended.
+        (
+            "KEN-6",
+            "Backlog",
+            "backlog",
+            json!(2),
+            json!({"labels": ["blocked"], "blocked_by": ["KEN-99"]}),
+            Some("state=backlog priority=2"),
+            true,
+        ),
+        // A Verifying blocker holds no launch.
+        (
+            "KEN-7",
+            "Todo",
+            "unstarted",
+            json!(3),
+            json!({"blocked_by_open": ["KEN-98"], "blocked_by": ["KEN-98"]}),
+            Some("state=todo priority=3"),
+            true,
+        ),
+        (
+            "KEN-8",
+            "Todo",
+            "unstarted",
+            json!(1),
+            json!({}),
+            None,
+            true,
+        ),
+        (
+            "KEN-9",
+            "Todo",
+            "unstarted",
+            json!(2),
+            json!({"parent_id": "KEN-8"}),
+            Some("state=todo priority=2"),
+            true,
+        ),
+        (
+            "KEN-10",
+            "Todo",
+            "unstarted",
+            json!(2),
+            json!({"labels": ["agent:multi"]}),
+            None,
+            true,
+        ),
+        (
+            "KEN-11",
+            "Todo",
+            "unstarted",
+            json!(1),
+            json!({"in_pr_bundle": true}),
+            Some("state=todo priority=1"),
+            true,
+        ),
+        // The bundle root's lane works its children.
+        (
+            "KEN-12",
+            "Backlog",
+            "backlog",
+            json!(1),
+            json!({"parent_id": "KEN-11"}),
+            None,
+            true,
+        ),
+        (
+            "KEN-13",
+            "Todo",
+            "unstarted",
+            json!(1),
+            json!({"blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            None,
+            false,
+        ),
+        // Its container ancestor holds it, as the Ancestor gate does.
+        (
+            "KEN-14",
+            "Todo",
+            "unstarted",
+            json!(1),
+            json!({"parent_id": "KEN-13"}),
+            None,
+            true,
+        ),
+        (
+            "KEN-15",
+            "In Progress",
+            "started",
+            json!(2),
+            json!({"blocked_by_open": ["KEN-1"], "blocked_by": ["KEN-1"], "blocked_by_launch": ["KEN-1"]}),
+            Some("state=in-progress priority=2"),
+            false,
+        ),
+        (
+            "KEN-16",
+            "In Progress",
+            "started",
+            json!(2),
+            json!({}),
+            Some("state=in-progress priority=2"),
+            true,
+        ),
+        (
+            "KEN-17",
+            "Triage",
+            "triage",
+            json!(1),
+            json!({"parent_id": "KEN-16"}),
+            None,
+            true,
+        ),
     ];
-    let childless = |id: &str, kind: &str| json!({"identifier": id, "state": {"type": kind}, "children": {"nodes": []}});
-    world.linear("statuses list", statuses());
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|(id, state, kind, priority, fields, _, _)| {
+            let mut row = item(
+                id,
+                "2026-08-16T00:00:00Z",
+                state,
+                kind,
+                priority.clone(),
+                &[],
+            );
+            for (key, value) in fields.as_object().unwrap() {
+                row[key] = value.clone();
+            }
+            row
+        })
+        .collect();
+    let nodes: Vec<Value> = items
+        .iter()
+        .map(|row| {
+            let children: Vec<Value> = items
+                .iter()
+                .filter(|child| child["parent_id"] == row["id"])
+                .map(|child| json!({"identifier": child["id"], "state": {"type": child["state_type"]}}))
+                .collect();
+            json!({"identifier": row["id"], "state": {"type": row["state_type"]},
+                "children": {"nodes": children}})
+        })
+        .collect();
+    let mut statuses = statuses();
+    statuses["body"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "Ready", "type": "unstarted"}));
+    world.linear("statuses list", statuses);
     world.linear("issues list", json!({"body": items}));
     world.linear(
         "issues bulk-get",
-        json!({"body": {"issues": {"nodes": [
-            childless("KEN-1", "unstarted"), childless("KEN-2", "backlog"),
-            childless("KEN-3", "unstarted"), childless("KEN-4", "backlog"),
-            {"identifier": "KEN-5", "state": {"type": "unstarted"},
-             "children": {"nodes": [{"identifier": "KEN-6", "state": {"type": "unstarted"}}]}},
-            childless("KEN-6", "unstarted"), childless("KEN-7", "triage")
-        ]}}}),
+        json!({"body": {"issues": {"nodes": nodes}}}),
     );
     quiet_github(&mut world);
     let clock = FakeClock::new();
@@ -2093,19 +2274,23 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
         .map(String::as_str)
         .filter(|l| l.starts_with("owed "))
         .collect();
-    assert_eq!(
-        owed,
-        [
-            "owed KEN-1 state=todo priority=2 lane=none verdict=queue",
-            "owed KEN-2 state=backlog priority=- lane=none verdict=queue",
-            "owed KEN-6 state=todo priority=2 lane=none verdict=queue",
-        ],
-        "{lines:?}"
+    let mut expected: Vec<(&str, String)> = rows
+        .iter()
+        .filter_map(|(id, _, _, _, _, line, _)| {
+            line.map(|line| (*id, format!("owed {id} {line} lane=none verdict=queue")))
+        })
+        .collect();
+    expected.sort();
+    let expected: Vec<&str> = expected.iter().map(|(_, line)| line.as_str()).collect();
+    assert_eq!(owed, expected, "{lines:?}");
+    let mut unblocked: Vec<&str> = rows.iter().filter(|row| row.6).map(|row| row.0).collect();
+    unblocked.sort();
+    let line = format!(
+        "open-unblocked count={} items={}",
+        unblocked.len(),
+        unblocked.join(",")
     );
-    assert!(
-        lines.contains(&"open-unblocked count=5 items=KEN-1,KEN-2,KEN-5,KEN-6,KEN-7".to_owned()),
-        "the `blocked` label holds KEN-4 as a relation holds KEN-3: {lines:?}"
-    );
+    assert!(lines.contains(&line), "{line}: {lines:?}");
 }
 
 /// The terminal state read of a GitHub-tracked item and a container's

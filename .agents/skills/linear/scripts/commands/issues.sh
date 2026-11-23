@@ -74,7 +74,8 @@ List Options:
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd|UTC>  Filter by created date; UTC is YYYY-MM-DDTHH:MM:SSZ
   --select <name>      full (default), triage (identity and creation), or owed
-                        (priority, state, labels, verification and container facts).
+                        (priority, state, labels, blockers, verification and
+                        container facts).
                         triage and owed use safe output and pages of 250.
   --limit <n>           Max results (default: 75); a larger value spans pages,
                         and a read that leaves rows unread says so on stderr
@@ -702,7 +703,8 @@ labels { pageInfo { hasNextPage endCursor } nodes { name } }
     elif [[ "$selection" == owed ]]; then
         jq "$ISSUE_RELATION_JQ"'[.issues.nodes[] | {id: .identifier, title, description,
           in_pr_bundle: issue_in_pr_bundle(.description), priority, state: .state.name, state_type: .state.type, parent_id: (.parent.identifier // ""),
-          created_at: .createdAt, blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes), labels: [(.labels.nodes // [])[] | .name]}]' <<<"$result"
+          created_at: .createdAt, blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes),
+          blocked_by: issue_blocked_by_ids(.inverseRelations.nodes), blocked_by_launch: issue_blocked_by_launch_ids(.inverseRelations.nodes), labels: [(.labels.nodes // [])[] | .name]}]' <<<"$result"
         return
     fi
 
@@ -3372,17 +3374,18 @@ block_issue() {
         return 1
     fi
 
-    # Add blocked-by relation. The label and comment are cosmetic; this is the
-    # relation that actually blocks, so its rejection cannot be reported as a
-    # successful block.
+    # Add blocked-by relation. The relation is what holds the launch, so its
+    # rejection cannot be reported as a successful block. The label stays:
+    # on an issue with no blocking relation it holds orch's selection until
+    # `issues unblock` removes it.
     local relation_result
     if ! relation_result=$(add_relation "$issue_id" --blocked-by "$blocker"); then
         jq -cn --arg id "$issue_id" --arg blocker "$blocker" \
-            '{error: ("Blocking relation could not be created between " + $id + " and " + $blocker + " - the blocked label was applied but the issue is NOT blocked")}' >&2
+            '{error: ("Blocking relation could not be created between " + $id + " and " + $blocker + " - the blocked label was applied and no blocking relation holds the issue; the label holds it from orch selection until issues unblock removes it")}' >&2
         return 1
     fi
     if [ "$(echo "$relation_result" | jq -r '.success // .already_exists // false')" != "true" ]; then
-        echo "$relation_result" | jq -c '{error: "Blocking relation was rejected - the blocked label was applied but the issue is NOT blocked", data: .}' >&2
+        echo "$relation_result" | jq -c '{error: "Blocking relation was rejected - the blocked label was applied and no blocking relation holds the issue; the label holds it from orch selection until issues unblock removes it", data: .}' >&2
         return 1
     fi
 
