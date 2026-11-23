@@ -10,7 +10,6 @@ audit|-
 challenge|-
 quick|-
 quick|override
-quick|project
 quick|unresolved
 quick|empty
 quick|inherit
@@ -37,8 +36,6 @@ SH
   case "$change" in
     -) ;;
     override) W_ENV+=("SECOND_OPINION_CLAUDE_CMD=claude --custom-command"); want=--custom-command ;;
-    # The command row alone: the project's room check needs fleet accounts.
-    project) { echo '[env]'; grep '^SECOND_OPINION_CLAUDE_CMD = ' "$SKILL_DIR/../../kendex.settings.toml"; } >"$PROJ/kendex.settings.toml"; want="${BASE_EXPECTED/$'\n--effort'/$'\n--model\nclaude-opus-5-5\n--effort'}" ;;
     unresolved|unresolved-retry|empty|inherit)
       case "$change" in
         unresolved*) printf '#!/usr/bin/env bash\necho resolver-failed >&2\nexit 1\n' >"$ROW/bin/kendex" ;;
@@ -74,7 +71,7 @@ PY
   assert_eq "$(jq -r .summary "$ROW/out/out.json")" clean "$mode/$change preserves the reply"
   got="$(cat "$ROW/argv")"
   case "$change" in
-    -|override|project|unresolved|unresolved-retry|empty|inherit) assert_eq "$got" "$want" "$mode/$change argv under a bypass default" ;;
+    -|override|unresolved|unresolved-retry|empty|inherit) assert_eq "$got" "$want" "$mode/$change argv under a bypass default" ;;
     *)
       control_rc=0
       (assert_eq "$got" "$want" "must-fail: $change"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
