@@ -26,12 +26,6 @@ LINEAR_TEAM_PREFIX = "KEN"
 # such an issue is invisible to agent routing. Empty = guard off.
 LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:human, agent:runtime, agent:rust, agent:iced, agent:frontend, agent:swift"
 
-# When the review signal never arrives: "block" reports a timeout;
-# "proceed" moves on only where no reviewer engaged and no thread is open
-# (skills/orch/references/settings.md). Comment-only bots can go silent on a
-# trivial head, so a silent round proceeds rather than stalling the session.
-PR_REVIEW_ON_TIMEOUT = "proceed"
-
 # Who the overseer is talking to: "ceo" or "engineer"; what each value
 # means: skills/orch/references/communication-modes.md.
 # values: ceo | engineer
