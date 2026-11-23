@@ -74,11 +74,16 @@ STUB="${ONE_JOB_STUB_HARNESS:-$TEST_DIR/job/stub-harness}"
 unset ORCH_STATE_DIR ORCH_DELIVERY ORCH_PR_ORDER AGENT_RUNTIME_TMUX_SESSION AGENT_RUNTIME_HARNESS_BINARIES AGENT_RUNTIME_LAUNCH_PERMISSION \
   AGENT_RUNTIME_TMUX_VERIFY_SECS ORCH_LANE_CLOSE_SECS DEV_VALIDATE_CMD DEV_VALIDATE_RANGE_CMD DEV_VALIDATE_CI_CONTEXT \
   DEV_VALIDATE_SELECTION_CMD WORKTREE_DEFAULT_BRANCH WORKTREE_BASE_DIR WORKTREE_SYMLINKS \
-  KENDEX_ENV_FILE GH_REPO GITHUB_REPOSITORY GITHUB_TOKEN GH_BOT_TOKEN KENDEX_SESSION_OWNER HT_SESSION_OWNER \
+  KENDEX_ENV_FILE GH_REPO GITHUB_REPOSITORY GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN KENDEX_SESSION_OWNER HT_SESSION_OWNER \
   CI_WAIT_MAX_SECS ORCH_ROUND_PRUNE_DISK_PCT ORCH_LANE_WRITABLE
 one_job_bin "$TMP_ROOT/bin"
 export PATH="$TMP_ROOT/bin:$SEALED:$PATH"
 mkdir -p "$TMP_ROOT/home"
+# The lane's Claude account holds a stored login, as a signed-in one does: a
+# launch on a named Claude account with none refuses before any window opens
+# (agent_runtime::accounts::usage::SignIn::launch). The stub harness never
+# reads it; no refresh expiry is stated, so it never lapses.
+jq -n '{claudeAiOauth: {accessToken: "one-job", subscriptionType: "max"}}' > "$TMP_ROOT/home/.credentials.json"
 one_job_server "$TMP_ROOT/server" fleet
 # The runtime resolves the fleet server from its own $TMUX, as a lane does.
 export TMUX="$ONE_JOB_SOCKET,0,0"
@@ -144,13 +149,19 @@ validate_stages() { # STATE ROUND_ID
 
 # launch_lane NAME ROOT REQUEST — one launch-lane op (skills/orch/workflows/oversee.md § 3):
 # confirmed, running, the recorded pid the stub. Sets PID and PANE. Returns 1
-# on a refused launch, after failing the row.
+# on a refused or failed launch, after failing the row.
 launch_lane() { # NAME ROOT REQUEST
-  local launched cmdline
+  local launched cmdline outcome
   launched="$(cd "$main" && "$orch/orch-runtime" op --fleet --request "$3" 2>"$2/launch.err")" \
     || { fail "$1: launch-lane" "$(cat "$2/launch.err")"; return 1; }
-  assert_eq "$(jq -r '.result.effect.report.intent.outcome + " " + .result.effect.report.lane.status' <<<"$launched")" \
-    "confirmed running" "$1: the launch confirms and the lane runs"
+  outcome="$(jq -r '.result.effect.report.intent.outcome + " " + .result.effect.report.lane.status' <<<"$launched")"
+  # A launch the op recorded as failed opened no lane, so no row after it
+  # can pass: the row stops here rather than wait out its lane bounds.
+  assert_eq "$outcome" "confirmed running" "$1: the launch confirms and the lane runs"
+  if [[ "$outcome" != "confirmed running" ]]; then
+    printf '        intent:   %s\n' "$(jq -c '.result.effect.report.intent' <<<"$launched")"
+    return 1
+  fi
   PID="$(jq -r '.result.effect.report.lane.launch.pid' <<<"$launched")"
   PANE="$(jq -r '.result.effect.report.lane.launch.pane' <<<"$launched")"
   cmdline="$(tr '\0' ' ' < "/proc/$PID/cmdline" 2>/dev/null || echo unreadable)"
