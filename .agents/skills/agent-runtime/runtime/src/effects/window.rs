@@ -274,11 +274,12 @@ impl Operation<'_> {
     /// printing its pane, has its one pane closed again by exact
     /// id and that close discharged by its own answer.
     ///
-    /// A start `alone` over a session whose one window is an idle shell
-    /// ([`tmux::sole_idle_shell`]) runs its line in that shell instead, so
-    /// the session holds the controller's window alone. A listing that does
-    /// not answer opens a window as every other case does: a window of the
-    /// effect's own touches nothing of the session's.
+    /// A launch `alone` over a session whose one window is an idle shell
+    /// ([`tmux::sole_idle_shell`]) runs its line in that shell instead, and
+    /// the shell's window takes `name`, so the session holds the
+    /// controller's window alone under the name a new one would have. A
+    /// listing that does not answer opens a window as every other case
+    /// does: a window of the effect's own touches nothing of the session's.
     pub fn open_window(
         &mut self,
         server: &Server,
@@ -297,7 +298,7 @@ impl Operation<'_> {
             Err(e) => return Ok(Err(OpenRefusal::Refused(e))),
         };
         if alone && let Reading::Live(Some(shell)) = tmux::sole_idle_shell(server, session) {
-            return self.run_in_idle_shell(shell, &line, opening, &receipt_path);
+            return self.run_in_idle_shell(shell, name, &line, opening, &receipt_path);
         }
         let asked = Opening {
             asked: true,
@@ -459,10 +460,12 @@ impl Operation<'_> {
     /// prompts again, and the runtime runs only the line it wrote. Until the
     /// receipt nothing of the effect closes or stops the shell, since it may
     /// still be the person's: a line refused before its paste leaves the
-    /// shell standing as it is.
+    /// shell standing as it is, its name among it. Once the receipt names
+    /// it, its window takes `name`.
     fn run_in_idle_shell(
         &mut self,
         shell: Pane,
+        name: &str,
         line: &str,
         opening: &Opening,
         receipt_path: &Path,
@@ -499,6 +502,12 @@ impl Operation<'_> {
                     self.harness,
                 );
                 self.write()?;
+                // A refused rename leaves the launch standing: the line
+                // already runs in the pane, and a rename of a window the
+                // receipt just named is refused only for a window or server
+                // gone or a host that does not answer, which the caller's
+                // wait on the pane reads next.
+                let _ = tmux::rename_window(&shell, name);
                 return Ok(Ok(shell));
             }
             if self.now() >= deadline {

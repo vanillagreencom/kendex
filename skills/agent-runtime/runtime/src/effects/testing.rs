@@ -16,11 +16,11 @@ use crate::record::{Document, Locking};
 use crate::settings::{ENGINE_KEYS, EngineSettings, Judged, Keys};
 
 /// A fleet record with a controller at generation 3 and its lanes.
-pub(super) const FLEET: &str =
+pub(crate) const FLEET: &str =
     include_str!("../../../tests/rust/fixtures/workflow-state-oversee.json");
 
 /// The engine's settings with no key set: every bound at its default.
-pub(super) fn settings(dir: &Path) -> EngineSettings {
+pub(crate) fn settings(dir: &Path) -> EngineSettings {
     let keys = Keys {
         read: &[ENGINE_KEYS],
         load: &[],
@@ -43,7 +43,7 @@ fn no_target(
 
 /// The engine's run over the record at `path`, its files under `dir`, the
 /// owner notice run by `mail_program` under `dir`, no tmux server named.
-pub(super) fn run<'a>(
+pub(crate) fn run<'a>(
     path: &'a Path,
     settings: &'a EngineSettings,
     env: &'a Env,

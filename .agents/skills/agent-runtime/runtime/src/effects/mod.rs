@@ -62,7 +62,7 @@ mod obligations;
 pub mod prepare;
 mod receipt;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 mod window;
 
 use std::collections::BTreeMap;

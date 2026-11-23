@@ -905,6 +905,15 @@ fn names_pane_on(overseer: &Overseer, server: &Server) -> bool {
         && number("server_start") == Some(server.start)
 }
 
+/// Whether the launch may run in the session's idle shell on `server`: a
+/// start's and a transfer's alike, never where the record names a pane on
+/// that server, since that pane is the predecessor's, whose window the
+/// retirement closes. A stopped record names none, and one written before
+/// the server restarted names a pane on another.
+fn adopts_idle_shell(overseer: &Overseer, server: &Server) -> bool {
+    !names_pane_on(overseer, server)
+}
+
 fn succeed(
     run: &Run,
     intent_id: &str,
@@ -1077,10 +1086,7 @@ fn succeed(
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
     })?;
-    // A start may run in the session's idle shell, never in a pane the record
-    // names on this server: that is the predecessor's, whose window the
-    // retirement closes. A stopped record names none.
-    let alone = mode == Mode::Start && !names_pane_on(&overseer, &server);
+    let alone = adopts_idle_shell(&overseer, &server);
     let window = operation.open_window(
         &server,
         &session,
@@ -2693,5 +2699,144 @@ fn recorded_runner(phase: &Phase) -> Option<Identity> {
         | Phase::Delivering { opened, .. }
         | Phase::Delivered { opened, .. } => opened.identity.clone(),
         Phase::Opening { .. } | Phase::CloudCreate { .. } | Phase::Preparing { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effects::testing;
+    use crate::host::tmux;
+
+    /// The windows a session holds once the controller's launch ran over it,
+    /// the session made as fleet makes one: a single idle shell, its window
+    /// named `shell`. `record` is the controller record, given the server.
+    /// Returns the shell's pane, the launch's, and each window's pane and
+    /// name.
+    fn launch_over_idle_shell(
+        record: impl Fn(&Server) -> Value,
+    ) -> (String, String, Vec<(String, String)>) {
+        let dir = tempfile::tempdir().unwrap();
+        let private = tmux::Private::start(dir.path());
+        let server = &private.0;
+        let shell = private.idle_shell();
+        tmux::rename_window(&shell, "shell").unwrap();
+        let overseer: Overseer = serde_json::from_value(record(server)).unwrap();
+
+        let settings = testing::settings(dir.path());
+        let env = crate::journal::Env {
+            now_secs: 1,
+            now_nanos: 1_000_000_000,
+            nonce: 77,
+            owner: None,
+        };
+        let path = dir.path().join(crate::record::FLEET_FILE_NAME);
+        let run = testing::run(
+            &path,
+            &settings,
+            &env,
+            dir.path(),
+            dir.path().join("lane-mail"),
+            &crate::clock::SystemClock,
+        );
+        let intent = json!({
+            "id": "start-controller:1-1", "op": "start-controller", "target": "controller",
+            "revision": 0, "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed"
+        });
+        let mut fleet: Value = serde_json::from_str(testing::FLEET).unwrap();
+        fleet["intents"] = json!([intent]);
+        std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
+        let intent: Intent = serde_json::from_value(intent).unwrap();
+        let mut operation = Operation::open(
+            &run,
+            &intent,
+            Bootstrap::Launch {
+                launch: None,
+                harness: Some(Harness::Claude),
+                auxiliary: None,
+            },
+        )
+        .unwrap();
+        let opening = operation
+            .opening(server, &SessionFloor::Baseline(vec![]), None, None, false)
+            .unwrap();
+        let command = LaunchCommand {
+            program: "/bin/sleep".to_owned(),
+            args: vec!["30".to_owned()],
+            env: Default::default(),
+            env_remove: vec![],
+            env_files: Default::default(),
+            cwd: dir.path().to_path_buf(),
+            brief_arg: None,
+            brief_path: None,
+            confinement: None,
+        };
+        let alone = adopts_idle_shell(&overseer, server);
+        let Ok(Ok(launched)) =
+            operation.open_window(server, "t", "overseer", &command, &opening, alone)
+        else {
+            panic!("the launch's window opened");
+        };
+        let Reading::Live(windows) = tmux::list_windows(server, "t") else {
+            panic!("the session's windows read");
+        };
+        let windows = windows
+            .into_iter()
+            .map(|(_, pane, name)| (pane, name))
+            .collect();
+        (shell.id, launched.id, windows)
+    }
+
+    /// A start over a stopped record, or a transfer whose record names its
+    /// predecessor on a server since restarted, runs in the session's idle
+    /// shell and leaves one window, named as a new one would be. A record
+    /// naming a pane on the session's own server names the predecessor's, so
+    /// the launch opens its own window beside the shell.
+    #[test]
+    fn the_idle_shell_is_adopted_under_the_launch_name_unless_the_record_names_a_pane_on_its_server()
+     {
+        type Record = fn(&Server) -> Value;
+        let rows: [(&str, Record, bool); 3] = [
+            ("start, stopped record", |_| json!({}), true),
+            (
+                "transfer, server restarted",
+                |server| {
+                    json!({
+                        "pane": "%0",
+                        "server": u64::from(server.pid) + 1,
+                        "server_start": server.start,
+                    })
+                },
+                true,
+            ),
+            (
+                "transfer, predecessor on this server",
+                |server| {
+                    json!({
+                        "pane": "%0",
+                        "server": server.pid,
+                        "server_start": server.start,
+                    })
+                },
+                false,
+            ),
+        ];
+        for (row, record, adopted) in rows {
+            let (shell, launched, windows) = launch_over_idle_shell(record);
+            if adopted {
+                assert_eq!(launched, shell, "{row}");
+                assert_eq!(windows, vec![(shell, "overseer".to_owned())], "{row}");
+            } else {
+                assert_ne!(launched, shell, "{row}");
+                assert_eq!(
+                    windows,
+                    vec![
+                        (shell, "shell".to_owned()),
+                        (launched, "overseer".to_owned())
+                    ],
+                    "{row}"
+                );
+            }
+        }
     }
 }

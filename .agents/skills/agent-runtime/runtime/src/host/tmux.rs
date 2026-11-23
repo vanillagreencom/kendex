@@ -1160,6 +1160,22 @@ pub fn set_window_option(pane: &Pane, name: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Name the pane's window `name`, spelled as [`new_window`] spells it, since
+/// `rename-window` expands formats in its name as `new-window -n` does. It
+/// turns the window's `automatic-rename` off, as tmux 3.8 answers, so the
+/// command the window runs next leaves the name standing.
+pub fn rename_window(pane: &Pane, name: &str) -> Result<()> {
+    let client = confirm(&pane.server)?;
+    let name = literal(name);
+    tmux(
+        &client,
+        &pane.server.socket,
+        "rename-window",
+        &["rename-window", "-t", &pane.window, "--", &name],
+    )?;
+    Ok(())
+}
+
 /// Close the pane's whole window, for a caller that owns the window: every
 /// pane in it goes.
 pub fn kill_window(pane: &Pane) -> Close {
@@ -1240,6 +1256,35 @@ impl Private {
 }
 
 #[cfg(test)]
+impl Private {
+    /// The session's one pane respawned at `exec /bin/sh`, so its process is
+    /// the shell itself at its prompt, as a pane tmux opens at the person's
+    /// own shell stands; returned once [`sole_idle_shell`] reads it so.
+    pub(crate) fn idle_shell(&self) -> Pane {
+        let server = &self.0;
+        let client = confirm(server).expect("the private server answers");
+        tmux(
+            &client,
+            &server.socket,
+            "respawn-pane",
+            &["respawn-pane", "-k", "-t", "%0", "exec /bin/sh"],
+        )
+        .expect("the pane respawns");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Reading::Live(Some(pane)) = sole_idle_shell(server, "t") {
+                return pane;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the respawned shell reads idle"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+#[cfg(test)]
 impl Drop for Private {
     fn drop(&mut self) {
         let _ = kill_server(&self.0);
@@ -1288,22 +1333,34 @@ mod tests {
         }
     }
 
+    /// A window opened under a name, or renamed to it, reads that name as
+    /// spelled.
     #[test]
-    fn new_windows_keep_literal_names() {
+    fn windows_keep_literal_names() {
         let dir = tempfile::tempdir().unwrap();
         let private = Private::start(dir.path());
         let server = &private.0;
+        let named = |pane: &Pane| {
+            let Reading::Live(windows) = list_windows(server, "t") else {
+                panic!("the windows must read");
+            };
+            windows
+                .into_iter()
+                .find(|(window, _, _)| window == &pane.window)
+                .map(|(_, _, name)| name)
+        };
         for name in ["helper;", "helper-#{window_name}"] {
             let pane = new_window(server, "t", name, dir.path())
                 .unwrap_or_else(|error| panic!("{name:?}: {error:?}"));
-            let Reading::Live(windows) = list_windows(server, "t") else {
-                panic!("{name:?}: the windows must read");
-            };
-            assert_eq!(
-                windows.iter().find(|(window, _, _)| window == &pane.window),
-                Some(&(pane.window.clone(), pane.id.clone(), name.to_owned())),
-                "{name:?}"
-            );
+            assert_eq!(named(&pane).as_deref(), Some(name), "new-window {name:?}");
+        }
+        let Reading::Live(fields) = pane_fields(server, "%0") else {
+            panic!("the session's first pane is live");
+        };
+        let first = fields.pane;
+        for name in ["helper;", "helper-#{window_name}"] {
+            rename_window(&first, name).unwrap_or_else(|error| panic!("{name:?}: {error:?}"));
+            assert_eq!(named(&first).as_deref(), Some(name), "rename {name:?}");
         }
     }
 
