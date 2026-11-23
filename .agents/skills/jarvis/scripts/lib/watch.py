@@ -1004,8 +1004,9 @@ class Watch:
     def wall(self):
         """The bound controller's wall: (session, pane, account, kind), kind
         None for a session its rows do not read walled; None with no bound
-        controller, as presence reads it; a Failure where the rows were not
-        judged, the runtime's refusal of the read included."""
+        controller, as presence reads it, a refused status read included; a
+        Failure where the bound controller's rows were not judged, the
+        runtime's refusal of the verdict read included."""
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "wall", self.home], operation="controller-wall")
             if result.returncode:
@@ -1041,8 +1042,10 @@ class Watch:
             if memory["outcome"] is None and reading is not None:
                 # The loop that started the succession ended before its answer,
                 # as one under the predecessor's harness does once the
-                # predecessor ends: another controller in control is its proof.
-                memory["outcome"] = (replaced(reading[2]) if reading[:2] != (memory["session"], memory["pane"]) else
+                # predecessor ends: another session in control is its proof. A
+                # successor is always a new session; the walled one resumed in
+                # another pane replaced nothing.
+                memory["outcome"] = (replaced(reading[2]) if reading[0] != memory["session"] else
                                      "The replacement's outcome was not read; jarvis-session status shows it.")
             if memory["outcome"] is not None:
                 self.notify(memory)

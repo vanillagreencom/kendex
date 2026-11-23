@@ -67,8 +67,10 @@ Every 30 seconds the loop reads the home's own controller for a wall: `jarvis-en
 - It then sends the owner one notice, `lane-mail notice --item overseer --to owner`, naming the cause, the account and the succession's outcome: the account the successor runs on, or the refusal and its detail.
 - A wall is one episode of one controller, its session in its pane.
 - A wall already reported starts nothing and sends nothing again until its episode ends: the controller in control reads unwalled, or another controller is walled, such as a successor or a session resumed in another pane.
-- When the loop ends with the predecessor before the succession answers, the next loop sends the owed notice once a successor is in control.
-- An unreadable reading, the runtime's refusal of the read included, reports `root-unreachable` once and starts nothing. An unsent notice reports `root-unreachable` once and is retried each check.
+- When the loop ends with the predecessor before the succession answers, the next loop sends the owed notice once a controller is bound. The notice names the successor's account when another session is in control, and says the outcome was not read when the walled session is, in any pane.
+- An unreadable verdict of the bound controller's rows, the runtime's refusal of that read included, reports `root-unreachable` once and starts nothing. So does a missing agent-runtime or mailbox package.
+- A status read the runtime refuses binds no controller, as presence reads it, so the check starts and sends nothing.
+- An unsent notice reports `root-unreachable` once and is retried each check.
 
 A host change takes effect after a stop and restart.
 

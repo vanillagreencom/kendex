@@ -2083,7 +2083,8 @@ with open(sys.argv[1], "ab") as out:
         context stamp a day old: agent-runtime's status read is planted, and
         the real rows verdict judges ROW, an object or a raw line, as the
         session's last row. VERDICT is the stderr line of a runtime that
-        refuses the rows read; RUNTIME false leaves no runtime installed."""
+        answers the status read and then refuses the verdict read with the
+        wrapper's exit 69; RUNTIME false leaves no runtime installed."""
         directory = self.packages / "agent-runtime"
         if directory.is_symlink():
             directory.unlink()
@@ -2092,7 +2093,7 @@ with open(sys.argv[1], "ab") as out:
         script.unlink(missing_ok=True)
         status = self.root / "status.json"
         if runtime:
-            refusal = ('if [ "$1 $2" = "rows verdict" ]; then echo ' + shlex.quote(verdict) + ' >&2; exit 1; fi\n'
+            refusal = ('if [ "$1 $2" = "rows verdict" ]; then echo ' + shlex.quote(verdict) + ' >&2; exit 69; fi\n'
                        if verdict else "")
             script.write_text('#!/bin/sh\nif [ "$1 $2" = "controller status" ]; then cat ' + shlex.quote(str(status))
                               + '; exit 0; fi\n' + refusal + 'exec '
@@ -2148,33 +2149,53 @@ with open(sys.argv[1], "ab") as out:
         usage = dict(auth, row={"event": "StopFailure", "error": "rate_limit"})
         quiet = dict(auth, row={"event": "Stop"})
         signed_out = ["signed out", "/accounts/a"]
-        # Each row: the session command's answer and exit, whether lane-mail
-        # refuses the first notice, then one check per step. A step plants
-        # the controller (None keeps the last) and counts what that check
-        # adds: succeed runs, owner notices by the words each names, and
+        # Each row: the session command's answer and exit, its world, then
+        # one check per step. The world names how many notices lane-mail
+        # refuses first, and the step whose loop ends before its succession
+        # answers; a new loop runs the steps after it. A step plants the
+        # controller (None keeps the last) and counts what that check adds:
+        # succeed runs, owner notices by the words each names, and
         # root-unreachable events.
-        for name, (answer, code), unsent, steps in (
-                ("auth", running, False, [(auth, 1, [signed_out + ["/accounts/b"]], 0), (None, 0, [], 0)]),
-                ("usage", running, False, [(usage, 1, [["no room", "/accounts/a", "/accounts/b"]], 0), (None, 0, [], 0)]),
-                ("refused", refused, False, [(auth, 1, [signed_out + [refusal]], 0), (None, 0, [], 0)]),
-                ("no answer", (None, 1), False, [(auth, 1, [signed_out + ["No replacement", "launch-failed"]], 0),
+        for name, (answer, code), world, steps in (
+                ("auth", running, {}, [(auth, 1, [signed_out + ["/accounts/b"]], 0), (None, 0, [], 0)]),
+                ("usage", running, {}, [(usage, 1, [["no room", "/accounts/a", "/accounts/b"]], 0), (None, 0, [], 0)]),
+                ("refused", refused, {}, [(auth, 1, [signed_out + [refusal]], 0), (None, 0, [], 0)]),
+                ("no answer", (None, 1), {}, [(auth, 1, [signed_out + ["No replacement", "launch-failed"]], 0),
                                                  (None, 0, [], 0)]),
-                ("unwalled", running, False, [(quiet, 0, [], 0), (None, 0, [], 0)]),
+                ("unwalled", running, {}, [(quiet, 0, [], 0), (None, 0, [], 0)]),
                 # A refused succession leaves the walled session in control;
                 # once it recovers in place, its next wall is another one.
-                ("recovered", refused, False, [(auth, 1, [signed_out + [refusal]], 0), (None, 0, [], 0),
+                ("recovered", refused, {}, [(auth, 1, [signed_out + [refusal]], 0), (None, 0, [], 0),
                                                (quiet, 0, [], 0), (usage, 1, [["no room", refusal]], 0)]),
                 # A session resumed in another pane is another controller.
-                ("resumed", refused, False, [(auth, 1, [signed_out], 0), (dict(usage, pane="%4"), 1, [["no room"]], 0)]),
+                ("resumed", refused, {}, [(auth, 1, [signed_out], 0), (dict(usage, pane="%4"), 1, [["no room"]], 0)]),
                 # The successor's own wall is its own episode.
-                ("successor walled", ({"state": "running", "account": "/accounts/c"}, 0), False,
+                ("successor walled", ({"state": "running", "account": "/accounts/c"}, 0), {},
                  [(auth, 1, [signed_out + ["/accounts/c"]], 0),
                   (dict(usage, session="s2", account="/accounts/b"), 1, [["no room", "/accounts/b", "/accounts/c"]], 0)]),
-                ("unreadable row", running, False, [(dict(auth, row='{"event": "StopFail'), 0, [], 1), (None, 0, [], 0)]),
-                ("rows read refused", running, False,
-                 [(dict(auth, verdict="agent-runtime: setup-required"), 0, [], 1), (None, 0, [], 0)]),
-                ("runtime missing", running, False, [(dict(auth, runtime=False), 0, [], 1), (None, 0, [], 0)]),
-                ("notice unsent", running, True, [(auth, 1, [], 1), (None, 0, [signed_out + ["/accounts/b"]], 0)])):
+                ("unreadable row", running, {}, [(dict(auth, row='{"event": "StopFail'), 0, [], 1), (None, 0, [], 0)]),
+                # A runtime that answers the status read and then refuses the
+                # verdict read, as the wrapper does once its setup goes stale
+                # between the two. One that refuses the status read binds no
+                # controller, as presence reads it.
+                ("verdict read refused", running, {},
+                 [(dict(auth, verdict="agent-runtime: setup-required key=abc run=/x/setup"), 0, [], 1),
+                  (None, 0, [], 0)]),
+                ("runtime missing", running, {}, [(dict(auth, runtime=False), 0, [], 1), (None, 0, [], 0)]),
+                # A notice owed past the succession, with the successor quiet
+                # in control, stays owed until it is sent.
+                ("notice unsent", running, dict(refusals=2),
+                 [(auth, 1, [], 1), (dict(quiet, session="s2", account="/accounts/b"), 0, [], 0),
+                  (None, 0, [signed_out + ["/accounts/b"]], 0)]),
+                # The predecessor's end takes its loop before the succession
+                # answers: the next loop tells the owner once a controller is
+                # bound, the successor's account when it is another session.
+                ("ended successor", running, dict(ends=0),
+                 [(auth, 0, [], 0), (dict(quiet, session="s2", account="/accounts/b"), 0,
+                                     [signed_out + ["/accounts/b"]], 0)]),
+                # The walled session resumed in another pane replaced nothing.
+                ("ended resumed", running, dict(ends=0),
+                 [(auth, 0, [], 0), (dict(quiet, pane="%4"), 0, [signed_out + ["not read"]], 0)])):
             with self.subTest(row=name):
                 # Each row's own home: the mailbox refuses an equal notice
                 # within a minute, as a retry.
@@ -2183,9 +2204,10 @@ with open(sys.argv[1], "ab") as out:
                     # The log keeps every event: no batch settles and takes it.
                     self.settings.update(JARVIS_LOG_DIR=str(self.root / ("log-" + name)), JARVIS_WAKE_SETTLE_SECS="86400")
                     log = self.session_command(answer, code)
-                    if unsent:
-                        self.intercept_mail('if [ "$1" = notice ] && [ ! -e ' + shlex.quote(str(log) + ".refused") + ' ]; then\n'
-                                            ': > ' + shlex.quote(str(log) + ".refused")
+                    if world.get("refusals"):
+                        refusals = shlex.quote(str(log) + ".refused")
+                        self.intercept_mail(': >> ' + refusals + '\nif [ "$1" = notice ] && [ "$(wc -l < ' + refusals
+                                            + ')" -lt ' + str(world["refusals"]) + ' ]; then\necho >> ' + refusals
                                             + '\necho "lane-mail: send-failed=owner" >&2\nexit 1\nfi')
                     watch = self.watch()
                     runs, told, alerts = 0, [], 0
@@ -2193,7 +2215,10 @@ with open(sys.argv[1], "ab") as out:
                         for index, (plant, ran, named, alerted) in enumerate(steps):
                             if plant is not None:
                                 self.controller(**plant)
-                            self.wall_passes(watch, 30 * index)
+                            ended = world.get("ends") == index
+                            self.wall_passes(watch, 30 * index, succeeding=not ended)
+                            if ended:
+                                watch = self.watch()
                             runs, alerts = runs + ran, alerts + alerted
                             told += named
                             succeeded = log.read_text().splitlines() if log.exists() else []
@@ -2207,22 +2232,6 @@ with open(sys.argv[1], "ab") as out:
                             self.assertEqual(len(re.findall(r"^EVENT root-unreachable", events, re.M)), alerts, events)
                     finally:
                         shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
-
-    def test_a_loop_that_ends_during_its_succession_leaves_the_notice_owed(self):
-        # The failure it stops: the predecessor's end takes its own loop with
-        # it before the succession answers, and the owner is never told.
-        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
-            self.controller("s1", "/accounts/a", {"event": "StopFailure", "error": "authentication_failed"})
-            log = self.session_command({"state": "running", "account": "/accounts/b"}, 0)
-            self.wall_passes(self.watch(), 0, succeeding=False)
-            self.assertEqual(self.owner_notices(), [])
-            self.controller("s2", "/accounts/b", {"event": "Stop"})
-            self.wall_passes(self.watch(), 30)
-            notices = self.owner_notices()
-            self.assertEqual(len(notices), 1, notices)
-            for word in ("signed out", "/accounts/a", "/accounts/b"):
-                self.assertIn(word, notices[0])
-            self.assertFalse(log.exists())
 
     def test_forward_cadence_and_answer_event_restart(self):
         self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home")
@@ -2474,10 +2483,12 @@ with open(sys.argv[1], "ab") as out:
                 (walled, controller, 'session == memory["session"]'),
                 # Another controller's wall is its own episode.
                 (walled, 'or not memory["noticed"]):', "or True):"),
-                # An unwalled reading ends the episode.
+                # An unwalled reading ends the episode, once its notice is sent.
                 (walled, 'if memory is not None and memory["noticed"] and reading is not None and kind is None:',
                  "if False:"),
-                # A refused rows read, an unreadable row and a missing runtime each report.
+                (walled, 'if memory is not None and memory["noticed"] and reading is not None and kind is None:',
+                 "if memory is not None and reading is not None and kind is None:"),
+                # A refused verdict read, an unreadable row and a missing runtime each report.
                 (walled, 'raise child_failure("controller-wall", verdict)', "return None"),
                 (walled, 'raise Failure("controller-wall", "rows", "unreadable", rows["cause"])', "return None"),
                 (walled, 'return error if error.record["key"][1:] == ["refusal", "dependency"] else None', "return None"),
@@ -2486,8 +2497,9 @@ with open(sys.argv[1], "ab") as out:
                 # A succession with no answer tells its refusal.
                 (walled, '"No replacement started: " + answer.record["detail"][:200] + "."', '"No replacement started."'),
                 # A successor in control settles the notice its predecessor's loop owed.
-                ("test_a_loop_that_ends_during_its_succession_leaves_the_notice_owed",
-                 'if memory["outcome"] is None and reading is not None:', "if False:"),
+                (walled, 'if memory["outcome"] is None and reading is not None:', "if False:"),
+                # A successor is another session; the walled one in another pane is not.
+                (walled, 'reading[0] != memory["session"]', 'reading[:2] != (memory["session"], memory["pane"])'),
                 # A satellite reads no other root.
                 ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()"),
                 # The control host's presence pass runs as JARVIS_CONTROL_USER.

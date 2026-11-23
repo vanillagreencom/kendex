@@ -62,8 +62,9 @@ jarvis_live() {
 # The bound session, whatever the context stamp's age, with its pane, its
 # recorded account and the rows file its hooks write for that pane: the one
 # the stop-failure-row hook names, the pane number without its `%`. The
-# caller reads the rows' verdict itself, so a refused read is never taken for
-# an unbound session.
+# caller reads the rows' verdict itself, so a refused verdict read is never
+# taken for an unbound session; a refused status read binds nothing, as
+# presence reads it.
 jarvis_wall() {
   local runtime box server pane at status
   jarvis_bound "$1" || return 1
