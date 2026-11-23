@@ -112,7 +112,7 @@ The runtime's settings reader and the shell loader `scripts/lib/kendex-env.sh` r
 ## Debug
 
 - `skills/orch/scripts/orch-runtime ready` prints each duty's readiness and the fix for an unready one. `--duty D` asks about one.
-- A confined lane writes its checkout and, of the state directory, only its item's own folder `items/<ITEM>/` (`of` in `runtime/src/effects/grants.rs`). An overseer-owned act such a lane reaches leaves the act to the overseer and changes nothing.
+- A confined lane writes its checkout, a `read_only` one only the checkout's `tmp`, and, of the state directory, only its item's own folder `items/<ITEM>/` (`of` in `runtime/src/effects/grants.rs`). An overseer-owned act such a lane reaches leaves the act to the overseer and changes nothing.
 
 ## Harness update
 

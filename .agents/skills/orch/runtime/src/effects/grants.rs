@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use super::refused;
 use crate::error::Result;
 use crate::settings::Settings;
+use crate::state::Lane;
 
 /// The grants as JSON, the lane's to read.
 const GRANTS_FILE: &str = "grants.json";
@@ -303,6 +304,13 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 /// refused `grant-tmp-linked`: the link's target is shared, the state
 /// directory or another lane's folder among what it can hold. A Codex lane whose home holds a link leading outside these grants
 /// runs unconfined under `linked-seat` ([`linked_seat`]).
+///
+/// A `read_only` record's lane is granted its checkout's `tmp` in place of
+/// the checkout and its common git folder, so it writes no tracked file,
+/// ref or index: its admission held no path on that grant. Its `tmp` must
+/// stand as a folder of its own, since a link would grant what it leads
+/// to, and a launch the confinement cannot hold, a `linked-seat` Codex
+/// lane's among them, refuses `read-only-unconfined`.
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's reads of the paths it grants and of `gh auth token`, before the window; it writes nothing"
@@ -314,15 +322,29 @@ pub(super) fn of(
     harness: Harness,
     account: Option<&Path>,
     homes: &LaunchHome,
-    desktop: bool,
+    lane: &Lane,
 ) -> Result<Granted> {
     let item = crate::marker::item_name(item)?;
+    // The display and the read-only checkout are the record's: a relaunch
+    // or a recovery keeps what the first launch was granted.
+    let desktop = lane
+        .extra
+        .get("desktop")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let checkout = crate::marker::checkout(mail_root)?;
     let root = resolved(&checkout.root).unwrap_or_else(|| checkout.root.clone());
     let answer = confine::answer(Host::this(), harness);
     let tmp = checkout.root.join("tmp");
+    let own_tmp = root.join("tmp");
     if answer == Answer::Confined
-        && let Some(target) = resolved(&tmp).filter(|t| !t.starts_with(&root))
+        && let Some(target) = resolved(&tmp).filter(|t| {
+            if lane.read_only {
+                *t != own_tmp
+            } else {
+                !t.starts_with(&root)
+            }
+        })
     {
         return Err(refused(
             "grant-tmp-linked",
@@ -332,12 +354,16 @@ pub(super) fn of(
             ],
         ));
     }
-    let mut writable = vec![root.clone()];
+    let mut writable = vec![if lane.read_only {
+        own_tmp
+    } else {
+        root.clone()
+    }];
     let mut read_only = Vec::new();
     let mut kept = Vec::new();
     let mut missing = Vec::new();
     if let Some(common) = resolved(&checkout.common) {
-        if !common.starts_with(&root) {
+        if !lane.read_only && !common.starts_with(&root) {
             writable.push(common.clone());
         }
         for name in ["hooks", "config"] {
@@ -498,6 +524,21 @@ pub(super) fn of(
     } else {
         answer
     };
+    if lane.read_only
+        && let Answer::Unconfined { cause } = answer
+    {
+        return Err(refused(
+            "read-only-unconfined",
+            &[
+                ("item", item),
+                ("harness", harness.name()),
+                (
+                    "cause",
+                    serde_json::to_value(cause)?.as_str().unwrap_or_default(),
+                ),
+            ],
+        ));
+    }
     let own_cache = (answer == Answer::Confined).then(|| root.join("tmp").join(OWN_RUNTIME_CACHE));
     let own_caches = match answer {
         Answer::Confined => OWN_CACHES

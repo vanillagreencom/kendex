@@ -1480,6 +1480,111 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
     assert!(inbox(&root, "KEN-H").is_empty());
 }
 
+/// A lane whose confinement binds its checkout read-only touches no path.
+/// Beside a running hosted holder of its item's Location path, the lane
+/// that writes is refused `join-unreachable`; the read-only one meets no
+/// holder and is recorded `read_only` with an empty touched set, which its
+/// relaunch keeps, while a launch over its `done` record naming none
+/// records a writing lane. The tier still classifies the Location paths: a
+/// read-only brief requesting `micro` over an instruction file is refused
+/// `tier-narrower`. A read-only lane this machine cannot confine, on a
+/// Copilot harness or a host, is refused `read-only-unconfined`. Each
+/// refusal writes nothing.
+#[test]
+fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refused() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let mut hosted = holder("KEN-R", "running", None, Some(&["src/r.sh"]));
+    hosted["host"] = json!("/w/provider");
+    hosted["kind"] = json!("ssh");
+    fleet.write_lanes(vec![hosted]);
+    fleet.item("KEN-P", "`src/r.sh`, `skills/x/SKILL.md`", 0, &[]);
+    let checkout = fleet.checkout("p", None);
+    let before = fleet.fleet();
+    let read_only = |fields: Value| {
+        let mut request = launch("KEN-P", &checkout);
+        request["read_only"] = json!(true);
+        for (key, value) in fields.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        request
+    };
+
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-P", &checkout)));
+    assert_eq!(key, "join-unreachable", "{fields:?}");
+    assert_eq!(fleet.fleet(), before, "nothing written");
+
+    for (fields, harness, cause) in [
+        (
+            json!({"harness": "copilot", "permission": "--allow-all"}),
+            "copilot",
+            "token-on-session-bus",
+        ),
+        (json!({"host": "/w/provider"}), "claude", "hosted"),
+    ] {
+        let (key, refused) = refusal(&fleet.op(&read_only(fields)));
+        assert_eq!(key, "read-only-unconfined", "{harness}: {refused:?}");
+        assert_eq!(
+            refused,
+            pairs(&[("item", "KEN-P"), ("harness", harness), ("cause", cause)])
+        );
+        assert_eq!(fleet.fleet(), before, "{harness}: nothing written");
+    }
+
+    let brief = fleet.dir.path().join("brief.md");
+    std::fs::write(
+        &brief,
+        "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=1\nAnswer on the item.\n",
+    )
+    .unwrap();
+    let (key, fields) = refusal(&fleet.op(&read_only(
+        json!({"brief_file": brief.display().to_string()}),
+    )));
+    assert_eq!(key, "tier-narrower", "{fields:?}");
+    assert!(
+        fields.contains(&("judged".to_owned(), "small".to_owned())),
+        "{fields:?}"
+    );
+    assert_eq!(fleet.fleet(), before, "nothing written");
+
+    let out = fleet.op(&read_only(json!({})));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let lane = fleet.lane("KEN-P");
+    assert_eq!(
+        (&lane["read_only"], &lane["touched"]),
+        (&json!(true), &json!([])),
+        "{lane}"
+    );
+    assert_eq!(fleet.lane("KEN-R"), before["lanes"][0]);
+    // No fleet server exists here, so the admitted launch fails before any
+    // window and leaves its record `stopped`, whose relaunch keeps it.
+    assert_eq!(lane["status"], "stopped");
+    let out = fleet.op(&launch("KEN-P", &checkout));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(fleet.lane("KEN-P")["read_only"], true);
+
+    // Over its `done` record, the hosted holder stopped, a launch naming no
+    // `read_only` is the item's next phase: a writing lane holding the
+    // Location paths.
+    let mut lanes = fleet.fleet()["lanes"].as_array().unwrap().clone();
+    for lane in &mut lanes {
+        lane["status"] = json!(if lane["item"] == "KEN-P" {
+            "done"
+        } else {
+            "stopped"
+        });
+    }
+    fleet.write_lanes(lanes);
+    let out = fleet.op(&launch("KEN-P", &checkout));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let lane = fleet.lane("KEN-P");
+    assert_eq!(
+        (&lane["read_only"], &lane["touched"]),
+        (&Value::Null, &json!(["skills/x/SKILL.md", "src/r.sh"])),
+        "{lane}"
+    );
+}
+
 /// Two candidates of one pass sharing a path, launched one after the other:
 /// the first opens its window on the fleet's server and stays `preparing`
 /// (its harness never draws), and the second joins it in place of a launch
@@ -1531,21 +1636,81 @@ fn two_candidates_of_one_pass_ride_the_first_ones_lane() {
     );
 }
 
-/// A `linear` candidate whose one launch blocker is the item of a running
-/// lane before its review ships with that lane: it joins it in place of
-/// `launch-blocked`, its body naming no path.
+/// A running lane before its review takes the candidate tied to it: a
+/// `linear` candidate whose one launch blocker is its item, its body naming
+/// no path, joins it in place of `launch-blocked`, and so does one sharing
+/// its recorded path. A `read_only` lane takes no join on either side: a
+/// read-only holder, its record holding no path, and a read-only candidate
+/// beside a writing holder each leave the blocked candidate `launch-blocked`.
+/// A holder that owns an open pull request is in its review and refuses the
+/// same. A relaunch naming `read_only` over a stopped writing record keeps
+/// the record writing and its path held: a candidate sharing it joins.
+/// Every refusal writes nothing and leaves the holder's mailbox empty.
 #[test]
-fn a_candidate_blocked_by_a_running_lanes_item_joins_that_lane() {
-    for owns_pull in [true, false] {
+fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_only() {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Tie {
+        Blocker,
+        File,
+    }
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum ReadOnly {
+        Neither,
+        Holder,
+        Candidate,
+        HolderRelaunched,
+    }
+    for (tie, owns_pull, read_only, joins) in [
+        (Tie::Blocker, false, ReadOnly::Neither, true),
+        (Tie::Blocker, true, ReadOnly::Neither, false),
+        (Tie::Blocker, false, ReadOnly::Holder, false),
+        (Tie::Blocker, false, ReadOnly::Candidate, false),
+        (Tie::File, false, ReadOnly::HolderRelaunched, true),
+    ] {
+        let row = format!("{tie:?} owns_pull={owns_pull} read_only={read_only:?}");
         let mut fleet = Fleet::new();
         fleet.init_fleet();
         let root = fleet.checkout("h", None);
         let harness = Owned::sleep();
-        let mut held = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
+        let paths: &[&str] = if read_only == ReadOnly::Holder {
+            &[]
+        } else {
+            &["src/a.sh"]
+        };
+        let mut held = holder("KEN-H", "running", Some(&harness), Some(paths));
         held["mail_root"] = json!(root.display().to_string());
         held["repo"] = json!("o/r");
+        match read_only {
+            ReadOnly::Holder => held["read_only"] = json!(true),
+            ReadOnly::HolderRelaunched => {
+                let live = held.clone();
+                held["status"] = json!("stopped");
+                held["launch"] = Value::Null;
+                fleet.write_lanes(vec![held]);
+                fleet.item("KEN-H", "`src/a.sh`", 0, &[]);
+                let mut relaunch = launch("KEN-H", &root);
+                relaunch["read_only"] = json!(true);
+                let out = fleet.op(&relaunch);
+                assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
+                // No fleet server exists here, so the relaunch fails before
+                // any window: its record stands `stopped`, made live again
+                // as its harness would make it.
+                held = fleet.lane("KEN-H");
+                assert_eq!(
+                    (&held["read_only"], &held["touched"]),
+                    (&Value::Null, &json!(["src/a.sh"])),
+                    "{row}: {held}"
+                );
+                held["status"] = live["status"].clone();
+                held["launch"] = live["launch"].clone();
+            }
+            ReadOnly::Neither | ReadOnly::Candidate => {}
+        }
         fleet.write_lanes(vec![held]);
-        fleet.item_under("CC-1", "", &["KEN-H"]);
+        match tie {
+            Tie::Blocker => fleet.item_under("CC-1", "", &["KEN-H"]),
+            Tie::File => fleet.item("CC-1", "`src/a.sh`", 0, &[]),
+        }
         let pulls = if owns_pull {
             vec![fake_pull(8, "KEN-H", &["src/a.sh"])]
         } else {
@@ -1554,24 +1719,33 @@ fn a_candidate_blocked_by_a_running_lanes_item_joins_that_lane() {
         fleet.gh_api(&gh_map(&pulls));
         let mut request = launch("CC-1", &fleet.checkout("c", None));
         request["repo"] = json!("o/r");
-        let before = std::fs::read(fleet.fleet_path()).unwrap();
+        if read_only == ReadOnly::Candidate {
+            request["read_only"] = json!(true);
+        }
+        let before_bytes = std::fs::read(fleet.fleet_path()).unwrap();
         let out = fleet.op(&request);
-        if owns_pull {
-            let (key, fields) = refusal(&out);
-            assert_eq!(key, "launch-blocked", "{fields:?}");
-            assert_eq!(std::fs::read(fleet.fleet_path()).unwrap(), before);
-            assert!(inbox(&root, "KEN-H").is_empty());
-        } else {
+        if joins {
             let answer = reply(&out);
-            assert_eq!(answer["ok"], true, "{}", stderr(&out));
+            assert_eq!(answer["ok"], true, "{row}: {}", stderr(&out));
             let report = joined_or_launched(&answer);
             assert_eq!(
                 (&report["op"], &report["holder"]),
-                (&json!("joined"), &json!("KEN-H"))
+                (&json!("joined"), &json!("KEN-H")),
+                "{row}"
             );
             assert_eq!(fleet.lane("KEN-H")["carried"][0]["item"], "CC-1");
-            assert_eq!(inbox(&root, "KEN-H").len(), 1);
+            assert_eq!(inbox(&root, "KEN-H").len(), 1, "{row}");
+            continue;
         }
+        assert_eq!(reply(&out)["ok"], false, "{row}: {}", reply(&out));
+        let (key, fields) = refusal(&out);
+        assert_eq!(key, "launch-blocked", "{row}: {fields:?}");
+        assert_eq!(
+            std::fs::read(fleet.fleet_path()).unwrap(),
+            before_bytes,
+            "{row}: nothing written"
+        );
+        assert!(inbox(&root, "KEN-H").is_empty(), "{row}");
     }
 }
 

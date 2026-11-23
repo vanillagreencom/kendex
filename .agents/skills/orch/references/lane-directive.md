@@ -84,6 +84,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `item-ineligible`: the item is a container; launch its unblocked children.
 - `launch-overlap`: launch once that lane stops, or name the file in `in_scope` where the brief adds to it append-only.
 - `join-unreachable`: the holder is hosted or a cloud session. Launch once that lane stops.
+- `read-only-unconfined`: this machine cannot confine the lane, as `cause` names. Launch it here on a harness the confinement holds. A first launch, or one over a `done` record, may instead leave out `read_only`; a relaunch keeps the record's (§ Recovery relaunch).
 - `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder stops.
 - `tier-narrower`: brief the judged cycle.
 - `lane-repo-conflict`: leave `repo` out of the `admit-paths` request; the lane's own is judged.
@@ -97,6 +98,15 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 ### A joined launch
 
 A first launch whose touched set meets a live lane of the same repository before that lane's review joins it. The reply's `op` is `joined`. Nothing is launched and no slot is charged. The brief reaches the holder's mailbox, and the holder ships both items.
+
+### A read-only launch
+
+A request naming `read_only: true` launches a lane whose confinement binds its checkout and its common git folder read-only, the checkout's `tmp` alone writable. Name it for a lane whose brief changes no repository file, such as a plan or a tracker-comment lane.
+
+- Its first launch judges an empty touched set: it meets no holder, and its record holds no path.
+- The tier is still judged over the paths a writing lane's touched set would hold ([oversee.md § 2. Select Work](../workflows/oversee.md#2-select-work), Shared files).
+- A read-only lane takes no join on either side. A launch sharing a path with it passes it, and one whose launch blockers it alone carries refuses `launch-blocked`. A read-only launch with any launch blocker refuses `launch-blocked`, whatever lane carries it.
+- `read_only` is decided where the launch is judged. A relaunch keeps the record's `read_only` and touched set whatever it names (§ Recovery relaunch): one naming `read_only: true` over a writing record launches a writing lane. A launch over a `done` record is judged, and takes its request's.
 
 ### After the lane is recorded `preparing`
 
@@ -113,6 +123,7 @@ These causes need more:
 - `home-relative`, `no-context-reader`: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup). Repair what `file` names.
 - `tmux-session-unresolved`, `tmux-session-missing`: § Tmux session.
 - `session-owned-elsewhere`, `session-store-unreadable`: the same request meets the same refusal. Repair the store, or report the session to the operator.
+- `read-only-unconfined`: a Codex seat linked outside its grants (`linked-seat`) cannot hold a read-only lane. Repair the seat, or launch on another account.
 
 ### Harness gate
 
@@ -232,7 +243,8 @@ A relaunch sends the item's `launch-lane` request again over its standing record
 - A request naming neither `host` nor `kind` opens a window on this machine and records a local lane.
 - A relaunch without `refresh` drops the record's `refresh`.
 - The confirmed launch writes `harness`, `account`, `model` and `effort` from the request, each null where the request names none: carry each one the replacement keeps.
-- Left out, `tracker`, `repo`, `over_cap`, `permission`, `obligation` and `desktop` keep the record's value.
+- Left out, `tracker`, `repo`, `over_cap`, `permission` and `obligation` keep the record's value.
+- A recorded `desktop` stands whatever the request names, and so does the record's `read_only`, set or not.
 - A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
 - A relaunch is not judged by the [Ancestor gate](skill-rules.md#ancestor-gate) or the file-overlap hold; it keeps the record's touched sets and tier.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.

@@ -255,11 +255,7 @@ pub fn admit(duty: Duty, settings: &Settings) -> Result<()> {
 }
 
 pub(crate) fn admit_launch(request: &crate::ops::LaunchLane, settings: &Settings) -> Result<()> {
-    let confined = request.host().is_none()
-        && matches!(
-            answer(Host::this(), Harness::named(&request.harness)?),
-            Answer::Confined
-        );
+    let confined = request.unconfined_cause()?.is_none();
     match judge_needs(Duty::Launch, settings, confined)?.first() {
         Some(unready) => Err(unready.refusal()),
         None => Ok(()),

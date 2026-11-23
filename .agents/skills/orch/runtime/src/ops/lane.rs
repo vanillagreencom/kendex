@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
+use agent_runtime::confine;
 use agent_runtime::harness::{Harness, PermissionMeaning};
 use agent_runtime::launch::Permission;
 use agent_runtime::process::Identity;
@@ -115,6 +116,14 @@ pub struct LaunchLane {
     /// name it included.
     #[serde(default)]
     pub desktop: bool,
+    /// The lane writes no repository file: its confinement binds the
+    /// checkout read-only bar its `tmp` scratch, so its admission holds no
+    /// path. Read only where the launch is judged, a first launch or one
+    /// over a `done` record, and recorded as `read_only`; a relaunch takes
+    /// the record's and ignores this one. Only a launch this machine
+    /// confines can hold it; any other refuses `read-only-unconfined`.
+    #[serde(default)]
+    pub read_only: bool,
     /// The opening instruction, read by the harness at its start. Not a
     /// record field: the effect carries it to the launch, and the
     /// admission reads the paths it names.
@@ -185,6 +194,27 @@ impl LaunchLane {
         self.host
             .as_deref()
             .filter(|h| !h.is_empty() && *h != "local")
+    }
+
+    /// Why the launch's harness runs outside this machine's confinement,
+    /// `None` where it runs inside: a hosted or cloud lane runs under its
+    /// host's, and a local one under agent-runtime's answer for its harness
+    /// here.
+    pub(crate) fn unconfined_cause(&self) -> Result<Option<String>> {
+        if self.host().is_some() {
+            return Ok(Some("hosted".to_owned()));
+        }
+        Ok(
+            match confine::answer(confine::Host::this(), Harness::named(&self.harness)?) {
+                confine::Answer::Confined => None,
+                confine::Answer::Unconfined { cause } => Some(
+                    serde_json::to_value(cause)?
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+            },
+        )
     }
 
     /// The host kind the record carries: the request's word, else the one
@@ -1357,6 +1387,25 @@ pub(super) fn launch_lane(
         // a relaunch over one would make a second.
         no_live_harness(previous, ids)?;
     }
+    // A read-only lane holds no path, which stands only where this
+    // machine's confinement binds its checkout read-only: a launch it
+    // cannot confine would write under an empty touched set. It is decided
+    // where the launch is judged: a relaunch, unjudged, keeps the record's,
+    // so a writing record never turns read-only over the set it holds.
+    let read_only = match relaunch {
+        Some(index) => lanes[index].read_only,
+        None => r.read_only,
+    };
+    if read_only && let Some(cause) = r.unconfined_cause()? {
+        return Err(Error::from(agent_runtime::Error::refused(
+            "read-only-unconfined",
+            &[
+                ("item", &r.item),
+                ("harness", &r.harness),
+                ("cause", &cause),
+            ],
+        )));
+    }
     // The admission judgement, under the same launch lock and before the
     // account's room and the cap, so one transition admits, joins or
     // refuses with one cause: a first launch is judged on its item, its
@@ -1372,6 +1421,7 @@ pub(super) fn launch_lane(
         in_scope: &r.in_scope,
         paths: &[],
         checkout: Some(Path::new(&r.mail_root)),
+        read_only,
     };
     let judged = match relaunch {
         Some(_) => None,
@@ -1458,7 +1508,7 @@ pub(super) fn launch_lane(
         admission::tier_judged(
             &r.item,
             requested,
-            &judged.touched,
+            &judged.classified,
             Path::new(&r.mail_root),
             host,
         )?;
@@ -1515,6 +1565,11 @@ pub(super) fn launch_lane(
             if r.desktop {
                 record::set(lane, "desktop", true);
             }
+            if read_only {
+                record::set(lane, "read_only", true);
+            } else {
+                record::delete(lane, "read_only");
+            }
             record::set(lane, "session_since", at.as_str());
             record::set(lane, "running_at", Value::Null);
             record::set(lane, "status", LaneStatus::Preparing.word());
@@ -1555,6 +1610,9 @@ pub(super) fn launch_lane(
             }
             if r.desktop {
                 record["desktop"] = Value::Bool(true);
+            }
+            if read_only {
+                record["read_only"] = Value::Bool(true);
             }
             if r.host().is_some() {
                 record["checkout"] = Value::String(r.mail_root.clone());
