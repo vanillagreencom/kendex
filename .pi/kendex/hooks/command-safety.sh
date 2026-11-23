@@ -1992,8 +1992,9 @@ esac_reserved() { # PREVIOUS IN
   while [ "$at" -ge 0 ] && [ "$at" -ne "$2" ]; do
     case "${kinds[$at]}:${tokens[$at]}" in operator:';' | operator:'&') return 0 ;; esac
     [ "${kinds[$at]}" = literal ] && [ "${unquoted_words[$at]%%:*}" = 1 ] || return 1
+    # 'esac' is quoted: Bash 3.2 ends the case at a bare esac pattern word.
     case "${tokens[$at]}" in
-      fi | done | esac | '}') ;;
+      fi | done | 'esac' | '}') ;;
       ']]')
         while [ "$at" -gt 0 ] && [ "${tokens[$at]}:${kinds[$at]}" != '[[:literal' ]; do at=$((at - 1)); done ;;
       *) return 1 ;;
