@@ -274,7 +274,7 @@ Launch, follow and re-arm the watch's reader as [watch-delivery.md](../reference
 
 ### Judgement at every event
 
-- Before reading a lane's pane, state or status file for an event, read [oversee-reads.md § Bounded lane reads](../references/oversee-reads.md#bounded-lane-reads).
+- Before reading a lane's pane, state, status file or transcript, or the watch log, for an event, read [oversee-reads.md § Bounded lane reads](../references/oversee-reads.md#bounded-lane-reads).
 - Write owner summaries with communication's [reports and template](../../communication/references/reports.md).
 - For an owner note marked as a voice request, apply orch's [voice requests](../references/communication-modes.md#voice-requests) before acting and communication's [voice wording](../../communication/references/voice.md) before replying.
 - Judgement rules for every event: [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules).

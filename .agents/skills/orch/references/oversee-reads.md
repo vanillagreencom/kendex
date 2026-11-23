@@ -1,6 +1,6 @@
 # Oversee reads
 
-Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles an event whose entry in [oversee-events.md § Event kinds](oversee-events.md#event-kinds) reads a lane's state or status file (§ Bounded lane reads), and at each `triage` pass and the triage backstop at `heartbeat` (§ Bounded issue reads).
+Read when [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) handles an event whose entry in [oversee-events.md § Event kinds](oversee-events.md#event-kinds) reads a lane's state or status file, or before any read of a lane's pane or transcript or of the watch log for an event (§ Bounded lane reads), and at each `triage` pass and the triage backstop at `heartbeat` (§ Bounded issue reads).
 
 ## Bounded lane reads
 
