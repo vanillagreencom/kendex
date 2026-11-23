@@ -194,7 +194,7 @@ Per-verdict routing lives in the workflows: `submit-pr.md` § 4 and § 5, `merge
 
 - Its `reason` reads `regression-open location=[LOCATION]`.
 - It is never a met gate.
-- [review-pr.md § At The Cap](../workflows/review-pr.md#at-the-cap) and its [§ 7 Converged](../workflows/review-pr.md#converged) exit write the entry.
+- [review-cycle.md § Escalation](review-cycle.md#escalation) and the [review-pr.md § 7 Converged](../workflows/review-pr.md#converged) exit write the entry.
 - The entry stands until its outcome reads `skipped` or it leaves `escalated_items`.
 
 A `queue-watch` answer of `armed_awaiting_checks` or `armed_blocked` at its deadline is the wait's last check reading before the deadline, never a check verdict.

@@ -30,7 +30,7 @@ Get the issue → dev implements → publication, review and fixes in the order 
   - The same pass declines or tracks every `fix` suggestion ([review-pr](workflows/review-pr.md) § 4).
   - A re-review narrows to the fix diff, the domains it touched and the class of every defect it fixed ([reviewer](../reviewer/SKILL.md) § Re-Review Rounds).
   - Two consecutive rounds with no new blocker end the review.
-  - [At The Cap](workflows/review-pr.md#at-the-cap) sets the cap, cap 0 and a fix round's own regression.
+  - [Review cap](references/review-cycle.md#review-cap) sets the cap, cap 0 and a fix round's own regression.
 - **Finding conduct.** Apply reviewer's [decision flow](../reviewer/references/finding-disposition.md#decision-flow), [recurrence rule](../reviewer/references/finding-disposition.md#recurrence) and [filing bar](../reviewer/references/finding-disposition.md#filing-bar).
 - **Scope cuts.**
   - A reviewer or the orchestrator can choose a cut round.

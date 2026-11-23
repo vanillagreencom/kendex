@@ -78,7 +78,7 @@ Read when a workflow writes, checks or recovers a round's completion artifact, o
   - `orch-runtime dev-return --text check --wait <quiet_window> …` polls the disk. It returns when a receipt lands, or at the deadline.
   - Delivery of the return message is never load-bearing.
   - If the round is still outstanding when it returns, run A and B.
-  - [review-pr.md](../workflows/review-pr.md) § 3.2 states the reviewer side.
+  - [review-cycle.md § Reviewer wait](review-cycle.md#reviewer-wait) states the reviewer side.
 - **A watchdog runs where its end wakes the session.**
   - A lane launches it as [skill-rules.md § Round Closure](skill-rules.md#round-closure) step 5 states, then ends its turn; the job's end arrives as the lane's mail.
   - A session that is no lane keeps its own wait.
