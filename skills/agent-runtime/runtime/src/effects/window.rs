@@ -920,16 +920,17 @@ mod tests {
 
     /// The session's idle shell, its window beside the runner's, is closed
     /// at the publication only while it stands alone in its window at its
-    /// prompt: a shell running a command, or sharing its window with
-    /// another pane, is the person's again and stands, said by its cause.
+    /// prompt: a shell running a command, keeping a job in the background
+    /// or sharing its window with another pane is the person's again and
+    /// stands, said by its cause.
     #[test]
     fn the_idle_shell_closes_only_while_it_stands_alone_at_its_prompt() {
-        type Use = fn(&tmux::Private, &Pane);
-        let rows: [(&str, Use, Option<&str>); 3] = [
-            ("alone at its prompt", |_, _| {}, None),
+        type Use = fn(&tmux::Private, &Pane, &Path);
+        let rows: [(&str, Use, Option<&str>); 4] = [
+            ("alone at its prompt", |_, _, _| {}, None),
             (
                 "running a command",
-                |private, shell| {
+                |private, shell, _| {
                     tmux::send_line(shell, "sleep 30").unwrap();
                     let deadline = std::time::Instant::now() + Duration::from_secs(10);
                     while private
@@ -950,8 +951,26 @@ mod tests {
                 Some("shell-in-use"),
             ),
             (
+                "keeping a job in the background",
+                |_, shell, dir| {
+                    // The shell writes the job's pid once it has forked it.
+                    let job = dir.join("job");
+                    let line = format!(
+                        "sleep 30 & echo $! > {}.part && mv {0}.part {0}",
+                        job.display()
+                    );
+                    tmux::send_line(shell, &line).unwrap();
+                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    while !job.exists() {
+                        assert!(std::time::Instant::now() < deadline, "the job runs");
+                        std::thread::sleep(POLL);
+                    }
+                },
+                Some("shell-in-use"),
+            ),
+            (
                 "sharing its window",
-                |private, shell| {
+                |private, shell, _| {
                     private.ask(&["split-window", "-d", "-t", &shell.id]);
                 },
                 Some("shell-in-use"),
@@ -963,7 +982,7 @@ mod tests {
             let shell = private.idle_shell();
             let runner = tmux::new_window(&private.0, "t", "overseer", dir.path())
                 .unwrap_or_else(|e| panic!("{row}: {e:?}"));
-            used(&private, &shell);
+            used(&private, &shell, dir.path());
             let windows = || {
                 let Reading::Live(windows) = tmux::list_windows(&private.0, "t") else {
                     panic!("{row}: the windows read");
@@ -984,6 +1003,20 @@ mod tests {
                 Some(_) => before,
             };
             assert_eq!(windows(), expected, "{row}");
+            // A background job outlives the server's end, which hangs up
+            // only the terminal's foreground group: it is stopped by the
+            // identity read while the shell still holds it unreaped.
+            if let Ok(pid) = std::fs::read_to_string(dir.path().join("job")) {
+                let pid: u32 = pid.trim().parse().unwrap();
+                let Reading::Live(job) = process::identity(pid) else {
+                    panic!("{row}: the job runs");
+                };
+                let stop = process::stop_identities(&[job], Duration::from_secs(5)).unwrap();
+                assert!(
+                    matches!(stop, process::Stop::Stopped { .. }),
+                    "{row}: {stop:?}"
+                );
+            }
         }
     }
 

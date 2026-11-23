@@ -552,13 +552,15 @@ pub fn new_window(
 }
 
 /// The one pane of `session` where the session holds one window with one
-/// pane and that pane's shell holds its own terminal: a shell at its prompt
-/// with no foreground job, as a session stands before anything ran in it.
-/// `None` where a second window or pane stands, or the one pane stands dead
-/// or runs a command. One `list-panes` and one read of the shell's
-/// terminal group answer it. A typed but unsent line is not told from an
+/// pane and that pane's shell holds its own terminal with no process below
+/// it: a shell at its prompt with no job, foreground or background, as a
+/// session stands before anything ran in it. `None` where a second window
+/// or pane stands, or the one pane stands dead, runs a command or keeps a
+/// job: closing its window hangs up the shell, and an interactive bash
+/// hangs up its jobs in turn. One `list-panes`, one read of the shell's
+/// terminal group and one table read answer it. A typed but unsent line is not told from an
 /// empty prompt: neither tmux nor the kernel carries it. The session gone is
-/// `Gone`; a server, a listing or a process that does not answer is
+/// `Gone`; a server, a listing, a process or a table that does not answer is
 /// `Unreadable`.
 pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> {
     let target = format!("={session}");
@@ -569,8 +571,8 @@ pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> 
 
 /// The pane `id` where it stands alone in its window as an idle shell, read
 /// as [`sole_idle_shell`] reads a session's: `None` where its window holds
-/// another pane or the pane stands dead or runs a command, `Gone` where the
-/// pane is.
+/// another pane or the pane stands dead, runs a command or keeps a job,
+/// `Gone` where the pane is.
 pub fn lone_idle_shell_pane(server: &Server, id: &str) -> Reading<Option<Pane>> {
     match lone_idle_shell(server, &["-t", id], names_missing_target) {
         Reading::Live(Some(shell)) if shell.id == id => Reading::Live(Some(shell)),
@@ -650,15 +652,30 @@ fn lone_idle_shell(
         return Reading::Live(None);
     }
     match crate::process::foreground_group(pid) {
-        Reading::Live(Some(group)) if group == pid => Reading::Live(Some(Pane {
-            server: server.clone(),
-            id: id.to_owned(),
-            window: window.to_owned(),
-            session: session.to_owned(),
-        })),
-        Reading::Live(_) | Reading::Gone => Reading::Live(None),
-        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+        Reading::Live(Some(group)) if group == pid => {}
+        Reading::Live(_) | Reading::Gone => return Reading::Live(None),
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
     }
+    // A background job leaves the shell holding its terminal, so only the
+    // processes below the shell tell it from a shell that keeps none.
+    let rows = match crate::process::table() {
+        Ok(rows) => rows,
+        Err(unread) => {
+            return Reading::Unreadable {
+                cause: unread.cause,
+            };
+        }
+    };
+    match crate::process::below(&rows, pid, &|_| true)[..] {
+        [(_, member)] if member == pid => {}
+        _ => return Reading::Live(None),
+    }
+    Reading::Live(Some(Pane {
+        server: server.clone(),
+        id: id.to_owned(),
+        window: window.to_owned(),
+        session: session.to_owned(),
+    }))
 }
 
 /// The pane a `new-window -P` line names, `%N @N session`. The ids are
