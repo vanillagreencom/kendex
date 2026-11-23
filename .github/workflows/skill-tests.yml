@@ -891,12 +891,15 @@ jobs:
       # it as `<name>-<key>.sha256`, the key lib/key.sh gives. A lane-host
       # provider in another repository of this organization (Fleet) fetches
       # these by name to fill a shared runtime cache. It counts only an
-      # unexpired artifact whose workflow_run.head_branch is main and whose
-      # head_repository_id equals its repository_id, the filter
-      # runtime_publish applies: a fork's pull-request run can upload any
-      # name, and the bundled sha256 checks the transfer, not who made the
-      # artifact. A change to the name, the files, the filter or the leg's
-      # event is told to its overseer before it lands.
+      # unexpired artifact whose run record, read at actions/runs/<id>, has
+      # event push, head_branch main, head_repository.id equal to
+      # repository.id and path .github/workflows/skill-tests.yml, the
+      # filter runtime_publish applies as PUBLISHED_RUN: a pull-request run
+      # whose head branch is named main runs code no review accepted, a
+      # fork's pull-request run can upload any name, and the bundled sha256
+      # checks the transfer, not who made the artifact. A change to the
+      # name, the files, the filter or the leg's event is told to its
+      # overseer before it lands.
       # They publish before the suites, so a suite's failure keeps no build
       # from the machines that run main.
       - name: the runtime builds main has no artifact for, staged

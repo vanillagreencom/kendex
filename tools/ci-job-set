@@ -201,12 +201,13 @@
 #                       unproved. A selected night uses its fixed full matrix.
 #   runtime_publish     a push's alone: the JSON list of `{name, key}` for
 #                       each package runtime whose build at the head has no
-#                       unexpired `<name>-<key>` artifact from a run on this
-#                       repository's main, the key skills/agent-runtime's
-#                       lib/key.sh gives. A listing that cannot be read owes
-#                       the publication. Where the list is not empty, the
-#                       `shards=` list holds PUBLISH_SHARD, whose Linux leg
-#                       builds the runtimes and publishes each listed build.
+#                       unexpired `<name>-<key>` artifact from a run that
+#                       PUBLISHED_RUN admits, the key skills/agent-runtime's
+#                       lib/key.sh gives. A listing or run record that cannot
+#                       be read proves no publication. Where the list is not
+#                       empty, the `shards=` list holds PUBLISH_SHARD, whose
+#                       Linux leg builds the runtimes and publishes each
+#                       listed build.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -359,29 +360,47 @@ RUNTIMES="agent-runtime:skills/agent-runtime/runtime orch-runtime:skills/orch/ru
 # uploads of one name in a run collide.
 PUBLISH_SHARD="orch-state"
 
+# The one test of a workflow run record whose artifacts count as main's
+# publication, with $path the workflow's path: a push run of this workflow on
+# this repository's main. A pull-request run whose head branch is named main
+# passes the branch and repository legs and runs code no review accepted, and
+# a fork's pull-request run can upload an artifact of any name. The artifact's
+# own workflow_run carries no event or path, so the run record decides.
+PUBLISHED_RUN='.event == "push" and .head_branch == "main"
+  and .head_repository.id == .repository.id and .path == $path'
+
 # The runtime_publish value the header states. A key that cannot be computed
 # stops the selection: the leg's build computes the same key and would fail
-# too. Only main's own runs count, since a fork's pull-request run can upload
-# an artifact of any name.
+# too. A listing or run record that cannot be read proves nothing published.
 runtime_publish() {
-  local entry name key listing found owed="" mains
-  mains='[.[].artifacts[] | select(.name == $name and .expired == false
-    and .workflow_run.head_branch == "main" and .workflow_run.head_repository_id == .workflow_run.repository_id)] | length'
+  local entry name key listing runs run record status published owed=""
   for entry in $RUNTIMES; do
     name="${entry%%:*}"
     key="$(refuse() { printf 'ci-job-set: %s\n' "$*" >&2; exit 1; }
       . skills/agent-runtime/scripts/lib/key.sh && agent_runtime_key "${entry#*:}")" ||
       die "runtime-key-unread name=$name" "the build key of ${entry#*:} could not be computed"
-    listing="" found=""
-    if listing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name-$key&per_page=100")"; then
-      found="$(jq -s --arg name "$name-$key" "$mains" <<<"$listing")" || found=""
-    fi
-    if [ -n "$found" ]; then
-      [ "$found" -eq 0 ] || continue
+    published=false
+    if listing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name-$key&per_page=100")" &&
+      runs="$(jq -rs --arg name "$name-$key" '[.[].artifacts[] | select(.name == $name and .expired == false)
+        | .workflow_run.id | numbers] | unique | reverse | .[]' <<<"$listing")"; then
+      for run in $runs; do
+        status=0
+        if record="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"; then
+          jq -e --arg path "$PROOF_WORKFLOW" "$PUBLISHED_RUN" <<<"$record" >/dev/null 2>&1 || status=$?
+        else
+          status=2
+        fi
+        # jq -e exits 1 on a false test and above 1 on input it cannot read.
+        case "$status" in
+          0) published=true; break ;;
+          1) ;;
+          *) printf 'ci-job-set: runtime-run-unread name=%s key=%s run=%s\n' "$name" "$key" "$run" >&2 ;;
+        esac
+      done
     else
       printf 'ci-job-set: runtime-artifacts-unread name=%s key=%s\n' "$name" "$key" >&2
     fi
-    owed="$owed,{\"name\":\"$name\",\"key\":\"$key\"}"
+    [ "$published" = true ] || owed="$owed,{\"name\":\"$name\",\"key\":\"$key\"}"
   done
   printf '[%s]' "${owed#,}"
 }
