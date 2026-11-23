@@ -16,8 +16,8 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 Route the answer:
 
-- A non-zero exit from either, or output with no numeric `unresolved_count`, is no answer, never zero. Report it and record `review-threads-unreadable` through merge-pr.md § 1's stop routes.
-- A count of zero returns to the merge-pr step that ran this read: § 3.2, § 5 step 1, the Recovery cycle's gate wait, or Late-findings triage step 2.
+- A non-zero exit from either, or output with no numeric `unresolved_count`, is no answer, never zero. Report it and record `review-threads-unreadable` through [merge-contracts.md § Stop routes](merge-contracts.md#stop-routes).
+- A count of zero returns to the step that ran this read: merge-pr's § 3.2 or § 5 step 1, the gate wait of [merge-contracts.md § Recovery cycle](merge-contracts.md#recovery-cycle) step 2, or [merge-contracts.md § Late-findings triage](merge-contracts.md#late-findings-triage) step 2.
   - That step is the original caller, never a fresh entry to merge-pr's § 3.3.
   - A read run again from § After the triage keeps the same caller.
 - A nonzero count takes `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → thread-read.md § After the triage` with managed context. Under `ORCH_DECISION_MODE=auto-recommended` the triage repeats within `REVIEW_MAX_EXTERNAL_ROUNDS`, then records `review-threads-open`.
@@ -38,7 +38,7 @@ Four readers check open threads:
 - This read: from merge-pr § 3.2 before the `not_approved` wait, and from merge-pr § 5 step 1 before every merge call.
   - Under the `off` gate mode, § 5 step 1 runs it once more after its review call.
   - The § 5 read covers the entries that skip § 3.2: a [micro.md](../workflows/micro.md) § 4 entry and every return from the merge cycles.
-- `orch-runtime queue-watch`'s late-findings guard, on a thread posted after this read while the pull request is armed or queued. Its `dequeued` verdict takes merge-pr § 5 step 1's Late-findings triage, which runs this read.
+- `orch-runtime queue-watch`'s late-findings guard, on a thread posted after this read while the pull request is armed or queued. Its `dequeued` verdict takes [merge-contracts.md § Late-findings triage](merge-contracts.md#late-findings-triage), which runs this read.
 - `ci-classify-refusal`, before a same-head retry. `ci-classify-refusal --help` states its thread and retry contract, and [merge-attempt.md § Exit routing](merge-attempt.md#exit-routing) routes its result.
 - GitHub, only where the base branch's ruleset requires thread resolution: `pr-merge --help` § Approvals and review threads.
 

@@ -745,6 +745,7 @@
   ".agents/skills/orch/references/lane-directive.md",
   ".agents/skills/orch/references/lane-reach.md",
   ".agents/skills/orch/references/merge-attempt.md",
+  ".agents/skills/orch/references/merge-contracts.md",
   ".agents/skills/orch/references/oversee-events.md",
   ".agents/skills/orch/references/oversee-lanes.md",
   ".agents/skills/orch/references/overseer-session-events.md",

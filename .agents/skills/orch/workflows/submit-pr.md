@@ -409,7 +409,7 @@ Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --expected-head [HEAD_SHA]
    ```
 
-   Before you route the exit, apply [merge-pr.md § 5 step 1](merge-pr.md#5-execute-the-merge)'s **Record the merge decision** instruction with `[HEAD_SHA]`, this call's exit and its returned route.
+   Before you route the exit, apply [merge-attempt.md § Record the merge decision](../references/merge-attempt.md#record-the-merge-decision) with `[HEAD_SHA]`, this call's exit and its returned route.
 
    - For that instruction, `[STATE_KEY]` is `[ISSUE_ID]` and `[MAIN_REPO_ROOT]` is this worktree.
    - On exit `1`, that instruction confirms removal of any earlier arm before this routing.

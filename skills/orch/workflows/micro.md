@@ -269,7 +269,7 @@ This entry skips merge-pr's § 3. `ci-classify-refusal --help` states the refusa
 - Retry a refusal marked `retry: same-head` on that head by re-entering the step, within [merge-attempt.md § Exit routing](../references/merge-attempt.md#exit-routing)'s bound; it is no escape. Its limit stop ends the run as a merge-pr verdict.
 - Any other refusal returns to merge-pr's § 3.2, and that return escapes (§ Escape condition 7).
 
-A `dequeued` verdict routes to that step's late-findings triage.
+A `dequeued` verdict routes to [merge-contracts.md § Late-findings triage](../references/merge-contracts.md#late-findings-triage).
 
 - Answer a wording, naming or index finding in a thread there, or at the step's [thread read](../references/thread-read.md), by reply ([finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow)).
 - A finding in a Copilot review body takes the body-finding route above, never a reply alone.
