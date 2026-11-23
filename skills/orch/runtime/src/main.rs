@@ -2040,7 +2040,16 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             )?)?
         }
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
-        Verb::DevReturn { op, text } => {
+        Verb::DevReturn { mut op, text } => {
+            // The receipt's repository is read from its path, so a relative
+            // --file answers as its absolute form does.
+            if let ops::artifact::DevReturn::Check(r) = &mut op
+                && let Some(file) = &r.file
+            {
+                r.file = Some(std::path::absolute(file).map_err(|e| {
+                    Error::Runtime(agent_runtime::Error::io("receipt-path", file.clone(), e))
+                })?);
+            }
             let worktree = match &op {
                 ops::artifact::DevReturn::Write(r) => Some(r.id.worktree.as_path()),
                 ops::artifact::DevReturn::Check(r) => r.worktree.as_deref(),

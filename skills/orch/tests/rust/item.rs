@@ -906,6 +906,13 @@ mod dev_artifacts {
         assert_eq!(v["validate_lanes"], "unit");
         assert_eq!(v["validate_selection"], "battery");
         assert_eq!(w.check("r1")["verdict"], "accept");
+        // The same receipt by its path relative to the working directory
+        // answers as by its absolute path.
+        let relative = Path::new(&path).strip_prefix(&w.wt).unwrap();
+        for file in [Path::new(&path), relative] {
+            let answer = result(&w.run(&["dev-return", "check", "--file", file.to_str().unwrap()]));
+            assert_eq!(answer["verdict"], "accept", "{}: {answer}", file.display());
+        }
         refused(
             &w.write(
                 "r1",
