@@ -160,12 +160,14 @@ esac
 # from a published one in the legs the state names; the artifact's
 # workflow_run mirrors the record's legs GitHub copies onto it.
 RUNS='def states: ["published", "expired", "fork", "queue", "pull-request-main", "feature-push", "other-workflow",
-    "run-unread"];
+    "run-unread", "pull-request-queue", "queue-other-base"];
   def run($state): {id: (100 + (states | index($state) // error("no state \($state)"))),
-    event: (if $state == "queue" then "merge_group" elif $state == "fork" or $state == "pull-request-main"
-      then "pull_request" else "push" end),
-    head_branch: (if $state == "queue" then "gh-readonly-queue/main/pr-1-0" elif $state == "feature-push" then "feature"
-      else "main" end),
+    event: (if $state == "queue" or $state == "queue-other-base" then "merge_group"
+      elif $state == "fork" or $state == "pull-request-main" or $state == "pull-request-queue" then "pull_request"
+      else "push" end),
+    head_branch: (if $state == "queue" or $state == "pull-request-queue" then "gh-readonly-queue/main/pr-1-0"
+      elif $state == "queue-other-base" then "gh-readonly-queue/release/pr-1-0"
+      elif $state == "feature-push" then "feature" else "main" end),
     path: (if $state == "other-workflow" then ".github/workflows/lock-record.yml" else ".github/workflows/skill-tests.yml" end),
     repository: {id: 1}, head_repository: {id: (if $state == "fork" then 2 else 1 end)}};'
 case "$#:$url" in
@@ -401,8 +403,9 @@ check "push route: one-target owes the other runtime whole" true "$(in_list rust
 
 # THE RUNTIME PUBLICATION: a push owes each package runtime build whose
 # `<name>-<key>` has no unexpired artifact from a push run of this workflow
-# on this repository's main, whatever its group proved, and runs the
-# orch-state leg that publishes it. STATES|OWED: each runtime's listing state in the world, and the names
+# on this repository's main or a merge-group run on one of main's queue
+# branches, whatever its group proved, and runs the orch-state leg that
+# publishes it. STATES|OWED: each runtime's listing state in the world, and the names
 # owed; each owed name carries the key lib/key.sh gives the head's sources.
 runtime_key() { # RUNTIME_DIR
   (cd "$PUSH_REPO" && refuse() { exit 1; } && . skills/agent-runtime/scripts/lib/key.sh && agent_runtime_key "$1")
@@ -428,24 +431,76 @@ while IFS='|' read -r states owed; do
 done <<'ROWS'
 agent-runtime=none|["agent-runtime"]
 agent-runtime=fork orch-runtime=expired|["agent-runtime","orch-runtime"]
-agent-runtime=queue orch-runtime=unread|["agent-runtime","orch-runtime"]
+agent-runtime=queue orch-runtime=unread|["orch-runtime"]
 agent-runtime=pull-request-main|["agent-runtime"]
+agent-runtime=pull-request-queue orch-runtime=queue-other-base|["agent-runtime","orch-runtime"]
 agent-runtime=feature-push|["agent-runtime"]
 agent-runtime=other-workflow orch-runtime=run-unread|["agent-runtime","orch-runtime"]
 ROWS
-[ "$publish_rows" -eq 6 ] || { echo "the publication table read $publish_rows rows" >&2; exit 1; }
-# Control: a selector that takes any event's run as main's counts a
+[ "$publish_rows" -eq 7 ] || { echo "the publication table read $publish_rows rows" >&2; exit 1; }
+# A copy of the selector with one edit to PUBLISHED_RUN, or a refusal where
+# the edit no longer matches one condition.
+filter_copy() { # NAME FROM TO
+  mkdir -p "$TMP/$1/tools"
+  cp -R "$ROOT/tools/lib" "$TMP/$1/tools/lib"
+  cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$ROOT/tools/guard" "$TMP/$1/tools/"
+  FROM="$2" TO="$3" awk '/^PUBLISHED_RUN=/ { on = 1 } on { n += gsub(ENVIRON["FROM"], ENVIRON["TO"]) } /\$path.$/ { on = 0 } { print } END { exit n != 1 }' \
+    "$JOB_SET" >"$TMP/$1/tools/ci-job-set" ||
+    { echo "PUBLISHED_RUN no longer holds one '$2' in $JOB_SET" >&2; exit 1; }
+  chmod +x "$TMP/$1/tools/ci-job-set"
+}
+# Control: a selector that takes a push of any event as main's counts a
 # pull-request run whose head branch is named main as published.
-mkdir -p "$TMP/any-event/tools"
-cp -R "$ROOT/tools/lib" "$TMP/any-event/tools/lib"
-cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$ROOT/tools/guard" "$TMP/any-event/tools/"
-awk '{ n += sub(/^PUBLISHED_RUN=.\.event == "push" and /, "PUBLISHED_RUN=\047") } { print } END { exit n != 1 }' \
-  "$JOB_SET" >"$TMP/any-event/tools/ci-job-set" ||
-  { echo "the event check is no longer one condition in $JOB_SET" >&2; exit 1; }
-chmod +x "$TMP/any-event/tools/ci-job-set"
+filter_copy any-event '\(\.event == "push" and ' '('
 publish_world agent-runtime=pull-request-main
 push_select publish "$TMP/any-event/tools/ci-job-set" >/dev/null
 check "control: a selector taking any event's run owes no agent-runtime build" '[]' "$(field runtime_publish <"$TMP/push-out")"
+
+# THE MERGE GROUP'S PUBLICATION: under --runtime-publish a class selection
+# owes the same builds and adds the orch-state leg to its Linux shards in
+# roster order, never to its macOS list, so the group that proves a head
+# publishes its keys before main moves. The path selects shards on both
+# runners and no orch-state leg of its own.
+GROUP_PATH=skills/youtube-publish/scripts/youtube-publish
+group_select() { # STATES [SELECTOR] — the selection over GROUP_PATH in a world from all-proved
+  publish_world "$1"
+  PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/publish" GITHUB_REPOSITORY=vanillagreencom/kendex \
+    SELECT_IN="$PUSH_REPO" SELECT_WITH="${2:-$JOB_SET}" SELECT_EVENT=merge_group SELECT_ARG=--runtime-publish \
+    selection micro false "$GROUP_PATH"
+}
+group_base="$(SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group selection micro false "$GROUP_PATH")"
+group_shards="$(field shards <<<"$(tr ' ' '\n' <<<"$group_base")")"
+group_queue="$(field queue_macos_shards <<<"$(tr ' ' '\n' <<<"$group_base")")"
+[ "$(jq 'index("orch-state") == null and length > 0' <<<"$group_shards")" = true ] &&
+  [ "$group_queue" != '[]' ] ||
+  { echo "$GROUP_PATH no longer selects shards on both runners and no orch-state leg: $group_base" >&2; exit 1; }
+check "a selection without --runtime-publish publishes no runtime line" '' \
+  "$(tr ' ' '\n' <<<"$group_base" | field runtime_publish)"
+with_leg="$(jq -c --argjson roster "$ROSTER" '. as $s | [$roster[] | select(. == "orch-state" or (. as $r | $s | index($r)))]' <<<"$group_shards")"
+group_row() { # SELECTION — `shards=… queue_macos_shards=… runtime_publish=…`
+  local lines
+  lines="$(tr ' ' '\n' <<<"$1")"
+  printf 'shards=%s queue_macos_shards=%s runtime_publish=%s' "$(field shards <<<"$lines")" \
+    "$(field queue_macos_shards <<<"$lines")" "$(field runtime_publish <<<"$lines")"
+}
+# STATES|SHARDS|OWED
+group_rows=0
+while IFS='|' read -r states shards owed; do
+  group_rows=$((group_rows + 1))
+  check "merge-group publication: $states" \
+    "shards=$shards queue_macos_shards=$group_queue runtime_publish=$(owed_publish "$owed")" \
+    "$(group_row "$(group_select "$states")")"
+done <<ROWS
+agent-runtime=none orch-runtime=queue|$with_leg|["agent-runtime"]
+agent-runtime=queue|$group_shards|[]
+ROWS
+[ "$group_rows" -eq 2 ] || { echo "the merge-group publication table read $group_rows rows" >&2; exit 1; }
+# Control: a selector whose filter admits no merge-group run owes the build
+# the queue run published.
+filter_copy no-queue '\(\.event == "merge_group" and ' '(false and '
+check "control: a selector admitting no merge-group run owes the queue's orch-runtime build" \
+  "$(owed_publish '["agent-runtime","orch-runtime"]')" \
+  "$(tr ' ' '\n' <<<"$(group_select "agent-runtime=none orch-runtime=queue" "$TMP/no-queue/tools/ci-job-set")" | field runtime_publish)"
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
