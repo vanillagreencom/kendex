@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a shell or interpreter runs as its program, piped to it or through a substitution, naming the form; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host, and one an assignment before the program, or before the exec, builtin, eval or shell running it, can route; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository, a push in a command whose git remote or git config can change a remote included, and any other git word of a command whose git config can define an alias, or one a GIT_CONFIG_COUNT, GIT_CONFIG_KEY_, GIT_CONFIG_VALUE_ or GIT_CONFIG_PARAMETERS assignment reaches. A command those checks pass with a stage that holds curl, wget, scp, rsync or git push and is not plain literal argv in a plain pipeline is reported with a would= line. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command with a word that names it refuses, except as an argument of grep, rg or cat.
 # summary: Refuses commands that `cat` the private environment file or print the whole environment, pipe or feed a download into a shell, upload to a host the project has not listed, push to a remote the repository does not have, or match the project's deny pattern, which by default stops a small systemd-run memory cap. The owner allows one exact download, upload or push by starting the session with it in COMMAND_SAFETY_OWNER_COMMAND.
-# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage that runs its input, any stage of a subshell or the first command of a brace group included, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option, an assignment before the program word, NAME= or NAME+=, or before the exec, builtin, eval, shell or script that runs it, or an expanding or substituted host unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, an expanding or substituted operand, an unread Git global word whose first later literal word that is no option or option argument is push, and Git configuration, a GIT_ variable or an inline alias its command sets, or a git remote or git config anywhere in the command that can change a remote, unresolved, for every push of the command, and a git config that can define an alias makes every other git word of the command such a push, as a GIT_CONFIG_COUNT, GIT_CONFIG_KEY_, GIT_CONFIG_VALUE_ or GIT_CONFIG_PARAMETERS assignment makes the git word it reaches; a cd, env -C or git -C operand with an unquoted leading ~, a cd a launcher runs, such as builtin cd, any cd in text eval, source or . runs in the same shell, and a relative cd that CDPATH can search in a command with a word naming CDPATH leave the push's repository unresolved. Each literal curl, wget, scp, rsync or git word after an unresolved launcher is judged as that program's head, and an interpreter's script operand counts only after no option. The plain-stage rule reports and does not refuse: a command these checks pass with a stage holding such a word, or git with a later push, that is not plain, literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages, gets a report=plain-stage notice with one would= line per check naming its program and cause. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg or cat argument. Not reached: a receiver behind an unresolved launcher, a sender in a brace group or compound command, a later command of a brace group that reads the pipe, a push behind an unread Git global word that takes the next literal word as its argument, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, Git configuration an earlier command or a file write sets, variables or aliases an earlier command or file sets, an export, declare -x or typeset -x earlier in the same command, the commands inside a sourced script or script file, a CDPATH the session's shell already holds, an alias that a configuration file a variable assigned before git names, such as GIT_CONFIG_GLOBAL or HOME, defines, other upload programs, a program that makes its own network calls, and runtime-built names.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; a cd, pushd or popd that eval, source or . runs in the same shell, for an environ read after that text, such as eval 'cd /proc/self'; cat environ; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage that runs its input, any stage of a subshell or the first command of a brace group included, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option, an assignment before the program word, NAME= or NAME+=, or before the exec, builtin, eval, shell or script that runs it, or an expanding or substituted host unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, an expanding or substituted operand, an unread Git global word whose first later literal word that is no option or option argument is push, and Git configuration, a GIT_ variable or an inline alias its command sets, or a git remote or git config anywhere in the command that can change a remote, unresolved, for every push of the command, and a git config that can define an alias makes every other git word of the command such a push, as a GIT_CONFIG_COUNT, GIT_CONFIG_KEY_, GIT_CONFIG_VALUE_ or GIT_CONFIG_PARAMETERS assignment makes the git word it reaches; a cd, env -C or git -C operand with an unquoted leading ~, a cd a launcher runs, such as builtin cd, any cd in text eval, source or . runs in the same shell, and a relative cd that CDPATH can search in a command with a word naming CDPATH leave the push's repository unresolved; that cd, and in such a command a cd, pushd or popd whose destination the walk does not follow, such as CDPATH=/proc cd self or cd -P self, also leave the directory of a later relative environ read in the same shell source unresolved, so CDPATH=/proc; cd self && cat environ refuses. Each literal curl, wget, scp, rsync or git word after an unresolved launcher is judged as that program's head, and an interpreter's script operand counts only after no option. The plain-stage rule reports and does not refuse: a command these checks pass with a stage holding such a word, or git with a later push, that is not plain, literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages, gets a report=plain-stage notice with one would= line per check naming its program and cause. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg or cat argument. Not reached: a receiver behind an unresolved launcher, a sender in a brace group or compound command, a later command of a brace group that reads the pipe, a push behind an unread Git global word that takes the next literal word as its argument, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, Git configuration an earlier command or a file write sets, variables or aliases an earlier command or file sets, an export, declare -x or typeset -x earlier in the same command, the commands inside a sourced script or script file, a CDPATH the session's shell already holds, an alias that a configuration file a variable assigned before git names, such as GIT_CONFIG_GLOBAL or HOME, defines, other upload programs, a program that makes its own network calls, and runtime-built names.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -435,10 +435,7 @@ load_reader_context() {
 # The reader walk takes a cd destination only where the shell does not
 # expand it: an unquoted leading ~ expands against a HOME the command can
 # set first, as history_git_argv states for -C, so it leaves the push's
-# repository unresolved. cd searches CDPATH for a relative destination
-# whose first component is not . or .., .hidden included (bash 5.2 probes),
-# so push_judge settles one with the command's CDPATH words. The targeting
-# check needs only the cd.
+# repository unresolved. The targeting check needs only the cd.
 literal_cd_operand() {
   local cursor=$pos options_ended=""
   [ "${args[$cursor]:-}" != -- ] || { cursor=$((cursor + 1)); options_ended=1; }
@@ -447,7 +444,6 @@ literal_cd_operand() {
     { [ -n "$options_ended" ] || [[ ${args[$cursor]} != -* ]]; } || return 1
   cd_operand=${args[$cursor]}
   case "${arg_unquoted[$cursor]%%:*}:$cd_operand" in ?*:'~'*) cd_destination="" ;; *) cd_destination=$cd_operand ;; esac
-  case "$cd_destination" in '' | /* | . | .. | ./* | ../*) ;; *) push_cd_searched=1 ;; esac
 }
 
 # The reader walk follows only a literal cd destination at a command head,
@@ -457,9 +453,21 @@ literal_cd_operand() {
 # queued it moves that shell's later commands; either moves them to a
 # directory the walk does not follow. A shell's command string or input
 # runs in a child, whose cd moves only its own frame.
+# cd searches CDPATH for a relative destination whose first component is not
+# . or .., .hidden included (bash 5.2 probes), and pushd runs cd. A cd the
+# walk does not follow, such as CDPATH=/proc cd self, cd -P self or builtin
+# cd self, can be searched too, so push_judge settles each such cd with the
+# command's CDPATH words. The reader walk settles one only in the frame it
+# walks: a cd in text eval, source or . runs leaves that nested walk's reader
+# directories unresolved, not the outer walk's, so a read after the text is
+# not reached.
 directory_change() {
   case "$program" in cd | pushd | popd) ;; *) return 0 ;; esac
   [ -z "$same_shell" ] && [ -n "$cd_destination" ] || push_dir_unknown=1
+  case "$cd_destination" in
+    /* | . | .. | ./* | ../*) ;;
+    *) cd_searched=1; push_cd_searched=1 ;;
+  esac
 }
 
 # eval, source and . run their text in the shell that runs them.
@@ -2009,7 +2017,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local reader_dirs=(${source_reader_dirs[@]+"${source_reader_dirs[@]}"}) reader_dirs_unresolved=${source_reader_dirs_unresolved:-}
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
   local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
-  local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand cd_destination
+  local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand cd_destination cd_searched
   local shell_forwarder shell_forwarded_pos selected_forwarder selected_operand next_candidate
   local stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
@@ -2402,7 +2410,7 @@ environment_dump() { # command kind; arguments are already decoded data
     if [ -z "${transfer_ignored:-}" ]; then
       for value in ${args[@]+"${args[@]}"}; do case "$value" in *CDPATH*) push_cdpath_named=1 ;; esac; done
     fi
-    cd_operand=""; cd_destination=""
+    cd_operand=""; cd_destination=""; cd_searched=""
     if [ "$program" = cd ] && [ "$head_start" -eq 0 ] && [ "$program_pos" = 0 ]; then
       literal_cd_operand || :
     fi
@@ -2553,9 +2561,13 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
     decisions[stage]=$mode
-    if [ -n "$cd_destination" ]; then
-      case "${separators[$stage]}" in '|' | '&') ;; *) remember_reader_directory "$cd_destination" ;; esac
-    fi
+    case "${separators[$stage]}" in
+      '|' | '&') ;;
+      # A CDPATH word can send a searched cd anywhere, by push_judge's rule.
+      *)
+        if [ -n "$cd_searched" ] && [ -n "$push_cdpath_named" ]; then reader_dirs_unresolved=1
+        elif [ -n "$cd_destination" ]; then remember_reader_directory "$cd_destination"; fi ;;
+    esac
     piped_source=$data_source
     # Echo's plain operands define its output without another shell parser.
     # Options, escapes and expanding words need runtime interpretation.
@@ -2873,6 +2885,30 @@ history_roots=(); history_root_reasons=(); outside=""
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
+# The first walk can reach a CDPATH word only after a searched cd, as in a
+# sourced here-string or a loop that sets CDPATH after its cd, so a second
+# walk, which knows the word from its start, judges that cd unresolved. Its
+# subshell keeps the first walk's facts and diagnostics. The walk's verdict
+# is its last line, since a walk that dies can exit with any status, 1
+# included; that walk, and a refusal inside it, keep their captured words.
+if [ -n "$push_cd_searched" ] && [ -n "$push_cdpath_named" ]; then
+  walk_status=0
+  walk_text=$( (
+    verdict=0
+    environment_dump "$command_kind" >/dev/null || verdict=$?
+    printf '\nwalk=%s' "$verdict"
+  ) 2>&1 ) || walk_status=$?
+  walk_verdict=""
+  case "$walk_status:$walk_text" in
+    0:*$'\n'walk=[01]) walk_verdict=${walk_text##*=}; walk_text=${walk_text%$'\n'walk=?} ;;
+  esac
+  case "$walk_verdict:$walk_status:$walk_text" in
+    0:*) refuse refused environment-dump ;;
+    1:*) ;;
+    :2:'command-safety: refused='*) printf '%s\n' "$walk_text" >&2; exit 2 ;;
+    *) refuse exit "$walk_status" "$walk_text" ;;
+  esac
+fi
 [ "$cwd_state" != invalid-cwd ] || refuse payload invalid-cwd
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 [ -n "$cwd" ] || cwd="$PWD"
@@ -2898,7 +2934,8 @@ git_entry_above() { # DIR
 push_judge() {
   local record base_start=0 dir_start=0 base cursor chain listing line name url rewritten known directory
   # A CDPATH the command sets moves a searched cd wherever it stands, since
-  # a loop can set it after the cd runs once.
+  # the walk can reach the word only after the cd, as in a sourced
+  # here-string, where the reader directories already hold the cd.
   [ -z "$push_cd_searched" ] || [ -z "$push_cdpath_named" ] || push_dir_unknown=1
   for ((record=0; record<${#push_remotes[@]}; record++)); do
     push_remote=${push_remotes[$record]}; push_reason=${push_reasons[$record]}
