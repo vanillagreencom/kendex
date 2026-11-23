@@ -105,9 +105,13 @@ The handoff and its archive also follow these rules:
 
 ### State retention
 
-- Keep a State entry only if its absence would cause the successor to act wrongly or repeat work and the successor cannot recover the fact from its owning source.
-  - Examples include an unfinished operation with no receipt, a live lane, a temporary instruction, report coverage or a hold.
-  - Keep an existing entry whose source is unreadable until a readback succeeds.
+- State holds only these entries:
+  - a value a step produced, such as a lane's run directory, a wake registration, report coverage or a hold;
+  - an unfinished operation with no receipt;
+  - an outcome whose tracker write failed, until a retried write reads back on its item.
+- Keep such an entry only while its absence would cause the successor to act wrongly or repeat work and the successor cannot recover the fact from its owning source.
+- A work next action goes to its tracker item through [5. Retain the next action](../workflows/tasks.md#5-retain-the-next-action), never to State.
+- Keep an existing entry whose source is unreadable until a readback succeeds.
 
 An explicit session identity uses the existing `session=ID` token or a State entry opening `- SESSION ID`.
 
@@ -121,7 +125,7 @@ Write and rebuild State by these rules:
 - Change a State entry with the single `progress-log` call under [Progress records](#progress-records).
   - It replaces the whole entry or removes it and appends the record under the same file lock and write.
   - Put the account in the record, never append it to the old State text.
-- Update session-only state when it changes: an unfinished operation's next step, a running lane's identity or result path, a temporary instruction or its end event, report coverage, or a hold.
+- Update a State entry when its value changes, such as an unfinished operation's next step, a lane's run directory, report coverage or a hold.
   - Change only the affected lines.
   - Append the state-change record in the same write.
   - Advance the checkpoint's covered log range with the update.
@@ -154,7 +158,7 @@ Write a record only for a decision, a state change, a send whose delivery or eff
 
 - In Observed result and source, mark unread evidence as unread.
 - In Decision, link any recorded disposition under [Lane results](#lane-results).
-- A State change set carries the complete replacement next action on one line.
+- A State change set carries the complete replacement for an entry [State retention](#state-retention) admits, on one line.
 
 Write and replay records by these rules:
 
@@ -173,7 +177,7 @@ Write and replay records by these rules:
   - When State holds one key twice under two spellings, such as `- KEN-123: ...` and `- KEN-123:: ...`, the writer refuses every spelling of that key and the staged commit check refuses every commit in the home.
     1. Delete the stale entry from State by hand.
     2. Then commit the handoff.
-- Preserve an open question's exact words in its next action, with its message id.
+- An open question stays in its mailbox under [Homes](#homes). The next action that answers it goes to its tracker item and names the question's message id.
 - Keep location, holds, wake registrations and report coverage in the session entries when replacing them.
 - Replay each later record's State change with that record's id; a set replaces the whole earlier value and a remove deletes it.
 - To retain a searchable session id, put a bare `session=ID` token in Operation or Decision, separated from other text by whitespace.

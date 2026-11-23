@@ -39,6 +39,9 @@
    - Preserve the request identity and outcome on that item through every next step.
    - If capture or readback fails, hold the dependent action.
    - Keep the original request in its exchange home until capture succeeds.
+   - While capture fails, record the outcome as a State entry under [State retention](../references/long-session.md#state-retention).
+   - Remove that entry once a retried capture reads back.
+   - Once the binding reads back, the work's next action goes on the item under [Retain the next action](#5-retain-the-next-action), never in State.
 4. Before treating an owner thread as handled, read every request in the thread.
    - For each distinct outcome the owner requested or a reply promised, answer it in full or bind it to a tracker item.
    - Read back each binding.
@@ -79,6 +82,8 @@
 
 1. Before settling an owner thread, follow [Bind the request](#2-bind-the-request).
 2. On the same tracker item, record the current decision, evidence or explicit unknown, existing attempt reference, unresolved next action and responsible actor.
+   - Record the next action here, never in the handoff's State.
+   - State keeps only the entries [State retention](../references/long-session.md#state-retention) admits.
    - For an external wait, retain its condition, evidence source and trigger or review date.
    - For an answer or result awaiting acceptance, retain the acceptance action.
    - Preserve the original criterion when another owner's item completes.
