@@ -1328,9 +1328,7 @@ fn findings_query_counts_a_shared_cause_key_and_leaves_an_unbound_request_unknow
 }
 
 /// A recorded review finding keeps its artifact item's priority, read back
-/// from the record once the artifact is gone; a review record without one
-/// refuses and lands none of its batch, while a validation record, which
-/// no artifact item backs, needs none.
+/// from the record once the artifact is gone.
 #[test]
 fn findings_record_keeps_a_review_findings_priority_past_its_artifact() {
     let store = Store::new();
@@ -1345,19 +1343,6 @@ fn findings_record_keeps_a_review_findings_priority_past_its_artifact() {
     let review = json!({"kind": "review", "location": "src/x.rs (`f`)", "priority": 1, "source": source});
     let check = json!({"kind": "validation", "check": "cargo test",
         "source": {"round_id": "R1", "receipt": "r.json", "identity": ["receipt", "R1", "r.json", "cargo test"]}});
-    let mut unprioritized = review.clone();
-    unprioritized.as_object_mut().unwrap().remove("priority");
-    let refused = store.write_file(
-        "b0.json",
-        &json!({"records": [check, unprioritized]}).to_string(),
-    );
-    let (key, line) = store.refused(&["state", "findings", "record", "--item", ITEM, &refused]);
-    assert_eq!(key, "finding-priority");
-    assert!(line.ends_with("index=1"), "{line}");
-    let doc = store.doc(&store.item_path(ITEM));
-    assert_eq!(doc["finding_occurrences"]["records"], json!([]));
-    assert_eq!(doc["finding_occurrences"]["prior"], "none");
-
     let batch = store.write_file("b1.json", &json!({"records": [review, check]}).to_string());
     assert_eq!(
         store.ok(&["state", "findings", "record", "--item", ITEM, &batch])["recorded"],

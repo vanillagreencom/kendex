@@ -640,7 +640,6 @@ Outside dry-run, record it:
 .agents/skills/orch/scripts/orch-runtime state findings record --item [ISSUE_ID] [BATCH_FILE]
 ```
 
-- A review record without a numeric `priority` refuses `finding-priority`, naming its index in the batch. None of the batch lands, and coverage stays as it was.
 - The recorder keeps the first source provenance.
 - A known identity under the same class adds nothing, even after a new round token or a native retriage.
 - A known identity under another class refuses: none of the batch lands, and coverage stays unknown.
