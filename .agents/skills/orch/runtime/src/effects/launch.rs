@@ -471,14 +471,18 @@ struct LaunchPrep {
 }
 
 /// The sign-in of the named Claude account a local lane bills, a Pi
-/// `pi-claude/` seat among them: its declared token file, else its stored
-/// login, so the window's inherited credentials never sign it in. A lane
-/// billing no named Claude account signs in as it did.
+/// `pi-claude/` seat among them, at `now`, as the reader judges it
+/// ([`agent_runtime::accounts::usage::SignIn::launch`]): the window's
+/// inherited credentials never sign it in, and an account holding no
+/// sign-in refuses before any window opens. A lane billing no named Claude
+/// account signs in as it did.
 fn lane_sign_in(
     settings: &Settings,
     harness: Harness,
     r: &LaunchLane,
+    now: u64,
 ) -> agent_runtime::Result<Option<ClaudeSignIn>> {
+    use agent_runtime::accounts::usage;
     let billed = harness.billed(r.model.as_deref().unwrap_or_default());
     let Some(account) = r
         .account
@@ -487,14 +491,10 @@ fn lane_sign_in(
     else {
         return Ok(None);
     };
-    let files = agent_runtime::accounts::usage::token_files(&settings.controller.account_tokens)?;
-    Ok(Some(
-        files
-            .declared(account)
-            .map_or(ClaudeSignIn::StoredLogin, |file| {
-                ClaudeSignIn::TokenFile(file.to_path_buf())
-            }),
-    ))
+    let files = usage::token_files(&settings.controller.account_tokens)?;
+    usage::sign_in(Harness::Claude, account, &files, now)
+        .launch(account, &files)
+        .map(Some)
 }
 
 /// Resolve everything a local launch can refuse before it opens a window:
@@ -588,7 +588,7 @@ fn prepare_launch(
             },
             extra_args: &permission,
             opener: &super::opener_env(harness, r.model.as_deref()),
-            claude_sign_in: lane_sign_in(settings, harness, r)?,
+            claude_sign_in: lane_sign_in(settings, harness, r, operation.wall_secs())?,
         },
     )?;
     lane_words(&mut intent, &cwd);

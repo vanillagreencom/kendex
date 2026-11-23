@@ -71,7 +71,8 @@ enum Verb {
     /// account, a Pi `pi-claude/` intent's account) signs in as that home
     /// alone: by the token file `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`
     /// declares for it, else its stored login, the inherited Claude
-    /// credentials cleared.
+    /// credentials cleared; a home holding neither refuses
+    /// `successor-not-signed-in` before any window opens.
     Launch {
         #[arg(long)]
         intent: PathBuf,
@@ -2375,13 +2376,13 @@ impl HandOverSettings {
     }
 }
 
-/// A launch that names its account and no home runs, before its window
-/// opens, under the home that account names with the trust record its
-/// directory needs, as a lane's and a controller's do.
-/// The sign-in of the named Claude home `intent` bills, `None` for an intent
-/// billing none: the setting is read from the current directory's project
-/// only then, so a value that does not read refuses no other launch.
+/// The sign-in of the named Claude home `intent` bills, as the reader
+/// judges it ([`agent_runtime::accounts::usage::SignIn::launch`]), `None`
+/// for an intent billing none: the setting is read from the current
+/// directory's project only then, so a value that does not read refuses no
+/// other launch.
 fn claude_sign_in(intent: &LaunchIntent) -> Result<Option<launch::ClaudeSignIn>> {
+    use agent_runtime::accounts::usage;
     let named = match intent
         .harness
         .billed(intent.model.as_deref().unwrap_or_default())
@@ -2403,18 +2404,19 @@ fn claude_sign_in(intent: &LaunchIntent) -> Result<Option<launch::ClaudeSignIn>>
         load: &[],
     };
     let values = settings::layered(&roots.project, &environment, true, &keys)?;
-    let files = agent_runtime::accounts::usage::token_files(
-        &settings::ControllerSettings::read(&values).account_tokens,
-    )?;
-    Ok(Some(
-        files
-            .declared(&home.display().to_string())
-            .map_or(launch::ClaudeSignIn::StoredLogin, |file| {
-                launch::ClaudeSignIn::TokenFile(file.to_path_buf())
-            }),
-    ))
+    let files = usage::token_files(&settings::ControllerSettings::read(&values).account_tokens)?;
+    let home = home.display().to_string();
+    let now = clock::Clock::wall(&clock::SystemClock)
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    usage::sign_in(Harness::Claude, &home, &files, now)
+        .launch(&home, &files)
+        .map(Some)
 }
 
+/// A launch that names its account and no home runs, before its window
+/// opens, under the home that account names with the trust record its
+/// directory needs, as a lane's and a controller's do.
 fn prepare_home(intent: &mut LaunchIntent) -> Result<()> {
     let (Some(account), None) = (intent.account.as_deref(), intent.home.as_ref()) else {
         return Ok(());

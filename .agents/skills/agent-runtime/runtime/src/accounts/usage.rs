@@ -20,6 +20,7 @@ use serde_json::{Map, Value, json};
 
 use super::wall::canon;
 use crate::harness::Harness;
+use crate::launch::ClaudeSignIn;
 use crate::settings;
 
 /// Five hours: a Codex window more than half again as long is its weekly
@@ -718,6 +719,34 @@ pub fn sign_in(billed: Harness, dir: &str, files: &TokenFiles, now: u64) -> Sign
         StoredLogin::Held => SignIn::StoredLogin,
         StoredLogin::Missing { cause } => SignIn::Missing { cause },
         StoredLogin::Unjudged { cause } => SignIn::Unjudged { cause },
+    }
+}
+
+impl SignIn {
+    /// How a launch on the home `dir` this answer judged signs in, the one
+    /// projection a successor, a local lane and `agent-runtime launch` read:
+    /// a held token file is exported, and a held stored login, or one
+    /// nothing here reads, which the first turn judges, is the launch's own
+    /// once the inherited credentials are cleared. A home holding nothing
+    /// refuses `successor-not-signed-in` before any window opens, with the
+    /// home, the cause and the file `files` declares for it; a Codex home's
+    /// launch reads that refusal alone.
+    pub fn launch(self, dir: &str, files: &TokenFiles) -> crate::error::Result<ClaudeSignIn> {
+        match self {
+            SignIn::StoredLogin | SignIn::Unjudged { .. } => Ok(ClaudeSignIn::StoredLogin),
+            SignIn::TokenFile(file) => Ok(ClaudeSignIn::TokenFile(file)),
+            SignIn::Missing { cause } => {
+                let file = files.declared(dir).map(|f| f.display().to_string());
+                let mut fields = vec![("account", dir), ("cause", cause)];
+                if let Some(file) = &file {
+                    fields.push(("file", file));
+                }
+                Err(crate::error::Error::refused(
+                    "successor-not-signed-in",
+                    &fields,
+                ))
+            }
+        }
     }
 }
 

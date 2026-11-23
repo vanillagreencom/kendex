@@ -428,29 +428,16 @@ impl Successor {
                     Harness::Claude => usage::token_files(&settings.controller.account_tokens)?,
                     Harness::Codex | Harness::Copilot | Harness::Pi => TokenFiles::none(),
                 };
-                let claude = |sign_in: ClaudeSignIn| (billed == Harness::Claude).then_some(sign_in);
-                match usage::sign_in(billed, account, &files, now) {
-                    SignIn::StoredLogin => (None, claude(ClaudeSignIn::StoredLogin)),
-                    SignIn::TokenFile(file) => (
-                        Some(json!({"token_file": file.display().to_string()})),
-                        claude(ClaudeSignIn::TokenFile(file)),
-                    ),
-                    SignIn::Unjudged { cause } => (
-                        Some(json!({"unjudged": cause})),
-                        claude(ClaudeSignIn::StoredLogin),
-                    ),
-                    SignIn::Missing { cause } => {
-                        let file = files.declared(account).map(|f| f.display().to_string());
-                        let mut fields = vec![("account", account), ("cause", cause)];
-                        if let Some(file) = &file {
-                            fields.push(("file", file));
-                        }
-                        return Err(Unready::Refused(refused(
-                            "successor-not-signed-in",
-                            &fields,
-                        )));
+                let answer = usage::sign_in(billed, account, &files, now);
+                let note = match &answer {
+                    SignIn::TokenFile(file) => {
+                        Some(json!({"token_file": file.display().to_string()}))
                     }
-                }
+                    SignIn::Unjudged { cause } => Some(json!({"unjudged": cause})),
+                    SignIn::StoredLogin | SignIn::Missing { .. } => None,
+                };
+                let launch = answer.launch(account, &files)?;
+                (note, (billed == Harness::Claude).then_some(launch))
             }
             (Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None, _) => {
                 (None, None)

@@ -2848,8 +2848,8 @@ fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
     runner.init_fleet();
     let a = dir.path().join("a");
     let b = dir.path().join("b");
-    std::fs::create_dir_all(&a).unwrap();
-    std::fs::create_dir_all(&b).unwrap();
+    plant_credential(&a);
+    plant_credential(&b);
     let request = |account: &Path| {
         json!({
             "op": "launch-lane",
@@ -9113,7 +9113,7 @@ fn a_bypassed_claude_launch_records_the_accounts_bypass_consent_and_honours_a_re
     let cwd = runner.state_dir().display().to_string();
     let home = |name: &str| {
         let home = dir.path().join(name);
-        std::fs::create_dir_all(&home).unwrap();
+        plant_credential(&home);
         home
     };
     let settings_of = |home: &Path| -> Option<Value> {
@@ -9862,6 +9862,7 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
     runner.init_fleet();
     let seat = dir.path().join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let home = dir.path().join("home");
     let pi_root = home.join(".pi/agent");
     std::fs::create_dir_all(&pi_root).unwrap();
@@ -9962,6 +9963,128 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
     assert_eq!(server.panes().len(), panes_before, "no window opened");
 }
 
+/// A local lane on a named Claude account, Claude's own or a Pi
+/// `pi-claude/` seat, signs in as that account alone whatever the fleet
+/// server's environment holds: a declared token file's text is the token
+/// it holds, an undeclared account signs in by its stored login with no
+/// token in its environment, every key that would outrank either and the
+/// endpoint that would receive it are cleared, and an account whose
+/// declared file holds no token refuses before any window opens, naming the
+/// account, the cause and the file. Each row: the item, the harness, the
+/// account's declared file, and the token the lane holds or the refusal's
+/// cause.
+#[test]
+fn a_lane_on_a_named_claude_account_signs_in_as_that_account_alone() {
+    enum Want {
+        Holds(Option<&'static str>),
+        Refused(&'static str),
+    }
+    let rows = [
+        (
+            "KEN-SF",
+            "claude",
+            Some("file-token\n"),
+            Want::Holds(Some("file-token")),
+        ),
+        ("KEN-SL", "claude", None, Want::Holds(None)),
+        ("KEN-SP", "pi", None, Want::Holds(None)),
+        (
+            "KEN-SA",
+            "claude",
+            Some(""),
+            Want::Refused("declared-token-absent"),
+        ),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    for (name, value) in [
+        ("CLAUDE_CODE_OAUTH_TOKEN", "inherited"),
+        ("ANTHROPIC_API_KEY", "planted-key"),
+        ("ANTHROPIC_AUTH_TOKEN", "planted-auth"),
+        ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
+    ] {
+        let out = tmux(&server.socket, &["set-environment", "-g", name, value]);
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    let home = dir.path().join("home");
+    pi_root_ready(&home.join(".pi/agent"));
+    let home = home.display().to_string();
+    let binaries = format!(
+        "claude={},pi={}",
+        fixtures().join("stub-record/claude").display(),
+        fixtures().join("stub-record/pi").display()
+    );
+    for (item, harness, declared, want) in rows {
+        let seat = dir.path().join(format!("seat-{item}"));
+        plant_credential(&seat);
+        let token = dir.path().join(format!("{item}.token"));
+        let setting = match declared {
+            Some(text) => {
+                std::fs::write(&token, text).unwrap();
+                format!("{}={}", seat.display(), token.display())
+            }
+            None => String::new(),
+        };
+        let env = [
+            ("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str()),
+            ("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", setting.as_str()),
+            ("HOME", home.as_str()),
+        ];
+        let mut request = launch_request(item, runner.state_dir());
+        request["harness"] = json!(harness);
+        request["account"] = json!(seat.display().to_string());
+        if harness == "pi" {
+            request["model"] = json!("pi-claude/fable");
+        }
+        let record = runner.state_dir().join("launch-record.json");
+        let _ = std::fs::remove_file(&record);
+        let panes_before = server.panes().len();
+        let report = effect_report(&runner.op_fleet_env(&request, &env));
+        match want {
+            Want::Holds(holds) => {
+                assert!(
+                    matches!(
+                        report["intent"]["outcome"].as_str(),
+                        Some("confirmed" | "unconfirmed")
+                    ),
+                    "{item}: {report}"
+                );
+                let launched = launch_record_of(runner.state_dir());
+                assert_eq!(
+                    launched["sign_in"],
+                    json!({
+                        "CLAUDE_CODE_OAUTH_TOKEN": holds,
+                        "ANTHROPIC_API_KEY": null,
+                        "ANTHROPIC_AUTH_TOKEN": null,
+                        "ANTHROPIC_BASE_URL": null,
+                    }),
+                    "{item}: {launched}"
+                );
+            }
+            Want::Refused(cause) => {
+                assert_eq!(report["intent"]["outcome"], "failed", "{item}: {report}");
+                let observation = &report["intent"]["observation"];
+                for (field, value) in [
+                    ("cause", "successor-not-signed-in".to_owned()),
+                    ("account", seat.display().to_string()),
+                    ("detail", cause.to_owned()),
+                    ("file", token.display().to_string()),
+                ] {
+                    assert_eq!(observation[field], json!(value), "{item}: {report}");
+                }
+                assert_eq!(
+                    server.panes().len(),
+                    panes_before,
+                    "{item}: no window opened"
+                );
+            }
+        }
+    }
+}
+
 /// A Pi root and a carrier that leaves its compaction off and wakes on mail.
 fn pi_root_ready(root: &Path) {
     let carrier = root.join("packages/@vanillagreen/pi-hooks");
@@ -9992,6 +10115,7 @@ fn a_pi_root_the_private_env_file_names_is_the_root_a_seat_lane_is_judged_and_ru
     runner.init_fleet();
     let seat = dir.path().join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let home = dir.path().join("home");
     std::fs::create_dir_all(home.join(".pi/agent")).unwrap();
     let relocated = home.join("relocated-pi");
@@ -11042,6 +11166,7 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
     runner.init_fleet();
     let account = dir.path().join("account");
     std::fs::create_dir_all(&account).unwrap();
+    plant_credential(&account);
     let file = dir.path().join("brief.md");
     std::fs::write(&file, &continuation).unwrap();
     let request = json!({
@@ -11699,6 +11824,7 @@ fn a_lane_on_a_seat_whose_settings_are_a_link_reads_them_and_is_refused_a_write(
         ("KEN-K", world.dir.path().join("seat-in"), inside),
     ] {
         std::fs::create_dir_all(&seat).unwrap();
+        plant_credential(&seat);
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
         std::fs::write(&target, "{\"theme\": \"dark\"}\n").unwrap();
         let link = seat.join("settings.json");
@@ -11810,6 +11936,7 @@ fn a_lane_on_a_claude_seat_is_refused_new_settings_and_writes_its_session() {
     std::fs::write(&operator, "{\"theme\": \"dark\"}\n").unwrap();
     let seat = outside.join("seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let link = seat.join("settings.json");
     std::os::unix::fs::symlink(&operator, &link).unwrap();
     world.probe_env(
@@ -11878,6 +12005,7 @@ fn a_lane_is_refused_the_code_folders_of_a_copilot_seat_and_a_pi_root_and_writes
     std::fs::create_dir_all(root.join("extensions")).unwrap();
     let seat = outside.join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let bin = outside.join("pi-bin");
     std::fs::create_dir_all(&bin).unwrap();
     write_executable(
@@ -11930,6 +12058,7 @@ fn a_pi_lane_leaves_the_pi_root_s_absent_code_folders_absent_and_starts() {
     pi_root_ready(&root);
     let seat = outside.join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let pi = world.runner.state_dir().join("pi-stub").join("pi");
     std::fs::create_dir_all(pi.parent().unwrap()).unwrap();
     write_executable(
@@ -11974,6 +12103,7 @@ fn a_pi_lane_is_refused_the_kendex_hooks_of_its_root_and_writes_its_session_stat
     std::fs::write(kendex.join("hooks/guard.sh"), operators_script).unwrap();
     let seat = outside.join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let bin = outside.join("pi-bin");
     std::fs::create_dir_all(&bin).unwrap();
     write_executable(
@@ -12069,6 +12199,7 @@ fn a_pi_lane_starts_past_pi_s_project_trust_question() {
     pi_root_ready(&root);
     let seat = outside.join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let pi = world.runner.state_dir().join("pi-stub").join("pi");
     std::fs::create_dir_all(pi.parent().unwrap()).unwrap();
     write_executable(
@@ -12102,6 +12233,7 @@ fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_lead
     std::fs::create_dir_all(&shared).unwrap();
     let seat = outside.join("seat");
     std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     std::os::unix::fs::symlink(&shared, seat.join("projects")).unwrap();
     world.probe_env(
         "PROBE_RUN",
@@ -12126,7 +12258,7 @@ fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_lead
     );
 
     let gone = outside.join("seat-gone");
-    std::fs::create_dir_all(&gone).unwrap();
+    plant_credential(&gone);
     std::os::unix::fs::symlink(outside.join("shared/absent"), gone.join("projects")).unwrap();
     let mut request = launch_request("KEN-SG", world.runner.state_dir());
     request["account"] = json!(gone.display().to_string());

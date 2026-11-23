@@ -79,8 +79,10 @@ Each version was tested on Linux on 2026-10-26. The runtime refuses a harness na
 - `AGENT_RUNTIME_LAUNCH_PERMISSION=bypass` runs every launch unattended.
 - `AGENT_RUNTIME_LAUNCH_PERMISSION=native` keeps the harness's own prompts.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` names paths, never a token.
-- The account walk and a hand-over judge a declared account by its file alone, and a launch on it exports the file's text as `CLAUDE_CODE_OAUTH_TOKEN`.
-- A launch on a named Claude account clears the Claude credentials its window inherits, so it signs in as that account alone.
+- The account walk and a hand-over judge a declared account by its file alone, and any other account by its stored login.
+- A hand-over's, an orch local lane's or `agent-runtime launch`'s launch on a declared account exports the file's text as `CLAUDE_CODE_OAUTH_TOKEN`. An orch cloud session exports no file and signs in by its account's stored login.
+- A launch on a named Claude account, a Pi `pi-claude/` seat among them, clears the Claude credentials its window inherits, so it signs in as that account alone.
+- A hand-over's, an orch local lane's or `agent-runtime launch`'s launch on an account holding no sign-in refuses `successor-not-signed-in` before any window opens.
 - Declare `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every new session inherits.
 
 ## Licence

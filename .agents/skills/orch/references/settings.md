@@ -272,10 +272,10 @@ The keys' rules, in the table's order:
 - `AGENT_RUNTIME_CONTROLLER_PREFERENCE`: unset, a context mark's succession walks the controller's own entry alone.
 - `AGENT_RUNTIME_CONTROLLER_PREFERENCE`: the grammar is the example's § Fleet.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: the successor walk and the transfer judge a declared account by its file alone, and any other account by its stored login. A declared account whose file holds no token, or an undeclared account holding no stored login, is no candidate.
-- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a successor's or a local lane's launch on a declared account exports the file's text as `CLAUDE_CODE_OAUTH_TOKEN` in its own window.
+- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a successor's, a local lane's or `agent-runtime launch`'s launch on a declared account exports the file's text as `CLAUDE_CODE_OAUTH_TOKEN` in its own window.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a cloud session signs in by its account's stored login whatever the setting declares, and exports no file.
 - Every launch on a named Claude account clears the Claude credentials its window inherits that would outrank the account's own sign-in. A token the tmux server's environment holds signs no named account in.
-- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a declared account whose file is missing or empty refuses `successor-not-signed-in` with `cause=declared-token-absent file=<path>`.
+- A successor's, a local lane's or `agent-runtime launch`'s launch on a named Claude account holding no sign-in refuses `successor-not-signed-in` before any window opens. A declared account whose file is missing or empty refuses with `cause=declared-token-absent file=<path>`.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: the value names paths, never a token.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: declare it in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every successor inherits; a successor does not inherit its predecessor's own environment.
 
