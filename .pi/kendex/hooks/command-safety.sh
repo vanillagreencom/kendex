@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a shell or interpreter runs as its program, piped to it or through a substitution, naming the form; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host, and one an assignment before the program can route; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository, a push in a command whose git remote or git config can change a remote included. A command those checks pass with a stage that holds curl, wget, scp, rsync or git push and is not plain literal argv in a plain pipeline is reported with a would= line. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command with a word that names it refuses, except as an argument of grep, rg or cat.
+# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check. Refuse curl or wget output that a shell or interpreter runs as its program, piped to it or through a substitution, naming the form; refuse an upload (curl -T, a curl data or form file, wget --post-file, scp or rsync to a remote) to a host COMMAND_SAFETY_UPLOAD_HOSTS does not list, empty by default, naming the host, and one an assignment before the program, or before the exec, builtin, eval or shell running it, can route; refuse git push to a repository operand that is neither a remote of the repository nor one of its remote URLs, naming the remote, and an unresolved remote or repository, a push in a command whose git remote or git config can change a remote included, and any other git word of a command whose git config can define an alias, or one a GIT_CONFIG_COUNT, GIT_CONFIG_KEY_, GIT_CONFIG_VALUE_ or GIT_CONFIG_PARAMETERS assignment reaches. A command those checks pass with a stage that holds curl, wget, scp, rsync or git push and is not plain literal argv in a plain pipeline is reported with a would= line. An exact command in the hook's own environment variable COMMAND_SAFETY_OWNER_COMMAND passes those three; a command with a word that names it refuses, except as an argument of grep, rg or cat.
 # summary: Refuses commands that `cat` the private environment file or print the whole environment, pipe or feed a download into a shell, upload to a host the project has not listed, push to a remote the repository does not have, or match the project's deny pattern, which by default stops a small systemd-run memory cap. The owner allows one exact download, upload or push by starting the session with it in COMMAND_SAFETY_OWNER_COMMAND.
-# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage that runs its input, any stage of a subshell or the first command of a brace group included, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option, an assignment before the program word, NAME= or NAME+=, or an expanding or substituted host unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, an expanding or substituted operand, an unread Git global word whose first later literal word that is no option or option argument is push, and Git configuration, a GIT_ variable or an inline alias its command sets, or a git remote or git config anywhere in the command that can change a remote, unresolved, for every push of the command; a cd or git -C operand with an unquoted leading ~ leaves the push's repository unresolved. Each literal curl, wget, scp, rsync or git word after an unresolved launcher is judged as that program's head, and an interpreter's script operand counts only after no option. The plain-stage rule reports and does not refuse: a command these checks pass with a stage holding such a word, or git with a later push, that is not plain, literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages, gets a report=plain-stage notice with one would= line per check naming its program and cause. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg or cat argument. Not reached: a receiver behind an unresolved launcher, a sender in a brace group or compound command, a later command of a brace group that reads the pipe, a push behind an unread Git global word that takes the next literal word as its argument, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, Git configuration an earlier command or a file write sets, variables or aliases an earlier command or file sets, an export, declare -x or typeset -x earlier in the same command, an alias a git config in the same command writes, an assignment before exec, builtin exec, eval, a shell's -c or a sourced script that runs the sender or git, other upload programs, a program that makes its own network calls, and runtime-built names.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage that runs its input, any stage of a subshell or the first command of a brace group included, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option, an assignment before the program word, NAME= or NAME+=, or before the exec, builtin, eval, shell or script that runs it, or an expanding or substituted host unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, an expanding or substituted operand, an unread Git global word whose first later literal word that is no option or option argument is push, and Git configuration, a GIT_ variable or an inline alias its command sets, or a git remote or git config anywhere in the command that can change a remote, unresolved, for every push of the command, and a git config that can define an alias makes every other git word of the command such a push, as a GIT_CONFIG_COUNT, GIT_CONFIG_KEY_, GIT_CONFIG_VALUE_ or GIT_CONFIG_PARAMETERS assignment makes the git word it reaches; a cd, env -C or git -C operand with an unquoted leading ~, a cd a launcher runs, such as builtin cd, any cd in text eval, source or . runs in the same shell, and a relative cd that CDPATH can search in a command with a word naming CDPATH leave the push's repository unresolved. Each literal curl, wget, scp, rsync or git word after an unresolved launcher is judged as that program's head, and an interpreter's script operand counts only after no option. The plain-stage rule reports and does not refuse: a command these checks pass with a stage holding such a word, or git with a later push, that is not plain, literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages, gets a report=plain-stage notice with one would= line per check naming its program and cause. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg or cat argument. Not reached: a receiver behind an unresolved launcher, a sender in a brace group or compound command, a later command of a brace group that reads the pipe, a push behind an unread Git global word that takes the next literal word as its argument, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, Git configuration an earlier command or a file write sets, variables or aliases an earlier command or file sets, an export, declare -x or typeset -x earlier in the same command, the commands inside a sourced script or script file, a CDPATH the session's shell already holds, an alias that a configuration file a variable assigned before git names, such as GIT_CONFIG_GLOBAL or HOME, defines, other upload programs, a program that makes its own network calls, and runtime-built names.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -33,7 +33,16 @@ set -euo pipefail
 # git_walk selects the history judgment, the push or both.
 history_git_argv() { # START [launched]
   local cursor=$1 launched=${2:-} value fenced="" reason="" state=relative words=() tildes=() dirs=() assigned_name tilde_push=""
-  local push_at="" push_reason="" push_state setting="" unread="" unread_push=""
+  local push_at="" push_reason="" push_state setting="" unread="" unread_push="" launch_names
+  [ -n "${transfer_ignored:-}" ] || [ "${git_walk:-both}" = history ] || push_git_heads=$((push_git_heads + 1))
+  # An assignment before the git word applies to it, and so does one before
+  # the exec, eval or shell that runs it. Git reads these variables as
+  # inline configuration, as it reads -c, so they can define an alias
+  # (git-config(1) ENVIRONMENT).
+  launch_assignments $(($1 - 1))
+  for assigned_name in $launch_names; do
+    case "$assigned_name" in GIT_CONFIG_COUNT | GIT_CONFIG_KEY_* | GIT_CONFIG_VALUE_* | GIT_CONFIG_PARAMETERS) setting='alias' ;; esac
+  done
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
     [ "${arg_kinds[$cursor]}" = literal ] || { reason=unresolved-git-argv; unread=$cursor; unread_push=repository; break; }
@@ -48,11 +57,12 @@ history_git_argv() { # START [launched]
         fi
         # An inline alias stays one whatever setting follows it.
         case "$value" in -c | --config-env) setting=${setting:-1} ;; --git-dir | --work-tree) push_reason=repository ;; esac
-        case "$value:${args[$cursor]}" in -c:[Aa][Ll][Ii][Aa][Ss].* | --config-env:[Aa][Ll][Ii][Aa][Ss].*) setting='alias' ;; esac
+        case "$value" in -c | --config-env) ! alias_key "${args[$cursor]}" || setting='alias' ;; esac
         if [ "$value" = -C ]; then words[${#words[@]}]=${args[$cursor]}; tildes[${#tildes[@]}]=${arg_unquoted[$cursor]%%:*}; fi ;;
       -c?* | --config-env=*)
         setting=${setting:-1}
-        case "${value#-c}" in [Aa][Ll][Ii][Aa][Ss].* | --config-env=[Aa][Ll][Ii][Aa][Ss].*) setting='alias' ;; esac ;;
+        ! alias_key "${value#-c}" || setting='alias'
+        ! alias_key "${value#--config-env=}" || setting='alias' ;;
       --git-dir=* | --work-tree=*) push_reason=repository ;;
       # Git runs its subcommands from the exec path.
       --exec-path=*) setting=${setting:-1} ;;
@@ -101,9 +111,7 @@ history_git_argv() { # START [launched]
   if [ -n "$push_at" ]; then
     [ -z "${split_undecoded:-}" ] || push_reason=${push_reason:-remote}
     [ -z "$setting" ] || push_reason=${push_reason:-remote}
-    # An assignment before the git word applies to it.
-    for ((cursor=0; cursor<$1 - 1; cursor++)); do
-      assignment_word "${args[$cursor]}" || continue
+    for assigned_name in $launch_names; do
       case "$assigned_name" in
         GIT_DIR | GIT_WORK_TREE | GIT_COMMON_DIR) push_reason=repository ;;
         GIT_*) push_reason=${push_reason:-remote} ;;
@@ -143,9 +151,11 @@ history_git_argv() { # START [launched]
 # first. git remote changes a remote with any verb but listing, show,
 # get-url, add, whose new remote the hook does not find yet, and the
 # fetch-side prune, update, set-head and set-branches; git config can write
-# unless config_reads proves a read; an inline alias can run either.
+# unless config_reads proves a read; an inline alias can run either. A
+# config write that can define an alias makes every other git word of the
+# command a possible push, which push_judge settles.
 push_config_mark() { # START SUBCOMMAND
-  local cursor=$1
+  local cursor=$1 config_action config_operand
   [ -z "${transfer_ignored:-}" ] && [ "${git_walk:-both}" != history ] || return 0
   case "$2" in
     remote)
@@ -157,40 +167,94 @@ push_config_mark() { # START SUBCOMMAND
         esac
       done
       [ "$cursor" -lt "${#args[@]}" ] || return 0 ;;
-    config) ! config_reads "$cursor" || return 0 ;;
+    config)
+      ! config_reads "$cursor" || return 0
+      config_alias "$cursor" ;;
   esac
   push_config_changed=1
 }
 
-# git config only reads with its get or list subcommand, or in the legacy
-# form with a read action among the options before the first operand, or
-# with one operand and no action. Git's legacy parser stops at that operand,
-# so a later --get or -l is a value, and an option that takes an argument,
-# such as --comment, takes the next word whatever it reads. Any other
-# option, an abbreviation included, any other subcommand, edit's editor
-# included, and a word the hook cannot read there can write. Option list:
-# git config -h of Git 2.56.1.
-config_reads() { # START
-  local cursor=$1
-  case "${arg_kinds[$cursor]:-}:${args[$cursor]:-}" in
-    literal:get | literal:list) return 0 ;;
-    literal:set | literal:unset | literal:rename-section | literal:remove-section | literal:edit) return 1 ;;
-  esac
-  while [ "$cursor" -lt "${#args[@]}" ] && [ "${arg_kinds[$cursor]}" = literal ]; do
+# A Git setting that can define an alias: an alias key, or an include,
+# which can read one from another file. Section names ignore case.
+alias_key() { # WORD
+  case "$1" in [Aa][Ll][Ii][Aa][Ss].* | [Ii][Nn][Cc][Ll][Uu][Dd][Ee].* | [Ii][Nn][Cc][Ll][Uu][Dd][Ee][Ii][Ff].*) return 0 ;; esac
+  return 1
+}
+
+# A git config write can define an alias where its key names an alias or
+# include key or section, as a rename-section target can, where it opens an
+# editor, or where the hook cannot read a word that can stand for an option
+# or the key. A value after a literal key cannot.
+config_alias() { # START
+  local cursor last
+  config_words "$1"
+  case "$config_action" in edit | unknown) push_alias_changed=1; return ;; esac
+  last=$config_operand
+  [ "$config_action" != rename ] || last=$((last + 1))
+  for ((cursor=config_operand; cursor<=last; cursor++)); do
+    [ "$cursor" -lt "${#args[@]}" ] || return 0
+    [ "${arg_kinds[$cursor]}" = literal ] || { push_alias_changed=1; return; }
     case "${args[$cursor]}" in
-      --get | --get-all | --get-regexp | --get-urlmatch | --get-color | --get-colorbool | -l | --list) return 0 ;;
-      -f | --file | --blob | -t | --type | --default | --comment) cursor=$((cursor + 1)) ;;
-      -f?* | -t?* | --file=* | --blob=* | --type=* | --default=* | --comment=* | --no-file | --no-blob | --no-type | --no-default | --no-comment) ;;
+      [Aa][Ll][Ii][Aa][Ss] | [Ii][Nn][Cc][Ll][Uu][Dd][Ee] | [Ii][Nn][Cc][Ll][Uu][Dd][Ee][Ii][Ff]) push_alias_changed=1; return ;;
+    esac
+    ! alias_key "${args[$cursor]}" || { push_alias_changed=1; return; }
+  done
+}
+
+# git config only reads with its get or list subcommand, or in the legacy
+# form with a read action among its options, or with one operand and no
+# action.
+config_reads() { # START
+  config_words "$1"
+  case "$config_action" in
+    read) return 0 ;;
+    '') [ "$((config_operand + 1))" -eq "${#args[@]}" ] && [ "${arg_kinds[$config_operand]}" = literal ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# The one reading of git config's words: config_action is the subcommand or
+# option action, read, edit, rename, write, unknown where an option the list
+# does not name or a word the hook cannot read stands before the first
+# operand, or empty for none, and config_operand is that operand's index.
+# Git's parser stops at the first operand, so a later --get or -l is a
+# value, and an option that takes an argument, such as --comment, takes the
+# next word whatever it reads, where that word stays one field. A word whose
+# field count the tokenizer cannot prove, such as $F, can split, and its
+# later fields stand where an option or the key stands. Git takes a unique prefix of a long option,
+# so an unlisted one can be --edit or --rename-section. Option list: git
+# config -h and git config set -h of Git 2.56.1.
+config_words() { # START
+  local cursor=$1
+  config_action=""
+  case "${arg_kinds[$cursor]:-}:${args[$cursor]:-}" in
+    literal:get | literal:list) config_action=read; return ;;
+    literal:edit) config_action=edit; return ;;
+    literal:rename-section) config_action=rename; cursor=$((cursor + 1)) ;;
+    literal:set | literal:unset | literal:remove-section) config_action=write; cursor=$((cursor + 1)) ;;
+  esac
+  while [ "$cursor" -lt "${#args[@]}" ]; do
+    [ "${arg_kinds[$cursor]}" = literal ] || { config_action=unknown; break; }
+    case "${args[$cursor]}" in
+      --get | --get-all | --get-regexp | --get-urlmatch | --get-color | --get-colorbool | -l | --list) config_action=read; break ;;
+      -e | --edit) config_action=edit; break ;;
+      --rename-section) config_action=rename ;;
+      --add | --replace-all | --unset | --unset-all | --remove-section) config_action=write ;;
+      -f | --file | --blob | -t | --type | --default | --comment | --value)
+        cursor=$((cursor + 1))
+        [[ ${arg_unquoted[$cursor]:-} != *:fields ]] || { config_action=unknown; break; } ;;
+      -f?* | -t?* | --file=* | --blob=* | --type=* | --default=* | --comment=* | --value=*) ;;
+      --no-file | --no-blob | --no-type | --no-default | --no-comment | --no-value | --all | --no-all) ;;
       --global | --system | --local | --worktree | --no-global | --no-system | --no-local | --no-worktree) ;;
       -z | --null | --no-null | --name-only | --no-name-only | --show-origin | --no-show-origin | --show-scope | --no-show-scope | --show-names | --no-show-names) ;;
       --bool | --int | --bool-or-int | --bool-or-str | --path | --expiry-date | --fixed-value | --no-fixed-value | --includes | --no-includes) ;;
       --) cursor=$((cursor + 1)); break ;;
-      -*) return 1 ;;
+      -*) config_action=unknown; break ;;
       *) break ;;
     esac
     cursor=$((cursor + 1))
   done
-  [ "$((cursor + 1))" -eq "${#args[@]}" ] && [ "${arg_kinds[$cursor]}" = literal ]
+  config_operand=$cursor
 }
 
 # git push -h names the options that take a separate argument; Git takes the
@@ -371,7 +435,10 @@ load_reader_context() {
 # The reader walk takes a cd destination only where the shell does not
 # expand it: an unquoted leading ~ expands against a HOME the command can
 # set first, as history_git_argv states for -C, so it leaves the push's
-# repository unresolved. The targeting check needs only the cd.
+# repository unresolved. cd searches CDPATH for a relative destination
+# whose first component is not . or .., .hidden included (bash 5.2 probes),
+# so push_judge settles one with the command's CDPATH words. The targeting
+# check needs only the cd.
 literal_cd_operand() {
   local cursor=$pos options_ended=""
   [ "${args[$cursor]:-}" != -- ] || { cursor=$((cursor + 1)); options_ended=1; }
@@ -380,6 +447,25 @@ literal_cd_operand() {
     { [ -n "$options_ended" ] || [[ ${args[$cursor]} != -* ]]; } || return 1
   cd_operand=${args[$cursor]}
   case "${arg_unquoted[$cursor]%%:*}:$cd_operand" in ?*:'~'*) cd_destination="" ;; *) cd_destination=$cd_operand ;; esac
+  case "$cd_destination" in '' | /* | . | .. | ./* | ../*) ;; *) push_cd_searched=1 ;; esac
+}
+
+# The reader walk follows only a literal cd destination at a command head,
+# and only in the frame whose later commands it judges. A cd a launcher
+# runs, such as builtin cd or a sourced script running cd "$@", has no such
+# destination, and any cd in text eval, source or . runs in the shell that
+# queued it moves that shell's later commands; either moves them to a
+# directory the walk does not follow. A shell's command string or input
+# runs in a child, whose cd moves only its own frame.
+directory_change() {
+  case "$program" in cd | pushd | popd) ;; *) return 0 ;; esac
+  [ -z "$same_shell" ] && [ -n "$cd_destination" ] || push_dir_unknown=1
+}
+
+# eval, source and . run their text in the shell that runs them.
+runs_in_shell() {
+  case "$program" in eval | source | .) return 0 ;; esac
+  return 1
 }
 
 remember_reader_directory() {
@@ -774,6 +860,12 @@ environment_producer() { # command kind
             if [ "${arg_kinds[$env_chdir_word]}" != literal ] ||
                [[ ${arg_unquoted[$env_chdir_word]} == *:fields ]]; then
               reader_chdir_unresolved=1
+            # The shell expands an unquoted leading ~ in a separate operand
+            # word, never in --chdir=~ or -C~, against a HOME the command
+            # can set first, as literal_cd_operand states for cd.
+            elif [ "${args[$env_chdir_word]}" = "$env_chdir" ] && [ -n "${arg_unquoted[$env_chdir_word]%%:*}" ] &&
+                 [[ $env_chdir == '~'* ]]; then
+              reader_chdir_unresolved=1
             else
               case "$env_chdir" in
                 /*) reader_chdir=$env_chdir; reader_chdir_unresolved="" ;;
@@ -1006,6 +1098,19 @@ assignment_word() { # WORD
   assigned_name=${BASH_REMATCH[1]}
 }
 
+# A program reads the variables assigned before its word, and so does what
+# it runs: the command an exec or builtin forwards, the source eval or a
+# shell runs, and a script's operands. inherited_assignments carries the
+# names a launching command assigned into the frame or operand it runs;
+# launch_names adds the current command's own, those before the word at END.
+launch_assignments() { # END
+  local cursor assigned_name
+  launch_names=${inherited_assignments:-}
+  for ((cursor=0; cursor<$1; cursor++)); do
+    ! assignment_word "${args[$cursor]}" || launch_names="$launch_names $assigned_name"
+  done
+}
+
 # Reserved-word syntax and assignment prefixes come before the executable
 # head; a quoted or pathname word is never syntax.
 environment_head() { # command kind; updates pos, syntax_head and head_start
@@ -1179,12 +1284,14 @@ environment_receiver_evidence() { # language text
 # and source word with decoded argv, retaining the env prefix and typed tail.
 # The word kind travels too, so every writer keeps the escape judgment.
 environment_queue() { # source text, word kind, optional forwarded tag or split-string tail offset
-  local code=${#executable_texts[@]} context=conservative cursor
+  local code=${#executable_texts[@]} context=conservative cursor launch_names
   [ -z "${forwarded_argument:-}" ] && [ "${3:-}" != forwarded ] || context=forwarded
   executable_texts[code]=$1; executable_kinds[code]=$2; executable_stages[code]=$stage; executable_contexts[code]=$context
   executable_tail_starts[code]=${#executable_tail_args[@]}
   executable_tail_counts[code]=0
   executable_source_kinds[code]=shell; executable_prefix_counts[code]=0
+  executable_same_shell[code]=""
+  [ "$#" -ne 2 ] || ! runs_in_shell || executable_same_shell[code]=1
   if [ "$#" -eq 3 ] && [ "$3" != forwarded ]; then
     # The inner decode replays this env command's options. Its context starts
     # before that command applies its own chdir.
@@ -1202,6 +1309,8 @@ environment_queue() { # source text, word kind, optional forwarded tag or split-
   fi
   record_reader_context
   executable_reader_context[code]=$reader_context_id
+  launch_assignments "${program_pos:-0}"
+  executable_assignments[code]=$launch_names
 }
 
 # A script operand that names the process's own standard input runs that input.
@@ -1634,11 +1743,12 @@ transfer_host() { # WORD KIND url|remote; returns 1 for a local scp or rsync pat
 # names, rsync its remote shell; each reads more of its environment than a
 # list here would hold. So an assignment before the program word, as a
 # prefix or an env or sudo operand, leaves the destination unresolved, as a
-# GIT_ assignment leaves a push's remote. An export earlier in the command
-# is not read.
+# GIT_ assignment leaves a push's remote, and so does one before the exec,
+# eval or shell that runs the program. An export earlier in the command is
+# not read.
 upload_arguments() {
   local cursor=$pos value option argument letters takes short_takes long_takes upload="" redirected="" options_ended=""
-  local destinations=() destination_kinds=() host index long_flags=' ' sensitive=' ' candidate assigned="" assigned_name
+  local destinations=() destination_kinds=() host index long_flags=' ' sensitive=' ' candidate assigned launch_names
   case "$program" in
     curl)
       # --head is the one curl 8.5.0 flag that begins a sending option.
@@ -1655,9 +1765,7 @@ upload_arguments() {
       short_takes=@BefMT
       long_takes=' --address --backup-dir --block-size --bwlimit --checksum-choice --checksum-seed --chmod --chown --compare-dest --compress-choice --compress-level --contimeout --copy-as --copy-dest --debug --early-input --exclude --exclude-from --files-from --filter --groupmap --iconv --include --include-from --info --link-dest --log-file --log-file-format --max-alloc --max-delete --max-size --min-size --modify-window --only-write-batch --out-format --outbuf --partial-dir --password-file --port --protocol --read-batch --remote-option --rsh --rsync-path --skip-compress --sockopts --stop-after --stop-at --suffix --temp-dir --timeout --usermap --write-batch ' ;;
   esac
-  for ((cursor=0; cursor<pos-1; cursor++)); do
-    ! assignment_word "${args[$cursor]}" || assigned=1
-  done
+  launch_assignments $((pos - 1)); assigned=${launch_names:+1}
   cursor=$pos
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}; option=""; argument=""; takes=""
@@ -1853,8 +1961,10 @@ case_word() {
   local depth=${#closers[@]} top=$((${#case_depths[@]} - 1)) previous=$((${#tokens[@]} - 2))
   if [ "$top" -ge 0 ] && [ "${case_depths[$top]}" -eq "$depth" ]; then
     case "${case_states[$top]}:$word" in
-      subject:in) case_states[top]=arms; return ;;
-      arms:esac) unset 'case_depths[top]' 'case_states[top]'; return ;;
+      subject:in) case_states[top]=arms; case_ins[top]=$((previous + 1)); return ;;
+      arms:esac)
+        ! esac_reserved "$previous" "${case_ins[$top]}" || unset 'case_depths[top]' 'case_states[top]' 'case_ins[top]'
+        return ;;
     esac
   fi
   [ "$word" = case ] || return 0
@@ -1868,6 +1978,31 @@ case_word() {
   case_depths[${#case_depths[@]}]=$depth; case_states[${#case_states[@]}]=subject
 }
 
+# esac ends a case only where a command can start or a compound command has
+# just ended: after a ; or & terminator, a newline, a ;; or a pattern's ),
+# which the tokenizer each stores as ;, after the case's own in, or after a
+# reserved fi, done, esac, } or [[ ... ]]. After any other word it is an
+# argument, as in echo esac, and the case stays open. After a | it is a
+# pattern word, as in a|esac), or in a command a syntax error, as it is
+# after && or ||. Bash 5.2 probes: it runs case x in x) if true; then :; fi
+# esac and case x in a|esac) ;; esac, and refuses a redirect, |, && or ||
+# before a command's esac.
+esac_reserved() { # PREVIOUS IN
+  local at=$1
+  while [ "$at" -ge 0 ] && [ "$at" -ne "$2" ]; do
+    case "${kinds[$at]}:${tokens[$at]}" in operator:';' | operator:'&') return 0 ;; esac
+    [ "${kinds[$at]}" = literal ] && [ "${unquoted_words[$at]%%:*}" = 1 ] || return 1
+    # 'esac' is quoted: Bash 3.2 ends the case at a bare esac pattern word.
+    case "${tokens[$at]}" in
+      fi | done | 'esac' | '}') ;;
+      ']]')
+        while [ "$at" -gt 0 ] && [ "${tokens[$at]}:${kinds[$at]}" != '[[:literal' ]; do at=$((at - 1)); done ;;
+      *) return 1 ;;
+    esac
+    at=$((at - 1))
+  done
+}
+
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted="" fields_unknown=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
@@ -1878,7 +2013,9 @@ environment_dump() { # command kind; arguments are already decoded data
   local shell_forwarder shell_forwarded_pos selected_forwarder selected_operand next_candidate
   local stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
-  local stage_reader_context=() executable_reader_context=()
+  local stage_reader_context=() executable_reader_context=() executable_assignments=() stage_launches=() launch_names
+  # Whether this frame's text runs in the shell of the frame that queued it.
+  local same_shell=${queued_same_shell:-} queued_same_shell="" executable_same_shell=() stage_input_same_shell=()
   local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
   local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
@@ -1904,7 +2041,7 @@ environment_dump() { # command kind; arguments are already decoded data
   local stage_uploads_from=() stage_pushes_from=() stage_upload_records=()
   local tail_args=() tail_kinds=() tail_unquoted=() tail_glued=""
   # The case statements open at each substitution depth, for case_word.
-  local case_depths=() case_states=()
+  local case_depths=() case_states=() case_ins=()
   [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
   local executable_tail_starts=() executable_tail_counts=() executable_tail_args=() executable_tail_kinds=() executable_tail_unquoted=()
   local executable_source_kinds=() executable_prefix_counts=() prefix_count=${command_prefix_count:-0}
@@ -2258,13 +2395,18 @@ environment_dump() { # command kind; arguments are already decoded data
       program=opaque
     fi
     environment_producer "$1"
+    launch_assignments "${program_pos:-0}"; stage_launches[stage]=$launch_names
     [ -n "${transfer_ignored:-}" ] || owner_word
+    # A shell can set CDPATH in more ways than a reader can list, so any
+    # decoded word that names it counts, as owner_word counts its variable.
+    if [ -z "${transfer_ignored:-}" ]; then
+      for value in ${args[@]+"${args[@]}"}; do case "$value" in *CDPATH*) push_cdpath_named=1 ;; esac; done
+    fi
     cd_operand=""; cd_destination=""
     if [ "$program" = cd ] && [ "$head_start" -eq 0 ] && [ "$program_pos" = 0 ]; then
       literal_cd_operand || :
     fi
-    # The reader directories record only a literal cd destination.
-    case "$program" in cd | pushd | popd) [ -n "$cd_destination" ] || push_dir_unknown=1 ;; esac
+    directory_change
     [ -z "$targeting_eligible" ] || relative_targeting collect
     # A /proc environ input only these readers' arms can classify. Any other
     # program, such as a shell reading its descriptors, can print it.
@@ -2283,6 +2425,8 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     environment_program_text
     stage_input_programs[stage]=${input_program:+$program}
+    stage_input_same_shell[stage]=""
+    [ -z "$stdin_program" ] || ! runs_in_shell || stage_input_same_shell[stage]=1
     stage_receivers[stage]=""
     case "$receiver" in shell | interpreter) stage_receivers[stage]=$program ;; esac
     stage_program_words[stage]=$program_word
@@ -2361,9 +2505,11 @@ environment_dump() { # command kind; arguments are already decoded data
         arg_unquoted=("${stage_unquoted[@]:candidate:limit-candidate}")
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
         reader_chdir=$stage_chdir; reader_chdir_unresolved=$stage_chdir_unresolved
-        environment_producer shell
-        environment_program_text
+        inherited_assignments=${stage_launches[$stage]} environment_producer shell
+        inherited_assignments=${stage_launches[$stage]} environment_program_text
+        directory_change
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
+        [ -z "$stdin_program" ] || ! runs_in_shell || stage_input_same_shell[stage]=1
         [ -z "$input_program" ] || stage_input_programs[stage]=$program
         if [ "$candidate" = "$selected_operand" ]; then
           selected_operand=""
@@ -2392,7 +2538,7 @@ environment_dump() { # command kind; arguments are already decoded data
         # after a command string, every quoted operand can be, $0 included.
         if { [ -n "$script_string" ] || [ "$candidate" -gt "$((script_pos + 1))" ]; } && [ -z "$output" ] &&
            [ "${stage_unquoted[$candidate]%%:*}" != 1 ] && [ "$producer_end" -le 1 ]; then
-          environment_queue "${stage_args[$candidate]}" "${stage_kinds[$candidate]}" forwarded
+          inherited_assignments=${stage_launches[$stage]} environment_queue "${stage_args[$candidate]}" "${stage_kinds[$candidate]}" forwarded
         fi
         if [ "$producer_end" -gt 1 ]; then
           next_candidate=$((candidate + producer_end - 1))
@@ -2454,7 +2600,7 @@ environment_dump() { # command kind; arguments are already decoded data
       command_tail_unquoted=("${executable_tail_unquoted[@]:tail_start:tail_count}")
       command_prefix_count=${executable_prefix_counts[$code]:-0}
       load_reader_context "${executable_reader_context[$code]}"
-      if environment_dump "${executable_source_kinds[$code]:-shell}" "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
+      if inherited_assignments=${executable_assignments[$code]} queued_same_shell=${executable_same_shell[$code]:-} environment_dump "${executable_source_kinds[$code]:-shell}" "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
     done
     command_tail_args=(); command_tail_kinds=(); command_tail_unquoted=(); command_prefix_count=0
     # A stdin shell runs every body; an unknown receiver may run the ones
@@ -2467,7 +2613,7 @@ environment_dump() { # command kind; arguments are already decoded data
       [ "${literal_kinds[$doc]}" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
       local command_text=${literal_inputs[$doc]}
       load_reader_context "${stage_reader_context[$stage]}"
-      if transfer_ignored=$fallback_only environment_dump shell conservative; then return 0; fi
+      if inherited_assignments=${stage_launches[$stage]} queued_same_shell=${stage_input_same_shell[$stage]:-} transfer_ignored=$fallback_only environment_dump shell conservative; then return 0; fi
     done
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
@@ -2721,7 +2867,7 @@ if [ -n "${COMMAND_SAFETY_OWNER_COMMAND:-}" ] && [ "$COMMAND_SAFETY_OWNER_COMMAN
 download_form=""; download_program=""; download_receiver=""
 upload_programs=(); upload_hosts=(); upload_assigned=(); upload_program=""; upload_host=""; upload_cause=""
 push_remotes=(); push_reasons=(); push_states=(); push_bases=(); push_base_ends=(); push_dirs=(); push_dir_ends=(); push_dir_unknown=""
-push_seen=""; push_config_changed=""
+push_seen=""; push_config_changed=""; push_cd_searched=""; push_cdpath_named=""; push_alias_changed=""; push_git_heads=0
 push_reason=""; push_remote=""; push_repository=""; push_cause=""
 history_roots=(); history_root_reasons=(); outside=""
 if environment_dump "$command_kind"; then
@@ -2751,6 +2897,9 @@ git_entry_above() { # DIR
 # directory the reader directories say it can run in, before any settings.
 push_judge() {
   local record base_start=0 dir_start=0 base cursor chain listing line name url rewritten known directory
+  # A CDPATH the command sets moves a searched cd wherever it stands, since
+  # a loop can set it after the cd runs once.
+  [ -z "$push_cd_searched" ] || [ -z "$push_cdpath_named" ] || push_dir_unknown=1
   for ((record=0; record<${#push_remotes[@]}; record++)); do
     push_remote=${push_remotes[$record]}; push_reason=${push_reasons[$record]}
     if [ -z "$push_reason" ] && [ -n "$push_config_changed" ]; then push_reason=remote; push_cause=config; fi
@@ -2780,6 +2929,9 @@ push_judge() {
     done
     base_start=${push_base_ends[$record]}; dir_start=${push_dir_ends[$record]}
   done
+  # An alias the command's git config defines can make any other git word a
+  # push, one with no record.
+  [ -z "$push_alias_changed" ] || [ "$push_git_heads" -lt 2 ] || push_seen=1
   # A push with no repository has no record.
   if [ -n "$push_seen" ] && [ -n "$push_config_changed" ]; then
     push_remote=""; push_reason=remote; push_cause=config
