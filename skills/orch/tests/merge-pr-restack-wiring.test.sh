@@ -2,7 +2,8 @@
 # The restack cycle's wiring in merge-pr-restack.md, executed as the document
 # writes it against a real worktree: step 2 asks record-push for a fix round in
 # flight, reads the base, resolves the mode, asks the restack check and starts the
-# range run before step 3's record-push; the push records that run as the
+# range run before step 3's record-push, with a route for every mode the read
+# prints; the push records that run as the
 # item's restack stage, a second run recorded after a push-time rewrite takes
 # no second publication, and step 3's proof block prints the reader's reply,
 # hands back on a refusal and holds the merge on a missing answer. restack_skip.sh holds the skip check's
@@ -399,6 +400,49 @@ for order in review-first open-first push-first ''; do
   CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-resolve
   assert_eq "$CI_RESOLVED" validate-mode=ci "order=${order:-unset} restack resolves pending CI with subset CI coverage"
 done
+
+# A docs-only branch resolves docs at the restack's base, and the document's
+# range start runs it as docs to a pass: no CI read, so no gh stands in.
+DOCS_WT="$(make_worktree docs-restack)" || fixture_failed docs-worktree
+printf 'note\n' > "$DOCS_WT/note.md"
+git -C "$DOCS_WT" add note.md
+git -C "$DOCS_WT" -c user.name=t -c user.email=t@example.com commit -q -m note
+printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' >> "$DOCS_WT/kendex.settings.toml"
+DOCS_RESOLVED="$(live "$RESTACK_DOC" "$RESOLVE" "$DOCS_WT" main -)" || fixture_failed docs-resolve
+assert_eq "$DOCS_RESOLVED" validate-mode=docs 'a docs-only restack resolves docs'
+DOCS_OUT="$(live "$RESTACK_DOC" "$RANGE" "$DOCS_WT" main -)" || true
+DOCS_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$DOCS_OUT")"
+DOCS_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$DOCS_WT" main "$DOCS_DIR")" || fixture_failed docs-record
+assert_eq "$(sed -n 's/^state=done .*\(validate=[A-Za-z-]*\).*$/\1/p' <<<"$DOCS_OUT") ${DOCS_RECORD%% *}" \
+  'validate=pass validate-mode=docs' "the document's range start runs a docs-only head as docs to a pass"
+
+# routed_modes DOC — the mode words step 2's route headings name, one per line.
+routed_modes() {
+  awk '
+    /^2\. / { inside = 1 }
+    /^3\. / { inside = 0 }
+    inside && /^[[:space:]]*\*\*`validate-mode=/ {
+      line = $0; sub(/^[[:space:]]*\*\*/, "", line); sub(/\*\*.*$/, "", line)
+      while (match(line, /`[^`]*`/)) {
+        word = substr(line, RSTART + 1, RLENGTH - 2); sub(/^validate-mode=/, "", word); print word
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$1"
+}
+# unrouted DOC — each mode the document's own mode read printed above that
+# step 2 gives no route, or `none`.
+unrouted() {
+  local resolved missing=
+  for resolved in "$MODE" "$CI_RESOLVED" "$DOCS_RESOLVED"; do
+    routed_modes "$1" | grep -qxF "${resolved#validate-mode=}" || missing="$missing ${resolved#validate-mode=}"
+  done
+  echo "${missing# }" | sed 's/^$/none/'
+}
+assert_eq "$(unrouted "$RESTACK_DOC")" none 'step 2 routes every mode its mode read printed: range, ci and docs'
+cp "$RESTACK_DOC" "$TMP_ROOT/docs-route-mutant.md"
+mutate_file "$TMP_ROOT/docs-route-mutant.md" '**`validate-mode=full`, `range` or `docs`.**' '**`validate-mode=full` or `range`.**'
+assert_eq "$(unrouted "$TMP_ROOT/docs-route-mutant.md")" docs 'control: step 2 without its docs route leaves docs unrouted'
 
 # Pending validation comes from an accepted receipt or a run submit starts.
 # Execute the workflow's binding and no-CI check against the real run record.
