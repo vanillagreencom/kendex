@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 4.3.0
+
+- `EXA_API_KEY` can come from the computer's private key file: set `KENDEX_KEY_FILE` in your user environment to its absolute path. The tools keep only the file's `EXA_API_KEY` line, and use it only when the environment, the private config file, Pi settings and the project's `.env` files hold no key; a project `.env.local` key still wins. The key is never written to the process environment, so no process Pi starts inherits it. A key file with no key, one that cannot be read, or a relative path leaves the Exa tools off, and `/web-tools:doctor` names the file and the cause.
+
 ### 4.2.2
 
 - The installed prompt selects only active tools. It requires Exa configuration for `code_search`, `web_answer`, `web_find_similar` and `web_research`, and the deep research setting for `web_research`.

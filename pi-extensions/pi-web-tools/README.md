@@ -59,6 +59,13 @@ Set these as environment variables, in the project's `.env` or `.env.local`, or 
 - `OPENAI_API_KEY`
 - `JINA_API_KEY`, optional; Jina Reader works anonymously without it.
 
+`EXA_API_KEY` may also live in the computer's private key file: set `KENDEX_KEY_FILE` in your user environment to the file's absolute path. The file holds literal `KEY=value` lines.
+
+- The tools read the file whenever `KENDEX_KEY_FILE` is set and keep only its `EXA_API_KEY` line. They use that key only when none of the places above holds one.
+- The key stays inside Pi's process and is passed to no process Pi starts.
+- A project file cannot name the key file.
+- A key file with no `EXA_API_KEY` value, one that cannot be read, or a relative `KENDEX_KEY_FILE` leaves the key unset. `/web-tools:doctor` names the file and the cause.
+
 Without `EXA_API_KEY`, Pi does not offer `web_research`, `web_answer`, `web_find_similar` or `code_search`, and `web_fetch` has no Exa fallback. `web_answer`, `web_find_similar` and `code_search` join the active tools on their own only when `exaAdvancedEnabled` is on and an Exa key is set.
 
 A value may be a 1Password reference such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in. A reference that does not resolve within the startup timeout is treated as unset so Pi starts anyway; `PI_WEB_TOOLS_OP_READ_TIMEOUT_MS` changes that timeout.

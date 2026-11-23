@@ -103,7 +103,7 @@ export class ExaClient {
 	private readonly timeoutMs: number | undefined;
 
 	constructor(options: ExaClientOptions) {
-		this.apiKey = requireApiKey(options.apiKey, "Exa", "Set EXA_API_KEY or PI_WEB_TOOLS_CONFIG_FILE with exaApiKey.");
+		this.apiKey = requireApiKey(options.apiKey, "Exa", "Set EXA_API_KEY, set PI_WEB_TOOLS_CONFIG_FILE with exaApiKey, or name a key file holding EXA_API_KEY in KENDEX_KEY_FILE.");
 		this.baseUrl = options.baseUrl ?? "https://api.exa.ai";
 		this.fetchImpl = options.fetchImpl ?? fetch;
 		this.timeoutMs = options.timeoutMs;

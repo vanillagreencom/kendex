@@ -71,6 +71,8 @@ export function isolateEnvironment(t: TestContext, keys: string[]): void {
 export const settingsEnvironment = [
 	"PI_CODING_AGENT_DIR", "PI_WEB_TOOLS_CONFIG_FILE", "PI_WEB_TOOLS_OP_READ_TIMEOUT_MS",
 	"EXA_API_KEY", "PERPLEXITY_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "JINA_API_KEY",
+	// A host's key file would otherwise supply EXA_API_KEY to every settings test.
+	"KENDEX_KEY_FILE",
 ];
 
 /** A local repository with `files` committed, which git clones in place of https://github.com/fixture/repo.git
