@@ -57,8 +57,8 @@ cd -- "$1"
 # The host refusal keys a forward names as its cause; any other refusal takes
 # the operation's own cause.
 HOST_CAUSES = ("mailbox-missing", "overseer-absent", "overseer-unreadable")
-# Causes the drain reports as `forward-failed`. The first four hold an open
-# forward until the owner acts, and a later drain can still deliver and answer
+# Causes the drain reports as `forward-failed`. The first four leave the
+# forward open, and a later drain's retry or read can still deliver and answer
 # it; only answer-unseen and stop close one.
 FAILURES = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen", "stop")
 # The standard library has no portable file-change notice, so a wait reads
@@ -630,8 +630,8 @@ class Forwarder:
     def wait(self, key, timeout):
         """KEY's outcome once the drain stores its answer or closes it unanswered, or its open state at TIMEOUT seconds.
 
-        An open forward held on a cause in FAILURES is not final: the owner's
-        fix lets a later drain deliver and answer it, so the wait goes on.
+        An open forward held on a cause in FAILURES is not final: a later
+        drain can still deliver and answer it, so the wait goes on.
         The answer is its id, matched to `status --main`'s answers row; its
         text stays there. Returns (outcome, exit code).
         """
