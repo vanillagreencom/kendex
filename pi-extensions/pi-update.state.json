@@ -1,8 +1,8 @@
 {
-  "lastVersion": "1.0.1",
-  "lastDate": "2026-10-03",
-  "lastRun": "2026-10-20T10:58:06Z",
-  "lastRunHead": "40c25ec1f77ffed5b896727965f84daf12560acd",
+  "lastVersion": "1.6.0",
+  "lastDate": "2026-11-20",
+  "lastRun": "2026-11-23T06:03:15Z",
+  "lastRunHead": "e32c59e138871886379e42756eb572dd38dc3627",
   "sourcesCovered": [
     "agent",
     "ai",
@@ -14,6 +14,7 @@
     "env",
     "mcp",
     "protocol",
+    "schema",
     "server",
     "telemetry",
     "tui",
