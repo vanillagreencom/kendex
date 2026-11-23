@@ -173,7 +173,7 @@ A child takes its parent's project ([dependencies.md](dependencies.md) § Parent
 ## Audit
 
 ```bash
-.agents/skills/linear/scripts/linear.sh projects audit --team [TEAM]
+.agents/skills/linear/scripts/linear.sh projects audit --team "[TEAM]"
 ```
 
 It reads the team's open issues, the map projects, and the team and workspace labels, and prints `{team, map, projects, findings}`. `projects[]` lists each map project's `name`, `kind`, Linear `id` and `state`.

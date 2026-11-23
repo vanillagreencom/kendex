@@ -20,8 +20,8 @@ The overseer reads counts and identifiers only. The TPM reads bodies, comments a
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime --state-dir [OVERSEE_STATE_DIR] state get --fleet /last_backlog_audit
-.agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --state Backlog --max --format ids
-.agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --state Triage --max --format ids
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --state Backlog --max --format ids
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --state Triage --max --format ids
 ```
 
 ## Full audit

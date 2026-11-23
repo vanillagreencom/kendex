@@ -139,7 +139,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 1. Select unblocked, non-terminal development items from the tracker, read live through every page.
    - For a Linear tracker, run each line below in its own tool call. The first writes the whole read to ignored scratch storage, the second prints one row per item with no description, and the last removes the read.
    - If the read exits nonzero, stop the selection with its error and leave `launch_queue` as it is.
-   - `[STATES]` names the team's open states but Triage and Verifying, comma-separated, as `linear.sh statuses list --team [TEAM]` lists them. The verification pass owns a Verifying item's post-merge readings.
+   - `[STATES]` names the team's open states but Triage and Verifying, comma-separated, as `linear.sh statuses list --team "[TEAM]"` lists them. The verification pass owns a Verifying item's post-merge readings.
    - Keep only an item that can start, in any state. Each of these holds it out:
      - a blocker its `blocked_by_launch` names, the field the [Ancestor gate](../references/skill-rules.md#ancestor-gate) reads;
      - the `blocked` label on an item with no blocking relation at all. Beside a relation, the relation decides;
@@ -150,7 +150,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
    - A GitHub item labeled `blocked` is no candidate.
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --state [STATES] --select owed --max > tmp/oversee-select-source.json
+   .agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --state "[STATES]" --select owed --max > tmp/oversee-select-source.json
    jq -r '.[] | [.id, .state, (.priority // 0), .in_pr_bundle, .parent_id, (.blocked_by_launch | join(",")), (.blocked_by | length), (.labels | join(","))] | @tsv' tmp/oversee-select-source.json
    rm -f tmp/oversee-select-source.json
    ```
@@ -548,7 +548,7 @@ For each `triage` pass, and the triage backstop at `heartbeat`:
    - The last removes the response.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --created-since [AGE] --max --format=raw > tmp/oversee-triage-source.json
+.agents/skills/linear/scripts/linear.sh issues list --team "[TEAM]" --created-since [AGE] --max --format=raw > tmp/oversee-triage-source.json
 jq '[.issues.nodes[] | {identifier, title, done_when: ((("\n" + (.description // "")) | gsub("\r\n"; "\n") | split("\n## Done when\n")) as $sections | if ($sections | length) > 1 then ($sections[1] | split("\n## ")[0] | gsub("^[[:space:]]+|[[:space:]]+$"; "")) else "" end)}]' tmp/oversee-triage-source.json
 rm -f tmp/oversee-triage-source.json
 ```
