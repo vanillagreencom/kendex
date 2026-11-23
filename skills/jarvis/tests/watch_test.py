@@ -2086,6 +2086,25 @@ with open(sys.argv[1], "ab") as out:
         self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
                          [block.split("\n")[0]])
 
+    def path_without(self, name):
+        """One directory linking every program on the test's PATH but NAME,
+        the first of each name: the search path of a computer without it."""
+        directory = self.root / ("path-without-" + name)
+        if not directory.is_dir():
+            directory.mkdir()
+            for entry in self.env["PATH"].split(os.pathsep):
+                try:
+                    programs = sorted(Path(entry).iterdir())
+                except OSError:
+                    continue
+                for program in programs:
+                    link = directory / program.name
+                    if program.name == name or os.path.lexists(link) or program.is_dir() \
+                            or not os.access(program, os.X_OK):
+                        continue
+                    link.symlink_to(program)
+        return directory
+
     def controller(self, session, account, row, pane="%3", verdict=None, runtime=True, setup=True):
         """The home's live, bound controller SESSION on ACCOUNT in PANE, its
         context stamp a day old: agent-runtime's status read is planted, and
@@ -2093,8 +2112,9 @@ with open(sys.argv[1], "ab") as out:
         session's last row. VERDICT is the stderr line of a runtime that
         answers the status read and then refuses the verdict read with the
         wrapper's exit 69; RUNTIME false leaves no runtime installed; SETUP
-        false runs the real wrapper with no binary built, which refuses
-        every command, the status read first."""
+        false runs the real wrapper with no binary built on a PATH without
+        cargo, where it builds nothing and refuses every command,
+        setup-required, the status read first."""
         directory = self.packages / "agent-runtime"
         if directory.is_symlink():
             directory.unlink()
@@ -2104,7 +2124,8 @@ with open(sys.argv[1], "ab") as out:
         status = self.root / "status.json"
         wrapper = shlex.quote(str(REPO / "skills/agent-runtime/scripts/agent-runtime"))
         if runtime and not setup:
-            script.write_text('#!/bin/sh\nAGENT_RUNTIME_CACHE=' + shlex.quote(str(self.root / "unbuilt"))
+            script.write_text('#!/bin/sh\nPATH=' + shlex.quote(str(self.path_without("cargo")))
+                              + ' AGENT_RUNTIME_CACHE=' + shlex.quote(str(self.root / "unbuilt"))
                               + ' exec ' + wrapper + ' "$@"\n')
             script.chmod(0o755)
         elif runtime:
