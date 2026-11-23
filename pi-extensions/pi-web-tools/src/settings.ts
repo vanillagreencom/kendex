@@ -9,6 +9,7 @@ export const PACKAGE_ID = "@vanillagreen/pi-web-tools";
 export const WEB_PROVIDERS = ["auto", "exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"] as const;
 const DEFAULT_OP_READ_TIMEOUT_MS = 1500;
 const OP_READ_TIMEOUT_ENV = "PI_WEB_TOOLS_OP_READ_TIMEOUT_MS";
+const KEY_FILE_ENV = "KENDEX_KEY_FILE";
 export type WebProvider = (typeof WEB_PROVIDERS)[number];
 export type ResolvedWebProvider = Exclude<WebProvider, "auto">;
 
@@ -248,6 +249,29 @@ function resolveSecretRef(value: string | undefined, name: string, resolution: R
 	return resolved;
 }
 
+/** The key file's `EXA_API_KEY`, consulted only when no other source set one.
+ * A key file that cannot supply it leaves the key unset, which withholds the
+ * Exa tools, and records why, naming the file, where `/web-tools:doctor`
+ * shows it. The key is returned, never assigned to process.env, so no process
+ * Pi starts inherits it. */
+function keyFileKey(keyFile: SettingsInputs["keyFile"], warnings: string[]): string | undefined {
+	if (!keyFile) return undefined;
+	const { path, read } = keyFile;
+	switch (read.kind) {
+		case "key":
+			return read.key;
+		case "key-missing":
+			warnings.push(`key-file-key-missing: ${path}, the key file ${KEY_FILE_ENV} names, holds no EXA_API_KEY value. Add an EXA_API_KEY=<key> line to ${path}.`);
+			return undefined;
+		case "unreadable":
+			warnings.push(`key-file-unreadable: ${path}, the key file ${KEY_FILE_ENV} names, could not be read (${read.error}). Make ${path} readable by this user, with an EXA_API_KEY=<key> line.`);
+			return undefined;
+		case "not-absolute":
+			warnings.push(`key-file-not-absolute: ${KEY_FILE_ENV} is ${JSON.stringify(path)}; set it to the absolute path of the computer's key file.`);
+			return undefined;
+	}
+}
+
 /** What a file read gave: its text, nothing where it does not exist, or the
  * error that stopped the read. */
 type FileRead = { kind: "absent" } | { kind: "text"; text: string } | { kind: "failed"; error: string };
@@ -262,30 +286,61 @@ function readFile(path: string): FileRead {
 	}
 }
 
+/** What the computer's key file gave for `EXA_API_KEY`: its last value, no
+ * nonempty value, the error that stopped the read, or a path that is not
+ * absolute. Only that one line is kept, so no other key the file holds is
+ * held in memory. */
+type KeyFileRead = { kind: "key"; key: string } | { kind: "key-missing" } | { kind: "unreadable"; error: string } | { kind: "not-absolute" };
+
+// Literal `KEY=value` lines, as deep-research's key-file reader takes them:
+// no quote stripping, since the file is not a dotenv file.
+function readKeyFile(path: string): KeyFileRead {
+	if (!isAbsolute(path)) return { kind: "not-absolute" };
+	let text: string;
+	try {
+		text = readFileSync(path, "utf8");
+	} catch (error) {
+		const code = (error as { code?: unknown } | null)?.code;
+		return { kind: "unreadable", error: typeof code === "string" ? code : error instanceof Error ? error.message : String(error) };
+	}
+	let key: string | undefined;
+	for (const line of text.split(/\r?\n/)) {
+		const match = line.match(/^\s*EXA_API_KEY\s*=(.*)$/);
+		if (match) key = match[1]!.trim();
+	}
+	return key ? { kind: "key", key } : { kind: "key-missing" };
+}
+
 /** Every input `loadSettings` resolves from, read raw: the merged package
  * config, the settings-file diagnostics, the trusted project's `.env` files, the
- * private config file. With the trust answer, the process cwd and the
- * environment variables `loadSettings` keys on, two equal inputs resolve to the
- * same settings. */
+ * private config file, the key file's `EXA_API_KEY` line. With the trust
+ * answer, the process cwd and the environment variables `loadSettings` keys on,
+ * two equal inputs resolve to the same settings. */
 interface SettingsInputs {
 	raw: SettingsRecord;
 	diagnostics: string[];
 	envFiles: Array<{ path: string; read: FileRead }>;
 	privateConfigFile: string | undefined;
 	privateConfig: FileRead | undefined;
+	keyFile: { path: string; read: KeyFileRead } | undefined;
 }
 
-const INPUT_ENV_KEYS = ["EXA_API_KEY", "PERPLEXITY_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "JINA_API_KEY", "PI_WEB_TOOLS_CONFIG_FILE", OP_READ_TIMEOUT_ENV] as const;
+const INPUT_ENV_KEYS = ["EXA_API_KEY", "PERPLEXITY_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "JINA_API_KEY", "PI_WEB_TOOLS_CONFIG_FILE", OP_READ_TIMEOUT_ENV, KEY_FILE_ENV] as const;
 
 function readSettingsInputs(cwd: string): SettingsInputs {
 	const raw = readRawkendexConfig(cwd);
 	const privateConfigFile = resolveConfigPath(raw);
+	// The key file is a user-scope setting read from the process environment
+	// alone; the project's `.env` files never reach process.env, so no project
+	// file can point this read elsewhere.
+	const keyFile = process.env[KEY_FILE_ENV];
 	return {
 		raw,
 		diagnostics: settingsDiagnostics(cwd),
 		envFiles: projectSettingsTrustedForCwd(cwd) ? projectEnvFiles(cwd).map((path) => ({ path, read: readFile(path) })) : [],
 		privateConfigFile,
 		privateConfig: privateConfigFile === undefined ? undefined : readFile(privateConfigFile),
+		keyFile: keyFile === undefined ? undefined : { path: keyFile, read: readKeyFile(keyFile) },
 	};
 }
 
@@ -344,7 +399,7 @@ function resolveSettings(inputs: SettingsInputs, resolution: Resolution): WebToo
 	const sharedSecrets = ["exaApiKey", "perplexityApiKey", "geminiApiKey", "openaiApiKey"].filter((key) => typeof raw[key] === "string");
 	if (sharedSecrets.length > 0) warnings.push(`API keys in shared Pi settings are supported for compatibility but env vars or PI_WEB_TOOLS_CONFIG_FILE are preferred: ${sharedSecrets.join(", ")}`);
 	const secrets = { ...envFileConfig, ...raw, ...privateConfig };
-	const exaKey = process.env.EXA_API_KEY || secretFrom(secrets, ["EXA_API_KEY", "exaApiKey"]);
+	const exaKey = process.env.EXA_API_KEY || secretFrom(secrets, ["EXA_API_KEY", "exaApiKey"]) || keyFileKey(inputs.keyFile, warnings);
 	const perplexityKey = process.env.PERPLEXITY_API_KEY || secretFrom(secrets, ["PERPLEXITY_API_KEY", "perplexityApiKey"]);
 	const geminiKey = process.env.GEMINI_API_KEY || secretFrom(secrets, ["GEMINI_API_KEY", "geminiApiKey"]);
 	const openAiKey = process.env.OPENAI_API_KEY || secretFrom(secrets, ["OPENAI_API_KEY", "openaiApiKey"]);
