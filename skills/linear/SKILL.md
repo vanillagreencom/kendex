@@ -203,6 +203,8 @@ A blocking relation pointing at a Done or Canceled issue is **satisfied history,
 
 Normalized issue lists, gets and their `children` rows, bulk gets, relation reads, and session status keep each blocking relation in `blocked_by`. They list only nonterminal blockers in `blocked_by_open`.
 
+Safe gets and their `children` rows, safe lists and the `owed` selection also carry `blocked_by_launch`, the blockers that hold a launch: it leaves out a Verifying blocker too.
+
 ## Option Behavior
 
 What each option accepts: `issues --help`.

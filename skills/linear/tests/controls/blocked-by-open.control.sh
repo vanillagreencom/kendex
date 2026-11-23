@@ -17,3 +17,9 @@ control_expect "live bundle child names launch blockers"
 control_replace scripts/lib/formatters.sh 1 \
     '                blocked_by_launch: issue_blocked_by_launch_ids($node.inverseRelations.nodes)' \
     '                blocked_by_launch_dropped: null'
+
+# The list loses its launch field, the one selection reads.
+control_expect "safe list launch blockers for Verifying"
+control_replace scripts/lib/formatters.sh 1 \
+    '        blocked_by_launch: issue_blocked_by_launch_ids(.inverseRelations.nodes),' \
+    '        blocked_by_launch_dropped: null,'

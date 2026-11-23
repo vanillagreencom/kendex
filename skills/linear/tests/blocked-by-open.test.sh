@@ -92,7 +92,8 @@ assert_issue() {
 }
 
 
-# Verifying remains open to existing readers. Only the launch field differs.
+# Verifying remains open to existing readers. Only the launch field differs,
+# on the get the launch gate reads and the list selection reads.
 while IFS='|' read -r state state_type expected_launch; do
   verifying_raw="$(jq -cn --argjson issue "$main" --arg name "$state" --arg type "$state_type" \
     '{issue:($issue | .inverseRelations.nodes[0].issue.state = {name:$name,type:$type})}')"
@@ -101,6 +102,8 @@ while IFS='|' read -r state state_type expected_launch; do
   assert_issue "compact get keeps open blockers for $state" "$(format_issue_compact "$verifying_raw")" '.'
   list_raw="$(jq -c '{issues:{nodes:[.issue]}}' <<<"$verifying_raw")"
   assert_issue "safe list keeps open blockers for $state" "$(format_issues_list "$list_raw")" '.[0]'
+  assert_jq "safe list launch blockers for $state" "$(format_issues_list "$list_raw")" \
+    ".[0].blocked_by_launch == $expected_launch"
 done <<'ROWS'
 Verifying|started|[]
 In Progress|started|["KEN-2"]
