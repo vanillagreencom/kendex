@@ -228,6 +228,8 @@ fn ready_names_what_each_duty_lacks_and_its_fix() {
         "ready duty=ci-proof",
         "ready duty=reconcile-items",
         "unready duty=prune program=worktree cause=absent fix=kendex-apply",
+        "unready duty=overseer setting=ORCH_OWNER_ASK_LABEL cause=unset fix=set-ORCH_OWNER_ASK_LABEL",
+        "unready duty=overseer setting=ORCH_OWNER_EMAIL cause=unset fix=set-ORCH_OWNER_EMAIL",
     ]);
     assert_eq!(lines[1..], expected);
     let path = std::ffi::OsString::from(support::tool_path(&[]));
@@ -238,6 +240,8 @@ fn ready_names_what_each_duty_lacks_and_its_fix() {
         ("ORCH_AGENT_RUNTIME", support::agent_runtime().as_os_str()),
         ("LANE_MAIL_CLI", lane_mail.as_os_str()),
         ("WORKTREE_CLI", worktree.as_os_str()),
+        ("ORCH_OWNER_ASK_LABEL", "owner-ask".as_ref()),
+        ("ORCH_OWNER_EMAIL", "owner@example.com".as_ref()),
     ];
     let (lines, code) = ready_in(&root, &[], &ready_env);
     assert_eq!(code, 0, "{lines:?}");
@@ -250,10 +254,47 @@ fn ready_names_what_each_duty_lacks_and_its_fix() {
         "ready duty=ci-proof",
         "ready duty=reconcile-items",
         "ready duty=prune",
+        "ready duty=overseer",
     ]);
     assert_eq!(lines, expected);
     let (lines, code) = ready_in(&root, &["--duty", "prune"], &ready_env);
     assert_eq!((lines, code), (vec!["ready duty=prune".to_owned()], 0));
+}
+
+/// The overseer's start names each owner-ask key its settings leave unset,
+/// one line per key, since `lane-mail ask --issue` refuses without both;
+/// with both set, the owner account by `KENDEX_USER_EMAIL`, it reads ready.
+#[test]
+fn ready_names_each_owner_ask_key_the_overseer_lacks() {
+    let label = "unready duty=overseer setting=ORCH_OWNER_ASK_LABEL cause=unset fix=set-ORCH_OWNER_ASK_LABEL";
+    let email =
+        "unready duty=overseer setting=ORCH_OWNER_EMAIL cause=unset fix=set-ORCH_OWNER_EMAIL";
+    /// The caller's environment, the lines and the exit.
+    type Row<'a> = (&'a [(&'a str, &'a str)], &'a [&'a str], i32);
+    let rows: [Row; 4] = [
+        (&[], &[label, email], 1),
+        (&[("ORCH_OWNER_EMAIL", "owner@example.com")], &[label], 1),
+        (&[("ORCH_OWNER_ASK_LABEL", "owner-ask")], &[email], 1),
+        (
+            &[
+                ("ORCH_OWNER_ASK_LABEL", "owner-ask"),
+                ("KENDEX_USER_EMAIL", "user@example.com"),
+            ],
+            &["ready duty=overseer"],
+            0,
+        ),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    for (env, expected, code) in rows {
+        let env: Vec<(&str, &std::ffi::OsStr)> = env
+            .iter()
+            .map(|(key, value)| (*key, std::ffi::OsStr::new(value)))
+            .collect();
+        let answer = ready_in(&root, &["--duty", "overseer"], &env);
+        let expected = expected.iter().map(|l| (*l).to_owned()).collect();
+        assert_eq!(answer, (expected, code), "{env:?}");
+    }
 }
 
 /// The judge's other answers, each a duty asked alone: a runtime whose

@@ -845,7 +845,8 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     let mut tracker = None;
     let mut owner = OwnerPass::default();
     if held.is_none()
-        && (ctx.settings.linear_team.is_some() || ctx.settings.reads.owner_tracker.is_some())
+        && (ctx.settings.linear_team.is_some()
+            || ctx.settings.reads.owner_asks.configured().is_some())
     {
         match read_tracker(&linear, &fleet, ctx, tick, &mut owner) {
             Ok(Answered::Value(read)) => tracker = read,
@@ -1057,7 +1058,7 @@ fn read_tracker(
     // The marks run before this pass's own closes: the first pass's floor is
     // then what stood closed before it, and a close made here is marked by
     // the next pass.
-    if let Some(configured) = &ctx.settings.reads.owner_tracker {
+    if let Some(configured) = ctx.settings.reads.owner_asks.configured() {
         quota!(mark_closed_owner_asks(
             linear,
             &mailbox,
@@ -1443,7 +1444,7 @@ fn read_owner_tracker_answers(
     tick: &Tick,
     owner_pass: &mut OwnerPass,
 ) -> Result<Answered<OwnerRead>> {
-    let Some(owner) = &ctx.settings.reads.owner_tracker else {
+    let Some(owner) = ctx.settings.reads.owner_asks.configured() else {
         return Ok(Answered::Value(OwnerRead::Disabled));
     };
     let unread = |cause: &str| {

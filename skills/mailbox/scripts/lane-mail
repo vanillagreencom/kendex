@@ -232,7 +232,12 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               --issue requires --do: plain words saying what the
               person does and what evidence closes it. It adds the configured
               Linear assignment, label, opening action line and comment.
-              Tracker failures leave the chat ask open.
+              With ORCH_OWNER_ASK_LABEL or the owner account
+              (ORCH_OWNER_EMAIL, else KENDEX_USER_EMAIL) unset, or the
+              settings unreadable, it is refused `item-ask-unconfigured`
+              before anything is appended, exit 2, unset= naming each
+              unset key. Tracker failures after the append leave the chat
+              ask open.
               a question for the owner, appended to to-overseer.jsonl with
               `to` as a field. --purpose memory adds `purpose: "memory"`,
               marking a memory proposal; its text takes at most 256 UTF-8 bytes.
@@ -605,9 +610,12 @@ lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
 host-root-required, host-route-missing, state-unreadable, worktree-absent, channel-session,
-session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
-value follows ` id=` rather than `=`, so it names the earlier envelope through
-the same field the receipt above prints; `resolved-already`,
+session-unrecorded, session-archived, session-send-failed, item-ask-unconfigured.
+Two keys take another separator than `=`. `duplicate`'s value follows ` id=`,
+so it names the earlier envelope through the same field the receipt above
+prints. `item-ask-unconfigured`'s value, the item, follows ` issue=`, and
+` cause=<cause>` closes it, then ` unset=<keys>` where the cause is
+settings-unset. `resolved-already`,
 `delivery-repeated` and `owner-notice-repeated` close their own value with
 ` id=<id>` naming the envelope already there.
 
@@ -736,6 +744,7 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     session-unrecorded) text='The session route names no account or no session id, so no cloud session can be reached. Nothing was sent.' ;;
     session-archived) text='The Claude CLI answered that the cloud session is archived, so it takes no more messages. Nothing was delivered. oversee-events.md lane-stalled names what follows.' ;;
     session-send-failed) text='The Claude CLI did not answer ok true for the cloud session, so nothing says the directive was queued. Its exit status and its own words follow; send again once they are fixed.' ;;
+    item-ask-unconfigured) sep=' issue='; text='--issue asks for the question on the tracker item, and the settings that write needs are not there: cause=settings-unset names each unset key in unset=, the owner account as ORCH_OWNER_EMAIL, which KENDEX_USER_EMAIL also sets, and cause=settings-unreadable means the settings files could not be read. Nothing was appended. Set the keys in the repository'"'"'s kendex settings and ask again, or leave out --issue and --do for an ask that stays in chat.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
@@ -2622,15 +2631,17 @@ case "$VERB" in
     [ -z "$ATTACH" ] || lm_attach_confined
     OWNER_TRACKER_ACTIVE=0
     if [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ]; then
-      # Linear is optional. An unconfigured tracker leaves the chat ask intact.
-      if owner_tracker_settings "$SCRIPT_DIR"; then
-        OWNER_TRACKER_ACTIVE=1
-        # Named before the append, so a refused read leaves no ask pending.
-        OWNER_TRACKER_ASKER="the $(lm_repository) overseer" || exit
-      else
-        owner_tracker_unwritten "$ISSUE" "$OWNER_TRACKER_SETTINGS_CAUSE"
-        ISSUE=""
+      # An ask without --issue needs no tracker. One with it is refused here,
+      # before the append, where the settings cannot carry it to the item: a
+      # chat-only ask would leave the asker pointing the owner at an item
+      # that holds no question.
+      if ! owner_tracker_settings "$SCRIPT_DIR"; then
+        REFUSE_EXTRA="cause=$OWNER_TRACKER_SETTINGS_CAUSE${OWNER_TRACKER_UNSET:+ unset=$OWNER_TRACKER_UNSET}"
+        refuse item-ask-unconfigured "$ISSUE"
       fi
+      OWNER_TRACKER_ACTIVE=1
+      # Named before the append, so a refused read leaves no ask pending.
+      OWNER_TRACKER_ASKER="the $(lm_repository) overseer" || exit
     fi
     LINE="$(lm_envelope "$VERB")"
     if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then

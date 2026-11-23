@@ -175,26 +175,34 @@ mailbox_warn_legacy() { # FILE
   done <<<"$ids"
 }
 
-# The mailbox owns the ask. Tracker writes are advisory: a failed write must
-# leave that ask available on its existing chat route.
+# The mailbox owns the ask. Tracker writes after the append are advisory: a
+# failed write must leave that ask available on its existing chat route. The
+# settings the write needs are judged before the append, and an item ask they
+# cannot carry is refused there.
 
+# OWNER_TRACKER_UNSET names, comma-separated, each key left unset, the owner
+# account as ORCH_OWNER_EMAIL, its documented key, which KENDEX_USER_EMAIL
+# stands in for.
 owner_tracker_settings() { # MAILBOX SCRIPT DIRECTORY
-  local root configured=0
+  local root
   OWNER_TRACKER_SETTINGS_CAUSE=settings-unreadable
   OWNER_TRACKER_EMAIL=""
   OWNER_TRACKER_LABEL=""
+  OWNER_TRACKER_UNSET=""
   # shellcheck source=kendex-env.sh
   # shellcheck source=common-root.sh
   if . "$1/lib/kendex-env.sh" && . "$1/lib/common-root.sh" &&
      root="$(mailbox_common_root .)" &&
      kendex_load_project_env "$root" -- ORCH_OWNER_EMAIL KENDEX_USER_EMAIL ORCH_OWNER_ASK_LABEL; then
-    OWNER_TRACKER_SETTINGS_CAUSE=settings-unset
     OWNER_TRACKER_EMAIL="${ORCH_OWNER_EMAIL:-${KENDEX_USER_EMAIL:-}}"
     OWNER_TRACKER_LABEL="${ORCH_OWNER_ASK_LABEL:-}"
-    [[ -z "$OWNER_TRACKER_LABEL" || -z "$OWNER_TRACKER_EMAIL" ]] || configured=1
+    [[ -n "$OWNER_TRACKER_LABEL" ]] || OWNER_TRACKER_UNSET=ORCH_OWNER_ASK_LABEL
+    [[ -n "$OWNER_TRACKER_EMAIL" ]] || OWNER_TRACKER_UNSET="${OWNER_TRACKER_UNSET:+$OWNER_TRACKER_UNSET,}ORCH_OWNER_EMAIL"
+    [[ -n "$OWNER_TRACKER_UNSET" ]] || return 0
+    OWNER_TRACKER_SETTINGS_CAUSE=settings-unset
   fi
-  [[ "$configured" -eq 1 ]] || OWNER_TRACKER_LABEL=""
-  [[ "$configured" -eq 1 ]]
+  OWNER_TRACKER_LABEL=""
+  return 1
 }
 
 owner_tracker_unwritten() { # ISSUE CAUSE [ERROR FILE]

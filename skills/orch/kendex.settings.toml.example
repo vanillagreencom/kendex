@@ -244,9 +244,10 @@ AGENT_RUNTIME_QUESTION_TOOL = "off"
 # `lane-mail --help` states what the deadline does for each form of
 # question. An ask's own --wait overrides it.
 ORCH_ASK_WAIT_MINUTES = "120"
-# The label and the owner email that enable an item ask's tracker route;
-# with no ORCH_OWNER_EMAIL, the route uses KENDEX_USER_EMAIL. What the
-# route does: references/communication-modes.md § Owner asks.
+# The label and the owner email an item ask's tracker route needs; with
+# either unset, lane-mail refuses an ask that names an item. With no
+# ORCH_OWNER_EMAIL, the route uses KENDEX_USER_EMAIL. What the route does:
+# references/communication-modes.md § Owner asks.
 # ORCH_OWNER_EMAIL = "owner@example.com"
 # ORCH_OWNER_ASK_LABEL = "owner-gated"
 # KENDEX_USER_EMAIL = "owner@example.com"

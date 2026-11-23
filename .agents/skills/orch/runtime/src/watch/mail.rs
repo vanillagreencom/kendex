@@ -110,7 +110,7 @@ impl Config {
             interval: watch.mail_interval,
             mark_repeat: watch.mark_repeat,
             unread: watch.directive_unread,
-            tracker_asks: settings.reads.owner_tracker.is_some(),
+            tracker_asks: settings.reads.owner_asks.configured().is_some(),
         })
     }
 

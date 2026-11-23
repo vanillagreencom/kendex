@@ -3,7 +3,8 @@
 //! ([`admit`]) before it claims anything and refuses
 //! `unready duty=D program=P cause=C fix=F`, exit 1; `orch-runtime ready`
 //! prints every duty's answer ([`report`]), and orch's setup prints it at
-//! its end.
+//! its end. A setting a duty needs reads `setting=K` in place of
+//! `program=P`.
 //!
 //! A runtime built from sources is judged by its own wrapper, which holds
 //! the one key reader: `version` answers 0 built, 69 unbuilt. Another
@@ -23,7 +24,7 @@ use agent_runtime::harness::Harness;
 use agent_runtime::host;
 
 use crate::error::{Error, Result};
-use crate::settings::{ORCH_SETUP, Settings};
+use crate::settings::{ORCH_SETUP, OwnerAsks, Settings};
 
 /// A wrapper's exit for a runtime whose sources are unbuilt.
 const SETUP_REQUIRED: i32 = 69;
@@ -49,7 +50,7 @@ pub fn setup_required(status: Option<i32>) -> bool {
 pub fn unbuilt(duty: Duty, program: &str, settings: &Settings) -> Unready {
     Unready {
         duty,
-        program: program.to_owned(),
+        lacks: Lack::Program(program.to_owned()),
         cause: "unbuilt",
         fix: settings
             .roots
@@ -83,11 +84,14 @@ pub enum Duty {
     ReconcileItems,
     /// A round's prune: the worktree program, the worktrees' git.
     Prune,
+    /// The overseer, read at its takeover: the settings an owner ask on an
+    /// item needs, since `lane-mail ask --issue` refuses without them.
+    Overseer,
 }
 
 impl Duty {
     /// Every duty, in the order `orch-runtime ready` prints them.
-    pub const DUTIES: [Duty; 8] = [
+    pub const DUTIES: [Duty; 9] = [
         Duty::Watch,
         Duty::Launch,
         Duty::Controller,
@@ -96,6 +100,7 @@ impl Duty {
         Duty::CiProof,
         Duty::ReconcileItems,
         Duty::Prune,
+        Duty::Overseer,
     ];
 
     /// The duty's word on a line and in `--duty`.
@@ -109,6 +114,7 @@ impl Duty {
             Duty::CiProof => "ci-proof",
             Duty::ReconcileItems => "reconcile-items",
             Duty::Prune => "prune",
+            Duty::Overseer => "overseer",
         }
     }
 
@@ -121,7 +127,7 @@ impl Duty {
     }
 }
 
-/// One program a duty needs, as the judge reads it.
+/// One program or setting a duty needs, as the judge reads it.
 enum Need {
     /// A runtime built from this install's sources, judged by its wrapper.
     Built {
@@ -136,13 +142,32 @@ enum Need {
     /// probe judges it on `PATH`: present, and the kernel lets it make an
     /// unprivileged user namespace.
     Confined,
+    /// The owner-ask keys: each key the settings leave unset is lacking.
+    OwnerAsks,
+}
+
+/// What a duty lacks: a program, or a key its settings leave unset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lack {
+    Program(String),
+    Setting(&'static str),
+}
+
+impl Lack {
+    /// The field naming it on a line and in a refusal, and its value.
+    fn field(&self) -> (&'static str, &str) {
+        match self {
+            Lack::Program(name) => ("program", name),
+            Lack::Setting(key) => ("setting", key),
+        }
+    }
 }
 
 /// What a duty lacks on this computer and the fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unready {
     pub duty: Duty,
-    pub program: String,
+    pub lacks: Lack,
     pub cause: &'static str,
     pub fix: String,
 }
@@ -150,10 +175,10 @@ pub struct Unready {
 impl Unready {
     /// The line `orch-runtime ready` prints and the refusal's fields.
     pub fn line(&self) -> String {
+        let (field, name) = self.lacks.field();
         format!(
-            "unready duty={} program={} cause={} fix={}",
+            "unready duty={} {field}={name} cause={} fix={}",
             self.duty.name(),
-            self.program,
             self.cause,
             self.fix
         )
@@ -165,7 +190,7 @@ impl Unready {
             UNREADY,
             &[
                 ("duty", self.duty.name()),
-                ("program", &self.program),
+                self.lacks.field(),
                 ("cause", self.cause),
                 ("fix", &self.fix),
             ],
@@ -209,6 +234,7 @@ fn needs(duty: Duty, settings: &Settings) -> Vec<Need> {
             },
             Need::OnPath("git"),
         ],
+        Duty::Overseer => vec![Need::OwnerAsks],
     }
 }
 
@@ -221,26 +247,41 @@ fn judge_needs(duty: Duty, settings: &Settings, confined: bool) -> Result<Vec<Un
     let setup = settings.roots.project.join(ORCH_SETUP);
     let mut lacking = Vec::new();
     for need in needs(duty, settings) {
-        let found = match &need {
-            Need::Built { name, wrapper } => {
-                built(name, wrapper, settings)?.map(|cause| (*name, cause, fix_of(cause, &setup)))
-            }
-            Need::Entry { name, path } => {
-                executable(path).map(|cause| (*name, cause, INSTALL_PACKAGES.to_owned()))
-            }
+        let program = |name: &str| Lack::Program(name.to_owned());
+        let found: Vec<(Lack, &'static str, String)> = match &need {
+            Need::Built { name, wrapper } => built(name, wrapper, settings)?
+                .map(|cause| (program(name), cause, fix_of(cause, &setup)))
+                .into_iter()
+                .collect(),
+            Need::Entry { name, path } => executable(path)
+                .map(|cause| (program(name), cause, INSTALL_PACKAGES.to_owned()))
+                .into_iter()
+                .collect(),
             Need::OnPath(name) => on_path(name)
                 .is_none()
-                .then(|| (*name, "absent", format!("install-{name}"))),
-            Need::Confined => confined.then(confinement_lacking).flatten(),
+                .then(|| (program(name), "absent", format!("install-{name}")))
+                .into_iter()
+                .collect(),
+            Need::Confined => confined
+                .then(confinement_lacking)
+                .flatten()
+                .map(|(name, cause, fix)| (program(name), cause, fix))
+                .into_iter()
+                .collect(),
+            Need::OwnerAsks => match &settings.reads.owner_asks {
+                OwnerAsks::Configured(_) => Vec::new(),
+                OwnerAsks::Unset(keys) => keys
+                    .iter()
+                    .map(|key| (Lack::Setting(key), "unset", format!("set-{key}")))
+                    .collect(),
+            },
         };
-        if let Some((program, cause, fix)) = found {
-            lacking.push(Unready {
-                duty,
-                program: program.to_owned(),
-                cause,
-                fix,
-            });
-        }
+        lacking.extend(found.into_iter().map(|(lacks, cause, fix)| Unready {
+            duty,
+            lacks,
+            cause,
+            fix,
+        }));
     }
     Ok(lacking)
 }
@@ -263,7 +304,7 @@ pub(crate) fn admit_launch(request: &crate::ops::LaunchLane, settings: &Settings
 }
 
 /// Every line `orch-runtime ready` prints for `duties`: `ready duty=D`, or
-/// one `unready` line per program a duty lacks.
+/// one `unready` line per program or setting a duty lacks.
 pub fn report(duties: &[Duty], settings: &Settings) -> Result<(Vec<String>, bool)> {
     let mut lines = Vec::new();
     let mut ready = true;

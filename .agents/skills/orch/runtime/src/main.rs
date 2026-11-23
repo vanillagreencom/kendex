@@ -50,8 +50,9 @@ enum Verb {
     Version,
     /// Whether what each duty needs is ready on this computer, one line per
     /// duty on stdout: `ready duty=D`, or `unready duty=D program=P cause=C
-    /// fix=F` per program it lacks; exit 1 where a duty asked about is
-    /// unready.
+    /// fix=F` per program it lacks and `unready duty=D setting=K cause=unset
+    /// fix=set-K` per key its settings leave unset; exit 1 where a duty
+    /// asked about is unready.
     Ready {
         /// A duty asked about (repeatable; default every duty).
         #[arg(long = "duty")]
