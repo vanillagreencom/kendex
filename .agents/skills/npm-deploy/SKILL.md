@@ -1,6 +1,7 @@
 ---
 name: npm-deploy
-description: "Audit the Pi extension packages against npm, land their version bumps, tag them so the publish workflow runs, refresh and verify."
+description: "Load to publish the kendex Pi extension packages to npm: audit, bump, tag, refresh and verify."
+summary: "Audit the Pi extension packages against npm, land their version bumps, tag them so the publish workflow runs, refresh and verify."
 argument-hint: "[package-name]"
 ---
 

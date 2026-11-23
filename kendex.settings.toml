@@ -10,8 +10,8 @@
 # (docs/decisions/D027-merge-queue-proves-every-change.md).
 ORCH_PR_ORDER = "push-first"
 
-# The label an owner ask puts on its item. The mailbox reader has no
-# default and refuses an item ask while this is unset.
+# The label an owner ask puts on its item. It has no default:
+# `lane-mail ask --issue` refuses while it is unset.
 ORCH_OWNER_ASK_LABEL = "owner-gated"
 # This checkout's Linear team. No default: with it unset, existing-issue
 # writes route by the issue identifier and run with the cross-team guard
