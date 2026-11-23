@@ -2830,6 +2830,40 @@ fn an_idle_overseer_with_watch_lines_past_its_last_follow_and_none_running_is_ty
     }
 }
 
+/// A wake whose agent-runtime wrapper built its unbuilt key first and the
+/// build failed (exit 69 after its `setup-building` line) fails the step
+/// with the setup's own refusal beside orch's setup, as `build=` to the
+/// line's end.
+#[test]
+fn a_wake_whose_agent_runtime_build_failed_names_the_setup_s_refusal() {
+    let tools = tempfile::tempdir().unwrap();
+    let helper = tools.path().join("agent-runtime");
+    write_executable(
+        &helper,
+        "#!/bin/bash\nprintf 'agent-runtime: setup-building key=k run=/elsewhere/setup\\n' >&2\nprintf 'agent-runtime-setup: toolchain-missing rust-version=1.96 key=k fix=rustup toolchain install 1.96\\n' >&2\nexit 69\n",
+    );
+    let fleet = Fleet::with_agent_runtime(&helper);
+    let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
+    fleet.server.await_composer(&pane.id);
+    fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
+    let state = unread(&[("KEN-1", "m-1")]);
+    let clock = FakeClock::new();
+    let err = run_once(&mut fleet.body(), &state, &clock).unwrap_err();
+    assert_eq!(
+        orch_runtime::protocol::diagnostic_line(&err),
+        format!(
+            "orch-runtime: unready duty=watch program=agent-runtime cause=unbuilt fix={} build=agent-runtime-setup: toolchain-missing rust-version=1.96 key=k fix=rustup toolchain install 1.96",
+            fleet
+                .settings
+                .roots
+                .project
+                .join(".agents/skills/orch/scripts/setup")
+                .display()
+        )
+    );
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "nothing typed");
+}
+
 /// A running watch whose agent-runtime answers setup-required in the middle
 /// of the wake's pass (its wrapper finding the key unbuilt, as while an
 /// update builds it) fails that step and runs on: the claim stands, the log

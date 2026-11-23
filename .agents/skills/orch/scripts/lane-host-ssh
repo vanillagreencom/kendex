@@ -819,9 +819,10 @@ done''', row["clone"], item)
 
 def built(row, package, refusal):
     """The binary the clone's own setup of PACKAGE builds from the clone's
-    sources, keyed on them, so neither create's later steps nor a lane's first
-    turn meets setup-required; a host that already holds it builds nothing. A clone without the
-    setup, or a setup that names no binary, refuses before any window."""
+    sources, keyed on them. The build runs here, so neither create's later
+    steps nor a lane's first turn waits on a build at its first call; a host
+    that already holds it builds nothing. A clone without the setup, or a
+    setup that names no binary, refuses before any window."""
     return remote(row, '''setup="$1/.agents/skills/$2/scripts/setup"
 if [ ! -x "$setup" ]; then
   printf 'lane-host-ssh: %s-setup-missing path=%s fix=refresh the host clone to a build carrying that setup\\n' "$3" "$setup" >&2
@@ -837,8 +838,8 @@ esac''', row["clone"], package, refusal).stdout.decode().strip()
 def runtimes(row):
     """The clone's orch runtime and agent-runtime, built for the sources the
     clone holds. Every verb that updates the clone calls it right after the
-    update and before any step that runs either runtime: a program the update
-    left unbuilt answers setup-required."""
+    update and before any step that runs either runtime, so no step waits on
+    a build the update left to its first call."""
     return built(row, "orch", "runtime"), built(row, "agent-runtime", "agent-runtime")
 
 

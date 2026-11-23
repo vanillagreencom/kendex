@@ -338,8 +338,12 @@ Default commands:
           from the project root this script is installed in: an entry is
           taken only where the agent-runtime skill is installed there and its check
           admits the account's Copilot seat; the reviewer runs on this
-          machine's login. A runtime its setup has not built refuses the
-          check (exit 69, its setup command on stderr). An install in no
+          machine's login. Where cargo is on PATH, a runtime its setup
+          has not built is built first, with an `agent-runtime:
+          setup-building` line on stderr, and the check refuses (exit 69)
+          only where that build fails, the setup's refusal last on stderr.
+          With no cargo an unbuilt runtime refuses the check (exit 69, its
+          setup command on stderr). An install in no
           repository, such as a global one, has no project root, and the
           check is unavailable there; it never runs an agent-runtime found
           under the working directory.

@@ -5,11 +5,19 @@
 # The binary is <cache>/bin/orch-runtime-<key>, the one scripts/setup placed
 # for these sources: the key and the cache layout are agent-runtime's
 # lib/key.sh, the required sibling beside this package, and the key covers
-# this crate's inputs and agent-runtime's. When the binary is absent this
-# wrapper builds nothing: it prints
+# this crate's inputs and agent-runtime's. When the binary is absent and
+# cargo is on PATH, this wrapper first prints
+#   orch-runtime: setup-building key=<key> run=<path to scripts/setup>
+# on stderr, then runs that setup, every line of it on stderr so stdout
+# stays the binary's, then runs the binary; a build that fails leaves the
+# setup's refusal the last line on stderr and exits 69. With no cargo it
+# builds nothing: it prints
 #   orch-runtime: setup-required key=<key> run=<path to scripts/setup>
-# on stderr and exits 69; a caller that must answer meanwhile starts it with
-# `setup --detach`. A copy outside the sibling layout is refused first, exit 2:
+# on stderr and exits 69. agent-runtime's wrapper states why the first line
+# is printed, how two calls that find the key unbuilt at once share one
+# build, and how a caller that must answer meanwhile, such as a harness
+# hook, avoids the build. A copy outside the sibling layout is refused
+# first, exit 2:
 #   orch-runtime: dependency-absent skill=agent-runtime path=<key.sh>
 set -euo pipefail
 
@@ -34,6 +42,10 @@ runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse runtime-mi
 cache="$(agent_runtime_cache)"
 key="$(agent_runtime_key "$runtime")"
 binary="$cache/bin/orch-runtime-$key"
+if [ ! -x "$binary" ] && command -v cargo >/dev/null 2>&1; then
+  printf 'orch-runtime: setup-building key=%s run=%s\n' "$key" "$here/setup" >&2
+  "$here/setup" </dev/null >&2 || exit 69
+fi
 if [ ! -x "$binary" ]; then
   printf 'orch-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2
   exit 69

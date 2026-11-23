@@ -4543,9 +4543,10 @@ fn every_verb_taking_a_harness_refuses_one_outside_the_four_by_its_name_and_writ
 
 /// The lanes' charges are asked of the project's orch, the one program that
 /// counts them: a project holding no orch has no lanes and the reading
-/// counts none; one holding orch's shipped entry with its runtime unbuilt
-/// refuses `account-charges-unread` with the entry and its exit, the keyed
-/// line under `--env` too, never a judgement as if no lane ran.
+/// counts none; one holding orch's shipped entry with its runtime unbuilt,
+/// on a computer without cargo where the entry builds nothing, refuses
+/// `account-charges-unread` with the entry and its exit, the keyed line
+/// under `--env` too, never a judgement as if no lane ran.
 #[test]
 fn an_installed_orch_that_cannot_count_its_lanes_refuses_the_reading_and_no_orch_counts_none() {
     let mut world = World::new(&[]);
@@ -4568,12 +4569,10 @@ fn an_installed_orch_that_cannot_count_its_lanes_refuses_the_reading_and_no_orch
         .to_string();
     for text in [false, true] {
         let mut command = world.command();
-        command.env("AGENT_RUNTIME_CACHE", &cache).args([
-            "accounts",
-            "pick",
-            "--harness",
-            "claude",
-        ]);
+        command
+            .env("AGENT_RUNTIME_CACHE", &cache)
+            .env("PATH", path_without(&world.path().join("bin"), &["cargo"]))
+            .args(["accounts", "pick", "--harness", "claude"]);
         if text {
             command.arg("--env");
         }

@@ -14,7 +14,7 @@ A command and Rust library that starts one AI coding-agent session, watches it, 
 - Reads how much use each account has left and picks the account a launch uses.
 - Keeps launch records as JSON that another package can add its own fields to.
 - Answers most commands with one versioned JSON reply, `agent-runtime-v1`.
-- Builds into a user cache through its setup command, once per source revision, and refuses to run before that build exists.
+- Builds into a user cache through its setup command, once per source revision. Where cargo is installed, the first command after a source change builds it. Without cargo, it refuses to run before that build exists.
 - Builds a dependent package's runtime, such as orch's, the same way.
 
 ## Install

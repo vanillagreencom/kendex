@@ -3,9 +3,9 @@
 # name: dev-stop-check
 # event: SubagentStop
 # matcher:
-# description: Blocks a subagent's stop while a validation run it started is still going, naming the `orch-runtime validate entry --wait --run-dir <run dir>` command to run next, because a subagent whose turn has ended is not woken when the run ends and its round is left with a verdict on disk and no commit. The worktrees are those the subagent's transcript names as `orch-runtime validate entry ... --worktree <absolute path>` in a command it ran, read as the shell splits that command: the flag and the path are words of the same command as `orch-runtime validate entry`, with no unquoted `;`, `&`, `|` or newline between them other than a redirection's `&`, and the path is bare, ending at whitespace or a shell metacharacter, or in single or double quotes; the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's) and its `transcript_path` where it does not; the run is the one orch's `orch-runtime validate entry --live --worktree` reports there, the run a start would refuse as run-live, so a run that has its verdict, or whose child is gone, passes. A stop whose transcript names no such worktree, a worktree since removed, or no run still going passes silently. On `stop_hook_active` true, the harness's continued stop, a live run passes with an `abandoned=<run dir>` notice only where the transcript holds this hook's last hold for that run and no `orch-runtime validate entry --wait --run-dir <that run dir>` call after it, the run dir read as the worktree is; every other live run is held as on a first stop. The harness records each hold in the transcript, so each further hold costs the subagent one bounded wait and the stops cannot spin. An `orch-runtime` that cannot say whether a run is going, as one whose runtime is not built cannot, holds the stop at exit 2 with its own words, and on a continued stop is reported at exit 0 instead. The `orch-runtime` read comes from this hook's own install; a missing reader, a transcript that cannot be read and a missing tool are reported under their own key at exit 0, since the subagent can do nothing about them. Not run on copilot: its subagentStop names the lead's transcript, not the subagent's, so the worktree a subagent validated in cannot be read. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
+# description: Blocks a subagent's stop while a validation run it started is still going, naming the `orch-runtime validate entry --wait --run-dir <run dir>` command to run next, because a subagent whose turn has ended is not woken when the run ends and its round is left with a verdict on disk and no commit. The worktrees are those the subagent's transcript names as `orch-runtime validate entry ... --worktree <absolute path>` in a command it ran, read as the shell splits that command: the flag and the path are words of the same command as `orch-runtime validate entry`, with no unquoted `;`, `&`, `|` or newline between them other than a redirection's `&`, and the path is bare, ending at whitespace or a shell metacharacter, or in single or double quotes; the transcript being the payload's `agent_transcript_path` where the payload carries that key (Claude Code and Codex, whose `transcript_path` is the parent session's) and its `transcript_path` where it does not; the run is the one orch's `orch-runtime validate entry --live --worktree` reports there, the run a start would refuse as run-live, so a run that has its verdict, or whose child is gone, passes. A stop whose transcript names no such worktree, a worktree since removed, or no run still going passes silently. On `stop_hook_active` true, the harness's continued stop, a live run passes with an `abandoned=<run dir>` notice only where the transcript holds this hook's last hold for that run and no `orch-runtime validate entry --wait --run-dir <that run dir>` call after it, the run dir read as the worktree is; every other live run is held as on a first stop. The harness records each hold in the transcript, so each further hold costs the subagent one bounded wait and the stops cannot spin. An `orch-runtime` that cannot say whether a run is going holds the stop at exit 2 with its own words, and on a continued stop is reported at exit 0 instead; where its runtime is not built for its sources the hook calls it not at all, starts its build through orch's `scripts/setup --detach` and holds or reports the stop the same way with that setup's line. The `orch-runtime` read comes from this hook's own install; a missing reader, a transcript that cannot be read and a missing tool are reported under their own key at exit 0, since the subagent can do nothing about them. Not run on copilot: its subagentStop names the lead's transcript, not the subagent's, so the worktree a subagent validated in cannot be read. Not run on pi: Pi 1.0.0's extension `types.ts` has no subagent event. Not run on gemini: it has no SubagentStop event. Not run on antigravity: it has no SubagentStop event.
 # summary: Stops a coding agent from finishing while the validation run it started is still going, and hands it the command that waits for the verdict.
-# safety: Reads the payload and the subagent's transcript, runs `git rev-parse` in the session's directory, and runs orch's `orch-runtime validate entry --live`, which reads the worktree's run directories and the process table; it writes nothing. jq is required to read the payload. Exit 2 is one of three holds: a run still going, naming the run and the `--wait` command that ends the block; an `orch-runtime` that cannot answer, naming the worktree and that reader's own words; and a payload that cannot be read or is not JSON, naming neither. Every line opens with `dev-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line.
+# safety: Reads the payload and the subagent's transcript, runs `git rev-parse` in the session's directory, and runs orch's `orch-runtime validate entry --live`, which reads the worktree's run directories and the process table; it writes nothing, except that where that runtime is not built for its sources, read through agent-runtime's `lib/key.sh`, it runs orch's `scripts/setup --detach` instead, which starts the build in the background. jq is required to read the payload. Exit 2 is one of three holds: a run still going, naming the run and the `--wait` command that ends the block; an `orch-runtime` that cannot answer, naming the worktree and that reader's own words, or the detached setup's line where its runtime is not built; and a payload that cannot be read or is not JSON, naming neither. Every line opens with `dev-stop-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line.
 # timeout: 30
 # harnesses: [claude, codex, opencode, cursor]
 # requires-skills: [orch]
@@ -236,9 +236,35 @@ if [ -z "$READER" ] && [ -n "$ROOT" ] && [ -x "$ROOT/.agents/skills/$SCRIPT" ]; 
 fi
 [ -n "$READER" ] || notice reader "${HOOK_DIR:-unlocatable}"
 
+# unbuilt: 0 where the program READER runs for its sources is absent, read
+# as the wrapper reads it, through agent-runtime's lib/key.sh beside the
+# wrapper's physical directory; hooks/lane-mail-check.sh owns this read,
+# copied here since each hook is installed as one file. The wrapper builds an
+# absent program in the foreground where cargo is on PATH, past this hook's
+# timeout, so an unbuilt runtime's build is started detached instead. A read
+# that fails leaves the call to the wrapper, which says why.
+unbuilt() (
+  here=$(cd -- "${READER%/*}" 2>/dev/null && pwd -P) || exit 1
+  key_lib=$here/../../agent-runtime/scripts/lib/key.sh
+  [ -r "$key_lib" ] || exit 1
+  refuse() { exit 1; }
+  # shellcheck source=/dev/null
+  . "$key_lib"
+  runtime=$(cd -- "$here/../runtime" 2>/dev/null && pwd -P) || exit 1
+  key=$(agent_runtime_key "$runtime" 2>/dev/null) || exit 1
+  [ ! -x "$(agent_runtime_cache)/bin/orch-runtime-$key" ]
+)
+JUDGED=""
+
 while IFS= read -r WORKTREE; do
   # A worktree since removed holds no run directory, so no run to wait on.
   [ -d "$WORKTREE" ] || continue
+  if [ -z "$JUDGED" ] && unbuilt; then
+    BUILD=$("${READER%/*}/setup" --detach 2>&1) || :
+    [ "$ACTIVE" != true ] || notice unread "$WORKTREE" "$BUILD"
+    refuse unread "$WORKTREE" "$BUILD"
+  fi
+  JUDGED=1
   rc=0
   LIVE=$("$READER" validate entry --live --worktree "$WORKTREE" 2>&1) || rc=$?
   case "$rc" in

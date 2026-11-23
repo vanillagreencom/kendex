@@ -176,17 +176,63 @@ cp -p "$ROOT/skills/agent-runtime/runtime/src/lib.rs" "$AGENT/runtime/src/lib.rs
 run "$CACHE" "$SETUP"
 assert_eq "$(key_of "$OUT")" "$KEY" 'the restored inputs give the first key again'
 
-# --- the wrapper execs the keyed binary, and never builds -----------------
+# --- the wrapper execs the keyed binary, and builds a missing one ----------
 run "$CACHE" "$WRAPPER" op --file state.json --request req.json
 assert_eq "$RC" 0 'wrapper exits with the binary' "$TMP_ROOT/err"
 assert_eq "$OUT" 'fake-binary argv=op --file state.json --request req.json' 'wrapper hands every argument to the keyed binary'
+
+# A PATH holding every tool the wrapper reads but cargo.
+NOCARGO="$TMP_ROOT/no-cargo-bin"
+mkdir -p "$NOCARGO"
+for tool in awk bash cat cut find sh sha256sum shasum sort tr wc; do
+  if found="$(command -v "$tool")"; then ln -s "$found" "$NOCARGO/$tool"; fi
+done
 before="$(calls)"
-run "$TMP_ROOT/cache-empty" "$WRAPPER" version
-assert_eq "$RC" 69 'wrapper without a binary exits 69'
-assert_eq "$ERR" "orch-runtime: setup-required key=$KEY run=$ORCH/scripts/setup" 'wrapper names the key and the setup to run'
-assert_eq "$OUT" '' 'wrapper prints no reply without a binary'
-assert_eq "$(calls)" "$before" 'wrapper calls cargo never'
-if [ ! -e "$TMP_ROOT/cache-empty" ]; then pass 'wrapper writes no cache'; else fail 'wrapper writes no cache'; fi
+RC=0
+OUT="$(PATH="$NOCARGO" AGENT_RUNTIME_CACHE="$TMP_ROOT/cache-empty" "$WRAPPER" version 2>"$TMP_ROOT/err")" || RC=$?
+assert_eq "$RC|$(cat "$TMP_ROOT/err")|$OUT|$(calls)" "69|orch-runtime: setup-required key=$KEY run=$ORCH/scripts/setup||$before" \
+  'wrapper on a computer with no cargo exits 69, names the key and the setup to run, and prints no reply'
+if [ ! -e "$TMP_ROOT/cache-empty" ]; then pass 'wrapper with no cargo writes no cache'; else fail 'wrapper with no cargo writes no cache'; fi
+
+# The checkout moves to new orch runtime sources by a plain fast-forward, as
+# a person's or an automation's pull moves it, and the next call answers.
+MOVED="$TMP_ROOT/moved"
+mkdir -p "$MOVED"
+cp -R "$SKILLS" "$MOVED/skills"
+git -C "$MOVED" init -q -b main
+git -C "$MOVED" config gc.auto 0
+git -C "$MOVED" config maintenance.auto false
+git -C "$MOVED" add -A
+git -C "$MOVED" -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m base
+git -C "$MOVED" checkout -q -b topic
+printf '// moved\n' >>"$MOVED/skills/orch/runtime/src/lib.rs"
+git -C "$MOVED" -c user.name=fixture -c user.email=fixture@example.invalid commit -q -am moved
+git -C "$MOVED" checkout -q main
+MC="$TMP_ROOT/cache-moved"
+run "$MC" "$MOVED/skills/orch/scripts/setup"
+assert_eq "$RC|$(key_of "$OUT")" "0|$KEY" 'premise: the checkout before the move holds the program for its key' "$TMP_ROOT/err"
+git -C "$MOVED" merge -q --ff-only topic
+before="$(calls)"
+run "$MC" "$MOVED/skills/orch/scripts/orch-runtime" version
+MOVED_KEY="$(key_of "$(grep '^orch-runtime-setup: key=' "$TMP_ROOT/err")")"
+assert_eq "$RC|$OUT|$(calls)" "0|fake-binary argv=version|$((before + 1))" \
+  'after a fast-forward past an orch runtime change the next call builds it once and answers' "$TMP_ROOT/err"
+assert_eq "$(head -n 1 "$TMP_ROOT/err")" "orch-runtime: setup-building key=$MOVED_KEY run=$MOVED/skills/orch/scripts/setup" \
+  'the call names the runtime and key it builds on its first stderr line'
+if [ "$MOVED_KEY" != "$KEY" ] && [ -x "$MC/bin/orch-runtime-$MOVED_KEY" ]; then pass 'the build placed the moved sources'"'"' own key'; else fail 'the build placed the moved sources'"'"' own key' "$MOVED_KEY"; fi
+
+# A build that fails ends the call with the setup's refusal, last on stderr.
+printf '// failing\n' >>"$MOVED/skills/orch/runtime/src/lib.rs"
+FAKE_CARGO_EXIT=1 run "$MC" "$MOVED/skills/orch/scripts/orch-runtime" version
+assert_eq "$RC|$OUT" '69|' 'a call whose build fails exits 69 with no reply'
+case "$(head -n 1 "$TMP_ROOT/err")" in
+  "orch-runtime: setup-building key="*" run=$MOVED/skills/orch/scripts/setup") pass 'a call whose build fails names the build first' ;;
+  *) fail 'a call whose build fails names the build first' "$ERR" ;;
+esac
+case "${ERR##*$'\n'}" in
+  'orch-runtime-setup: build-failed status=1 key='*) pass "the setup's refusal is the call's last stderr line" ;;
+  *) fail "the setup's refusal is the call's last stderr line" "$ERR" ;;
+esac
 
 # --- a failed build leaves bin/ empty --------------------------------------
 before="$(calls)"

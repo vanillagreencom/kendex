@@ -6806,7 +6806,7 @@ fn a_launch_with_no_tmux_refuses_before_its_intent_persists() {
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let path = path_without(&dir.path().join("no-tmux"), "tmux");
+    let path = path_without(&dir.path().join("no-tmux"), &["tmux"]);
     let out = runner.op_fleet_env(
         &launch_request("KEN-R", runner.state_dir()),
         &[("PATH", &path)],

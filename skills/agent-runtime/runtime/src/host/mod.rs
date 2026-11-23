@@ -594,14 +594,14 @@ fn spawn(
     // dropping its sender when the output ends.
     let hold = stdin.and_then(|(_, hold)| hold);
     let (release, released) = std::sync::mpsc::channel::<()>();
-    let stdout = drain(
+    let (stdout, _) = drain(
         child.stdout.take(),
         hold.map(|hold| Release {
             answered: hold.answered,
             release,
         }),
     );
-    let stderr = drain(child.stderr.take(), None);
+    let (stderr, stderr_so_far) = drain(child.stderr.take(), None);
     if let (Some((bytes, _)), Some(mut pipe)) = (stdin, child.stdin.take()) {
         let bytes = bytes.to_vec();
         std::thread::spawn(move || {
@@ -625,6 +625,19 @@ fn spawn(
                 .status();
         }
     };
+    // A run past its bound names the first line its stderr held by then,
+    // such as a wrapper's `setup-building` line for the build it waited on.
+    let no_answer = || {
+        let held = stderr_so_far.lock().map(|b| b.clone()).unwrap_or_default();
+        let text = String::from_utf8_lossy(&held);
+        match text.lines().map(str::trim).find(|l| !l.is_empty()) {
+            Some(line) => format!(
+                "no answer within {}s{STDERR_BEGAN}{line}",
+                timeout.as_secs()
+            ),
+            None => format!("no answer within {}s", timeout.as_secs()),
+        }
+    };
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -633,7 +646,7 @@ fn spawn(
                     end_group();
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(external(format!("no answer within {}s", timeout.as_secs())));
+                    return Err(external(no_answer()));
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -643,7 +656,7 @@ fn spawn(
     let remaining = || timeout.saturating_sub(started.elapsed());
     let unanswered = || {
         end_group();
-        external(format!("no answer within {}s", timeout.as_secs()))
+        external(no_answer())
     };
     let stdout = stdout
         .recv_timeout(remaining())
@@ -667,13 +680,24 @@ struct Release {
     release: std::sync::mpsc::Sender<()>,
 }
 
+/// What a bound's `no answer within Ns` cause puts before the first line
+/// the child's stderr held when the bound ended it.
+pub const STDERR_BEGAN: &str = "; its stderr began: ";
+
+/// The bytes a pipe's reader has taken so far.
+type SoFar = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+
 /// Read one of the child's output pipes to its end on its own thread; the
-/// bytes arrive on the returned channel once the child closes the pipe.
+/// bytes arrive on the returned channel once the child closes the pipe, and
+/// the bytes read so far stand in the returned buffer meanwhile, for a run
+/// that ends before the pipe does.
 fn drain<R: std::io::Read + Send + 'static>(
     pipe: Option<R>,
     watch: Option<Release>,
-) -> std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>> {
+) -> (std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>, SoFar) {
     let (tx, rx) = std::sync::mpsc::channel();
+    let so_far = SoFar::default();
+    let seen = so_far.clone();
     std::thread::spawn(move || {
         let mut watch = watch;
         let mut bytes = Vec::new();
@@ -684,6 +708,9 @@ fn drain<R: std::io::Read + Send + 'static>(
                     Ok(0) => break Ok(bytes),
                     Ok(n) => {
                         bytes.extend_from_slice(&chunk[..n]);
+                        if let Ok(mut seen) = seen.lock() {
+                            seen.extend_from_slice(&chunk[..n]);
+                        }
                         if watch.as_ref().is_some_and(|w| (w.answered)(&bytes)) {
                             let _ = watch.take().map(|w| w.release.send(()));
                         }
@@ -697,7 +724,7 @@ fn drain<R: std::io::Read + Send + 'static>(
         drop(watch);
         let _ = tx.send(read);
     });
-    rx
+    (rx, so_far)
 }
 
 pub fn stdout_text(output: &Output) -> String {
@@ -977,6 +1004,34 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, Error::External { .. }), "{err:?}");
         assert_eq!(counts().of("u5b2-bounded", Some("row-f")), 1);
+    }
+
+    /// A run past its bound names the first line its stderr held by then,
+    /// as a wrapper's `setup-building` line names the build it waited on;
+    /// one that wrote nothing there reads as no answer alone.
+    #[test]
+    fn a_run_past_its_bound_names_its_first_stderr_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let bound = Duration::from_millis(500);
+        let speaking = stub(
+            dir.path(),
+            "u5396-bound-speaking",
+            "echo 'wrapper: setup-building key=k run=/s' >&2\necho second >&2\nexec sleep 30\n",
+        );
+        let err = run("u5396-bound-speaking", &speaking, "bounded", &[], bound).unwrap_err();
+        assert!(
+            err.to_string().contains(
+                "no answer within 0s; its stderr began: wrapper: setup-building key=k run=/s"
+            ),
+            "{err}"
+        );
+        let silent = stub(dir.path(), "u5396-bound-silent", "exec sleep 30\n");
+        let err = run("u5396-bound-silent", &silent, "bounded", &[], bound).unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("no answer within 0s") && !text.contains("its stderr began"),
+            "{text}"
+        );
     }
 
     #[test]

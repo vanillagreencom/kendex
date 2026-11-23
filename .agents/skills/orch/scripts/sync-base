@@ -35,9 +35,10 @@ message() {
 refuse() { message "$@" >&2; exit 1; }
 
 # The runtime wrappers in .agents/skills run the program keyed on the sources
-# beside them, and build none. A machine without cargo cannot build one
-# (agent-runtime's scripts/setup), so a move that changes those sources waits
-# until the cache holds every program the target keys.
+# beside them, and build a missing one at their first call only where cargo
+# is on PATH. A machine without cargo cannot build one (agent-runtime's
+# scripts/setup), so a move that changes those sources waits until the cache
+# holds every program the target keys.
 check_runtime_keys() ( # WORKTREE TARGET
   local paths=(.agents/skills/agent-runtime/runtime .agents/skills/orch/runtime)
   command -v cargo >/dev/null 2>&1 && exit 0

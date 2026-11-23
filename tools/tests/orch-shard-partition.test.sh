@@ -1643,7 +1643,7 @@ check "must-fail: a build step dropping jarvis names the leg whose picker rows w
   "$(unbuilt_checkout_legs "$TMP/kendex-unbuilt.yml")"
 
 # --- 4f. The package runtimes on each leg whose suites run them ------------
-# orch-runtime's wrapper refuses `setup-required` where no build matches the
+# orch-runtime's wrapper builds at its first call where no build matches the
 # checkout, and the orch package's scripts, the hook, the mailbox's
 # lane-mail.sh, lane-mail-compact.sh and lane-mail-session.sh,
 # second-opinion's room-check.test.sh and Jarvis's presence.test.sh (the

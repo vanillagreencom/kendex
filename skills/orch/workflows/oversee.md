@@ -126,7 +126,8 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 - Exit 1 with `ok: false` is a refusal.
 - A line naming `persisted_intent=` means the runtime recorded an intent and the effect may have acted: inspect that intent.
 - An unanswered call also leaves the outcome unknown.
-- At exit 69 the wrapper prints `orch-runtime: setup-required ... run=...`: run the named `scripts/setup`, then retry.
+- At exit 69 the runtime is unbuilt. With no cargo the wrapper prints `orch-runtime: setup-required ... run=...`: run the named `scripts/setup`, then retry. With cargo its own build failed, and the setup's refusal is the last stderr line.
+- A call whose stderr opens `orch-runtime: setup-building key=...` or `agent-runtime: setup-building key=...` built its program first. If it ended on a caller's time bound, the build is the cause: retry once the build ends.
 
 ### Mailbox and handoff
 

@@ -2162,9 +2162,9 @@ touch node_modules/dep
         """A first launch, then the base moving the orch runtime's sources,
         then a relaunch, or THEN called with the launch environment, whose
         sync-base carries the clone across that move. The clone runs the real
-        orch-runtime wrapper and key library, so its next runtime call meets
-        setup-required unless setup placed a program for the sources the move
-        left; the fixture setup places one, keyed the same way, that runs this
+        orch-runtime wrapper and key library, so its next runtime call runs
+        setup unless setup placed a program for the sources the move left; the
+        fixture setup places one, keyed the same way, that runs this
         checkout's runtime. Returns the first launch and the second call."""
         self.real_worktree_source(".env.local")
         orch = self.source / ".agents/skills/orch"
@@ -2205,53 +2205,25 @@ printf 'orch-runtime-setup: key=%s binary=%s\\n' "$key" "$bin/orch-runtime-$key"
         """The first launch and a close in place of the relaunch."""
         return self.relaunch_across_a_runtime_change(lambda env: self.call("close", "--item", "TEST-1", **env))
 
-    def test_relaunch_across_a_runtime_change_builds_before_the_reuse(self):
+    def test_relaunch_across_a_runtime_change_reuses_the_tree(self):
         """A relaunch whose update crosses a runtime change reuses the
-        item's tree with no setup run by hand."""
+        item's tree with no setup run by hand. The build order is not
+        asserted: the clone's wrapper builds on its first call."""
         first, relaunch = self.relaunch_across_a_runtime_change()
         self.assertEqual(relaunch.returncode, 0, relaunch.stderr)
         self.assertEqual(self.fields(relaunch.stdout)["path"], self.fields(first.stdout)["path"])
         self.assertEqual((Path(self.row["clone"]) / ".agents/skills/orch/runtime/src/main.rs").read_text(),
                          "fn main() { moved() }\n")
 
-    def test_control_relaunch_building_after_the_reuse_is_refused(self):
-        """With the builds back after the worktree steps, the reuse reads
-        the clone's unbuilt runtime and refuses."""
-        original = self.script.read_text()
-        step = '    runtime, lead = runtimes(row)\n'
-        anchor = '    prefix = "exec env "'
-        for text in (step, anchor):
-            self.assertEqual(original.count(text), 1, text)
-        late = original.replace(step, "").replace(anchor, step + anchor)
-        self.assertNotEqual(late, original)
-        with tempfile.TemporaryDirectory() as control:
-            self.script = Path(control) / "orch/scripts/lane-host-ssh"
-            self.executable(self.script, late)
-            _, relaunch = self.relaunch_across_a_runtime_change()
-            self.assertEqual((relaunch.returncode != 0, b"cause=activity-unreadable" in relaunch.stderr),
-                             (True, True), relaunch.stderr)
-
-    def test_close_across_a_runtime_change_builds_before_the_archive(self):
+    def test_close_across_a_runtime_change_archives_the_tree(self):
         """A close whose update crosses a runtime change archives and removes
-        the item's tree with no setup run by hand."""
+        the item's tree with no setup run by hand. The build order is not
+        asserted: the clone's wrapper builds on its first call."""
         first, close = self.close_across_a_runtime_change()
         self.assertEqual(close.returncode, 0, close.stderr)
         self.assertFalse(Path(self.fields(first.stdout)["path"]).exists())
         self.assertEqual((Path(self.row["clone"]) / ".agents/skills/orch/runtime/src/main.rs").read_text(),
                          "fn main() { moved() }\n")
-
-    def test_control_close_without_its_build_is_refused(self):
-        """Without the build after sync-base, the archive reads the clone's
-        unbuilt runtime and the close refuses with the item's tree kept."""
-        original = self.script.read_text()
-        step = '        runtimes(row)\n'
-        self.assertEqual(original.count(step), 1)
-        self.script.write_text(original.replace(step, ""))
-        self.assertNotEqual(self.script.read_text(), original)
-        first, close = self.close_across_a_runtime_change()
-        self.assertEqual((close.returncode != 0, b"lane-host-ssh: state-unresolved item=TEST-1 " in close.stderr,
-                          Path(self.fields(first.stdout)["path"]).exists()),
-                         (True, True, True), close.stderr)
 
     def git(self, path, *args):
         """Git in a fixture checkout, committing as the fixture's author."""

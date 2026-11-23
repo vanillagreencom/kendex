@@ -157,8 +157,19 @@ class Session:
         remaining = self.deadline - time.monotonic() if timeout is None else timeout
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
-        result = subprocess.run(argv, input=input, text=True, capture_output=True,
-                                cwd=self.home, env=env or self.env, timeout=remaining)
+        try:
+            result = subprocess.run(argv, input=input, text=True, capture_output=True,
+                                    cwd=self.home, env=env or self.env, timeout=remaining)
+        except subprocess.TimeoutExpired as error:
+            # A call past its deadline keeps the stderr it held, such as a
+            # runtime wrapper's setup-building line for the build it waited
+            # on; the caller's answer stands.
+            held = error.stderr or b""
+            print("jarvis-session: operation=" + " ".join(map(str, argv[:3])) + " timeout=" + str(error.timeout),
+                  file=sys.stderr)
+            print(held.decode(errors="backslashreplace") if isinstance(held, bytes) else held, end="",
+                  file=sys.stderr)
+            raise
         if check and result.returncode:
             print("jarvis-session: operation=" + " ".join(argv[:3]) + " exit=" + str(result.returncode), file=sys.stderr)
             print(result.stderr, end="", file=sys.stderr)

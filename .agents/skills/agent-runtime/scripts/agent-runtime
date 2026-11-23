@@ -4,10 +4,20 @@
 #
 # The binary is <cache>/bin/agent-runtime-<key>, the one scripts/setup placed
 # for these sources (lib/key.sh; <cache> as setup resolves it). When it is
-# absent this wrapper builds nothing: it prints
+# absent and cargo is on PATH, this wrapper first prints
+#   agent-runtime: setup-building key=<key> run=<path to scripts/setup>
+# on stderr, so a caller whose own bound ends the call can name the build it
+# waited on, then runs that setup, every line of it on stderr so stdout stays
+# the binary's, then runs the binary; a build that fails leaves the setup's
+# refusal the last line on stderr and exits 69. Two calls that find the key
+# unbuilt at once each run the setup, and cargo's lock on the build folder
+# (its .cargo-lock there) has the later one wait and find the build done.
+# With no cargo it builds nothing: it prints
 #   agent-runtime: setup-required key=<key> run=<path to scripts/setup>
-# on stderr and exits 69; a caller that must answer meanwhile starts it with
-# `setup --detach`.
+# on stderr and exits 69. A caller that must answer meanwhile, such as a
+# harness hook, reads the key and the cache through lib/key.sh before it
+# calls, and where <cache>/bin/<name>-<key> is absent starts the build with
+# `setup --detach` instead of calling.
 set -euo pipefail
 
 here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
@@ -26,6 +36,10 @@ runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse runtime-mi
 cache="$(agent_runtime_cache)"
 key="$(agent_runtime_key "$runtime")"
 binary="$cache/bin/agent-runtime-$key"
+if [ ! -x "$binary" ] && command -v cargo >/dev/null 2>&1; then
+  printf 'agent-runtime: setup-building key=%s run=%s\n' "$key" "$here/setup" >&2
+  "$here/setup" </dev/null >&2 || exit 69
+fi
 if [ ! -x "$binary" ]; then
   printf 'agent-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2
   exit 69

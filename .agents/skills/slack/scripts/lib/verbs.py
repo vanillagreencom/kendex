@@ -30,6 +30,12 @@ CHANNEL_NAME = re.compile(r"[^a-z0-9_-]+")
 TOLERATED_INVITE = {"already_in_channel", "cant_invite_self"}
 
 
+# Seconds a command run from the root has to answer.
+ANSWER_SECONDS = 30
+# The line a runtime wrapper's stderr opens with while it builds the program
+# it found absent.
+SETUP_BUILDING = re.compile(r"[\w-]+: setup-building ")
+
 # Slack's limit for conversations.setPurpose.
 PURPOSE_LIMIT = 250
 SIDE_PLACE = {"vm": "on the control VM", "local": "on a local machine"}
@@ -50,14 +56,24 @@ def slug(text: str) -> str:
 
 
 def answer(root: Path, *args: str, forward_setup: bool = False) -> Optional[str]:
-    """A command's stdout run from the root, None where it does not answer."""
+    """A command's stdout run from the root, None where it does not answer.
+    With forward_setup a runtime wrapper's unbuilt answer passes through: its
+    exit 69 with its stderr, and a call past the bound whose stderr opened
+    with the wrapper's `setup-building` line, that stderr and exit 69."""
     try:
         proc = subprocess.run(
             list(args), cwd=str(root), env=CALLER_ENV, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if forward_setup else subprocess.DEVNULL,
-            text=True, timeout=30, check=False,
+            text=True, timeout=ANSWER_SECONDS, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired as exc:
+        held = exc.stderr or b""
+        text = held.decode(errors="replace") if isinstance(held, bytes) else held
+        if forward_setup and SETUP_BUILDING.match(text):
+            sys.stderr.write(text if text.endswith("\n") else text + "\n")
+            raise SystemExit(69)
+        return None
+    except OSError:
         return None
     if forward_setup and proc.returncode == 69:
         sys.stderr.write(proc.stderr)

@@ -2009,8 +2009,8 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
 }
 
 /// The watch wakes the overseer through agent-runtime, so it asks first:
-/// agent-runtime's real wrapper finding its key unbuilt (an empty cache),
-/// `watch run` refuses `unready` naming orch's setup before the credential
+/// agent-runtime's real wrapper finding its key unbuilt (an empty cache) on
+/// a computer without cargo, where it builds nothing, `watch run` refuses `unready` naming orch's setup before the credential
 /// ladder runs and before any claim, event line or alert.
 #[test]
 fn a_watch_run_on_an_unbuilt_agent_runtime_refuses_before_the_ladder_and_any_claim() {
@@ -2025,7 +2025,8 @@ fn a_watch_run_on_an_unbuilt_agent_runtime_refuses_before_the_ladder_and_any_cla
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../agent-runtime/scripts/agent-runtime"),
         )
-        .env("AGENT_RUNTIME_CACHE", state_dir.join("cache"));
+        .env("AGENT_RUNTIME_CACHE", state_dir.join("cache"))
+        .env("PATH", path_without(&state_dir.join("bin"), &["cargo"]));
     let out = bounded_output(
         Owned(command.spawn().unwrap()),
         secs(30),

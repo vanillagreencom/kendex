@@ -7,7 +7,11 @@
 //! `program=P`.
 //!
 //! A runtime built from sources is judged by its own wrapper, which holds
-//! the one key reader: `version` answers 0 built, 69 unbuilt. Another
+//! the one key reader: `version` answers 0 built. On a computer without
+//! cargo an unbuilt key answers 69 at once. With cargo the wrapper opens
+//! its stderr with `setup-building` and builds first: within the bound it
+//! answers 0, or 69 with the setup's refusal as its last stderr line, read
+//! as `unbuilt` with that line; past the bound it reads `building`. Another
 //! package's program is judged present and executable only, since each
 //! package refuses its own missing tools. A harness's binary stays the
 //! launch's own preflight: the walk chooses the harness per launch. A
@@ -44,10 +48,34 @@ pub fn setup_required(status: Option<i32>) -> bool {
     status == Some(SETUP_REQUIRED)
 }
 
+/// The key of the line a wrapper's stderr opens with while it builds the
+/// program it found absent.
+const SETUP_BUILDING: &str = "setup-building";
+
+/// Whether `line` is a wrapper's `<name>: setup-building ...` line.
+fn building(line: &str) -> bool {
+    line.split_once(": ")
+        .is_some_and(|(_, rest)| rest.split(' ').next() == Some(SETUP_BUILDING))
+}
+
+/// The setup's refusal a wrapper's 69 ended on where it built first: the
+/// last line of its stderr after a leading `setup-building` line. `None`
+/// for the `setup-required` answer of a computer without cargo, which
+/// built nothing.
+pub fn build_refusal(output: &std::process::Output) -> Option<String> {
+    let text = host::stderr_text(output);
+    let mut lines = text.lines();
+    if !building(lines.next()?) {
+        return None;
+    }
+    lines.last().map(str::to_owned)
+}
+
 /// What `duty` lacks where the wrapper of the runtime `program` answered
 /// setup-required in the middle of its work: the line its admission prints
-/// for the same state.
-pub fn unbuilt(duty: Duty, program: &str, settings: &Settings) -> Unready {
+/// for the same state, with the setup's refusal `build` where the wrapper
+/// built first.
+pub fn unbuilt(duty: Duty, program: &str, settings: &Settings, build: Option<String>) -> Unready {
     Unready {
         duty,
         lacks: Lack::Program(program.to_owned()),
@@ -58,6 +86,7 @@ pub fn unbuilt(duty: Duty, program: &str, settings: &Settings) -> Unready {
             .join(ORCH_SETUP)
             .display()
             .to_string(),
+        build,
     }
 }
 
@@ -170,31 +199,39 @@ pub struct Unready {
     pub lacks: Lack,
     pub cause: &'static str,
     pub fix: String,
+    /// The setup's refusal where the wrapper built first and the build
+    /// failed, last on the line, to its end.
+    pub build: Option<String>,
 }
 
 impl Unready {
     /// The line `orch-runtime ready` prints and the refusal's fields.
     pub fn line(&self) -> String {
         let (field, name) = self.lacks.field();
-        format!(
+        let mut line = format!(
             "unready duty={} {field}={name} cause={} fix={}",
             self.duty.name(),
             self.cause,
             self.fix
-        )
+        );
+        if let Some(build) = &self.build {
+            line.push_str(&format!(" build={build}"));
+        }
+        line
     }
 
     /// The duty's refusal, before it claims anything.
     pub fn refusal(&self) -> Error {
-        refused(
-            UNREADY,
-            &[
-                ("duty", self.duty.name()),
-                self.lacks.field(),
-                ("cause", self.cause),
-                ("fix", &self.fix),
-            ],
-        )
+        let mut fields = vec![
+            ("duty", self.duty.name()),
+            self.lacks.field(),
+            ("cause", self.cause),
+            ("fix", &self.fix),
+        ];
+        if let Some(build) = &self.build {
+            fields.push(("build", build));
+        }
+        refused(UNREADY, &fields)
     }
 }
 
@@ -248,9 +285,13 @@ fn judge_needs(duty: Duty, settings: &Settings, confined: bool) -> Result<Vec<Un
     let mut lacking = Vec::new();
     for need in needs(duty, settings) {
         let program = |name: &str| Lack::Program(name.to_owned());
+        let mut build = None;
         let found: Vec<(Lack, &'static str, String)> = match &need {
             Need::Built { name, wrapper } => built(name, wrapper, settings)?
-                .map(|cause| (program(name), cause, fix_of(cause, &setup)))
+                .map(|(cause, refusal)| {
+                    build = refusal;
+                    (program(name), cause, fix_of(cause, &setup))
+                })
                 .into_iter()
                 .collect(),
             Need::Entry { name, path } => executable(path)
@@ -281,6 +322,7 @@ fn judge_needs(duty: Duty, settings: &Settings, confined: bool) -> Result<Vec<Un
             lacks,
             cause,
             fix,
+            build: build.clone(),
         }));
     }
     Ok(lacking)
@@ -401,15 +443,21 @@ pub(crate) fn executable(path: &Path) -> Option<&'static str> {
 }
 
 /// A runtime's state as its wrapper answers `version`: `None` built,
-/// `unbuilt` on the wrapper's 69, `unanswered` on any other answer, or why
-/// the wrapper is no program to run.
+/// `unbuilt` on the wrapper's 69, with the setup's refusal where the
+/// wrapper built first; `building` where the bound ended a call whose
+/// stderr opened with the wrapper's `setup-building` line; `unanswered` on
+/// any other answer; or why the wrapper is no program to run.
 #[allow(
     clippy::disallowed_methods,
     reason = "readiness runs a runtime's own wrapper for its `version` alone, the wrapper's 69 the one reading of an unbuilt key, before any duty claims"
 )]
-fn built(name: &'static str, wrapper: &Path, settings: &Settings) -> Result<Option<&'static str>> {
+fn built(
+    name: &'static str,
+    wrapper: &Path,
+    settings: &Settings,
+) -> Result<Option<(&'static str, Option<String>)>> {
     if let Some(cause) = executable(wrapper) {
-        return Ok(Some(cause));
+        return Ok(Some((cause, None)));
     }
     let answered = host::run_tagged(
         "ready",
@@ -419,15 +467,30 @@ fn built(name: &'static str, wrapper: &Path, settings: &Settings) -> Result<Opti
         &["version"],
         settings.engine.verify.get()?,
     );
-    Ok(match answered.map(|out| out.status.code()) {
-        Ok(Some(0)) => None,
-        Ok(Some(SETUP_REQUIRED)) => Some("unbuilt"),
-        Ok(_) | Err(_) => Some("unanswered"),
+    Ok(match answered {
+        Ok(out) => match out.status.code() {
+            Some(0) => None,
+            Some(SETUP_REQUIRED) => Some(("unbuilt", build_refusal(&out))),
+            _ => Some(("unanswered", None)),
+        },
+        Err(e) => {
+            let text = e.to_string();
+            let began = text.split_once(host::STDERR_BEGAN).map(|(_, line)| line);
+            Some((
+                if began.is_some_and(building) {
+                    "building"
+                } else {
+                    "unanswered"
+                },
+                None,
+            ))
+        }
     })
 }
 
 /// The fix for a runtime that is not ready: orch's setup where it is
-/// unbuilt or unanswered, the package's install where its wrapper is gone.
+/// unbuilt, building or unanswered, the package's install where its wrapper
+/// is gone.
 fn fix_of(cause: &str, setup: &Path) -> String {
     match cause {
         "absent" | "not-executable" => INSTALL_PACKAGES.to_owned(),

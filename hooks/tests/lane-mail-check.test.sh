@@ -2,9 +2,10 @@
 # lane-mail-check, the turn-end entry: it finds its install's mailbox reader
 # by walking up from its own directory, runs that install's `orch-runtime
 # turn-end` through the shipped wrapper, and where the runtime is not built
-# for its sources starts the build through the install's `scripts/setup
-# --detach`, holding a turn end while the build runs in a checkout with a
-# mailbox directory. Every row runs the real entry and the real wrapper over
+# for its sources, read through agent-runtime's lib/key.sh, starts the build
+# through the install's `scripts/setup --detach` without calling the wrapper,
+# holding a turn end while the build runs in a checkout with a mailbox
+# directory, though cargo is on PATH. Every row runs the real entry and the real wrapper over
 # a lane the real `lane-marker` launched and the real `lane-mail` wrote to;
 # with the runtime built, the binary scripts/setup placed in
 # AGENT_RUNTIME_CACHE answers, and a row that needs it unbuilt runs the real
@@ -317,13 +318,17 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     ! grep -q '^  FAIL  ' "$TMP_ROOT/$1.log" || red=yes
     assert_eq "status=$status red=$red" "status=1 red=yes" "control $1: the $2 row turns red"
   }
-  control exit-passed mail '  exit "$rc"' '  exit 0'
+  control exit-passed mail '    exit "$rc"' '    exit 0'
   control arm-dropped arm \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" 2>&1 1>&3 3>&-) || rc=$?'
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" 2>&1 1>&3 3>&-) || rc=$?'
   control dir-resolved copilot \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$hook" "$@" 2>&1 1>&3 3>&-) || rc=$?'
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$hook" "$@" 2>&1 1>&3 3>&-) || rc=$?'
+  # A hook that hands an unbuilt runtime to the wrapper has it build in the
+  # foreground: the wrapper prints its own setup-building line and answers
+  # in place of the silent pass.
+  control built-on-call boxless 'if ! unbuilt; then' 'if true; then'
   control reader-unexported global 'export LANE_MAIL_CLI=$reader' 'LANE_MAIL_READER=$reader'
   control unlocatable-held unlocatable \
     "  printf 'lane-mail-check: reader=unlocatable hook=%s\\n' \"\$dir\" >&2" \
