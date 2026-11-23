@@ -24,7 +24,7 @@
 
 pub mod accept;
 pub mod accounts;
-mod admission;
+pub(crate) mod admission;
 pub mod approve;
 pub mod artifact;
 pub mod boxes;

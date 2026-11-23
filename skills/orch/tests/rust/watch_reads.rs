@@ -2017,13 +2017,15 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
 }
 
 /// Which open items the heartbeat owes, with an empty queue and no lane: a
-/// Todo or Backlog item only where the launch's admission would take it, a
+/// Todo or Backlog item only where the launch's container and chain-blocker
+/// rules pass and neither hold of selection alone applies (the `blocked`
+/// label with no blocking relation, an open in-PR bundle root ancestor); a
 /// started one whatever blocks or parents it. One row per case of the
 /// owner (`tracker::inventory_of`): the state, by type for work not yet
 /// begun; the blocker, launch-held or not; the `blocked` label, alone or
 /// beside a relation whose blocker ended; a container by children or
-/// `agent:multi`, and an in-PR bundle root; a held ancestor. The last
-/// column is the `open-unblocked` membership.
+/// `agent:multi`, and an in-PR bundle root; an ancestor held one and two
+/// levels up. The last column is the `open-unblocked` membership.
 #[test]
 fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
     let mut world = World::new();
@@ -2195,6 +2197,16 @@ fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
             "triage",
             json!(1),
             json!({"parent_id": "KEN-16"}),
+            None,
+            true,
+        ),
+        // Held two levels up: KEN-14's parent KEN-13 is blocked.
+        (
+            "KEN-18",
+            "Todo",
+            "unstarted",
+            json!(1),
+            json!({"parent_id": "KEN-14"}),
             None,
             true,
         ),

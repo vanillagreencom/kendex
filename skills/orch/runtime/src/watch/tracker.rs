@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::mailbox::{Envelope, Mailbox, OwnerImportRead, OwnerImportReceipt, Resolved};
-use crate::ops::{self, CloseOwnedResources, Delivery, Request, Terminal};
+use crate::ops::{self, CloseOwnedResources, Delivery, Request, Terminal, admission};
 use crate::settings::Settings;
 use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, TerminalVerdict};
 use crate::verify::wire::Nullable;
@@ -420,24 +420,27 @@ struct OpenItem {
 }
 
 /// The label `issues block` sets beside its blocking relation and a person
-/// sets alone for a blocker that is no tracker item. Only `issues unblock`
-/// removes it, so it outlives a relation whose blocker ended.
+/// sets alone for a blocker that is no tracker item. Nothing removes it
+/// when its blocker ends; `issues unblock` is the package's verb for that.
 const BLOCKED_LABEL: &str = "blocked";
 
-/// The label that makes an item a container whatever its children.
-const MULTI_LABEL: &str = "agent:multi";
-
 impl OpenItem {
-    fn labelled(&self, label: &str) -> bool {
-        self.labels.iter().any(|l| l == label)
+    /// The `blocked` label on an item with no blocking relation at all: a
+    /// blocker outside the tracker. Beside a relation, the relation judges.
+    fn label_held(&self) -> bool {
+        self.blocked_by.is_empty() && self.labels.iter().any(|l| l == BLOCKED_LABEL)
     }
 
-    /// Held by a blocker the launch gate counts, or by the `blocked` label
-    /// on an item with no blocking relation at all: the label beside a
-    /// relation stands for that relation, which judges it.
+    /// Held by a blocker the launch gate counts, or by the label alone.
     fn blocked(&self) -> bool {
-        !self.blocked_by_launch.is_empty()
-            || (self.blocked_by.is_empty() && self.labelled(BLOCKED_LABEL))
+        !self.blocked_by_launch.is_empty() || self.label_held()
+    }
+
+    fn chain_node(&self) -> admission::ChainNode {
+        admission::ChainNode {
+            blocked_by_launch: Some(self.blocked_by_launch.clone()),
+            parent_id: Some(self.parent_id.clone()),
+        }
     }
 }
 
@@ -1335,27 +1338,32 @@ fn inventory_of(
     }
 }
 
-/// Whether work no lane has begun can start, as the launch's admission
-/// judges it on the rows this read holds: the item is unblocked and no
-/// container (`skill-rules.md` § Containers), and no open ancestor is
-/// blocked or an in-PR bundle root, whose own lane works its children. An
-/// ancestor the read does not hold, ended or in another team, is left to
-/// the admission's own read.
+/// Whether work no lane has begun can start, on the rows this read holds:
+/// the launch's own container and chain-blocker rules
+/// (`ops::admission`), and two holds of selection alone, the `blocked`
+/// label with no blocking relation and an open in-PR bundle root ancestor,
+/// whose own lane works its children. The chain ends at an ancestor the
+/// read does not hold, ended or in another team, which the admission's own
+/// read judges; a chain the walk cannot read is not startable, as the
+/// admission refuses it.
 fn startable(item: &OpenItem, by_id: &BTreeMap<&str, &OpenItem>, parents: &BTreeSet<&str>) -> bool {
-    let container =
-        !item.in_pr_bundle && (parents.contains(item.id.as_str()) || item.labelled(MULTI_LABEL));
-    if item.blocked() || container {
+    let has_children = parents.contains(item.id.as_str());
+    if admission::container_cause(item.in_pr_bundle, has_children, &item.labels).is_err()
+        || item.label_held()
+    {
         return false;
     }
-    let mut seen = BTreeSet::from([item.id.as_str()]);
-    let mut parent = item.parent_id.as_str();
-    while let Some(row) = by_id.get(parent).filter(|_| seen.insert(parent)) {
-        if row.in_pr_bundle || row.blocked() {
-            return false;
+    let read = |parent: &str| Ok(by_id.get(parent).map(|row| row.chain_node()));
+    match admission::chain(&item.id, item.chain_node(), read) {
+        Ok(chain) => {
+            chain.blockers.is_empty()
+                && !chain
+                    .ancestors
+                    .iter()
+                    .any(|a| by_id.get(a.as_str()).is_some_and(|row| row.in_pr_bundle))
         }
-        parent = row.parent_id.as_str();
+        Err(_) => false,
     }
-    true
 }
 
 // --- the owner's tracker answers and the due tracker asks -----------------------
