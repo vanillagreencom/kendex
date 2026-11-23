@@ -10,6 +10,8 @@
 # (docs/decisions/D027-merge-queue-proves-every-change.md).
 ORCH_PR_ORDER = "push-first"
 
+# The label an owner ask puts on its item. It has no default:
+# `lane-mail ask --issue` refuses while it is unset.
 ORCH_OWNER_ASK_LABEL = "owner-gated"
 # This checkout's Linear team. No default: with it unset, existing-issue
 # writes route by the issue identifier and run with the cross-team guard
@@ -30,6 +32,9 @@ LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:hu
 # means: skills/orch/references/communication-modes.md.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
+
+# The owner's quiet window, 9 pm to 8 am; the package default 0-7 sends
+# scheduled reports between 9 pm and midnight and between 7 am and 8 am.
 ORCH_REPORT_QUIET_HOURS = "21-8"
 
 # Minutes between two overseer status reports.
@@ -61,8 +66,13 @@ ORCH_CONNECTED_REPOS = "vanillagreencom/kendex-web"
 # The account folders the account reading lists, each relative to the home folder.
 AGENT_RUNTIME_ACCOUNT_DIRS = ".claude:.1claude:.2claude:.3claude:.4claude:.5claude:.6claude:.7claude:.codex:.3codex:.1copilot"
 
+# The owner approved spending Codex credits: a Codex account with any
+# positive credit balance qualifies for a lane pick, below the package's
+# 5000-credit reserve (KEN-4091).
 AGENT_RUNTIME_CODEX_CREDIT_FLOOR = "0"
 
+# The owner's overseer policy: medium effort for launch, restart, recovery
+# and succession.
 AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium,codex:standard:medium"
 
 # This repository runs the read-only GitHub ruleset and CI report.
@@ -78,6 +88,12 @@ GITHUB_STANDARD_CONTEXTS = "CI"
 
 # This repository uses remote review and keeps the full review output.
 GITHUB_STANDARD_BOT_REVIEW = "on"
+
+# This repository checks in hosted CI: the required "CI" context runs the
+# tools/guard lanes in the merge group. The local commit chain still runs
+# the staged review-file check. No default: setup and adopt refuse while it
+# is empty.
+GITHUB_STANDARD_CHECK_LOCATION = "hosted"
 
 # This repository sets no HARNESS_CI_PER_PUSH_REASON, so every change is
 # queue-only (docs/decisions/D027-merge-queue-proves-every-change.md); what a
@@ -201,8 +217,8 @@ GH_ISSUE_PATTERN = "ken-[0-9]+"
 # .claude/settings.json is absent here and each worktree carries git's own copy.
 #
 # .opencode is absent for a different reason: kendex-local.toml's [install]
-# harnesses names claude, codex and pi, not opencode, so nothing renders
-# there. The tree holds no files, and an entry would link an empty directory.
+# harnesses names claude, codex, pi and copilot, not opencode, so nothing
+# renders there. The tree holds no files, and an entry would link an empty directory.
 #
 # Nothing is copied: the install record (.kendex-lock.json) is committed and
 # arrives with the branch, and this machine's half of it sits under .cache,
