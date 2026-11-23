@@ -1544,7 +1544,9 @@ fn occurrence_bound(record: &Value) -> bool {
 /// new identity joins, one whose identity stands under the same class adds
 /// nothing, and one whose identity stands under another class is a conflict
 /// that lands none of the batch and leaves coverage unknown; an unbound
-/// record or a batch marked unknown leaves coverage unknown too.
+/// record or a batch marked unknown leaves coverage unknown too. A review
+/// record carries its artifact item's `priority`, the one copy that
+/// outlives the artifact.
 pub(super) fn findings_record_batch(
     doc: &mut Document,
     batch: Value,
@@ -1553,6 +1555,17 @@ pub(super) fn findings_record_batch(
     let Some(records) = batch.get("records").and_then(Value::as_array).cloned() else {
         return Err(refused("finding-batch", &[("file", &text_of(file))]));
     };
+    // Refused before any write, unlike a conflict: the author can copy the
+    // priority and record again, and coverage stays known.
+    if let Some(index) = records.iter().position(|record| {
+        record.get("kind").and_then(Value::as_str) == Some("review")
+            && !record.get("priority").is_some_and(Value::is_number)
+    }) {
+        return Err(refused(
+            "finding-priority",
+            &[("file", &text_of(file)), ("index", &index.to_string())],
+        ));
+    }
     let mut history = match doc.get("finding_occurrences") {
         Some(Value::Object(history)) => history.clone(),
         _ => Map::new(),

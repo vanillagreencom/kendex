@@ -66,10 +66,15 @@ impl PanelKind {
 pub struct Panel {
     pub agents: Vec<String>,
     pub reason: String,
-    /// Whether the external lane runs beside the agents; a `small` item's
-    /// panel must say.
+    /// Whether the external lane runs beside the agents. A write must say;
+    /// a record written before every tier had to reads without it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<bool>,
+    /// Why the external lane does not run, owed exactly when `external` is
+    /// false: a review-quality reading cannot otherwise tell a skipped
+    /// second opinion from a clean one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_skip: Option<String>,
     /// Why the fix diff concerns each reviewer, owed by a later panel that
     /// holds every `first_panel` reviewer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,6 +94,8 @@ pub struct RecordPanel {
     #[serde(default)]
     pub external: Option<bool>,
     #[serde(default)]
+    pub external_skip: Option<String>,
+    #[serde(default)]
     pub domain_reasons: Option<BTreeMap<String, String>>,
 }
 
@@ -102,15 +109,16 @@ pub(crate) fn record_panel(
         agents: r.agents.clone(),
         reason: r.reason.clone(),
         external: r.external,
+        external_skip: r.external_skip.clone(),
         domain_reasons: r.domain_reasons.clone(),
     };
     panel_write(path, doc, store, r.panel, &panel)
 }
 
 /// Write `panel` as the record's `kind` panel under the panel rules: no
-/// reviewer named twice and a reason given; a `small` item's panel says
-/// whether the external lane runs and holds at most three reviewers with it;
-/// a later panel holding every `first_panel` reviewer names why the fix diff
+/// reviewer named twice and a reason given; the panel says whether the
+/// external lane runs and, when it does not, why; a `small` item's panel
+/// holds at most three reviewers with the external lane; a later panel holding every `first_panel` reviewer names why the fix diff
 /// concerns each.
 pub(crate) fn panel_write(
     path: &Path,
@@ -135,10 +143,20 @@ pub(crate) fn panel_write(
     if panel.reason.trim().is_empty() {
         return Err(refused("panel-reason", &[("field", field)]));
     }
+    let Some(external) = panel.external else {
+        return Err(refused("panel-external", &[("field", field)]));
+    };
+    match (external, panel.external_skip.as_deref()) {
+        (true, None) => {}
+        (false, Some(why)) if !why.trim().is_empty() => {}
+        _ => {
+            return Err(refused(
+                "panel-external-skip",
+                &[("field", field), ("external", &external.to_string())],
+            ));
+        }
+    }
     if tier(doc) == Some("small") {
-        let Some(external) = panel.external else {
-            return Err(refused("panel-external", &[("field", field)]));
-        };
         let agents = panel.agents.len() + usize::from(external);
         if agents > SMALL_TIER_PANEL_MAX {
             return Err(refused(

@@ -38,7 +38,7 @@ Run [start-worktree.md](start-worktree.md) § 3 under these bounds:
 
 - **Panel.** [review-pr.md](review-pr.md) § 2 Prepare Reviewers chooses the first-cycle panel from the domains the diff touches.
   - The panel holds three reviewers at most. The external lane counts as one of the three.
-  - Resolve review-pr.md § 2.1 before writing a panel. Record its answer as `"external": true` or `false` beside `agents`; with the lane requested, two domain reviewers remain.
+  - Resolve review-pr.md § 2.1 before writing a panel. Record its answer as `"external": true` or `false` beside `agents`, a false one with its `external_skip` reason; with the lane requested, two domain reviewers remain.
   - Trim a larger panel in this order: `reviewer-error` where review-pr.md § 2 always carries it, then the reviewers whose findings the pass verifies, then the domains with the most changed production lines.
   - Apply the same trim to the verification panel [review-pr-comments.md](review-pr-comments.md) writes.
 - **QA.** [review-pr.md](review-pr.md) § 5 Verdict Pass records the QA routing. There, drop `needs-review` with the reason `small tier: nothing visible` when the change is not visible in the UI or in the CLI output. `needs-safety-audit`, `needs-perf-test` and `needs-ui-review` follow that routing unchanged.

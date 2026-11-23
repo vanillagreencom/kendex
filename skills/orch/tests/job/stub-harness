@@ -432,7 +432,7 @@ SH
     gh issue view "$NUMBER" --repo "$GH_REPO_SLUG" --json body --jq .body > tmp/done-when.md || fail done-when
   fi
   "$ORCH/orch-runtime" state set --item "$ITEM" /first_panel \
-    '{"agents": ["reviewer-correctness"], "reason": "domains touched: lib.sh", "external": false}' || fail first-panel
+    '{"agents": ["reviewer-correctness"], "reason": "domains touched: lib.sh", "external": false, "external_skip": "policy: skip"}' || fail first-panel
   review_begun="$(op --item '{"op": "begin-round", "kind": "review"}')" || fail begin-review
   RRID="$(jq -er '.round_id' <<<"$review_begun")" || fail begin-review-id
   "$ORCH/orch-runtime" state set-now --item "$ITEM" /review_delegated_at || fail review-delegated-at

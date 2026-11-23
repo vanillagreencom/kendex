@@ -221,11 +221,11 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
    .agents/skills/orch/scripts/orch-runtime validate policy --base-checkout [REVIEW_BASE_CHECKOUT] --stage external-review
    ```
 
-   - `result.answer` `skip` sets `EXTERNAL_REVIEW_REQUESTED=false`.
-   - A nonzero exit reports its keyed line and sets it false.
+   - `result.answer` `skip` sets `EXTERNAL_REVIEW_REQUESTED=false`, with `EXTERNAL_SKIP_REASON` `policy: skip`.
+   - A nonzero exit reports its keyed line and sets it false, with that line as `EXTERNAL_SKIP_REASON`.
    - On `run`, continue.
 
-2. When `.agents/skills/second-opinion/scripts/second-opinion` is absent, report in one line that the chosen external review has no installed tool. Set `EXTERNAL_REVIEW_REQUESTED=false` and continue.
+2. When `.agents/skills/second-opinion/scripts/second-opinion` is absent, report in one line that the chosen external review has no installed tool. Set `EXTERNAL_REVIEW_REQUESTED=false`, with `EXTERNAL_SKIP_REASON` `second-opinion not installed`, and continue.
 3. Detect the available targets:
 
    ```bash
@@ -235,12 +235,20 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
    - A failure, `none` or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`.
    - Anything else sets it `true`. The output signals availability only; the review runs without `--target`.
    - On `none`, the error JSON's `candidates` carry a reason per target. Tell the user once, `External review skipped — [CANDIDATE_REASONS]. Fix: [FIX]`, where `[FIX]` is each reason's remedy in the second-opinion skill's references/error-handling.md.
+   - `EXTERNAL_SKIP_REASON` is `[CANDIDATE_REASONS]` on `none`, the error JSON's `error` or first stderr line on another failure, and `detect: no output` on empty output.
 
-4. **Record the panel** on a fresh § 1 entry, before any spawn, with `external` set to `EXTERNAL_REVIEW_REQUESTED`. A `small` item's panel holds three reviewers at most, the external lane counted:
+4. **Record the panel** on a fresh § 1 entry, before any spawn, with `external` set to `EXTERNAL_REVIEW_REQUESTED` and, when it is false, `external_skip` set to `EXTERNAL_SKIP_REASON`. A `small` item's panel holds three reviewers at most, the external lane counted.
+   1. The reason is tool output, so write the request to `[WORKTREE_PATH]/tmp/record-panel-[ISSUE_ID].json` with the harness file tool. Leave out `external_skip` when `external` is true:
 
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"first","agents":[PANEL_AGENTS_JSON],"reason":"[PANEL_REASON]","external":[EXTERNAL_REVIEW_REQUESTED]}'
-   ```
+      ```json
+      {"op":"record-panel","panel":"first","agents":[PANEL_AGENTS_JSON],"reason":"[PANEL_REASON]","external":[EXTERNAL_REVIEW_REQUESTED],"external_skip":"[EXTERNAL_SKIP_REASON]"}
+      ```
+
+   2. Run it:
+
+      ```bash
+      .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/record-panel-[ISSUE_ID].json
+      ```
 
 ### 2.2 Launch And Delegate
 
@@ -701,13 +709,13 @@ A finding that leaves the fix set is never dropped. Decline it per [finding-disp
 | No files changed | § 5 |
 | Anything else | § 2 with caller context `agents` = the scoped panel below |
 
-The scoped panel is the reviewers whose domains the fix diff touches, the reviewers whose defect classes the round fixed (the blocker finders), and external review when available. A domain counts when the fix diff changes code or text that reviewer reads, not when the item's first diff did. Record it, with `external` set to the cycle's `EXTERNAL_REVIEW_REQUESTED`:
+The scoped panel is the reviewers whose domains the fix diff touches, the reviewers whose defect classes the round fixed (the blocker finders), and external review when available. A domain counts when the fix diff changes code or text that reviewer reads, not when the item's first diff did. Record it, with `external` set to the cycle's `EXTERNAL_REVIEW_REQUESTED` and, when false, `external_skip` set to its `EXTERNAL_SKIP_REASON`, through § 2.1 step 4's request file:
 
 - the correction route of § At The Cap writes `"panel":"verification"`;
 - every other entry writes `"panel":"rereview"`. Below the cap the write raises `rereview_cycles`, the count § At The Cap reads. At the cap it records `verification_panel` and raises nothing, and the reply's `pointer` names the panel it wrote.
 
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"rereview","agents":[PANEL_AGENTS_JSON],"reason":"[DOMAINS_TOUCHED] + blocker finders + external","external":[EXTERNAL_REVIEW_REQUESTED]}'
+```json
+{"op":"record-panel","panel":"rereview","agents":[PANEL_AGENTS_JSON],"reason":"[DOMAINS_TOUCHED] + blocker finders + external","external":[EXTERNAL_REVIEW_REQUESTED],"external_skip":"[EXTERNAL_SKIP_REASON]"}
 ```
 
 A panel holding every `first_panel` reviewer adds `"domain_reasons": {"[AGENT]": "[WHY THE FIX DIFF CONCERNS THIS DOMAIN]", ...}`, one entry per `first_panel` reviewer.
