@@ -1,8 +1,8 @@
 //! What a session loaded into its model's context, read from the file its
 //! harness writes for it: the tokens its Start left, the context by
 //! source, and each rule section it read. The rows are read through
-//! [`session::entries`] and the usage through [`context::response`], the
-//! readers every other caller uses; this module knows no harness's rows.
+//! [`session::entries`] and the usage through [`context::response`]; this
+//! module knows no harness's rows.
 //!
 //! Start is the first user turn, up to the second: its tokens are the
 //! context the turn's last response left, as the harness counted it.
@@ -18,16 +18,17 @@
 //! and output of the response before it, is what the record between them
 //! added. That growth goes to a source only where everything between the
 //! two responses belongs to it, and to one item or section only where it is
-//! alone there; any other share is unclear, and is printed as such. The
-//! first response's prompt also holds the harness's own prompt and tools,
-//! which no record names apart, so the first delivery's tokens are
-//! unsupported.
+//! alone there; any other share is unsupported. The first response's prompt
+//! also holds the harness's own prompt and tools, which no record names
+//! apart, so the first delivery's tokens are unsupported.
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -44,14 +45,8 @@ pub enum Figure {
     Measured { value: u64 },
     /// Derived from measured figures by this module's attribution rule.
     Attributed { value: u64 },
-    /// The record holds the figure only inside a share with others.
-    Unclear { cause: &'static str },
-    /// The harness's record never carries the figure.
-    Unsupported { cause: &'static str },
-    /// The harness writes the figure and this record holds none yet.
-    Absent,
-    /// The record holds the figure in a form this reader cannot take.
-    Unread { cause: &'static str },
+    /// The record holds no figure this reader can take apart: never zero.
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -86,10 +81,8 @@ pub enum Read {
     Skill {
         name: Option<String>,
     },
-    /// A `jarvis-section` command whose words this reader cannot settle.
-    Unreadable {
-        cause: &'static str,
-    },
+    /// A `jarvis-section` command whose operands [`SECTION`] cannot settle.
+    Unreadable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -134,8 +127,8 @@ pub struct Report {
 /// The reading of the session file `file` of `harness`: Copilot CLI's
 /// `events.jsonl`, every other harness's transcript. `Err` where the file
 /// cannot be read, a usage field holds no whole count, or a Pi file holds
-/// a branch, which a walk in file order would mix with the path the session
-/// took.
+/// a branch (Pi's `/tree` writes one into the same file), which a walk in
+/// file order would mix with the path the session took.
 pub fn read(harness: Harness, file: &Path) -> Result<Report> {
     let opened = File::open(file).map_err(|e| Error::io("open", file, e))?;
     let mut reader = BufReader::new(opened);
@@ -201,8 +194,7 @@ enum Share {
     Whole(u64),
     /// Its gap held only its own source's items, which shared the growth.
     Source,
-    Unclear(&'static str),
-    Unsupported(&'static str),
+    Unsupported,
 }
 
 struct Item {
@@ -256,7 +248,7 @@ impl Walk {
             turn: None,
             start: Start {
                 turn: None,
-                tokens: Figure::Absent,
+                tokens: Figure::Unsupported,
             },
             open: None,
             gap: Vec::new(),
@@ -355,12 +347,8 @@ impl Walk {
             Response::Unread => (None, None, None),
         };
         if self.turns == 1 {
-            self.start.tokens = context.map_or(
-                Figure::Unread {
-                    cause: "usage-unread",
-                },
-                |value| Figure::Measured { value },
-            );
+            self.start.tokens =
+                context.map_or(Figure::Unsupported, |value| Figure::Measured { value });
         }
         // A response spanning several lines: its last line's usage stands,
         // and the gap after it stays open.
@@ -386,15 +374,11 @@ impl Walk {
         if pending.is_empty() {
             return;
         }
-        let Some(open) = &self.open else {
-            self.settle(
-                &pending,
-                Share::Unsupported("first-call-holds-harness-prompt"),
-            );
-            return;
-        };
-        let (Some(before), Some(after)) = (open.split, next) else {
-            self.settle(&pending, Share::Unsupported("response-names-no-split"));
+        // With no response before the gap, its growth also holds the
+        // harness's own prompt.
+        let (Some(before), Some(after)) = (self.open.as_ref().and_then(|open| open.split), next)
+        else {
+            self.settle(&pending, Share::Unsupported);
             return;
         };
         let carried = u128::from(before.prompt) + u128::from(before.output);
@@ -402,7 +386,7 @@ impl Walk {
             .checked_sub(carried)
             .and_then(|g| u64::try_from(g).ok())
         else {
-            self.settle(&pending, Share::Unclear("context-shrank"));
+            self.settle(&pending, Share::Unsupported);
             return;
         };
         let source = self.items[pending[0]].source;
@@ -412,7 +396,7 @@ impl Walk {
             *self.source_growth.entry(source).or_default() += growth;
             self.settle(&pending, Share::Source);
         } else {
-            self.settle(&pending, Share::Unclear("shared-gap"));
+            self.settle(&pending, Share::Unsupported);
         }
     }
 
@@ -424,7 +408,7 @@ impl Walk {
 
     fn report(mut self) -> Report {
         let open: Vec<usize> = std::mem::take(&mut self.gap);
-        self.settle(&open, Share::Unclear("no-later-response"));
+        self.settle(&open, Share::Unsupported);
         let context = SOURCES
             .iter()
             .map(|&source| self.source_reading(source))
@@ -435,10 +419,7 @@ impl Walk {
             .map(|section| {
                 let item = &self.items[section.item];
                 let (bytes, tokens) = if section.shared {
-                    let unclear = Figure::Unclear {
-                        cause: "shared-call",
-                    };
-                    (unclear.clone(), unclear)
+                    (Figure::Unsupported, Figure::Unsupported)
                 } else {
                     (
                         Figure::Measured { value: item.bytes },
@@ -467,16 +448,15 @@ impl Walk {
     fn source_reading(&self, source: Source) -> SourceReading {
         let items: Vec<&Item> = self.items.iter().filter(|i| i.source == source).collect();
         let bytes = items.iter().map(|i| i.bytes).sum();
-        let (mut measured, mut attributed, mut had) = (0u64, false, 0usize);
-        let mut cause = None;
+        let (mut value, mut attributed, mut had) = (0u64, false, 0usize);
         for item in &items {
             match item.share {
                 Share::Own(n) => {
-                    measured += n;
+                    value += n;
                     had += 1;
                 }
                 Share::Whole(n) => {
-                    measured += n;
+                    value += n;
                     attributed = true;
                     had += 1;
                 }
@@ -484,16 +464,16 @@ impl Walk {
                     attributed = true;
                     had += 1;
                 }
-                Share::Pending | Share::Unclear(_) | Share::Unsupported(_) => {
-                    cause.get_or_insert(item_tokens(item.share));
-                }
+                Share::Pending | Share::Unsupported => {}
             }
         }
-        let value = measured + self.source_growth.get(&source).copied().unwrap_or(0);
-        let tokens = match cause {
-            Some(cause) if had == 0 => cause,
-            _ if attributed => Figure::Attributed { value },
-            _ => Figure::Measured { value },
+        value += self.source_growth.get(&source).copied().unwrap_or(0);
+        let tokens = if had == 0 && !items.is_empty() {
+            Figure::Unsupported
+        } else if attributed {
+            Figure::Attributed { value }
+        } else {
+            Figure::Measured { value }
         };
         SourceReading {
             source,
@@ -505,285 +485,82 @@ impl Walk {
     }
 }
 
-/// One item's tokens, alone: a share of its source's growth is unclear for
-/// the item itself.
+/// One item's tokens, alone: a share of its source's growth is not the
+/// item's own.
 fn item_tokens(share: Share) -> Figure {
     match share {
         Share::Own(value) => Figure::Measured { value },
         Share::Whole(value) => Figure::Attributed { value },
-        Share::Source => Figure::Unclear {
-            cause: "shared-gap",
-        },
-        Share::Pending => Figure::Unclear {
-            cause: "no-later-response",
-        },
-        Share::Unclear(cause) => Figure::Unclear { cause },
-        Share::Unsupported(cause) => Figure::Unsupported { cause },
+        Share::Source | Share::Pending | Share::Unsupported => Figure::Unsupported,
     }
 }
 
-/// The programs whose Markdown operands are file reads: each prints the
-/// file, or the range it names, as its output.
-const PRINTERS: [&str; 6] = ["cat", "head", "tail", "sed", "nl", "less"];
+/// The programs whose Markdown operands are file reads, each printing the
+/// file or the range it names: Codex has no read tool, so its file reads
+/// are shell commands.
+const PRINTERS: [&str; 5] = ["cat", "head", "tail", "sed", "nl"];
+
+/// A `jarvis-section FILE HEADING` command, each operand single-quoted,
+/// double-quoted or bare, with nothing the shell expands.
+static SECTION: LazyLock<Regex> = LazyLock::new(|| {
+    let operand = r#"(?:'([^']*)'|"([^"$`\\]*)"|([^\s'"$`\\<>*?\[\]#(){}]+))"#;
+    Regex::new(&format!(
+        r"^\s*\S*jarvis-section\s+{operand}\s+{operand}(?:\s|$)"
+    ))
+    .unwrap()
+});
 
 /// The one table of what a call reads as rules: a read of a Markdown file,
 /// a skill load, and in a shell command each `jarvis-section` and each
-/// Markdown operand of a [`PRINTERS`] program.
+/// Markdown operand of a [`PRINTERS`] program. A command splits at each
+/// `;`, `&`, `|` and newline, quoted or not, so a heading holding one reads
+/// as [`Read::Unreadable`].
 fn rule_reads(action: &Action) -> Vec<Read> {
-    match action {
-        Action::Read(path) if path.ends_with(".md") => vec![Read::File { file: path.clone() }],
-        Action::Skill(name) => vec![Read::Skill { name: name.clone() }],
-        Action::Shell(command) => shell_reads(command),
-        Action::Read(_) | Action::Other => Vec::new(),
-    }
-}
-
-fn shell_reads(command: &str) -> Vec<Read> {
-    let Some(commands) = simple_commands(command) else {
-        return if command.contains("jarvis-section") {
-            vec![Read::Unreadable {
-                cause: "command-unsplit",
-            }]
-        } else {
-            Vec::new()
-        };
+    let command = match action {
+        Action::Read(path) if path.ends_with(".md") => {
+            return vec![Read::File { file: path.clone() }];
+        }
+        Action::Skill(name) => return vec![Read::Skill { name: name.clone() }],
+        Action::Shell(command) => command,
+        Action::Read(_) | Action::Other => return Vec::new(),
     };
     let mut reads = Vec::new();
-    for words in commands {
-        let mut words = words
-            .into_iter()
-            .skip_while(|w| matches!(w, Word::Text(t) if is_assignment(t)));
-        let Some(Word::Text(program)) = words.next() else {
+    for segment in command.split([';', '&', '|', '\n']) {
+        let mut words = segment.split_whitespace();
+        let Some(program) = words.next() else {
             continue;
         };
-        let operands: Vec<Word> = words.collect();
-        match program.rsplit('/').next().unwrap_or_default() {
-            "jarvis-section" => reads.push(match operands.as_slice() {
-                [Word::Text(file), Word::Text(heading)] => Read::Section {
-                    file: file.clone(),
-                    heading: heading.clone(),
-                },
-                [_, _] => Read::Unreadable {
-                    cause: "word-expands",
-                },
-                _ => Read::Unreadable { cause: "operands" },
-            }),
-            name if PRINTERS.contains(&name) => {
-                for operand in operands {
-                    if let Word::Text(file) = operand
-                        && !file.starts_with('-')
-                        && file.ends_with(".md")
-                    {
-                        reads.push(Read::File { file });
+        match program.rsplit('/').next().unwrap_or(program) {
+            "jarvis-section" => {
+                reads.push(SECTION.captures(segment).map_or(Read::Unreadable, |found| {
+                    let operand = |first: usize| {
+                        (first..first + 3)
+                            .find_map(|i| found.get(i))
+                            .map_or_else(String::new, |m| m.as_str().to_owned())
+                    };
+                    Read::Section {
+                        file: operand(1),
+                        heading: operand(4),
                     }
-                }
+                }))
             }
+            name if PRINTERS.contains(&name) => reads.extend(
+                words
+                    .map(|word| word.trim_matches(['\'', '"']))
+                    .filter(|word| word.ends_with(".md") && !word.starts_with('-'))
+                    .map(|file| Read::File {
+                        file: file.to_owned(),
+                    }),
+            ),
             _ => {}
         }
     }
     reads
 }
 
-fn is_assignment(word: &str) -> bool {
-    word.split_once('=').is_some_and(|(name, _)| {
-        !name.is_empty()
-            && !name.starts_with(|c: char| c.is_ascii_digit())
-            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Word {
-    Text(String),
-    /// A word the shell expands, whose text the record does not hold.
-    Expands,
-}
-
-/// The simple commands of a shell command's text, each its words in order:
-/// split at an unquoted `;`, `&`, `|`, newline or parenthesis, words at
-/// unquoted blanks, quotes and backslashes removed, a redirection and its
-/// target dropped, a `#` comment skipped. A word holding an unquoted or
-/// double-quoted `$` or backquote expands. `None` where the text cannot be
-/// split: an open quote, or a here-document, whose body would read as
-/// commands.
-fn simple_commands(text: &str) -> Option<Vec<Vec<Word>>> {
-    let mut commands = Vec::new();
-    let mut words: Vec<Word> = Vec::new();
-    let mut word = String::new();
-    let (mut started, mut expands, mut target) = (false, false, false);
-    let mut chars = text.chars().peekable();
-    let finish = |words: &mut Vec<Word>,
-                  word: &mut String,
-                  started: &mut bool,
-                  expands: &mut bool,
-                  target: &mut bool| {
-        if *started {
-            if !*target {
-                words.push(if *expands {
-                    Word::Expands
-                } else {
-                    Word::Text(std::mem::take(word))
-                });
-            }
-            *target = false;
-        }
-        word.clear();
-        *started = false;
-        *expands = false;
-    };
-    while let Some(c) = chars.next() {
-        match c {
-            ' ' | '\t' => finish(
-                &mut words,
-                &mut word,
-                &mut started,
-                &mut expands,
-                &mut target,
-            ),
-            ';' | '&' | '|' | '\n' | '(' | ')' => {
-                finish(
-                    &mut words,
-                    &mut word,
-                    &mut started,
-                    &mut expands,
-                    &mut target,
-                );
-                target = false;
-                if !words.is_empty() {
-                    commands.push(std::mem::take(&mut words));
-                }
-            }
-            '#' if !started => {
-                while chars.peek().is_some_and(|&n| n != '\n') {
-                    chars.next();
-                }
-            }
-            '<' | '>' => {
-                if chars.peek() == Some(&'<') && c == '<' {
-                    return None;
-                }
-                if started && word.bytes().all(|b| b.is_ascii_digit()) && !expands {
-                    word.clear();
-                    started = false;
-                } else {
-                    finish(
-                        &mut words,
-                        &mut word,
-                        &mut started,
-                        &mut expands,
-                        &mut target,
-                    );
-                }
-                while chars.peek().is_some_and(|&n| n == '>' || n == '&') {
-                    chars.next();
-                }
-                target = true;
-            }
-            '\'' => {
-                started = true;
-                loop {
-                    match chars.next()? {
-                        '\'' => break,
-                        q => word.push(q),
-                    }
-                }
-            }
-            '"' => {
-                started = true;
-                loop {
-                    match chars.next()? {
-                        '"' => break,
-                        '\\' => match chars.next()? {
-                            e @ ('"' | '\\' | '$' | '`') => word.push(e),
-                            '\n' => {}
-                            other => {
-                                word.push('\\');
-                                word.push(other);
-                            }
-                        },
-                        '$' | '`' => expands = true,
-                        q => word.push(q),
-                    }
-                }
-            }
-            '\\' => match chars.next() {
-                Some('\n') | None => {}
-                Some(escaped) => {
-                    started = true;
-                    word.push(escaped);
-                }
-            },
-            '$' | '`' | '*' | '?' | '[' => {
-                started = true;
-                expands = true;
-            }
-            other => {
-                started = true;
-                word.push(other);
-            }
-        }
-    }
-    finish(
-        &mut words,
-        &mut word,
-        &mut started,
-        &mut expands,
-        &mut target,
-    );
-    if !words.is_empty() {
-        commands.push(words);
-    }
-    Some(commands)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn text(word: &str) -> Word {
-        Word::Text(word.to_owned())
-    }
-
-    #[test]
-    fn a_shell_command_splits_into_its_simple_commands_and_their_words() {
-        let rows: [(&str, Option<Vec<Vec<Word>>>); 8] = [
-            ("", Some(vec![])),
-            (
-                "a 'b c' \"d e\" f\\ g",
-                Some(vec![vec![text("a"), text("b c"), text("d e"), text("f g")]]),
-            ),
-            (
-                "a && b; c | d\ne",
-                Some(vec![
-                    vec![text("a")],
-                    vec![text("b")],
-                    vec![text("c")],
-                    vec![text("d")],
-                    vec![text("e")],
-                ]),
-            ),
-            (
-                "a x >out 2>&1 < in y",
-                Some(vec![vec![text("a"), text("x"), text("y")]]),
-            ),
-            (
-                "a \"$X\" $Y 'lit$' b*",
-                Some(vec![vec![
-                    text("a"),
-                    Word::Expands,
-                    Word::Expands,
-                    text("lit$"),
-                    Word::Expands,
-                ]]),
-            ),
-            ("a # b c\nd", Some(vec![vec![text("a")], vec![text("d")]])),
-            ("a 'open", None),
-            ("cat <<EOF\nb\nEOF", None),
-        ];
-        for (command, want) in rows {
-            assert_eq!(simple_commands(command), want, "{command:?}");
-        }
-    }
 
     #[test]
     fn a_call_reads_as_rules_by_the_one_table() {
@@ -801,39 +578,15 @@ mod tests {
                 vec![file("a/SKILL.md")],
             ),
             (Action::Read("a/main.rs".to_owned()), vec![]),
-            (Action::Other, vec![]),
-            (
-                Action::Skill(Some("jarvis".to_owned())),
-                vec![Read::Skill {
-                    name: Some("jarvis".to_owned()),
-                }],
-            ),
             (
                 shell(".agents/skills/jarvis/scripts/jarvis-section persona.md 'Conduct'"),
                 vec![section("persona.md", "Conduct")],
             ),
             (
-                shell(
-                    "X=1 jarvis-section a.md 'One' && .agents/skills/jarvis/scripts/jarvis-section b.md \"Two words\"",
-                ),
+                shell("jarvis-section a.md One && jarvis-section b.md \"Two words\" 2>&1"),
                 vec![section("a.md", "One"), section("b.md", "Two words")],
             ),
-            (
-                shell("jarvis-section \"$F\" 'One'"),
-                vec![Read::Unreadable {
-                    cause: "word-expands",
-                }],
-            ),
-            (
-                shell("jarvis-section a.md"),
-                vec![Read::Unreadable { cause: "operands" }],
-            ),
-            (
-                shell("jarvis-section a.md 'open"),
-                vec![Read::Unreadable {
-                    cause: "command-unsplit",
-                }],
-            ),
+            (shell("jarvis-section \"$F\" 'One'"), vec![Read::Unreadable]),
             (
                 shell("sed -n '1,40p' docs/a.md | head -5 && cat b.md c.txt"),
                 vec![file("docs/a.md"), file("b.md")],

@@ -286,10 +286,10 @@ const CLAUDE_FIELDS: [&str; 4] = [
 const CLAUDE_SYNTHETIC: &str = "<synthetic>";
 
 /// One reading of a Claude Code transcript: the last assistant message
-/// carrying a usage object ([`response`]). Its window is the model's
-/// declared capacity ([`Harness::context_capacity`]) only where
-/// `compaction_off`: enabled compaction has inputs this reader does not
-/// see, so its point stays unresolved.
+/// carrying a usage object. Its window is the model's declared capacity
+/// ([`Harness::context_capacity`]) only where `compaction_off`: enabled
+/// compaction has inputs this reader does not see, so its point stays
+/// unresolved.
 pub fn claude(text: &str, compaction_off: bool) -> Result<Usage, String> {
     let mut last = Usage::Absent;
     for line in objects(text) {
@@ -320,16 +320,16 @@ pub fn claude_compaction_off() -> bool {
 }
 
 /// One reading of a Codex rollout: the last `token_count` event's
-/// `last_token_usage.total_tokens` ([`response`]), the model the last
-/// `turn_context` names. The event's `model_context_window` is the verified
-/// point only where `overrides`, the launch's compaction overrides as the
-/// caller recorded them, are Codex's and keep every compaction at or past
-/// that window (`body_after_prefix` scope, post-turn compaction off, a
-/// token limit no smaller than the window); any other evidence, or none,
-/// leaves the point unresolved and never discards the count.
+/// `last_token_usage.total_tokens`, the model the last `turn_context` names.
+/// The event's `model_context_window` is the verified point only where
+/// `overrides`, the launch's compaction overrides as the caller recorded
+/// them, are Codex's and keep every compaction at or past that window
+/// (`body_after_prefix` scope, post-turn compaction off, a token limit no
+/// smaller than the window); any other evidence, or none, leaves the point
+/// unresolved and never discards the count.
 pub fn codex(text: &str, overrides: Option<&str>) -> Result<Usage, String> {
     let mut turn = Named::default();
-    let mut last = Usage::Absent;
+    let mut last: Option<Option<(u64, Option<u64>)>> = None;
     for line in objects(text) {
         if word(&line, "type") == "turn_context" {
             turn.take_turn(line.get("payload"));
@@ -337,22 +337,24 @@ pub fn codex(text: &str, overrides: Option<&str>) -> Result<Usage, String> {
         }
         match codex_response(&line) {
             None => {}
-            Some(Response::Unread) => last = Usage::Unread,
+            Some(Response::Unread) => last = Some(None),
             Some(Response::Spent(spent)) => {
-                last = Usage::Measured {
-                    tokens: spent.context,
-                    window: spent
-                        .window
-                        .filter(|window| codex_point_verified(overrides, *window)),
-                    model: String::new(),
-                };
+                last = Some(Some((
+                    spent.context,
+                    spent.window.filter(|w| codex_point_verified(overrides, *w)),
+                )));
             }
         }
     }
-    if let Usage::Measured { model, .. } = &mut last {
-        model.clone_from(&turn.model);
-    }
-    Ok(last)
+    Ok(match last {
+        None => Usage::Absent,
+        Some(None) => Usage::Unread,
+        Some(Some((tokens, window))) => Usage::Measured {
+            tokens,
+            window,
+            model: turn.model,
+        },
+    })
 }
 
 /// What a session's own record names it runs on: the model and the
@@ -632,10 +634,10 @@ fn codex_point_verified(overrides: Option<&str>, window: u64) -> bool {
 const PI_FIELDS: [&str; 4] = ["input", "output", "cacheRead", "cacheWrite"];
 
 /// One reading of a Pi session file: the last message carrying a usage
-/// object ([`response`]), its model spelled `provider/id` where the message
-/// names its provider, the way the account a Pi session spends is named. Pi
-/// keeps no window in that file, so where `compaction_off` the window is the
-/// one `window` finds for the reading's model, and `None` otherwise: enabled
+/// object, its model spelled `provider/id` where the message names its
+/// provider, the way the account a Pi session spends is named. Pi keeps no
+/// window in that file, so where `compaction_off` the window is the one
+/// `window` finds for the reading's model, and `None` otherwise: enabled
 /// compaction has no verified point.
 pub fn pi(
     text: &str,

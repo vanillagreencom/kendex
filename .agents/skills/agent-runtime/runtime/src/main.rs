@@ -294,8 +294,7 @@ enum SessionOp {
     /// its harness writes for it: the tokens its Start (the first user
     /// turn) left, the context by source (`first-delivery`, `later-turns`,
     /// `rule-reads`, `tool-results`) and each rule section it read. Every
-    /// figure names its `basis`: `measured`, `attributed`, `unclear`,
-    /// `unsupported`, `absent` or `unread`, with a `cause` where one applies.
+    /// figure names its `basis`: `measured`, `attributed` or `unsupported`.
     /// Refuses `session-branched` for a Pi file holding a branch and
     /// `session-usage-unread` for a usage count that is no whole number.
     Load {
