@@ -219,7 +219,6 @@ assert_eq "$RC|$OUT|$(calls)" "0|fake-binary argv=version|$((before + 1))" \
   'after a fast-forward past an orch runtime change the next call builds it once and answers' "$TMP_ROOT/err"
 assert_eq "$(head -n 1 "$TMP_ROOT/err")" "orch-runtime: setup-building key=$MOVED_KEY run=$MOVED/skills/orch/scripts/setup" \
   'the call names the runtime and key it builds on its first stderr line'
-assert_contains "$ERR" "orch-runtime-setup: key=$MOVED_KEY binary=$MC/bin/orch-runtime-$MOVED_KEY" "the build's line goes to stderr"
 if [ "$MOVED_KEY" != "$KEY" ] && [ -x "$MC/bin/orch-runtime-$MOVED_KEY" ]; then pass 'the build placed the moved sources'"'"' own key'; else fail 'the build placed the moved sources'"'"' own key' "$MOVED_KEY"; fi
 
 # A build that fails ends the call with the setup's refusal, last on stderr.

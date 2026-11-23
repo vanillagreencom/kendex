@@ -599,21 +599,21 @@ pub fn press_key(settings: &Settings, fleet_path: &Path, item: &str, key: &str) 
     };
     let mut args = wake.target_args(&target, false)?;
     args.extend(["--key".to_owned(), key.to_owned()]);
-    let (code, reply) = wake.deliver("lane-key", &args)?;
-    if crate::ready::setup_required(code) {
-        return Err(Error::Runtime(agent_runtime::Error::External {
-            program: "agent-runtime",
-            operation: "deliver",
-            cause: format!(
-                "unbuilt: run {}",
-                settings
-                    .roots
-                    .project
-                    .join(crate::settings::ORCH_SETUP)
-                    .display()
-            ),
-        }));
-    }
+    let reply = match wake.deliver("lane-key", &args)? {
+        Delivery::Reply(reply) => reply,
+        Delivery::Unbuilt(build) => {
+            let setup = settings.roots.project.join(crate::settings::ORCH_SETUP);
+            let mut cause = format!("unbuilt: run {}", setup.display());
+            if let Some(build) = build {
+                cause.push_str(&format!("; its build refused: {build}"));
+            }
+            return Err(Error::Runtime(agent_runtime::Error::External {
+                program: "agent-runtime",
+                operation: "deliver",
+                cause,
+            }));
+        }
+    };
     if reply.get("ok").and_then(Value::as_bool) == Some(true) {
         let mut result = reply.get("result").cloned().unwrap_or(Value::Null);
         if let Value::Object(fields) = &mut result {
@@ -1649,13 +1649,14 @@ impl Wake {
     }
 
     /// One run of agent-runtime's `deliver` counted under `tag`, its reply
-    /// read whole. No reply is the program failing, not a reading of the
-    /// pane.
+    /// read whole, or its wrapper's 69 for an unbuilt key with the setup's
+    /// refusal where it built first. No reply is the program failing, not a
+    /// reading of the pane.
     #[allow(
         clippy::disallowed_methods,
         reason = "the wake and the key verb act only through agent-runtime's own `deliver` verb, run by the one runner under their own tag"
     )]
-    fn deliver(&self, tag: &'static str, args: &[String]) -> Result<(Option<i32>, Value)> {
+    fn deliver(&self, tag: &'static str, args: &[String]) -> Result<Delivery> {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let output = host::run_tagged(
             tag,
@@ -1667,7 +1668,7 @@ impl Wake {
         )?;
         let code = output.status.code();
         if crate::ready::setup_required(code) {
-            return Ok((code, Value::Null));
+            return Ok(Delivery::Unbuilt(crate::ready::build_refusal(&output)));
         }
         let reply: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
             Error::Runtime(agent_runtime::Error::External {
@@ -1676,24 +1677,27 @@ impl Wake {
                 cause: format!("no reply (exit {code:?}): {}", host::stderr_text(&output)),
             })
         })?;
-        Ok((code, reply))
+        Ok(Delivery::Reply(reply))
     }
 
     /// The wake's run of `deliver`: a result, or the refusal's key; the
     /// mark is recorded before it types.
     fn call(&self, args: &[String]) -> Result<Answer> {
-        let (code, reply) = self.deliver("wake", args)?;
         // agent-runtime unbuilt under a running watch: the pass fails with
         // the cause the watch's admission gives the same state, which names
         // orch's setup.
-        if crate::ready::setup_required(code) {
-            return Err(crate::ready::unbuilt(
-                crate::ready::Duty::Watch,
-                "agent-runtime",
-                &self.settings,
-            )
-            .refusal());
-        }
+        let reply = match self.deliver("wake", args)? {
+            Delivery::Reply(reply) => reply,
+            Delivery::Unbuilt(build) => {
+                return Err(crate::ready::unbuilt(
+                    crate::ready::Duty::Watch,
+                    "agent-runtime",
+                    &self.settings,
+                    build,
+                )
+                .refusal());
+            }
+        };
         if reply.get("ok").and_then(Value::as_bool) == Some(true) {
             return Ok(Answer::Result(
                 reply.get("result").cloned().unwrap_or(Value::Null),
@@ -1709,6 +1713,13 @@ impl Wake {
         }
         Err(protocol_error("refused", &reply))
     }
+}
+
+/// What a run of `deliver` gave: its reply, or the wrapper's unbuilt
+/// answer with the setup's refusal where it built first.
+enum Delivery {
+    Reply(Value),
+    Unbuilt(Option<String>),
 }
 
 /// A reply of `deliver`: its result, or a refusal that read the pane.

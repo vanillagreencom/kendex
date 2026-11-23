@@ -325,9 +325,10 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   control dir-resolved copilot \
     '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
     '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$hook" "$@" 2>&1 1>&3 3>&-) || rc=$?'
-  # An unbuilt runtime handed to the wrapper builds in the foreground, under
-  # the planted cargo held for the row, so no build line comes in time.
-  control built-on-call building 'if ! unbuilt; then' 'if true; then'
+  # A hook that hands an unbuilt runtime to the wrapper has it build in the
+  # foreground: the wrapper prints its own setup-building line and answers
+  # in place of the silent pass.
+  control built-on-call boxless 'if ! unbuilt; then' 'if true; then'
   control reader-unexported global 'export LANE_MAIL_CLI=$reader' 'LANE_MAIL_READER=$reader'
   control unlocatable-held unlocatable \
     "  printf 'lane-mail-check: reader=unlocatable hook=%s\\n' \"\$dir\" >&2" \

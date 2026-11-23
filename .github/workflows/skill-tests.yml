@@ -836,13 +836,13 @@ jobs:
       # (`orch-runtime validate entry`) on both runners and, on macOS,
       # Jarvis's succession suite, whose `SessionContract` rows run it too.
       # The worktree suites' reuse and restack rows read `orch-runtime
-      # validate entry --live`, which holds the tree where no build matches,
-      # in `worktree` and `worktree-restack`. The pi-hooks lane wake suite of
-      # `node` runs the lane-mail hooks kendex renders for Pi, whose judge is
-      # `orch-runtime turn-end`.
+      # validate entry --live`, in `worktree` and `worktree-restack`. The
+      # pi-hooks lane wake suite of `node` runs the lane-mail hooks kendex
+      # renders for Pi, whose judge is `orch-runtime turn-end`.
       # These legs build both package runtimes ahead of their suites into one
       # cache that every later step reads through AGENT_RUNTIME_CACHE,
-      # whatever HOME a suite sets.
+      # whatever HOME a suite sets: without it each suite's first call would
+      # build in the foreground, inside the suite's own time and cache.
       # scripts/setup places each binary at bin/<name>-<key> there, its key
       # the runtime trees' Cargo.toml, Cargo.lock and src/ (lib/key.sh), and
       # builds nothing where that binary stands. One entry per runner holds

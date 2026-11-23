@@ -254,8 +254,10 @@ owner_requests() {
 # only as that reading names it. A model the launch requested (`source=launch`)
 # is no reading of the one the session runs, so it stays unknown; so does
 # every member where orch is not installed beside this package, its runtime is
-# not built, or no lane session is bound at the caller (an overseer, Jarvis, a
-# plain shell). A Claude Code subagent shares its lane's pane and session, so
+# not built on a computer without cargo, or no lane session is bound at the
+# caller (an overseer, Jarvis, a plain shell). With cargo on PATH an unbuilt
+# runtime is built at this read, so the post waits on that build. A Claude
+# Code subagent shares its lane's pane and session, so
 # its comment names the lane session's model.
 comment_attribution() {
     local reader="$SCRIPT_DIR/../../../orch/scripts/orch-runtime" lines="" line

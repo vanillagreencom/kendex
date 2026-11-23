@@ -2205,18 +2205,20 @@ printf 'orch-runtime-setup: key=%s binary=%s\\n' "$key" "$bin/orch-runtime-$key"
         """The first launch and a close in place of the relaunch."""
         return self.relaunch_across_a_runtime_change(lambda env: self.call("close", "--item", "TEST-1", **env))
 
-    def test_relaunch_across_a_runtime_change_builds_before_the_reuse(self):
+    def test_relaunch_across_a_runtime_change_reuses_the_tree(self):
         """A relaunch whose update crosses a runtime change reuses the
-        item's tree with no setup run by hand."""
+        item's tree with no setup run by hand. The build order is not
+        asserted: the clone's wrapper builds on its first call."""
         first, relaunch = self.relaunch_across_a_runtime_change()
         self.assertEqual(relaunch.returncode, 0, relaunch.stderr)
         self.assertEqual(self.fields(relaunch.stdout)["path"], self.fields(first.stdout)["path"])
         self.assertEqual((Path(self.row["clone"]) / ".agents/skills/orch/runtime/src/main.rs").read_text(),
                          "fn main() { moved() }\n")
 
-    def test_close_across_a_runtime_change_builds_before_the_archive(self):
+    def test_close_across_a_runtime_change_archives_the_tree(self):
         """A close whose update crosses a runtime change archives and removes
-        the item's tree with no setup run by hand."""
+        the item's tree with no setup run by hand. The build order is not
+        asserted: the clone's wrapper builds on its first call."""
         first, close = self.close_across_a_runtime_change()
         self.assertEqual(close.returncode, 0, close.stderr)
         self.assertFalse(Path(self.fields(first.stdout)["path"]).exists())

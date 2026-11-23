@@ -20,6 +20,36 @@ PATH="$NOCARGO_PATH" sk_run AGENT_RUNTIME_CACHE="$SK_TMP/unbuilt-cache" -- setup
 assert_eq "$RC=$(grep -Ec '^orch-runtime: setup-required key=[0-9a-f]+ run=.+/skills/orch/scripts/setup$' <<<"$ERR")" \
   "69=1" "setup passes on the unbuilt orch runtime's cause and setup command"
 
+# A computer with cargo, where the wrapper builds the absent program first:
+# a build that outlasts answer's bound passes the wrapper's setup-building
+# line through with exit 69, never an unanswered setting. agent-runtime's
+# planted cargo is held for the row, and the bound is the module's own,
+# shortened for the row; the build ends once the hold goes.
+BUILDING="$(sk_new_root building)"
+mkdir -p "$SK_TMP/planted"
+ln -sf "$SK_ROOT/skills/agent-runtime/tests/setup/cargo" "$SK_TMP/planted/cargo"
+: >"$SK_TMP/cargo-hold"
+RC=0
+ERR="$(cd "$SK_TMP/home" && env -i PATH="$SK_TMP/planted:$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$SK_TMP/building-cache" \
+  FAKE_CARGO_LOG="$SK_TMP/cargo.log" FAKE_CARGO_HOLD="$SK_TMP/cargo-hold" \
+  python3 - "${SK_BIN%/*}/lib" "$BUILDING" 2>&1 >/dev/null <<'PY'
+import pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import verbs
+verbs.ANSWER_SECONDS = 2
+print(verbs.lane_side(pathlib.Path(sys.argv[2])))
+PY
+)" || RC=$?
+rm -f -- "${SK_TMP:?}/cargo-hold"
+assert_eq "$RC=$(grep -Ec '^orch-runtime: setup-building key=[0-9a-f]+ run=.+/skills/orch/scripts/setup$' <<<"$ERR")" \
+  "69=1" "setup passes on a building orch runtime's line past its bound"
+waited=0
+until ls "$SK_TMP/building-cache/bin/orch-runtime-"* >/dev/null 2>&1 || [ "$waited" -ge 100 ]; do
+  sleep 0.2
+  waited=$((waited + 1))
+done
+
 sk_channel_name() { jq -r .channel_name "$1/tmp/slack/binding.json"; } # ROOT
 sk_purpose() { sk_state ".channels[\"$(sk_channel "$1")\"].purpose"; }     # ROOT — its channel's purpose
 set_purposes() { sk_state '[.calls[] | select(. == "conversations.setPurpose")] | length'; }

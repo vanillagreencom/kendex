@@ -915,6 +915,21 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                     self.assertEqual(module.chain_caller(pid, recorded, read), expected)
 
     @unittest.skipUnless(sys.platform == "linux", "only Linux names a jarvis-session caller")
+    def test_record_read_past_its_bound_names_its_stderr(self):
+        # A runtime wrapper that builds its program before it answers opens its stderr with setup-building; a
+        # read the bound ends journals that line, never an empty cause.
+        module = load("lib/op_fifo.py")
+        building = self.executable("building", "import sys,time\n"
+            "sys.stderr.write('agent-runtime: setup-building key=k run=/s\\n'); sys.stderr.flush(); time.sleep(30)\n")
+        journal = io.StringIO()
+        with patch.object(module, "RECORD_SECONDS", 1), redirect_stderr(journal):
+            with self.assertRaises(module.Refusal) as refused:
+                module.runtime_result("agent-runtime-controller-status", [str(building)], self.root)
+        self.assertEqual(str(refused.exception), "record=unreadable")
+        self.assertEqual(journal.getvalue().splitlines(), [
+            "op-broker: record=unreadable operation=agent-runtime-controller-status cause=TimeoutExpired",
+            "op-broker: stderr=agent-runtime: setup-building key=k run=/s"])
+
     def test_controller_record_states(self):
         module = load("lib/op_fifo.py")
         own = (os.getpid(), start_ticks(os.getpid()))

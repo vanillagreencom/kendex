@@ -262,7 +262,9 @@ def runtime_result(operation, argv, home, absent=None):
         run = subprocess.run(argv, cwd=home, env=env, stdin=subprocess.DEVNULL, capture_output=True,
                              timeout=RECORD_SECONDS)
     except (OSError, subprocess.SubprocessError) as error:
-        unreadable_record(operation, "cause=" + type(error).__name__, b"")
+        # A call past its bound keeps the stderr it held, such as a runtime
+        # wrapper's setup-building line for the build it waited on.
+        unreadable_record(operation, "cause=" + type(error).__name__, getattr(error, "stderr", None) or b"")
     try:
         reply = json.loads(run.stdout.splitlines()[-1])
         refusal, result = (reply.get("refusal") or {}).get("key"), reply.get("result")

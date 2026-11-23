@@ -299,6 +299,77 @@ fn ready_names_each_owner_ask_key_the_overseer_lacks() {
     }
 }
 
+/// On a computer with cargo agent-runtime's real wrapper builds its
+/// unbuilt key first, under agent-runtime's planted cargo: a build the
+/// verify bound ends reads `building`, never `unanswered`, and a build that
+/// fails reads `unbuilt` with the setup's own refusal as `build=`, to the
+/// line's end.
+#[test]
+fn ready_reads_a_wrapper_building_its_key_and_the_build_s_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let wrapper = packages.join("agent-runtime/scripts/agent-runtime");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(
+        packages
+            .join("agent-runtime/tests/setup/cargo")
+            .canonicalize()
+            .unwrap(),
+        bin.join("cargo"),
+    )
+    .unwrap();
+    let path = std::ffi::OsString::from(support::path_without(&bin, &[]));
+    let setup = root.join(".agents/skills/orch/scripts/setup");
+    let log = root.join("cargo.log");
+    let hold = root.join("hold");
+    let judge = |cache: &Path, extra: &[(&str, &std::ffi::OsStr)]| {
+        let mut env = vec![
+            ("PATH", path.as_os_str()),
+            ("ORCH_AGENT_RUNTIME", wrapper.as_os_str()),
+            ("AGENT_RUNTIME_CACHE", cache.as_os_str()),
+            ("AGENT_RUNTIME_TMUX_VERIFY_SECS", std::ffi::OsStr::new("1")),
+            ("FAKE_CARGO_LOG", log.as_os_str()),
+        ];
+        env.extend_from_slice(extra);
+        let (lines, _) = ready_in(&root, &["--duty", "watch"], &env);
+        lines.into_iter().next().unwrap_or_default()
+    };
+    fs::write(&hold, "").unwrap();
+    let building = root.join("cache-building");
+    let first = judge(&building, &[("FAKE_CARGO_HOLD", hold.as_os_str())]);
+    fs::remove_file(&hold).unwrap();
+    assert_eq!(
+        first,
+        format!(
+            "unready duty=watch program=agent-runtime cause=building fix={}",
+            setup.display()
+        )
+    );
+    // The build the bound left goes on once its hold is gone.
+    let placed = || {
+        fs::read_dir(building.join("bin"))
+            .map(|entries| entries.count() > 0)
+            .unwrap_or(false)
+    };
+    for _ in 0..200 {
+        if placed() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let failed = judge(
+        &root.join("cache-failed"),
+        &[("FAKE_CARGO_EXIT", std::ffi::OsStr::new("1"))],
+    );
+    let prefix = format!(
+        "unready duty=watch program=agent-runtime cause=unbuilt fix={} build=agent-runtime-setup: build-failed status=1 key=",
+        setup.display()
+    );
+    assert!(failed.starts_with(&prefix), "{failed}");
+}
+
 /// The judge's other answers, each a duty asked alone: a runtime whose
 /// wrapper is gone names the packages' install; a wrapper that answers
 /// neither built nor unbuilt reads `unanswered` and names orch's setup; a
