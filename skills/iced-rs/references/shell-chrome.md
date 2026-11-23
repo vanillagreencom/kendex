@@ -64,7 +64,7 @@ Menus opened near edges must not overflow the window. Clamp the menu origin so `
 
 ### Composition
 
-Use `float` or `stack` + `opaque` to layer the menu above siblings. The menu is an overlay — it must not affect the base layer's widget tree structure (see overlay state isolation rules in SKILL.md).
+Use `float` or `stack` + `opaque` to layer the menu. A menu that must flip above its trigger or cover its siblings without moving them uses the anchored overlay template: `guide-custom-overlays.md` § Built-ins says which. The menu is an overlay — it must not affect the base layer's widget tree structure (see overlay state isolation rules in SKILL.md, and its exception for a `float` in its trigger's own column).
 
 ## Tab bars
 

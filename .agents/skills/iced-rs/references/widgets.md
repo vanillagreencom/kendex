@@ -13,7 +13,7 @@ Use this catalog to select an Iced 0.14.0 widget and a bundled example. Load the
 | `scrollable` | Scrollable region | `on_scroll` reports changed overflowing viewports on scroll or redraw; use a sensor for size without overflow | `scrollable` |
 | `pane_grid` | Resizable docking panes with drag-and-drop | `TitleBar` width must be `Shrink` to preserve pick area | `pane_grid` |
 | `responsive` | Layout that adapts to available size | Prefer `sensor` for dimension queries | — |
-| `float` | Overlay-based floating content (above siblings) | Use for tooltips and popovers | `gallery` |
+| `float` | Overlay-based floating content (above siblings) | For a popover, `guide-custom-overlays.md` § Built-ins says when | `gallery` |
 | `pin` | Absolute positioning within parent | Use for drag ghosts, context menus | `multi_window` |
 | `table` | Data tables with columns | — | `table` |
 | `center` | Center a single child | — | `tour`, `custom_widget` |
@@ -98,7 +98,7 @@ area
 2. Dropdown → `pick_list` or `combo_box`
 3. Modal dialog → `stack![base, opaque(modal)]`
 4. Drag ghost → `pin` or `float`
-5. Complex popover → `float`
+5. Popover under a trigger → `float` or the anchored template: `guide-custom-overlays.md` § Built-ins says which
 6. None of the above fit → `iced::advanced::overlay::Overlay` (last resort)
 
 See `guide-custom-overlays.md` for the custom Overlay contract.
