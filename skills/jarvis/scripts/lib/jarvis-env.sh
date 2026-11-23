@@ -59,17 +59,18 @@ jarvis_live() {
   printf '%s\n' "$at"
 }
 
-# The bound session's own last word on its turns: agent-runtime's session
-# verdict of the rows file its hooks write for that pane, whatever the
-# context stamp's age, with the recorded session and account. The file is
-# the one the stop-failure-row hook names, the pane number without its `%`.
+# The bound session, whatever the context stamp's age, with its pane, its
+# recorded account and the rows file its hooks write for that pane: the one
+# the stop-failure-row hook names, the pane number without its `%`. The
+# caller reads the rows' verdict itself, so a refused read is never taken for
+# an unbound session.
 jarvis_wall() {
-  local runtime box server pane at status verdict
+  local runtime box server pane at status
   jarvis_bound "$1" || return 1
-  verdict="$("$runtime" rows verdict --kind session \
-    --file "$box/tmp/lane-mail/overseer/session-$server-${pane#%}.jsonl")" || return 1
-  jq -c --argjson status "$status" '{session: $status.result.recorded.session_id,
-    account: $status.result.recorded.account, rows: .result}' <<<"$verdict"
+  jq -nc --argjson status "$status" --arg pane "$server $pane" \
+    --arg rows "$box/tmp/lane-mail/overseer/session-$server-${pane#%}.jsonl" \
+    '{session: $status.result.recorded.session_id, pane: $pane,
+      account: $status.result.recorded.account, rows: $rows}'
 }
 
 case "${1:-}" in

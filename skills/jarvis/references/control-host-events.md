@@ -59,15 +59,16 @@ The loop adds `EVENT owner-unanswered` for a delivered owner message that no rep
 - The loop judges coverage from the default handoff and its archive.
 - The event reminds the session; it never means the message is unread.
 
-Every 30 seconds the loop reads the home's own controller for a wall, through `jarvis-env.sh wall HOME`.
+Every 30 seconds the loop reads the home's own controller for a wall: `jarvis-env.sh wall HOME` names the bound controller and its rows file.
 
-- The reading is agent-runtime's session verdict of the rows its hooks write for the controller's pane: an auth wall for a signed-out account, a usage wall for one out of room.
+- The reading is agent-runtime's session verdict of the rows its hooks write for the controller's pane, `agent-runtime rows verdict --kind session`: an auth wall for a signed-out account, a usage wall for one out of room.
 - It reads a live, bound controller whatever its context stamp's age. A quiet session that is not walled starts nothing.
-- On a wall it runs `jarvis-session succeed --home HOME` once, adding `--account-walled` for a usage wall, so the successor opens with the home's stored Start brief.
+- On a wall of either kind it runs `jarvis-session succeed --home HOME --account-walled` once, so the successor leaves the walled account and opens with the home's stored Start brief.
 - It then sends the owner one notice, `lane-mail notice --item overseer --to owner`, naming the cause, the account and the succession's outcome: the account the successor runs on, or the refusal and its detail.
-- A wall already reported starts nothing and sends nothing again until another session is the controller.
+- A wall is one episode of one controller, its session in its pane.
+- A wall already reported starts nothing and sends nothing again until its episode ends: the controller in control reads unwalled, or another controller is walled, such as a successor or a session resumed in another pane.
 - When the loop ends with the predecessor before the succession answers, the next loop sends the owed notice once a successor is in control.
-- An unreadable reading reports `root-unreachable` once, and an unsent notice is retried each check.
+- An unreadable reading, the runtime's refusal of the read included, reports `root-unreachable` once and starts nothing. An unsent notice reports `root-unreachable` once and is retried each check.
 
 A host change takes effect after a stop and restart.
 

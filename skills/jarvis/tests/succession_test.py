@@ -94,8 +94,8 @@ class SuccessionContract(SessionContract):
                 before = after
 
     def test_successor_setup_readiness(self):
-        # A walled succession, the one the watch loop starts for a usage
-        # wall, briefs its successor with the home's stored Start brief.
+        # A walled succession, the one the watch loop starts for a wall of
+        # either kind, briefs its successor with the home's stored Start brief.
         brief = self.root / "brief.md"
         brief.write_text("Watch the release.\n")
         for runner_up in (False, True):

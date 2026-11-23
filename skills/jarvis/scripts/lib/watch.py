@@ -404,6 +404,11 @@ def lane_mail():
     return LIB.parents[2] / "mailbox/scripts/lane-mail"
 
 
+def agent_runtime():
+    """The producer's own agent-runtime wrapper, the one jarvis-env.sh runs."""
+    return LIB.parents[2] / "agent-runtime/scripts/agent-runtime"
+
+
 def mailbox_header(line):
     """The `count=N first=ID` header lane-mail's drain and events print, as (count, first), or None."""
     match = re.fullmatch(r"count=(\d+) first=(\S*)", line)
@@ -997,27 +1002,36 @@ class Watch:
             return False
 
     def wall(self):
-        """The bound controller's wall: (session, account, kind), kind None for
-        a session its rows do not read walled; None with no bound controller,
-        as presence reads it; a Failure where the reading was not judged."""
+        """The bound controller's wall: (session, pane, account, kind), kind
+        None for a session its rows do not read walled; None with no bound
+        controller, as presence reads it; a Failure where the rows were not
+        judged, the runtime's refusal of the read included."""
         try:
             result = run([self.bash, LIB / "jarvis-env.sh", "wall", self.home], operation="controller-wall")
             if result.returncode:
                 error = child_failure("controller-wall", result)
                 return error if error.record["key"][1:] == ["refusal", "dependency"] else None
-            reading = json.loads(result.stdout)
-            rows = reading["rows"]
+            bound = json.loads(result.stdout)
+            verdict = run([self.bash, agent_runtime(), "rows", "verdict", "--kind", "session", "--file", bound["rows"]],
+                          operation="controller-wall")
+            if verdict.returncode:
+                raise child_failure("controller-wall", verdict)
+            rows = json.loads(verdict.stdout)["result"]
             if rows["reading"] == "unreadable":
                 raise Failure("controller-wall", "rows", "unreadable", rows["cause"])
             walled = rows["reading"] == "live" and rows["verdict"] == "walled"
-            return reading["session"], reading["account"], rows["kind"] if walled else None
+            return bound["session"], bound["pane"], bound["account"], rows["kind"] if walled else None
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("controller-wall", error)
 
     def accept_wall(self, reading):
         """One wall reading judged: the wall kind a succession starts for, or None.
 
-        The notice the last succession owes goes first, and a new wall waits for it."""
+        The notice the last succession owes goes first, and a new wall waits
+        for it. A wall is one episode of one controller, its session in its
+        pane: a resumed session is another controller, and the episode ends
+        once the controller in control reads unwalled, so a refused succession
+        whose predecessor recovers in place is told of again when next walled."""
         if isinstance(reading, Failure):
             self.failed_pass("wall", reading.record)
             return None
@@ -1027,33 +1041,42 @@ class Watch:
             if memory["outcome"] is None and reading is not None:
                 # The loop that started the succession ended before its answer,
                 # as one under the predecessor's harness does once the
-                # predecessor ends: another session in control is its proof.
-                memory["outcome"] = (replaced(reading[1]) if reading[0] != memory["session"] else
+                # predecessor ends: another controller in control is its proof.
+                memory["outcome"] = (replaced(reading[2]) if reading[:2] != (memory["session"], memory["pane"]) else
                                      "The replacement's outcome was not read; jarvis-session status shows it.")
             if memory["outcome"] is not None:
                 self.notify(memory)
-        session, account, kind = reading or (None, None, None)
-        if kind is None or memory is not None and (session == memory["session"] or not memory["noticed"]):
+        session, pane, account, kind = reading or (None, None, None, None)
+        if memory is not None and memory["noticed"] and reading is not None and kind is None:
+            del self.state["wall"]
+            memory = None
+        if kind is None or memory is not None and ((session, pane) == (memory["session"], memory["pane"])
+                                                   or not memory["noticed"]):
             self.save()
             return None
         # Durable before the succession starts: a restarted loop owes this
         # wall its notice and never starts a second succession for it.
-        self.state["wall"] = {"session": session, "account": account, "kind": kind, "outcome": None, "noticed": False}
+        self.state["wall"] = {"session": session, "pane": pane, "account": account, "kind": kind,
+                              "outcome": None, "noticed": False}
         self.save()
         return kind
 
-    def succeed(self, kind):
-        """jarvis-session succeed for a wall of KIND: its answer, or a Failure."""
-        argv = [self.bash, LIB.parent / "jarvis-session", "succeed", "--home", self.home]
+    def succeed(self):
+        """jarvis-session succeed away from the walled account: its answer, or a Failure.
+
+        Either wall kind is the account's own, so the successor leaves it."""
         try:
             # The session command bounds each wait it makes, the hand-over's too.
-            result = run(argv + (["--account-walled"] if kind == "usage" else []), self.home,
-                         operation="succeed", timeout=None)
-            answer = json.loads(result.stdout.splitlines()[-1])
+            result = run([self.bash, LIB.parent / "jarvis-session", "succeed", "--home", self.home, "--account-walled"],
+                         self.home, operation="succeed", timeout=None)
+            lines = result.stdout.splitlines()
+            if not lines:
+                raise child_failure("succeed", result)
+            answer = json.loads(lines[-1])
             if not isinstance(answer, dict):
                 raise ValueError("answer-unread")
             return answer
-        except (OSError, ValueError, IndexError, RuntimeError, subprocess.SubprocessError) as error:
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             return failure("succeed", error)
 
     def accept_succession(self, answer):
@@ -1374,8 +1397,8 @@ class Watch:
             self.wall_pending = None
             if wall[0] == "succession":
                 self.accept_succession(wall[1].result())
-            elif (kind := self.accept_wall(wall[1].result())) is not None:
-                self.wall_pending = ("succession", passes.submit(self.succeed, kind))
+            elif self.accept_wall(wall[1].result()) is not None:
+                self.wall_pending = ("succession", passes.submit(self.succeed))
         if self.wall_pending is None and now >= self.next_wall:
             self.next_wall = now + 30
             self.wall_pending = ("read", passes.submit(self.wall))
