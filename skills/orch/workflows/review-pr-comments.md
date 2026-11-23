@@ -353,15 +353,9 @@ Before it answers a thread, every pass owes two things, whether it fixes, replie
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"base","worktree":"[WORKTREE_PATH]"}'
    ```
 
-2. Group the fix set by `agent`. Run the groups one after another, and take steps 3 to 12 for each group.
-3. Read the pull request and bind `[PR_OPEN]` as [dev-fix.md § 2](dev-fix.md#2-delegate) step 4 does:
-
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] [PR_NUMBER] --json state
-   ```
-
-4. Run [dev-fix.md § 2](dev-fix.md#2-delegate)'s base-freshness gate before stamping this round.
-5. Apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this group's proposed fix classes. Write the requests to `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from the original review items, or from exact receipt-origin check names:
+2. Group the fix set by `agent`. Run the groups one after another, and take steps 3 to 11 for each group.
+3. Run [dev-fix.md § 2](dev-fix.md#2-delegate)'s base-freshness gate before stamping this round.
+4. Apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this group's proposed fix classes. Write the requests to `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from the original review items, or from exact receipt-origin check names:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime state findings query --item [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
@@ -372,10 +366,10 @@ Before it answers a thread, every pass owes two things, whether it fixes, replie
    - Take the [finding-specific design read](../references/design-review.md#inputs-and-actions), with that JSON in the ask or status, before the round's `begin-round`, prune or delegation time. This path owns the read even when dev-fix has not run.
    - Carry the same JSON in the group's delegation.
 
-6. Stamp the round as separate tool calls immediately before delegating.
+5. Stamp the round as separate tool calls immediately before delegating.
    - Apply the cleanup condition and arm the watchdog per [skill-rules.md § Round Closure](../references/skill-rules.md#round-closure).
    - First reconcile the standing dev round, as [dev-start.md § 2](dev-start.md#2-delegate) does, with `{"op": "reconcile-round", "round_id": "[PRIOR_DEV_ROUND_ID]"}` through the command below. Its admitted runs then close before the new round supersedes it.
-7. Mint the round: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "dev"}`, run it, and take `[DEV_ROUND_ID]` from the reply's `.result.report.round_id`.
+6. Mint the round: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "dev"}`, run it, and take `[DEV_ROUND_ID]` from the reply's `.result.report.round_id`.
    - With several groups, the request adds `"group": {"n": [N], "of": [GROUPS]}`.
    - It may also carry an `exception`: the known failures the round may end with. This side grants the exception, and the receipt only cites it:
 
@@ -383,7 +377,7 @@ Before it answers a thread, every pass owes two things, whether it fixes, replie
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
    ```
 
-8. Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune. Write `[WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "dev"}`, run it, then stamp the delegation time:
+7. Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune. Write `[WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "dev"}`, run it, then stamp the delegation time:
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
@@ -393,24 +387,24 @@ Before it answers a thread, every pass owes two things, whether it fixes, replie
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"dev"}'
    ```
 
-9. Write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`. The delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states.
-10. Persist the group's items: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`.
-    - Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text).
-    - `[REACH]` names the shipped producer, user action or fixture that reaches the finding: a command a person runs, a file a shipped writer emits, or a test in the tree.
-    - An item with no reach is a `Declined:` reply, not a fix; disposition it per [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar).
-11. Decide whether this round may add protected files. [dev-round.md § Protected additions](../schemas/dev-round.md#protected-additions) is the one scope definition, and the default is none.
+8. Write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`. The delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states.
+9. Persist the group's items: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`.
+   - Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text).
+   - `[REACH]` names the shipped producer, user action or fixture that reaches the finding: a command a person runs, a file a shipped writer emits, or a test in the tree.
+   - An item with no reach is a `Declined:` reply, not a fix; disposition it per [finding-disposition.md § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar).
+10. Decide whether this round may add protected files. [dev-round.md § Protected additions](../schemas/dev-round.md#protected-additions) is the one scope definition, and the default is none.
     - When the list is non-empty, pass the exact repository-relative paths to the writer as one blank-separated `--adds` value.
     - Render the same list after `Adds:` in the delegation: `Adds: tools/one-helper.sh`, or `Adds: tools/one-helper.sh skills/x/scripts/check`.
     - A blank or tab separates paths, so no path holding whitespace can be authorized. Check for one first.
 
     ```bash
-    .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
+    .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
     ```
 
     - A nonzero exit names a usage or environment failure: report it and stop.
     - A chosen cut follows [dev-fix.md § 2](dev-fix.md#2-delegate) step 4 with `[SOURCE]` `pr-comments`.
 
-12. Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry. An absent field renders none. The stamp already moved `dev_round_id`, so the state key is the one carrier:
+11. Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry. An absent field renders none. The stamp already moved `dev_round_id`, so the state key is the one carrier:
 
     ```bash
     .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /near_ceiling

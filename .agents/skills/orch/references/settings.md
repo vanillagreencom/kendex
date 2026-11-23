@@ -81,6 +81,7 @@ The keys' rules, in the table's order:
 The keys' rules, in the table's order:
 
 - `ORCH_PR_ORDER`: unset, the order follows the repository's visibility. `orch-runtime pr order --help` owns the defaults.
+- `ORCH_PR_ORDER`: it decides when the pull request opens. No validation start or mode read takes it as an input.
 - `ORCH_STAGES`: it is read from the base checkout's files alone, never the environment.
 - `ORCH_STAGES`: a chosen stage runs whether or not its tool is installed.
 - `ORCH_COPILOT_HOLD_SECS`: `approve-head` with `hold_copilot` counts it from that wait's start.

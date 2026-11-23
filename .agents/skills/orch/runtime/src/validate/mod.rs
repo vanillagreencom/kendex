@@ -63,9 +63,6 @@ pub struct StartRequest {
     pub foreground: bool,
     pub reproduce: bool,
     pub restack: bool,
-    /// A proof read: it asks the CI admission whatever the publication
-    /// order, so a missing proof names the admission's cause.
-    pub prove: bool,
 }
 
 /// The start's reply: the fields of the `state=started` line, the
@@ -888,13 +885,14 @@ fn class_covered(class: &Classified, queue: bool) -> bool {
 
 /// Whether required CI validates the change (`ci_runs_validation`): the
 /// context is declared, delivery is not direct, an open pull request names
-/// the base (or push-first's resolved base before one exists), and that
-/// base requires the context. `branch_class` is the whole branch's.
+/// the base (or the resolved base branch before one exists), and that base
+/// requires the context. `branch_class` is the whole branch's. The
+/// publication order is no input: whenever the pull request opens, the
+/// same required CI runs on it before it merges.
 fn ci_admission(
     settings: &Settings,
     worktree: &Path,
     branch_class: &Classified,
-    order: &str,
     log: &mut String,
 ) -> Result<CiAdmission> {
     if settings.validate.delivery()? == crate::settings::Delivery::PushBase {
@@ -909,27 +907,19 @@ fn ci_admission(
     let Some(view) = pr_view(&checkout_gh(&gh), log) else {
         return Ok(CiAdmission::Fallback("base-unresolved".to_owned()));
     };
-    let push_first = order == "push-first";
-    // An open pull request's base, or push-first's resolved base before
-    // one exists, is read for its rules; anything else needs the class
-    // covered to go on at all.
-    let base_readable = match &view {
-        PrView::Open { .. } => true,
-        PrView::None => push_first,
-        PrView::NotOpen => false,
-    };
-    if !base_readable && !class_covered(branch_class, false) {
-        return Ok(CiAdmission::Fallback("class-uncovered".to_owned()));
-    }
+    // An open pull request's base, or the resolved base before one exists,
+    // is read for its rules. A closed or merged one runs no further CI: it
+    // names class-uncovered where the class is uncovered, else pr-not-open.
     let base = match view {
-        PrView::None if push_first => match base_branch(settings, worktree, log)? {
+        PrView::Open { base } => base,
+        PrView::None => match base_branch(settings, worktree, log)? {
             Some(branch) => branch,
             None => return Ok(CiAdmission::Fallback("base-unresolved".to_owned())),
         },
-        PrView::None | PrView::NotOpen => {
-            return Ok(CiAdmission::Fallback("pr-not-open".to_owned()));
+        PrView::NotOpen if !class_covered(branch_class, false) => {
+            return Ok(CiAdmission::Fallback("class-uncovered".to_owned()));
         }
-        PrView::Open { base } => base,
+        PrView::NotOpen => return Ok(CiAdmission::Fallback("pr-not-open".to_owned())),
     };
     let Some((contexts, queue)) = required_contexts_under(settings, worktree, &gh, &base, log)
     else {
@@ -1102,28 +1092,20 @@ fn settle(
         class_base.clear();
         base_sha.clear();
     }
-    let order = pr_order(settings, worktree, &mut log)?;
     let mut ci_fallback: Option<String> = None;
     let mut ci_event = String::new();
-    let mut ci_attempted = false;
     let mut previewed = false;
     let mut preview = Preview::default();
     let paths_file = scratch.0.join("paths");
-    // A ci request, and under push-first any fix round, asks whether CI
-    // covers the change; so does a fix round the declaration lets defer
-    // (its narrowest mode), and a proof read, which names the admission's
-    // cause where CI does not take the change.
-    let may_defer = fix_round && req.mode.is_none() && settings.validate.ci_context.is_some();
-    if !docs_mode
-        && !req.reproduce
-        && (mode == ValidateMode::Ci || order == "push-first" || may_defer || req.prove)
-    {
-        ci_attempted = true;
+    // Every request but a docs snapshot or a reproduction asks whether CI
+    // covers the change, whatever the publication order, so a worker runs
+    // locally only what required CI does not; a fallback names its cause.
+    if !docs_mode && !req.reproduce {
         let branch = read("", &mut log)?;
         if requested != ValidateMode::Full {
             mode = ValidateMode::Range;
         }
-        match ci_admission(settings, worktree, &branch, order, &mut log)? {
+        match ci_admission(settings, worktree, &branch, &mut log)? {
             CiAdmission::Admitted { event } => {
                 ci_event = event;
                 if req.restack || settings.validate.selection_cmd.is_none() {
@@ -1207,33 +1189,16 @@ fn settle(
             ci_env(&ci_event, ci_fallback.as_deref().unwrap_or_default()),
             &mut log,
         )?;
-        let all = preview.selection.as_deref() == Some("selection=all");
-        let subset = preview.selection.as_deref() == Some("selection=subset");
-        if all || (requested == ValidateMode::Range && subset) {
-            if !ci_attempted {
-                // The one CI admission read: its result decides the mode and
-                // the fallback cause, matched once, since two reads could
-                // disagree and leave a stale placeholder. A Fallback's own
-                // cause (`class-uncovered` among them) is the fallback;
-                // Admitted clears it.
-                let branch = read("", &mut log)?;
-                match ci_admission(settings, worktree, &branch, order, &mut log)? {
-                    CiAdmission::Admitted { event } => {
-                        ci_event = event;
-                        mode = ValidateMode::Ci;
-                        ci_fallback = None;
-                    }
-                    CiAdmission::Fallback(cause) => ci_fallback = Some(cause),
-                }
-                class = read(&class_base, &mut log)?;
-            }
-            let fallback = ci_fallback.as_deref().unwrap_or_default();
-            if (fallback == "pr-not-open"
-                || (order == "push-first" && fallback == "class-uncovered"))
-                && all
-            {
-                scoped = true;
-            }
+        // An all selection CI does not take runs scoped where no open pull
+        // request runs CI on the head or its class is uncovered: the
+        // selector's own suites, not the whole battery to its bound.
+        if preview.selection.as_deref() == Some("selection=all")
+            && matches!(
+                ci_fallback.as_deref(),
+                Some("pr-not-open" | "class-uncovered")
+            )
+        {
+            scoped = true;
         }
     }
     if mode == ValidateMode::Ci && !req.restack && settings.validate.selection_cmd.is_some() {

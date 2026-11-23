@@ -2,7 +2,8 @@
 # The restack cycle's wiring in merge-pr-restack.md, executed as the document
 # writes it against a real worktree: step 2 asks record-push for a fix round in
 # flight, reads the base, resolves the mode, asks the restack check and starts the
-# range run before step 3's record-push; the push records that run as the
+# range run before step 3's record-push, with a route for every mode the read
+# prints; the push records that run as the
 # item's restack stage, a second run recorded after a push-time rewrite takes
 # no second publication, and step 3's proof block prints the reader's reply,
 # hands back on a refusal and holds the merge on a missing answer. restack_skip.sh holds the skip check's
@@ -160,9 +161,6 @@ live() {
   line="$(command_at "$1" "$2")"
   [[ -n "$line" ]] || { printf 'live: no live command holds %s\n' "$2" >&2; return 1; }
   line="${line#*$'\t'}"
-  if [[ "$2" == "$RESOLVE" ]]; then
-    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /validate entry --resolve-mode/ {exit}' "$1")"
-  fi
   line="${line//\[MAIN_REPO_ROOT\]\/.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
   line="${line//\[WT_PATH\]/$3}"
   line="${line//\[BASE_BRANCH\]/$4}"
@@ -356,7 +354,7 @@ git -C "$CI_WT" update-index --skip-worktree kendex.settings.toml
 printf '#!/bin/sh\nprintf changed\\n\n' > "$CI_WT/check.sh"
 git -C "$CI_WT" add check.sh
 git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m source
-printf 'ORCH_PR_ORDER = "push-first"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$CI_WT/kendex.settings.toml"
+printf 'DEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$CI_WT/kendex.settings.toml"
 mkdir -p "$TMP_ROOT/ci-bin"
 cat > "$TMP_ROOT/ci-bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -381,7 +379,7 @@ CI_COMMAND='orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci 
 printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=all; test $DEV_VALIDATE_SCOPED = false || touch %s"\n' \
   "$TMP_ROOT/ci-restack-scoped-ran" >> "$CI_WT/kendex.settings.toml"
 CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed ci-resolve
-assert_eq "$CI_RESOLVED" validate-mode=ci 'push-first restack resolves to pending CI'
+assert_eq "$CI_RESOLVED" validate-mode=ci 'a covered restack resolves to pending CI'
 CI_OUT="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main -)" || fixture_failed ci-start
 CI_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$CI_OUT")"
 CI_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$CI_WT" main "$CI_DIR")" || fixture_failed ci-record
@@ -392,36 +390,59 @@ assert_eq "$(grep -c '^class-base=' "$CI_DIR/start" || :)" 0 'restack CI record 
 # The restack rule these rows hold lives in the runtime's validation start,
 # where its must-fail control mutates it.
 
-# Execute the workflow's mode block for every order under a covered subset.
-for order in review-first open-first push-first; do
+# Execute the workflow's mode read under every order, and none, with a
+# covered subset: the order decides publication alone.
+for order in review-first open-first push-first ''; do
   sed '/^ORCH_PR_ORDER =/d; /^DEV_VALIDATE_SELECTION_CMD =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
   mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
-  printf 'ORCH_PR_ORDER = "%s"\nDEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' "$order" >> "$CI_WT/kendex.settings.toml"
-  want=range
-  [[ "$order" != push-first ]] || want=ci
+  [[ -z "$order" ]] || printf 'ORCH_PR_ORDER = "%s"\n' "$order" >> "$CI_WT/kendex.settings.toml"
+  printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' >> "$CI_WT/kendex.settings.toml"
   CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-resolve
-  assert_eq "$CI_RESOLVED" "validate-mode=$want" "$order keeps its restack validation order with subset CI coverage"
+  assert_eq "$CI_RESOLVED" validate-mode=ci "order=${order:-unset} restack resolves pending CI with subset CI coverage"
 done
-cp "$RESTACK_DOC" "$TMP_ROOT/restack-order-mutant.md"
-mutate_file "$TMP_ROOT/restack-order-mutant.md" '[[ "$PR_ORDER" != pr-order=push-first ]] ||' 'false ||'
-sed '/^ORCH_PR_ORDER =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
-mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
-printf 'ORCH_PR_ORDER = "review-first"\n' >> "$CI_WT/kendex.settings.toml"
-CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-order-mutant.md" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-control
-assert_eq "$CI_RESOLVED" validate-mode=ci 'control: applying the opt-in base to every order breaks review-first restack validation'
 
-cp "$RESTACK_DOC" "$TMP_ROOT/restack-array-mutant.md"
-mutate_file "$TMP_ROOT/restack-array-mutant.md" '${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}' '"${RESTACK_MODE_ARGS[@]}"'
-if (( BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2 )); then
-  array_rc=0
-  LC_ALL=C PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-array-mutant.md" "$RESOLVE" "$CI_WT" main - > "$TMP_ROOT/array-control.out" 2> "$TMP_ROOT/array-control.err" || array_rc=$?
-  array_error="$(sed 's/^[^:]*: line [0-9][0-9]*: //' "$TMP_ROOT/array-control.err")"
-  printf 'control: bare-array diagnostic=%s\n' "$array_error"
-  assert_eq "$array_rc" 127 'control: bare empty-array expansion fails review-first under Bash 3.2 nounset' "$TMP_ROOT/array-control.err"
-  assert_eq "$array_error" 'RESTACK_MODE_ARGS[@]: unbound variable' 'control: bare empty-array failure names the target array' "$TMP_ROOT/array-control.err"
-else
-  printf 'control: bare-array requires Bash 3.2; current=%s\n' "$BASH_VERSION"
-fi
+# A docs-only branch resolves docs at the restack's base, and the document's
+# range start runs it as docs to a pass: no CI read, so no gh stands in.
+DOCS_WT="$(make_worktree docs-restack)" || fixture_failed docs-worktree
+printf 'note\n' > "$DOCS_WT/note.md"
+git -C "$DOCS_WT" add note.md
+git -C "$DOCS_WT" -c user.name=t -c user.email=t@example.com commit -q -m note
+printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' >> "$DOCS_WT/kendex.settings.toml"
+DOCS_RESOLVED="$(live "$RESTACK_DOC" "$RESOLVE" "$DOCS_WT" main -)" || fixture_failed docs-resolve
+assert_eq "$DOCS_RESOLVED" validate-mode=docs 'a docs-only restack resolves docs'
+DOCS_OUT="$(live "$RESTACK_DOC" "$RANGE" "$DOCS_WT" main -)" || true
+DOCS_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$DOCS_OUT")"
+DOCS_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$DOCS_WT" main "$DOCS_DIR")" || fixture_failed docs-record
+assert_eq "$(sed -n 's/^state=done .*\(validate=[A-Za-z-]*\).*$/\1/p' <<<"$DOCS_OUT") ${DOCS_RECORD%% *}" \
+  'validate=pass validate-mode=docs' "the document's range start runs a docs-only head as docs to a pass"
+
+# routed_modes DOC — the mode words step 2's route headings name, one per line.
+routed_modes() {
+  awk '
+    /^2\. / { inside = 1 }
+    /^3\. / { inside = 0 }
+    inside && /^[[:space:]]*\*\*`validate-mode=/ {
+      line = $0; sub(/^[[:space:]]*\*\*/, "", line); sub(/\*\*.*$/, "", line)
+      while (match(line, /`[^`]*`/)) {
+        word = substr(line, RSTART + 1, RLENGTH - 2); sub(/^validate-mode=/, "", word); print word
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$1"
+}
+# unrouted DOC — each mode the document's own mode read printed above that
+# step 2 gives no route, or `none`.
+unrouted() {
+  local resolved missing=
+  for resolved in "$MODE" "$CI_RESOLVED" "$DOCS_RESOLVED"; do
+    routed_modes "$1" | grep -qxF "${resolved#validate-mode=}" || missing="$missing ${resolved#validate-mode=}"
+  done
+  echo "${missing# }" | sed 's/^$/none/'
+}
+assert_eq "$(unrouted "$RESTACK_DOC")" none 'step 2 routes every mode its mode read printed: range, ci and docs'
+cp "$RESTACK_DOC" "$TMP_ROOT/docs-route-mutant.md"
+mutate_file "$TMP_ROOT/docs-route-mutant.md" '**`validate-mode=full`, `range` or `docs`.**' '**`validate-mode=full` or `range`.**'
+assert_eq "$(unrouted "$TMP_ROOT/docs-route-mutant.md")" docs 'control: step 2 without its docs route leaves docs unrouted'
 
 # Pending validation comes from an accepted receipt or a run submit starts.
 # Execute the workflow's binding and no-CI check against the real run record.

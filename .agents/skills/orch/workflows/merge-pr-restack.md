@@ -56,18 +56,12 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    ```
 
    ```bash
-   RESTACK_MODE_ARGS=()
-   if ! PR_ORDER="$([MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime pr order [WT_PATH])"; then
-     PR_ORDER=pr-order=review-first
-   fi
-   [[ "$PR_ORDER" != pr-order=push-first ]] || RESTACK_MODE_ARGS=(--base origin/[BASE_BRANCH])
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --resolve-mode --worktree [WT_PATH] --base origin/[BASE_BRANCH]
    ```
 
-   - A refused or failed order read takes review-first.
    - A non-zero exit from `resolve-base-branch`, `--resolve-mode` or the `--record` read below hands back with that command's stderr and pushes nothing.
 
-   **`validate-mode=ci`.** Under `push-first`, a covered head records required CI as pending and starts no local range command. Step 4's exact-head CI wait proves the published head. Record the pending run through the validation entry:
+   **`validate-mode=ci`.** A covered head records required CI as pending and starts no local range command. Step 4's exact-head CI wait proves the published head. Record the pending run through the validation entry:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack
@@ -75,7 +69,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
 
    The restack's starts, this one and the range run below, carry no `--run-id`: the entry records the run itself, the route [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) names for a delegation with no admission. Read the result through `--record` before step 3.
 
-   **`validate-mode=full` or `range`.** `full` means the project declares no `DEV_VALIDATE_RANGE_CMD`. Both modes first ask whether the restacked head can skip its range re-test:
+   **`validate-mode=full`, `range` or `docs`.** `full` means the project declares no `DEV_VALIDATE_RANGE_CMD`. All three first ask whether the restacked head can skip its range re-test:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --restack-check --worktree [WT_PATH] --base origin/[BASE_BRANCH]
@@ -92,7 +86,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    - A skip proves tree equivalence and no more. A later run at that tree that did not pass voids the skip's proof, with every other proof of the tree.
    - Handle step 3's `missing` reply before either caller resumes.
 
-   Under `full`, any other exit of the check goes to step 3 with no run. Under `range`, any other exit, whatever it prints, runs the range command over the restacked branch on its base:
+   Under `full`, any other exit of the check goes to step 3 with no run. Under `range` or `docs`, any other exit, whatever it prints, runs the range command over the restacked branch on its base. Never pass `--validate-mode docs`: this range start runs a docs-only branch's docs command and records `validate-mode=docs`:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
@@ -122,7 +116,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    - Never skip this step, and never replace it with another push: this request alone reconciles the SHAs the item recorded before the restack, and records the run as the item's restack `validate` stage.
    - Exit 0 is a confirmed push. Every non-zero exit hands back.
 
-   A `ci` record needs no head comparison after the push. After a local range run, compare the pushed head with the `head=` value of that run's record. After a skip, compare it with the `head=` value of the skip line:
+   A `ci` record needs no head comparison after the push. After a local run, `range` or `docs`, compare the pushed head with the `head=` value of that run's record. After a skip, compare it with the `head=` value of the skip line:
 
    ```bash
    git -C [WT_PATH] rev-parse HEAD
@@ -131,7 +125,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    A different head means the push rebased the branch again onto a moved base, and pushed a head no run validated:
 
    - Run step 2's mode read and skip check again on that head, and record a new skip for it.
-   - Where range mode does not skip, run its range command and record read.
+   - Where range or docs mode does not skip, run its range command and record read.
    - The proof read below uses the resulting head.
    - Route a result that did not pass as step 2 does.
    - After a pass, bind `[RUN_DIR]` to this second run and record its stage through the same owner. Write `[WT_PATH]/tmp/restack-stage-[ISSUE].json` with the harness file tool as `{"op": "record-push", "mode": "record-restack-validation", "worktree": "[WT_PATH]", "run_dir": "[RUN_DIR]"}`, then send it:

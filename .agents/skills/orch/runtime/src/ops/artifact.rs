@@ -69,8 +69,6 @@ pub struct StampRound {
     pub cut: bool,
     #[arg(long)]
     pub source: Option<String>,
-    #[arg(long, value_parser = ["true", "false"], default_value = "false")]
-    pub pr_open: String,
     #[arg(long)]
     pub finding_occurrences_file: Option<PathBuf>,
 }
@@ -436,7 +434,6 @@ fn round_record(id: &Identity) -> Result<Value> {
                     == a.len()
         })
         || !(r["cut"].is_null() || r["cut"].is_boolean())
-        || r.get("pr_open").is_some_and(|v| !v.is_boolean())
     {
         return Err(refuse("round-schema", path.display()));
     }
@@ -579,7 +576,7 @@ pub fn stamp(r: &StampRound, cut: bool, env: &Env) -> Result<Answer> {
         token(source)?;
     }
     let base = git(&r.id.worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let mut record = json!({"schema_version": 2, "round_id": r.id.round_id, "issue": r.id.issue, "base_sha": base, "delegated_at": env.now_secs, "adds": adds, "cut": cut || r.cut, "source": r.source, "pr_open": r.pr_open == "true", "items": items});
+    let mut record = json!({"schema_version": 2, "round_id": r.id.round_id, "issue": r.id.issue, "base_sha": base, "delegated_at": env.now_secs, "adds": adds, "cut": cut || r.cut, "source": r.source, "items": items});
     if let Some(path) = &r.finding_occurrences_file {
         let findings = json_file(path, "findings-input")?;
         if !["none", "unknown"].contains(&findings["prior"].as_str().unwrap_or_default())
@@ -1954,25 +1951,15 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
     if id.is_some() && v["kind"] == "fix" && round.is_none() {
         return Err(refuse("expected-round-required", file.display()));
     }
-    if let (Some(round), Some(id)) = (&round, &id)
+    // A run no stage admitted keeps the mode its start recorded: a foreground
+    // record cannot record ci, and an ad-hoc start records it only where the
+    // CI admission took the change, so the check does not answer that again.
+    if round.is_some()
         && v["kind"] == "fix"
-        && !v["validate_mode"].is_null()
+        && let (Some(wanted), Some(recorded)) = (stage_mode, v["validate_mode"].as_str())
+        && mode(recorded)? != wanted
     {
-        let recorded = mode(v["validate_mode"].as_str().expect("receipt schema"))?;
-        // A round no stage admitted defers to CI only where the pull request
-        // runs CI: open at the stamp, or published first.
-        let admitted = match stage_mode {
-            Some(wanted) => recorded == wanted,
-            None => {
-                recorded != ValidateMode::Ci
-                    || round["pr_open"] == true
-                    || crate::validate::pr_order(settings, &id.worktree, &mut String::new())?
-                        == "push-first"
-            }
-        };
-        if !admitted {
-            return Ok(emit("mode_mismatch", None, None, &[]));
-        }
+        return Ok(emit("mode_mismatch", None, None, &[]));
     }
     let repo = id.as_ref().map(|id| id.worktree.clone()).or_else(|| {
         file.parent()

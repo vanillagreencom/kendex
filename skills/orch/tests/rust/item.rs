@@ -626,8 +626,6 @@ mod dev_artifacts {
                 "app CLI",
                 "--adds",
                 "tools/new",
-                "--pr-open",
-                "true",
                 "--source",
                 "review",
             ],
@@ -637,7 +635,6 @@ mod dev_artifacts {
         assert_eq!(v["cut"], true);
         assert_eq!(v["adds"], json!(["tools/new"]));
         assert_eq!(v["source"], "review");
-        assert_eq!(v["pr_open"], true);
     }
 
     #[test]
@@ -709,55 +706,35 @@ mod dev_artifacts {
         let outside = w.wt.join("other/receipt.json");
         fs::write(&outside, receipt.to_string()).unwrap();
         assert_eq!(by_file(&outside), "commit_unverifiable");
-        // A run-less ci receipt defers to CI only where the pull request runs
-        // it: open at the stamp, or published first.
+        // A run-less ci receipt keeps the mode its start's CI admission
+        // recorded: under review-first, on a round stamped with no pull
+        // request open, the check takes it rather than re-deriving CI from
+        // the order. An order the check cannot read is then no refusal.
         let mut ci = receipt.clone();
         ci["validate"] = json!("pass");
         ci["validate_mode"] = json!("ci");
         ci["validate_time"] = second.clone();
         w.plant_receipt("r1", &ci);
-        assert_eq!(w.check("r1")["reason"], "mode_mismatch");
-        let ordered = |order: &str| {
-            w.command()
-                .env("ORCH_PR_ORDER", order)
+        let pre_publication = w.check("r1");
+        assert_eq!(pre_publication["verdict"], "accept", "{pre_publication}");
+        let unread_order = result(
+            &w.command()
+                .env("ORCH_PR_ORDER", "bogus")
                 .args(["dev-return", "check"])
                 .args(w.identity("r1"))
                 .arg("--expect-items-from-round")
                 .output()
-                .unwrap()
-        };
-        let push_first = result(&ordered("push-first"));
-        assert_eq!(push_first["verdict"], "accept", "{push_first}");
-        // An order outside the three words is a choice the check cannot
-        // read: it refuses rather than judge the round under a default.
-        refused(&ordered("bogus"), "setting-invalid");
-        result(&w.call(
-            &["round", "stamp"],
-            "open",
-            &[
-                "--item",
-                "1",
-                "repair parser",
-                "app CLI",
-                "--pr-open",
-                "true",
-            ],
-        ));
-        w.plant_receipt("open", &{
-            let mut v = ci.clone();
-            v["round_id"] = json!("open");
-            v
-        });
-        assert_eq!(w.check("open")["verdict"], "accept");
+                .unwrap(),
+        );
+        assert_eq!(unread_order["verdict"], "accept", "{unread_order}");
         let parent = w.head();
         w.commit("later.txt");
-        w.plant_receipt("open", &{
+        w.plant_receipt("r1", &{
             let mut v = ci.clone();
-            v["round_id"] = json!("open");
             v["commit"] = json!(parent);
             v
         });
-        assert_eq!(w.check("open")["reason"], "ci_head_mismatch");
+        assert_eq!(w.check("r1")["reason"], "ci_head_mismatch");
         let mut bad = receipt.clone();
         bad["commit"] = json!("badbad");
         bad["items"] = json!([]);
@@ -989,14 +966,7 @@ mod dev_artifacts {
         result(&w.call(
             &["round", "stamp"],
             "ci",
-            &[
-                "--item",
-                "1",
-                "repair parser",
-                "app CLI",
-                "--pr-open",
-                "true",
-            ],
+            &["--item", "1", "repair parser", "app CLI"],
         ));
         let ci = w.finished_run("ci", "full");
         fs::write(
@@ -1812,9 +1782,7 @@ mod dev_artifacts {
             );
         }
         // Arguments outside a verb's grammar are refused before any answer.
-        let id = ["--worktree", wt, "--issue", "issue-8", "--round-id", "r1"];
         for args in [
-            [&["round", "stamp"][..], &id, &item, &["--pr-open", "yes"]].concat(),
             vec!["dev-return", "check", "--file", receipt, "--interval", "0"],
             vec![
                 "dev-return",
@@ -1827,7 +1795,6 @@ mod dev_artifacts {
             let out = w.run(&args);
             assert_eq!(out.status.code(), Some(2), "{args:?} {}", stderr(&out));
             assert!(out.stdout.is_empty(), "{args:?}");
-            assert!(!w.round_path("r1").exists(), "{args:?}");
         }
     }
 
@@ -2600,7 +2567,6 @@ mod dev_artifacts {
             ("adds", json!(["a b"]), "round-schema"),
             ("base_sha", json!("a".repeat(41)), "round-schema"),
             ("cut", json!("yes"), "round-schema"),
-            ("pr_open", Value::Null, "round-schema"),
             ("items", json!([]), "round-schema"),
             ("items", json!([{"n":1,"text":""}]), "round-schema"),
         ] {

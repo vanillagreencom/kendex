@@ -24,7 +24,6 @@ The optional `finding_occurrences` holds the `result` of the pre-stamp `orch-run
   "adds": ["tools/refresh-fixture"],
   "cut": false,
   "source": "pr-comments",
-  "pr_open": true,
   "items": [
     { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account" }
   ]
@@ -41,7 +40,6 @@ The optional `finding_occurrences` holds the `result` of the pre-stamp `orch-run
 | `adds` | Yes | `--adds "PATH [PATH...]"` | The exact protected additions the round may make |
 | `cut` | Yes | `--cut`, or the `round cut` verb | Whether the round was declared a branch cut |
 | `source` | Yes | `--source NAME` | The brief's `Source:` value |
-| `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation |
 | `items` | Yes, at least one | `--items-file` or `--item N TEXT REACH` | The delegated items |
 
 - `round_id` equals the name's token and the round's `dev_round_id`.
@@ -50,10 +48,6 @@ The optional `finding_occurrences` holds the `result` of the pre-stamp `orch-run
 - `adds`: an empty array allows none.
 - `cut`: a reader takes a missing or `null` `cut` as `false` and refuses any other non-boolean.
 - `source` is `null` without the flag.
-- `pr_open`:
-  - It is `false` by default.
-  - A reader takes an absent field as `false` and refuses a non-boolean.
-  - It is a recorded fact, read only for a receipt whose run has no admitted entry ([dev-return.md § Fix-round run binding](dev-return.md#fix-round-run-binding)).
 - `items`:
   - `n` is the delegated item number, a unique integer.
   - `text` is the item's formatted block verbatim.

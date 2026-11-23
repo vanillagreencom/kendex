@@ -2349,7 +2349,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 foreground,
                 reproduce,
                 restack,
-                prove: false,
             };
             let mut started = orch_runtime::validate::start(&settings, &request, &env, locking)?;
             if request.foreground && started.launched {
