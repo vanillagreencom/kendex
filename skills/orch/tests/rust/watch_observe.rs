@@ -7420,9 +7420,11 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
 /// keeps the handoff row a running pass set, so the relaunched lane's record
 /// is not said again. A lane running with its root still the checkout, as a
 /// launch confirmed by the reconcile records it, is unread under its key,
-/// never read as absent. The provider refuses any path outside its root, as
-/// `lane-host-daytona` does. The lane is Pi's, whose rows are read through
-/// the provider on every pass, preparing included.
+/// never read as absent: each reader under it says its own failure, the
+/// start stall's first, then, once the stall's row stands, the handoff's.
+/// The provider refuses any path outside its root, as `lane-host-daytona`
+/// does. The lane is Pi's, whose rows are read through the provider on every
+/// pass, preparing included.
 #[test]
 fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
     #[derive(Clone, Copy, Debug)]
@@ -7433,11 +7435,13 @@ fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
         Preparing,
         /// Running, `mail_root` still the checkout.
         RunningAtCheckout,
+        /// As [`Step::RunningAtCheckout`], its start already seen by the
+        /// start stall, which then says nothing.
+        RunningAtCheckoutStallSeen,
     }
     // Each step's record, whether `EVENT handoff` is said, and the pass's
-    // failure: none, or one ending in these fields.
+    // failure, the first one a reader said.
     type Steps<'a> = &'a [(Step, bool, Option<&'a str>)];
-    let pending = Some("item=KEN-4 cause=root-pending");
     let cases: [(&str, Steps); 2] = [
         (
             "relaunch",
@@ -7449,7 +7453,18 @@ fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
         ),
         (
             "confirmed at the checkout",
-            &[(Step::RunningAtCheckout, false, pending)],
+            &[
+                (
+                    Step::RunningAtCheckout,
+                    false,
+                    Some("start-stall-unread item=KEN-4 cause=root-pending"),
+                ),
+                (
+                    Step::RunningAtCheckoutStallSeen,
+                    false,
+                    Some("handoff-read-failed item=KEN-4 cause=root-pending"),
+                ),
+            ],
         ),
     ];
     for (case, steps) in cases {
@@ -7511,21 +7526,17 @@ fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
                     record["running_at"] = Value::Null;
                 }
                 Step::RunningAtCheckout => {}
+                // `lane_record`'s `running_at`, 2026-01-01T00:00:00Z.
+                Step::RunningAtCheckoutStallSeen => driver.baseline.apply(Change::Set {
+                    kind: "start-stalled".into(),
+                    identity: "gh-4".into(),
+                    value: "1767225600|seen".into(),
+                }),
             }
             fleet.set_lanes(vec![record]);
             let produced = driver.pass(&fleet.read());
             let at = format!("{case} step {n} {step:?}: {:?}", lines(&produced));
-            match failure {
-                None => assert_eq!(produced.failed, None, "{at}"),
-                Some(fields) => assert!(
-                    produced
-                        .failed
-                        .as_deref()
-                        .is_some_and(|f| f.ends_with(fields)),
-                    "{at} {:?}",
-                    produced.failed
-                ),
-            }
+            assert_eq!(produced.failed.as_deref(), failure, "{at}");
             let calls = std::fs::read_to_string(&log).unwrap_or_default();
             let outside: Vec<&str> = calls
                 .lines()
