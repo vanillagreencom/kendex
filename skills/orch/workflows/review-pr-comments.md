@@ -35,10 +35,10 @@ Route a pull request's review comments to domain agents, fix the valid ones, and
 
 **Dry run.** Under `--dry-run`, write no state. Once the key resolves, run `orch-runtime state exists --item [ISSUE_ID]` once, and carry its answer into §§ 3-5:
 
-| State exists | Recurrence handling |
-|---|---|
-| `true` | Read the existing recurrence records as § 5 requires |
-| `false` | Report `unavailable: workflow state absent` and skip the recurrence lookup. History stays unknown, never empty or zero |
+- If the state exists, read the existing recurrence records as § 5 requires.
+- If it does not:
+  1. Report `unavailable: workflow state absent`.
+  2. Skip the recurrence lookup. History stays unknown, never empty or zero.
 
 **Continuing action.** Except under `--dry-run`, this triage pass is a continuing action, and it clears a standing stop. Run the clear once the key resolves and the state exists:
 
@@ -306,7 +306,7 @@ Every pass owes two things before it answers a thread, whether it fixes, replies
 - `at-cap`: ordinary fix rounds end on this pull request.
   - The cap is a ruling point. No ordinary fix round starts past it until the overseer has ruled and recorded one `ruling` row for the item in the fleet log ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). The overseer judges with the reply's `count` and `limit`.
   - At the cap the disposition still runs in full, and only the fix stops. Every thread is analyzed and gets its reply and resolve, on this pass and every later one.
-  - The fix set holds only the cap-exempt items: a defect this diff itself introduces or arms, which Step 0 does not exclude.
+  - The fix set holds only the cap-exempt items: a defect this diff itself introduces or arms that Step 0 does not exclude.
   - Run three steps in order:
     1. **File first.** Run § 6.2 for every item that clears its bar, with its return recorded as `→ § 6.1` in place of § 6.2's `→ § 6.3`.
     2. **Then the exception.** The cap-exempt fix set is this pass's only fix delegation and only push. A fix the verification pass below triggers belongs to it.
@@ -505,14 +505,17 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
 
 **Reply step.** Reply to and resolve every inline thread this pass handled, and defer none to § 7. This holds for every outcome, mixed passes included.
 
-| Outcome | Reply body |
-|---------|------------|
-| Applied | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
-| Skipped, blocked, or declined, nothing filed | `Declined: [REASON]` |
-| Blocked or skipped → issue | `Tracked: [CREATED_ISSUE_ID]` |
-| Already fixed | Review-body: `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]`, using its verified fix SHA; otherwise the finding's `draft_response` |
-| Question or verified decline | Review-body: its retained `draft_response`, in `Declined: [VERIFIED_DECISION_FLOW_REASON]` form; otherwise the finding's `draft_response` |
+| Outcome | Item | Reply body |
+|---------|------|------------|
+| Applied | any | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
+| Skipped, blocked, or declined, nothing filed | any | `Declined: [REASON]` |
+| Blocked or skipped → issue | any | `Tracked: [CREATED_ISSUE_ID]` |
+| Already fixed | review-body | `Fixed in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
+| Already fixed | other | the finding's `draft_response` |
+| Question or verified decline | review-body | its retained `draft_response`, in `Declined: [VERIFIED_DECISION_FLOW_REASON]` form |
+| Question or verified decline | other | the finding's `draft_response` |
 
+- An already-fixed review-body item's `[COMMIT_SHA]` is its verified fix SHA.
 - Resolving a thread is not a reply.
 - `[REASON]` takes one of the forms [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) sets out.
 

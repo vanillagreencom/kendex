@@ -1,6 +1,6 @@
 # Copilot head notices
 
-Read when the overseer handles a Copilot head notice: the three notices [copilot-head-route.md § Copilot head route](copilot-head-route.md#copilot-head-route) sends as a `lane-notice`, the review call's own `copilot-fallback`, or a pr-watch `awaiting-stale` or `refresh-ready` line ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)). The first line of such a notice is its kind, then `PR #[N] head [SHA]`. Read the review call's notice by [gates.md § Copilot requests](gates.md#copilot-requests).
+Read when the overseer handles a Copilot head notice: the three notices [copilot-head-route.md § Copilot head route](copilot-head-route.md#copilot-head-route) sends as a `lane-notice`, the review call's own `copilot-fallback`, or a pr-watch `awaiting-stale` or `refresh-ready` line ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)). The first line of a notice copilot-head-route.md sends is its kind, then `PR #[N] head [SHA]`. Read the review call's notice by [gates.md § Copilot requests](gates.md#copilot-requests).
 
 ## Approve a head
 

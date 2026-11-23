@@ -28,14 +28,15 @@ The bound is `ORCH_COPILOT_HOLD_SECS`, counted from the wait's own start.
 
 Every caller routes the reply's `result` by this table. An expiry is a `state` in a reply that exits 0, so route the `state`, never the exit.
 
-| Reply | Route |
-|---|---|
-| `status` `complete`, `state` `none` | No Copilot work on the head: continue the calling read |
-| `state` `settled` | Continue the calling read |
-| `state` `expired` | Report `run`, `started_at` and `waited`, then continue the calling read under the existing gate |
-| `status` `unreadable` | Report its `reason` and `detail`, and stop the calling read |
-| A refusal: a nonzero exit with a keyed `orch-runtime:` line | Report it and stop the calling read |
+| Reply | Report | Then the calling read |
+|---|---|---|
+| `status` `complete`, `state` `none` | nothing | continues |
+| `state` `settled` | nothing | continues |
+| `state` `expired` | `run`, `started_at` and `waited` | continues under the existing gate |
+| `status` `unreadable` | its `reason` and `detail` | stops |
+| A refusal: a nonzero exit with a keyed `orch-runtime:` line | the refusal | stops |
 
+- `state` `none` means no Copilot work on the head.
 - After `settled`, the calling read reads the review that `review` names, where it names one, with the threads and bodies.
 - The expiry grants no approval.
 - A read stopped on `unreadable` takes the **GitHub read failures** rule of review-pr-comments.md. A failed read is never `none`.
@@ -78,6 +79,8 @@ The body check is the one reader of those bodies. Run it at two points:
 
 The lane answers a body finding before it waits on CI, not at the merge gate.
 
+The body check is this command:
+
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
 ```
@@ -86,8 +89,8 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "
 - Exit `1` with `suppressed-entry` lines starts a triage pass. Save `[HEAD_SHA]` as `[BODY_REVIEW_HEAD]` in the new pass's context, then loop to [review-pr-comments.md](../workflows/review-pr-comments.md) § 2.
   - Each entry is an item: `source_type: "review-body"`, `source_id` the entry's token, and the finding's text from the review at `[BODY_REVIEW_HEAD]` in the reviews read.
   - Carry that head with each entry's source identity through analysis, reporting and publication. A later head read or fix push never replaces it.
-  - The pass runs that workflow's §§ 5-6: Recurrence before the cap, the fix set, verification and the cause records included. Its § 6.3 posts the body replies and counts the pass once.
-  - After its § 6.3, restart this route from its Copilot wait, review call, reviews read and route selection, the body check included. A pushed head's body findings take their own pass, with that head as their source.
+  - The pass runs that workflow's §§ 5-6: Recurrence before the cap, the fix set, verification and the cause records included. That workflow's § 6.3 posts the body replies and counts the pass once.
+  - After that workflow's § 6.3, restart this route from its Copilot wait, review call, reviews read and route selection, the body check included. A pushed head's body findings take their own pass, with that head as their source.
   - Keep the handled body items with their source-reviewed heads for the skip decision and the notices.
   - Complete that workflow's § 8 before returning to the caller with the current head and whether the pass pushed.
   - Discard every route selected before the pass.
@@ -125,17 +128,25 @@ On a `complete` reply, compare its `head` with `[HEAD_SHA]`.
 - A different head restarts this route from its Copilot wait.
 - Otherwise read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review.
 
-| Verdict | Copilot's review at `[HEAD_SHA]` | Then |
-|---------|----------------------------------|------|
-| `comments` | any | Update the baseline and loop to review-pr-comments.md § 1 for each open thread this triage has not answered, as its § 6.3 does; this route then routes the head again, except as below the table |
-| `approved` | `APPROVED` | Run the body check; on its exit `0`, send the notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
-| `approved` | none, or not `APPROVED` | No notice from this route: another reviewer approved the head, and no hold of [Copilot requests](gates.md#copilot-requests) stands |
-| `copilot-error` | error answer | Route as [Copilot requests](gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer's approval |
-| `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
-| `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |
-| any other | any | No notice: the caller's own review wait routes it |
+| Verdict | Copilot's review at `[HEAD_SHA]` | Route |
+|---------|----------------------------------|-------|
+| `comments` | any | **Open threads** |
+| `approved` | `APPROVED` | **Re-request approved** |
+| `approved` | none, or not `APPROVED` | **Other approver** |
+| `copilot-error` | error answer | **Copilot error** |
+| `timeout` | present, not `APPROVED` | **Fallback** |
+| `timeout` | none | **Silent head** |
+| any other | any | **Caller's wait** |
 
-The call answers `comments` while any thread stands open. Where every open thread is one review-pr-comments.md § 7.1 keeps open for a human, every repeat answers `comments` until the human answers. On such a `comments`, end this route and leave the head to the caller's own review wait.
+- **Open threads.** Update the baseline, and loop to review-pr-comments.md § 1 for each open thread this triage has not answered, as its § 6.3 does. This route then routes the head again, with one exception:
+  - The call answers `comments` while any thread stands open. Where every open thread is one review-pr-comments.md § 7.1 keeps open for a human, every repeat answers `comments` until the human answers.
+  - On such a `comments`, end this route and leave the head to the caller's own review wait.
+- **Re-request approved.** Run the body check. On its exit `0`, send the notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]`.
+- **Other approver.** This route sends no notice. Another reviewer approved the head, and no hold of [Copilot requests](gates.md#copilot-requests) stands.
+- **Copilot error.** Route as [Copilot requests](gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer's approval.
+- **Fallback.** Copilot read the head again and left no open thread. Send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`. It asks for the overseer's fallback approval.
+- **Silent head.** This route sends no notice. The overseer's `awaiting-stale` rule decides the head.
+- **Caller's wait.** This route sends no notice. The caller's own review wait routes the verdict.
 
 ### Notice
 

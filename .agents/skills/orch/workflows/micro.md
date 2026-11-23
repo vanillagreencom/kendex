@@ -255,7 +255,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 A Copilot finding that only a review body carries takes the body-finding route of [copilot-head-route.md § Body findings](../references/copilot-head-route.md#body-findings), with managed context, as [submit-pr.md § 6.1](submit-pr.md#61-merge-gates) sends it. In a lane, that route sends the overseer the notice that copilot-head-route.md § Copilot head route selects for the head. A reply alone sends none.
 
 - `[CHECK]` names such a finding as a `suppressed-entry` in its `review_replies:` issue.
-- Complete the route's triage pass and its §§ 7.2-8. A fix that pass makes follows the path rules of the late-findings triage below.
+- Complete the route's triage pass and [review-pr-comments.md](review-pr-comments.md) §§ 7.2-8. A fix that pass makes follows the path rules of the late-findings triage below.
 - Then re-enter this section from its top on the current head.
 
 **Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]` and `[STATE_KEY]` as `[ISSUE_ID]`.

@@ -684,7 +684,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "
 
 - On exit `1`, rewrite the replies by gate 3 of [publication.md § Merge gates](../references/publication.md#merge-gates).
 - Send every `suppressed-entry` through the body-finding route of [copilot-head-route.md § Body findings](../references/copilot-head-route.md#body-findings) with managed context.
-  - Complete its triage pass and its §§ 7.2-8, then return here with the current head and whether the pass pushed.
+  - Complete its triage pass and [review-pr-comments.md](review-pr-comments.md) §§ 7.2-8, then return here with the current head and whether the pass pushed.
   - If it pushed commits, re-confirm the gates as the thread pass above does.
 - Run the command once more. A second exit `1` records `review-replies-unmet`.
 - On exit `2`, report its first stderr line. The gate is unmet.
