@@ -57,8 +57,10 @@ cd -- "$1"
 # The host refusal keys a forward names as its cause; any other refusal takes
 # the operation's own cause.
 HOST_CAUSES = ("mailbox-missing", "overseer-absent", "overseer-unreadable")
-# Causes no retry clears: the drain reports each once as an event.
-TERMINAL = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen", "stop")
+# Causes the drain reports as `forward-failed`. The first four hold an open
+# forward until the owner acts, and a later drain can still deliver and answer
+# it; only answer-unseen and stop close one.
+FAILURES = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen", "stop")
 # The standard library has no portable file-change notice, so a wait reads
 # the outbox at this period: a local read, beside the drain's 5 s cadence
 # while an answer is due.
@@ -256,11 +258,6 @@ def entry_state(entry):
     if entry.get("forwarded") is None:
         return "queued"
     return "read" if entry.get("read") else "delivered"
-
-
-def failed(entry):
-    """True when ENTRY's cause is one no retry clears: its drain prints `forward-failed`, and its wait returns."""
-    return entry.get("cause") in TERMINAL
 
 
 def kept(entry, now):
@@ -506,7 +503,7 @@ class Forwarder:
                 state["last_answer"] = latest[1]
 
     def events(self):
-        """One forward-failed block per kept entry whose cause no retry clears, a closed answer-unseen one included,
+        """One forward-failed block per kept entry whose cause is in FAILURES, a closed answer-unseen one included,
         and one forward-unreachable block while the loop's last collection could not reach the main.
 
         The watch's pass cursor appends a printed block once, so a closed
@@ -529,7 +526,7 @@ class Forwarder:
             if kept(entry, now) and entry.get("answer"):
                 blocks.append(watch.event("forward-answer", request=entry["request"], key=entry["key"],
                                           answer=entry["answer"]["answer"]))
-            if kept(entry, now) and failed(entry):
+            if kept(entry, now) and entry.get("cause") in FAILURES:
                 fields = {"request": entry["request"], "key": entry["key"], "cause": entry["cause"]}
                 if entry.get("detail"):
                     fields["detail"] = entry["detail"]
@@ -631,8 +628,10 @@ class Forwarder:
                 "last_answer": state.get("last_answer"), "requests": requests, "answers": answers}
 
     def wait(self, key, timeout):
-        """KEY's outcome once the drain stores its answer or failure, or its open state at TIMEOUT seconds.
+        """KEY's outcome once the drain stores its answer or closes it unanswered, or its open state at TIMEOUT seconds.
 
+        An open forward held on a cause in FAILURES is not final: the owner's
+        fix lets a later drain deliver and answer it, so the wait goes on.
         The answer is its id, matched to `status --main`'s answers row; its
         text stays there. Returns (outcome, exit code).
         """
@@ -649,8 +648,6 @@ class Forwarder:
             if closed:
                 # An entry closed before answers were kept holds neither answer nor cause.
                 return dict(outcome, cause=entry.get("cause") or "answered-already"), 1
-            if failed(entry):
-                return outcome, 1
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 return dict(outcome, state=entry_state(entry)), WAIT_TIMEOUT

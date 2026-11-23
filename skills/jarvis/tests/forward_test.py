@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import select
 import shutil
 import signal
 import subprocess
@@ -232,9 +233,10 @@ class Forward(MailWorld):
         return json.loads(result.stdout)
 
     def waiting(self, key, timeout):
-        """A forward-wait on KEY that has read it open and now waits."""
+        """A forward-wait on KEY, with no --timeout when TIMEOUT is None, that has read it open and now waits."""
+        limit = () if timeout is None else ("--timeout", str(timeout))
         process = subprocess.Popen([sys.executable, "-B", "-c", WAIT_SHIM, self.scripts / "lib", "forward-wait",
-                                    "--key", key, "--timeout", str(timeout), "--home", self.satellite],
+                                    "--key", key, *limit, "--home", self.satellite],
                                    cwd=self.satellite, env=dict(self.env, JARVIS_BASH=BASH), text=True,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         def cleanup():
@@ -242,6 +244,9 @@ class Forward(MailWorld):
                 process.kill()
             process.communicate()
         self.addCleanup(cleanup)
+        # A wait that spins without sleeping never writes the barrier line.
+        ready, _, _ = select.select([process.stderr], [], [], 60)
+        self.assertTrue(ready, "forward-wait wrote no barrier line within 60 s")
         self.assertEqual(process.stderr.readline(), "shim: waiting\n")
         return process
 
@@ -698,10 +703,13 @@ class Forward(MailWorld):
             process.send_signal(signal.SIGTERM)
 
         # Each row: name, what is stored before the wait, what happens while it
-        # waits, its timeout, then its exit status, state and cause.
+        # waits, its timeout (None passes no --timeout), then its exit status,
+        # state and cause. A hold the owner fixes is not final: the wait stays
+        # for the answer a later drain reads.
         rows = (("answer stored before the wait", answered, None, 1, 0, "answered", None),
-                ("answer stored during the wait", None, answered, 60, 0, "answered", None),
-                ("failure stored before the wait", held, None, 1, 1, "failed", "setting-invalid"),
+                ("answer stored during an untimed wait", None, answered, None, 0, "answered", None),
+                ("hold fixed and answered during the wait", held, answered, 60, 0, "answered", None),
+                ("hold at the timeout", held, None, 1, 75, "delivered", "setting-invalid"),
                 ("closed unanswered during the wait", None, unseen, 60, 1, "failed", "answer-unseen"),
                 ("timeout", None, None, 1, 75, "delivered", None),
                 ("signal", None, stopped, 60, 143, None, None))
@@ -1025,9 +1033,13 @@ class Forward(MailWorld):
              'unreachable = False\n        for entry in queued:',
              'unreachable = False\n        if stopped is not None:\n            self.record(queued, *stopped)\n            return\n        for entry in queued:'),
             ("test_retained_answers", "lib/forward.py", 'entry["answer"] = retained', 'entry["answer"] = dict(retained, text="")'),
-            # A wait that takes a stored failure for an open forward runs to its timeout.
+            # A wait that takes a held open forward for a final failure leaves before its answer.
             ("test_wait_returns_the_stored_outcome", "lib/forward.py",
-             '            if failed(entry):\n                return outcome, 1\n', ''),
+             '            if closed:\n', '            if closed or entry.get("cause") in FAILURES:\n'),
+            # A wait with no --timeout leaves at once.
+            ("test_wait_returns_the_stored_outcome", "lib/forward.py",
+             'deadline = None if timeout is None else time.monotonic() + timeout',
+             'deadline = time.monotonic() + (timeout or 0)'),
             # A signal kills an unguarded wait with no status of its own.
             ("test_wait_returns_the_stored_outcome", "lib/forward.py",
              'signal.signal(number, interrupted)', 'pass'),

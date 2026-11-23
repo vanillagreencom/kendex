@@ -209,10 +209,11 @@ The satellite's watch-loop runs the [forward drain](session-command.md#session-c
 To act when the answer arrives, run `.agents/skills/jarvis/scripts/jarvis-session forward-wait --home HOME --key KEY`, with the `key` that `forward` printed.
 
 - The wait reads the local outbox that the watch-loop's drain writes. It writes nothing and does not call Jarvis main.
-- `--timeout SECONDS` bounds the wait. Without it, the wait runs until the forward settles or a signal ends it.
+- `--timeout SECONDS` bounds the wait. Without it, the wait runs until the forward is answered or closes, or a signal ends it.
 - Exit 0 prints `state` `answered` and the `answer` id, at once when the answer is already stored. Read the answer text from the `answers` row of [`status --main`](#status) with that `key` and `answer`.
-- Exit 1 prints `state` `failed` and the `cause` that the drain's `EVENT forward-failed` names. A forward closed before its answer was kept reads `answered-already`.
-- Exit 75 means the timeout passed first. `state` and `cause` are the forward's current ones.
+- Exit 1 prints `state` `failed`: the forward closed unanswered, and its `cause`, `answer-unseen` or `stop`, is final. A forward closed before its answer was kept reads `answered-already`.
+- A forward the drain holds open on a cause that its `EVENT forward-failed` reports, such as `setting-invalid`, keeps the wait going. Once the owner acts on that cause, a later drain can still deliver and answer it.
+- Exit 75 means the timeout passed first. `state` and `cause` are the forward's current ones, a held forward's cause included.
 - A signal ends the wait with 128 plus the signal number.
 - Exit 2 is a refusal. `key-unknown` names a key the outbox does not hold, or one whose closed forward is past its keep.
 
