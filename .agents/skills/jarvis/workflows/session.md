@@ -49,6 +49,8 @@ The `jarvis-session` and `task` commands this workflow runs are in [Session comm
      - Read all open session work from the selected tracker project, through every page.
      - Compare that list with the handoff's tracker ids; those ids are an index, not the discovery source.
      - Reconcile the tracker queue, the open asks and the due audits through live reads of their homes.
+     - Apply [State retention](../references/long-session.md#state-retention) to the State entries the predecessor left: remove each entry whose content its open tracker item supplies through the [Progress records](../references/long-session.md#progress-records) `progress-log` call with `--state-change 'remove State ID'`, and keep an entry whose source is unreadable until a readback succeeds.
+       - Where the open item does not yet hold an entry's next action, record it on the item through [5. Retain the next action](tasks.md#5-retain-the-next-action) before the entry leaves State.
      - Keep a compact view of open work and due obligations for the first decision.
      - Check what each open item waits for, and why.
      - Resume authorized work once its wait no longer applies.
