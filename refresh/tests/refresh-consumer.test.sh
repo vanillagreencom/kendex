@@ -391,6 +391,10 @@ case "$1" in
     # A landing row's render that moves a file the base holds to a new
     # name, which git's default rename detection pairs.
     if [ -f .fixture-render-removes ]; then mv .fixture-render-removes .fixture-render-renamed; fi
+    # A citation row's render rewrites the probe guide with these bytes.
+    if [ -f "$TEST_STATE/render-guide" ]; then
+      cp "$TEST_STATE/render-guide" .agents/skills/probe/references/guide.md
+    fi
     if [ -f "$TEST_STATE/classifier-proof" ]; then
       mkdir -p .agents/skills/probe
       printf 'a gained render\n' >.agents/skills/probe/SKILL.md
@@ -1282,7 +1286,7 @@ edits = {
     'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
     'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
     'queue-ignored': (runner, '  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi\n', ''),
-    'skip-unchanged': (runner, 'if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then', 'if false; then # [ "$state" = unchanged ]'),
+    'skip-unchanged': (runner, 'if [ "$state" = unchanged ] && [ -z "$verify_report" ] && [ -z "$refs_report" ]; then', 'if false; then # [ "$state" = unchanged ]'),
     'moved-unread': (library, '*":refs/heads/$4:[rejected]"*) KENDEX_LAND_RESULT=base-moved ;;', '*":refs/heads/$4:[rejected-never]"*) KENDEX_LAND_RESULT=base-moved ;;'),
     'remote-moved': (library, '*":refs/heads/$4:[rejected]"*)', '*":refs/heads/$4:["*"rejected]"*)'),
 }
@@ -1414,6 +1418,103 @@ cp "$TMP/land-lib" "$landing_lib"
 rm -f -- "${TMP:?}/state/prepush-state.json"
 if [ "$arm_runs" -eq "$(grep -c . "$TMP/reporter-arms")" ]; then ok 'each landing reporter arm control ran on its row'
 else bad 'landing reporter arm controls ran' "ran=$arm_runs"; fi
+# A render that drops a heading a consumer-owned file cites holds the
+# refresh: the consumer's installed md-refs, run over the refreshed tree,
+# names each such citation with its file and line in a draft pull request,
+# and the run lands and arms nothing. The same render with no such citation
+# lands, a consumer with no md-refs runs none and says so, and an md-refs
+# that cannot finish stops the run before publication, having run with no
+# credential. The runner before the check is the must-fail control: it
+# lands the cited render. md-refs reads the consumer's settings, here only
+# the docs and the settings file, since the sandbox's skills cite siblings
+# it does not carry.
+# NAME|MD_REFS|CITES|EXPECTED: MD_REFS is copy (the package's own md-refs),
+# stub (one that records its environment and exits 2) or none.
+refs_held() { # ROLLING
+  [ "$RC" -eq 0 ] &&
+    grep -qxF 'refresh-md-refs=held' <<<"$OUT" &&
+    grep -qxF 'refresh-land=skipped value=md-refs' <<<"$OUT" &&
+    grep -qxF "refresh-state=held pr=1 class=render head=$1" <<<"$OUT" &&
+    [ "$1" != "$land_rolling" ] &&
+    [ "$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)" = "$land_base" ] &&
+    grep -qF -- '-F draft=true --jq .number' "$TMP/state/calls" &&
+    ! grep -q '^pr merge \|^git push main ' "$TMP/state/calls" &&
+    grep -qF 'docs/cites.md:3:.agents/skills/probe/references/guide.md § Settings' "$TMP/state/body" &&
+    grep -qF 'docs/cites.md:7:.agents/skills/probe/references/guide.md § Settings' "$TMP/state/body" &&
+    ! grep -qF 'docs/cites.md:5:' "$TMP/state/body"
+}
+git -C "$SKILL_DIR" show 263b7707d2b9b6d86e8c22cb62beef785a2f692c:refresh/refresh-consumer.sh >"$TMP/before-refs-runner"
+printf '# Guide\n\n## Kept\n\nstays\n' >"$TMP/state/render-guide"
+printf '0\n' >"$TMP/state/queue-entries"
+LAND_TOKEN=land-token
+LAND_CONFIGURED=true
+MEASURED=true
+reset_default
+refs_main="$(git -C "$repo" rev-parse main)"
+while IFS='|' read -r name md_refs cites expected; do
+  reset_default
+  git -C "$repo" reset -q --hard "$refs_main"
+  cp "$TMP/land-runner" "$runner"
+  [ "$name" != control-before-check ] || cp "$TMP/before-refs-runner" "$runner"
+  mkdir -p "$repo/.agents/skills/probe/references" "$repo/.claude/skills/commit-guards/scripts"
+  printf '# Guide\n\n## Settings\n\nset up\n\n## Kept\n\nstays\n' >"$repo/.agents/skills/probe/references/guide.md"
+  if [ "$cites" = yes ]; then
+    printf '%s\n' '# Cites' '' 'See `.agents/skills/probe/references/guide.md § Settings`.' '' \
+      'Keep `.agents/skills/probe/references/guide.md § Kept`.' '' \
+      'Again `.agents/skills/probe/references/guide.md § Settings`.' >"$repo/docs/cites.md"
+  fi
+  settings "$repo" COMMIT_GUARDS_MD_REFS_PATHS 'docs/*.md'
+  settings "$repo" COMMIT_GUARDS_MD_REFS_SOURCE_PATHS kendex.settings.toml
+  case "$md_refs" in
+    copy) cp -R "$REFRESH_DIR/../skills/commit-guards/scripts/." "$repo/.claude/skills/commit-guards/scripts/" ;;
+    stub)
+      printf '#!/usr/bin/env bash\nenv >%q\nexit 2\n' "$TMP/state/md-refs-env" >"$repo/.claude/skills/commit-guards/scripts/md-refs"
+      chmod +x "$repo/.claude/skills/commit-guards/scripts/md-refs" ;;
+  esac
+  rm -f -- "${TMP:?}/state/md-refs-env" "${TMP:?}/state/body" "${TMP:?}/state/land-token-seen"
+  commit "$repo"
+  git -C "$repo" push -q --force origin main
+  land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+  land_rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  : >"$TMP/state/pr"
+  : >"$TMP/state/calls"
+  : >"$TMP/state/tokens"
+  run_refresh "md-refs-$name" pass render
+  rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  case "$expected" in
+    held)
+      if [ "$name" = control-before-check ]; then
+        if ! refs_held "$rolling"; then ok 'control: the runner before the md-refs check lands a render that breaks a citation'
+        else bad 'md-refs control' "$OUT"; fi
+      elif refs_held "$rolling"; then ok "md-refs $name: a broken consumer citation holds the render, naming each file and line"
+      else bad "md-refs $name" "$OUT"; fi ;;
+    landed)
+      if land_matches landed render '' '' &&
+          { [ "$md_refs" != none ] || grep -qxF 'refresh-md-refs=skipped cause=absent' <<<"$OUT"; } &&
+          { [ "$md_refs" = none ] || { grep -q '^md-refs: summary=violations=0 ' <<<"$OUT" &&
+            ! grep -q '^refresh-md-refs=' <<<"$OUT"; }; }; then
+        ok "md-refs $name: the render lands"
+      else bad "md-refs $name" "$OUT"; fi ;;
+    stopped)
+      if [ "$RC" -eq 2 ] && grep -qxF 'refresh-error=md-refs value=2' <<<"$OUT" &&
+          [ "$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)" = "$land_base" ] &&
+          [ "$rolling" = "$land_rolling" ] && ! grep -q '^api --method \|^pr \|^git push' "$TMP/state/calls" &&
+          [ -s "$TMP/state/md-refs-env" ] && ! grep -q '^GH_TOKEN=\|^GITHUB_TOKEN=\|^TEST_SECRET=\|^KENDEX_LAND_TOKEN=' "$TMP/state/md-refs-env"; then
+        ok "md-refs $name: an md-refs that cannot finish stops the run, and it ran with no credential"
+      else bad "md-refs $name" "$OUT"; fi ;;
+  esac
+  git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+done <<'REFS_ROWS'
+cited|copy|yes|held
+uncited|copy|no|landed
+absent|none|yes|landed
+unfinished|stub|yes|stopped
+control-before-check|copy|yes|held
+REFS_ROWS
+rm -f -- "${TMP:?}/state/render-guide" "${TMP:?}/state/md-refs-env"
+reset_default
+git -C "$repo" reset -q --hard "$refs_main"
+git -C "$repo" push -q --force origin main
 # The current route closes the open rolling pull request the same way: only
 # while GitHub still holds it open.
 for close in close merged; do
@@ -2148,6 +2249,7 @@ cp -R "$SKILL_DIR" "$TMP/judging-release/skills/review-gate"
 cp -R "$SKILL_DIR/../harness-ci" "$TMP/judging-release/skills/harness-ci"
 cp -R "$SKILL_DIR/../change-scope" "$TMP/judging-release/skills/change-scope"
 cp -R "$SKILL_DIR/../orch" "$TMP/judging-release/skills/orch"
+cp -R "$SKILL_DIR/../commit-guards" "$TMP/judging-release/skills/commit-guards"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n: >"$TEST_STATE/adopted"\n' >"$TMP/judging-release/refresh/adopt-refresh.sh"
 chmod +x "$TMP/judging-release/refresh/adopt-refresh.sh"
 cp "$TEST_DIR/fixtures/stale-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"

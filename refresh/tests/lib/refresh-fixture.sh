@@ -54,6 +54,11 @@ adoption_preserved() { # EXACT_ERROR_RECORD
 # Project selection loads orch's kendex-env.sh from the release tree, which the
 # sandbox's skills link resolves into this copy.
 cp -R "$SKILL_DIR/../orch" "$PRISTINE/.agents/skills/orch"
+# The runner reads the skill roots from the release tree's commit-guards. The
+# library alone ships no md-refs, so a consumer here installs none until a
+# row adds one.
+mkdir -p "$PRISTINE/.agents/skills/commit-guards/scripts/lib"
+cp "$SKILL_DIR/../commit-guards/scripts/lib/skill-roots.sh" "$PRISTINE/.agents/skills/commit-guards/scripts/lib/"
 BIN="$TMP/bin"
 FIXTURES="$TMP/github"
 mkdir -p "$BIN" "$FIXTURES"
@@ -409,7 +414,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1]).resolve()
 source = path.read_text()
-old = 'if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then'
+old = 'if [ "$state" = unchanged ] && [ -z "$verify_report" ] && [ -z "$refs_report" ]; then'
 assert source.count(old) == 1
 changed = source.replace(old, 'if false; then # ' + old)
 assert changed != source
@@ -421,7 +426,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1]).resolve()
 source = path.read_text()
-start = 'if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then\n'
+start = 'if [ "$state" = unchanged ] && [ -z "$verify_report" ] && [ -z "$refs_report" ]; then\n'
 assert source.count(start) == 1
 offset = source.index(start)
 end = source.index('\nfi\n', offset)

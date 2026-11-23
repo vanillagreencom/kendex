@@ -152,6 +152,13 @@ The verify outcomes:
 - Any other verify failure, an unread verify document included, prints `refresh-error=verify value=STATUS` and exits with verify's status before publication.
 - The next run whose verify passes marks a drafted rolling pull request ready before it arms it.
 
+The citation outcomes, on a run with a change to publish:
+
+- The run starts the consumer's installed `md-refs --staged`, the commit-guards lane its pre-commit runs, over the staged refreshed tree, with no credential. It runs the first executable copy under the selected projects' skill roots.
+- md-refs exit 1 prints `refresh-md-refs=held`. A citing file the lock lists as rendered only warns, so the exit names a file the consumer owns. The run takes the held route above: a draft pull request whose body carries md-refs' output, each citation with its file and line, nothing armed and nothing landed. Fix each citation on that branch and merge it before the next run rebuilds the branch. A citation the default branch can already drop or repoint, such as one to a removed section, can be fixed there instead.
+- Any other md-refs failure prints `refresh-error=md-refs value=STATUS` and exits with that status before publication.
+- A consumer with no installed md-refs runs no such check and prints `refresh-md-refs=skipped cause=absent`.
+
 ### Landing a proved render
 
 [§ Publication](#publication) states when a run tries the landing push and its `refresh-state=landed` and `refresh-state=deferred` outcomes. The table below states each `refresh-land=` line.
@@ -206,12 +213,13 @@ A run that committed a new head and kept the pull request route prints one landi
 
 - The shared workflow passes the script the boolean `KENDEX_LAND_CONFIGURED`: true where the run received either name of the pair, and never a secret value.
 - A run that received neither name prints no landing line.
-- The run checks the token, the verify, the class, the removed paths, the sources and the merge queue in that order. The line names the first check the run does not meet.
+- The run checks the token, the verify, md-refs, the class, the removed paths, the sources and the merge queue in that order. The line names the first check the run does not meet.
 
 | Line | Cause |
 | --- | --- |
 | `refresh-land=unavailable value=token` | The run received one name of the pair alone, or the `Mint the landing token` step failed. |
 | `refresh-land=skipped value=verify` | The run is held: its verify failed only on declarations a project's own manifest withholds. |
+| `refresh-land=skipped value=md-refs` | The run is held: the consumer's md-refs refused a citation in the refreshed tree. |
 | `refresh-land=skipped value=class` | The classifier answered a class other than `render`. |
 | `refresh-land=skipped value=path-removed` | The commit removes or renames a path against the base the run judged. |
 | `refresh-land=skipped value=sources-uncovered` | A selected project does not have the source coverage above. |
@@ -222,7 +230,7 @@ A run that committed a new head and kept the pull request route prints one landi
 | `refresh-error=land-check value=ANSWER` | The landing check gave an answer that the script does not report. |
 
 - On `value=token`, the `Mint the landing token` step's log holds the mint error.
-- On `value=verify`, the head goes to a draft pull request that names each finding.
+- On `value=verify` or `value=md-refs`, the head goes to a draft pull request that names each finding.
 - On `value=sources-read`, stderr holds what kendex printed, then `refresh-sources=unread value=PROJECT`, then the cause.
 - On `value=queued`, the run does not push because a push to that branch makes GitHub rebuild each running merge group.
 - On `refresh-land=refused`, `STATUS` is git's exit status, and stderr holds git's record of the push. The ruleset and workflow-file paragraphs above name the refusals this route expects.

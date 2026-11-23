@@ -19,9 +19,12 @@
 # refresh-state=held pr=NUMBER class=CLASS head=REVISION, or
 # refresh-state=deferred reason=queued|merged|closed|branch-gone|base-moved.
 # A held run's verify failed only on declarations its projects' manifests
-# withhold, each project's printing refresh-verify=held project=ENTRY: it
-# publishes the head as a draft pull request whose body names each finding
-# and its manifest line, arms nothing and lands nothing. A
+# withhold, each project's printing refresh-verify=held project=ENTRY, or
+# the consumer's md-refs refused a citation in the refreshed tree, printing
+# refresh-md-refs=held: it publishes the head as a draft pull request whose
+# body names each finding, arms nothing and lands nothing. A run with a
+# change to publish and no installed md-refs prints
+# refresh-md-refs=skipped cause=absent. A
 # render this run committed that it did not push, or whose push GitHub
 # refused, and a held run's retained head, where the caller set either
 # landing name, also print one landing line ahead of the pull request
@@ -29,7 +32,7 @@
 # refresh-land=refused value=STATUS (GitHub refused the push),
 # refresh-land=unavailable value=token|sources-read|queue-read (no landing
 # token reached the run, or the project sources or the merge queue could not
-# be read), or refresh-land=skipped value=verify|class|path-removed|sources-uncovered|queued
+# be read), or refresh-land=skipped value=verify|md-refs|class|path-removed|sources-uncovered|queued
 # (the run is held, the class is not render, the render removes or renames a
 # path, a project takes packages from another catalog or revision, or the
 # merge queue holds an entry). An unread
@@ -41,6 +44,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load from the trusted runner before refresh replaces its installed files.
 source "$SCRIPT_DIR/../skills/review-gate/scripts/lib/arm-published-head.sh"
 source "$SCRIPT_DIR/lib/landing.sh"
+# The skills directories an install writes, in the order the commit hook
+# searches them, for finding the consumer's md-refs.
+source "$SCRIPT_DIR/../skills/commit-guards/scripts/lib/skill-roots.sh"
 # The landing app's token bypasses the review rulesets and serves the one
 # landing push alone, so no child this run starts inherits it.
 land_token="${KENDEX_LAND_TOKEN:-}"
@@ -625,6 +631,39 @@ if [ "$publication_status" -eq 0 ]; then
   [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
   exit 0
 fi
+# verify reads only the files kendex wrote, so a render that removes or
+# renames a heading a consumer-owned file cites passes it, and the
+# consumer's pre-commit then refuses every commit. The consumer's installed
+# md-refs, the lane that pre-commit runs, judges the staged refreshed tree:
+# a citing file the lock lists as rendered only warns, so exit 1 names a
+# file the consumer owns. The first executable copy under the selected
+# projects' skill roots runs, with no credential, like the render above.
+refs_report=""
+md_refs=""
+for directory in "${projects[@]}"; do
+  for skill_root in $GG_SKILL_ROOTS; do
+    if [ -x "$directory/$skill_root/commit-guards/scripts/md-refs" ]; then
+      md_refs="$directory/$skill_root/commit-guards/scripts/md-refs"
+      break 2
+    fi
+  done
+done
+if [ -z "$md_refs" ]; then
+  printf 'refresh-md-refs=skipped cause=absent\n'
+else
+  refs_status=0
+  refs_output="$(env -i PATH="$PATH" HOME="$HOME" "$md_refs" --staged 2>&1)" || refs_status=$?
+  printf '%s\n' "$refs_output" >&2
+  case "$refs_status" in
+    0) ;;
+    1)
+      printf 'refresh-md-refs=held\n'
+      refs_report="$refs_output" ;;
+    *)
+      printf 'refresh-error=md-refs value=%s\n' "$refs_status" >&2
+      exit "$refs_status" ;;
+  esac
+fi
 if ! tree="$(git write-tree)"; then
   printf 'refresh-error=read value=tree\n' >&2
   exit 1
@@ -671,7 +710,7 @@ report_settings
 # this automatic admission route; absence of an open PR proves no first arm.
 # A held run still names its findings on the retained head and keeps it a
 # draft.
-if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then
+if [ "$state" = unchanged ] && [ -z "$verify_report" ] && [ -z "$refs_report" ]; then
   printf 'refresh-state=unchanged pr=%s class=%s head=%s published=false\n' "${pr:-none}" "$class" "$head"
   printf 'Refresh retained head `%s`; no new head was published. Automatic admission was deferred.\n\n%s\n\n%s\n' "$head" "$version_report" "$class_line" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
@@ -688,9 +727,10 @@ fi
 # project that takes packages from any other catalog or revision keeps the
 # pull request, where the consumer reviews them. A render that removes or
 # renames a path can break a file the consumer still cites, which the render
-# proof does not read, so it keeps the pull request too. No token, a
-# class other than render, a removed path, that coverage, and a merge queue
-# that holds an entry or could not be read keep the pull request route.
+# proof does not read, so it keeps the pull request too. No token, a held
+# verify or md-refs, a class other than render, a removed path, that
+# coverage, and a merge queue that holds an entry or could not be read keep
+# the pull request route.
 # Sets land_check to try, to unconfigured where the caller set neither
 # landing name, or to unavailable:CAUSE or skipped:CAUSE for the first
 # precondition the run does not meet. The one reporter below prints every
@@ -705,6 +745,7 @@ refresh_land_check() {
     return 0
   fi
   if [ -n "$verify_report" ]; then land_check=skipped:verify; return 0; fi
+  if [ -n "$refs_report" ]; then land_check=skipped:md-refs; return 0; fi
   if [ "$class" != render ]; then land_check=skipped:class; return 0; fi
   # --no-renames reports a renamed path as removed.
   if ! removed="$(git diff --no-renames --diff-filter=D --name-only "$base" "$head")"; then
@@ -764,11 +805,22 @@ fi
 if [ -n "$retired_items" ]; then
   printf -v body '%s\nRetired items:\n```text\n%s```\n' "$body" "$retired_items"
 fi
+# What holds the head a draft, unarmed: a held verify, a held md-refs, or
+# both.
+hold_note=""
 if [ -n "$verify_report" ]; then
-  printf -v verify_note 'kendex verify failed on declarations this repository holds, so this pull request stays a draft and unarmed until verify passes. Make the edit each finding names on the default branch; the next refresh renders on it and marks this pull request ready.\n\n%s' "$verify_report"
-  printf -v body '%s\n%s\n' "$body" "$verify_note"
+  printf -v hold_note 'kendex verify failed on declarations this repository holds, so this pull request stays a draft and unarmed until verify passes. Make the edit each finding names on the default branch; the next refresh renders on it and marks this pull request ready.\n\n%s' "$verify_report"
 fi
-if [ "$state" = pushed ] || [ -n "$verify_report" ]; then
+if [ -n "$refs_report" ]; then
+  # Each run rebuilds this branch from the default branch, so a fix
+  # committed here lasts until the next run.
+  printf -v refs_note 'md-refs, the citation check this repository'\''s pre-commit runs, refused the refreshed tree, so this pull request stays a draft and unarmed. Each finding names a file this repository owns, its line and the citation that no longer resolves. Point each citation at a heading the refreshed file has, or remove it: commit the fix to this branch, then mark the pull request ready and merge it before the next refresh rebuilds the branch. A citation the default branch can already drop or repoint, such as one to a removed section, can be fixed there instead, and the next refresh marks this pull request ready.\n\n```text\n%s\n```' "$refs_report"
+  hold_note="${hold_note}${hold_note:+$'\n\n'}$refs_note"
+fi
+if [ -n "$hold_note" ]; then
+  printf -v body '%s\n%s\n' "$body" "$hold_note"
+fi
+if [ "$state" = pushed ] || [ -n "$hold_note" ]; then
   # An old arm survives a push and could merge the replacement before review,
   # and a held head must not merge at all. Read lifecycle again after
   # rendering; disarm only for this new publication or a held head.
@@ -828,23 +880,23 @@ fi
 # GitHub merges by no route, and a held run leaves it one.
 if [ -z "$pr" ]; then
   draft=()
-  if [ -n "$verify_report" ]; then draft=(-F draft=true); fi
+  if [ -n "$hold_note" ]; then draft=(-F draft=true); fi
   pr="$(gh api --method POST "repos/$GH_REPO/pulls" -f head=kendex/refresh -f base="$default" -f title='chore: refresh kendex renders' -f body="$body" ${draft[@]+"${draft[@]}"} --jq .number)"
 else
   if ! drafted="$(gh api --method PATCH "repos/$GH_REPO/pulls/$pr" -f body="$body" --jq .draft)"; then
     printf 'refresh-error=pull-update pr=%s\n' "$pr" >&2
     exit 1
   fi
-  if [ -n "$verify_report" ] && [ "$drafted" != true ]; then
+  if [ -n "$hold_note" ] && [ "$drafted" != true ]; then
     gh pr ready "$pr" --repo "$GH_REPO" --undo || { printf 'refresh-error=draft pr=%s\n' "$pr" >&2; exit 1; }
-  elif [ -z "$verify_report" ] && [ "$drafted" = true ]; then
+  elif [ -z "$hold_note" ] && [ "$drafted" = true ]; then
     gh pr ready "$pr" --repo "$GH_REPO" || { printf 'refresh-error=ready pr=%s\n' "$pr" >&2; exit 1; }
   fi
 fi
-if [ -n "$verify_report" ]; then
+if [ -n "$hold_note" ]; then
   printf 'refresh-state=held pr=%s class=%s head=%s\n' "$pr" "$class" "$head"
-  printf '::warning title=refresh held::pull request %s stays a draft until kendex verify passes; its body names each finding\n' "$pr"
-  printf 'Held pull request %s at `%s` as a draft.\n\n%s\n' "$pr" "$head" "$verify_note" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+  printf '::warning title=refresh held::pull request %s stays a draft until what holds it passes; its body names each finding\n' "$pr"
+  printf 'Held pull request %s at `%s` as a draft.\n\n%s\n' "$pr" "$head" "$hold_note" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   exit 0
 fi
 merge_route=auto
