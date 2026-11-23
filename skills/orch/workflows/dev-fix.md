@@ -127,14 +127,6 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
 
 4. **Stamp and delegate.** Run each command as its own tool call, immediately before delegating.
 
-   Read the pull request's state:
-
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime pr view [WORKTREE_PATH] --json state
-   ```
-
-   `[PR_OPEN]` is `true` for `OPEN`, and `false` for `status: no_pr`, `CLOSED` or `MERGED`. An unknown state or a failed read stops delegation.
-
    Stamp the round as [dev-start.md § 2](dev-start.md#2-delegate) steps 3 to 8 do.
 
    - Arm the watchdog per [Round Closure](../references/skill-rules.md#round-closure).
@@ -156,7 +148,7 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
    Write the round record:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
+   .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
    - A nonzero exit is a refusal or an environment failure, named on stderr: report it and stop.
@@ -166,7 +158,7 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
    **Cuts.** When a reviewer or the orchestrator decides a cut, mint a fresh round. Delegate the cut back to the Done-when as its items, and stamp the record with `--cut`:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json --cut
+   .agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source [SOURCE] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json --cut
    ```
 
    - Never improvise a finding-shaped `reach` for a cut item: [dev-round.md § Declared cuts](../schemas/dev-round.md#declared-cuts) states its reach, the cut declaration and its retry rule.

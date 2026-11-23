@@ -241,7 +241,7 @@ On `redelegate`:
 
 1. The printed `round-id` is already minted into `dev_round_id`. Run [§ Round Closure](#round-closure) step 3 for it, then step 4.
 2. Keep `pre_delegate_sha`.
-3. On a fix round, run `orch-runtime round --text stamp` for that id with the whole authorization of the `from` round's record, `[WORKTREE]/tmp/dev-round-[ISSUE_ID]-[FROM].json`: the same items, the same `--source`, `--pr-open` with the record's `pr_open`, the same `--adds` list repeated as the delegation's `Adds:` line, and `--cut` where the record has `cut: true`.
+3. On a fix round, run `orch-runtime round --text stamp` for that id with the whole authorization of the `from` round's record, `[WORKTREE]/tmp/dev-round-[ISSUE_ID]-[FROM].json`: the same items, the same `--source`, the same `--adds` list repeated as the delegation's `Adds:` line, and `--cut` where the record has `cut: true`.
 4. On Codex, choose the instance under [Codex thread reuse](#codex-thread-reuse). Elsewhere, shut the idle agent down and spawn fresh.
 5. Delegate under that round id and arm its watchdog.
 

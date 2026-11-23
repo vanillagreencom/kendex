@@ -626,8 +626,6 @@ mod dev_artifacts {
                 "app CLI",
                 "--adds",
                 "tools/new",
-                "--pr-open",
-                "true",
                 "--source",
                 "review",
             ],
@@ -637,7 +635,6 @@ mod dev_artifacts {
         assert_eq!(v["cut"], true);
         assert_eq!(v["adds"], json!(["tools/new"]));
         assert_eq!(v["source"], "review");
-        assert_eq!(v["pr_open"], true);
     }
 
     #[test]
@@ -974,8 +971,6 @@ mod dev_artifacts {
                 "1",
                 "repair parser",
                 "app CLI",
-                "--pr-open",
-                "true",
             ],
         ));
         let ci = w.finished_run("ci", "full");
@@ -1792,9 +1787,7 @@ mod dev_artifacts {
             );
         }
         // Arguments outside a verb's grammar are refused before any answer.
-        let id = ["--worktree", wt, "--issue", "issue-8", "--round-id", "r1"];
         for args in [
-            [&["round", "stamp"][..], &id, &item, &["--pr-open", "yes"]].concat(),
             vec!["dev-return", "check", "--file", receipt, "--interval", "0"],
             vec![
                 "dev-return",
@@ -1807,7 +1800,6 @@ mod dev_artifacts {
             let out = w.run(&args);
             assert_eq!(out.status.code(), Some(2), "{args:?} {}", stderr(&out));
             assert!(out.stdout.is_empty(), "{args:?}");
-            assert!(!w.round_path("r1").exists(), "{args:?}");
         }
     }
 
@@ -2580,7 +2572,6 @@ mod dev_artifacts {
             ("adds", json!(["a b"]), "round-schema"),
             ("base_sha", json!("a".repeat(41)), "round-schema"),
             ("cut", json!("yes"), "round-schema"),
-            ("pr_open", Value::Null, "round-schema"),
             ("items", json!([]), "round-schema"),
             ("items", json!([{"n":1,"text":""}]), "round-schema"),
         ] {
