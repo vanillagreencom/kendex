@@ -139,11 +139,11 @@ pub struct LaunchIntent {
     /// wrapper, as a controller's launch does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grants: Option<Grants>,
-    /// The sign-in of the named Claude account the launch bills, `None` for
-    /// a launch naming none: the launch then clears every inherited
-    /// credential that would sign it in over that account's own
-    /// ([`CLAUDE_OUTRANKING`]). Off the JSON contract, so only a site that
-    /// resolved the account sets it.
+    /// The sign-in of the named Claude account the launch bills: set, the
+    /// launch clears every inherited credential that would sign it in over
+    /// that account's own ([`CLAUDE_OUTRANKING`]); `None` for a launch
+    /// naming none, which clears none. Off the JSON contract, so only a site
+    /// that resolved the account sets it.
     #[serde(skip)]
     pub claude_sign_in: Option<ClaudeSignIn>,
 }
@@ -265,6 +265,11 @@ pub const CLAUDE_TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 /// environment reaches. `ANTHROPIC_BASE_URL` goes too: Claude Code sends the
 /// login's token in `Authorization` to the endpoint it names
 /// (https://code.claude.com/docs/en/llm-gateway-protocol § Request headers).
+/// A Pi `pi-claude/` seat's launch clears the same names, since the bridge
+/// starts its Claude child on the window's environment where no account
+/// router supplies one (`pi-extensions/pi-claude-bridge/src/query-options.ts`);
+/// a Pi launch on its own `anthropic/` provider bills no named seat
+/// ([`crate::harness::Harness::pool`]) and is given no sign-in to clear for.
 pub const CLAUDE_OUTRANKING: [&str; 13] = [
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
@@ -280,12 +285,6 @@ pub const CLAUDE_OUTRANKING: [&str; 13] = [
     "ANTHROPIC_ORGANIZATION_ID",
     "ANTHROPIC_BASE_URL",
 ];
-
-/// The keys a Pi launch on a Claude seat keeps: Pi's own `anthropic`
-/// provider signs in with them (`@earendil-works/pi-ai` 1.6.0,
-/// `dist/providers/anthropic.js` and `dist/env-api-keys.js`), and it reads
-/// no `ANTHROPIC_BASE_URL`, passing the model's own base URL.
-const PI_PROVIDER_KEYS: [&str; 2] = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
 
 /// Spell the command for an intent. Refuses an intent the harness cannot
 /// honour: compaction off where it has no word, a model-free lane launch is
@@ -426,12 +425,8 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
     }
     let mut env_files = BTreeMap::new();
     if let Some(sign_in) = &intent.claude_sign_in {
-        let kept: &[&str] = match h {
-            Harness::Pi => &PI_PROVIDER_KEYS,
-            Harness::Claude | Harness::Codex | Harness::Copilot => &[],
-        };
         for name in CLAUDE_OUTRANKING {
-            if !kept.contains(&name) && !env_remove.iter().any(|n| n == name) {
+            if !env_remove.iter().any(|n| n == name) {
                 env_remove.push(name.to_owned());
             }
         }
@@ -665,9 +660,13 @@ impl LaunchCommand {
                 line.push_str(" && ");
             }
         }
+        // A plain assignment exits with its substitution's status, where
+        // `export NAME="$(cat FILE)"` exits 0 whatever `cat` did: a file gone
+        // or emptied since it was judged stops the line, never starting the
+        // harness on an empty token with every other credential cleared.
         for (name, file) in &self.env_files {
             line.push_str(&format!(
-                "export {name}=\"$(cat {})\" && ",
+                "{name}=\"$(cat {})\" && [ -n \"${name}\" ] && export {name} && ",
                 shell_quote(&file.display().to_string())
             ));
         }
@@ -770,7 +769,42 @@ mod tests {
     /// Claude credential a named account's launch clears, a Copilot token
     /// and `HOME` set on the child shell; the recorder prints its
     /// environment one `NAME=VALUE` a line.
-    fn child_env(dir: &Path, mut i: LaunchIntent) -> BTreeMap<String, String> {
+    fn child_env(dir: &Path, i: LaunchIntent) -> BTreeMap<String, String> {
+        let (line, out) = run_line(dir, i);
+        assert!(
+            out.status.success(),
+            "{line}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
+            .collect()
+    }
+
+    /// The credentials Claude Code ranks above a stored `/login`, and the
+    /// endpoint it would send one to, named here apart from the builder's
+    /// list so a name the builder stops clearing stays planted and is seen.
+    const CLAUDE_CREDENTIALS: [&str; 13] = [
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+        "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+        "CLAUDE_CODE_USE_MANTLE",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_PROFILE",
+        "ANTHROPIC_FEDERATION_RULE_ID",
+        "ANTHROPIC_ORGANIZATION_ID",
+        "ANTHROPIC_BASE_URL",
+    ];
+
+    /// The rendered line of `i` and the output of `sh` running it, under
+    /// the environment [`child_env`] describes.
+    fn run_line(dir: &Path, mut i: LaunchIntent) -> (String, std::process::Output) {
         let recorder = dir.join("show-env");
         crate::host::write_executable(&recorder, "#!/bin/sh\nexec env\n");
         i.cwd = dir.to_path_buf();
@@ -786,22 +820,13 @@ mod tests {
             .chain(&DESKTOP_DISPLAY)
             .copied()
             .chain([LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR])
-            .chain(CLAUDE_OUTRANKING)
+            .chain(CLAUDE_CREDENTIALS)
             .chain(i.env_remove.iter().map(String::as_str))
         {
             sh.env(name, "parent");
         }
         let out = sh.output().unwrap();
-        assert!(
-            out.status.success(),
-            "{line}\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8(out.stdout)
-            .unwrap()
-            .lines()
-            .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
-            .collect()
+        (line, out)
     }
 
     /// A variable read from a file reaches the harness's environment with
@@ -1044,10 +1069,11 @@ mod tests {
     /// A launch on a named Claude account, Claude's own or a Pi
     /// `pi-claude/` seat, signs in as that account alone: every inherited
     /// credential that would outrank its sign-in and the endpoint that would
-    /// receive it are cleared, a Pi launch keeping the two keys its own
-    /// provider signs in with, and a declared token file's text is the token
-    /// the child holds. A launch naming no Claude account clears none. The
-    /// sign-in is off the intent's JSON: a round trip carries none.
+    /// receive it are cleared, and a declared token file's text is the token
+    /// the child holds. A launch naming no Claude account clears none. A
+    /// token file gone or emptied once the launch was built starts no
+    /// harness. The sign-in is off the intent's JSON: a round trip carries
+    /// none.
     #[test]
     fn a_named_claude_accounts_launch_signs_in_as_that_account_alone() {
         let dir = tempfile::tempdir().unwrap();
@@ -1056,58 +1082,45 @@ mod tests {
         let pi_claude = "pi-claude/claude-fable-5-1";
         let token = Some(ClaudeSignIn::TokenFile(file.clone()));
         let stored = Some(ClaudeSignIn::StoredLogin);
-        // The case, the harness and model, the sign-in, and whether the
-        // provider keys stand.
+        // The case, the harness and model, and the sign-in.
         let rows = [
             (
                 "a Claude home by stored login",
                 Harness::Claude,
                 "opus",
                 stored.clone(),
-                false,
             ),
             (
                 "a Claude home by token file",
                 Harness::Claude,
                 "opus",
                 token.clone(),
-                false,
             ),
-            (
-                "a Pi seat by stored login",
-                Harness::Pi,
-                pi_claude,
-                stored,
-                true,
-            ),
-            (
-                "a Pi seat by token file",
-                Harness::Pi,
-                pi_claude,
-                token,
-                true,
-            ),
+            ("a Pi seat by stored login", Harness::Pi, pi_claude, stored),
+            ("a Pi seat by token file", Harness::Pi, pi_claude, token),
             (
                 "an accountless Claude launch",
                 Harness::Claude,
                 "opus",
                 None,
-                true,
             ),
         ];
-        let keys = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
-        for (case, h, model, sign_in, keys_stand) in rows {
+        let launch = |h: Harness, model: &str, sign_in: Option<ClaudeSignIn>| {
             let mut i = bare(h);
             i.home = Some(dir.path().join(format!(".1{h}")));
             i.model = Some(model.into());
             i.effort = None;
-            i.claude_sign_in = sign_in.clone();
-            let env = child_env(dir.path(), i);
-            for name in CLAUDE_OUTRANKING {
+            i.claude_sign_in = sign_in;
+            i
+        };
+        for (case, h, model, sign_in) in rows {
+            let env = child_env(dir.path(), launch(h, model, sign_in.clone()));
+            for name in CLAUDE_CREDENTIALS {
                 let expected = match (&sign_in, name) {
                     (None, _) => Some("parent"),
-                    (Some(_), key) if keys.contains(&key) && keys_stand => Some("parent"),
-                    (Some(ClaudeSignIn::TokenFile(_)), CLAUDE_TOKEN_VAR) => Some("file-token"),
+                    (Some(ClaudeSignIn::TokenFile(_)), "CLAUDE_CODE_OAUTH_TOKEN") => {
+                        Some("file-token")
+                    }
                     (Some(_), _) => None,
                 };
                 assert_eq!(
@@ -1116,6 +1129,16 @@ mod tests {
                     "{case}: {name}"
                 );
             }
+        }
+        for (case, text) in [("gone", None), ("emptied", Some("\n"))] {
+            let late = dir.path().join(format!("{case}.token"));
+            if let Some(text) = text {
+                fs::write(&late, text).unwrap();
+            }
+            let sign_in = Some(ClaudeSignIn::TokenFile(late));
+            let (line, out) = run_line(dir.path(), launch(Harness::Claude, "opus", sign_in));
+            assert!(!out.status.success(), "{case}: {line}");
+            assert!(out.stdout.is_empty(), "{case}: the harness ran: {line}");
         }
         let mut i = bare(Harness::Claude);
         i.claude_sign_in = Some(ClaudeSignIn::TokenFile(file));

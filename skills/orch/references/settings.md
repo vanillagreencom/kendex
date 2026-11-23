@@ -271,7 +271,7 @@ The keys' rules, in the table's order:
 - `AGENT_RUNTIME_CONTROLLER_SUCCESSION`: under `off`, `request-transfer` refuses before any intent persists.
 - `AGENT_RUNTIME_CONTROLLER_PREFERENCE`: unset, a context mark's succession walks the controller's own entry alone.
 - `AGENT_RUNTIME_CONTROLLER_PREFERENCE`: the grammar is the example's § Fleet.
-- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: the successor walk and the transfer judge a declared account by its file alone. An account holding neither a token in its file nor a stored login is no candidate.
+- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: the successor walk and the transfer judge a declared account by its file alone, and any other account by its stored login. A declared account whose file holds no token, or an undeclared account holding no stored login, is no candidate.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a successor's or a local lane's launch on a declared account exports the file's text as `CLAUDE_CODE_OAUTH_TOKEN` in its own window.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a cloud session signs in by its account's stored login whatever the setting declares, and exports no file.
 - Every launch on a named Claude account clears the Claude credentials its window inherits that would outrank the account's own sign-in. A token the tmux server's environment holds signs no named account in.

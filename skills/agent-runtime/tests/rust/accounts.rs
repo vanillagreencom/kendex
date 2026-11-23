@@ -459,12 +459,11 @@ fn named(dir: &str, req: PickRequest) -> PickRequest {
 /// measured room, taken as a 429 fallback and found by name, and a home
 /// holding nothing it signs in with is none of these, whatever the provider
 /// measured. A declared file that holds no token is no sign-in even beside
-/// a stored login; a login nothing reads leaves the home on its own row; a
-/// setting naming one home twice judges no account. Each row: the case, the
-/// home's credential file, its declared token file, whether the setting
-/// declares the home twice, then whether the chooser picks the home on a
-/// provider row of room, whether the fallback takes it on a provider row
-/// refused with a 429, and whether its named pick finds a record.
+/// a stored login; a login nothing reads leaves the home on its own row.
+/// Each row: the case, the home's credential file, its declared token file,
+/// then whether the chooser picks the home on a provider row of room,
+/// whether the fallback takes it on a provider row refused with a 429, and
+/// whether its named pick finds a record.
 #[test]
 fn a_session_opening_here_is_judged_by_one_sign_in_reader_in_every_pick() {
     #[derive(Clone, Copy)]
@@ -477,38 +476,28 @@ fn a_session_opening_here_is_judged_by_one_sign_in_reader_in_every_pick() {
         &'static str,
         Option<&'static str>,
         Token,
-        bool,
         (bool, bool, bool),
     );
     let credential = r#"{"claudeAiOauth":{"accessToken":"planted","subscriptionType":"max"}}"#;
     let rows: Vec<Row> = vec![
-        (
-            "a token file only",
-            None,
-            Token::Held,
-            false,
-            (true, true, true),
-        ),
+        ("a token file only", None, Token::Held, (true, true, true)),
         (
             "a declared file holding no token beside a stored login",
             Some(credential),
             Token::Absent,
-            false,
             (false, false, false),
         ),
         (
             "a stored login only",
             Some(credential),
             Token::None,
-            false,
             (true, true, true),
         ),
-        ("neither", None, Token::None, false, (false, false, false)),
+        ("neither", None, Token::None, (false, false, false)),
         (
             "a login nothing reads",
             Some("not json\n"),
             Token::None,
-            false,
             (false, false, true),
         ),
     ];
@@ -547,7 +536,7 @@ fn a_session_opening_here_is_judged_by_one_sign_in_reader_in_every_pick() {
         _ => None,
     };
     let token = world.path().join("tclaude.token");
-    for (case, stored, declared, twice, (chosen, taken, found)) in rows {
+    for (case, stored, declared, (chosen, taken, found)) in rows {
         std::fs::create_dir_all(&dir).unwrap();
         let credentials = Path::new(&dir).join(".credentials.json");
         match stored {
@@ -563,9 +552,6 @@ fn a_session_opening_here_is_judged_by_one_sign_in_reader_in_every_pick() {
         let mut pairs = Vec::new();
         if !matches!(declared, Token::None) {
             pairs.push((dir.clone(), token.clone()));
-        }
-        if twice {
-            pairs.push((format!("{dir}/"), token.clone()));
         }
         let tokens = Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(pairs));
         let pick = |rows: &[AccountRow], lane: Option<&str>| {

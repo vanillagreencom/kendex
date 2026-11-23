@@ -685,19 +685,15 @@ fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
 /// `pi-claude/` seat, signs in as that account alone, whatever the tmux
 /// server's environment holds: the server's token never reaches it, a
 /// declared token file's text does, the keys that would outrank its sign-in
-/// are cleared on Claude and kept on Pi for Pi's own provider, and no
-/// endpoint that would receive the account's token stands. Each row: the
-/// harness, whether the account signs in by a declared token file (else by
-/// its stored login), and whether the keys stand.
+/// are cleared, and no endpoint that would receive the account's token
+/// stands. A Claude successor on a declared file is
+/// `a_declared_token_file_signs_the_successor_in_its_own_window_only`'s.
+/// Each row: the harness, and whether the account signs in by a declared
+/// token file (else by its stored login).
 #[test]
 fn a_named_claude_successor_signs_in_as_its_account_whatever_the_server_holds() {
-    let rows = [
-        ("claude", false, false),
-        ("claude", true, false),
-        ("pi", false, true),
-        ("pi", true, true),
-    ];
-    for (harness, by_file, keys_stand) in rows {
+    let rows = [("claude", false), ("pi", false), ("pi", true)];
+    for (harness, by_file) in rows {
         let case = format!("{harness} by_file={by_file}");
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -756,13 +752,12 @@ fn a_named_claude_successor_signs_in_as_its_account_whatever_the_server_holds() 
         runner.transfer_started_env(&request, &env);
         runner.wait_intent_settled("request-transfer:", SETTLE);
         let launched = launch_record(runner.state_dir());
-        let key = |planted: &str| keys_stand.then(|| planted.to_owned());
         assert_eq!(
             launched["sign_in"],
             json!({
                 "CLAUDE_CODE_OAUTH_TOKEN": by_file.then_some("file-token"),
-                "ANTHROPIC_API_KEY": key("planted-key"),
-                "ANTHROPIC_AUTH_TOKEN": key("planted-auth"),
+                "ANTHROPIC_API_KEY": null,
+                "ANTHROPIC_AUTH_TOKEN": null,
                 "ANTHROPIC_BASE_URL": null,
             }),
             "{case}: {launched}"

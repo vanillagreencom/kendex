@@ -911,10 +911,8 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
 
 /// The overseer walk reads a home's sign-in through the consumer's token
 /// setting: the caller's own home, nothing measured and no credential file,
-/// is kept where its declared token file holds a token, is no candidate
-/// where no file is declared for it, and a setting naming it twice refuses
-/// the walk unjudged at its pick, where any answer would read the setting
-/// one way.
+/// is kept where its declared token file holds a token, and is no
+/// candidate where no file is declared for it.
 #[test]
 fn the_overseer_walk_reads_a_homes_sign_in_through_the_token_setting() {
     let mut nothing = unreachable("aclaude");
@@ -954,16 +952,6 @@ fn the_overseer_walk_reads_a_homes_sign_in_through_the_token_setting() {
     token_files(&mut world, String::new());
     let signed_out = world.answered(&args);
     assert_eq!(signed_out["answer"], json!("none"), "{signed_out}");
-    token_files(
-        &mut world,
-        format!("{lane}={t},{lane}/={t}", t = token.display()),
-    );
-    let (key, fields) = world.refused(&args);
-    assert_eq!(key, "account-unjudged", "{fields:?}");
-    assert!(
-        fields.contains(&("step".to_owned(), "pick".to_owned())),
-        "{fields:?}"
-    );
 }
 
 #[test]

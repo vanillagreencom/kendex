@@ -70,9 +70,12 @@ pub const CONTROLLER_PREFERENCE_KEY: &str = "AGENT_RUNTIME_CONTROLLER_PREFERENCE
 /// The standard class on each harness.
 pub const DEFAULT_CONTROLLER_PREFERENCE: &str = "claude:standard:high,codex:standard:high";
 /// `<account dir>=<token file>` pairs separated by commas, both absolute:
-/// the file whose text a successor's launch on that Claude account signs in
-/// with. The value names paths, never a token, so it may sit in a committed
-/// settings file; a consumer sets its own, since the files are its own.
+/// the file each declared Claude account signs in with. The account walk,
+/// the roster and a hand-over judge the account by that file alone
+/// ([`crate::accounts::usage::sign_in`]), and a launch that signs in by it
+/// exports its text. The value names paths, never a token, so it may sit in
+/// a committed settings file; a consumer sets its own, since the files are
+/// its own.
 pub const ACCOUNT_TOKEN_FILES_KEY: &str = "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES";
 const DEFAULT_VERIFY_SECS: u64 = 15;
 const DEFAULT_CLAIM_SECS: u64 = 15;
