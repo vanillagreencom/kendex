@@ -160,9 +160,6 @@ live() {
   line="$(command_at "$1" "$2")"
   [[ -n "$line" ]] || { printf 'live: no live command holds %s\n' "$2" >&2; return 1; }
   line="${line#*$'\t'}"
-  if [[ "$2" == "$RESOLVE" ]]; then
-    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /validate entry --resolve-mode/ {exit}' "$1")"
-  fi
   line="${line//\[MAIN_REPO_ROOT\]\/.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
   line="${line//\[WT_PATH\]/$3}"
   line="${line//\[BASE_BRANCH\]/$4}"
@@ -356,7 +353,7 @@ git -C "$CI_WT" update-index --skip-worktree kendex.settings.toml
 printf '#!/bin/sh\nprintf changed\\n\n' > "$CI_WT/check.sh"
 git -C "$CI_WT" add check.sh
 git -C "$CI_WT" -c user.name=t -c user.email=t@example.com commit -q -m source
-printf 'ORCH_PR_ORDER = "push-first"\nDEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$CI_WT/kendex.settings.toml"
+printf 'DEV_VALIDATE_CI_CONTEXT = "CI"\n' >> "$CI_WT/kendex.settings.toml"
 mkdir -p "$TMP_ROOT/ci-bin"
 cat > "$TMP_ROOT/ci-bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -381,7 +378,7 @@ CI_COMMAND='orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci 
 printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=all; test $DEV_VALIDATE_SCOPED = false || touch %s"\n' \
   "$TMP_ROOT/ci-restack-scoped-ran" >> "$CI_WT/kendex.settings.toml"
 CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed ci-resolve
-assert_eq "$CI_RESOLVED" validate-mode=ci 'push-first restack resolves to pending CI'
+assert_eq "$CI_RESOLVED" validate-mode=ci 'a covered restack resolves to pending CI'
 CI_OUT="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main -)" || fixture_failed ci-start
 CI_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$CI_OUT")"
 CI_RECORD="$(live "$RESTACK_DOC" "$RECORD" "$CI_WT" main "$CI_DIR")" || fixture_failed ci-record
@@ -392,36 +389,16 @@ assert_eq "$(grep -c '^class-base=' "$CI_DIR/start" || :)" 0 'restack CI record 
 # The restack rule these rows hold lives in the runtime's validation start,
 # where its must-fail control mutates it.
 
-# Execute the workflow's mode block for every order under a covered subset.
-for order in review-first open-first push-first; do
+# Execute the workflow's mode read under every order, and none, with a
+# covered subset: the order decides publication alone.
+for order in review-first open-first push-first ''; do
   sed '/^ORCH_PR_ORDER =/d; /^DEV_VALIDATE_SELECTION_CMD =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
   mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
-  printf 'ORCH_PR_ORDER = "%s"\nDEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' "$order" >> "$CI_WT/kendex.settings.toml"
-  want=range
-  [[ "$order" != push-first ]] || want=ci
+  [[ -z "$order" ]] || printf 'ORCH_PR_ORDER = "%s"\n' "$order" >> "$CI_WT/kendex.settings.toml"
+  printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=subset"\n' >> "$CI_WT/kendex.settings.toml"
   CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-resolve
-  assert_eq "$CI_RESOLVED" "validate-mode=$want" "$order keeps its restack validation order with subset CI coverage"
+  assert_eq "$CI_RESOLVED" validate-mode=ci "order=${order:-unset} restack resolves pending CI with subset CI coverage"
 done
-cp "$RESTACK_DOC" "$TMP_ROOT/restack-order-mutant.md"
-mutate_file "$TMP_ROOT/restack-order-mutant.md" '[[ "$PR_ORDER" != pr-order=push-first ]] ||' 'false ||'
-sed '/^ORCH_PR_ORDER =/d' "$CI_WT/kendex.settings.toml" > "$CI_WT/settings.next"
-mv "$CI_WT/settings.next" "$CI_WT/kendex.settings.toml"
-printf 'ORCH_PR_ORDER = "review-first"\n' >> "$CI_WT/kendex.settings.toml"
-CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-order-mutant.md" "$RESOLVE" "$CI_WT" main -)" || fixture_failed order-control
-assert_eq "$CI_RESOLVED" validate-mode=ci 'control: applying the opt-in base to every order breaks review-first restack validation'
-
-cp "$RESTACK_DOC" "$TMP_ROOT/restack-array-mutant.md"
-mutate_file "$TMP_ROOT/restack-array-mutant.md" '${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}' '"${RESTACK_MODE_ARGS[@]}"'
-if (( BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] == 2 )); then
-  array_rc=0
-  LC_ALL=C PATH="$TMP_ROOT/ci-bin:$PATH" live "$TMP_ROOT/restack-array-mutant.md" "$RESOLVE" "$CI_WT" main - > "$TMP_ROOT/array-control.out" 2> "$TMP_ROOT/array-control.err" || array_rc=$?
-  array_error="$(sed 's/^[^:]*: line [0-9][0-9]*: //' "$TMP_ROOT/array-control.err")"
-  printf 'control: bare-array diagnostic=%s\n' "$array_error"
-  assert_eq "$array_rc" 127 'control: bare empty-array expansion fails review-first under Bash 3.2 nounset' "$TMP_ROOT/array-control.err"
-  assert_eq "$array_error" 'RESTACK_MODE_ARGS[@]: unbound variable' 'control: bare empty-array failure names the target array' "$TMP_ROOT/array-control.err"
-else
-  printf 'control: bare-array requires Bash 3.2; current=%s\n' "$BASH_VERSION"
-fi
 
 # Pending validation comes from an accepted receipt or a run submit starts.
 # Execute the workflow's binding and no-CI check against the real run record.

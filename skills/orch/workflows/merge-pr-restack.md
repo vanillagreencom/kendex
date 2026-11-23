@@ -56,18 +56,12 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    ```
 
    ```bash
-   RESTACK_MODE_ARGS=()
-   if ! PR_ORDER="$([MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime pr order [WT_PATH])"; then
-     PR_ORDER=pr-order=review-first
-   fi
-   [[ "$PR_ORDER" != pr-order=push-first ]] || RESTACK_MODE_ARGS=(--base origin/[BASE_BRANCH])
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --resolve-mode --worktree [WT_PATH] --base origin/[BASE_BRANCH]
    ```
 
-   - A refused or failed order read takes review-first.
    - A non-zero exit from `resolve-base-branch`, `--resolve-mode` or the `--record` read below hands back with that command's stderr and pushes nothing.
 
-   **`validate-mode=ci`.** Under `push-first`, a covered head records required CI as pending and starts no local range command. Step 4's exact-head CI wait proves the published head. Record the pending run through the validation entry:
+   **`validate-mode=ci`.** A covered head records required CI as pending and starts no local range command. Step 4's exact-head CI wait proves the published head. Record the pending run through the validation entry:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack

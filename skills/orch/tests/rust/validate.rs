@@ -120,6 +120,12 @@ impl World {
     }
 
     fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
+        self.run_without(args, extra, &[])
+    }
+
+    /// `run` with each key of `unset` left out of the child's environment,
+    /// unless `extra` names it.
+    fn run_without(&self, args: &[&str], extra: &[(&str, &str)], unset: &[&str]) -> Output {
         let mut command = support::isolated();
         command
             .arg("--state-dir")
@@ -128,6 +134,9 @@ impl World {
             .current_dir(&self.worktree);
         for (k, v) in self.env() {
             command.env(k, v);
+        }
+        for k in unset {
+            command.env_remove(k);
         }
         for (k, v) in extra {
             command.env(k, v);
@@ -3365,7 +3374,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     }
     if matches!(
         case,
-        "queue-no-merge-queue" | "queue-absent" | "push-first-no-pr-no-queue"
+        "queue-no-merge-queue" | "queue-absent" | "no-pr-no-queue"
     ) {
         rules = json!([{ "type":"required_status_checks", "parameters":{"required_status_checks":[{"context":"CI"}]} }]);
     }
@@ -3398,9 +3407,9 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
         replies[rules_page("feature%2Fparent", 1)] = json!({"body":[]});
         replies["repos/o/r/branches/feature%2Fparent"] = json!({"body":{"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":false,"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}});
     }
-    // gh's answer for a branch with no pull request, which push-first
-    // reads as its resolved base.
-    if matches!(case, "push-first-no-pr" | "push-first-no-pr-no-queue") {
+    // gh's answer for a branch with no pull request, whose rules are read
+    // at the resolved base.
+    if matches!(case, "no-pr" | "no-pr-no-queue") {
         replies["pr view --json"] =
             json!({"exit":1,"stderr":"no pull requests found for branch \"feature\""});
     }
@@ -3457,7 +3466,7 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
         ("push-base", "range", "push-base"),
         ("setting-empty", "range", "setting-empty"),
         ("stacked", "range", "context-unrequired"),
-        ("push-first-no-pr", "ci", ""),
+        ("no-pr", "ci", ""),
         ("class-trivial", "range", "class-uncovered"),
         ("class-standard-unmeasured", "ci", ""),
         ("class-docs", "range", "class-uncovered"),
@@ -3527,9 +3536,6 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
             ),
             ("DEV_VALIDATE_RANGE_CMD", "echo local-range"),
         ];
-        if case == "push-first-no-pr" {
-            extra.push(("ORCH_PR_ORDER", "push-first"));
-        }
         if case.starts_with("queue-absent") {
             extra.push(("CHANGE_SCOPE_PATHS_CLI", alone.as_str()));
         }
@@ -3572,8 +3578,8 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
             assert_eq!(text(&last).trim(), "last-pass=none", "{case}");
         }
         // A read-only resolution of the same round reads the base the start
-        // read: the open PR's, or push-first's resolved base before one.
-        if matches!(case, "required" | "stacked" | "push-first-no-pr") {
+        // read: the open PR's, or the resolved base before one.
+        if matches!(case, "required" | "stacked" | "no-pr") {
             let wt = w.worktree.display().to_string();
             let resolved = w.entry(
                 &["--resolve-mode", "--worktree", &wt, "--base", &base],
@@ -3632,8 +3638,8 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
 }
 
 #[test]
-fn under_push_first_a_named_range_start_asks_the_ci_admission_and_review_first_runs_it_locally() {
-    for (order, want) in [("push-first", "ci"), ("review-first", "range")] {
+fn a_named_range_start_asks_the_ci_admission_under_every_publication_order() {
+    for order in ["push-first", "review-first", "open-first"] {
         let w = World::new();
         let base = w.head();
         w.commit("source.rs");
@@ -3652,8 +3658,70 @@ fn under_push_first_a_named_range_start_asks_the_ci_admission_and_review_first_r
         assert!(out.status.success(), "{order}: {}", stderr(&out));
         let dir = directory(&out);
         let record = read_record(&w, &dir);
-        assert_eq!(field(&record, "validate-mode"), want, "{order}: {record}");
-        assert_eq!(Path::new(&dir).join("execution").exists(), want != "ci");
+        assert_eq!(field(&record, "validate-mode"), "ci", "{order}: {record}");
+        assert!(!Path::new(&dir).join("execution").exists(), "{order}");
+    }
+}
+
+/// An implement round asks the CI admission whatever the publication
+/// order: admitted, required CI holds its proof and no command runs, the
+/// base read at the resolved base branch while no pull request is open;
+/// refused, the whole battery runs locally.
+#[test]
+fn an_implement_round_ci_admits_runs_no_command_under_every_publication_order() {
+    for order in [
+        Some("review-first"),
+        Some("open-first"),
+        Some("push-first"),
+        None,
+    ] {
+        for (world, want, cause) in [
+            ("required", "ci", ""),
+            ("no-pr", "ci", ""),
+            ("context-unrequired", "full", "context-unrequired"),
+        ] {
+            let case = format!("{order:?} {world}");
+            let w = World::new();
+            let (path, replies, log) = ci_world(&w, world);
+            w.base_with(&[]);
+            w.commit("source.rs");
+            let mut extra = vec![
+                ("PATH", path.as_str()),
+                ("GH_FAKE_REPLIES", replies.as_str()),
+                ("GH_FAKE_LOG", log.as_str()),
+                ("GH_REPO", "o/r"),
+                ("ORCH_DELIVERY", "pr"),
+                ("DEV_VALIDATE_CI_CONTEXT", "CI"),
+            ];
+            if let Some(order) = order {
+                extra.push(("ORCH_PR_ORDER", order));
+            }
+            let started = ok(&w.run_without(
+                &[
+                    "validate",
+                    "start",
+                    "--item",
+                    ITEM_ID,
+                    "--round",
+                    ROUND,
+                    "--poll",
+                    "1",
+                    "--foreground",
+                ],
+                &extra,
+                &["ORCH_PR_ORDER"],
+            ));
+            assert_eq!(started["mode"], want, "{case}: {started}");
+            let dir = started["run_dir"].as_str().unwrap();
+            let record = read_record(&w, dir);
+            assert_eq!(field(&record, "validate-mode"), want, "{case}: {record}");
+            assert_eq!(field(&record, "ci-fallback"), cause, "{case}: {record}");
+            assert_eq!(
+                Path::new(dir).join("execution").exists(),
+                want != "ci",
+                "{case}"
+            );
+        }
     }
 }
 
@@ -3732,37 +3800,35 @@ fn an_admitted_ci_round_executes_scoped_suites_but_a_restack_skips_the_selector(
 }
 
 #[test]
-fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_open_all() {
+fn every_start_asks_the_ci_admission_before_its_selection_and_scopes_an_all_ci_does_not_take() {
     // The selector previews with $SEL, recording the mode it was asked
     // for; its scoped run passes unless $SEL ends `-red`.
     let selector = "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo 'validate: lanes=scoped selection=subset'; [ \"$SEL\" != all-red ]; else printf '%s\\n' \"$DEV_VALIDATE_MODE\" > \"$MODE_FILE\"; if [ \"$SEL\" = failed ]; then echo 'selector: unavailable' >&2; exit 1; fi; echo \"selection=${SEL%-red}\"; fi";
-    // (requested, selection, world, change, order) and the record's (mode,
+    // (requested, selection, world, change) and the record's (mode,
     // scoped, ci-fallback, verdict). The real classifier reads the change:
     // `trivial` a trivial class; `queue` queue-only work; `branch-queue`
     // queue-only work on the branch whole and not in the round.
-    for (requested, sel, world, fixture, order, want) in [
-        (
-            "full",
-            "all",
-            "required",
-            "",
-            "review-first",
-            ("ci", "true", "", "pending"),
-        ),
+    for (requested, sel, world, fixture, want) in [
+        ("full", "all", "required", "", ("ci", "true", "", "pending")),
         (
             "full",
             "subset",
             "required",
             "",
-            "review-first",
-            ("full", "", "", "pass"),
+            ("ci", "true", "", "pending"),
+        ),
+        (
+            "full",
+            "subset",
+            "context-unrequired",
+            "",
+            ("full", "", "context-unrequired", "pass"),
         ),
         (
             "range",
             "subset",
             "required",
             "",
-            "review-first",
             ("ci", "true", "", "pending"),
         ),
         (
@@ -3770,7 +3836,6 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "all",
             "pr-not-open",
             "",
-            "review-first",
             ("full", "true", "pr-not-open", "pass"),
         ),
         (
@@ -3778,15 +3843,13 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "all-red",
             "pr-not-open",
             "",
-            "review-first",
             ("full", "true", "pr-not-open", "FAILING"),
         ),
         (
             "full",
             "all",
-            "push-first-no-pr",
+            "no-pr",
             "trivial",
-            "push-first",
             ("full", "true", "class-uncovered", "pass"),
         ),
         (
@@ -3794,43 +3857,32 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "all",
             "required",
             "trivial",
-            "review-first",
-            ("full", "", "class-uncovered", "pass"),
+            ("full", "true", "class-uncovered", "pass"),
         ),
         (
             "full",
             "failed",
             "required",
             "",
-            "review-first",
-            ("full", "", "", "pass"),
+            ("full", "", "selection-unread", "pass"),
         ),
-        (
-            "full",
-            "subset",
-            "push-first-no-pr",
-            "",
-            "push-first",
-            ("ci", "true", "", "pending"),
-        ),
+        ("full", "subset", "no-pr", "", ("ci", "true", "", "pending")),
         (
             "ci",
             "unknown",
-            "push-first-no-pr",
+            "no-pr",
             "queue",
-            "push-first",
             ("range", "", "selection-unread", "pass"),
         ),
         (
             "range",
             "subset",
-            "push-first-no-pr-no-queue",
+            "no-pr-no-queue",
             "branch-queue",
-            "push-first",
             ("range", "", "class-uncovered", "pass"),
         ),
     ] {
-        let case = format!("{requested} {sel} {world} {fixture} {order}");
+        let case = format!("{requested} {sel} {world} {fixture}");
         let w = World::new();
         let (path, replies, log) = ci_world(&w, world);
         let mut base = if fixture == "trivial" {
@@ -3853,7 +3905,6 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             ("GH_FAKE_LOG", log.as_str()),
             ("GH_REPO", "o/r"),
             ("ORCH_DELIVERY", "pr"),
-            ("ORCH_PR_ORDER", order),
             ("DEV_VALIDATE_CI_CONTEXT", "CI"),
             ("DEV_VALIDATE_RANGE_CMD", "echo range"),
             ("DEV_VALIDATE_SELECTION_CMD", selector),

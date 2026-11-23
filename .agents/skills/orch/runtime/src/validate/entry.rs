@@ -20,7 +20,7 @@ const VALIDATE: &str = "validate";
 
 A run has no time limit: its executor ends it as stalled only after the start's quiet-secs with no output, no new process and no CPU work, and a wait then prints validate=FAILING cause=stalled step=STEP last-line=LINE. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
 
-An admitted --run-id uses the runtime's declaration and base to resolve the mode. An ad-hoc start defaults to full. Range and ci requests require --base; full ignores a carried base with a notice. --reproduce forces fresh local work without CI admission or selector preview. --restack is a ci request without scoped execution.
+An admitted --run-id uses the runtime's declaration and base to resolve the mode. An ad-hoc start defaults to full. Every start but --reproduce and a docs-only snapshot asks whether required CI takes the change, at an open pull request's base or, before one opens, the resolved base branch; ORCH_PR_ORDER is no input. Range and ci requests require --base; full ignores a carried base with a notice. --reproduce forces fresh local work without CI admission or selector preview. --restack is a ci request without scoped execution.
 
 A docs-only snapshot runs the declared selector scoped, else DEV_VALIDATE_TEXT_CMD. Without either declaration it uses the range/full command and records that mode. A scoped docs pass proves that snapshot. Required CI records pending, never a local CI pass.
 
@@ -109,7 +109,6 @@ fn request(base: Option<String>) -> StartRequest {
         foreground: false,
         reproduce: false,
         restack: false,
-        prove: false,
     }
 }
 
