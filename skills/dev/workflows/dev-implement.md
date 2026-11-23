@@ -413,7 +413,7 @@ Print every field of the Validation Routes row in the evidence template below.
 - Keep native `cause=stalled` and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel. Never infer fallback, scope or a stall from prose or elapsed seconds: the run's `--record` line and its sentinel own those classifications.
 - A refused start is recorded as such and creates no validation run or verdict.
 
-A validation-routing check reads the evidence files attached to the originating item, listed by `linear.sh attachments list [ISSUE_ID]` and read by `linear.sh attachments fetch [URL] --output [PATH]`. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
+A validation-routing check reads each dev round's rows, implement and fix alike, from the evidence files attached to the originating item, listed by `linear.sh attachments list [ISSUE_ID]` and read by `linear.sh attachments fetch [URL] --output [PATH]`. It reads a restack run's rows, which no dev round writes, from the orchestrator's session and merge comments. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
 
 ```markdown
 ## Completion Summary
@@ -607,7 +607,7 @@ Summary: [ISSUE_ID] ✓
    - [Rule the validation list is missing]
    ```
 
-   - Link each child's summary for its files, decisions, metrics and proof. File and commit counts do not replace that proof.
+   - Link each child's summary for its files, decisions and metrics, and the evidence file its `**Evidence file**` line links for its proof. File and commit counts do not replace that proof.
 
 3. **Write the artifact**, keyed to the Parent ID, with that group's `Round ID:` when the bundle was delegated in groups:
 

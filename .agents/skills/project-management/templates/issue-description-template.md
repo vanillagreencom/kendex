@@ -109,8 +109,8 @@ Notes per placeholder:
   - Omit the section when absent.
 - `[DIRECTIVE_SOURCE]`: where the owner's full text is.
   - It is the source message's id, a mailbox or Slack id, when that message holds the full text.
-  - Otherwise it is the repository path of a file holding the full text, which the filer attaches to the created issue with `linear.sh issues update [ISSUE_ID] --attach [PATH]`.
-  - The description never holds the full text.
+  - Otherwise, on Linear, it is the repository path of a file holding the full text, which the filer attaches to the created issue with `linear.sh issues update [ISSUE_ID] --attach [PATH]`. The description never holds the full text.
+  - Otherwise, on GitHub, where this route attaches nothing, the body keeps the full text in a fenced block below the quote line, and `[DIRECTIVE_SOURCE]` reads `full text below`.
 - `[FILE_PATH]`: a backticked path.
   - **Never line numbers.**
   - Name the function or struct.
