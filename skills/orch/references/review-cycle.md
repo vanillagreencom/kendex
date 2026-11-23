@@ -189,8 +189,8 @@ Read when an admission answers `due`. It does so when the session is past its pl
 
 4. Compare HEAD with `[BOUND_HEAD]`. If it moved, apply [Rules reload after a rebase](../SKILL.md#the-cycle) at once, after a failed transport too.
 5. A failed checkpoint starts no panel and records no publication.
-6. Record the published head in the handoff under [oversee-events.md § Hand off a lane before it runs out](oversee-events.md#hand-off-a-lane-before-it-runs-out).
-7. Copy the batch's assignment facts into the handoff by § Original-batch continuation step 1.
+6. Copy the batch's assignment facts into the handoff by § Original-batch continuation step 1.
+7. Record the published head in the handoff under [oversee-events.md § Hand off a lane before it runs out](oversee-events.md#hand-off-a-lane-before-it-runs-out).
 8. Before retirement, collect the attached and external returns already available through review-pr.md § 3's checks.
    - Record every other return as unread, with only its known assignment, job, output path, wake, deadline and survival facts.
    - An unknown external outcome or liveness stays unread. Invent no wait target or result, and launch no duplicate job.
