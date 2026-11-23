@@ -61,9 +61,11 @@ scripts=${reader%/mailbox/scripts/lane-mail}/orch/scripts
 
 # stdout passes straight through; stderr is held so that the wrapper's own
 # line for an unbuilt runtime never stands ahead of the answer given here.
+# The wrapper builds nothing for this call: the hook answers within its
+# timeout, so an unbuilt runtime's build starts detached below.
 rc=0
 exec 3>&1
-err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?
+err=$(AGENT_RUNTIME_NO_BUILD=1 "$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?
 exec 3>&-
 if [ "$rc" -ne 69 ]; then
   [ -z "$err" ] || printf '%s\n' "$err" >&2

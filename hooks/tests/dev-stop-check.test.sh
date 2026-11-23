@@ -202,8 +202,8 @@ transcript hold-only "$(claude_hold "$RUN_LIVE")"
 # orch-runtime that cannot answer, as a catalog checkout holds orch's
 # source, which the walk stops short of. `global` installs it under a harness
 # root moved out of the home (CODEX_HOME elsewhere), beside the home's shared
-# tree. `unbuilt` is the `orch` install on a host whose runtime cache holds no
-# build, where the real reader answers its setup line.
+# tree. `unbuilt` is the `orch` install on a host with cargo whose runtime
+# cache holds no build, where the real reader answers its setup line.
 world_hook() { # WORLD -> the hook's path
   case "$1" in
     shared | codex) printf '%s' "$TMP_ROOT/world.$1/.codex/hooks/dev-stop-check.sh" ;;
@@ -277,6 +277,11 @@ farm() { # NAME TOOL...
 }
 FARM_NO_JQ="$(farm no-jq git cat grep awk)"
 FARM_NONE="$(farm none)"
+# agent-runtime's planted cargo, first on PATH for the unbuilt rows, so a
+# reader that built would run no real build.
+FARM_CARGO="$TMP_ROOT/farm.cargo"
+mkdir -p "$FARM_CARGO"
+ln -s "$TEST_DIR/../../skills/agent-runtime/tests/setup/cargo" "$FARM_CARGO/cargo"
 
 payload() { # AGENT-TRANSCRIPT PARENT-TRANSCRIPT ACTIVE
   jq -cn --arg a "$1" --arg p "$2" --argjson active "$3" \
@@ -343,6 +348,7 @@ stop_rows() {
       -) run_hook "$world" "$(payload_of "$spec")" ;;
       no-jq) run_hook "$world" "$(payload_of "$spec")" "$FARM_NO_JQ" ;;
       none) run_hook "$world" "$(payload_of "$spec")" "$FARM_NONE" ;;
+      cargo) run_hook "$world" "$(payload_of "$spec")" "$FARM_CARGO:$PATH" ;;
     esac
     extra=""
     case "$under" in
@@ -381,8 +387,8 @@ a worktree since removed passes|orch|-|agent:removed|0|-|-
 a transcript naming no worktree passes|orch|-|agent:none|0|-|-
 a reader that cannot answer is refused with its words|failing|-|agent:live-claude|2|dev-stop-check: unread=$WT_LIVE|cause
 a reader that cannot answer on a continued stop is reported, not held|failing|-|active:live-claude|0|dev-stop-check: unread=$WT_LIVE|cause
-a reader whose runtime is not built holds the stop with its setup line|unbuilt|-|agent:live-claude|2|dev-stop-check: unread=$WT_LIVE|setup
-a reader whose runtime is not built on a continued stop is reported, not held|unbuilt|-|active:live-claude|0|dev-stop-check: unread=$WT_LIVE|setup
+a reader whose runtime is not built holds the stop with its setup line|unbuilt|cargo|agent:live-claude|2|dev-stop-check: unread=$WT_LIVE|setup
+a reader whose runtime is not built on a continued stop is reported, not held|unbuilt|cargo|active:live-claude|0|dev-stop-check: unread=$WT_LIVE|setup
 a reader in the shared tree beside the hook is found|shared|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 a reader in the repository's shared tree is found at its root, not past it|codex|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 a reader in the home's shared tree is found for a harness root outside the home|global|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
@@ -527,6 +533,10 @@ stop_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_ro
 # word instead, every row naming the verb's start passes unheld.
 stop_control matcher-word "$HOOK" 'local flag prefix="orch-runtime($DQUOTE|$SQUOTE)? +validate +entry"' \
   'prefix="dev-validate-run($DQUOTE|$SQUOTE)?"' HOOK stop_rows "${LIVE_STOP_LABELS[@]}"
+# A hook that lets its reader build answers no setup line within its timeout.
+stop_control built-on-call "$HOOK" 'export AGENT_RUNTIME_NO_BUILD=1' 'unset AGENT_RUNTIME_NO_BUILD' HOOK stop_rows \
+  'a reader whose runtime is not built holds the stop with its setup line' \
+  'a reader whose runtime is not built on a continued stop is reported, not held'
 form_control running-newline 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' \
   'form == "bare" && operator == "newline" && position == "around"'
 

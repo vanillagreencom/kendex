@@ -5,7 +5,7 @@ Maintainer notes for the orch package: its runtime under `runtime/`, its scripts
 ## Prerequisites
 
 - What [README.md § Setup](README.md#setup) names. `orch-runtime ready` checks each and names the fix for one missing or refused.
-- The suites run on Linux, and on macOS for the subset `tools/macos-test-contracts` selects, as CI runs them. A suite that reaches `orch-runtime` before `setup` built it fails on `orch-runtime: setup-required`.
+- The suites run on Linux, and on macOS for the subset `tools/macos-test-contracts` selects, as CI runs them. A suite that reaches `orch-runtime` before `setup` built it builds it at that call, or fails on `orch-runtime: setup-required` where no cargo is on its `PATH`.
 
 ## Build
 

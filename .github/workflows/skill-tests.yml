@@ -824,7 +824,7 @@ jobs:
           echo "installed: $installed"
 
       # The orch suites and the hook's run orch-runtime, whose wrapper
-      # refuses `setup-required` where no build matches the checkout's
+      # builds at its first call where no build matches the checkout's
       # sources, and so do the Linux-only lane-mail.sh, lane-mail-compact.sh
       # and lane-mail-session.sh of `mailbox`, room-check.test.sh of `rest`'s
       # second-opinion battery, and Jarvis's presence (the hook's world),

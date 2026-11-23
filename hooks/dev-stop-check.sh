@@ -235,6 +235,9 @@ if [ -z "$READER" ] && [ -n "$ROOT" ] && [ -x "$ROOT/.agents/skills/$SCRIPT" ]; 
   esac
 fi
 [ -n "$READER" ] || notice reader "${HOOK_DIR:-unlocatable}"
+# The hook answers within its timeout, so the reader's wrapper reports an
+# unbuilt runtime rather than building it here.
+export AGENT_RUNTIME_NO_BUILD=1
 
 while IFS= read -r WORKTREE; do
   # A worktree since removed holds no run directory, so no run to wait on.

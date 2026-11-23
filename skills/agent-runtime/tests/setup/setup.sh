@@ -141,17 +141,61 @@ if [ -x "$TMP_ROOT/cache-changed/bin/agent-runtime-$KEY2" ]; then pass 'the new 
 # Put the byte back: the rows below speak of KEY.
 cp -p "$SRC/runtime/src/lib.rs" "$PKG/runtime/src/lib.rs"
 
-# --- the wrapper execs the keyed binary, and never builds -----------------
+# --- the wrapper execs the keyed binary, and builds a missing one ----------
 run "$CACHE" "$WRAPPER" inspect --record r.json
 assert_eq "$RC" 0 'wrapper exits with the binary' "$TMP_ROOT/err"
 assert_eq "$OUT" 'fake-binary argv=inspect --record r.json' 'wrapper hands every argument to the keyed binary'
+
+# A PATH holding every tool the wrapper and the setup read but cargo.
+NOCARGO="$TMP_ROOT/no-cargo-bin"
+mkdir -p "$NOCARGO"
+for tool in awk bash cat chmod cut date find ln mkdir mv readlink rm sh sha256sum shasum sort tr wc; do
+  if found="$(command -v "$tool")"; then ln -s "$found" "$NOCARGO/$tool"; fi
+done
 before="$(calls)"
-run "$TMP_ROOT/cache-empty" "$WRAPPER" version
-assert_eq "$RC" 69 'wrapper without a binary exits 69'
-assert_eq "$ERR" "agent-runtime: setup-required key=$KEY run=$PKG/scripts/setup" 'wrapper names the key and the setup to run'
-assert_eq "$OUT" '' 'wrapper prints no reply without a binary'
-assert_eq "$(calls)" "$before" 'wrapper calls cargo never'
-if [ ! -e "$TMP_ROOT/cache-empty" ]; then pass 'wrapper writes no cache'; else fail 'wrapper writes no cache'; fi
+RC=0
+OUT="$(PATH="$NOCARGO" AGENT_RUNTIME_CACHE="$TMP_ROOT/cache-empty" "$WRAPPER" version 2>"$TMP_ROOT/err")" || RC=$?
+assert_eq "$RC|$(cat "$TMP_ROOT/err")|$OUT|$(calls)" "69|agent-runtime: setup-required key=$KEY run=$PKG/scripts/setup||$before" \
+  'wrapper on a computer with no cargo exits 69, names the key and the setup to run, and prints no reply'
+if [ ! -e "$TMP_ROOT/cache-empty" ]; then pass 'wrapper with no cargo writes no cache'; else fail 'wrapper with no cargo writes no cache'; fi
+AGENT_RUNTIME_NO_BUILD=1 run "$TMP_ROOT/cache-empty" "$WRAPPER" version
+assert_eq "$RC|$ERR|$OUT|$(calls)" "69|agent-runtime: setup-required key=$KEY run=$PKG/scripts/setup||$before" \
+  'wrapper asked to build nothing refuses as with no cargo, though cargo is there'
+
+# The checkout moves to new runtime sources by a plain fast-forward, as a
+# person's or an automation's pull moves it, and the next call answers.
+MOVED="$TMP_ROOT/moved"
+mkdir -p "$MOVED"
+cp -R "$PKG/scripts" "$PKG/runtime" "$MOVED/"
+git -C "$MOVED" init -q -b main
+git -C "$MOVED" config gc.auto 0
+git -C "$MOVED" config maintenance.auto false
+git -C "$MOVED" add -A
+git -C "$MOVED" -c user.name=fixture -c user.email=fixture@example.invalid commit -q -m base
+git -C "$MOVED" checkout -q -b topic
+printf '// moved\n' >>"$MOVED/runtime/src/lib.rs"
+git -C "$MOVED" -c user.name=fixture -c user.email=fixture@example.invalid commit -q -am moved
+git -C "$MOVED" checkout -q main
+MC="$TMP_ROOT/cache-moved"
+run "$MC" "$MOVED/scripts/setup"
+assert_eq "$RC|$(key_of "$OUT")" "0|$KEY" 'premise: the checkout before the move holds the program for its key' "$TMP_ROOT/err"
+git -C "$MOVED" merge -q --ff-only topic
+before="$(calls)"
+run "$MC" "$MOVED/scripts/agent-runtime" version
+MOVED_KEY="$(key_of "$ERR")"
+assert_eq "$RC|$OUT|$(calls)" "0|fake-binary argv=version|$((before + 1))" \
+  'after a fast-forward past a runtime change the next call builds once and answers' "$TMP_ROOT/err"
+assert_contains "$ERR" "agent-runtime-setup: key=$MOVED_KEY binary=$MC/bin/agent-runtime-$MOVED_KEY" "the build's line goes to stderr"
+if [ "$MOVED_KEY" != "$KEY" ] && [ -x "$MC/bin/agent-runtime-$MOVED_KEY" ]; then pass 'the build placed the moved sources'"'"' own key'; else fail 'the build placed the moved sources'"'"' own key' "$MOVED_KEY"; fi
+
+# A build that fails ends the call with the setup's refusal, last on stderr.
+printf '// failing\n' >>"$MOVED/runtime/src/lib.rs"
+FAKE_CARGO_EXIT=1 run "$MC" "$MOVED/scripts/agent-runtime" version
+assert_eq "$RC|$OUT" '69|' 'a call whose build fails exits 69 with no reply'
+case "${ERR##*$'\n'}" in
+  'agent-runtime-setup: build-failed status=1 key='*) pass "the setup's refusal is the call's last stderr line" ;;
+  *) fail "the setup's refusal is the call's last stderr line" "$ERR" ;;
+esac
 
 # --- a failed build leaves bin/ empty --------------------------------------
 FAKE_CARGO_EXIT=1 run "$TMP_ROOT/cache-failed" "$SETUP"
@@ -579,12 +623,7 @@ run "$DC" "$SETUP" --detach --hold "$MAIL"
 assert_eq "$RC|$OUT" "3|$(unbuilt_line "$DC" build-lost)" 'detach: a claim no build took within its grace is lost'
 
 # No cargo: the caller is told once, nothing is recorded, and a later cargo
-# builds. The PATH holds every tool the setup reads but cargo.
-NOCARGO="$TMP_ROOT/no-cargo-bin"
-mkdir -p "$NOCARGO"
-for tool in awk bash cat chmod cut date find ln mkdir mv readlink rm sh sha256sum shasum sort tr wc; do
-  if found="$(command -v "$tool")"; then ln -s "$found" "$NOCARGO/$tool"; fi
-done
+# builds, on the PATH without cargo the wrapper rows use.
 DC="$TMP_ROOT/cache-no-cargo"
 RC=0
 OUT="$(PATH="$NOCARGO" AGENT_RUNTIME_CACHE="$DC" "$SETUP" --detach --hold "$MAIL" 2>"$TMP_ROOT/err")" || RC=$?
