@@ -319,12 +319,11 @@ class SuiteStop(unittest.TestCase):
                 if suite.poll() is None:
                     os.killpg(suite.pid, signal.SIGKILL)
                     suite.wait()
-                # A failed row stops what the child left before its scratch
-                # goes: a server outside any scope, and any in the child's own.
+                # A failed row stops a server the child left outside any scope
+                # before its scratch goes; the child's own shutdown owns the
+                # servers in its scope folder.
                 for row in self.launches(run):
                     subprocess.run([tmux, "-L", self.label(row), "kill-server"], env=env, capture_output=True, timeout=10)
-                for server in run.glob("jarvis-tmux-*/sockets/tmux-*/*"):
-                    subprocess.run([tmux, "-S", str(server), "kill-server"], env=env, capture_output=True, timeout=10)
 
     @staticmethod
     def label(row):
