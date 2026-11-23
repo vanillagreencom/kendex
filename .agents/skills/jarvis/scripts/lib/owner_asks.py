@@ -22,7 +22,13 @@ CALL_SECONDS = 14
 # A satellite keeps this share of its own deadline for the SSH connect, the
 # main's start and the answer's return, and gives the main the rest, so the
 # main answers with its own cause first. The main's list needs about 9 s at
-# the 0.42 s per tracker read measured on the main home on 2026-11-22.
+# the 0.42 s per tracker read measured on the main home on 2026-11-22. The
+# trip, run on 2026-11-23 through host_call to a real sshd and jarvis-session
+# with a near-zero main budget, took 0.42 s on loopback. Behind a proxy that
+# delayed each direction, it took 1.2 s at a 100 ms round trip and 2.8 s at
+# 300 ms. Counting the TCP handshake the proxy skips, a trip costs 0.42 s plus
+# about 8.8 round trips, so this share holds to about a 180 ms round trip. A
+# slower trip reports as main-slow.
 TRANSPORT_SECONDS = 2
 PAGE_ROWS = 32
 PAGE_BYTES = 16 * 1024
