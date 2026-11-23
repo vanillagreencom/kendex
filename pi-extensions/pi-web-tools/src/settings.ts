@@ -249,7 +249,7 @@ function resolveSecretRef(value: string | undefined, name: string, resolution: R
 	return resolved;
 }
 
-/** The key file's `EXA_API_KEY`, consulted only when no other source set one.
+/** The key file's `EXA_API_KEY`, used only when no other source set one.
  * A key file that cannot supply it leaves the key unset, which withholds the
  * Exa tools, and records why, naming the file, where `/web-tools:doctor`
  * shows it. The key is returned, never assigned to process.env, so no process

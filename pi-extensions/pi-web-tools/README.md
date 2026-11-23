@@ -61,7 +61,7 @@ Set these as environment variables, in the project's `.env` or `.env.local`, or 
 
 `EXA_API_KEY` may also live in the computer's private key file: set `KENDEX_KEY_FILE` in your user environment to the file's absolute path. The file holds literal `KEY=value` lines.
 
-- The file's `EXA_API_KEY` line is read only when none of the places above holds the key. No other line is read.
+- The tools read the file whenever `KENDEX_KEY_FILE` is set and keep only its `EXA_API_KEY` line. They use that key only when none of the places above holds one.
 - The key stays inside Pi's process and is passed to no process Pi starts.
 - A project file cannot name the key file.
 - A key file with no `EXA_API_KEY` value, one that cannot be read, or a relative `KENDEX_KEY_FILE` leaves the key unset. `/web-tools:doctor` names the file and the cause.
