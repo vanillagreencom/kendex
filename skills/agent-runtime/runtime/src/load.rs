@@ -18,7 +18,7 @@
 //! and output of the response before it, is what the record between them
 //! added. That growth goes to a source only where everything between the
 //! two responses belongs to it, and to one item or section only where it is
-//! alone there; any other share is unsupported. The first response's prompt
+//! alone there; any other share is unclear. The first response's prompt
 //! also holds the harness's own prompt and tools, which no record names
 //! apart, so the first delivery's tokens are unsupported.
 
@@ -45,7 +45,10 @@ pub enum Figure {
     Measured { value: u64 },
     /// Derived from measured figures by this module's attribution rule.
     Attributed { value: u64 },
-    /// The record holds no figure this reader can take apart: never zero.
+    /// The record holds the figure only inside a share this reader cannot
+    /// settle to one source, item or section: never zero.
+    Unclear,
+    /// The harness gives no reading of the figure: never zero.
     Unsupported,
 }
 
@@ -194,6 +197,7 @@ enum Share {
     Whole(u64),
     /// Its gap held only its own source's items, which shared the growth.
     Source,
+    Unclear,
     Unsupported,
 }
 
@@ -386,7 +390,7 @@ impl Walk {
             .checked_sub(carried)
             .and_then(|g| u64::try_from(g).ok())
         else {
-            self.settle(&pending, Share::Unsupported);
+            self.settle(&pending, Share::Unclear);
             return;
         };
         let source = self.items[pending[0]].source;
@@ -396,7 +400,7 @@ impl Walk {
             *self.source_growth.entry(source).or_default() += growth;
             self.settle(&pending, Share::Source);
         } else {
-            self.settle(&pending, Share::Unsupported);
+            self.settle(&pending, Share::Unclear);
         }
     }
 
@@ -408,7 +412,7 @@ impl Walk {
 
     fn report(mut self) -> Report {
         let open: Vec<usize> = std::mem::take(&mut self.gap);
-        self.settle(&open, Share::Unsupported);
+        self.settle(&open, Share::Unclear);
         let context = SOURCES
             .iter()
             .map(|&source| self.source_reading(source))
@@ -419,7 +423,7 @@ impl Walk {
             .map(|section| {
                 let item = &self.items[section.item];
                 let (bytes, tokens) = if section.shared {
-                    (Figure::Unsupported, Figure::Unsupported)
+                    (Figure::Unclear, Figure::Unclear)
                 } else {
                     (
                         Figure::Measured { value: item.bytes },
@@ -449,6 +453,7 @@ impl Walk {
         let items: Vec<&Item> = self.items.iter().filter(|i| i.source == source).collect();
         let bytes = items.iter().map(|i| i.bytes).sum();
         let (mut value, mut attributed, mut had) = (0u64, false, 0usize);
+        let mut unsupported = false;
         for item in &items {
             match item.share {
                 Share::Own(n) => {
@@ -464,12 +469,16 @@ impl Walk {
                     attributed = true;
                     had += 1;
                 }
-                Share::Pending | Share::Unsupported => {}
+                Share::Unsupported => unsupported = true,
+                Share::Pending | Share::Unclear => {}
             }
         }
         value += self.source_growth.get(&source).copied().unwrap_or(0);
-        let tokens = if had == 0 && !items.is_empty() {
+        // An item the harness gives no reading of leaves its source none.
+        let tokens = if had == 0 && unsupported {
             Figure::Unsupported
+        } else if had == 0 && !items.is_empty() {
+            Figure::Unclear
         } else if attributed {
             Figure::Attributed { value }
         } else {
@@ -485,13 +494,14 @@ impl Walk {
     }
 }
 
-/// One item's tokens, alone: a share of its source's growth is not the
-/// item's own.
+/// One item's tokens, alone: a share of its source's growth is unclear for
+/// the item itself.
 fn item_tokens(share: Share) -> Figure {
     match share {
         Share::Own(value) => Figure::Measured { value },
         Share::Whole(value) => Figure::Attributed { value },
-        Share::Source | Share::Pending | Share::Unsupported => Figure::Unsupported,
+        Share::Source | Share::Pending | Share::Unclear => Figure::Unclear,
+        Share::Unsupported => Figure::Unsupported,
     }
 }
 

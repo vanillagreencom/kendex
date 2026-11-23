@@ -26,12 +26,19 @@ const ROWS: &[Row] = &[
         fixture: "load/claude.jsonl",
         // msg_1: 2 + 23454 + 900 + 30; the sidechain's message is passed over.
         start: 24386,
-        // msg_2's prompt less msg_1's prompt and output.
         more: || {
-            vec![(
-                "/context/1/tokens",
-                json!({"basis": "attributed", "value": 32}),
-            )]
+            vec![
+                // msg_2's prompt less msg_1's prompt and output.
+                (
+                    "/context/1/tokens",
+                    json!({"basis": "attributed", "value": 32}),
+                ),
+                // msg_4's growth holds the persona.md read and turn p-3
+                // together, so neither the read nor its source owns it.
+                ("/sections/0/tokens", json!({"basis": "unclear"})),
+                ("/context/2/source", json!("rule-reads")),
+                ("/context/2/tokens", json!({"basis": "unclear"})),
+            ]
         },
     },
     Row {
