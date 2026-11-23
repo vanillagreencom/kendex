@@ -534,7 +534,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
    - A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) passes no `pr_number`, so the summary goes on the Linear item alone. A direct delivery of a GitHub-tracked item posts no summary.
    - Include every actual round's and run's Validation Routes under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file), among them the fix and restack runs since the previous summary.
    - After the merge-group CI passes, keep the original pending, failed and no-verdict rows. Record that CI proof separately by its run reference.
-   - Post each bundled child's rows on its own item through the same comment interface. A validation-routing Done-when box reads that item's attached evidence files for its dev rounds' rows, and these comments for its restack runs' rows.
+   - Post each bundled child's rows on its own item through the same comment interface. A validation-routing Done-when box reads the rows where [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file) **Where the records live** places them.
 
    **Linear only from here**, under [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution): the rest of this step runs for a Linear item alone.
 

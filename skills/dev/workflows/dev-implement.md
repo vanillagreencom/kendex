@@ -397,6 +397,12 @@ Always required. The summary carries the outcome only: what changed, each check 
 - Put the URL of the returned `attachments[0]` in the summary's `**Evidence file**` line. On a GitHub or ad-hoc round, that line names the path with no link.
 - If the attach fails, stop the round with its diagnostic.
 
+**Where the records live.** This is the one statement of where each round's Validation Routes rows live, for every reader:
+
+- On a Linear item, a dev round's rows are in its evidence file, attached to the item the round served: the sub-issue for a bundled implement round, the workflow item for a fix round. `linear.sh attachments list [ITEM_ID]` lists the files and `linear.sh attachments fetch [URL] --output [PATH]` reads one. While the worktree holds it, the round's local `tmp/evidence-[ITEM_ID]-[DEV_ROUND_ID].md` is the same file.
+- On a GitHub or ad-hoc item, a dev round's rows are in the orchestrator's session and merge comments, which orch's post-summary workflow § 1 fills from each round's local `tmp/evidence-[ITEM_ID]-[DEV_ROUND_ID].md`.
+- A restack run's rows, which no dev round writes, are in those session and merge comments.
+
 **Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `orch-runtime validate entry --record --run-dir [RUN_DIR]` evidence while available.
 
 - Use `--record` for its reported fields and `start` for that run's actual `quiet-secs`.
@@ -413,7 +419,7 @@ Print every field of the Validation Routes row in the evidence template below.
 - Keep native `cause=stalled` and host-caused `no-verdict` classifications in `outcome`, with the native ending or sentinel. Never infer fallback, scope or a stall from prose or elapsed seconds: the run's `--record` line and its sentinel own those classifications.
 - A refused start is recorded as such and creates no validation run or verdict.
 
-A validation-routing check reads each dev round's rows, implement and fix alike, from the evidence files attached to the originating item, listed by `linear.sh attachments list [ISSUE_ID]` and read by `linear.sh attachments fetch [URL] --output [PATH]`. It reads a restack run's rows, which no dev round writes, from the orchestrator's session and merge comments. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
+A validation-routing check reads the rows where **Where the records live** above places them. When it needs raw evidence, use the retained archive within its retention window or the operator's dated snapshot; an unavailable source stays unread.
 
 ```markdown
 ## Completion Summary
