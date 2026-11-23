@@ -11,7 +11,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
 
 - Skip step 1.
 - Run step 2 through the guarded restack and its rules reload.
-- Then, before step 2's validation, return to [submit-pr.md § 2.1](submit-pr.md#21-base-publication) from its entry. That route checks internal review, prepares, and returns control for another rules reload. It then validates the exact prepared head and transports it against its pinned base.
+- Then, before step 2's validation, return to [base-publication.md](base-publication.md) from its entry. That route checks internal review, prepares, and returns control for another rules reload. It then validates the exact prepared head and transports it against its pinned base.
 - Skip step 3 and the pull-request proof and merge steps.
 - A failed restack, validation or transport hands back without a completion notice.
 

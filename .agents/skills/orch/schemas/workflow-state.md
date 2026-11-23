@@ -558,7 +558,7 @@ An operation runs as `.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_
 - A fleet operation takes `--fleet`.
 - The named record writes are `record-round`, `record-panel`, `record-agents`, `record-disposition`, `record-comment-ledger`, `record-route`, `record-dev-return`, `record-pr-progress`, `record-surface-lane` and `record-overseer-ledger`; [`ops/mod.rs`](../runtime/src/ops/mod.rs) `Request` lists the others.
 - A transition's typed result is `.result.report`.
-- `verify-head` reads GitHub before it records. Its `.result.status` is `complete`, `pending` or `unreadable`, and `.result.verdict` stands only on `complete`. [submit-pr.md](../workflows/submit-pr.md) routes each status.
+- `verify-head` reads GitHub before it records. Its `.result.status` is `complete`, `pending` or `unreadable`, and `.result.verdict` stands only on `complete`. [base-publication.md § 5](../workflows/base-publication.md#5-verify-the-published-head) routes each status.
 
 The global `--state-dir <path>`, given before the verb, is the one way a command line names another checkout's state directory. The global `--no-private-env` keeps the settings reader off the project's private env file.
 

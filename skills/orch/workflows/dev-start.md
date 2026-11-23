@@ -486,7 +486,7 @@ The implement path only; a fix round has no QA signals or sub-issue set to recor
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-dev-return","qa_labels":[QA_LABELS_ARRAY],"sub_issues":[SUB_ISSUE_IDS_ARRAY]}'
 ```
 
-In the PR body's `## Done-when evidence` section, map each Done-when item to the files serving it, one `N: text` line per branch-provable box ([submit-pr.md § 2](submit-pr.md#2-push-and-submit) step 3).
+In the PR body's `## Done-when evidence` section, map each Done-when item to the files serving it, one `N: text` line per branch-provable box ([publication.md § PR body](../references/publication.md#pr-body)).
 
 - Every round measures against that map, never against its own last state.
 - Cut an unmapped hunk unless it is a [landing enabler](../../dev/SKILL.md#engineering-rules).

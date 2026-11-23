@@ -13,8 +13,9 @@
 # skills/orch/workflows/small.md § 2 and its section 3 with
 # skills/orch/workflows/review-pr.md § 1 through its section 3.3 and the
 # review JSON written in place of the reviewer,
-# skills/orch/workflows/submit-pr.md § 2.1 with its verification of the
-# published head and skills/orch/workflows/start-worktree.md § 5.4; or
+# skills/orch/workflows/base-publication.md § 1 through its section 7, with
+# the verification of the published head, and
+# skills/orch/workflows/start-worktree.md § 5.4; or
 # skills/orch/workflows/micro.md § 1 through its section 3 for a micro item.
 # Every step runs the real script; nothing here fakes a script's output. The
 # runtime operations run through scripts/orch-runtime: state init,
@@ -459,7 +460,7 @@ SH
   case "$tier_line" in tier=small*) ;; *) fail tier-review-value ;; esac
 fi
 
-# --- skills/orch/workflows/submit-pr.md § 2.1: base publication ---
+# --- skills/orch/workflows/base-publication.md § 1 through its section 4: base publication ---
 step delivery-setting
 delivery="$("$ORCH/orch-env" ORCH_DELIVERY pr)" || fail orch-env
 [ "$delivery" = push-base ] || fail delivery-value
@@ -490,7 +491,7 @@ PUSHED="$(jq -r '.result.delivery.commit // empty' <<<"$published")"
 PUSHED_BASE="$(jq -r '.result.delivery.base // empty' <<<"$published")"
 [ -n "$PUSHED" ] && [ -n "$PUSHED_BASE" ] || fail delivery-receipt
 
-# --- skills/orch/workflows/submit-pr.md § 2.1: verify the published head where it stands ---
+# --- skills/orch/workflows/base-publication.md § 5: verify the published head where it stands ---
 # The runtime reads the pinned head's checks, statuses and runs and the
 # base's required set, and records the verdict itself in the same call; the
 # whole reply is kept for the suite.
@@ -500,7 +501,7 @@ verified="$(op_reply --item "$(jq -cn --arg repo "$GH_REPO_SLUG" --arg base "$PU
 printf '%s\n' "$verified" > tmp/verify-report.json
 [ "$(jq -r '.result.status' <<<"$verified")" = complete ] || fail verify-status
 
-# --- skills/orch/workflows/submit-pr.md § 2.1: completion and the notice ---
+# --- skills/orch/workflows/base-publication.md § 6 and its section 7: completion and the notice ---
 step report
 if [ "$TRACKER" = github ]; then
   # The tracker's own answer to the close is the terminal evidence the
