@@ -609,6 +609,10 @@ environment_rows() {
 [2,"env --chdir=\"$DIR\" head -c 32 environ","process-environ-env-chdir-unresolved","claude-and-codex"]
 [2,"cd -- /proc/4242 && head -c 32 environ","process-environ-shell-cd","claude-and-codex"]
 [2,"cd /proc; cd 4242; head -c 32 < environ","process-environ-shell-cd-redirect","claude-and-codex"]
+[2,"CDPATH=/proc; cd self && cat environ","process-environ-cdpath-cd","claude-and-codex"]
+[2,"source /dev/stdin <<< 'CDPATH=/proc'; cd self && cat environ","process-environ-sourced-cdpath-cd","claude-and-codex"]
+[0,"CDPATH=/proc; cd ./self && cat environ","process-ordinary-cdpath-dot-cd","claude-and-codex"]
+[0,"cd self && cat environ","process-ordinary-searched-cd-without-cdpath","claude-and-codex"]
 [0,"env --chdir=/proc/4242 head -c 32 < environ","process-env-chdir-keeps-shell-redirect-cwd","claude-and-codex"]
 [2,"cd /proc/4242 && bash -c 'head -c 32 environ'","process-environ-shell-cd-source","claude-and-codex"]
 [2,"env --chdir=/proc/4242 bash -c 'head -c 32 environ'","process-environ-env-chdir-source","claude-and-codex"]
@@ -2589,6 +2593,8 @@ unquoted-expansion-fields|fields_unknown=1 ;;|: ;;|exit=0 expected=2|process-env
 quoted-spread-fields|if [ "$c" = '$' ] && [[ ! ${text:$i:24} =~ $one_field_re ]]; then|if false; then|exit=0 expected=2|process-environ-exec-positional-spread-name-stdin-claude process-environ-exec-array-spread-name-stdin-codex process-environ-exec-indirect-name-stdin-claude process-environ-exec-nameref-name-stdin-codex process-environ-exec-continued-name-stdin-claude
 exec-literal-option|elif [ "$exec_word" = literal ] && [[ $value =~ $exec_option_re ]]; then|elif [[ $value =~ $exec_option_re ]]; then|exit=0 expected=2|process-environ-exec-attached-quoted-name-stdin-claude process-environ-exec-attached-split-name-stdin-codex
 exec-stdin-shell|if [ -n "$stdin_program" ] &&|if [ "$program" = bash ] &&|exit=0 expected=2|process-environ-exec-chdir-sh-heredoc-claude process-environ-exec-chdir-dash-pipe-codex
+cdpath-reader-cd|if [ -n "$cd_searched" ] && [ -n "$push_cdpath_named" ]; then|if false; then|exit=0 expected=2|process-environ-cdpath-cd-claude process-environ-sourced-cdpath-cd-codex
+cdpath-second-walk|(environment_dump "$command_kind") >/dev/null 2>&1; then|false; then|exit=0 expected=2|process-environ-sourced-cdpath-cd-claude process-environ-sourced-cdpath-cd-codex
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|${stage_launches[$stage]} environment_producer shell|${stage_launches[$stage]} environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc waiter-launch-job-unset-validation
