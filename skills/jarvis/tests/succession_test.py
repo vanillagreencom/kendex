@@ -1,10 +1,14 @@
 """Succession over agent-runtime's controller record, with real tmux and the fixture harness."""
+import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import shlex
+import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -12,6 +16,7 @@ from unittest.mock import patch
 import session_test
 from session_test import START_BRIEF, SessionContract
 from fixtures.harness import native_launcher
+from fixtures.tmux_scope import SCOPE
 
 
 class SuccessionContract(SessionContract):
@@ -254,9 +259,80 @@ class HandOverBound(unittest.TestCase):
         self.assertEqual((refused.exception.reason, world.transfers), ("handover-failed", 1))
 
 
+class SuiteStop(unittest.TestCase):
+    """A succession suite stopped mid-run, as the battery runner stops an
+    overdue suite: its tmux server and fake harness must not outlive it,
+    since a lane's park reads a live fake harness as a live session."""
+
+    ROW = "SuccessionContract.test_a_context_succession_keeps_the_account_and_retires_the_predecessor_after_its_proof"
+
+    @staticmethod
+    def launches(run):
+        rows = [json.loads(line) for path in run.glob("*/rows.jsonl")
+                for line in path.read_text().splitlines(keepends=True) if line.endswith("\n")]
+        return [row for row in rows if "pid" in row]
+
+    def test_a_suite_stopped_by_term_leaves_no_process_of_its_run(self):
+        scope = Path(os.environ[SCOPE])
+        env = {key: value for key, value in os.environ.items() if key not in (SCOPE, "TMUX_TMPDIR", "TMUX", "TMUX_PANE")}
+        env["PATH"] = os.pathsep.join(entry for entry in env["PATH"].split(os.pathsep) if Path(entry).parent != scope)
+        tmux = shutil.which("tmux", path=env["PATH"])
+        with tempfile.TemporaryDirectory() as scratch:
+            run = Path(scratch).resolve()
+            env |= {"TMPDIR": str(run), "JARVIS_TEST_NATIVE": str(session_test.HARNESS)}
+            suite = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), self.ROW], env=env,
+                                     start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # The child's session is outside this suite's group: a TERM that
+            # ends this suite stops the child first, then takes its own route.
+            previous = signal.getsignal(signal.SIGTERM)
+
+            def stopped(signum, frame):
+                if suite.poll() is None:
+                    os.killpg(suite.pid, signal.SIGTERM)
+                    suite.wait(timeout=60)
+                signal.signal(signum, previous)
+                os.kill(os.getpid(), signum)
+            signal.signal(signal.SIGTERM, stopped)
+            try:
+                deadline = time.monotonic() + 120
+                while not self.launches(run):
+                    self.assertIsNone(suite.poll(), "the suite ended before its fake harness started")
+                    self.assertLess(time.monotonic(), deadline, "the fake harness never started")
+                    time.sleep(0.1)
+                os.killpg(suite.pid, signal.SIGTERM)
+                self.assertEqual(suite.wait(timeout=60), -signal.SIGTERM)
+                # A process of the run names its folder, a harness session id or
+                # its home's tmux server label. The runtime's own controller job
+                # ends by itself once its server is gone, hence the wait.
+                marks = [str(run)] + [mark for row in self.launches(run) for mark in (row["id"], self.label(row))]
+                deadline = time.monotonic() + 30
+                while True:
+                    table = subprocess.run(["ps", "-A", "-ww", "-o", "pid=,args="], capture_output=True, text=True,
+                                           check=True).stdout
+                    left = [line for line in table.splitlines() if any(mark in line for mark in marks)]
+                    if not left:
+                        break
+                    self.assertLess(time.monotonic(), deadline, "left running:\n" + "\n".join(left))
+                    time.sleep(0.2)
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+                if suite.poll() is None:
+                    os.killpg(suite.pid, signal.SIGKILL)
+                    suite.wait()
+                # A failed row stops a server the child left outside any scope
+                # before its scratch goes; the child's own shutdown owns the
+                # servers in its scope folder.
+                for row in self.launches(run):
+                    subprocess.run([tmux, "-L", self.label(row), "kill-server"], env=env, capture_output=True, timeout=10)
+
+    @staticmethod
+    def label(row):
+        return "jarvis-" + hashlib.sha256(os.fsencode(row["cwd"])).hexdigest()[:32]
+
 if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
         # The session rows SuccessionContract inherits run in their own suite.
         unittest.main(defaultTest=["SuccessionContract." + name for name in vars(SuccessionContract) if name.startswith("test_")]
-                      + ["HandOverBound.test_an_account_already_tried_in_the_call_ends_it"])
+                      + ["HandOverBound.test_an_account_already_tried_in_the_call_ends_it",
+                         "SuiteStop.test_a_suite_stopped_by_term_leaves_no_process_of_its_run"])
