@@ -610,9 +610,12 @@ lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
 write-failed, host-append, host-unreachable, mail-read-failed, host-busy,
 timeout, item-case-variant, mailbox-missing, retention-invalid, archive-failed, archived,
 host-root-required, host-route-missing, state-unreadable, worktree-absent, channel-session,
-session-unrecorded, session-archived, session-send-failed. `duplicate` is the one key whose
-value follows ` id=` rather than `=`, so it names the earlier envelope through
-the same field the receipt above prints; `resolved-already`,
+session-unrecorded, session-archived, session-send-failed, item-ask-unconfigured.
+Two keys take another separator than `=`. `duplicate`'s value follows ` id=`,
+so it names the earlier envelope through the same field the receipt above
+prints. `item-ask-unconfigured`'s value, the item, follows ` issue=`, and
+` cause=<cause>` closes it, then ` unset=<keys>` where the cause is
+settings-unset. `resolved-already`,
 `delivery-repeated` and `owner-notice-repeated` close their own value with
 ` id=<id>` naming the envelope already there.
 
