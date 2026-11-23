@@ -10,6 +10,7 @@ A command and Rust library that starts one AI coding-agent session, watches it, 
 - Runs a worker's session in a sandbox on Linux.
 - Tells whether a session is idle, working, asking, stopped by an account limit or exited, and says so when it cannot tell.
 - Finds the session file each harness writes for a working directory.
+- Reads from a session's file what it loaded into its context: the tokens its first turn left, the context by source and each rule section it read, each figure marked measured, attributed, unclear or unsupported.
 - Reads how much use each account has left and picks the account a launch uses.
 - Keeps launch records as JSON that another package can add its own fields to.
 - Answers most commands with one versioned JSON reply, `agent-runtime-v1`.

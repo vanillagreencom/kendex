@@ -568,6 +568,317 @@ fn text_parts(content: &Value) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
+/// What one row of a session's file adds to the model's context, as the
+/// row's harness records it. A row adds what its harness sends on, never
+/// what only its interface shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Entry {
+    /// A user turn, the one [`user_turns`] counts, with the turn's native
+    /// id where the row carries one. Its bytes are the text the row
+    /// records, not the text [`user_text`] reads from it.
+    Turn { id: Option<String>, bytes: u64 },
+    /// Text the harness added to the context beside a turn or a result:
+    /// each text block of a Claude Code `user` row that is not a turn,
+    /// such as a skill body a slash command expands to, marked `isMeta`
+    /// (measured on Claude Code 2.1.330).
+    Text { bytes: u64 },
+    /// Text that enters the context and belongs to no item beside it: a Pi
+    /// `custom_message`, an extension's message, which a steer delivers
+    /// after whatever tool result came last.
+    Foreign,
+    /// A tool call the model made.
+    Call { id: String, action: Action },
+    /// A tool result sent back: its bytes, `None` where the text it added
+    /// is not the row's; the tokens the harness counted for it where it
+    /// counts them; and the name of what it loaded where the harness names
+    /// that only on the result (a Copilot skill).
+    Result {
+        call: String,
+        bytes: Option<u64>,
+        tokens: Option<u64>,
+        loaded: Option<String>,
+    },
+}
+
+/// What a tool call does, in the terms its harness's own tools are named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// A file read: the path the call names.
+    Read(String),
+    /// A shell command's text.
+    Shell(String),
+    /// A skill load, with the skill's name where the call names it.
+    Skill(Option<String>),
+    Other,
+}
+
+/// Whether `row` is the lead session's own: a Claude Code sidechain row and
+/// a Copilot row carrying a sub-agent's `agentId` (Copilot SDK
+/// `session-events.ts`: absent for the root agent) are another agent's.
+pub fn lead_row(harness: Harness, row: &Value) -> bool {
+    match harness {
+        Harness::Claude => row.get("isSidechain").and_then(Value::as_bool) != Some(true),
+        Harness::Copilot => row
+            .get("agentId")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty),
+        Harness::Codex | Harness::Pi => true,
+    }
+}
+
+/// A Pi entry's own id and its parent's, by which Pi's file holds a tree
+/// (Pi 1.6.0's session format documentation): `None` for the header and on
+/// every other harness, whose rows a reader takes in file order.
+pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> {
+    if harness != Harness::Pi || row.get("type").and_then(Value::as_str) == Some("session") {
+        return None;
+    }
+    let id = row.get("id")?.as_str()?;
+    Some((id, row.get("parentId").and_then(Value::as_str)))
+}
+
+/// What `row` adds to the context, each harness's rows as its own record
+/// writes them:
+///
+/// - Claude Code (2.1.330, a recorded transcript): a turn's `promptId`;
+///   an assistant message's `tool_use` blocks, `Read` naming `file_path`,
+///   `Bash` `command` and `Skill` `skill`; a `user` row's `tool_result`
+///   blocks, by `tool_use_id`, and its text blocks.
+/// - Codex (rust-v0.171.0, `codex-rs/protocol/src/{models,items,protocol}.rs`
+///   and `core/src/tools/handlers/shell_spec.rs`): a turn's `turn_id`; a
+///   `function_call` or `custom_tool_call` by `call_id`, the shell being
+///   `exec_command` with its JSON `arguments`' `cmd`; its output by
+///   `call_id`, a string or `input_text` items.
+/// - Copilot CLI (Copilot SDK `session-events.ts`, the CLI's reference
+///   tool table, a recorded 1.0.112 log, and the tool-call classifier in
+///   1.0.114's `cli-main.js`): a `user.message`'s `interactionId`; a
+///   `tool.execution_start` by `toolCallId`, `bash` naming
+///   `arguments.command`, `view` (and `str_replace_editor` whose
+///   `command` is `view`) `arguments.path`, and `skill` its skill only on
+///   the result's `toolTelemetry.restrictedProperties.skillName`; a
+///   `tool.execution_complete`'s `result.content`, or a failure's
+///   `error.message`. A skill's result is not its body: the log records
+///   `skillContentLength` 30809 beside `result_token_count` 27, so the
+///   body reaches the context apart from the result, and the result
+///   counts neither its bytes nor its tokens.
+/// - Pi (Pi 1.6.0's session format and message type documentation):
+///   a turn's entry `id`; an assistant message's `toolCall` blocks,
+///   `read` naming `path` and `bash` `command`; a `toolResult` message's
+///   text by `toolCallId`; a `custom_message`, as no item's text.
+pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
+    fn text(value: Option<&Value>) -> &str {
+        value.and_then(Value::as_str).unwrap_or_default()
+    }
+    let turn = |id: Option<&Value>| {
+        user_text(harness, row).map(|_| Entry::Turn {
+            id: id.and_then(Value::as_str).map(str::to_owned),
+            bytes: turn_bytes(harness, row),
+        })
+    };
+    let kind = text(row.get("type"));
+    match harness {
+        Harness::Claude => {
+            if let Some(turn) = turn(row.get("promptId")) {
+                return vec![turn];
+            }
+            let Some(Value::Array(blocks)) = row.get("message").and_then(|m| m.get("content"))
+            else {
+                return Vec::new();
+            };
+            let mut found = Vec::new();
+            for block in blocks {
+                match (kind, text(block.get("type"))) {
+                    ("assistant", "tool_use") => {
+                        let input = |key: &str| text(block.get("input").and_then(|i| i.get(key)));
+                        let action = match text(block.get("name")) {
+                            "Read" => Action::Read(input("file_path").to_owned()),
+                            "Bash" => Action::Shell(input("command").to_owned()),
+                            "Skill" => Action::Skill(
+                                Some(input("skill"))
+                                    .filter(|n| !n.is_empty())
+                                    .map(str::to_owned),
+                            ),
+                            _ => Action::Other,
+                        };
+                        found.push(Entry::Call {
+                            id: text(block.get("id")).to_owned(),
+                            action,
+                        });
+                    }
+                    ("user", "tool_result") => found.push(Entry::Result {
+                        call: text(block.get("tool_use_id")).to_owned(),
+                        bytes: Some(text_bytes(block.get("content"), "text")),
+                        tokens: None,
+                        loaded: None,
+                    }),
+                    ("user", "text") => found.push(Entry::Text {
+                        bytes: text(block.get("text")).len() as u64,
+                    }),
+                    _ => {}
+                }
+            }
+            found
+        }
+        Harness::Codex => {
+            let payload = row.get("payload");
+            if let Some(turn) = turn(payload.and_then(|p| p.get("turn_id"))) {
+                return vec![turn];
+            }
+            let Some(payload) = payload.filter(|_| kind == "response_item") else {
+                return Vec::new();
+            };
+            let call = text(payload.get("call_id")).to_owned();
+            match text(payload.get("type")) {
+                "function_call" | "custom_tool_call" => {
+                    let action = match text(payload.get("name")) {
+                        "exec_command" => {
+                            serde_json::from_str::<Value>(text(payload.get("arguments")))
+                                .ok()
+                                .and_then(|args| args.get("cmd")?.as_str().map(str::to_owned))
+                                .map_or(Action::Other, Action::Shell)
+                        }
+                        _ => Action::Other,
+                    };
+                    vec![Entry::Call { id: call, action }]
+                }
+                "function_call_output" | "custom_tool_call_output" => vec![Entry::Result {
+                    call,
+                    bytes: Some(text_bytes(payload.get("output"), "input_text")),
+                    tokens: None,
+                    loaded: None,
+                }],
+                _ => Vec::new(),
+            }
+        }
+        Harness::Copilot => {
+            let data = row.get("data");
+            let field = |key: &str| data.and_then(|d| d.get(key));
+            if let Some(turn) = turn(field("interactionId")) {
+                return vec![turn];
+            }
+            let call = text(field("toolCallId")).to_owned();
+            match kind {
+                "tool.execution_start" => {
+                    let argument = |key: &str| text(field("arguments").and_then(|a| a.get(key)));
+                    let action = match text(field("toolName")) {
+                        "bash" => Action::Shell(argument("command").to_owned()),
+                        "view" => Action::Read(argument("path").to_owned()),
+                        "str_replace_editor" if argument("command") == "view" => {
+                            Action::Read(argument("path").to_owned())
+                        }
+                        "skill" => Action::Skill(None),
+                        _ => Action::Other,
+                    };
+                    vec![Entry::Call { id: call, action }]
+                }
+                "tool.execution_complete" => {
+                    let sent = match field("result") {
+                        Some(result) => result.get("content"),
+                        None => field("error").and_then(|e| e.get("message")),
+                    };
+                    let loaded = field("toolTelemetry")
+                        .and_then(|t| t.get("restrictedProperties"))
+                        .and_then(|p| p.get("skillName"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    let (bytes, tokens) = match loaded {
+                        Some(_) => (None, None),
+                        None => (
+                            Some(text(sent).len() as u64),
+                            row.as_object()
+                                .and_then(crate::context::copilot_result_tokens),
+                        ),
+                    };
+                    vec![Entry::Result {
+                        call,
+                        bytes,
+                        tokens,
+                        loaded,
+                    }]
+                }
+                _ => Vec::new(),
+            }
+        }
+        Harness::Pi => {
+            if let Some(turn) = turn(row.get("id")) {
+                return vec![turn];
+            }
+            if kind == "custom_message" {
+                return vec![Entry::Foreign];
+            }
+            let Some(message) = row.get("message").filter(|_| kind == "message") else {
+                return Vec::new();
+            };
+            match text(message.get("role")) {
+                "assistant" => message
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|block| text(block.get("type")) == "toolCall")
+                    .map(|block| {
+                        let argument =
+                            |key: &str| text(block.get("arguments").and_then(|a| a.get(key)));
+                        let action = match text(block.get("name")) {
+                            "read" => Action::Read(argument("path").to_owned()),
+                            "bash" => Action::Shell(argument("command").to_owned()),
+                            _ => Action::Other,
+                        };
+                        Entry::Call {
+                            id: text(block.get("id")).to_owned(),
+                            action,
+                        }
+                    })
+                    .collect(),
+                "toolResult" => vec![Entry::Result {
+                    call: text(message.get("toolCallId")).to_owned(),
+                    bytes: Some(text_bytes(message.get("content"), "text")),
+                    tokens: None,
+                    loaded: None,
+                }],
+                _ => Vec::new(),
+            }
+        }
+    }
+}
+
+/// The bytes a user turn's row records for the model: the content before
+/// [`user_text`] rewrites a Claude Code command record or unwraps pasted
+/// content, and on Copilot CLI the `transformedContent` the CLI sent, its
+/// augmentations included (the CLI's `schemas/session-events.schema.json`,
+/// 1.0.114), where the row carries it.
+fn turn_bytes(harness: Harness, row: &Value) -> u64 {
+    let content = match harness {
+        Harness::Claude | Harness::Pi => row.get("message").and_then(|m| m.get("content")),
+        Harness::Codex => row
+            .get("payload")
+            .and_then(|p| p.get("item"))
+            .and_then(|i| i.get("content")),
+        Harness::Copilot => {
+            let data = row.get("data");
+            data.and_then(|d| d.get("transformedContent"))
+                .filter(|sent| sent.is_string())
+                .or_else(|| data.and_then(|d| d.get("content")))
+        }
+    };
+    text_bytes(content, "text")
+}
+
+/// The bytes of a content value: a string whole, or the `text` of each part
+/// of type `part` in an array; anything else, an image among them, adds none.
+fn text_bytes(content: Option<&Value>, part: &str) -> u64 {
+    match content {
+        Some(Value::String(text)) => text.len() as u64,
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter(|p| p.get("type").and_then(Value::as_str) == Some(part))
+            .filter_map(|p| p.get("text").and_then(Value::as_str))
+            .map(|text| text.len() as u64)
+            .sum(),
+        _ => 0,
+    }
+}
+
 /// A session file a store lists for a cwd, with the modification time read
 /// beside it, so the floor a launch binds above costs no second read.
 struct Candidate {

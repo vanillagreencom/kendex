@@ -290,6 +290,24 @@ enum SessionOp {
         #[arg(long)]
         transcript: Option<PathBuf>,
     },
+    /// What a session loaded into its model's context, read from the file
+    /// its harness writes for it: the tokens its Start (the first user
+    /// turn) left, the context by source (`first-delivery`, `later-turns`,
+    /// `rule-reads`, `tool-results`) and each rule section it read. Every
+    /// figure names its `basis`: `measured`, `attributed`, `unclear` (a
+    /// share the reader cannot settle to one owner, or an item whose text
+    /// the record does not hold, such as a Copilot skill's body) or
+    /// `unsupported` (no reading from the harness).
+    /// Refuses `session-branched` for a Pi file holding a branch and
+    /// `session-usage-unread` for a usage count that is no whole number.
+    Load {
+        #[arg(long, value_parser = harness_word)]
+        harness: Harness,
+        /// The session's own file: Copilot CLI's `events.jsonl`, every
+        /// other harness's transcript.
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 fn harness_word(word: &str) -> std::result::Result<Harness, String> {
@@ -298,13 +316,21 @@ fn harness_word(word: &str) -> std::result::Result<Harness, String> {
 
 /// `session model`: its three lines and its exit in place of the JSON reply,
 /// since its reader binds a review's flags from the lines and stops on the
-/// exit.
-fn session_verb(op: SessionOp) -> ! {
-    let SessionOp::Model {
-        harness,
-        session,
-        transcript,
-    } = op;
+/// exit; `session load`: the JSON reply.
+fn session_verb(op: SessionOp) -> Result<serde_json::Value> {
+    let (harness, session, transcript) = match op {
+        SessionOp::Model {
+            harness,
+            session,
+            transcript,
+        } => (harness, session, transcript),
+        SessionOp::Load { harness, file } => {
+            return Ok(
+                serde_json::to_value(agent_runtime::load::read(harness, &file)?)
+                    .unwrap_or_default(),
+            );
+        }
+    };
     let answer = agent_runtime::context::calling_session(harness, &session, transcript.as_deref());
     let mut out = std::io::stdout().lock();
     for line in answer.lines(harness, &session) {

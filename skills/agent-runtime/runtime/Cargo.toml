@@ -60,6 +60,10 @@ path = "../tests/rust/controller.rs"
 name = "session"
 path = "../tests/rust/session.rs"
 
+[[test]]
+name = "load"
+path = "../tests/rust/load.rs"
+
 [lints.rust]
 # Denied, not forbidden, so the one FFI call macOS needs carries its own
 # allowance and SAFETY comment (host::tmux, own_program).

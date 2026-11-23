@@ -117,6 +117,170 @@ fn word<'a>(object: &'a Map<String, Value>, key: &str) -> &'a str {
     object.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
+/// What one line of a session's file records of one model response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Response {
+    Spent(Spent),
+    /// The line carries usage under none of the harness's field names: a
+    /// figure stands and this reader cannot take it, never read as zero.
+    Unread,
+}
+
+/// One response's figures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spent {
+    /// What names the response on every line that records it: a Claude
+    /// Code message spans one line per content block, each carrying the
+    /// message's usage, and a Codex `token_count` event can repeat the
+    /// response before it, with the session's running total unchanged.
+    pub id: Option<String>,
+    /// The tokens the response left in the context.
+    pub context: u64,
+    /// The prompt and the output the context is made of, where the line
+    /// names them apart.
+    pub split: Option<Split>,
+    /// The window the line names, as the harness wrote it.
+    pub window: Option<u64>,
+    pub model: String,
+}
+
+/// A response's prompt-side tokens, everything the request carried, and
+/// its output, which the next request carries back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Split {
+    pub prompt: u64,
+    pub output: u64,
+}
+
+/// The response one line of `harness`'s session file records, `None` for a
+/// line that records none: the one reading of a line's usage, behind both
+/// [`read_file`]'s last reading and a whole walk of the file. `Err` where a
+/// usage field holds anything but a whole count.
+pub fn response(harness: Harness, line: &Map<String, Value>) -> Result<Option<Response>, String> {
+    match harness {
+        Harness::Claude => claude_response(line),
+        Harness::Codex => Ok(codex_response(line)),
+        Harness::Pi => pi_response(line),
+        Harness::Copilot => Ok(copilot_row_figure(line).map(|(tokens, window, model)| {
+            Response::Spent(Spent {
+                id: None,
+                context: tokens,
+                split: None,
+                window: Some(window),
+                model,
+            })
+        })),
+    }
+}
+
+/// A Claude Code assistant line's usage: the prompt is the input with both
+/// cache counts, the output its `output_tokens`. A line naming the
+/// [`CLAUDE_SYNTHETIC`] model records no response.
+fn claude_response(line: &Map<String, Value>) -> Result<Option<Response>, String> {
+    let Some(Value::Object(message)) = line.get("message") else {
+        return Ok(None);
+    };
+    let Some(Value::Object(usage)) = message.get("usage") else {
+        return Ok(None);
+    };
+    if message.get("model").and_then(Value::as_str) == Some(CLAUDE_SYNTHETIC) {
+        return Ok(None);
+    }
+    if !CLAUDE_FIELDS.iter().any(|f| usage.contains_key(*f)) {
+        return Ok(Some(Response::Unread));
+    }
+    let split = Split {
+        prompt: summed(usage, &CLAUDE_FIELDS[..3])?,
+        output: summed(usage, &CLAUDE_FIELDS[3..])?,
+    };
+    Ok(Some(Response::Spent(Spent {
+        id: Some(word(message, "id"))
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned),
+        context: split.prompt.saturating_add(split.output),
+        split: Some(split),
+        window: None,
+        model: word(message, "model").to_owned(),
+    })))
+}
+
+/// A Codex `token_count` event's `last_token_usage`: its `total_tokens` is
+/// the context, `input_tokens` (cached input included) the prompt and
+/// `output_tokens` the output (`TokenUsage` in Codex's
+/// `codex-rs/protocol/src/protocol.rs`, rust-v0.171.0). An event with no
+/// `info` object records no response; one whose usage holds no total is
+/// unread. The model is the `turn_context`'s, which this line does not name.
+///
+/// The id is `info.total_token_usage.total_tokens`, the session's running
+/// total: an event whose total did not change repeats the response before
+/// it, the rule pi-codex-bridge's README § Usage records holds over the
+/// rollouts real Codex releases write in its fixture suite.
+fn codex_response(line: &Map<String, Value>) -> Option<Response> {
+    if word(line, "type") != "event_msg" {
+        return None;
+    }
+    let payload = line.get("payload")?;
+    if payload.get("type").and_then(Value::as_str) != Some("token_count") {
+        return None;
+    }
+    let Some(Value::Object(info)) = payload.get("info") else {
+        return None;
+    };
+    let usage = info.get("last_token_usage");
+    let count = |key: &str| usage.and_then(|u| u.get(key)).and_then(Value::as_u64);
+    let Some(context) = count("total_tokens") else {
+        return Some(Response::Unread);
+    };
+    let split = count("input_tokens")
+        .zip(count("output_tokens"))
+        .map(|(prompt, output)| Split { prompt, output });
+    let running = info
+        .get("total_token_usage")
+        .and_then(|u| u.get("total_tokens"))
+        .and_then(Value::as_u64);
+    Some(Response::Spent(Spent {
+        id: running.map(|total| total.to_string()),
+        context,
+        split,
+        window: info.get("model_context_window").and_then(Value::as_u64),
+        model: String::new(),
+    }))
+}
+
+/// A Pi message's usage: the input with both cache counts is the prompt,
+/// `output` the output, the sum Pi's own `totalTokens` is; the response's
+/// id is the entry's own `id`.
+fn pi_response(line: &Map<String, Value>) -> Result<Option<Response>, String> {
+    let Some(Value::Object(message)) = line.get("message") else {
+        return Ok(None);
+    };
+    let Some(Value::Object(usage)) = message.get("usage") else {
+        return Ok(None);
+    };
+    if !PI_FIELDS.iter().any(|f| usage.contains_key(*f)) {
+        return Ok(Some(Response::Unread));
+    }
+    let split = Split {
+        prompt: summed(usage, &["input", "cacheRead", "cacheWrite"])?,
+        output: summed(usage, &["output"])?,
+    };
+    let (provider, id) = (word(message, "provider"), word(message, "model"));
+    let model = if provider.is_empty() || id.is_empty() {
+        id.to_owned()
+    } else {
+        format!("{provider}/{id}")
+    };
+    Ok(Some(Response::Spent(Spent {
+        id: Some(word(line, "id"))
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned),
+        context: split.prompt.saturating_add(split.output),
+        split: Some(split),
+        window: None,
+        model,
+    })))
+}
+
 /// The prompt-side and response-side counts of a Claude Code usage object:
 /// the input with both cache counts is the prompt the line was billed for,
 /// and the output is sent back with the next request.
@@ -139,27 +303,19 @@ const CLAUDE_SYNTHETIC: &str = "<synthetic>";
 pub fn claude(text: &str, compaction_off: bool) -> Result<Usage, String> {
     let mut last = Usage::Absent;
     for line in objects(text) {
-        let Some(Value::Object(message)) = line.get("message") else {
-            continue;
-        };
-        let Some(Value::Object(usage)) = message.get("usage") else {
-            continue;
-        };
-        if message.get("model").and_then(Value::as_str) == Some(CLAUDE_SYNTHETIC) {
-            continue;
-        }
-        last = if CLAUDE_FIELDS.iter().any(|f| usage.contains_key(*f)) {
-            let model = word(message, "model").to_owned();
-            Usage::Measured {
-                tokens: summed(usage, &CLAUDE_FIELDS)?,
-                window: compaction_off
-                    .then(|| Harness::Claude.context_capacity(&model))
-                    .flatten(),
-                model,
+        match claude_response(&line)? {
+            None => {}
+            Some(Response::Unread) => last = Usage::Unread,
+            Some(Response::Spent(spent)) => {
+                last = Usage::Measured {
+                    tokens: spent.context,
+                    window: compaction_off
+                        .then(|| Harness::Claude.context_capacity(&spent.model))
+                        .flatten(),
+                    model: spent.model,
+                };
             }
-        } else {
-            Usage::Unread
-        };
+        }
     }
     Ok(last)
 }
@@ -185,30 +341,19 @@ pub fn codex(text: &str, overrides: Option<&str>) -> Result<Usage, String> {
     let mut turn = Named::default();
     let mut last: Option<Option<(u64, Option<u64>)>> = None;
     for line in objects(text) {
-        let payload = line.get("payload");
-        match word(&line, "type") {
-            "turn_context" => turn.take_turn(payload),
-            "event_msg" => {
-                let Some(payload) = payload else { continue };
-                if payload.get("type").and_then(Value::as_str) != Some("token_count") {
-                    continue;
-                }
-                let Some(Value::Object(info)) = payload.get("info") else {
-                    continue;
-                };
-                let total = info
-                    .get("last_token_usage")
-                    .and_then(|u| u.get("total_tokens"))
-                    .and_then(Value::as_u64);
-                last = Some(total.map(|tokens| {
-                    let window = info.get("model_context_window").and_then(Value::as_u64);
-                    (
-                        tokens,
-                        window.filter(|w| codex_point_verified(overrides, *w)),
-                    )
-                }));
+        if word(&line, "type") == "turn_context" {
+            turn.take_turn(line.get("payload"));
+            continue;
+        }
+        match codex_response(&line) {
+            None => {}
+            Some(Response::Unread) => last = Some(None),
+            Some(Response::Spent(spent)) => {
+                last = Some(Some((
+                    spent.context,
+                    spent.window.filter(|w| codex_point_verified(overrides, *w)),
+                )));
             }
-            _ => {}
         }
     }
     Ok(match last {
@@ -511,27 +656,17 @@ pub fn pi(
 ) -> Result<Usage, String> {
     let mut last = Usage::Absent;
     for line in objects(text) {
-        let Some(Value::Object(message)) = line.get("message") else {
-            continue;
-        };
-        let Some(Value::Object(usage)) = message.get("usage") else {
-            continue;
-        };
-        last = if PI_FIELDS.iter().any(|f| usage.contains_key(*f)) {
-            let (provider, id) = (word(message, "provider"), word(message, "model"));
-            let model = if provider.is_empty() || id.is_empty() {
-                id.to_owned()
-            } else {
-                format!("{provider}/{id}")
-            };
-            Usage::Measured {
-                tokens: summed(usage, &PI_FIELDS)?,
-                window: None,
-                model,
+        match pi_response(&line)? {
+            None => {}
+            Some(Response::Unread) => last = Usage::Unread,
+            Some(Response::Spent(spent)) => {
+                last = Usage::Measured {
+                    tokens: spent.context,
+                    window: None,
+                    model: spent.model,
+                };
             }
-        } else {
-            Usage::Unread
-        };
+        }
     }
     if let Usage::Measured {
         window: point,
@@ -658,20 +793,26 @@ pub fn copilot_usage(
     current_tokens: Option<&Value>,
     token_limit: Option<&Value>,
 ) -> Result<(u64, u64), &'static str> {
-    let whole = |value: Option<&Value>| {
-        let number = value?.as_number()?;
-        if let Some(n) = number.as_u64() {
-            return Some(n);
-        }
-        let f = number.as_f64()?;
-        // A float with no fraction from 0 below `u64::MAX` converts exactly.
-        (f >= 0.0 && f.fract() == 0.0 && f < u64::MAX as f64).then_some(f as u64)
-    };
-    let tokens = whole(current_tokens).ok_or("current_tokens is no whole number")?;
-    let limit = whole(token_limit)
+    let tokens = current_tokens
+        .and_then(whole_number)
+        .ok_or("current_tokens is no whole number")?;
+    let limit = token_limit
+        .and_then(whole_number)
         .filter(|limit| *limit > 0)
         .ok_or("token_limit is no whole number above 0")?;
     Ok((tokens, limit.saturating_mul(COPILOT_COMPACTION_PCT) / 100))
+}
+
+/// A whole number as Copilot writes one, an integer or a float with no
+/// fraction: its CLI writes its telemetry counts as floats.
+fn whole_number(value: &Value) -> Option<u64> {
+    let number = value.as_number()?;
+    if let Some(n) = number.as_u64() {
+        return Some(n);
+    }
+    let f = number.as_f64()?;
+    // A float with no fraction from 0 below `u64::MAX` converts exactly.
+    (f >= 0.0 && f.fract() == 0.0 && f < u64::MAX as f64).then_some(f as u64)
 }
 
 /// The capacity source of a reading taken from a Copilot session's own
@@ -779,11 +920,23 @@ fn copilot_figure(line: &str) -> Option<Usage> {
     let Ok(Value::Object(row)) = serde_json::from_str::<Value>(line) else {
         return None;
     };
-    fn member<'v>(value: Option<&'v Value>, key: &str) -> Option<&'v Value> {
-        value.and_then(|v| v.get(key))
-    }
+    let (tokens, window, model) = copilot_row_figure(&row)?;
+    Some(Usage::Measured {
+        tokens,
+        window: Some(window),
+        model,
+    })
+}
+
+fn member<'v>(value: Option<&'v Value>, key: &str) -> Option<&'v Value> {
+    value.and_then(|v| v.get(key))
+}
+
+/// [`copilot_figure`]'s reading of a parsed row: the tokens, the window
+/// [`copilot_usage`] takes of the limit, and the model.
+fn copilot_row_figure(row: &Map<String, Value>) -> Option<(u64, u64, String)> {
     let data = row.get("data");
-    let (tokens, limit) = match word(&row, "type") {
+    let (tokens, limit) = match word(row, "type") {
         "tool.execution_complete" => {
             let metrics = member(member(data, "toolTelemetry"), "metrics");
             (
@@ -803,14 +956,20 @@ fn copilot_figure(line: &str) -> Option<Usage> {
         _ => return None,
     };
     let (tokens, window) = copilot_usage(tokens, limit).ok()?;
-    Some(Usage::Measured {
-        tokens,
-        window: Some(window),
-        model: member(data, "model")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-    })
+    let model = member(data, "model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Some((tokens, window, model))
+}
+
+/// The tokens one Copilot tool result adds to the context, as the CLI
+/// counts them itself: a `tool.execution_complete` row's
+/// `data.toolTelemetry.metrics.result_token_count`, a whole number
+/// (measured on Copilot CLI 1.0.112). `None` where the row carries none.
+pub fn copilot_result_tokens(row: &Map<String, Value>) -> Option<u64> {
+    let metrics = member(member(row.get("data"), "toolTelemetry"), "metrics");
+    member(metrics, "result_token_count").and_then(whole_number)
 }
 
 /// Whether `session` is spelled in the alphabet that keeps a path named by
