@@ -46,6 +46,12 @@ The overseer mailbox carries owner and delegate notes, and data notices a progra
    - Read the controller record with `orch-runtime state get --fleet /controller`, and the account listing with `.agents/skills/orch/scripts/orch-runtime lane roster`.
    - Read the whole `fleet_log` or `lanes[]` only for a named unresolved question.
    - Load only the reference section the current event needs.
+7. Fill the launch queue from the tracker, before [§ 2](#2-claim-and-follow-the-watch) reports the watch ready.
+   - Read the current queue with `orch-runtime state get --fleet /launch_queue`.
+   - Run [oversee.md § 2](oversee.md#2-select-work) selection against the tracker live, through every page. It judges each item by its last lane record of any status, from the `/lanes` read step 6 made.
+   - Read the handoff's queue list as an index only. Once the selection completes, an item the list names that the selection does not keep leaves the queue, and an item the selection keeps that the list lacks joins it.
+   - A selection that stops leaves the queue as it is.
+   - Write the result as [oversee-events.md § Keep the report's inputs current](../references/oversee-events.md#keep-the-reports-inputs-current) does. Then launch under [oversee.md § 3](oversee.md#3-launch) where the cap has room.
 
 - With no handoff, start from the tracker.
 - With no item, handoff, note or pending owner ask, send the [§ Opening question](../references/communication-modes.md#opening-question).

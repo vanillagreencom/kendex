@@ -29,15 +29,15 @@ if [[ -n "${SELECTION_CASE:-}" ]]; then
     fi
     jq -cj '
       def conn($nodes; $more; $cursor): {nodes:$nodes,pageInfo:{hasNextPage:$more,endCursor:$cursor}};
-      def blocker($id; $type): {id:$id,type:"blocks",issue:{id:$id,identifier:$id,title:$id,state:{name:$type,type:$type}}};
+      def blocker($id; $name; $type): {id:$id,type:"blocks",issue:{id:$id,identifier:$id,title:$id,state:{name:$name,type:$type}}};
       if (.query | contains("ContinueConnection")) then
-        {data:{issue:{id:"uuid-1",inverseRelations:conn([blocker("KEN-open";"started"),blocker("KEN-done";"completed")];false;null)}}}
+        {data:{issue:{id:"uuid-1",inverseRelations:conn([blocker("KEN-open";"In Progress";"started"),blocker("KEN-verifying";"Verifying";"started"),blocker("KEN-done";"Done";"completed")];false;null)}}}
       elif .variables.after == "next" then
         {data:{issues:conn([{identifier:"KEN-2",createdAt:"2026-08-15T09:01:00Z"}];false;null)}}
       else
         {data:{issues:conn([({id:"uuid-1",identifier:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",priority:2,
           state:{name:"Verifying",type:"started"},parent:{identifier:"KEN-parent"},createdAt:"2026-08-15T09:00:00Z"}
-          + if (.query | contains("inverseRelations")) then {inverseRelations:conn([];true;"blocker")} else {} end)];true;"next")}}
+          + if (.query | contains("inverseRelations")) then {inverseRelations:conn([];true;"blocker"),labels:conn([{name:"blocked"}];false;null)} else {} end)];true;"next")}}
       end' <<<"$payload"
     printf '___HTTP_CODE___200'
     exit 0
@@ -110,12 +110,14 @@ for selection in triage owed; do
                            "state.name", "state.type", "parent.identifier",
                            "inverseRelations.pageInfo.hasNextPage", "inverseRelations.pageInfo.endCursor",
                            "inverseRelations.nodes.id", "inverseRelations.nodes.type",
-                           "inverseRelations.nodes.issue.identifier", "inverseRelations.nodes.issue.state.type"]
+                           "inverseRelations.nodes.issue.identifier", "inverseRelations.nodes.issue.state.type",
+                           "inverseRelations.nodes.issue.state.name",
+                           "labels.pageInfo.hasNextPage", "labels.pageInfo.endCursor", "labels.nodes.name"]
                           - $selected | length == 0)'
                 assert_jq 'owed: unused fields omitted upstream' "$(cat "$TMP_ROOT/calls")" \
-                    'select(.query | contains("ListIssues")) | .query | test("assignee|labels|project|estimate|sortOrder|updatedAt|archivedAt|trashed|url|relatedIssue") | not'
+                    'select(.query | contains("ListIssues")) | .query | test("assignee|project|estimate|sortOrder|updatedAt|archivedAt|trashed|url|relatedIssue") | not'
                 assert_jq 'owed: verification and container facts survive every blocker page' "$out" \
-                    '.[0] == {id:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",in_pr_bundle:true,priority:2,state:"Verifying",state_type:"started",parent_id:"KEN-parent",created_at:"2026-08-15T09:00:00Z",blocked_by_open:["KEN-open"]}'
+                    '.[0] == {id:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",in_pr_bundle:true,priority:2,state:"Verifying",state_type:"started",parent_id:"KEN-parent",created_at:"2026-08-15T09:00:00Z",blocked_by_open:["KEN-open","KEN-verifying"],blocked_by:["KEN-open","KEN-verifying","KEN-done"],blocked_by_launch:["KEN-open"],labels:["blocked"]}'
             fi
         else
             assert_ne "$selection $mode: refuses incomplete discovery" "$rc" 0

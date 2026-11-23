@@ -406,6 +406,65 @@ impl Join {
 /// adds beside its own.
 const UNCOUNTED_PREFIX: &str = "changelog.d/";
 
+/// One node of a `parent_id` chain as a walk reads it: its launch
+/// blockers (`None` where its read carries no such field) and its parent.
+pub(crate) struct ChainNode {
+    pub blocked_by_launch: Option<Vec<String>>,
+    pub parent_id: Option<String>,
+}
+
+/// A chain read to its end: the launch blockers of the item and every
+/// ancestor reached, and those ancestors, nearest first.
+pub(crate) struct Chain {
+    pub blockers: BTreeSet<String>,
+    pub ancestors: Vec<String>,
+}
+
+/// The chain above `item`, whose own node is `first`, each ancestor read
+/// through `read`. `Ok(None)` from `read` ends the chain at a node its
+/// reader does not hold. A node with no launch-blocker field, a parent the
+/// walk already read, or a failed read refuses `(node, cause)`.
+pub(crate) fn chain(
+    item: &str,
+    first: ChainNode,
+    mut read: impl FnMut(&str) -> std::result::Result<Option<ChainNode>, ReadFailure>,
+) -> std::result::Result<Chain, (String, String)> {
+    let mut blockers: BTreeSet<String> = BTreeSet::new();
+    let mut ancestors = Vec::new();
+    let mut seen: BTreeSet<String> = [item.to_owned()].into();
+    let mut current = first;
+    let mut current_id = item.to_owned();
+    loop {
+        match current.blocked_by_launch {
+            Some(judged) => blockers.extend(judged),
+            None => return Err((current_id, "blocked-by-launch-missing".to_owned())),
+        }
+        let Some(parent) = current.parent_id.filter(|p| !p.is_empty()) else {
+            break;
+        };
+        if !seen.insert(parent.clone()) {
+            return Err((parent, "chain-repeats".to_owned()));
+        }
+        current = match read(&parent).map_err(|cause| (parent.clone(), cause))? {
+            Some(node) => node,
+            None => break,
+        };
+        ancestors.push(parent.clone());
+        current_id = parent;
+    }
+    Ok(Chain {
+        blockers,
+        ancestors,
+    })
+}
+
+fn node_of(read: &ItemRead) -> ChainNode {
+    ChainNode {
+        blocked_by_launch: read.blocked_by_launch.clone(),
+        parent_id: read.parent_id.clone(),
+    }
+}
+
 /// The launch blockers of `item` and of every container ancestor up its
 /// `parent_id` chain, each ancestor read through `reader`: a chain read
 /// whole with none passes; a blocker on it refuses `launch-blocked` with
@@ -418,50 +477,49 @@ fn launch_blockers(
     read: &ItemRead,
     reader: impl Fn(&str) -> std::result::Result<ItemRead, ReadFailure>,
 ) -> Result<()> {
-    let unread = |read: &str, cause: &str| Error::LaunchBlockedUnread {
+    let chain = chain(item, node_of(read), |parent| {
+        reader(parent).map(|r| Some(node_of(&r)))
+    })
+    .map_err(|(read, cause)| Error::LaunchBlockedUnread {
         item: item.to_owned(),
-        read: read.to_owned(),
-        cause: cause.to_owned(),
-    };
-    let mut blockers: BTreeSet<String> = BTreeSet::new();
-    let mut seen: BTreeSet<String> = [item.to_owned()].into();
-    let mut current = read.clone();
-    let mut current_id = item.to_owned();
-    loop {
-        match &current.blocked_by_launch {
-            Some(judged) => blockers.extend(judged.iter().cloned()),
-            None => return Err(unread(&current_id, "blocked-by-launch-missing")),
-        }
-        let Some(parent) = current.parent_id.clone().filter(|p| !p.is_empty()) else {
-            break;
-        };
-        if !seen.insert(parent.clone()) {
-            return Err(unread(&parent, "chain-repeats"));
-        }
-        current = reader(&parent).map_err(|cause| unread(&parent, &cause))?;
-        current_id = parent;
-    }
-    if blockers.is_empty() {
+        read,
+        cause,
+    })?;
+    if chain.blockers.is_empty() {
         return Ok(());
     }
     Err(Error::LaunchBlocked {
         item: item.to_owned(),
-        blockers: blockers.into_iter().collect(),
+        blockers: chain.blockers.into_iter().collect(),
     })
+}
+
+/// The label that makes an item a container whatever its children.
+pub(crate) const MULTI_LABEL: &str = "agent:multi";
+
+/// The cause word of a container the launch refuses, or none: an in-PR
+/// bundle root is the one container launched (`skill-rules.md` §
+/// Containers).
+pub(crate) fn container_cause(
+    in_pr_bundle: bool,
+    has_children: bool,
+    labels: &[String],
+) -> std::result::Result<(), &'static str> {
+    if in_pr_bundle {
+        return Ok(());
+    }
+    if has_children {
+        return Err("parent-with-children");
+    }
+    if labels.iter().any(|l| l == MULTI_LABEL) {
+        return Err("agent-multi");
+    }
+    Ok(())
 }
 
 /// Whether the cause word a container refusal carries.
 fn eligibility(item: &ItemRead) -> std::result::Result<(), &'static str> {
-    if item.in_pr_bundle {
-        return Ok(());
-    }
-    if item.children > 0 {
-        return Err("parent-with-children");
-    }
-    if item.labels.iter().any(|l| l == "agent:multi") {
-        return Err("agent-multi");
-    }
-    Ok(())
+    container_cause(item.in_pr_bundle, item.children > 0, &item.labels)
 }
 
 /// Whether `line` is a Location header:

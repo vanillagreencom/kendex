@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::mailbox::{Envelope, Mailbox, OwnerImportRead, OwnerImportReceipt, Resolved};
-use crate::ops::{self, CloseOwnedResources, Delivery, Request, Terminal};
+use crate::ops::{self, CloseOwnedResources, Delivery, Request, Terminal, admission};
 use crate::settings::Settings;
 use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, TerminalVerdict};
 use crate::verify::wire::Nullable;
@@ -101,8 +101,8 @@ pub struct TrackerInventory {
     pub owed: Vec<OwedItem>,
     /// The Verifying items and the containers whose children all ended.
     pub verifying: Vec<VerifyingItem>,
-    /// The team's open items with no open blocker that no lane holds and
-    /// the launch queue does not name, sorted.
+    /// The team's open items no blocker holds (`OpenItem::blocked`) that no
+    /// lane holds and the launch queue does not name, sorted.
     pub open_unblocked: Vec<String>,
 }
 
@@ -127,26 +127,43 @@ pub type Shared = Arc<Mutex<Latest>>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OwedState {
+    Backlog,
+    Todo,
     InProgress,
     InReview,
     Verifying,
 }
 
 impl OwedState {
-    fn of_name(name: &str) -> Option<OwedState> {
-        match name {
-            "In Progress" => Some(OwedState::InProgress),
-            "In Review" => Some(OwedState::InReview),
-            "Verifying" => Some(OwedState::Verifying),
+    /// A started state by the name orch gives it; work not yet begun by
+    /// its tracker type, since a team names its Backlog and Todo states as
+    /// it likes. Triage is the triage pass's, never owed.
+    fn of_item(name: &str, state_type: &str) -> Option<OwedState> {
+        match (state_type, name) {
+            ("backlog", _) => Some(OwedState::Backlog),
+            ("unstarted", _) => Some(OwedState::Todo),
+            (_, "In Progress") => Some(OwedState::InProgress),
+            (_, "In Review") => Some(OwedState::InReview),
+            (_, "Verifying") => Some(OwedState::Verifying),
             _ => None,
         }
     }
 
     pub fn word(self) -> &'static str {
         match self {
+            OwedState::Backlog => "backlog",
+            OwedState::Todo => "todo",
             OwedState::InProgress => "in-progress",
             OwedState::InReview => "in-review",
             OwedState::Verifying => "verifying",
+        }
+    }
+
+    /// Work no lane has begun, owed only where it can start.
+    fn unstarted(self) -> bool {
+        match self {
+            OwedState::Backlog | OwedState::Todo => true,
+            OwedState::InProgress | OwedState::InReview | OwedState::Verifying => false,
         }
     }
 }
@@ -394,6 +411,37 @@ struct OpenItem {
     parent_id: String,
     created_at: String,
     blocked_by_open: Vec<String>,
+    /// Every blocking relation's blocker, open or ended.
+    blocked_by: Vec<String>,
+    /// The blockers that hold dispatch (the Ancestor gate's field): open,
+    /// and not Verifying.
+    blocked_by_launch: Vec<String>,
+    labels: Vec<String>,
+}
+
+/// The label `issues block` sets beside its blocking relation and a person
+/// sets alone for a blocker that is no tracker item. Nothing removes it
+/// when its blocker ends; `issues unblock` is the package's verb for that.
+const BLOCKED_LABEL: &str = "blocked";
+
+impl OpenItem {
+    /// The `blocked` label on an item with no blocking relation at all: a
+    /// blocker outside the tracker. Beside a relation, the relation judges.
+    fn label_held(&self) -> bool {
+        self.blocked_by.is_empty() && self.labels.iter().any(|l| l == BLOCKED_LABEL)
+    }
+
+    /// Held by a blocker the launch gate counts, or by the label alone.
+    fn blocked(&self) -> bool {
+        !self.blocked_by_launch.is_empty() || self.label_held()
+    }
+
+    fn chain_node(&self) -> admission::ChainNode {
+        admission::ChainNode {
+            blocked_by_launch: Some(self.blocked_by_launch.clone()),
+            parent_id: Some(self.parent_id.clone()),
+        }
+    }
 }
 
 /// `issues bulk-get --format=raw`: the public result, one node per asked
@@ -1154,7 +1202,13 @@ fn read_list(
             .values()
             .map(|(parent, kind)| (parent.as_str(), kind.as_str())),
     );
-    let inventory = inventory_of(&items, &containers, fleet, read_at);
+    // Every item an open item or a child read names as its parent.
+    let parents: BTreeSet<&str> = state_types
+        .values()
+        .map(|(parent, _)| parent.as_str())
+        .filter(|parent| !parent.is_empty())
+        .collect();
+    let inventory = inventory_of(&items, &containers, &parents, fleet, read_at);
     Ok(Answered::Value((items, inventory)))
 }
 
@@ -1184,14 +1238,17 @@ fn priority_word(priority: &Nullable<u64>) -> String {
 /// The inventory the heartbeat and verification read, from the open items
 /// and the fleet: the owed rows (`LANE_RUNNING_JQ`), the Verifying items
 /// and containers, the open unblocked items no lane holds. An item joined to
-/// a lane is that lane's, as its own item is.
+/// a lane is that lane's, as its own item is. `containers` are those whose
+/// children all ended, `parents` every item with a child.
 fn inventory_of(
     items: &[OpenItem],
     containers: &BTreeSet<String>,
+    parents: &BTreeSet<&str>,
     fleet: &FleetState,
     read_at: u64,
 ) -> TrackerInventory {
     let last_lane = |item: &str| fleet.lanes.iter().rfind(|l| l.carries(item));
+    let by_id: BTreeMap<&str, &OpenItem> = items.iter().map(|i| (i.id.as_str(), i)).collect();
     let mut owed = Vec::new();
     let mut verifying = Vec::new();
     for item in items {
@@ -1199,7 +1256,7 @@ fn inventory_of(
         let state = if container {
             Some(OwedState::Verifying)
         } else {
-            OwedState::of_name(&item.state)
+            OwedState::of_item(&item.state, &item.state_type)
         };
         let Some(state) = state else { continue };
         let priority = priority_word(&item.priority);
@@ -1218,6 +1275,9 @@ fn inventory_of(
             continue;
         }
         if fleet.launch_queue.contains(&item.id) {
+            continue;
+        }
+        if state.unstarted() && !startable(item, &by_id, parents) {
             continue;
         }
         let record = last_lane(&item.id);
@@ -1265,7 +1325,7 @@ fn inventory_of(
     owed.sort_by(|a, b| a.id.cmp(&b.id));
     let open_unblocked = items
         .iter()
-        .filter(|i| i.blocked_by_open.is_empty() && !held.contains(i.id.as_str()))
+        .filter(|i| !i.blocked() && !held.contains(i.id.as_str()))
         .map(|i| i.id.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -1275,6 +1335,34 @@ fn inventory_of(
         owed,
         verifying,
         open_unblocked,
+    }
+}
+
+/// Whether work no lane has begun can start, on the rows this read holds:
+/// the launch's own container and chain-blocker rules
+/// (`ops::admission`), and two holds of selection alone, the `blocked`
+/// label with no blocking relation and an open in-PR bundle root ancestor,
+/// whose own lane works its children. The chain ends at an ancestor the
+/// read does not hold, ended or in another team, which the admission's own
+/// read judges; a chain the walk cannot read is not startable, as the
+/// admission refuses it.
+fn startable(item: &OpenItem, by_id: &BTreeMap<&str, &OpenItem>, parents: &BTreeSet<&str>) -> bool {
+    let has_children = parents.contains(item.id.as_str());
+    if admission::container_cause(item.in_pr_bundle, has_children, &item.labels).is_err()
+        || item.label_held()
+    {
+        return false;
+    }
+    let read = |parent: &str| Ok(by_id.get(parent).map(|row| row.chain_node()));
+    match admission::chain(&item.id, item.chain_node(), read) {
+        Ok(chain) => {
+            chain.blockers.is_empty()
+                && !chain
+                    .ancestors
+                    .iter()
+                    .any(|a| by_id.get(a.as_str()).is_some_and(|row| row.in_pr_bundle))
+        }
+        Err(_) => false,
     }
 }
 
