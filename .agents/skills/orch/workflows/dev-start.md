@@ -264,7 +264,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
   - On `no-change`, B reads no HEAD; the check's answer already holds the unmoved HEAD.
   - On `hand-over`, HEAD must differ from `pre_delegate_sha`.
   - On `accept-excused`, the selected receipt's `.commit` must equal HEAD; an unchanged HEAD is allowed. Read its begun exception by adding `--round [DEV_ROUND_ID] --exception-file [EXCEPTION_FILE]` to the proof command below.
-  - Otherwise HEAD must differ from `pre_delegate_sha`, unless it did not move and the round's proof is complete for HEAD's tree. Read the tree, then run the runtime's proof reader over the round's `validate` entries. It must answer `complete` in `.result.proof`:
+  - Otherwise HEAD must differ from `pre_delegate_sha`, unless it did not move and the round's proof stands for HEAD's tree. Read the tree, then run the runtime's proof reader over the round's `validate` entries:
 
     ```bash
     git -C "[WORKTREE_PATH]" rev-parse "HEAD^{tree}"
@@ -273,6 +273,12 @@ git -C "[WORKTREE_PATH]" status --porcelain
     ```bash
     .agents/skills/orch/scripts/orch-runtime read-proof --item [ISSUE_ID] --need round --tree [TREE]
     ```
+
+    Its `.result.proof` judges the unmoved HEAD:
+
+    - `complete` passes.
+    - `pending` passes. Only a `ci` run's pass answers it, and it means what [submit-pr.md § 1.1](submit-pr.md#11-preflight)'s `pending` row means: the commit is accepted with required CI pending after publication.
+    - `missing`, or a refusal, fails.
 
 - **Clean tree.** `status --porcelain` must print nothing. The runtime does not check the tree on a hand-over; this check does.
 - **Tracker.** **Linear only**, and only on a final acceptance: a single issue's round, or a bundle's last group.
@@ -330,7 +336,7 @@ Each row's steps:
   3. Tell the caller the round closed `pass-excused` with its exception file.
 - **`accept` or `accept-excused`, fail.**
   1. Re-read once after a brief pause.
-  2. If B still fails, re-delegate only the missing step: commit the work, or commit or revert the leftover files. No commit is missing where HEAD did not move and the round's proof is complete.
+  2. If B still fails, re-delegate only the missing step: commit the work, or commit or revert the leftover files. No commit is missing where HEAD did not move and the round's proof reads `complete` or `pending`.
   3. Do not proceed.
 - **`hand-over`, pass.**
   1. → Close The Round's Stages with `handed-over`, then Store Proposed Rules and Store Near-Ceiling Lines.
