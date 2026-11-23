@@ -611,6 +611,11 @@ environment_rows() {
 [2,"cd /proc; cd 4242; head -c 32 < environ","process-environ-shell-cd-redirect","claude-and-codex"]
 [2,"CDPATH=/proc; cd self && cat environ","process-environ-cdpath-cd","claude-and-codex"]
 [2,"source /dev/stdin <<< 'CDPATH=/proc'; cd self && cat environ","process-environ-sourced-cdpath-cd","claude-and-codex"]
+[2,"CDPATH=/proc cd self && cat environ","process-environ-cdpath-prefix-cd","claude-and-codex"]
+[2,"CDPATH=/proc; cd -P self && cat environ","process-environ-cdpath-option-cd","claude-and-codex"]
+[2,"CDPATH=/proc; pushd self && cat environ","process-environ-cdpath-pushd","claude-and-codex"]
+[2,"CDPATH=/proc; builtin cd self && cat environ","process-environ-cdpath-builtin-cd","claude-and-codex"]
+[2,"while true; do cd self && cat environ; CDPATH=/proc; done","process-environ-loop-late-cdpath-cd","claude-and-codex"]
 [0,"CDPATH=/proc; cd ./self && cat environ","process-ordinary-cdpath-dot-cd","claude-and-codex"]
 [0,"cd self && cat environ","process-ordinary-searched-cd-without-cdpath","claude-and-codex"]
 [0,"env --chdir=/proc/4242 head -c 32 < environ","process-env-chdir-keeps-shell-redirect-cwd","claude-and-codex"]
@@ -2439,6 +2444,7 @@ push-after-config-split-option-argument|claude|-|2|refused=push-remote;reason=un
 git-after-config-unread-value|claude|-|0|-|git config user.email "$EMAIL" && git commit -m x
 push-cdpath-cd|claude|-|2|refused=push-remote;reason=unresolved-repository|CDPATH=@OTHER@; cd src && git push origin HEAD
 push-cdpath-declared|claude|-|2|refused=push-remote;reason=unresolved-repository|declare CDP"ATH"=@OTHER@; cd src && git push origin HEAD
+push-sourced-cdpath-cd|claude|-|2|refused=push-remote;reason=unresolved-repository|source /dev/stdin <<< 'CDPATH=@OTHER@'; cd src && git push origin HEAD
 push-relative-cd|claude|-|0|-|cd src && git push origin HEAD
 push-cdpath-dot-cd|claude|-|0|-|CDPATH=@OTHER@; cd ./src && git push origin HEAD
 push-builtin-cd|claude|-|2|refused=push-remote;reason=unresolved-repository|builtin cd @OTHER@ && git push origin HEAD
@@ -2593,8 +2599,11 @@ unquoted-expansion-fields|fields_unknown=1 ;;|: ;;|exit=0 expected=2|process-env
 quoted-spread-fields|if [ "$c" = '$' ] && [[ ! ${text:$i:24} =~ $one_field_re ]]; then|if false; then|exit=0 expected=2|process-environ-exec-positional-spread-name-stdin-claude process-environ-exec-array-spread-name-stdin-codex process-environ-exec-indirect-name-stdin-claude process-environ-exec-nameref-name-stdin-codex process-environ-exec-continued-name-stdin-claude
 exec-literal-option|elif [ "$exec_word" = literal ] && [[ $value =~ $exec_option_re ]]; then|elif [[ $value =~ $exec_option_re ]]; then|exit=0 expected=2|process-environ-exec-attached-quoted-name-stdin-claude process-environ-exec-attached-split-name-stdin-codex
 exec-stdin-shell|if [ -n "$stdin_program" ] &&|if [ "$program" = bash ] &&|exit=0 expected=2|process-environ-exec-chdir-sh-heredoc-claude process-environ-exec-chdir-dash-pipe-codex
-cdpath-reader-cd|if [ -n "$cd_searched" ] && [ -n "$push_cdpath_named" ]; then|if false; then|exit=0 expected=2|process-environ-cdpath-cd-claude process-environ-sourced-cdpath-cd-codex
-cdpath-second-walk|(environment_dump "$command_kind") >/dev/null 2>&1; then|false; then|exit=0 expected=2|process-environ-sourced-cdpath-cd-claude process-environ-sourced-cdpath-cd-codex
+cdpath-reader-cd|if [ -n "$cd_searched" ] && [ -n "$push_cdpath_named" ]; then|if false; then|exit=0 expected=2|process-environ-cdpath-cd-claude process-environ-sourced-cdpath-cd-codex process-environ-cdpath-prefix-cd-claude process-environ-cdpath-option-cd-codex
+cdpath-unfollowed-cd|    *) cd_searched=1; push_cd_searched=1 ;;|    ?*) cd_searched=1; push_cd_searched=1 ;;|exit=0 expected=2|process-environ-cdpath-prefix-cd-claude process-environ-cdpath-prefix-cd-codex process-environ-cdpath-option-cd-claude process-environ-cdpath-option-cd-codex process-environ-cdpath-builtin-cd-claude
+cdpath-second-walk|if [ -n "$push_cd_searched" ] && [ -n "$push_cdpath_named" ]; then|if false; then|exit=0 expected=2|process-environ-sourced-cdpath-cd-claude process-environ-sourced-cdpath-cd-codex process-environ-loop-late-cdpath-cd-claude
+second-walk-dies|    environment_dump "$command_kind" >/dev/null |    : "$planted_unbound" >/dev/null |exit=0 expected=2 first=command-safety: exit=1 expected-first=command-safety: refused=environment-dump|process-environ-sourced-cdpath-cd-claude process-environ-loop-late-cdpath-cd-codex
+second-walk-refuses|    environment_dump "$command_kind" >/dev/null |    refuse refused relative-target >/dev/null |exit=2 expected=2 first=command-safety: refused=relative-target expected-first=command-safety: refused=environment-dump|process-environ-sourced-cdpath-cd-codex process-environ-loop-late-cdpath-cd-claude
 no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|${stage_launches[$stage]} environment_producer shell|${stage_launches[$stage]} environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc waiter-launch-job-unset-validation
@@ -2910,7 +2919,8 @@ inherited-assignment|launch_names=${inherited_assignments:-}|launch_names=""|exi
 config-variable-alias|GIT_CONFIG_PARAMETERS) setting='alias'|GIT_CONFIG_PARAMETERS) :|exit=0 expected=2|push-config-variable-alias push-config-parameters-exec
 config-alias|[ "$push_git_heads" -lt 2 ]|:|exit=0 expected=2|push-after-config-alias push-after-config-include push-after-config-include-if push-after-config-edit-option push-after-config-rename-section push-after-config-rename-section-subcommand push-after-config-option-prefix push-after-config-unread-key push-after-config-split-option-argument
 include-alias-key|[Ii][Nn][Cc][Ll][Uu][Dd][Ee].*|[Ii][Nn][Cc][Ll][Uu][Dd][Ee].none|exit=0 expected=2|push-after-config-include push-inline-include
-cdpath-cd|[ -z "$push_cdpath_named" ]|:|exit=0 expected=2|push-cdpath-cd push-cdpath-declared
+cdpath-cd|[ -z "$push_cdpath_named" ]|:|exit=0 expected=2|push-sourced-cdpath-cd
+cdpath-searched-cd|    *) cd_searched=1; push_cd_searched=1 ;;|    *) ;;|exit=0 expected=2|push-cdpath-cd push-cdpath-declared push-sourced-cdpath-cd
 env-chdir-tilde|[[ $env_chdir == '~'* ]]; then|false; then|exit=0 expected=2|push-tilde-env-chdir
 forwarded-cd|        directory_change|        program=forwarded directory_change|exit=0 expected=2|push-builtin-cd
 same-shell-cd|[ -z "$same_shell" ] && [ -n "$cd_destination" ]|[ -n "$cd_destination" ]|exit=0 expected=2|push-eval-cd push-stdin-source-cd push-dot-source-cd push-builtin-source-cd
