@@ -163,23 +163,19 @@ fn copy_tree(from: &Path, to: &Path) {
 /// repository has its accepted finding set aside in all three, and one
 /// whose `origin` is a fork, one with no `origin`, and a folder that is
 /// no repository keep it in all three. The package is this repository's
-/// `review-gate`, whose accepted finding in `templates/review-gate-writer.yml` the
+/// `agent-runtime`, whose accepted finding in `runtime/src/harness.rs` the
 /// table names; what the rest of the package scores is the rules'
 /// business, so the index's score and the Mine row's count are held to
 /// the check's rather than to a number.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn check_index_and_mine_agree_on_the_checkout() {
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/review-gate");
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/agent-runtime");
     let init: &[&str] = &["init", "--quiet", "-b", "main"];
-    let at_writer = |findings: &[kendex_core::quality::Finding]| -> Vec<String> {
+    let at_accepted = |findings: &[kendex_core::quality::Finding]| -> Vec<String> {
         findings
             .iter()
-            .filter(|finding| {
-                finding
-                    .location
-                    .ends_with("templates/review-gate-writer.yml")
-            })
+            .filter(|finding| finding.location.ends_with("runtime/src/harness.rs"))
             .map(|finding| finding.rule.clone())
             .collect()
     };
@@ -215,7 +211,7 @@ fn check_index_and_mine_agree_on_the_checkout() {
     ];
     for (row, git, accepted) in rows {
         let (_tmp, root) = repo();
-        copy_tree(&shipped, &root.join("skills/review-gate"));
+        copy_tree(&shipped, &root.join("skills/agent-runtime"));
         fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
         for args in git {
             let output = kendex_core::process::Hardened::git(args, Some(&root))
@@ -228,15 +224,19 @@ fn check_index_and_mine_agree_on_the_checkout() {
         let item = checked
             .items
             .iter()
-            .find(|item| item.name == "review-gate")
+            .find(|item| item.name == "agent-runtime")
             .unwrap();
         let (flagged, set_aside) = match accepted {
-            true => (vec![], vec!["rce".to_owned()]),
-            false => (vec!["rce".to_owned()], vec![]),
+            true => (vec![], vec!["safety-bypass".to_owned()]),
+            false => (vec!["safety-bypass".to_owned()], vec![]),
         };
-        assert_eq!(at_writer(&item.advisory.findings), flagged, "{row}: check");
         assert_eq!(
-            at_writer(&item.advisory.accepted),
+            at_accepted(&item.advisory.findings),
+            flagged,
+            "{row}: check"
+        );
+        assert_eq!(
+            at_accepted(&item.advisory.accepted),
             set_aside,
             "{row}: check"
         );
@@ -244,7 +244,7 @@ fn check_index_and_mine_agree_on_the_checkout() {
         let package = indexed
             .packages
             .iter()
-            .find(|package| package.name == "review-gate")
+            .find(|package| package.name == "agent-runtime")
             .unwrap();
         assert_eq!(
             package.safety.score, item.advisory.safety.score,

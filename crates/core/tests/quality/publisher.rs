@@ -19,12 +19,11 @@ use kendex_core::quality::Finding;
 use kendex_core::remote;
 use kendex_core::source::browse::{Catalog, package_safety};
 
-/// The kendex package with one accepted finding whose only required
-/// companion is one package, so a stub of that companion completes the
-/// closure the plan installs.
-const PACKAGE: &str = "review-gate";
-const COMPANION: &str = "harness-ci";
-const ACCEPTED_AT: &str = "templates/review-gate-writer.yml";
+/// The kendex package with one accepted finding, which requires no other
+/// package, so the plan installs it alone.
+const PACKAGE: &str = "agent-runtime";
+const ACCEPTED_AT: &str = "runtime/src/harness.rs";
+const RULE: &str = "safety-bypass";
 
 const KENDEX: &str = kendex_core::manifest::DEFAULT_SOURCE_REPO;
 const FORK: &str = "someone/kendex";
@@ -57,7 +56,7 @@ fn copy_tree(from: &Path, to: &Path) {
 }
 
 /// A repository at `repo` under the fake git base, holding this
-/// repository's own copy of the package and a stub of its companion.
+/// repository's own copy of the package.
 #[allow(clippy::unwrap_used)]
 fn publish(home: &Path, repo: &str) {
     let upstream = home.join("git").join(repo);
@@ -66,13 +65,6 @@ fn publish(home: &Path, repo: &str) {
         &shipped.join(PACKAGE),
         &upstream.join("skills").join(PACKAGE),
     );
-    let companion = upstream.join("skills").join(COMPANION);
-    fs::create_dir_all(&companion).unwrap();
-    fs::write(
-        companion.join("SKILL.md"),
-        format!("---\nname: {COMPANION}\ndescription: stands in for {COMPANION}\n---\n\nA stub.\n"),
-    )
-    .unwrap();
     fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
     git(&upstream, &["init", "--quiet", "-b", "main"]);
     git(&upstream, &["add", "-A"]);
@@ -160,8 +152,8 @@ fn standing(advisory: &kendex_core::quality::AuditResult) -> Standing<'_> {
 fn every_path_honours_the_table_for_kendex_and_for_nobody_else() {
     let w = world();
     let rows: [(&str, &str, Standing<'_>); 2] = [
-        ("kendex", KENDEX, (vec![], vec!["rce"])),
-        ("fork", FORK, (vec!["rce"], vec![])),
+        ("kendex", KENDEX, (vec![], vec![RULE])),
+        ("fork", FORK, (vec![RULE], vec![])),
     ];
     for (dir, repo, expected) in rows {
         let scope = project(&w, dir, repo);
@@ -227,7 +219,7 @@ fn a_hand_placed_copy_of_kendexs_own_install_keeps_its_finding() {
         .unwrap_or_else(|| panic!("no row for the copy: {rows:#?}"));
     assert_eq!(
         standing(&row.advisory),
-        (vec!["rce"], vec![]),
+        (vec![RULE], vec![]),
         "{:#?}",
         row.advisory
     );
@@ -243,8 +235,8 @@ fn a_hand_placed_copy_of_kendexs_own_install_keeps_its_finding() {
 fn every_observation_of_a_shared_tree_reads_as_its_recorded_source() {
     let w = world();
     let rows: [(&str, &str, Standing<'_>); 2] = [
-        ("kendex", KENDEX, (vec![], vec!["rce"])),
-        ("fork", FORK, (vec!["rce"], vec![])),
+        ("kendex", KENDEX, (vec![], vec![RULE])),
+        ("fork", FORK, (vec![RULE], vec![])),
     ];
     for (dir, repo, expected) in rows {
         let scope = project_for(&w, dir, repo, "codex");
@@ -313,7 +305,7 @@ fn a_copy_at_a_surface_no_row_wrote_is_nobodys_on_every_row() {
     for row in kendexs {
         assert_eq!(
             standing(&row.advisory),
-            (vec![], vec!["rce"]),
+            (vec![], vec![RULE]),
             "written: {}",
             row.targets[0].harness.name()
         );
@@ -321,7 +313,7 @@ fn a_copy_at_a_surface_no_row_wrote_is_nobodys_on_every_row() {
     for row in copies {
         assert_eq!(
             standing(&row.advisory),
-            (vec!["rce"], vec![]),
+            (vec![RULE], vec![]),
             "copy: {}",
             row.targets[0].harness.name()
         );

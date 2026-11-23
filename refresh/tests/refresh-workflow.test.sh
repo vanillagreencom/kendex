@@ -7,13 +7,10 @@ SKILL_DIR="$REFRESH_DIR/../skills/review-gate"
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 . "$TEST_DIR/lib/sandbox.sh"
-if cmp -s "$REFRESH_DIR/kendex-refresh.yml" "$SKILL_DIR/templates/kendex-refresh.yml"; then
-  ok 'the compatibility template equals the shared caller byte for byte'
-else bad 'caller template equality'; fi
 # A run stuck on the kendex environment gate must not hold the refresh group:
 # the release job takes no group and runs before the refresh asks for it, and
 # its own shell body force-cancels only a run waiting past the 30-minute bound.
-if python3 - "$SKILL_DIR/templates/kendex-refresh.yml" "$TMP" "$BASH" <<'PY'
+if python3 - "$REFRESH_DIR/kendex-refresh.yml" "$TMP" "$BASH" <<'PY'
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json, os, re, subprocess, sys, textwrap
@@ -47,7 +44,7 @@ for name, old, new in (
     except (AssertionError, KeyError): pass
     else: raise AssertionError('must-fail control missed ' + name)
 
-shared = (Path(sys.argv[1]).parents[3] / '.github/workflows/refresh-release.yml').read_text()
+shared = (Path(sys.argv[1]).parents[1] / '.github/workflows/refresh-release.yml').read_text()
 assert 'concurrency:' not in shared and 'environment:' not in shared
 assert shared.index('force-cancel') < shared.index('actions/checkout@') < shared.index('release-input-check')
 body = textwrap.dedent(re.split(r'^      - ', shared.split('        run: |\n', 1)[1], maxsplit=1, flags=re.M)[0])
@@ -121,81 +118,5 @@ for name, old, new, expected in (
     assert mutant == expected, (name, mutant)
 PY
 then ok 'release job force-cancels only a run waiting past the bound before the grouped refresh and skips one that left waiting before the cancel; release, bound, status, re-read and group controls'; else bad 'stuck-waiting release'; fi
-if python3 - "$SKILL_DIR/templates/review-gate-writer.yml" "$TMP" <<'PY'
-from pathlib import Path
-import os
-import re
-import subprocess
-import sys
-import textwrap
-
-template = Path(sys.argv[1]).read_text()
-blocks = re.findall(r'^      - name: Install kendex for change classification\n(.*?)(?=^      - name:)', template, re.M | re.S)
-assert len(blocks) == 1, 'writer installer step missing'
-block = blocks[0]
-assert 'KENDEX_VERSION' not in block, 'writer retains an engine version pin'
-assert re.search(r'^          GH_TOKEN: ""$', block, re.M)
-assert re.search(r'^          GITHUB_TOKEN: \$\{\{ github.token \}\}$', block, re.M)
-body = textwrap.dedent(block.split('        run: |\n')[1])
-root = Path(sys.argv[2]) / 'writer-install'
-scripts = root / '.agents/skills/review-gate/scripts'
-scripts.mkdir(parents=True)
-bin_dir = root / 'bin'
-bin_dir.mkdir()
-
-def executable(path, body):
-    path.write_text('#!/usr/bin/env bash\nset -euo pipefail\n' + body)
-    path.chmod(0o755)
-
-executable(scripts / 'review-policy', '''case "$1" in
-  --check-config) printf 'review-policy=%s\\n' "$POLICY" ;;
-  --lock-kendex) printf 'review-policy-lock-kendex=%s\\n' "$LOCK_MODE" ;;
-  *) exit 2 ;;
-esac
-''')
-installer_scripts = root / '.agents/skills/harness-ci/scripts'
-installer_scripts.mkdir(parents=True)
-executable(installer_scripts / 'install-latest.sh', '''printf 'latest|%s|%s\\n' "$GH_TOKEN" "$GITHUB_TOKEN" >>"$INSTALLS"
-''')
-executable(bin_dir / 'curl', '''printf '%s\\n' "$*" >"$CURL_ARGS"
-printf '%s\\n' 'printf "main\\n" >>"$INSTALLS"; exit "$MAIN_EXIT"'
-''')
-env = {'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'], 'HOME': str(root),
-       'GH_TOKEN': '', 'GITHUB_TOKEN': 'read-only-workflow-token',
-       'KENDEX_INSTALLER_REPO': 'vanillagreencom/kendex',
-       'KENDEX_INSTALLER_SHA': 'f6ad9491a810a9256f04f66f8d083eb9db709602',
-       'RUNNER_TEMP': str(root), 'GITHUB_ENV': str(root / 'github-env'),
-       'INSTALLS': str(root / 'installs'), 'CURL_ARGS': str(root / 'curl-args')}
-
-def run(command, policy, lock, main_exit):
-    (root / 'installs').write_text('')
-    (root / 'github-env').write_text('')
-    result = subprocess.run(['bash', '-c', command], cwd=root,
-                            env=dict(env, POLICY=policy, LOCK_MODE=lock, MAIN_EXIT=str(main_exit)),
-                            text=True, capture_output=True)
-    assert result.returncode == 0, result.stderr
-    return (root / 'installs').read_text().splitlines()
-
-# Run the template's actual shell body. The installer itself has its own
-# immutable-commit and credential-boundary suite in install-latest.test.sh.
-for policy, lock, main_exit, expected in (
-    ('active', 'off', 0, ['latest||read-only-workflow-token']),
-    ('inactive', 'off', 0, []),
-    ('active', 'main', 0, ['latest||read-only-workflow-token', 'main']),
-    ('active', 'main', 1, ['latest||read-only-workflow-token', 'main']),
-):
-    assert run(body, policy, lock, main_exit) == expected, (policy, lock, main_exit)
-    if lock == 'main':
-        assert (root / 'curl-args').read_text().strip() == ('-fsSL https://raw.githubusercontent.com/'
-            'vanillagreencom/kendex/f6ad9491a810a9256f04f66f8d083eb9db709602/install.sh')
-        recorded = (root / 'github-env').read_text().splitlines()
-        assert recorded == ([f'HARNESS_CI_LOCK_KENDEX={root}/kendex-lock/.local/bin/kendex'] if main_exit == 0 else [])
-needle = '  .agents/skills/harness-ci/scripts/install-latest.sh'
-assert body.count(needle) == 1
-mutant = body.replace(needle, '  : # ' + needle.strip())
-assert mutant != body
-assert run(mutant, 'active', 'off', 0) != ['latest||read-only-workflow-token'], 'missed writer install control'
-PY
-then ok 'writer uses the latest installer before optional fixed-commit main installation; dropped-call control'; else bad 'writer latest installation'; fi
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

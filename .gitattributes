@@ -70,13 +70,9 @@ refresh/lib/landing.sh text eol=lf
 *.ttf binary
 *.mp4 binary
 refresh/kendex-refresh.yml text eol=lf
-skills/review-gate/templates/kendex-refresh.yml text eol=lf
-.agents/skills/review-gate/templates/kendex-refresh.yml text eol=lf
 tools/release-previous-tag text eol=lf
 skills/harness-ci/templates/ci.yml text eol=lf
 .agents/skills/harness-ci/templates/ci.yml text eol=lf
-skills/review-gate/templates/review-gate-writer.yml text eol=lf
-.agents/skills/review-gate/templates/review-gate-writer.yml text eol=lf
 skills/xcode-run/templates/mac-run.yml text eol=lf
 .agents/skills/xcode-run/templates/mac-run.yml text eol=lf
 skills/harness-ci/scripts/harness-only text eol=lf

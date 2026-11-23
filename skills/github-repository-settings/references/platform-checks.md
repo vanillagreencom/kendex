@@ -33,7 +33,7 @@ The shared settings reader checks process values, the private env file (`.env.lo
 
 The organization's own ruleset applies approval, stale-dismissal, thread-resolution, deletion and force-push rules. Each repository owns its required checks and merge queue.
 
-A branch that requires the retired gate context fails the required-contexts row, whatever the contexts setting holds. Follow the review-gate skill's [trusted removal workflow](../../review-gate/workflows/retire-consumer-writer.md) before retiring a gate writer.
+A branch that requires the retired gate context fails the required-contexts row, whatever the contexts setting holds.
 
 ## Migration from review-gate
 

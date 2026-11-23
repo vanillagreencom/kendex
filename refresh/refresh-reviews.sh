@@ -19,8 +19,8 @@
 # with a package label. An outdated thread gets a keyed skip, a not-filed
 # reply and resolution. Live unfiled findings, including paths no single
 # package claims and ones without Issues access, get no reply and hold the run
-# while open. The consumer must answer an unclaimed finding through its
-# trusted removal PR or a reply, then resolve the thread by hand. A merged
+# while open. The consumer must answer an unclaimed finding through its own
+# pull request or a reply, then resolve the thread by hand. A merged
 # pull request is read only for 24 hours after its merge; after that its
 # unanswered threads get no filing, no retry and no run failure, and a person
 # answers them by hand.
@@ -70,7 +70,7 @@ if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
     'The workflow also sets GitHub run/summary variables for the reporter.' \
     'Outdated threads get a not-filed reply and resolution.' \
     'Live findings on unclaimed paths, findings routed elsewhere and ones without Issues access stay unfiled.' \
-    'The consumer must answer unclaimed findings through its trusted removal PR or a reply.' \
+    'The consumer must answer unclaimed findings through its own pull request or a reply.' \
     'While its thread is open the run exits 1; resolving the thread by hand ends that.' \
     'A merged pull request is read only for 24 hours after its merge; after that a person answers its open threads by hand.'
   exit 0

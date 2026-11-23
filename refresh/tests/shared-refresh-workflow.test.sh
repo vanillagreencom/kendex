@@ -26,7 +26,7 @@ bad() {
 # These declarations forward the fixed environment pairs. This checks wiring,
 # not hosted resolution. The FLEET pair also supplies the issue-token step,
 # and the optional KENDEX_LAND pair the landing token step.
-if python3 - "$TEST_DIR/../kendex-refresh.yml" "$TEST_DIR/../../skills/review-gate/templates/kendex-refresh.yml" <<'FORWARDING'
+if python3 - "$TEST_DIR/../kendex-refresh.yml" <<'FORWARDING'
 from pathlib import Path
 import re, sys
 expected = {'KENDEX_APP_ID': '${{ secrets.KENDEX_APP_ID }}',
@@ -51,7 +51,7 @@ for path in sys.argv[1:]:
         except AssertionError: pass
         else: raise AssertionError('missing forwarding control '+name)
 FORWARDING
-then ok 'default callers forward the fixed pairs; omitted same-name controls fail';
+then ok 'the default caller forwards the fixed pairs; omitted same-name controls fail';
 else bad 'default caller credential forwarding'; fi
 
 if python3 - "$WORKFLOW" "$TMP" "$BASH" <<'PY'

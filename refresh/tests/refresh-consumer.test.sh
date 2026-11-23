@@ -401,16 +401,11 @@ case "$1" in
       mkdir -p "$(dirname "$TEST_REFRESH_ADDS")"
       printf 'added by the refresh\n' >"$TEST_REFRESH_ADDS"
     fi
-    if [ -n "$TEST_REFRESH_SKILL" ]; then
-      rm -rf -- .agents/skills/review-gate
-      cp -R "$TEST_REFRESH_SKILL" .agents/skills/review-gate
-    fi
     if [ -n "$TEST_REFRESH_BOT" ]; then
       rm -rf -- .agents/skills/bot-instructions
       cp -R "$TEST_REFRESH_BOT" .agents/skills/bot-instructions
     fi
     if [ -n "${TEST_HOSTILE:-}" ]; then
-      cp "$TEST_FRESH_TEMPLATES/"*.yml .agents/skills/review-gate/templates/
       for path in adopt-refresh.sh validate-standard.sh lib/diagnostics.sh lib/settings.sh lib/standard.sh; do
         if [ "$path" = adopt-refresh.sh ]; then target="refresh/$path"
         else target=".agents/skills/review-gate/scripts/$path"; fi
@@ -2521,71 +2516,12 @@ PY_EXTRACT
 done
 rm -f -- "$repo/.env.local"
 
-# Scripts from the consumer's committed pre-platform checkout must adopt
-# refreshed catalog data before its PR can bring the new scripts. Fixtures
-# are verbatim renders from 672eb6013185427ba9cb109fece86dbe08f668b5.
-sandbox
-repo="$DIR"
-git -C "$repo" branch -M main
-cp "$SKILL_DIR/tests/fixtures/pre-platform/"*.sh "$repo/.agents/skills/review-gate/scripts/"
-# The old adopter calls the validator's retired environment-only mode, so the
-# validator pair from the same commit, and the standard that pair reads, sit
-# beside it.
-for path in scripts/validate-standard.sh scripts/lib/standard.sh standard.json; do
-  git -C "$SKILL_DIR" show "672eb6013185427ba9cb109fece86dbe08f668b5:skills/review-gate/$path" >"$repo/.agents/skills/review-gate/$path"
-done
-# The retired runner resolves the report beside itself, before the directory move.
-git -C "$SKILL_DIR" show a75766f9d:skills/review-gate/scripts/refresh-report.py >"$repo/.agents/skills/review-gate/scripts/refresh-report.py"
-chmod +x "$repo/.agents/skills/review-gate/scripts/"*.sh
-# The old validator checks the engine's tracked path, never its body.
-printf '#!/usr/bin/env bash\nexit 1\n' >"$repo/.agents/skills/review-gate/scripts/review-writer.sh"
-cp "$SKILL_DIR/templates/review-gate-writer.yml" "$repo/.github/workflows/review-gate-writer.yml"
-record_adoption "$repo" .github/workflows/review-gate-writer.yml .agents/skills/review-gate/templates/review-gate-writer.yml
-cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
-# This consumer installs no orch.
-rm -rf -- "${repo:?}/.agents/skills/orch"
-commit "$repo"
-git init --bare -q "$TMP/legacy-remote"
-git --git-dir="$TMP/legacy-remote" config gc.auto 0
-git --git-dir="$TMP/legacy-remote" config maintenance.auto false
-git -C "$repo" remote add origin "$TMP/legacy-remote"
-git -C "$repo" push -q origin main
-git -C "$repo" worktree add --detach "$TMP/legacy-trusted" HEAD
-runner="$TMP/legacy-trusted/.agents/skills/review-gate/scripts/refresh-consumer.sh"
-for bridge in retained missing; do
-  reset_default
-  REFRESH_SKILL="$TMP/catalog-$bridge"
-  cp -R "$SKILL_DIR" "$REFRESH_SKILL"
-  # Build C retains the old writer bridge for already installed inline runners.
-  cp "$TMP/shipped-historical" "$REFRESH_SKILL/templates/kendex-refresh.yml"
-  if [ "$bridge" = missing ]; then
-    rm -- "$REFRESH_SKILL/templates/review-gate-writer.yml"
-  fi
-  : >"$TMP/state/pr"
-  : >"$TMP/state/creates"
-  : >"$TMP/state/calls"
-  run_refresh legacy pass standard
-  if [ "$bridge" = retained ]; then
-    if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=pushed pr=1 class=standard' <<<"$OUT" &&
-        [ -s "$TMP/state/creates" ] && [ ! -e "$repo/.agents/skills/review-gate/scripts/validate-workflow.sh" ]; then
-      ok 'pre-platform refresh opens its PR with the retained writer bridge'
-    else bad 'pre-platform refresh bridge' "$OUT"; fi
-  elif [ "$RC" -eq 2 ] &&
-      grep -qxF "review-gate-error=template-missing value=$repo/.agents/skills/review-gate/templates/review-gate-writer.yml" <<<"$OUT" &&
-      [ ! -s "$TMP/state/creates" ] && ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
-    ok 'control: removing the bridge fails old refresh at template-missing'
-  else bad 'pre-platform bridge removal control' "$OUT"; fi
-done
-unset REFRESH_SKILL
-
 # The shipped workflow preserves a trusted checkout before refresh replaces
-# catalog files. Real adoption must read new template bytes without executing
-# refreshed adoption code, including for a renamed writer.
+# catalog files. Adoption writes the release tree's caller without executing
+# refreshed adoption code.
 sandbox
 repo="$DIR"
 git -C "$repo" branch -M main
-printf 'retired workflow\n' >"$repo/.github/workflows/gate.yml"
-record_adoption "$repo" .github/workflows/gate.yml .agents/skills/review-gate/templates/review-gate-writer.yml
 printf 'current\n' >"$repo/rendered.txt"
 cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
 commit "$repo"
@@ -2596,44 +2532,30 @@ git -C "$repo" remote add origin "$TMP/secure-remote"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/trusted" HEAD
 runner="$TMP/trusted/refresh/refresh-consumer.sh"
-cp -R "$repo/.agents/skills/review-gate/templates" "$TMP/fresh-templates"
-printf '\n# fresh refresh template\n' >>"$TMP/fresh-templates/kendex-refresh.yml"
-ship_refresh_template "$TMP/fresh-templates/kendex-refresh.yml"
 : >"$TMP/state/pr"
 : >"$TMP/state/creates"
 HOSTILE=1
 run_refresh refreshed pass render
-warning_count="$(awk '/^refresh-warning=legacy-writer / { count++ } END { print count + 0 }' <<<"$OUT")" || exit 1
 if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] &&
-    retirement_matches "$repo" .github/workflows/gate.yml .agents/skills/review-gate/templates/review-gate-writer.yml preserved &&
-    [ "$warning_count" -eq 1 ] && grep -qxF 'refresh-warning=legacy-writer value=.agents/skills/review-gate/templates/review-gate-writer.yml' <<<"$OUT" &&
+    [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ] &&
     cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$CALLER" &&
-    python3 - "$repo" <<'INVENTORY'
-import hashlib,json,sys
-from pathlib import Path
-root=Path(sys.argv[1]); entries=json.loads((root/'.kendex-generated.json').read_text())
-assert {e['path'] for e in entries}=={'.github/workflows/gate.yml'}
-for entry in (e for e in entries if e['path'] == '.github/workflows/kendex-refresh.yml'):
- assert entry['templateHash']=='sha256:'+hashlib.sha256((root/entry['path']).read_bytes()).hexdigest()
- assert (root/entry['path']).read_bytes()==(root/entry['template']).read_bytes()
-INVENTORY
-then ok 'automatic adoption reads fresh templates and keeps the retired writer and record without executing refreshed code'
-else bad 'automatic adoption boundary and fresh data' "$OUT"; fi
-# A committed hand edit refuses before writer adoption and every publication.
+    jq -e '[.[] | objects | .path] == []' "$repo/.kendex-generated.json" >/dev/null; then
+  ok 'automatic adoption writes the caller and opens the pull request without executing refreshed code'
+else bad 'automatic adoption boundary' "$OUT"; fi
+# A committed hand edit refuses before adoption and every publication.
 reset_default
-cp "$repo/.agents/skills/review-gate/templates/kendex-refresh.yml" "$repo/.github/workflows/kendex-refresh.yml"
+mkdir -p "$repo/.github/workflows"
+cp "$CALLER" "$repo/.github/workflows/kendex-refresh.yml"
 file_edit "$repo" .github/workflows/kendex-refresh.yml 1 '^name: ' 's/^name: .*/name: consumer edit/'
 commit "$repo"
 git -C "$repo" push -q origin main
 cp "$repo/.github/workflows/kendex-refresh.yml" "$TMP/workflow-before"
-cp "$repo/.github/workflows/gate.yml" "$TMP/writer-before"
 cp "$repo/.kendex-generated.json" "$TMP/inventory-before"
 before="$(git --git-dir="$TMP/secure-remote" rev-parse refs/heads/kendex/refresh)"
 : >"$TMP/state/calls"
 run_refresh refreshed pass render
 if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$repo/.github/workflows/kendex-refresh.yml" <<<"$OUT" &&
     cmp -s "$TMP/workflow-before" "$repo/.github/workflows/kendex-refresh.yml" &&
-    cmp -s "$TMP/writer-before" "$repo/.github/workflows/gate.yml" &&
     cmp -s "$TMP/inventory-before" "$repo/.kendex-generated.json" &&
     [ "$before" = "$(git --git-dir="$TMP/secure-remote" rev-parse refs/heads/kendex/refresh)" ] &&
     ! grep -qE '^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls"; then
@@ -2654,59 +2576,6 @@ run_refresh refreshed pass render
 if [ "$RC" -eq 89 ] && [ -s "$TMP/state/hostile" ]; then
   ok 'control: refreshed adoption code executes when the trusted path is removed'
 else bad 'trusted adoption control' "$OUT"; fi
-# A repository with no review gate runs the whole refresh with no writer: the
-# trusted adoption records only the refresh copy and the pull request opens.
-# HOSTILE stays set, so the refreshed scripts must still never execute.
-sandbox
-repo="$DIR"
-git -C "$repo" branch -M main
-printf '[]\n' >"$repo/.kendex-generated.json"
-printf 'current\n' >"$repo/rendered.txt"
-cp "$TMP/stub-change-class" "$repo/.agents/skills/harness-ci/scripts/change-class"
-commit "$repo"
-git init --bare -q "$TMP/no-writer-remote"
-git --git-dir="$TMP/no-writer-remote" config gc.auto 0
-git --git-dir="$TMP/no-writer-remote" config maintenance.auto false
-git -C "$repo" remote add origin "$TMP/no-writer-remote"
-git -C "$repo" push -q origin main
-git -C "$repo" worktree add --detach "$TMP/no-writer-trusted" HEAD
-runner="$TMP/no-writer-trusted/refresh/refresh-consumer.sh"
-: >"$TMP/state/pr"
-: >"$TMP/state/creates"
-rm -f -- "${TMP:?}/state/hostile"
-run_refresh refreshed pass render
-if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -eq 1 ] &&
-    [ ! -e "$repo/.github/workflows/review-gate-writer.yml" ] &&
-    cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$CALLER" &&
-    jq -e '[.[] | objects | .path] == []' "$repo/.kendex-generated.json" >/dev/null; then
-  ok 'no-writer refresh adopts the refresh workflow and opens its pull request'
-else bad 'no-writer refresh' "$OUT"; fi
-# The shared workflow names its release tree's caller template. The run
-# adopts that caller and drops the earlier record; a runner that ignores the
-# argument adopts the rendered template instead.
-mkdir -p "$TMP/release/refresh"
-cp "$CALLER" "$TMP/release/refresh/kendex-refresh.yml"
-ship_caller_template "$CALLER"
-cp "$runner" "$TMP/release-runner"
-for mutation in none ignored; do
-  reset_default
-  if [ "$mutation" = ignored ]; then
-    file_edit "$TMP/no-writer-trusted" refresh/refresh-consumer.sh 1 \
-      '--templates-dir "\$templates"$' 's/--templates-dir "\$templates"$/--templates-dir "$ROOT\/.agents\/skills\/review-gate\/templates" # "$templates"/'
-  fi
-  cp "$CALLER" "${runner%/*}/kendex-refresh.yml"
-  run_refresh release-caller pass render
-    matched=no
-  if [ "$RC" -eq 0 ] && [ ! -e "$TMP/state/hostile" ] &&
-      cmp -s "$repo/.github/workflows/kendex-refresh.yml" "$CALLER" &&
-      jq -e '[.[] | objects | .path] == []' "$repo/.kendex-generated.json" >/dev/null; then matched=yes; fi
-  case "$mutation:$matched" in
-    none:yes) ok 'release-tree caller adoption writes the caller and drops its record' ;;
-    ignored:no) ok 'control: an ignored templates argument turns the release-tree adoption assertion red' ;;
-    *) bad "release-tree caller adoption mutation=$mutation (rc=$RC)" "$OUT" ;;
-  esac
-  cp "$TMP/release-runner" "$runner"
-done
 # A refresh that changes the bot-instructions package carries its render. The
 # default branch holds a render made with an older copy whose spec had one
 # more default surface; the refreshed copy no longer produces that file. The

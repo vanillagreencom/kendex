@@ -24,29 +24,26 @@ trap exit_report EXIT
 . "$TEST_DIR/lib/refresh-fixture.sh"
 ADOPT='refresh/adopt-refresh.sh'
 REFRESH='.github/workflows/kendex-refresh.yml'
-TEMPLATE='.agents/skills/review-gate/templates/kendex-refresh.yml'
-printf '["%s"]\n' "$TEMPLATE" >"$PRISTINE/.kendex-generated.json"
-# Seed a committed, owned writer to make retirement ordering observable.
-printf 'retired workflow\n' >"$PRISTINE/.github/workflows/review-gate-writer.yml"
-record_adoption "$PRISTINE" .github/workflows/review-gate-writer.yml .agents/skills/review-gate/templates/review-gate-writer.yml
+# The release copy's caller: the template the adopter reads by default.
+TEMPLATE='refresh/kendex-refresh.yml'
 commit "$PRISTINE"
 
 
 sandbox
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok 'adoption retires the owned writer and records the refresh copy'; else bad "initial adoption (rc=$RC)" "$OUT"; fi
+run_refresh_command "$DIR" "$DIR/$ADOPT"
+if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok 'adoption writes the shipped caller with no inventory record'; else bad "initial adoption (rc=$RC)" "$OUT"; fi
 cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && cmp -s "$TMP/inventory-before" "$DIR/.kendex-generated.json"; then ok 'repeated adoption keeps the inventory unchanged'; else bad "repeated adoption (rc=$RC)" "$OUT"; fi
 
 # The API child keeps the inputs used by GitHub CLI configuration, Linux
 # credential storage and Go network routes. The fixture owns its assertions.
 while IFS='|' read -r key value mutation expected; do
   sandbox
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   [ "$RC" -eq 0 ] || exit 1
   rm -- "${DIR:?}/$REFRESH"
-  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
+  printf '[]\n' >"$DIR/.kendex-generated.json"
   cp "$BIN/gh" "$BIN/gh-environment-base"
   api_calls="$TMP/api-environment-calls"
   : >"$api_calls"
@@ -79,7 +76,7 @@ INHERITED_ENVIRONMENT
   OUT="$(cd "$DIR" && env -i PATH="$BIN:$PATH" HOME="$TMP" GH_TOKEN=fixture \
     SSL_CERT_FILE=environment-input SSL_CERT_DIR=environment-input GODEBUG=x509sslcertoverrideplatform=0 \
     "$key=$value" UNRELATED_APPLICATION_SECRET=fixture \
-    "$DIR/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates" --retire-writer 2>&1)" || RC=$?
+    "$DIR/$ADOPT" 2>&1)" || RC=$?
   matched=no
   if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" &&
       grep -qxF discovery "$api_calls" && grep -qxF validation "$api_calls"; then matched=yes; fi
@@ -102,13 +99,9 @@ GH_ENV_ROWS
 
 # Only the catalog fixture licenses updates. Consumer records, current
 # templates and consumer commits cannot supply shipment evidence.
-# input | record | result | writer
-while IFS='|' read -r input record result writer; do
+# input | record | result
+while IFS='|' read -r input record result; do
   sandbox
-  if [ "$writer" = absent ]; then
-    rm -- "${DIR:?}/.github/workflows/review-gate-writer.yml"
-    printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
-  fi
   cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
   case "$input" in
     historical) cp "$TMP/shipped-historical" "$DIR/$REFRESH" ;;
@@ -129,33 +122,25 @@ RECORD
   commit "$DIR"
   # Refresh restores the shipped template, not the committed workflow edit.
   if [ "$input" = fake-history ]; then cp "$PRISTINE/$TEMPLATE" "$DIR/$TEMPLATE"; fi
-  # The owned writer must remain until refresh shipment is proved.
-  cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
-  cp "$DIR/$REFRESH" "$TMP/adoption-workflow"
-  if [ "$writer" != absent ]; then cp "$DIR/.github/workflows/review-gate-writer.yml" "$TMP/adoption-writer"; fi
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  snapshot_adoption
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   if [ "$result" = accept ]; then
-    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" && [ ! -e "$DIR/.github/workflows/review-gate-writer.yml" ]; then ok "$input record=$record writer=$writer adopts shipped bytes"
-    else bad "$input record=$record writer=$writer (rc=$RC)" "$OUT"; fi
-  elif [ "$writer" = absent ]; then
-    if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT" &&
-        cmp -s "$TMP/adoption-workflow" "$DIR/$REFRESH" && cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json" &&
-        ! grep -qE '^(ok|FAIL|note) check=workflow-' <<<"$OUT"; then ok 'no-writer edit refuses before adoption'
-    else bad 'no-writer edit preservation' "$OUT"; fi
+    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok "$input record=$record adopts shipped bytes"
+    else bad "$input record=$record (rc=$RC)" "$OUT"; fi
   else
     target="$REFRESH"
     [ "$result" != template-edited ] || target="$TEMPLATE"
     if adoption_preserved "refresh-error=$result value=$DIR/$target"; then
-      ok "$input record=$record refuses before writer effects"
+      ok "$input record=$record refuses before any workflow or inventory change"
     else bad "$input record=$record preservation (rc=$RC)" "$OUT"; fi
     if [ "$input" = fake-history ]; then
-      python3 - "$DIR/$ADOPT" <<'CONSUMER_HISTORY_CONTROL'
+      python3 - "$DIR/$ADOPT" "$TEMPLATE" <<'CONSUMER_HISTORY_CONTROL'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]).resolve(); s = p.read_text()
 old = 'if not shipped_copy:'
 assert s.count(old) == 1, 'fixture-error=edit-matches value=' + repr(old)
-new = '''consumer_path = ".agents/skills/review-gate/templates/kendex-refresh.yml"
+new = '''consumer_path = ''' + repr(sys.argv[2]) + '''
 consumer_commits = subprocess.check_output(
     ["git", "-C", str(root), "log", "--full-history", "--format=%H", "HEAD", "--", consumer_path],
     env=environment).decode().splitlines()
@@ -175,17 +160,15 @@ CONSUMER_HISTORY_CONTROL
     fi
   fi
 done <<'ROWS'
-current|missing|accept|present
-current|matching|accept|present
-current|stale|accept|present
-historical|missing|accept|present
-historical|matching|accept|present
-historical|stale|accept|present
-historical|missing|accept|absent
-hand-edit|missing|workflow-edited|present
-hand-edit|matching|workflow-edited|present
-hand-edit|missing|workflow-edited|absent
-fake-history|matching|workflow-edited|present
+current|missing|accept
+current|matching|accept
+current|stale|accept
+historical|missing|accept
+historical|matching|accept
+historical|stale|accept
+hand-edit|missing|workflow-edited
+hand-edit|matching|workflow-edited
+fake-history|matching|workflow-edited
 ROWS
 
 # Independent identity, evidence-read and link rules each keep their
@@ -209,8 +192,8 @@ BROKEN_TRANSPORT
   snapshot_adoption
   error="refresh-error=$key value=$DIR/$target"
   [ "$rule" != history ] || error='refresh-error=read value=workflow-history'
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-  if adoption_preserved "$error"; then ok "$rule refuses without workflow, writer or inventory changes"
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
+  if adoption_preserved "$error"; then ok "$rule refuses without workflow or inventory changes"
   else bad "$rule refusal" "$OUT"; fi
   if [ "$rule" = baseline ]; then
     git -C "$SKILL_DIR" show b315ac64:skills/review-gate/scripts/adopt-refresh.sh >"$DIR/$ADOPT"
@@ -244,14 +227,14 @@ cp "$TMP/shipped-historical" "$DIR/$REFRESH"
 file_edit "$DIR" "$ADOPT" 1 '^        shipped_copy = shipped_copy or copied_shape == candidate_shape$' \
   's/copied_shape == candidate_shape/copied == replacement # copied_shape == candidate_shape/'
 chmod +x "$DIR/$ADOPT"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT"; then
   ok 'control: removed historical equality breaks the f7db7e89 acceptance row'
 else bad 'historical equality control' "$OUT"; fi
 
 # A concurrent writer can change bytes or introduce a link after shipment
 # classification. The final check owns that link, not the initial-link preflight.
-# Refusal precedes retired-writer removal, refresh replacement and inventory.
+# Refusal precedes refresh replacement and inventory.
 for rule in workflow template symlink; do
   sandbox
   cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
@@ -266,16 +249,15 @@ if sys.argv[2]=='symlink':
  target=Path(sys.argv[4])/'concurrent-target'; target.write_bytes(workflow.read_bytes())
  effect='rm -- '+shlex.quote(str(workflow))+'; ln -s '+shlex.quote(str(target))+' '+shlex.quote(str(workflow))
 else:
- target=workflow if sys.argv[2]=='workflow' else root/'.agents/skills/review-gate/templates/kendex-refresh.yml'
+ target=workflow if sys.argv[2]=='workflow' else root/'refresh/kendex-refresh.yml'
  effect="printf '# concurrent edit\\n' >>"+shlex.quote(str(target))
 changed=s.replace(old, 'PREFLIGHT\n'+effect+'\n# Re-read inventory'); assert changed != s, 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(changed)
 CONCURRENT
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   if [ "$rule" = template ]; then key=template-changed; target="$TEMPLATE"; else key=workflow-changed; target="$REFRESH"; fi
   [ "$rule" != symlink ] || key=workflow-symlink
   if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=$key value=$DIR/$target" <<<"$OUT" &&
       cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json" &&
-      cmp -s "$TMP/adoption-writer" "$DIR/.github/workflows/review-gate-writer.yml" &&
       { [ "$rule" != workflow ] || grep -qxF '# concurrent edit' "$DIR/$REFRESH"; } &&
       { [ "$rule" != symlink ] || { [ -L "$DIR/$REFRESH" ] && cmp -s "$TMP/concurrent-target" "$TMP/adoption-workflow"; }; }; then
     ok "$rule precondition preserves the concurrent edit and inventory"
@@ -297,7 +279,7 @@ PRECONDITION_CONTROL
   if [ "$rule" = symlink ]; then rm -- "$DIR/$REFRESH"; fi
   cp "$TMP/adoption-workflow" "$DIR/$REFRESH"
   if [ "$rule" = template ]; then cp "$TMP/adoption-workflow" "$DIR/$TEMPLATE"; fi
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   if [ "$RC" -eq 0 ]; then ok "control: $rule precondition bypass overwrites after classification"
   else bad "$rule precondition control" "$OUT"; fi
 done
@@ -319,7 +301,7 @@ while IFS='|' read -r rule pattern; do
     read) SHIM_FAIL=environments ;;
   esac
   cp "$DIR/.kendex-generated.json" "$TMP/inventory-before"
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   cause="$rule"; [ "$rule" != policy-type ] || cause=branch-policy
   [ "$rule" != read ] || cause="read operation=repos/acme/widgets/environments"
   if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=environment value=kendex cause=$cause" <<<"$OUT" &&
@@ -342,7 +324,7 @@ if sys.argv[3]=='missing':
  s=s.replace(old, 'policy = selected[0].get("deployment_branch_policy") if selected else {"custom_branch_policies": True, "protected_branches": False}')
 assert s != p.read_text(), 'fixture-error=edit-unchanged value=' + sys.argv[1]; p.write_text(s)
 ENV_CONTROL
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
     ok "control: disabled $rule check permits adoption"
   else bad "$rule environment control" "$OUT"; fi
@@ -360,7 +342,7 @@ cp "$TMP/default-secrets" "$FIXTURES/environment-secrets-kendex.json"
 sandbox
 printf '{"full_name":"vanillagreencom/kendex","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
 cp "$DIR/.kendex-generated.json" "$TMP/self-inventory"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && [ ! -e "$DIR/$REFRESH" ] && cmp -s "$TMP/self-inventory" "$DIR/.kendex-generated.json"; then
   ok 'kendex adoption leaves workflows and inventory unchanged'
 else bad 'kendex self-exclusion' "$OUT"; fi
@@ -368,213 +350,34 @@ file_edit "$DIR" "$ADOPT" 1 'if \[ "\$repository" = vanillagreencom/kendex \]; t
   's/if \[ "\$repository" = vanillagreencom\/kendex \]; then/if false; then/'
 chmod +x "$DIR/$ADOPT"
 printf '{"environments":[{"name":"kendex","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && [ -e "$DIR/$REFRESH" ]; then
   ok 'control: removed self-exclusion adopts the consumer workflow in kendex'
 else bad 'self-exclusion control did not reach adoption' "$OUT"; fi
 
 sandbox
-rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
 printf '{"full_name":"acme/widgets","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+run_refresh_command "$DIR" "$DIR/$ADOPT"
 [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" || exit 1
-# Refresh records the new template hash before adoption, as above.
 commit "$DIR"
 printf '\n# new template bytes\n' >>"$DIR/$TEMPLATE"
-ship_refresh_template "$DIR/$TEMPLATE"
-record_template_hash
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+ship_caller_template "$DIR/$TEMPLATE"
+run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then
-  ok 'no-writer refresh updates an unedited refresh workflow'
-else bad "no-writer template update (rc=$RC)" "$OUT"; fi
+  ok 'refresh updates an unedited refresh workflow'
+else bad "template update (rc=$RC)" "$OUT"; fi
 commit "$DIR"
 printf '# consumer edit\n' >>"$DIR/$REFRESH"
 cp "$DIR/$REFRESH" "$TMP/adoption-workflow"
 cp "$DIR/.kendex-generated.json" "$TMP/adoption-inventory"
-run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+run_refresh_command "$DIR" "$DIR/$ADOPT"
 if [ "$RC" -eq 1 ] && grep -qxF "refresh-error=workflow-edited value=$DIR/$REFRESH" <<<"$OUT" &&
     cmp -s "$TMP/adoption-workflow" "$DIR/$REFRESH" && cmp -s "$TMP/adoption-inventory" "$DIR/.kendex-generated.json"; then
-  ok 'no-writer adoption preserves a later workflow edit'
-else bad 'no-writer later edit' "$OUT"; fi
+  ok 'adoption preserves a later workflow edit'
+else bad 'later edit' "$OUT"; fi
 
-OWNER=".agents/skills/review-gate/templates/review-gate-writer.yml"
-# The automatic runner invokes its preserved adopter without retirement
-# input, while reading templates from the refreshed checkout.
-while IFS='|' read -r mutation expected; do
-  sandbox
-  rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
-  writer='.github/workflows/retired.yml'
-  printf 'retired workflow\n' >"$DIR/$writer"
-  record_adoption "$DIR" "$writer" "$OWNER"
-  commit "$DIR"
-  trusted="$TMP/automatic-$SANDBOX_N"
-  git -C "$DIR" worktree add --detach -q "$trusted" HEAD
-  case "$mutation" in
-    none) ;;
-    retirement)
-      file_edit "$trusted" "$ADOPT" 1 '^retiring = retired if ' 's/else \[\]$/else retired/' ;;
-    warning)
-      file_edit "$trusted" "$ADOPT" 1 '^    print\("refresh-warning=legacy-writer' \
-        's/^    print("refresh-warning=legacy-writer/    # print("refresh-warning=legacy-writer/' ;;
-    *) exit 2 ;;
-  esac
-  run_refresh_command "$DIR" "$trusted/$ADOPT" --templates-dir "$DIR/.agents/skills/review-gate/templates"
-  warning_count="$(awk '/^refresh-warning=legacy-writer / { count++ } END { print count + 0 }' <<<"$OUT")" || exit 1
-  matched=no
-  if retirement_matches "$DIR" "$writer" "$OWNER" preserved &&
-      [ "$warning_count" -eq 1 ] && grep -qxF "refresh-warning=legacy-writer value=$OWNER" <<<"$OUT"; then matched=yes; fi
-  if [ "$RC" -eq 0 ] && [ "$matched" = "$expected" ]; then ok "automatic legacy writer mutation=$mutation"; else bad "automatic legacy writer mutation=$mutation (rc=$RC)" "$OUT"; fi
-done <<'AUTOMATIC'
-none|yes
-retirement|no
-warning|no
-AUTOMATIC
-
-while IFS='|' read -r kind expected; do
-  sandbox
-  rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
-  writer="$DIR/.github/workflows/retired.yml"
-  printf 'retired workflow\n' >"$writer"
-  record_adoption "$DIR" .github/workflows/retired.yml "$OWNER"
-  commit "$DIR"
-  case "$kind" in
-    initial) rm -- "${writer:?}"; printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json" ;;
-    new-install)
-      rm -- "${writer:?}"
-      git -C "$DIR" rm -q .kendex-generated.json
-      commit "$DIR"
-      printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json" ;;
-    retired|repeat) ;;
-    missing) rm "$writer" ;;
-    edited) printf 'consumer edit\n' >>"$writer" ;;
-    symlink) mv "$writer" "$DIR/target"; ln -s ../../target "$writer" ;;
-    unrecorded) mv "$writer" "$DIR/.github/workflows/review-gate-writer.yml"; writer="$DIR/.github/workflows/review-gate-writer.yml" ;;
-    refresh-symlink|update)
-      cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
-      record_adoption "$DIR" "$REFRESH" "$TEMPLATE"
-      commit "$DIR"
-      case "$kind" in
-        refresh-symlink) mv "$DIR/$REFRESH" "$DIR/refresh-target"; ln -s ../../refresh-target "$DIR/$REFRESH" ;;
-        update) printf '\n# updated template\n' >>"$DIR/$TEMPLATE"; ship_refresh_template "$DIR/$TEMPLATE" ;;
-      esac ;;
-    environment) SHIM_FAIL='environments' ;;
-    excluded) printf '{"full_name":"vanillagreencom/kendex","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json" ;;
-    *) exit 2 ;;
-  esac
-  cp "$DIR/.kendex-generated.json" "$TMP/before"
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-  if [ "$expected" = pass ]; then
-    if [ "$RC" -eq 0 ] && [ ! -e "$writer" ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then ok "$kind"; else bad "$kind (rc=$RC)" "$OUT"; fi
-    if [ "$kind" = retired ]; then
-      if retirement_matches "$DIR" .github/workflows/retired.yml "$OWNER" removed; then
-        ok 'explicit trusted retirement removes the writer and record'
-      else bad 'explicit trusted retirement' "$OUT"; fi
-      cp "$TMP/before" "$DIR/.kendex-generated.json"
-      printf 'retired workflow\n' >"$writer"
-      file_edit "$DIR" "$ADOPT" 1 '^retiring = retired if ' 's/^retiring = retired if /retiring = [] if /'
-      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-      if [ "$RC" -eq 0 ] && ! retirement_matches "$DIR" .github/workflows/retired.yml "$OWNER" removed; then
-        ok 'control: disabled explicit retirement breaks the removal assertion'
-      else bad 'explicit retirement control' "$OUT"; fi
-    fi
-    if [ "$kind" = repeat ]; then
-      cp "$DIR/.kendex-generated.json" "$TMP/repeated"
-      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-      if [ "$RC" -eq 0 ] && cmp -s "$TMP/repeated" "$DIR/.kendex-generated.json" &&
-          ! grep -q '^refresh-warning=legacy-writer ' <<<"$OUT"; then ok 'repeat unchanged without a legacy warning'; else bad 'repeat unchanged' "$OUT"; fi
-    fi
-  elif [ "$expected" = excluded ]; then
-    if [ "$RC" -eq 0 ] && cmp -s "$TMP/before" "$DIR/.kendex-generated.json" && [ ! -e "$DIR/$REFRESH" ]; then ok "$kind"; else bad "$kind" "$OUT"; fi
-  else
-    if [ "$RC" -ne 0 ] && cmp -s "$TMP/before" "$DIR/.kendex-generated.json" && [ -e "$writer" ] && { [ "$expected" = environment ] || grep -q "^refresh-error=$expected value=" <<<"$OUT"; }; then ok "$kind"; else bad "$kind (rc=$RC)" "$OUT"; fi
-  fi
-  SHIM_FAIL=''
-  printf '{"full_name":"acme/widgets","default_branch":"main","owner":{"type":"Organization"}}\n' >"$FIXTURES/repository.json"
-done <<'CASES'
-initial|pass
-new-install|pass
-retired|pass
-repeat|pass
-missing|pass
-edited|workflow-edited
-symlink|workflow-symlink
-unrecorded|workflow-unrecorded
-refresh-symlink|workflow-symlink
-update|pass
-environment|environment
-excluded|excluded
-CASES
-
-# Each independent ownership guard keeps its diagnostic and operands while
-# the control disables its condition in a disposable script copy.
-while IFS='|' read -r kind pattern replacement; do
-  sandbox
-  rm -- "$DIR/.github/workflows/review-gate-writer.yml"
-  printf '["%s"]\n' "$TEMPLATE" >"$DIR/.kendex-generated.json"
-  writer="$DIR/.github/workflows/retired.yml"
-  printf 'retired workflow\n' >"$writer"
-  record_adoption "$DIR" .github/workflows/retired.yml "$OWNER"
-  commit "$DIR"
-  case "$kind" in
-    retired-edited) printf 'consumer edit\n' >>"$writer" ;;
-    retired-symlink) mv "$writer" "$DIR/target"; ln -s ../../target "$writer" ;;
-    unrecorded) mv "$writer" "$DIR/.github/workflows/review-gate-writer.yml" ;;
-  esac
-  file_edit "$DIR" "$ADOPT" 1 "$pattern" "$replacement" 1
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
-  if [ "$RC" -eq 0 ]; then ok "$kind control allows the forbidden mutation"; else bad "$kind control did not reach the guard" "$OUT"; fi
-done <<'CONTROLS'
-retired-edited|^        if not copied.is_file|s/^        if \(.*\):$/        if False and (\1):/
-retired-symlink|^    if copied.is_symlink|s/^    if \(.*\):$/    if False and (\1):/
-unrecorded|^if.*unrecorded.exists|s/^if \(.*\):$/if False and (\1):/
-CONTROLS
-
-# The rendered template becomes the caller. The adopter checks the shared
-# workflow's names and records the copy; the v1.5.1 adopter extracts empty
-# names from the caller and refuses it.
-sandbox
-cp "$DIR/$TEMPLATE" "$DIR/$REFRESH"
-record_adoption "$DIR" "$REFRESH" "$TEMPLATE"
-commit "$DIR"
-cp "$CALLER" "$DIR/$TEMPLATE"
-ship_refresh_template "$CALLER"
-record_template_hash
-cp "$DIR/.kendex-generated.json" "$TMP/caller-inventory"
-cp "$DIR/$REFRESH" "$TMP/caller-workflow"
-run_refresh_command "$DIR" "$DIR/$ADOPT"
-if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
-    retirement_matches "$DIR" .github/workflows/review-gate-writer.yml "$OWNER" preserved &&
-    python3 - "$DIR" "$REFRESH" "$TEMPLATE" <<'RECORD'
-import hashlib, json, sys
-from pathlib import Path
-root = Path(sys.argv[1]); path, template = sys.argv[2:]
-record = [e for e in json.loads((root / '.kendex-generated.json').read_text()) if isinstance(e, dict) and e['path'] == path]
-assert record == [{'path': path, 'template': template, 'templateHash': 'sha256:' + hashlib.sha256((root / template).read_bytes()).hexdigest()}], 'adoption=record value=' + path
-RECORD
-then ok 'the rendered caller template adopts with the shared workflow names'
-else bad "rendered caller adoption (rc=$RC)" "$OUT"; fi
-cp "$TMP/caller-inventory" "$DIR/.kendex-generated.json"
-cp "$TMP/caller-workflow" "$DIR/$REFRESH"
-historical_adopt="$DIR/.agents/skills/review-gate/scripts/adopt-refresh.sh"
-git -C "$SKILL_DIR" show 5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/scripts/adopt-refresh.sh >"$historical_adopt"
-# The v1.5.1 adopter calls the validator's retired environment-only mode, so
-# the validator pair it shipped beside, and the standard that pair reads,
-# sit under it for this control alone.
-for path in scripts/validate-standard.sh scripts/lib/standard.sh standard.json; do
-  git -C "$SKILL_DIR" show "5a8c5d71f2670d2d26710a11475d17d091c3cd9a:skills/review-gate/$path" >"$DIR/.agents/skills/review-gate/$path"
-done
-chmod +x "$historical_adopt" "$DIR/.agents/skills/review-gate/scripts/validate-standard.sh"
-trust_refresh_transport "$DIR" "$historical_adopt"
-run_refresh_command "$DIR" "$historical_adopt"
-if [ "$RC" -ne 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/caller-workflow" && grep -q '^review-gate-error=standard-setting-missing ' <<<"$OUT"; then
-  ok 'control: the v1.5.1 adopter refuses the rendered caller template'
-else bad "v1.5.1 adopter control (rc=$RC)" "$OUT"; fi
-
-# A release checkout can sit beside or inside the consumer. Neither location
-# makes its caller a declared consumer render.
+# A release checkout can sit beside or inside the consumer. From either, the
+# adopter writes its caller and drops the earlier record.
 RELEASE="$TMP/release-refresh"
 mkdir -p "$RELEASE"
 cp "$CALLER" "$RELEASE/kendex-refresh.yml"
@@ -595,22 +398,18 @@ while IFS='|' read -r location mutation; do
   case "$mutation" in
     none) ;;
     record)
-      file_edit "$DIR" "$ADOPT" 1 '^    entries = \[e for e in entries if not isinstance\(e, dict\) or e\["path"\] != ' \
-        's/^    entries = \[e for e in entries if not isinstance(e, dict) or e\["path"\] != .*$/    pass  # &/' ;;
+      file_edit "$DIR" "$ADOPT" 1 '^entries = \[e for e in entries if not isinstance\(e, dict\) or e\["path"\] != ' \
+        's/^entries = \[e for e in entries if not isinstance(e, dict) or e\["path"\] != .*$/pass  # &/' ;;
     history)
       file_edit "$DIR" "$ADOPT" 1 '^paths = \(' 's/, "refresh\/kendex-refresh.yml")/) # "refresh\/kendex-refresh.yml"/' ;;
-    containment)
-      file_edit "$DIR/tmp/kendex-v1" "$ADOPT" 1 '^from_render = ' \
-        's/^from_render = .*$/from_render = template.is_relative_to(root)/' ;;
   esac
   run_refresh_command "$DIR" "$adopter" --templates-dir "$release_templates"
   matched=no
   if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$CALLER" &&
-      retirement_matches "$DIR" .github/workflows/review-gate-writer.yml "$OWNER" preserved &&
       jq -e --arg path "$REFRESH" '[.[] | objects | select(.path == $path)] == []' "$DIR/.kendex-generated.json" >/dev/null; then matched=yes; fi
   case "$mutation:$matched" in
     none:yes) ok "$location release-tree adoption writes the caller and drops its record" ;;
-    record:no | history:no | containment:no) ok "control: $mutation turns the release-tree adoption assertion red" ;;
+    record:no | history:no) ok "control: $mutation turns the release-tree adoption assertion red" ;;
     *) bad "$location release-tree adoption mutation=$mutation (rc=$RC)" "$OUT" ;;
   esac
   if [ "$mutation" = none ]; then
@@ -626,7 +425,6 @@ external|none
 external|record
 external|history
 nested|none
-nested|containment
 RELEASE_ROWS
 
 # The v1.8.0 caller passes no secrets, so its called job reads them empty. A
@@ -752,7 +550,7 @@ from pathlib import Path
 import sys
 Path(sys.argv[1]).write_text(json.dumps({'secrets': [{'name': name} for name in sys.argv[2].split() if name!=sys.argv[3]]}))
 MISSING_FIXED_SECRET
-        run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+        run_refresh_command "$DIR" "$DIR/$ADOPT"
         if adoption_preserved "refresh-error=environment value=$selected_environment cause=secrets"; then
           ok "$rule declaration refuses an incomplete pair without $absent_name"
         else bad "$rule incomplete pair=$absent_name" "$OUT"; fi
@@ -760,7 +558,7 @@ MISSING_FIXED_SECRET
     else
       # One credential from each pair must not become a usable pair.
       printf '{"secrets":[{"name":"KENDEX_APP_ID"},{"name":"FLEET_GH_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-$selected_environment.json"
-      run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+      run_refresh_command "$DIR" "$DIR/$ADOPT"
       if adoption_preserved "refresh-error=environment value=$selected_environment cause=secrets"; then
         ok 'mixed credentials refuse before adoption'
       else bad 'mixed credentials refusal' "$OUT"; fi
@@ -917,7 +715,7 @@ OUTSIDE_SECRETS
         's/if placement\["cause"\]:/if False and placement["cause"]:/' ;;
     none) ;;
   esac
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   matched=no
   if adoption_preserved "refresh-error=environment value=kendex cause=secrets-outside operation=$scope:$outside"; then matched=yes; fi
   case "$mutation:$matched" in
@@ -984,12 +782,11 @@ OWNER_METADATA
   : >"$FIXTURES/.urls.log"
   SHIM_FAIL="$evidence"
   [ "$evidence" != none ] || SHIM_FAIL=''
-  run_refresh_command "$DIR" "$DIR/$ADOPT" --retire-writer
+  run_refresh_command "$DIR" "$DIR/$ADOPT"
   SHIM_FAIL=''
   if [ "$expected" = accept ]; then
     matched=no
-    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE" &&
-        [ ! -e "$DIR/.github/workflows/review-gate-writer.yml" ]; then matched=yes; fi
+    if [ "$RC" -eq 0 ] && adoption_metadata "$DIR" "$REFRESH" "$TEMPLATE"; then matched=yes; fi
     for endpoint in 'repos/{owner}/{repo}' repos/acme/widgets/environments \
         repos/acme/widgets/environments/kendex/deployment-branch-policies \
         repos/acme/widgets/environments/kendex/secrets repos/acme/widgets/actions/secrets; do
@@ -998,7 +795,7 @@ OWNER_METADATA
     if [ "$matched" = yes ]; then ok "$owner owner adopts with applicable evidence=$evidence"
     else bad "$owner applicable evidence=$evidence" "$OUT"; fi
   elif adoption_preserved "refresh-error=environment value=kendex cause=read operation=$expected"; then
-    ok "$owner unreadable evidence=$evidence preserves workflow, writer and inventory"
+    ok "$owner unreadable evidence=$evidence preserves workflow and inventory"
   else bad "$owner unreadable evidence=$evidence" "$OUT"; fi
   observed=no
   if grep -qxF orgs/acme/actions/secrets "$FIXTURES/.urls.log"; then observed=yes; fi

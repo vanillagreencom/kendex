@@ -23,8 +23,8 @@ kendex report routes elsewhere. Review text about content kendex has not
 claimed is never published, and its step summary row offers no filing link.
 The writer skips outdated threads before reporting. It replies as not filed
 and resolves those threads. Live unfiled threads stay open and hold the run.
-The consumer must answer an unclaimed finding through its trusted removal PR
-or a reply, then resolve the thread by hand.
+The consumer must answer an unclaimed finding through its own pull request or
+a reply, then resolve the thread by hand.
 
 stdout is one JSON array, read by refresh-reviews: [{root, issue, note}] with
 one row per input row. issue is the html_url of the upstream issue the

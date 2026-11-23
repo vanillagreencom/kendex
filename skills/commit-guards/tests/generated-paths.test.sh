@@ -76,7 +76,7 @@ load_rows \
 
 
 # Adopted workflows are writer records, and malformed records must not grant ownership.
-ADOPTED='{"path":".github/workflows/kendex-refresh.yml","template":".agents/skills/review-gate/templates/kendex-refresh.yml","templateHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+ADOPTED='{"path":".github/workflows/kendex-refresh.yml","template":".agents/skills/deploy/templates/adopted.yml","templateHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 assert_eq 'a mixed inventory uses the adopted workflow path' \
   'rc=0 paths=<plain.md;.github/workflows/kendex-refresh.yml>' "$(load "[\"plain.md\",$ADOPTED]")"
 for mutation in 'del(.path)' '.path = null' '.path = ""' '.path = "a\nb"' \

@@ -89,7 +89,7 @@ assert_verdict ownership-gain false \
 # The inventory tracks adopted workflow paths; template refreshes keep ownership.
 repo="$(new_repo adopted-workflow)"
 workflow='.github/workflows/kendex-refresh.yml'
-record='{"path":".github/workflows/kendex-refresh.yml","template":".agents/skills/review-gate/templates/kendex-refresh.yml","templateHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+record='{"path":".github/workflows/kendex-refresh.yml","template":".agents/skills/deploy/templates/adopted.yml","templateHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 jq --argjson record "$record" '. + [$record]' "$repo/.kendex-generated.json" >"$SANDBOX/inventory"
 mv "$SANDBOX/inventory" "$repo/.kendex-generated.json"
 commit_paths "$repo" baseline "$workflow"

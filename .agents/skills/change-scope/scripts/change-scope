@@ -1396,7 +1396,7 @@ named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.o
 # the pinned release under ../SKILL.md § Shared refresh caller ownership.
 RENDER_WORKFLOW_CHECKED=false
 released_workflow_owned() { # PATH
-  local pin history="$work/release-history" template=skills/review-gate/templates/kendex-refresh.yml
+  local pin history="$work/release-history" template=refresh/kendex-refresh.yml
   [ "$1" = "$HARNESS_CI_REFRESH_CALLER" ] || return 1
   RENDER_WORKFLOW_CHECKED=true
   [ -f "$proof_tree/$1" ] && [ ! -L "$proof_tree/$1" ] || return 1

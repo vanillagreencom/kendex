@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Surface: the refresh workflow trigger declarations.
-# Inputs: skills/review-gate/templates/kendex-refresh.yml, refresh/kendex-refresh.yml,
-# skills/harness-ci/tests/lib/workflow.sh, skills/harness-ci/tests/lib/gh-eval.py,
+# Inputs: refresh/kendex-refresh.yml, skills/harness-ci/tests/lib/workflow.sh, skills/harness-ci/tests/lib/gh-eval.py,
 # .github/workflows/refresh-release.yml.
 # GitHub Actions reads these declarations; this suite checks their source shape.
 set -euo pipefail
@@ -13,7 +12,6 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'refresh-workflow: scratch=r
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 . "$TEST_DIR/../../harness-ci/tests/lib/workflow.sh"
 
-TEMPLATE="$REPO_ROOT/skills/review-gate/templates/kendex-refresh.yml"
 CALLER="$REPO_ROOT/refresh/kendex-refresh.yml"
 
 # Read only schedule entries under the top-level event mapping. Other cron
@@ -32,7 +30,7 @@ schedule_cron() { # WORKFLOW
   ' "$1"
 }
 
-check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
+check_cadence() { # CALLER... -> structured failures, exit 0 or 1
   local caller_events cron file event index=0 failed=0
   for file in "$@"; do
     index=$((index + 1))
@@ -53,24 +51,21 @@ check_cadence() { # TEMPLATE CALLER -> structured failures, exit 0 or 1
 }
 
 PASS=0
-for file in "$TEMPLATE" "$CALLER"; do
-  [ -f "$file" ] && [ ! -L "$file" ] || { printf 'refresh-workflow: input=not-a-regular-file value=%q\n' "$file" >&2; exit 1; }
-done
+[ -f "$CALLER" ] && [ ! -L "$CALLER" ] || { printf 'refresh-workflow: input=not-a-regular-file value=%q\n' "$CALLER" >&2; exit 1; }
 
-# Each control uses the same assertions as the shipped callers.
-plant "$TEMPLATE" '    - cron: "43 8 * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/template.yml"
+# Each control uses the same assertions as the shipped caller.
 plant "$CALLER" '    - cron: "43 8 * * *"' '    - cron: "17 */6 * * *"' "$TMP_ROOT/caller.yml"
 
 while IFS='|' read -r shape expected_exit; do
   case "$shape" in
-    current) set -- "$TEMPLATE" "$CALLER" ;;
-    unfixed) set -- "$TMP_ROOT/template.yml" "$TMP_ROOT/caller.yml" ;;
+    current) set -- "$CALLER" ;;
+    unfixed) set -- "$TMP_ROOT/caller.yml" ;;
   esac
   status=0
   result="$(check_cadence "$@")" || status=$?
   expected=''
   if [ "$shape" = unfixed ]; then
-    expected=$'caller=1 cron=17 */6 * * *\ncaller=2 cron=17 */6 * * *'
+    expected='caller=1 cron=17 */6 * * *'
   fi
   if [ "$status" != "$expected_exit" ] || [ "$result" != "$expected" ]; then
     printf 'refresh-workflow: case=%s exit=%s result=[%s]\n' "$shape" "$status" "$result" >&2
@@ -83,37 +78,27 @@ current|0
 unfixed|1
 CASES
 
-# A missing dispatch receiver, manual entry or schedule must fail in either
-# caller. Change the event key so unrelated YAML still cannot satisfy it.
-for source in template caller; do
-  case "$source" in
-    template) file="$TEMPLATE"; index=1 ;;
-    caller) file="$CALLER"; index=2 ;;
-  esac
-  for event in repository_dispatch workflow_dispatch schedule; do
-    mutant="$TMP_ROOT/$source-$event.yml"
-    plant "$file" "  $event:" "  ignored_$event:" "$mutant"
-    case "$source" in
-      template) set -- "$mutant" "$CALLER" ;;
-      caller) set -- "$TEMPLATE" "$mutant" ;;
-    esac
-    status=0
-    result="$(check_cadence "$@")" || status=$?
-    expected="caller=$index trigger-missing=$event"
-    [ "$event" != schedule ] || expected+=$'\n'"caller=$index cron="
-    if [ "$status" != 1 ] || [ "$result" != "$expected" ]; then
-      printf 'refresh-workflow: control=%s-%s exit=%s result=[%s]\n' "$source" "$event" "$status" "$result" >&2
-      exit 1
-    fi
-    printf 'refresh-workflow: control=%s-%s observed-exit=%s pass\n' "$source" "$event" "$status"
-    PASS=$((PASS + 1))
-  done
+# A missing dispatch receiver, manual entry or schedule must fail. Change the
+# event key so unrelated YAML still cannot satisfy it.
+for event in repository_dispatch workflow_dispatch schedule; do
+  mutant="$TMP_ROOT/caller-$event.yml"
+  plant "$CALLER" "  $event:" "  ignored_$event:" "$mutant"
+  status=0
+  result="$(check_cadence "$mutant")" || status=$?
+  expected="caller=1 trigger-missing=$event"
+  [ "$event" != schedule ] || expected+=$'\n'"caller=1 cron="
+  if [ "$status" != 1 ] || [ "$result" != "$expected" ]; then
+    printf 'refresh-workflow: control=caller-%s exit=%s result=[%s]\n' "$event" "$status" "$result" >&2
+    exit 1
+  fi
+  printf 'refresh-workflow: control=caller-%s observed-exit=%s pass\n' "$event" "$status"
+  PASS=$((PASS + 1))
 done
 printf 'pass: %s   fail: 0\n' "$PASS"
 
 # GitHub evaluates this job condition before allocating its runner. Execute
 # the declared expression for each route; a missing output must refresh.
-python3 - "$TEMPLATE" "$CALLER" "$GH_EVAL" <<'PY'
+python3 - "$CALLER" "$GH_EVAL" <<'PY'
 from pathlib import Path
 import json, re, subprocess, sys
 
@@ -138,11 +123,11 @@ def check(text):
                                    run_attempt=attempt, event=dict(repository=dict(default_branch='main'),
                                    sender=dict(login=actor, type='Bot'), client_payload=dict(gate_clear=clear))),
                        needs=dict(release=dict(result=outcome, outputs=dict(route=route))))
-        result = subprocess.run([sys.executable, sys.argv[3], 'jobs', json.dumps(context)],
+        result = subprocess.run([sys.executable, sys.argv[2], 'jobs', json.dumps(context)],
                                 input='release\t\t' + conditions[0] + '\nrefresh\trelease\t' + conditions[1] + '\n',
                                 text=True, capture_output=True, check=True, timeout=10)
         assert result.stdout == wanted + '\n', (event, actor, attempt, route, result.stdout)
-for path in sys.argv[1:3]:
+for path in sys.argv[1:2]:
     text = Path(path).read_text()
     check(text)
     for old, new in ((" && needs.release.outputs.route != 'skip'", ''),

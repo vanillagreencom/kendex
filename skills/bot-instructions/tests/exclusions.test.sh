@@ -360,7 +360,7 @@ from lib import manifest
 from lib.errors import ManifestError
 
 record = {"path": ".github/workflows/kendex-refresh.yml",
-          "template": ".agents/skills/review-gate/templates/kendex-refresh.yml",
+          "template": ".agents/skills/deploy/templates/adopted.yml",
           "templateHash": "sha256:" + "a" * 64}
 class Tree:
     def __init__(self, value):

@@ -21,7 +21,7 @@ Consumer refresh updates one rolling branch. The [publication rules](references/
 
 After installing, run `kendex refresh` and commit the installed files.
 
-Existing consumers first take the [trusted removal PR](workflows/retire-consumer-writer.md). [Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.
+[Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.
 
 github-repository-settings, which review-gate installs, runs the GitHub rules and required-checks report. Its [platform checks](../github-repository-settings/references/platform-checks.md) reference holds the report's settings and the migration from review-gate.
 

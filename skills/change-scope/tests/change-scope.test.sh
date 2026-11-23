@@ -247,24 +247,23 @@ assert_eq 'native relative fetch keeps the judged working tree at its original c
 # The public transport is a local release fixture. The classifier still runs
 # its own fetch and release comparison; no ownership operation is stubbed.
 release_catalog="$(new_repo released-caller)"
-mkdir -p "$release_catalog/skills/review-gate/templates" "$release_catalog/refresh/lib"
+mkdir -p "$release_catalog/refresh/lib"
 cp "$TEST_DIR/../../../refresh/lib/caller.py" "$release_catalog/refresh/lib/caller.py"
 released_template="$SANDBOX/released-caller.yml"
-cp "$TEST_DIR/../../review-gate/templates/kendex-refresh.yml" "$released_template"
-cp "$released_template" \
-  "$release_catalog/skills/review-gate/templates/kendex-refresh.yml"
+cp "$TEST_DIR/../../../refresh/kendex-refresh.yml" "$released_template"
+cp "$released_template" "$release_catalog/refresh/kendex-refresh.yml"
 git -C "$release_catalog" add -A
 git -C "$release_catalog" commit -q -m 'released refresh caller'
 git -C "$release_catalog" tag v1
 release_commit="$(git -C "$release_catalog" rev-parse v1)"
 # A version-shaped branch is not a release tag, even with matching bytes.
 sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v2|' "$released_template" \
-  >"$release_catalog/skills/review-gate/templates/kendex-refresh.yml"
+  >"$release_catalog/refresh/kendex-refresh.yml"
 git -C "$release_catalog" add -A
 git -C "$release_catalog" commit -q -m 'unreleased branch caller'
 git -C "$release_catalog" branch v2
 sed 's|refresh-consumer.yml@v1$|refresh-consumer.yml@v3|' "$released_template" \
-  >"$release_catalog/skills/review-gate/templates/kendex-refresh.yml"
+  >"$release_catalog/refresh/kendex-refresh.yml"
 rm "$release_catalog/refresh/lib/caller.py"
 git -C "$release_catalog" add -A
 git -C "$release_catalog" commit -q -m 'release without caller module'
