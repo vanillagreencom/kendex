@@ -724,8 +724,7 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
     assert_eq!(cap("REVIEW_MAX_CYCLES", &[]), "at-cap 1/1");
     // At the cap the workflow's rereview write records the uncounted
     // verification panel, and its reply names the panel the lane reads back.
-    let past =
-        json!({"op": "record-panel", "panel": "rereview", "agents": ["rev-b"], "reason": "test", "external": true});
+    let past = json!({"op": "record-panel", "panel": "rereview", "agents": ["rev-b"], "reason": "test", "external": true});
     assert_eq!(store.op_ok(&past)["pointer"], "/verification_panel");
     let doc = store.doc(&store.item_path(ITEM));
     assert_eq!(
@@ -817,7 +816,11 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
         json!({"external": true}),
     );
     assert_eq!(store.op_refused(&three_external).0, "panel-bound");
-    let twice = panel("first", json!(["r1", "r1"]), json!({"external": false, "external_skip": "none"}));
+    let twice = panel(
+        "first",
+        json!(["r1", "r1"]),
+        json!({"external": false, "external_skip": "none"}),
+    );
     assert_eq!(store.op_refused(&twice).0, "panel-agents");
     store.op_ok(&panel(
         "first",
@@ -1340,7 +1343,8 @@ fn findings_record_keeps_a_review_findings_priority_past_its_artifact() {
     );
     let source = json!({"round_id": "R1", "artifact": artifact, "array": "blockers", "index": 0,
         "identity": ["artifact", artifact, "blockers", 0]});
-    let review = json!({"kind": "review", "location": "src/x.rs (`f`)", "priority": 1, "source": source});
+    let review =
+        json!({"kind": "review", "location": "src/x.rs (`f`)", "priority": 1, "source": source});
     let check = json!({"kind": "validation", "check": "cargo test",
         "source": {"round_id": "R1", "receipt": "r.json", "identity": ["receipt", "R1", "r.json", "cargo test"]}});
     let batch = store.write_file("b1.json", &json!({"records": [review, check]}).to_string());
