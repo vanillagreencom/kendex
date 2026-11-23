@@ -400,7 +400,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    **The direct attempt.** Follow [merge-attempt.md § Direct attempt](../references/merge-attempt.md#direct-attempt) for the CI wait on the approved head, its pending bound, the exact-head attempt and its exit routing. Its exit `75` takes [merge-contracts.md § Queue wait](../references/merge-contracts.md#queue-wait).
 
-   **Record the merge decision.** After each attempt here or in [publication.md § Arm auto-merge](../references/publication.md#arm-auto-merge), apply [merge-attempt.md § Record the merge decision](../references/merge-attempt.md#record-the-merge-decision) before you route its exit.
+   **Record the merge decision.** After each attempt here or in the arm of [submit-pr.md](submit-pr.md) § 2 step 5, apply [merge-attempt.md § Record the merge decision](../references/merge-attempt.md#record-the-merge-decision) before you route its exit.
 
    **The `--auto` arm** takes only that same head:
 

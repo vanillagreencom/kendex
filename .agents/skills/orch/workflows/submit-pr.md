@@ -182,8 +182,10 @@ Otherwise:
 | Result | Action |
 |---|---|
 | `ok == true` | Route the findings below |
-| `reason == "valid_undermeasured"` | Report its `measurement_failed` string, and `measurement_suppressed` where present, with the findings. Never treat the pass as clean |
+| `reason == "valid_undermeasured"` | Report the measurement failure with the findings, as below |
 | `ok == false`, or a nonzero exit | Report `reason` and its `detail`, and go to § 2 |
+
+On `valid_undermeasured`, report its `measurement_failed` string, and `measurement_suppressed` where present, with the findings. Never treat the pass as clean.
 
 The local review is advisory. It never blocks submission, and none of those outcomes is a pass.
 
@@ -240,7 +242,7 @@ Record whether `autoMergeRequest` is set.
 - After § 6.1 confirms every merge gate, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point.
 - An armed managed submit returns that recorded decision with its final result, and the caller's merge stage owns the lifecycle.
 
-1. **Push.** With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, the first pass after the internal review runs § 3's triage first. That triage reviews the pull request [start-worktree.md](start-worktree.md) § 2.1 opened.
+1. **Push.** With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, the first pass after the internal review of the pull request [start-worktree.md](start-worktree.md) § 2.1 opened runs § 3's triage first.
 
    - Run `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context. `[PR_NUMBER]` is the `number` the `pr view` read above printed.
    - Its fix round commits on top of the internal review's, and its `record-push` request (that workflow's § 6.1) carries both.
@@ -326,7 +328,48 @@ Record whether `autoMergeRequest` is set.
 
    After those writes, run step 1's **Published-head route**.
 
-5. **Arm auto-merge** by [publication.md § Arm auto-merge](../references/publication.md#arm-auto-merge), on every pass through this section.
+5. **Arm auto-merge** on every pass through this section. [publication.md § Arm auto-merge](../references/publication.md#arm-auto-merge) states when the arm runs, its skips and what each exit means.
+
+   **Skip if** a skip condition of that section holds.
+
+   1. Read the bot token as [merge-pr.md § 4](merge-pr.md#4-prepare) does. On `.configured: false`, arm nothing here: merge-pr.md § 4 decides whose name a merge lands under, and that workflow's § 4 and § 5 make the arm.
+
+      ```bash
+      .agents/skills/github/scripts/github.sh bot-token
+      ```
+
+   2. Detach orphaned children before any arm.
+      - **Skip if** workflow state already records `children_detached`: the detach runs once per item.
+      - Run [merge-pr.md § 4.1](merge-pr.md#41-detach-orphaned-children) for this item, `[ISSUE]` being `[ISSUE_ID]`, with its skip conditions and its per-orphan ask. A lane sends that ask through its ask gate.
+      - An abort there arms nothing. Skip the rest of this step; [merge-pr.md](merge-pr.md) § 4.1 runs the detach again.
+      - Record the detach once it completes, or once the conditions of § 4.1 skip it:
+
+      ```bash
+      .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"children-detached"}'
+      ```
+
+   3. Read the pushed head as `[HEAD_SHA]`:
+
+      ```bash
+      git -C "[WORKTREE_PATH]" rev-parse HEAD
+      ```
+
+   4. Arm:
+
+      ```bash
+      env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --expected-head [HEAD_SHA]
+      ```
+
+   5. Before you route the exit, record the merge decision as publication.md § Arm auto-merge states, with `[HEAD_SHA]`, this call's exit and its returned route.
+   6. Route the exit:
+
+      | Exit | Action |
+      |---|---|
+      | `75` | Continue with the CI wait, the gate wait and § 6.1 |
+      | `0` | Continue |
+      | `1` | Continue unarmed |
+
+      On exit `1`, report the `arm: no-merge-gate=` line once.
 
 Once the pull request exists, this run is a continuing action. Before you enter another post-PR gate, clear any stop a capped run left:
 
@@ -437,9 +480,9 @@ The gate reads only GitHub-native review state, from any reviewer, human or bot.
    | `changes_requested` or `comments` | Run the triage pass, then the Restart check |
    | `blocked` | Record `review-regression-open` and stop, as below |
    | `copilot-error` | Route as [gates.md § Copilot requests](../references/gates.md#copilot-requests) says, then enter the Restart check |
-   | `timeout` | `auto-recommended` logs `Keep waiting` and enters the Restart check. `ask` asks, as below |
+   | `timeout` | Route by the decision mode, as below |
    | `unreadable` | Run the call once more, as below |
-   | refusal `pr-not-open` | The pull request is closed or merged: report its `state` and stop |
+   | refusal `pr-not-open` | Report the pull request's `state` and stop |
 
    - `proceeded` is the reviewer-down answer under `PR_REVIEW_ON_TIMEOUT=proceed`. CI and gate 3 still apply in full. Orch posts no status and makes no review evidence.
    - `blocked`: a regression-against-main blocker stands open on the item, its location in `reason` ([gates.md § Which waiter answers which state](../references/gates.md#which-waiter-answers-which-state)). No restart meets the gate while it stands.
@@ -447,8 +490,10 @@ The gate reads only GitHub-native review state, from any reviewer, human or bot.
      2. Post the rendered comment.
      3. Return `MERGE_READY = false` and skip § 5.
    - `copilot-error`: the approval gate stays unmet until an approval arrives.
+   - `timeout` under `auto-recommended`: log `Keep waiting` and enter the Restart check.
    - `timeout` under `ask`: present `Force merge` \| `Keep waiting` \| `Stop here`, with `Keep waiting` recommended. Route the answer by **On `timeout` under `ask`** below.
    - `unreadable`: if it repeats, `auto-recommended` records `review-gate-read-failed`. `ask` presents `Keep waiting` \| `Stop here`, with `Keep waiting` recommended.
+   - `pr-not-open`: the pull request is closed or merged.
 
    Record the reviewer-down answer:
 
@@ -545,18 +590,20 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
 
 | Result | Action |
 |--------|--------|
-| `conflict` | `mergeable` read `CONFLICTING` before the first call. The base, not CI, is the blocker: restack, as below |
+| `conflict` | Restack, as below |
 | `status=complete`, `verdict=pass` | Go to § 6 |
-| `status=complete`, `verdict=none` | Run the coverage check below. Only its exit 0 lets you record `ci: none` in workflow state and go to § 6 |
+| `status=complete`, `verdict=none` | Run the coverage check below |
 | `status=complete`, `verdict=fail` | Go to § 5.1 |
 | `status=pending` or `status=unreadable` at the budget | Run the call once more, as below |
-| refusal `pr-not-open` | The pull request is closed or merged: report its `state` and stop |
+| refusal `pr-not-open` | Report the pull request's `state` and stop |
 
-- `conflict`:
+- `conflict`: `mergeable` read `CONFLICTING` before the first call, so the base, not CI, is the blocker.
   1. Run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3. A red run there hands back.
   2. That push is a fix-up push: take the § 4 Restart check, then re-enter § 5 at its merge-state read.
   3. Never route a conflict into § 5.1 or the budget row.
+- `verdict=none`: only the coverage check's exit 0 lets you record `ci: none` in workflow state and go to § 6.
 - `pending` or `unreadable` at the budget: if it repeats, `auto-recommended` records `ci-status-unconfirmed`. `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended.
+- `pr-not-open`: the pull request is closed or merged.
 
 A step accepted under an `authorization` (§ 4 step 1) takes the budget row's `auto-recommended` action under either mode.
 
@@ -577,7 +624,7 @@ fi
 
 Its reply's `limit` is `MAX_CYCLES`.
 
-Take [publication.md § One rerun per head](../references/publication.md#one-rerun-per-head) first, with `[STATE_KEY]` being `[ISSUE_ID]`. Its CI verdict call is the § 5 call, and its fix route is Run Workflow below.
+Take [publication.md § One rerun per head](../references/publication.md#one-rerun-per-head) first. Its `verify-pr` call is the § 5 call, and its next route is Run Workflow below.
 
 **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail` with context `worktree`, `lifecycle: "managed"` and `issue_id`. Ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. It reads the gate at the new head through the review call, whose `mode` is the item's recorded one.
 

@@ -28,7 +28,7 @@ Write the body to `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP].md` (`git-
 [N]: [PROOF]
 
 ## Created Issues
-- [ISSUE_ID] - [TITLE] — Project: [PROJECT]
+- [CREATED_ISSUE_ID] - [TITLE] — Project: [PROJECT]
 
 ## QA Metrics
 [Results from the QA agents that ran — project-configurable.]
@@ -56,84 +56,59 @@ Write the body to `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP].md` (`git-
 
 ## Arm auto-merge
 
-Read when [submit-pr.md § 2](../workflows/submit-pr.md#2-push-and-submit) step 5 arms a pull request.
+Read when [submit-pr.md § 2](../workflows/submit-pr.md#2-push-and-submit) step 5 arms a pull request, and when another workflow looks up when that arm runs or what its exit means.
 
-Arm as soon as the pull request exists, on every pass through submit-pr.md § 2, for a pull request that will take the queue. The arm reads the merge route of [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1, and arms nothing where that route takes the pull request past the queue.
+Submit-pr arms as soon as the pull request exists, on every pass through its § 2, for a pull request that will take the queue. The arm reads the merge route of [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1, and arms nothing where that route takes the pull request past the queue.
 
 - Arm only through `github.sh pr-merge --auto`. A raw `gh pr merge --auto` is never the arm.
 - **Skip if** `.agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`.
 - **Skip if** workflow state `pr_order` reads `open-first` or `push-first`. The internal review of the pull request [start-worktree.md](../workflows/start-worktree.md) § 2.1 opened has not returned. The pass after [review-pr.md](../workflows/review-pr.md) § 9 arms it.
 
-1. Read the bot token as [merge-pr.md § 4](../workflows/merge-pr.md#4-prepare) does. On `.configured: false`, arm nothing here: merge-pr.md § 4 decides whose name a merge lands under, and that workflow's § 4 and § 5 make the arm.
+The arm records its merge decision by [merge-attempt.md § Record the merge decision](merge-attempt.md#record-the-merge-decision) before its exit is routed, with the armed head, the call's exit and its returned route.
 
-   ```bash
-   .agents/skills/github/scripts/github.sh bot-token
-   ```
+- For that section, `[STATE_KEY]` is `[ISSUE_ID]` and `[MAIN_REPO_ROOT]` is the worktree.
+- On exit `1`, that section confirms removal of any earlier arm before the exit is routed.
 
-2. Detach orphaned children before any arm.
-   - **Skip if** workflow state already records `children_detached`: the detach runs once per item.
-   - Run [merge-pr.md § 4.1](../workflows/merge-pr.md#41-detach-orphaned-children) for this item, `[ISSUE]` being `[ISSUE_ID]`, with its skip conditions and its per-orphan ask. A lane sends that ask through its ask gate.
-   - An abort there arms nothing. Skip the rest of this section; [merge-pr.md](../workflows/merge-pr.md) § 4.1 runs the detach again.
-   - Record the detach once it completes, or once the conditions of § 4.1 skip it:
+| Exit | Meaning |
+|---|---|
+| `75` | Armed |
+| `0` | Merged |
+| `1` | Armed nothing |
 
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"children-detached"}'
-   ```
-
-3. Read the pushed head as `[HEAD_SHA]`:
-
-   ```bash
-   git -C "[WORKTREE_PATH]" rev-parse HEAD
-   ```
-
-4. Arm:
-
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --expected-head [HEAD_SHA]
-   ```
-
-5. Before you route the exit, record the decision by [merge-attempt.md § Record the merge decision](merge-attempt.md#record-the-merge-decision), with `[HEAD_SHA]`, this call's exit and its returned route.
-   - `[STATE_KEY]` is `[ISSUE_ID]`, and `[MAIN_REPO_ROOT]` is this worktree.
-   - On exit `1`, that section confirms removal of any earlier arm before the routing below.
-6. Route the exit:
-
-| Exit | Meaning | Action |
-|---|---|---|
-| `75` | Armed | Continue with the CI wait, the gate wait and submit-pr.md § 6.1. GitHub holds the merge as `pr-merge --help` § Approvals and review threads states |
-| `0` | Merged | submit-pr.md § 6 enters [merge-pr.md](../workflows/merge-pr.md), whose § 3.2 takes a merged pull request straight to its post-merge steps |
-| `1` | Armed nothing | Continue unarmed. [merge-pr.md](../workflows/merge-pr.md) § 5 takes the merge after submit-pr.md § 6.1 |
-
-On exit `1`, report an `arm: no-merge-gate=` line once. `unverified` is a failed read of the base branch's rules. Any other gap names the setting that fixes it (`pr-merge --help`).
+- On exit `75`, GitHub holds the merge as `pr-merge --help` § Approvals and review threads states.
+- On exit `0`, submit-pr.md § 6 enters [merge-pr.md](../workflows/merge-pr.md), whose § 3.2 takes a merged pull request straight to its post-merge steps.
+- On exit `1`, [merge-pr.md](../workflows/merge-pr.md) § 5 takes the merge after submit-pr.md § 6.1.
+- In an `arm: no-merge-gate=` line, `unverified` is a failed read of the base branch's rules. Any other gap names the setting that fixes it (`pr-merge --help`).
 
 ## One rerun per head
 
 Read when a CI verdict on a pull request's head is `status=complete` with `verdict=fail`.
 
-Rerun a transient runner failure, such as a lost runner or a dependency install that timed out, once per head before any fix round. `[HEAD]` is the verdict's `result.head`. `[STATE_KEY]` is the item's workflow-state key, `[ISSUE_ID]` in submit-pr.md.
+Rerun a transient runner failure, such as a lost runner or a dependency install that timed out, once per head before any fix round. `[HEAD]` is the verdict's `result.head`.
 
 1. Read the recorded rerun:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state get --item [STATE_KEY] /ci_rerun/head
+   .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /ci_rerun/head
    ```
 
-2. When its `result.value` is `[HEAD]`, this head had its rerun: take the caller's fix route.
+2. When its `result.value` is `[HEAD]`, this head had its rerun: take the caller's next route.
 3. Otherwise record the rerun for this head, then ask for it. Write the record before the ask, never after. `ci-rerun --help` says which failed run it reruns:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"ci-rerun","head":"[HEAD]"}'
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"ci-rerun","head":"[HEAD]"}'
    env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
    ```
 
 4. On a `rerun run=[RUN_ID]` line, record the run on the item:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"ci-rerun-run","head":"[HEAD]","run":[RUN_ID]}'
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"ci-rerun-run","head":"[HEAD]","run":[RUN_ID]}'
    ```
 
-   Then return to the CI verdict call after the interval that call keeps between calls, never at once. That call then reads the rerun attempt as the current run.
+   Then repeat the caller's `verify-pr` call after the interval that call keeps between calls, never at once. That call then reads the rerun attempt as the current run.
 
-5. A `no-rerun` line, or exit `1`, takes the caller's fix route.
+5. A `no-rerun` line, or exit `1`, takes the caller's next route.
 
 ## Merge gates
 
@@ -150,30 +125,34 @@ A pull request merges on exactly four deterministic gates. `MERGE_READY = true` 
 
 Gates 2 and 4 check recorded results: do not run the waits again.
 
-**Gate 1.**
+**Gate 1** is met when the internal review verdict is recorded.
 
-- Managed: `review-pr.md` completed with verdict `pass`.
-- Standalone: `json_paths` is non-empty. Read it:
+- Under a managed caller, the gate is met when `review-pr.md` completed with verdict `pass`.
+- Under a standalone caller, the gate is met when `json_paths` is non-empty. Read it:
 
   ```bash
   STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {json_paths: (.json_paths // []), cycles: (.cycles // 0)}' <<<"$STATE_READ"
   ```
 
-  Empty `json_paths` means no internal review is recorded. Report the unmet gate and recommend `orch review-pr [PR_NUMBER]`.
+Empty `json_paths` means no internal review is recorded. Report the unmet gate and recommend `orch review-pr [PR_NUMBER]`.
 
-**Gate 2.**
+**Gate 2** is met when either holds:
 
 - The submit-pr.md § 5 result is `status=complete` with `verdict=pass`.
-- `verdict=none` meets the gate after its coverage check passes, with a `CI: none configured` note in the summary.
-- Raw `gh pr checks` output is never the gate.
-- On a `pr-merge --check` refusal, run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]`. Report its `cause:` line with its detail. `ci-classify-refusal --help` gives the output contract.
+- The result is `status=complete` with `verdict=none`, and its coverage check passed. The summary then carries a `CI: none configured` note.
 
-**Gate 3.**
+Raw `gh pr checks` output is never the gate. On a `pr-merge --check` refusal:
+
+1. Run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]`.
+2. Report its `cause:` line with its detail. `ci-classify-refusal --help` gives the output contract.
+
+**Gate 3** is met when all three hold:
 
 - `pr-threads` reports `unresolved_count == 0`.
 - Every actionable PR-level bot comment has a reply, tracked in `pr_comment_review.replied`.
 - `check-review-replies` exits 0.
-- Replying to every bot comment stays the hygiene rule of submit-pr.md § 3, not a gate in any mode.
+
+Replying to every bot comment stays the hygiene rule of submit-pr.md § 3, not a gate in any mode.
 
 On a `check-review-replies` exit `1`, the command prints one line per failing rule.
 
@@ -183,11 +162,11 @@ On a `check-review-replies` exit `1`, the command prints one line per failing ru
 
 Exit `2` reached no verdict, and the gate is unmet.
 
-**Gate 4.** Read the recorded gate mode, the one the runtime records per base ([gates.md § Gate-mode routing](gates.md#gate-mode-routing)):
+**Gate 4** reads the recorded gate mode, the one the runtime records per base ([gates.md § Gate-mode routing](gates.md#gate-mode-routing)):
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /pr_review/mode
 ```
 
-- `approval`: submit-pr.md § 4 ended `approved`, or a recorded `pr_approval.forced` or `pr_approval.reviewer_down` meets the gate.
-- `off`: the gate does not apply.
+- Under `approval`, the gate is met when submit-pr.md § 4 ended `approved`, or when a recorded `pr_approval.forced` or `pr_approval.reviewer_down` exists.
+- Under `off`, the gate does not apply.

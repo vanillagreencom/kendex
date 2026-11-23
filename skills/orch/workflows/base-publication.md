@@ -43,11 +43,12 @@ if ! jq -e --arg lifecycle "[LIFECYCLE]" --arg verdict "[REVIEW_VERDICT]" '.tier
 fi
 ```
 
-A refused review check publishes nothing.
+A refused review check publishes nothing. On a refusal:
 
 1. Run [review-pr.md § 1-9](review-pr.md).
 2. Repeat this check with its result.
-3. Keep the tier's local validation.
+
+Keep the tier's local validation.
 
 ## 3. Prepare
 
@@ -61,8 +62,8 @@ A refused review check publishes nothing.
    The request runs the worktree skill's preparation, its normal commit hooks and SHA reconciliation. It returns before validation and transport.
 
 3. Bind `[BASE]`, `[PREPARED_BASE]` and `[PREPARED_HEAD]` from the reply's `prepared` receipt: its `base`, `before` and `commit`.
-4. Apply the rules reload after a rebase of [SKILL.md § The Cycle](../SKILL.md#the-cycle) at once, against `[BOUND_HEAD]`.
-5. If the new rules require edits or review, complete that work and restart this section.
+4. Apply **Rules reload after a rebase** ([SKILL.md § The Cycle](../SKILL.md#the-cycle)) at once, against `[BOUND_HEAD]`.
+5. If the new rules require edits or review, complete that work and restart base publication from its entry, § 1.
 6. Keep the receipt's values across this pause.
 
 ## 4. Publish
@@ -83,7 +84,7 @@ Route the reply:
 
 - On exit 0, read the reply's `delivery` receipt. Its `commit` is `[PUSHED_SHA]` and its `at` is `[PUSHED_AT]`.
 - A refusal exits 1 with its key. A failed push exits with its status.
-- A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal in the reply's `push` output returns to [merge-pr-restack.md](merge-pr-restack.md). That route returns here after its guarded restack and rules reload.
+- A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal in the reply's `push` output returns to [merge-pr-restack.md](merge-pr-restack.md). After its guarded restack and rules reload, that route returns to base publication from its entry.
 - A red validation publishes nothing. A failed push sends no completion notice.
 
 ## 5. Verify The Published Head
@@ -100,14 +101,15 @@ jq -cn --arg repo "[OWNER/REPO]" --arg base "[BASE]" --arg head "[PUSHED_SHA]" \
 | Reply | Action |
 |--------|--------|
 | `ok` true, `result.status` `complete` | Bind `[VERDICT]` to `result.verdict` |
-| `ok` true, `result.status` `pending` | Not final: repeat the call, as below |
+| `ok` true, `result.status` `pending` | Repeat the call, as below |
 | `ok` true, `result.status` `unreadable` | Run the call once more, as below |
-| `ok` false | Report the refusal's key with the pushed SHA in the completion notice. Do not repeat transport |
+| `ok` false | Report the refusal, as below |
 
 - On `complete`, the op records a `fail` on a published head as read. Name it in the completion notice. Its fix is a new item.
-- On `pending`, the op runs no wait of its own. Repeat the same call every 180 seconds until `CI_WAIT_MAX_SECS` seconds have passed since the first call (`.agents/skills/orch/scripts/orch-env CI_WAIT_MAX_SECS 600`).
+- A `pending` reply is not final, and the op runs no wait of its own. Repeat the same call every 180 seconds until `CI_WAIT_MAX_SECS` seconds have passed since the first call (`.agents/skills/orch/scripts/orch-env CI_WAIT_MAX_SECS 600`).
 - A `pending` reply at that point is unconfirmed: record nothing, and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice.
 - If `unreadable` repeats, record nothing, and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice. Never record a verdict that did not arrive.
+- On `ok` false, report the refusal's key with the pushed SHA in the completion notice. Do not repeat transport.
 
 The op records a `complete` verdict in the same call ([workflow-state.md](../schemas/workflow-state.md) `verification`). Make no separate `record-verification` call.
 
