@@ -762,6 +762,7 @@ struct AccountSettings {
     home: Option<String>,
     copilot_home: Option<String>,
     preference: String,
+    tokens: settings::Judged<Vec<(String, PathBuf)>>,
     /// The notice of each private env file line the load passed over, for
     /// the verb to say ahead of its reply.
     skipped: Vec<String>,
@@ -786,13 +787,15 @@ impl AccountSettings {
         };
         let values = settings::layered(&roots.project, &environment, true, &keys)?;
         let skipped = values.skipped();
+        let controller = settings::ControllerSettings::read(&values);
         let loaded = AccountSettings {
             skipped,
             accounts: settings::AccountSettings::read(&values),
             state: settings::account_state_dir(&values),
             home: values.get(settings::HOME_KEY).map(str::to_owned),
             copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
-            preference: settings::ControllerSettings::read(&values).preference,
+            preference: controller.preference,
+            tokens: controller.account_tokens,
             project: roots.project,
         };
         // Every verb reads the account keys first: a value outside its form
@@ -817,6 +820,7 @@ impl AccountSettings {
             home: self.home.as_deref(),
             copilot_home: self.copilot_home.as_deref(),
             controller_preference: &self.preference,
+            account_tokens: &self.tokens,
         }
     }
 }

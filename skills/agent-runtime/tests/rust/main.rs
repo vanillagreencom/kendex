@@ -133,6 +133,7 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
         extra_args: Vec::new(),
         program: None,
         grants: None,
+        claude_sign_in: None,
     };
     let flag = "--dangerously-skip-permissions".to_owned();
     let bypass = build(&intent(Permission::Bypass)).unwrap();

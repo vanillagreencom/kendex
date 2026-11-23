@@ -64,6 +64,17 @@ pub struct Resume {
     pub session_file: Option<PathBuf>,
 }
 
+/// How a launch on a named Claude account signs in, resolved by the site
+/// that named the account ([`crate::accounts::usage::sign_in`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaudeSignIn {
+    /// The account's stored login.
+    StoredLogin,
+    /// The account's declared token file, whose text the launch exports as
+    /// [`CLAUDE_TOKEN_VAR`].
+    TokenFile(PathBuf),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchIntent {
     pub harness: Harness,
@@ -128,6 +139,13 @@ pub struct LaunchIntent {
     /// wrapper, as a controller's launch does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grants: Option<Grants>,
+    /// The sign-in of the named Claude account the launch bills, `None` for
+    /// a launch naming none: the launch then clears every inherited
+    /// credential that would sign it in over that account's own
+    /// ([`CLAUDE_OUTRANKING`]). Off the JSON contract, so only a site that
+    /// resolved the account sets it.
+    #[serde(skip)]
+    pub claude_sign_in: Option<ClaudeSignIn>,
 }
 
 fn brief_none() -> Brief {
@@ -229,6 +247,45 @@ const CODEX_COMPACTION_KEYS: [&str; 3] = [
 /// runs (`LaunchCommand::shell_line`), so the same text serves a lane on
 /// another machine.
 pub const COPILOT_SKILLS_DIRS: &str = "$HOME/.agents/skills";
+
+/// The variable a declared token file's text is exported under.
+pub const CLAUDE_TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/// The environment a launch on a named Claude account clears, since its
+/// tmux window takes the server's environment and an inherited credential
+/// bills whoever owns it. Claude Code ranks each above a stored `/login`
+/// (https://code.claude.com/docs/en/authentication § Authentication
+/// precedence): the provider selections of rank 1, with Claude Platform on
+/// AWS, Anthropic-managed Google Cloud and Bedrock's Mantle endpoint beside
+/// them (https://code.claude.com/docs/en/env-vars, `CLAUDE_CODE_USE_*`),
+/// ranks 2, 3 and 5, and the profile and federation variables of rank 6. A
+/// declared token file's export, rank 5, is set over its cleared name, so
+/// nothing above it stands. `apiKeyHelper`, an active profile file and a
+/// gateway sign-in are settings, files and stored sessions, which no launch
+/// environment reaches. `ANTHROPIC_BASE_URL` goes too: Claude Code sends the
+/// login's token in `Authorization` to the endpoint it names
+/// (https://code.claude.com/docs/en/llm-gateway-protocol § Request headers).
+pub const CLAUDE_OUTRANKING: [&str; 13] = [
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+    "CLAUDE_CODE_USE_MANTLE",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    CLAUDE_TOKEN_VAR,
+    "ANTHROPIC_PROFILE",
+    "ANTHROPIC_FEDERATION_RULE_ID",
+    "ANTHROPIC_ORGANIZATION_ID",
+    "ANTHROPIC_BASE_URL",
+];
+
+/// The keys a Pi launch on a Claude seat keeps: Pi's own `anthropic`
+/// provider signs in with them (`@earendil-works/pi-ai` 1.6.0,
+/// `dist/providers/anthropic.js` and `dist/env-api-keys.js`), and it reads
+/// no `ANTHROPIC_BASE_URL`, passing the model's own base URL.
+const PI_PROVIDER_KEYS: [&str; 2] = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
 
 /// Spell the command for an intent. Refuses an intent the harness cannot
 /// honour: compaction off where it has no word, a model-free lane launch is
@@ -367,6 +424,24 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
         }
         Harness::Pi | Harness::Codex => {}
     }
+    let mut env_files = BTreeMap::new();
+    if let Some(sign_in) = &intent.claude_sign_in {
+        let kept: &[&str] = match h {
+            Harness::Pi => &PI_PROVIDER_KEYS,
+            Harness::Claude | Harness::Codex | Harness::Copilot => &[],
+        };
+        for name in CLAUDE_OUTRANKING {
+            if !kept.contains(&name) && !env_remove.iter().any(|n| n == name) {
+                env_remove.push(name.to_owned());
+            }
+        }
+        match sign_in {
+            ClaudeSignIn::StoredLogin => {}
+            ClaudeSignIn::TokenFile(file) => {
+                env_files.insert(CLAUDE_TOKEN_VAR.to_owned(), file.clone());
+            }
+        }
+    }
     match intent.question_tool {
         QuestionTool::Off => args.extend(h.question_off_words().into_iter().map(str::to_owned)),
         QuestionTool::Keep => {}
@@ -460,7 +535,7 @@ fn build_command(intent: &LaunchIntent, hosted_claude_consent: bool) -> Result<L
         args,
         env,
         env_remove,
-        env_files: BTreeMap::new(),
+        env_files,
         cwd: intent.cwd.clone(),
         brief_arg,
         brief_path,
@@ -677,6 +752,7 @@ mod tests {
             extra_args: Vec::new(),
             program: None,
             grants: None,
+            claude_sign_in: None,
         }
     }
 
@@ -690,8 +766,9 @@ mod tests {
 
     /// The environment a child of the rendered line sees: the line is run
     /// by `sh` in `dir` with a recorder as the harness, every scrubbed name,
-    /// both declared launch names, every name the intent removes, a Copilot
-    /// token and `HOME` set on the child shell; the recorder prints its
+    /// both declared launch names, every name the intent removes, every
+    /// Claude credential a named account's launch clears, a Copilot token
+    /// and `HOME` set on the child shell; the recorder prints its
     /// environment one `NAME=VALUE` a line.
     fn child_env(dir: &Path, mut i: LaunchIntent) -> BTreeMap<String, String> {
         let recorder = dir.join("show-env");
@@ -709,6 +786,7 @@ mod tests {
             .chain(&DESKTOP_DISPLAY)
             .copied()
             .chain([LAUNCH_MODEL_VAR, LAUNCH_AGENT_VAR])
+            .chain(CLAUDE_OUTRANKING)
             .chain(i.env_remove.iter().map(String::as_str))
         {
             sh.env(name, "parent");
@@ -961,6 +1039,88 @@ mod tests {
             );
             assert!(!env.contains_key("OPENER_CLEARED"), "{h}");
         }
+    }
+
+    /// A launch on a named Claude account, Claude's own or a Pi
+    /// `pi-claude/` seat, signs in as that account alone: every inherited
+    /// credential that would outrank its sign-in and the endpoint that would
+    /// receive it are cleared, a Pi launch keeping the two keys its own
+    /// provider signs in with, and a declared token file's text is the token
+    /// the child holds. A launch naming no Claude account clears none. The
+    /// sign-in is off the intent's JSON: a round trip carries none.
+    #[test]
+    fn a_named_claude_accounts_launch_signs_in_as_that_account_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("account.token");
+        fs::write(&file, "file-token\n").unwrap();
+        let pi_claude = "pi-claude/claude-fable-5-1";
+        let token = Some(ClaudeSignIn::TokenFile(file.clone()));
+        let stored = Some(ClaudeSignIn::StoredLogin);
+        // The case, the harness and model, the sign-in, and whether the
+        // provider keys stand.
+        let rows = [
+            (
+                "a Claude home by stored login",
+                Harness::Claude,
+                "opus",
+                stored.clone(),
+                false,
+            ),
+            (
+                "a Claude home by token file",
+                Harness::Claude,
+                "opus",
+                token.clone(),
+                false,
+            ),
+            (
+                "a Pi seat by stored login",
+                Harness::Pi,
+                pi_claude,
+                stored,
+                true,
+            ),
+            (
+                "a Pi seat by token file",
+                Harness::Pi,
+                pi_claude,
+                token,
+                true,
+            ),
+            (
+                "an accountless Claude launch",
+                Harness::Claude,
+                "opus",
+                None,
+                true,
+            ),
+        ];
+        let keys = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+        for (case, h, model, sign_in, keys_stand) in rows {
+            let mut i = bare(h);
+            i.home = Some(dir.path().join(format!(".1{h}")));
+            i.model = Some(model.into());
+            i.effort = None;
+            i.claude_sign_in = sign_in.clone();
+            let env = child_env(dir.path(), i);
+            for name in CLAUDE_OUTRANKING {
+                let expected = match (&sign_in, name) {
+                    (None, _) => Some("parent"),
+                    (Some(_), key) if keys.contains(&key) && keys_stand => Some("parent"),
+                    (Some(ClaudeSignIn::TokenFile(_)), CLAUDE_TOKEN_VAR) => Some("file-token"),
+                    (Some(_), _) => None,
+                };
+                assert_eq!(
+                    env.get(name).map(String::as_str),
+                    expected,
+                    "{case}: {name}"
+                );
+            }
+        }
+        let mut i = bare(Harness::Claude);
+        i.claude_sign_in = Some(ClaudeSignIn::TokenFile(file));
+        let back: LaunchIntent = serde_json::from_str(&serde_json::to_string(&i).unwrap()).unwrap();
+        assert_eq!(back.claude_sign_in, None);
     }
 
     /// A controller acts on the owner's desktop: its child reads the display

@@ -705,7 +705,8 @@ At an overseer trigger under [oversee-events.md § The overseer's own marks](../
    - Exit 75 leaves the intent open: read it before anything else.
    - The predecessor retires only once the successor reads ready.
    - A readiness refusal stops the successor, leaves the predecessor in control and tells the owner once.
-   - These notes hold their account out of the walk for 30 minutes, until a confirmed hand-over, or until `register --fleet` on that account: `successor-not-ready`, `successor-not-up`, `successor-unobservable`, `successor-exited`, `successor-wrong-account`, `brief-unconfirmed`, `launch-gate-refused` and `successor-not-signed-in`. Any other note holds nothing.
+   - These notes hold their account out of the walk for 30 minutes, until a confirmed hand-over, or until `register --fleet` on that account: `successor-not-ready`, `successor-not-up`, `successor-unobservable`, `successor-exited`, `successor-wrong-account`, `brief-unconfirmed` and `launch-gate-refused`. Any other note holds nothing.
+   - A `successor-not-signed-in` holds its account the same way only when its cause is `auth-wall`: the successor's first turn met a login wall. A refusal before any window opened holds nothing, since the walk already passes over an account holding no sign-in.
    - A `successor-not-signed-in`: sign in the account it names, or exclude it, then request the transfer again.
    - A `successor-asking`: its `step` names the first-run question on the successor's screen, `folder-trust` or `bypass-consent`. Answer that step in the account's config dir before requesting the transfer again; each request before then opens the same question. A dialog no step names fails `successor-not-ready` with the screen it read.
    - The successor follows the watch under [takeover § 2](oversee-takeover.md#watch-reader) and starts no second watch.

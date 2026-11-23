@@ -46,6 +46,7 @@ pub fn env<'a>(settings: &'a Settings, accounts: &'a Judged<AccountSettings>) ->
         home: settings.home.as_deref(),
         copilot_home: settings.copilot_home.as_deref(),
         controller_preference: &settings.controller.preference,
+        account_tokens: &settings.controller.account_tokens,
     }
 }
 
@@ -712,5 +713,12 @@ fn pick_read(
             Err(cause) => return PickAnswer::Unjudged { cause },
         };
     }
-    accounts::pick(&rows, req, &facts, &accounts, now)
+    accounts::pick(
+        &rows,
+        req,
+        &facts,
+        &accounts,
+        &settings.controller.account_tokens,
+        now,
+    )
 }

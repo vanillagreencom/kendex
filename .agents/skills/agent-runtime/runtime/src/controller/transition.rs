@@ -677,6 +677,15 @@ fn mark_unproved(record: &mut Document, observation: Option<&Value>, at: &str) {
     else {
         return;
     };
+    // A sign-in refused before any window opened read the account's files
+    // and proved nothing of a session on it; the walk already leaves out an
+    // account the same reader finds signed out. Only the launched runner's
+    // login wall holds it.
+    if note == "successor-not-signed-in"
+        && field("cause").and_then(Value::as_str) != Some("auth-wall")
+    {
+        return;
+    }
     let Some(account) = record
         .get("pending")
         .and_then(|pending| pending.get("account"))
@@ -2416,7 +2425,8 @@ mod tests {
         assert_eq!(fleet(&path).intents[0].notice, Some(owed));
     }
 
-    /// A failed attempt's mark on its account: a failure stamps one, a
+    /// A failed attempt's mark on its account: a sign-in refused before any
+    /// window stamps none, a failure of the launched runner stamps one, a
     /// later failure on the account replaces it rather than adding a
     /// second, and a confirmed hand-over drops the member.
     #[test]
@@ -2446,6 +2456,15 @@ mod tests {
             );
             (entries[0]["account"].clone(), entries[0]["note"].clone())
         };
+        assert_eq!(
+            attempt(
+                Outcome::Failed,
+                json!({"retired": false, "note": "successor-not-signed-in",
+                    "fields": {"account": account, "cause": "no-credential"}})
+            ),
+            None,
+            "a refusal before any window holds nothing"
+        );
         assert_eq!(
             marks(
                 json!({"retired": false, "note": "successor-not-signed-in", "cause": "auth-wall"})

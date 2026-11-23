@@ -151,6 +151,7 @@ fn judge(settings: &Env, ground: &Beside, req: &PickRequest, now: u64) -> PickAn
             req,
             &ground.facts(&roster.rows),
             &accounts,
+            settings.account_tokens,
             now,
         ),
         Err(cause) => PickAnswer::Unjudged {

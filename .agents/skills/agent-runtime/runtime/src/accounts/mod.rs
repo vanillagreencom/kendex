@@ -77,8 +77,9 @@ pub use renewal::step as renewal_step;
 pub const TAG: &str = "accounts";
 
 /// What the reading takes of the loaded settings: the account keys, the
-/// account records' root, the homes an account directory is resolved under
-/// and the controller's preference the walk reads.
+/// account records' root, the homes an account directory is resolved under,
+/// the controller's preference the walk reads and the token files a pick of
+/// a session opening here reads sign-in by.
 #[derive(Debug, Clone, Copy)]
 pub struct Env<'a> {
     pub accounts: &'a settings::Judged<AccountSettings>,
@@ -86,6 +87,7 @@ pub struct Env<'a> {
     pub home: Option<&'a str>,
     pub copilot_home: Option<&'a str>,
     pub controller_preference: &'a str,
+    pub account_tokens: &'a settings::Judged<Vec<(String, PathBuf)>>,
 }
 
 /// The host word of a read with no provider named.
@@ -673,19 +675,38 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// reading included. An account with one reading keeps it. The roster is
 /// never resolved: it reports both readings.
 ///
-/// A session that opens on this machine (`opens_here`) signs in with this
-/// machine's stored login of the home, never with the token a provider
-/// measured it through: the provider's reading stands for it only where
-/// that login reads held ([`usage::stored_login`]), else the account is
-/// judged on this machine's own row, and a provider's row with no home
-/// listed here is no candidate for it.
+/// A session that opens on this machine (`opens_here`) signs in as this
+/// machine reads the home's sign-in ([`usage::sign_in`] over `files`),
+/// never with the token a provider measured it through, read once per
+/// account: a held login or declared token lets the provider's reading
+/// stand, a sign-in nothing here reads leaves the account on this
+/// machine's own row, and an account holding none is no candidate, its rows
+/// dropped, as is a provider's row with no home listed here.
 fn resolve(
     rows: &[AccountRow],
     billed: Harness,
     model: &str,
     req: &PickRequest,
+    files: &usage::TokenFiles,
     now: u64,
 ) -> Vec<AccountRow> {
+    let signs: Vec<(&str, usage::SignIn)> = if req.opens_here {
+        rows.iter()
+            .filter(|r| r.harness == billed && !provider_reading(r))
+            .map(|r| {
+                let answer = usage::sign_in(r.harness, &r.config_dir, files, now);
+                (r.canon.as_str(), answer)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let sign = |row: &AccountRow| {
+        signs
+            .iter()
+            .find(|(canon, _)| row.harness == billed && *canon == row.canon)
+            .map(|(_, answer)| answer)
+    };
     let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
         let other = out.iter().position(|r| {
@@ -701,8 +722,10 @@ fn resolve(
                     (row.clone(), out[i].clone())
                 };
                 let signed_in = !req.opens_here
-                    || usage::stored_login(own.harness, &own.config_dir, now)
-                        == usage::StoredLogin::Held;
+                    || matches!(
+                        sign(&own),
+                        Some(usage::SignIn::StoredLogin | usage::SignIn::TokenFile(_))
+                    );
                 let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
                 let mut stands = if signed_in {
                     prefer(own, provider, billed, model, req.admit_unread_scope)
@@ -719,11 +742,19 @@ fn resolve(
         }
     }
     if req.opens_here {
-        out.retain(|r| {
-            !provider_reading(r)
-                || rows.iter().any(|own| {
-                    !provider_reading(own) && own.harness == r.harness && own.canon == r.canon
-                })
+        out.retain(|r| match sign(r) {
+            Some(usage::SignIn::Missing { .. }) => false,
+            Some(
+                usage::SignIn::StoredLogin
+                | usage::SignIn::TokenFile(_)
+                | usage::SignIn::Unjudged { .. },
+            ) => true,
+            None => {
+                !provider_reading(r)
+                    || rows.iter().any(|own| {
+                        !provider_reading(own) && own.harness == r.harness && own.canon == r.canon
+                    })
+            }
         });
     }
     out
@@ -1943,6 +1974,7 @@ pub fn pick(
     req: &PickRequest,
     facts: &FleetFacts,
     settings: &AccountSettings,
+    tokens: &settings::Judged<Vec<(String, PathBuf)>>,
     now: u64,
 ) -> PickAnswer {
     let today = today(now);
@@ -1956,7 +1988,23 @@ pub fn pick(
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    let rows = &resolve(rows, billed, model, req, now);
+    // A session opening here on a Claude account signs in as the token
+    // files say, read whole before any account: a setting that does not
+    // read judges none, as the transfer refuses it.
+    let files = match (req.opens_here, billed) {
+        (true, Harness::Claude) => match usage::token_files(tokens) {
+            Ok(files) => files,
+            Err(e) => {
+                return PickAnswer::Unjudged {
+                    cause: e.to_string(),
+                };
+            }
+        },
+        (true, Harness::Codex | Harness::Copilot | Harness::Pi) | (false, _) => {
+            usage::TokenFiles::none()
+        }
+    };
+    let rows = &resolve(rows, billed, model, req, &files, now);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {
@@ -2043,9 +2091,10 @@ pub fn pick(
 }
 
 /// An overseer's choice with no account of room: the account whose usage
-/// query was refused with a 429 and kept no figure, whose stored login on
-/// this machine reads held ([`usage::stored_login`]), and whose 5-hour
-/// window no session-limit report holds spent, the fewest claims first,
+/// query was refused with a 429 and kept no figure, a sign-in standing
+/// for it ([`resolve`] drops one holding none from an overseer's walk,
+/// which opens here), and whose 5-hour window no session-limit report
+/// holds spent, the fewest claims first,
 /// then listing order. A 429 from the usage endpoint shows the token was
 /// accepted and the plan answered; the token endpoint's 429 posted no
 /// usage query, and an unreachable endpoint, a 401 or 403 and a reading
@@ -2064,8 +2113,6 @@ fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
                 && j.row.usage_refused_429()
                 && j.row.headroom_pct.is_none()
                 && j.row.session_spent_until(now).is_none()
-                && usage::stored_login(j.row.harness, &j.row.config_dir, now)
-                    == usage::StoredLogin::Held
         })
         .min_by_key(|j| j.claims)
         .cloned()

@@ -20,6 +20,20 @@ opened() {
   done
   printf '{%s}' "$out"
 }
+# `signin` holds the credentials Claude Code would sign in with, each null
+# where the line left it unset.
+signin() {
+  local name out="" sep=""
+  for name in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL; do
+    if [ -n "${!name+x}" ]; then
+      out="$out$sep\"$name\":\"$(printf '%s' "${!name}" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+    else
+      out="$out$sep\"$name\":null"
+    fi
+    sep=","
+  done
+  printf '{%s}' "$out"
+}
 record() {
   local argv="" first=1 arg
   for arg in "$@"; do
@@ -27,8 +41,8 @@ record() {
     first=0
     argv="$argv\"$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'NR > 1 { printf "%s", "\\n" } { printf "%s", $0 }')\""
   done
-  printf '{"program":"%s","argv":[%s],"opened":%s,"env":{"CLAUDE_CONFIG_DIR":"%s","PI_CODING_AGENT_DIR":"%s","CODEX_HOME":"%s","COPILOT_HOME":"%s","CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT":"%s","CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT":"%s","CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS":"%s"}}\n' \
-    "$0" "$argv" "$(opened)" "${CLAUDE_CONFIG_DIR-}" "${PI_CODING_AGENT_DIR-}" "${CODEX_HOME-}" "${COPILOT_HOME-}" \
+  printf '{"program":"%s","argv":[%s],"opened":%s,"sign_in":%s,"env":{"CLAUDE_CONFIG_DIR":"%s","PI_CODING_AGENT_DIR":"%s","CODEX_HOME":"%s","COPILOT_HOME":"%s","CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT":"%s","CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT":"%s","CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS":"%s"}}\n' \
+    "$0" "$argv" "$(opened)" "$(signin)" "${CLAUDE_CONFIG_DIR-}" "${PI_CODING_AGENT_DIR-}" "${CODEX_HOME-}" "${COPILOT_HOME-}" \
     "${CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT-}" "${CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT-}" \
     "${CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS-}" > launch-record.json
 }

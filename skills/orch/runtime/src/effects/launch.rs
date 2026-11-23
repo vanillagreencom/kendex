@@ -18,7 +18,8 @@ use std::time::Duration;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
 use agent_runtime::launch::{
-    Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool, Resume, shell_quote,
+    ClaudeSignIn, Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool, Resume,
+    shell_quote,
 };
 use agent_runtime::reading::Reading;
 use agent_runtime::trust;
@@ -469,6 +470,30 @@ struct LaunchPrep {
     unrebased: bool,
 }
 
+/// The sign-in of the named Claude account a local lane bills, a Pi
+/// `pi-claude/` seat among them: its declared token file, exported over
+/// whatever the window inherits, since the walk counts a home that file
+/// signs in as eligible. A lane billing no named Claude account signs in as
+/// it did.
+fn lane_sign_in(
+    settings: &Settings,
+    harness: Harness,
+    r: &LaunchLane,
+) -> agent_runtime::Result<Option<ClaudeSignIn>> {
+    let billed = harness.billed(r.model.as_deref().unwrap_or_default());
+    let Some(account) = r
+        .account
+        .as_deref()
+        .filter(|_| billed == Some(Harness::Claude))
+    else {
+        return Ok(None);
+    };
+    let files = agent_runtime::accounts::usage::token_files(&settings.controller.account_tokens)?;
+    Ok(files
+        .declared(account)
+        .map(|file| ClaudeSignIn::TokenFile(file.to_path_buf())))
+}
+
 /// Resolve everything a local launch can refuse before it opens a window:
 /// the harness, the fleet server and session, the working directory, the
 /// home with its trust record and harness gate, the program and the brief
@@ -560,6 +585,7 @@ fn prepare_launch(
             },
             extra_args: &permission,
             opener: &super::opener_env(harness, r.model.as_deref()),
+            claude_sign_in: lane_sign_in(settings, harness, r)?,
         },
     )?;
     lane_words(&mut intent, &cwd);
@@ -1393,6 +1419,7 @@ fn hosted_command(
             session_id: None,
             extra_args: &permission,
             opener: &super::opener_env(harness, r.model.as_deref()),
+            claude_sign_in: None,
         },
     )?;
     intent.program = None;
@@ -1765,6 +1792,7 @@ fn cloud_launch(
             session_id: None,
             extra_args: &[],
             opener: &super::opener_env(Harness::Claude, r.model.as_deref()),
+            claude_sign_in: None,
         },
     )?;
     let answer_by = operation.stamp_after(CLOUD_BOUND);
@@ -2811,6 +2839,7 @@ mod tests {
                 extra_args: Vec::new(),
                 program: None,
                 grants: None,
+                claude_sign_in: None,
             };
             let cwd = intent.cwd.clone();
             lane_words(&mut intent, &cwd);

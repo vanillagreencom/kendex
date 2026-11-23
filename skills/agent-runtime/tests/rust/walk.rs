@@ -676,10 +676,11 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
 /// usage query was refused with a 429 and kept no figure, whose stored
 /// login this machine reads held, and whose 5-hour window is not spent.
 /// Measured room wins over either; a caller's account the mark leaves out
-/// is never kept, and a 429 account whose stored login nothing here reads
-/// (a Copilot one), a 429 account with a spent 5-hour window, the token
-/// endpoint's 429, a 401 or 403, an unreachable endpoint and a walk
-/// without the keep take none. Each row: the case, the preference, the
+/// is never kept, and a 429 account with a spent 5-hour window, the token
+/// endpoint's 429, a 401 or 403, an unreachable endpoint and a walk without
+/// the keep take none. A 429 account whose sign-in nothing here reads (a
+/// Copilot one) is taken, as the transfer opens it and leaves that sign-in
+/// to the first turn. Each row: the case, the preference, the
 /// listing, the caller's harness, pick model and account, whether the mark
 /// leaves the caller's account out, the retirement setting, the keep, and
 /// the account and entry chosen with whether nothing measured it.
@@ -734,7 +735,7 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             true,
             None,
             true,
-            None,
+            Some(("bcopilot", "caller", true)),
         ),
         (
             "a 429 account whose 5-hour window is spent",
@@ -906,6 +907,63 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             "{case}: {result}"
         );
     }
+}
+
+/// The overseer walk reads a home's sign-in through the consumer's token
+/// setting: the caller's own home, nothing measured and no credential file,
+/// is kept where its declared token file holds a token, is no candidate
+/// where no file is declared for it, and a setting naming it twice refuses
+/// the walk unjudged at its pick, where any answer would read the setting
+/// one way.
+#[test]
+fn the_overseer_walk_reads_a_homes_sign_in_through_the_token_setting() {
+    let mut nothing = unreachable("aclaude");
+    nothing["status"] = json!("no_credentials");
+    let mut world = World::new(&[]);
+    world.plant_listing(&[nothing]);
+    let lane = world.dir("aclaude");
+    let token = world.path().join("aclaude.token");
+    std::fs::write(&token, "planted-token\n").unwrap();
+    let args = [
+        "--controller",
+        "--preference",
+        "claude:standard:high",
+        "--source-harness",
+        "claude",
+        "--caller-harness",
+        "claude",
+        "--caller-account",
+        lane.as_str(),
+        "--caller-pick-model",
+        "fable",
+        "--keep-unmeasured",
+    ];
+    let token_files = |world: &mut World, setting: String| {
+        world
+            .env
+            .retain(|(k, _)| k != "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES");
+        world
+            .env
+            .push(("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES".to_owned(), setting));
+    };
+    token_files(&mut world, format!("{lane}={}", token.display()));
+    let kept = world.answered(&args);
+    assert_eq!(kept["answer"], json!("lane"), "{kept}");
+    assert_eq!(kept["chosen"]["account"], json!(lane), "{kept}");
+    assert_eq!(kept["chosen"]["entry"], json!("caller"), "{kept}");
+    token_files(&mut world, String::new());
+    let signed_out = world.answered(&args);
+    assert_eq!(signed_out["answer"], json!("none"), "{signed_out}");
+    token_files(
+        &mut world,
+        format!("{lane}={t},{lane}/={t}", t = token.display()),
+    );
+    let (key, fields) = world.refused(&args);
+    assert_eq!(key, "account-unjudged", "{fields:?}");
+    assert!(
+        fields.contains(&("step".to_owned(), "pick".to_owned())),
+        "{fields:?}"
+    );
 }
 
 #[test]

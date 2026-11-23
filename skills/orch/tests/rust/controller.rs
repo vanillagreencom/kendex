@@ -525,9 +525,10 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
 
 /// A named account holding no credential its harness signs in with is no
 /// successor: refused `successor-not-signed-in` before any window opens or
-/// any trust record is written into it, the predecessor running. The same
-/// account under a launch environment that carries a token is left to the
-/// first turn, which signs it in, and the outcome names the token.
+/// any trust record is written into it, the predecessor running. A token
+/// the server's environment carries signs no named account in, since it
+/// bills whoever owns it and the launch clears it, so the account is
+/// refused the same under one.
 #[test]
 fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file() {
     for token in [false, true] {
@@ -563,16 +564,7 @@ fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file(
         request["successor"] = unsigned;
         runner.transfer_started(&request);
         let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-        if token {
-            assert_eq!(intent["outcome"], "confirmed", "{intent}");
-            assert_eq!(
-                intent["observation"]["sign_in"],
-                json!({"token": "CLAUDE_CODE_OAUTH_TOKEN"}),
-                "{intent}"
-            );
-            continue;
-        }
-        assert_eq!(intent["outcome"], "failed", "{intent}");
+        assert_eq!(intent["outcome"], "failed", "token {token}: {intent}");
         let observation = &intent["observation"];
         assert_eq!(observation["note"], "successor-not-signed-in", "{intent}");
         assert_eq!(
@@ -689,6 +681,101 @@ fn a_declared_token_file_signs_the_successor_in_its_own_window_only() {
     );
 }
 
+/// A successor on a named Claude account, Claude's own or a Pi
+/// `pi-claude/` seat, signs in as that account alone, whatever the tmux
+/// server's environment holds: the server's token never reaches it, a
+/// declared token file's text does, the keys that would outrank its sign-in
+/// are cleared on Claude and kept on Pi for Pi's own provider, and no
+/// endpoint that would receive the account's token stands. Each row: the
+/// harness, whether the account signs in by a declared token file (else by
+/// its stored login), and whether the keys stand.
+#[test]
+fn a_named_claude_successor_signs_in_as_its_account_whatever_the_server_holds() {
+    let rows = [
+        ("claude", false, false),
+        ("claude", true, false),
+        ("pi", false, true),
+        ("pi", true, true),
+    ];
+    for (harness, by_file, keys_stand) in rows {
+        let case = format!("{harness} by_file={by_file}");
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        for (name, value) in [
+            ("CLAUDE_CODE_OAUTH_TOKEN", "inherited"),
+            ("ANTHROPIC_API_KEY", "planted-key"),
+            ("ANTHROPIC_AUTH_TOKEN", "planted-auth"),
+            ("ANTHROPIC_BASE_URL", "https://gateway.invalid"),
+        ] {
+            let out = tmux(&server.socket, &["set-environment", "-g", name, value]);
+            assert!(out.status.success(), "{}", stderr(&out));
+        }
+        let account = runner.state_dir().join("6claude");
+        std::fs::create_dir_all(&account).unwrap();
+        let token = runner.state_dir().join("6claude.token");
+        let mut env = vec![(
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!(
+                "claude={},pi={}",
+                fixtures().join("stub-record/claude").display(),
+                fixtures().join("stub-record/pi").display()
+            ),
+        )];
+        if by_file {
+            std::fs::write(&token, "file-token\n").unwrap();
+            env.push((
+                "AGENT_RUNTIME_ACCOUNT_TOKEN_FILES".to_owned(),
+                format!("{}={}", account.display(), token.display()),
+            ));
+        } else {
+            plant_credential(&account);
+        }
+        let predecessor = Owned::sleep();
+        plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+        let mut named = pending(runner.state_dir());
+        named["account"] = json!(account.display().to_string());
+        named["home"] = json!(account.display().to_string());
+        if harness == "pi" {
+            let pi_home = dir.path().join("pi-home");
+            pi_root_marked(&pi_home);
+            named["harness"] = json!("pi");
+            named["home"] = json!(pi_home.display().to_string());
+            named["model"] = json!("pi-claude/claude-fable-5-1");
+            named["permission"] = json!("native");
+        }
+        let mut fleet = runner.fleet();
+        fleet["controller"]["pending"] = named.clone();
+        runner.write_fleet(&fleet);
+        let mut request = transfer_request(&server, runner.state_dir());
+        request["expected"]["pending"] = named.clone();
+        request["successor"] = named;
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        runner.transfer_started_env(&request, &env);
+        runner.wait_intent_settled("request-transfer:", SETTLE);
+        let launched = launch_record(runner.state_dir());
+        let key = |planted: &str| keys_stand.then(|| planted.to_owned());
+        assert_eq!(
+            launched["sign_in"],
+            json!({
+                "CLAUDE_CODE_OAUTH_TOKEN": by_file.then_some("file-token"),
+                "ANTHROPIC_API_KEY": key("planted-key"),
+                "ANTHROPIC_AUTH_TOKEN": key("planted-auth"),
+                "ANTHROPIC_BASE_URL": null,
+            }),
+            "{case}: {launched}"
+        );
+        assert_eq!(
+            launched["env"]["CLAUDE_CONFIG_DIR"],
+            account.display().to_string(),
+            "{case}: {launched}"
+        );
+        drop(predecessor);
+    }
+}
+
 /// An account whose declared token file holds no token is no successor,
 /// whatever token the server's environment holds, and the refusal names
 /// the file; an account the setting does not declare is judged as before.
@@ -759,6 +846,71 @@ fn a_named_account_the_token_setting_does_not_sign_in_opens_nothing() {
             "{}: the predecessor keeps running",
             row.name
         );
+    }
+}
+
+/// The transfer reads the walk's one sign-in answer: a Claude account
+/// whose stored login nothing here reads opens, its note naming the cause
+/// for the first turn to judge, and a token setting naming the account
+/// twice in two spellings refuses before any window opens, the predecessor
+/// running. Each row: the case, the credential file's text, whether the
+/// setting declares the account twice, and the outcome with its note.
+#[test]
+fn a_transfer_judges_the_successor_by_the_walks_sign_in_answer() {
+    let rows = [
+        (
+            "a login nothing reads",
+            Some("not json\n"),
+            false,
+            ("confirmed", json!({"unjudged": "credential-invalid"})),
+        ),
+        (
+            "one account declared twice",
+            None,
+            true,
+            ("failed", json!("setting-invalid")),
+        ),
+    ];
+    for (case, credential, twice, (outcome, note)) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let account = runner.state_dir().join("6claude");
+        std::fs::create_dir_all(&account).unwrap();
+        if let Some(text) = credential {
+            std::fs::write(account.join(".credentials.json"), text).unwrap();
+        }
+        let token = runner.state_dir().join("6claude.token");
+        std::fs::write(&token, "file-token\n").unwrap();
+        let setting = if twice {
+            format!(
+                "{a}={t},{a}/={t}",
+                a = account.display(),
+                t = token.display()
+            )
+        } else {
+            String::new()
+        };
+        let (intent, panes, predecessor) = transfer_to_account(
+            &server,
+            &runner,
+            &account,
+            &[("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)],
+            &[],
+        );
+        assert_eq!(intent["outcome"], outcome, "{case}: {intent}");
+        match outcome {
+            "confirmed" => assert_eq!(intent["observation"]["sign_in"], note, "{case}: {intent}"),
+            _ => {
+                assert_eq!(intent["observation"]["note"], note, "{case}: {intent}");
+                assert_eq!(server.panes(), panes, "{case}: nothing opened");
+                assert!(
+                    live(predecessor.pid()),
+                    "{case}: the predecessor keeps running"
+                );
+            }
+        }
     }
 }
 
@@ -3747,7 +3899,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     runner.init_fleet();
     let seat = dir.path().join("seat");
     let pi_home = dir.path().join("pi-home");
-    std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     pi_root_marked(&pi_home);
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -8247,7 +8399,9 @@ fn a_pi_controller_resume_continues_by_the_session_file_its_pending_names() {
         }
         let cwd = runner.state_dir().to_path_buf();
         let home = dir.path().join("pi-home");
-        std::fs::create_dir_all(&home).unwrap();
+        // The pending names the root as its `pi-claude/` seat too, which
+        // must hold the Claude sign-in it bills.
+        plant_credential(&home);
         pi_root_marked(&home);
         let sessions = home
             .join("sessions")
@@ -10527,7 +10681,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
         .push(("HOME".to_owned(), home.display().to_string()));
     let spent = work.join("claude-a");
     let seat = work.join("claude-b");
-    std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let _predecessor = walled_on(&runner, &server, "claude", &spent, &spent);
     let before = runner.fleet()["controller"].clone();
     let panes = server.panes().len();
@@ -10586,7 +10740,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
         .push(("HOME".to_owned(), home.display().to_string()));
     let spent = work.join("claude-a");
     let seat = work.join("claude-b");
-    std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let _predecessor = walled_on(&runner, &server, "claude", &spent, &spent);
     let successor = walled_successor(&runner, "pi:pi-claude/claude-fable-5-1:high", &seat);
     let (intent, launched) = walled_transfer(&runner, &spent, &successor);
@@ -10610,7 +10764,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
     let spent = work.join("claude-a");
     let root = work.join("pi-root");
     let seat = work.join("claude-b");
-    std::fs::create_dir_all(&seat).unwrap();
+    plant_credential(&seat);
     let _predecessor = walled_on(&runner, &server, "pi", &spent, &root);
     pi_root_marked(&root);
     let mut fleet = runner.fleet();
@@ -11173,11 +11327,11 @@ fn measured_codex(alias: &str, used: u64) -> Value {
     row
 }
 
-/// A controller opens on this machine and signs in with this machine's
-/// stored login of its home: a home holding no credential here, which the
-/// provider measures with room through its own token, is judged on this
-/// machine's row, so the real `successor` verb passes it over as
-/// `unmeasured` and opens on the next entry's credentialed home.
+/// A controller opens on this machine and signs in as this machine reads
+/// its home's sign-in: a home holding no credential here and no declared
+/// token file, which the provider measures with room through its own
+/// token, is no candidate, so the real `successor` verb passes its entry
+/// over and opens on the next entry's credentialed home.
 #[test]
 fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
     let dir = tempfile::tempdir().unwrap();
@@ -11201,8 +11355,7 @@ fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
     );
     let skipped = &result["walk"]["skipped"][0];
     assert_eq!(skipped["entry"], "claude:fable:high", "{result}");
-    assert_eq!(skipped["reason"], "unmeasured", "{result}");
-    assert_eq!(skipped["lane"], signed_out, "{result}");
+    assert_eq!(skipped["reason"], "no-candidate", "{result}");
 }
 
 /// A provider's row naming a home this machine does not list is no

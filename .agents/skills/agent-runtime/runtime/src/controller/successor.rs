@@ -442,6 +442,7 @@ mod tests {
                 home: None,
                 copilot_home: None,
                 controller_preference: "",
+                account_tokens: &controller.account_tokens,
             },
             launch: &launch,
             controller: &controller,
