@@ -2328,14 +2328,17 @@ fn two_refreshers_under_the_lock_fetch_once() {
 /// A launch, a fresh pick or a relaunch alike, admits an account only on a
 /// fresh reading of every window that can stop the lane, the 5-hour window
 /// included, judged as the plan windows are: one lane's hour at the set
-/// burn (5 points of the 5-hour window) must leave it under the bound
-/// (95), and a reading older than that lane takes to spend the room a
-/// window shows below the bound admits nothing until a fresh one. The
-/// week (20) and the model window (30) have room on every row but the
-/// one walled on its week; an account that reports no 5-hour window is
-/// judged on the others alone. Each row: the case, the 5-hour figure, the
-/// week, the status and the reading's age in seconds, then the verdict
-/// of a fresh pick and of a relaunch, and the reset a walled pick names.
+/// burn (5 points of the 5-hour window, 5 × 5/168 of the week) must leave
+/// it under the bound (95), and a reading older than that lane takes to
+/// spend the room a window shows below the bound admits nothing until a
+/// fresh one, on the week as on the 5-hour window. The model window (30)
+/// has room on every row; an account that reports no 5-hour window is
+/// judged on the others alone. A running lane's own question reads the
+/// week alone, whatever the reading's age. A stale reading's detail leads
+/// with its key and keeps the reading's own. Each row: the case, the
+/// 5-hour figure, the week, the status and the reading's age in seconds,
+/// then the verdict of a fresh pick, of a relaunch and of the running
+/// question, and the reset a walled pick names.
 #[test]
 fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
     let world = World::new(&[]);
@@ -2347,17 +2350,17 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
         u64,
         &'a str,
         u64,
-        (&'a str, &'a str),
+        (&'a str, &'a str, &'a str),
         Option<&'a str>,
     );
-    let rows: [Row; 10] = [
+    let rows: [Row; 11] = [
         (
             "5-hour at 98",
             Some(98),
             20,
             "ok",
             0,
-            ("walled", "walled"),
+            ("walled", "walled", "room"),
             Some(&session),
         ),
         (
@@ -2366,7 +2369,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "ok",
             0,
-            ("walled", "walled"),
+            ("walled", "walled", "room"),
             Some(&session),
         ),
         (
@@ -2375,7 +2378,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "ok",
             0,
-            ("room", "room"),
+            ("room", "room", "room"),
             None,
         ),
         (
@@ -2384,7 +2387,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "ok",
             0,
-            ("room", "room"),
+            ("room", "room", "room"),
             None,
         ),
         (
@@ -2393,8 +2396,17 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             96,
             "ok",
             0,
-            ("walled", "walled"),
+            ("walled", "walled", "walled"),
             Some(&weekly),
+        ),
+        (
+            "no 5-hour window, 1 point of room on the week read 8 hours ago",
+            None,
+            94,
+            "ok",
+            8 * 3600,
+            ("unmeasured", "unmeasured", "room"),
+            None,
         ),
         (
             "15 points of room read 4 hours ago",
@@ -2402,7 +2414,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "ok",
             4 * 3600,
-            ("unmeasured", "unmeasured"),
+            ("unmeasured", "unmeasured", "room"),
             None,
         ),
         (
@@ -2411,7 +2423,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "ok",
             2 * 3600,
-            ("room", "room"),
+            ("room", "room", "room"),
             None,
         ),
         (
@@ -2420,7 +2432,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "rate_limited",
             4 * 3600,
-            ("unmeasured", "unmeasured"),
+            ("unmeasured", "unmeasured", "room"),
             None,
         ),
         (
@@ -2429,7 +2441,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "rate_limited",
             600,
-            ("room", "unmeasured"),
+            ("room", "unmeasured", "room"),
             None,
         ),
         (
@@ -2438,12 +2450,12 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             20,
             "ok",
             0,
-            ("room", "room"),
+            ("room", "room", "room"),
             None,
         ),
     ];
     let request = claude(Some("claude-fable-5-1"));
-    for (case, five_hour, week, status, age, (fresh, relaunch), reset) in rows {
+    for (case, five_hour, week, status, age, (fresh, relaunch, running), reset) in rows {
         let mut row = measured("a", week, 0);
         row["session_5h_pct"] = json!(five_hour);
         row["resets"]["session"] = json!(five_hour.map(|_| session.clone()));
@@ -2452,6 +2464,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
         row["status"] = json!(status);
         row["refused_endpoint"] = json!((status == "rate_limited").then_some("usage"));
         row["usage_age_s"] = json!(age);
+        row["detail"] = json!("planted detail");
         for (relaunched, expected) in [(false, fresh), (true, relaunch)] {
             let facts = FleetFacts {
                 relaunch: relaunched,
@@ -2469,6 +2482,34 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
                 (got.as_str(), walled_at.as_deref()),
                 (expected, reset),
                 "{case}, relaunch {relaunched}: {answer:?}"
+            );
+        }
+        let dir = row["config_dir"].as_str().unwrap();
+        let word = |answer: &PickAnswer| match answer {
+            PickAnswer::Lane(_) => "room",
+            PickAnswer::Walled(_) => "walled",
+            PickAnswer::Unmeasured(_) => "unmeasured",
+            other => panic!("{case}: {other:?}"),
+        };
+        let own = PickRequest {
+            lane: Some(dir.to_owned()),
+            ..request.clone()
+        };
+        let facts = FleetFacts::default();
+        let answer = judged(&world, std::slice::from_ref(&row), &own, &facts);
+        assert_eq!(word(&answer), running, "{case}, running: {answer:?}");
+        // The named launch reads the record a refused start prints.
+        let start = named(dir, request.clone());
+        let answer = judged(&world, std::slice::from_ref(&row), &start, &facts);
+        assert_eq!(word(&answer), fresh, "{case}, named: {answer:?}");
+        if let PickAnswer::Unmeasured(j) = &answer {
+            let record = j.record();
+            let detail = record["detail"].as_str().unwrap_or_default();
+            let (key, prior) = detail.split_once("; ").unwrap_or((detail, ""));
+            assert_eq!(
+                (key.split(' ').next(), prior),
+                (Some("usage-stale"), "planted detail"),
+                "{case}: {record}"
             );
         }
     }

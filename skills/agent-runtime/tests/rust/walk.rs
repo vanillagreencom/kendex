@@ -301,6 +301,16 @@ fn refused_429(alias: &str) -> Value {
     row
 }
 
+/// A 429 row served from a kept figure four hours old, its 5-hour window
+/// at 80: one lane at the set burn spends the 15 points of room to the
+/// bound in three hours, so the figure is too old to vouch for room.
+fn stale_429(alias: &str) -> Value {
+    let mut row = measured(alias, 20, 80);
+    row["status"] = json!("rate_limited");
+    row["usage_age_s"] = json!(4 * 3600);
+    row
+}
+
 /// A local row whose expired access token the token endpoint refused to
 /// renew with a 429, its refresh token live: rate-limited with no
 /// headroom, and no usage query posted.
@@ -673,8 +683,9 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
 /// nothing measured has room: one account nothing measured, the caller's
 /// own where the mark leaves it in (the session running there is the
 /// proof, whatever its harness or its stated end), else an account whose
-/// usage query was refused with a 429 and kept no figure, whose stored
-/// login this machine reads held, and whose 5-hour window is not spent.
+/// usage query was refused with a 429 and kept no figure or one too old to
+/// vouch for room, whose stored login this machine reads held, and whose
+/// 5-hour window is not spent.
 /// Measured room wins over either; a caller's account the mark leaves out
 /// is never kept, and a 429 account with a spent 5-hour window, the token
 /// endpoint's 429, a 401 or 403, an unreachable endpoint and a walk without
@@ -682,7 +693,7 @@ fn a_numeric_entry_on_a_callers_one_million_window_converts_to_that_models_class
 /// Copilot one) is taken, as the transfer opens it and leaves that sign-in
 /// to the first turn. Each row: the case, the preference, the
 /// listing, the caller's harness, pick model and account, whether the mark
-/// leaves the caller's account out, the retirement setting, the keep, and
+/// leaves the caller's account out, a setting the row sets, the keep, and
 /// the account and entry chosen with whether nothing measured it.
 #[test]
 fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
@@ -696,7 +707,7 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
         Vec<Value>,
         (&'static str, &'static str, &'static str),
         bool,
-        Option<&'static str>,
+        Option<(&'static str, &'static str)>,
         bool,
         Option<(&'static str, &'static str, bool)>,
     );
@@ -736,6 +747,16 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             None,
             true,
             Some(("bcopilot", "caller", true)),
+        ),
+        (
+            "a 429 account whose kept figure is too old to vouch for room",
+            entry,
+            vec![measured("aclaude", 96, 5), stale_429("bclaude")],
+            claude,
+            true,
+            Some(("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "5")),
+            true,
+            Some(("bclaude", entry, true)),
         ),
         (
             "a 429 account whose 5-hour window is spent",
@@ -843,20 +864,19 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             vec![unreachable("aclaude")],
             claude,
             false,
-            Some("aclaude=2020-01-01"),
+            Some(("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2020-01-01")),
             true,
             Some(("aclaude", "caller", true)),
         ),
     ];
-    for (case, preference, listing, (harness, model, own), at_headroom, retire, keep, chosen) in
+    for (case, preference, listing, (harness, model, own), at_headroom, setting, keep, chosen) in
         rows
     {
         let mut world = World::new(&[]);
         world.plant_listing(&listing);
-        if let Some(retire) = retire {
-            world
-                .env
-                .push(("AGENT_RUNTIME_ACCOUNT_RETIRE".to_owned(), retire.to_owned()));
+        if let Some((key, value)) = setting {
+            world.env.retain(|(k, _)| k != key);
+            world.env.push((key.to_owned(), value.to_owned()));
         }
         let lane = world.dir(own);
         let mut args = vec![

@@ -409,6 +409,7 @@ mod tests {
             grant: None,
             score: None,
             qualifying: None,
+            usage_stale: false,
         }
     }
 

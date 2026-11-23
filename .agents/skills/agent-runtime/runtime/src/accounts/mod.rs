@@ -1034,9 +1034,10 @@ pub(crate) const WINDOWS: [Window; 3] = [
 pub(crate) const MODEL: &str = "model";
 
 /// The 5-hour window, which can stop a session hours before any plan
-/// window. Only the launch question reads it: the listing rates no reading
-/// on it, so a roster line and a running session's own question read the
-/// plan windows alone.
+/// window. No judgement but a launch's reads it: the listing rates no
+/// reading on it, so a roster line and a running session's own question
+/// read the plan windows alone. The usage cache also asks again a figure
+/// past its reset ([`cache::consumed_reset`]).
 pub(crate) const SESSION: Window = Window {
     bucket: "session",
     field: "session_5h_pct",
@@ -1176,8 +1177,8 @@ fn session_window(row: &AccountRow) -> Option<Binding> {
     })
 }
 
-/// The projected room of one account on the window that binds it: the
-/// window charged `S × burn`, one hour of burn per lane, plus, for an
+/// The projected room of one account on a window that can stop it: the
+/// binding window, or for a launch the 5-hour window, charged `S × burn`, one hour of burn per lane, plus, for an
 /// overseer's launch, `burn × hours_to_reset` for the controller it places.
 /// `S` is the lanes that will spend it: the fleet's live lanes on the
 /// account and, for a lane's launch, the candidate about to join them. A
@@ -1493,6 +1494,9 @@ pub struct Judged {
     /// walk's successor bound and the mark judge's capacity row read; a
     /// named account's judgement counts none.
     pub qualifying: Option<u32>,
+    /// A launch read the reading too old to vouch for the room it shows
+    /// ([`judge`]): nothing measured the account, whatever figure it kept.
+    pub usage_stale: bool,
 }
 
 /// A figure as the record spells it: an integral value as an integer, a
@@ -1946,8 +1950,13 @@ fn judge(
     };
     let mut row = row.clone();
     row.state_end(today);
-    if let Some((age, bucket)) = stale.filter(|_| !refused_relaunch) {
-        let detail = format!("usage-stale age_s={age} window={bucket}");
+    if let Some((age, bucket)) = stale.as_ref().filter(|_| !refused_relaunch) {
+        // The stable key leads for the programs that read it; the reading's
+        // own detail, such as a 429's refusal, follows.
+        let detail = match row.detail.as_deref().filter(|d| !d.is_empty()) {
+            Some(prior) => format!("usage-stale age_s={age} window={bucket}; {prior}"),
+            None => format!("usage-stale age_s={age} window={bucket}"),
+        };
         if let Some(raw) = row.raw.as_object_mut() {
             raw.insert("detail".to_owned(), Value::from(detail.as_str()));
         }
@@ -1965,6 +1974,7 @@ fn judge(
         grant,
         score,
         qualifying: None,
+        usage_stale: stale.is_some(),
     }
 }
 
@@ -2149,7 +2159,8 @@ pub fn pick(
 }
 
 /// An overseer's choice with no account of room: the account whose usage
-/// query was refused with a 429 and kept no figure, a sign-in standing
+/// query was refused with a 429 and kept no figure, or one the judge read
+/// too old to vouch for room ([`Judged::usage_stale`]), a sign-in standing
 /// for it ([`resolve`] drops one holding none from an overseer's walk,
 /// which opens here), and whose 5-hour window no session-limit report
 /// holds spent, the fewest claims first,
@@ -2169,7 +2180,7 @@ fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
         .filter(|j| {
             j.verdict == "unmeasured"
                 && j.row.usage_refused_429()
-                && j.row.headroom_pct.is_none()
+                && (j.row.headroom_pct.is_none() || j.usage_stale)
                 && j.row.session_spent_until(now).is_none()
         })
         .min_by_key(|j| j.claims)

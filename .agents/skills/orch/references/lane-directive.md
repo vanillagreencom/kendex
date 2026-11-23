@@ -13,7 +13,7 @@ Read `.result.answer`:
 - `cloud-repo-unset` is a cloud-session account with no access to this checkout's repository under `ORCH_LANE_CLOUD_REPOS`.
 - Any other answer refuses; on a walled one, read the roster.
 
-The 5-hour window is no wall for a running lane. A start is judged on it as on the plan windows:
+The 5-hour window is no wall for a running lane. An account a lane-host provider row measures is judged on its plan windows alone, by its figures whatever their age. On an account this machine's listing measures, a start is judged on the 5-hour window as on the plan windows:
 
 - One lane's hour of burn must leave it under the bound, and the harness's own session-limit report on a lane there holds it spent until its reset. A refusal on it names the `session` bucket and its `resets_at` in `projected_window`.
 - A reading older than one lane at its burn takes to spend the room a window shows below the bound admits no start until a fresh reading. The account reads `unmeasured`, its `detail` starting `usage-stale`.
