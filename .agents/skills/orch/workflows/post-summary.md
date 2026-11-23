@@ -30,7 +30,7 @@ Read the counts the summary needs:
 STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles, post_pr_stop: .post_pr_stop}' <<<"$STATE_READ"
 ```
 
-- Collect each implement or fix round's Validation Routes from its evidence file, the local `tmp/evidence-[ISSUE_ID]-[DEV_ROUND_ID].md` or the attached copy `linear.sh attachments list` and `attachments fetch` read, and each later restack run's from its own evidence, per [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file).
+- Collect each implement or fix round's Validation Routes from the evidence file of the item it served, the local `tmp/evidence-[ITEM_ID]-[DEV_ROUND_ID].md` or the attached copy `linear.sh attachments list [ITEM_ID]` and `attachments fetch` read, `[ITEM_ID]` being the sub-issue in a bundle, and each later restack run's from its own evidence, per [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file).
 - Carry the rows into the comment with their original identities and outcomes.
 - In a bundle, put each child's rows on the child's item; the parent summary may carry them too.
 - Never fill a field the original sources lack from a state projection or a final verdict.
