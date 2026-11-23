@@ -751,6 +751,7 @@ class Forward(MailWorld):
         with patch.dict(os.environ, self.env, clear=True):
             watch = module.Watch(self.satellite, BASH, settings)
             watch.next_relay = 10 ** 12
+            watch.next_wall = 10 ** 12
             watch.forward_pending = Future()
             watch.forward_pending.set_result(("", 60, (None, None, None)))
             before = int(time.time())
