@@ -376,6 +376,28 @@ fn the_last_choice_mark_is_held_back_while_an_earlier_entry_has_room_at_the_full
     assert_eq!(strings(&result["unread"]), ["pi:openai/gpt-5:high"]);
     assert_eq!(result["room"], Value::Null);
     assert_eq!(result["last_choice"], json!("codex:gpt-6.1-sol:high"));
+    // Earlier pools whose every account read unreachable answer no room
+    // with accounts nothing measured: unread at both bounds, so they hold
+    // the marked entry, whose own account has room.
+    let mut pools = World::new(&[(
+        PREFERENCE,
+        "claude:fable:high,codex:gpt-6.1-sol:high,copilot:gpt-6.1-sol:high:last",
+    )]);
+    let mut codex_unreachable = unreachable("codex");
+    codex_unreachable["harness"] = json!("codex");
+    let mut copilot = measured("acopilot", 10, 5);
+    copilot["harness"] = json!("copilot");
+    pools.plant_listing(&[unreachable("aclaude"), codex_unreachable, copilot]);
+    let result = pools.answered(&args);
+    assert_eq!(result["answer"], json!("held"), "{result}");
+    assert_eq!(
+        strings(&result["unread"]),
+        ["claude:fable:high", "codex:gpt-6.1-sol:high"],
+        "{result}"
+    );
+    assert_eq!(result["unmeasured"], json!(2), "{result}");
+    assert_eq!(result["room"], Value::Null);
+    assert_eq!(result["last_choice"], json!("copilot:gpt-6.1-sol:high"));
     // An unmarked walk asks no full-bound question and picks each entry
     // once.
     let mut unmarked = World::new(&[(PREFERENCE, "claude:fable:high,codex:gpt-6.1-sol:high")]);
@@ -383,6 +405,16 @@ fn the_last_choice_mark_is_held_back_while_an_earlier_entry_has_room_at_the_full
     let result = unmarked.answered(&args);
     assert_eq!(result["chosen"]["entry"], json!("codex:gpt-6.1-sol:high"));
     assert_eq!(result["room"], Value::Null);
+    // An unmarked walk holds nothing, so a pool with one walled account
+    // and one a 429 left unmeasured names no entry unread: a reset answers
+    // the walled one.
+    let mut pool = World::new(&[(PREFERENCE, "claude:fable:high")]);
+    pool.plant_listing(&[measured("aclaude", 96, 5), refused_429("bclaude")]);
+    let result = pool.answered(&args);
+    assert_eq!(result["answer"], json!("none"), "{result}");
+    assert_eq!(result["walled"], json!(1), "{result}");
+    assert_eq!(result["unmeasured"], json!(1), "{result}");
+    assert_eq!(result["unread"], json!([]), "{result}");
     // The mark off the final entry, and in an overseer walk, is a setting
     // to fix.
     let mut marked = World::new(&[

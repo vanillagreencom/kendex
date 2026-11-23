@@ -1033,22 +1033,29 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         judged = true;
         let Some((account, record, kept_unmeasured)) = picked else {
             // A refused entry before the marked one: whether it has room at
-            // the full bound, the one question the hold asks.
+            // the full bound, the one question the hold asks. Only this hold
+            // reads a no-room answer with unmeasured accounts as unread; a
+            // `none` walk's `unread` names entries no reset answers.
             if req.scope == Scope::Lane && preference.last_choice && room.is_none() && i < last {
-                match pick(&request(Some(100), named.clone(), req.exclude.clone())) {
+                let full = pick(&request(Some(100), named.clone(), req.exclude.clone()));
+                match &full {
                     PickAnswer::Lane(_) => room = Some(text.clone()),
+                    PickAnswer::Unjudged { cause } => {
+                        return Err(unjudged(&text, "last-choice", cause));
+                    }
                     PickAnswer::None { .. }
                     | PickAnswer::Walled(_)
                     | PickAnswer::Reserved(_)
                     | PickAnswer::Retired { .. }
-                    | PickAnswer::Excluded(_) => {}
-                    PickAnswer::NoRecord
+                    | PickAnswer::Excluded(_)
+                    | PickAnswer::NoRecord
                     | PickAnswer::Unmeasured(_)
                     | PickAnswer::ProviderUnmeasured { .. }
                     | PickAnswer::Unbilled { .. }
-                    | PickAnswer::CloudRepoUnset(_) => walked.unread.push(text.clone()),
-                    PickAnswer::Unjudged { cause } => {
-                        return Err(unjudged(&text, "last-choice", &cause));
+                    | PickAnswer::CloudRepoUnset(_) => {
+                        if left_unread(&answer) || left_unread(&full) {
+                            walked.unread.push(text.clone());
+                        }
                     }
                 }
             }
@@ -1102,6 +1109,26 @@ fn unmeasured_record(judged: &Judged) -> Value {
 enum Step {
     Entry(Entry),
     Caller(Caller),
+}
+
+/// Whether an answer leaves its entry unread, the reading the `:last` hold
+/// takes at either bound: the judge gave no judgement of room, or answered
+/// none of room while an account it could not measure may hold some.
+fn left_unread(answer: &PickAnswer) -> bool {
+    match answer {
+        PickAnswer::NoRecord
+        | PickAnswer::Unmeasured(_)
+        | PickAnswer::ProviderUnmeasured { .. }
+        | PickAnswer::Unbilled { .. }
+        | PickAnswer::CloudRepoUnset(_) => true,
+        PickAnswer::None { unmeasured, .. } => *unmeasured > 0,
+        PickAnswer::Lane(_)
+        | PickAnswer::Walled(_)
+        | PickAnswer::Reserved(_)
+        | PickAnswer::Retired { .. }
+        | PickAnswer::Excluded(_)
+        | PickAnswer::Unjudged { .. } => false,
+    }
 }
 
 fn word(answer: &PickAnswer) -> &'static str {
