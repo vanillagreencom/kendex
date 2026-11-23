@@ -53,8 +53,51 @@ assert_eq "$(jq '.rollback_notice' <<<"$CLOSE_FACTS")" true 'failed rollback rep
 assert_eq "$(jq '.comment_refused' <<<"$CLOSE_FACTS")" true 'refused comment acknowledgements stay unposted and retain the response'
 assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes only the added owner label from fresh labels'
 assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
+# The item write's settings are judged before the append: each unset key
+# refuses an item ask by name and leaves the mailbox and the tracker as they
+# were, while an ask without --issue still lands in chat.
+SETTINGS_CASE="$TMP_ROOT/settings"
+mkdir -p "$SETTINGS_CASE/.agents/skills/mailbox" "$SETTINGS_CASE/.agents/skills/linear/scripts"
+cp -R "${MAILBOX_UNDER_TEST:-$ROOT/skills/mailbox}/scripts" "$SETTINGS_CASE/.agents/skills/mailbox/scripts"
+git init -q "$SETTINGS_CASE"
+git -C "$SETTINGS_CASE" config gc.auto 0
+git -C "$SETTINGS_CASE" config maintenance.auto false
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s/tracker-calls"\nexit 1\n' "$SETTINGS_CASE" \
+  >"$SETTINGS_CASE/.agents/skills/linear/scripts/linear.sh"
+chmod +x "$SETTINGS_CASE/.agents/skills/linear/scripts/linear.sh"
+printf 'Approve the change?\n' >"$SETTINGS_CASE/question"
+SETTINGS_BOX="$SETTINGS_CASE/tmp/lane-mail/overseer/to-overseer.jsonl"
+settings_ask() { # ENV_ASSIGNMENT... -- LANE_MAIL_ARG...
+  local assignments=()
+  while [[ "$1" != -- ]]; do assignments+=("$1"); shift; done
+  shift
+  (cd "$SETTINGS_CASE" && env -i PATH="$PATH" HOME="$SETTINGS_CASE" TMPDIR="$SETTINGS_CASE" \
+    ${assignments[@]+"${assignments[@]}"} "$BASH" "$SETTINGS_CASE/.agents/skills/mailbox/scripts/lane-mail" ask \
+    --item overseer --to owner --options approve,hold --recommend approve --effect none --wait 5 \
+    --file "$SETTINGS_CASE/question" "$@")
+}
+chat_rc=0
+settings_ask -- >"$SETTINGS_CASE/chat.out" 2>"$SETTINGS_CASE/chat.err" || chat_rc=$?
+assert_eq "$chat_rc|$(jq -s 'map(select(.kind == "ask")) | length' "$SETTINGS_BOX" 2>/dev/null)" '0|1' \
+  'an ask without --issue lands in chat with the tracker settings unset'
+while IFS='|' read -r row assignment unset; do
+  [[ -n "$row" ]] || continue
+  before="$(cksum <"$SETTINGS_BOX")"
+  ask_rc=0
+  settings_ask ${assignment:+"$assignment"} -- --issue KEN-7 --do 'Approve change' \
+    >"$SETTINGS_CASE/$row.out" 2>"$SETTINGS_CASE/$row.err" || ask_rc=$?
+  assert_eq "$ask_rc|$(sed -n 1p "$SETTINGS_CASE/$row.err")|$(cat "$SETTINGS_CASE/$row.out")" \
+    "2|lane-mail: item-ask-unconfigured issue=KEN-7 cause=settings-unset unset=$unset|" \
+    "an item ask with $row unset refuses by the key it lacks"
+  assert_eq "$(cksum <"$SETTINGS_BOX")|$([[ -e "$SETTINGS_CASE/tracker-calls" ]] && echo called)" "$before|" \
+    "an item ask with $row unset leaves the mailbox and the tracker untouched"
+done <<'ROWS'
+label|ORCH_OWNER_EMAIL=owner@example.test|ORCH_OWNER_ASK_LABEL
+owner account|ORCH_OWNER_ASK_LABEL=owner-gated|ORCH_OWNER_EMAIL
+both||ORCH_OWNER_ASK_LABEL,ORCH_OWNER_EMAIL
+ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed cause comment-id mention close-untracked retained-error rollback-owner comment-refused rollback-label; do
+  for rule in pending failed bound private-failed cause comment-id mention close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -104,6 +147,10 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         "select(.success == true) | .data.comment.id" "select(true) | .data.comment.id"
       assertion='refused comment acknowledgements stay unposted and retain the response'
+    elif [[ "$rule" == settings ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
+        'refuse item-ask-unconfigured "$ISSUE"' ':'
+      assertion='an item ask with label unset refuses by the key it lacks'
     else
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         'if [[ "$added_label" == true ]]; then' 'if false && [[ "$added_label" == true ]]; then'
