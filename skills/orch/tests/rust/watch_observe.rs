@@ -5533,32 +5533,53 @@ fn a_merge_before_the_launch_leaves_a_working_hosted_lane_open() {
     assert_eq!(closes(&fleet, "issue-1"), 1);
 }
 
+/// What a hosted lane's work leaves on its host, the finished close's proof
+/// that nothing is left: a record standing under the root its host named
+/// reads live, and a root still the launch's checkout proves nothing gone,
+/// so the close keeps waiting rather than closing the lane.
 #[test]
 fn a_hosted_lanes_worktree_record_still_stands_for_the_finished_close() {
-    let dir = tempfile::tempdir().unwrap();
-    let scripts = provider_world(dir.path());
-    let root = "/remote/KEN-4";
-    let disk = scripts.join("disk");
-    on_disk(
-        &disk,
-        "/remote/KEN-4/.git",
-        "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
-    );
-    on_disk(
-        &disk,
-        "/remote/KEN-4/kendex.settings.toml",
-        "[env]\nORCH_STATE_DIR = \"tmp\"\n",
-    );
-    on_disk(
-        &disk,
-        "/remote/KEN-4/tmp/items/KEN-4/workflow-state-KEN-4.json",
-        "{}",
-    );
-    let lane = serde_json::from_value(hosted_lane(dir.path(), "KEN-4", "gh-4", root)).unwrap();
-    assert_eq!(
-        hosted::record_left(&scripts, &lane),
-        hosted::Answer::Live(())
-    );
+    let rows: [(&str, Option<&str>, hosted::Answer<()>); 2] = [
+        ("named root", None, hosted::Answer::Live(())),
+        (
+            "pending root",
+            Some("/remote/KEN-4"),
+            hosted::Answer::Unreadable {
+                cause: "root-pending".to_owned(),
+            },
+        ),
+    ];
+    for (case, checkout, expected) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = provider_world(dir.path());
+        let root = "/remote/KEN-4";
+        let disk = scripts.join("disk");
+        // The pending row plants nothing: no read can make it live, and an
+        // absent file must not read as gone.
+        if checkout.is_none() {
+            on_disk(
+                &disk,
+                "/remote/KEN-4/.git",
+                "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
+            );
+            on_disk(
+                &disk,
+                "/remote/KEN-4/kendex.settings.toml",
+                "[env]\nORCH_STATE_DIR = \"tmp\"\n",
+            );
+            on_disk(
+                &disk,
+                "/remote/KEN-4/tmp/items/KEN-4/workflow-state-KEN-4.json",
+                "{}",
+            );
+        }
+        let mut record = hosted_lane(dir.path(), "KEN-4", "gh-4", root);
+        if let Some(checkout) = checkout {
+            record["checkout"] = json!(checkout);
+        }
+        let lane = serde_json::from_value(record).unwrap();
+        assert_eq!(hosted::record_left(&scripts, &lane), expected, "{case}");
+    }
 }
 
 /// The scripts directory a pass runs the real close verb from: `orch-runtime`
@@ -7393,22 +7414,52 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
 }
 
 /// A hosted lane's files are asked of its provider only under the root its
-/// host named. A launch still preparing holds the checkout it ran from as
-/// `mail_root` (equal to `checkout`), which the host does not have: the
-/// pass asks nothing under it and says no `handoff-read-failed`. Once the
-/// launch moved `mail_root` to the host's root, the handoff there is read.
-/// The provider refuses any path outside its root, as `lane-host-daytona`
-/// does.
+/// host named. A launch still preparing, a first one or a relaunch, holds
+/// the checkout it ran from as `mail_root` (equal to `checkout`), which the
+/// host does not have: the pass asks nothing under it, says no failure, and
+/// keeps the handoff row a running pass set, so the relaunched lane's record
+/// is not said again. A lane running with its root still the checkout, as a
+/// launch confirmed by the reconcile records it, is unread under its key,
+/// never read as absent. The provider refuses any path outside its root, as
+/// `lane-host-daytona` does. The lane is Pi's, whose rows are read through
+/// the provider on every pass, preparing included.
 #[test]
 fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
-    for (case, preparing) in [("preparing", true), ("running", false)] {
+    #[derive(Clone, Copy, Debug)]
+    enum Step {
+        /// Running under the root its host named.
+        Running,
+        /// Preparing, `mail_root` the checkout.
+        Preparing,
+        /// Running, `mail_root` still the checkout.
+        RunningAtCheckout,
+    }
+    // Each step's record, whether `EVENT handoff` is said, and the pass's
+    // failure: none, or one ending in these fields.
+    type Steps<'a> = &'a [(Step, bool, Option<&'a str>)];
+    let pending = Some("item=KEN-4 cause=root-pending");
+    let cases: [(&str, Steps); 2] = [
+        (
+            "relaunch",
+            &[
+                (Step::Running, true, None),
+                (Step::Preparing, false, None),
+                (Step::Running, false, None),
+            ],
+        ),
+        (
+            "confirmed at the checkout",
+            &[(Step::RunningAtCheckout, false, pending)],
+        ),
+    ];
+    for (case, steps) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let fleet = Fleet::new(&server);
-        let claude = named_sleep(dir.path(), "claude");
-        let line = format!("printf 'working\\n'; exec {} 600", claude.display());
+        let pi = named_sleep(dir.path(), "pi");
+        let line = format!("printf 'working\\n'; exec {} 600", pi.display());
         let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
-        let identity = await_named(&server, &pane, "claude");
+        let identity = await_named(&server, &pane, "pi");
         let checkout = dir.path().join("overseer");
         let host_root = dir.path().join("host");
         let lane_root = host_root.join("KEN-4");
@@ -7438,43 +7489,52 @@ fn a_hosted_lanes_files_are_asked_only_under_its_host_root() {
                 root = host_root.display(),
             ),
         );
-        let mut record = lane_record(
+        let mut launched = lane_record(
             "KEN-4",
             "gh-4",
-            "claude",
+            "pi",
             &server,
             &pane,
             Some(&identity),
             &checkout,
         );
-        record["host"] = json!(provider.display().to_string());
-        record["kind"] = json!("ssh");
-        record["checkout"] = json!(checkout.display().to_string());
-        if preparing {
-            record["status"] = json!("preparing");
-            record["running_at"] = Value::Null;
-        } else {
-            record["mail_root"] = json!(lane_root.display().to_string());
-        }
-        fleet.set_lanes(vec![record]);
-        let state = fleet.read();
+        launched["host"] = json!(provider.display().to_string());
+        launched["kind"] = json!("ssh");
+        launched["checkout"] = json!(checkout.display().to_string());
         lane_driver!(server, fleet, readers, driver);
-        let produced = driver.pass(&state);
-        let failed = produced.failed.clone().unwrap_or_default();
-        assert!(!failed.contains("handoff-read-failed"), "{case}: {failed}");
-        let calls = std::fs::read_to_string(&log).unwrap_or_default();
-        let outside: Vec<&str> = calls
-            .lines()
-            .filter(|l| l.starts_with("cat ") && !l.contains(&host_root.display().to_string()))
-            .collect();
-        assert_eq!(outside, Vec::<&str>::new(), "{case}");
-        let handed = event_lines(&produced).contains(&"EVENT handoff KEN-4".to_owned());
-        assert_eq!(
-            handed,
-            !preparing,
-            "{case}: {:?} {failed}",
-            lines(&produced)
-        );
+        for (n, &(step, said, failure)) in steps.iter().enumerate() {
+            let mut record = launched.clone();
+            match step {
+                Step::Running => record["mail_root"] = json!(lane_root.display().to_string()),
+                Step::Preparing => {
+                    record["status"] = json!("preparing");
+                    record["running_at"] = Value::Null;
+                }
+                Step::RunningAtCheckout => {}
+            }
+            fleet.set_lanes(vec![record]);
+            let produced = driver.pass(&fleet.read());
+            let at = format!("{case} step {n} {step:?}: {:?}", lines(&produced));
+            match failure {
+                None => assert_eq!(produced.failed, None, "{at}"),
+                Some(fields) => assert!(
+                    produced
+                        .failed
+                        .as_deref()
+                        .is_some_and(|f| f.ends_with(fields)),
+                    "{at} {:?}",
+                    produced.failed
+                ),
+            }
+            let calls = std::fs::read_to_string(&log).unwrap_or_default();
+            let outside: Vec<&str> = calls
+                .lines()
+                .filter(|l| l.starts_with("cat ") && !l.contains(&host_root.display().to_string()))
+                .collect();
+            assert_eq!(outside, Vec::<&str>::new(), "{at}");
+            let handed = event_lines(&produced).contains(&"EVENT handoff KEN-4".to_owned());
+            assert_eq!(handed, said, "{at}");
+        }
     }
 }
 
