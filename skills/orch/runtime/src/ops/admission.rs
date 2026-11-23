@@ -20,7 +20,10 @@
 //! touched set is its record's, else its item's Location paths read now;
 //! a holder whose set cannot be read blocks `holder-unreadable
 //! read=touched`. `changelog.d/` paths never count, and a path the request
-//! names in scope is left out of the comparison.
+//! names in scope is left out of the comparison. A `read_only` lane, whose
+//! confinement binds its checkout read-only, touches none of its sources'
+//! paths: it meets no holder and its record holds none, while the tier
+//! still classifies them.
 //!
 //! A holder a first launch would join is in its review where it owns an
 //! open pull request of the item's repository: one its record names by its
@@ -356,12 +359,18 @@ pub(super) struct Admission<'r> {
     /// before anything is read; `None` for paths a running lane adds,
     /// bound when it was admitted.
     pub checkout: Option<&'r Path>,
+    /// The lane's grants bind its checkout read-only, as the launch
+    /// enforces them: it touches no path.
+    pub read_only: bool,
 }
 
 /// What the judge answers when it admits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Judged {
+    /// The paths the lane holds: its sources', none for a read-only lane.
     pub touched: Vec<String>,
+    /// The sources' paths the tier classifies, whatever the lane writes.
+    pub classified: Vec<String>,
     pub in_scope: Vec<String>,
     /// The running lane a first launch joins in place of opening its own.
     pub join: Option<Join>,
@@ -936,6 +945,7 @@ pub(super) fn bound(
         in_scope: &[],
         paths: &[],
         checkout: Some(checkout),
+        read_only: false,
     };
     bind(path, &a, checkout, reads, host.accounts)
 }
@@ -1007,8 +1017,13 @@ pub(super) fn judge(
         range_paths = (reads.range_paths)(&reads.clis, dir, range)
             .map_err(|c| unreadable("classification", c))?;
     }
-    let touched = touched(body.as_deref(), brief.as_deref(), &range_paths, a.paths)
+    let classified = touched(body.as_deref(), brief.as_deref(), &range_paths, a.paths)
         .map_err(|c| unreadable("location", c.into()))?;
+    let touched = if a.read_only {
+        Vec::new()
+    } else {
+        classified.clone()
+    };
     let in_scope: Vec<String> = a
         .in_scope
         .iter()
@@ -1185,6 +1200,7 @@ pub(super) fn judge(
     }
     Ok(Judged {
         touched,
+        classified,
         in_scope,
         join,
         checkout_common,
@@ -1409,6 +1425,7 @@ pub(super) fn admit_paths(
             in_scope: &in_scope,
             paths: &r.paths,
             checkout: None,
+            read_only: position.is_some_and(|i| lanes[i].read_only),
         },
         env,
         host,
@@ -1427,6 +1444,7 @@ pub(super) fn admit_paths(
             standing.touched.as_deref().unwrap_or_default(),
             &judged.touched,
         ),
+        classified: judged.classified,
         in_scope: judged.in_scope,
         join: None,
         checkout_common: None,
@@ -1893,6 +1911,7 @@ mod tests {
             in_scope: &[],
             paths,
             checkout: None,
+            read_only: false,
         }
     }
 

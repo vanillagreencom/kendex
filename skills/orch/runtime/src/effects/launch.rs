@@ -601,13 +601,6 @@ fn prepare_launch(
             session_file: None,
         });
     }
-    // The display is the record's: a relaunch or a recovery keeps what the
-    // first launch was granted.
-    let desktop = lane
-        .extra
-        .get("desktop")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let granted = super::grants::of(
         settings,
         &r.item,
@@ -615,7 +608,7 @@ fn prepare_launch(
         harness,
         r.account.as_deref().map(Path::new),
         &homes,
-        desktop,
+        lane,
     )?;
     for (name, value) in granted.env() {
         intent.env.insert(name, value);
@@ -2501,6 +2494,7 @@ mod tests {
             launch: None,
             viewer: false,
             reservation: None,
+            read_only: false,
             touched: None,
             in_scope: None,
             carried: Vec::new(),
@@ -2529,6 +2523,7 @@ mod tests {
             judge_account: false,
             refresh: false,
             desktop: false,
+            read_only: false,
             brief_file: None,
             repo_dir: None,
             scope_range: None,

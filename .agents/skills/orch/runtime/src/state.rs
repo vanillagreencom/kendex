@@ -669,10 +669,17 @@ pub struct Lane {
     pub viewer: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reservation: Option<Reservation>,
+    /// The lane's confinement binds its checkout read-only: no tracked file
+    /// and no git folder, only the checkout's `tmp` scratch. Every later
+    /// launch of the record keeps it; a launch over a `done` record takes
+    /// its request's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
     /// The touched set the admission judged: the union
     /// of the item's Location paths, the brief's paths, the change-scope
     /// paths over the named range and the paths a running lane added,
-    /// sorted and unique. `None` on a record written with no judgement.
+    /// sorted and unique, and empty for a `read_only` lane, which writes
+    /// none of them. `None` on a record written with no judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched: Option<Vec<String>>,
     /// The paths the launch named in scope: a file the brief names as an

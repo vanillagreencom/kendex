@@ -318,6 +318,7 @@ A launch on the tmux surface takes these steps in order, locally or on a remote 
      - `permission` for a permission word other than the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture's, spelled as the harness takes it;
      - `refresh: true` for a refresh lane;
      - `desktop: true` where the brief needs the owner's live display;
+     - `read_only: true` where the brief changes no repository file ([lane-directive.md § A read-only launch](../references/lane-directive.md#a-read-only-launch));
      - `in_scope` for the paths the brief names in scope;
      - `judge_account: true` for an account named by hand rather than picked;
      - `over_cap` for a deliberate launch past the cap;

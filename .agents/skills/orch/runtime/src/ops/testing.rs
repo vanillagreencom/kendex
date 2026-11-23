@@ -219,6 +219,7 @@ pub(super) fn launch_fields(item: &str) -> LaunchLane {
         judge_account: false,
         refresh: false,
         desktop: false,
+        read_only: false,
         brief_file: None,
         repo_dir: None,
         scope_range: None,

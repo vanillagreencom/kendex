@@ -1480,6 +1480,89 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
     assert!(inbox(&root, "KEN-H").is_empty());
 }
 
+/// A lane whose confinement binds its checkout read-only touches no path.
+/// Beside a running hosted holder of its item's Location path, the lane
+/// that writes is refused `join-unreachable`; the read-only one meets no
+/// holder and is recorded `read_only` with an empty touched set, which its
+/// relaunch keeps. The tier still classifies the Location paths: a
+/// read-only brief requesting `micro` over an instruction file is refused
+/// `tier-narrower`. A read-only lane this machine cannot confine, on a
+/// Copilot harness or a host, is refused `read-only-unconfined`. Each
+/// refusal writes nothing.
+#[test]
+fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refused() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let mut hosted = holder("KEN-R", "running", None, Some(&["src/r.sh"]));
+    hosted["host"] = json!("/w/provider");
+    hosted["kind"] = json!("ssh");
+    fleet.write_lanes(vec![hosted]);
+    fleet.item("KEN-P", "`src/r.sh`, `skills/x/SKILL.md`", 0, &[]);
+    let checkout = fleet.checkout("p", None);
+    let before = fleet.fleet();
+    let read_only = |fields: Value| {
+        let mut request = launch("KEN-P", &checkout);
+        request["read_only"] = json!(true);
+        for (key, value) in fields.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        request
+    };
+
+    let (key, fields) = refusal(&fleet.op(&launch("KEN-P", &checkout)));
+    assert_eq!(key, "join-unreachable", "{fields:?}");
+    assert_eq!(fleet.fleet(), before, "nothing written");
+
+    for (fields, harness, cause) in [
+        (
+            json!({"harness": "copilot", "permission": "--allow-all"}),
+            "copilot",
+            "token-on-session-bus",
+        ),
+        (json!({"host": "/w/provider"}), "claude", "hosted"),
+    ] {
+        let (key, refused) = refusal(&fleet.op(&read_only(fields)));
+        assert_eq!(key, "read-only-unconfined", "{harness}: {refused:?}");
+        assert_eq!(
+            refused,
+            pairs(&[("item", "KEN-P"), ("harness", harness), ("cause", cause)])
+        );
+        assert_eq!(fleet.fleet(), before, "{harness}: nothing written");
+    }
+
+    let brief = fleet.dir.path().join("brief.md");
+    std::fs::write(
+        &brief,
+        "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=1\nAnswer on the item.\n",
+    )
+    .unwrap();
+    let (key, fields) = refusal(&fleet.op(&read_only(
+        json!({"brief_file": brief.display().to_string()}),
+    )));
+    assert_eq!(key, "tier-narrower", "{fields:?}");
+    assert!(
+        fields.contains(&("judged".to_owned(), "small".to_owned())),
+        "{fields:?}"
+    );
+    assert_eq!(fleet.fleet(), before, "nothing written");
+
+    let out = fleet.op(&read_only(json!({})));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let lane = fleet.lane("KEN-P");
+    assert_eq!(
+        (&lane["read_only"], &lane["touched"]),
+        (&json!(true), &json!([])),
+        "{lane}"
+    );
+    assert_eq!(fleet.lane("KEN-R"), before["lanes"][0]);
+    // No fleet server exists here, so the admitted launch fails before any
+    // window and leaves its record `stopped`, whose relaunch keeps it.
+    assert_eq!(lane["status"], "stopped");
+    let out = fleet.op(&launch("KEN-P", &checkout));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(fleet.lane("KEN-P")["read_only"], true);
+}
+
 /// Two candidates of one pass sharing a path, launched one after the other:
 /// the first opens its window on the fleet's server and stays `preparing`
 /// (its harness never draws), and the second joins it in place of a launch

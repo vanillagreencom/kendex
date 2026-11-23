@@ -339,7 +339,7 @@ A first `launch-lane` appends the record `{item, tracker, repo, harness, window,
 | `touched`, `in_scope`, `carried` | The touched set the admission judged; the append-only paths left out of the overlap judgement; and `{item, tracker, repo, at}` per item the admission joined to this lane. |
 | `obligation` | `{repo, item, parent_repo, parent_item}`, the item's original lineage. |
 | `tier`, `tier_inputs` | The tier the first launch's brief states, and `{estimate, delta, paths}`. |
-| `refresh`, `desktop` | `refresh` is `true` on a refresh lane. `desktop` is `true` where the overseer granted the owner's live display. |
+| `refresh`, `desktop`, `read_only` | `refresh` is `true` on a refresh lane. `desktop` is `true` where the overseer granted the owner's live display. `read_only` is `true` where the lane's confinement binds its checkout read-only. |
 | `parked`, `park_owed`, `sandbox` | `parked`, `{head, repo, at, pr?, until_pr?, until_repo?}`, is a hosted lane's park after its sandbox stop. |
 | `pending_pr`, `pauses`, `capacity_wait`, `walled` | `pending_pr`, `{pr, repo, head, until_pr?, until_repo?}`; the paused spans; `capacity_wait`, `{at}`; `walled`, `{at}`. |
 | `wake` | `{pid, start}` of a detached print-mode turn beside the lane's pane. |
@@ -373,6 +373,7 @@ The members' rules, in the table's order:
 - `obligation`: a differing one refuses ([lane-directive.md § Obligation lineage](../references/lane-directive.md#obligation-lineage)).
 - `tier`: the brief states it by its workflow verb (`start` is `standard`) or by its one whole `item-tier` line.
 - `desktop`: every later launch keeps it.
+- `read_only`: [lane-directive.md § A read-only launch](../references/lane-directive.md#a-read-only-launch) states what it grants and which launches keep it.
 - `park_owed` and `sandbox: "standing"` mark a stopped lane whose park's sandbox stop has not confirmed.
 - `pending_pr`: a relaunch moves `parked`'s pull request into `pending_pr`, and its span into `pauses` as `{from, to, cause: "parked"}`.
 - `capacity_wait`: it stands from a relaunch's first capacity refusal, then closes into `pauses` with `cause: "capacity"`.

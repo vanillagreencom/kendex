@@ -11484,7 +11484,7 @@ fn launch_record_of(cwd: &Path) -> Value {
 #[cfg(target_os = "linux")]
 fn probe_script(harness: &Path) -> String {
     format!(
-        "#!/bin/bash\nexec 3>&1 > \"$PWD/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  for file in ${{PROBE_FILES:-}}; do (: >> \"$file\") 2>/dev/null && echo \"file=${{file##*/}} written\" || echo \"file=${{file##*/}} refused\"; done\n  echo \"cache=${{AGENT_RUNTIME_CACHE:-none}}\"\n  [ -z \"${{PROBE_RUN:-}}\" ] || eval \"$PROBE_RUN\"\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {harness} \"$@\" >&3 2>&3 3>&-\n",
+        "#!/bin/bash\nexec 3>&1 > \"${{PROBE_OUT:-$PWD}}/probe-$AGENT_RUNTIME_LAUNCH_AGENT-$$.txt\" 2>&1\necho started\n{{\n  tmux -S \"${{XDG_RUNTIME_DIR:-/none}}/${{WAYLAND_DISPLAY:-none}}\" has-session 2>/dev/null && echo display=reached || echo display=refused\n  [ -e \"${{XDG_RUNTIME_DIR:-/none}}/bus\" ] && echo bus=visible || echo bus=hidden\n  for seat in ${{PROBE_SEATS:-}}; do touch \"$seat/probe\" 2>/dev/null && echo \"seat=${{seat##*/}} written\" || echo \"seat=${{seat##*/}} refused\"; done\n  for file in ${{PROBE_FILES:-}}; do (: >> \"$file\") 2>/dev/null && echo \"file=${{file##*/}} written\" || echo \"file=${{file##*/}} refused\"; done\n  echo \"cache=${{AGENT_RUNTIME_CACHE:-none}}\"\n  [ -z \"${{PROBE_RUN:-}}\" ] || eval \"$PROBE_RUN\"\n  echo \"gh=$(gh auth token 2>/dev/null || echo none)\"\n}}\nexec {harness} \"$@\" >&3 2>&3 3>&-\n",
         harness = harness.display()
     )
 }
@@ -11493,10 +11493,11 @@ fn probe_script(harness: &Path) -> String {
 /// folder the launch hides (a socket standing for the session bus, a
 /// second private server at `wayland-1` standing for the display), a `gh`
 /// that answers the bus's login, `GH_TOKEN` before it, and a probe harness
-/// that writes what it reached into `probe-<item>.txt` in its worktree,
-/// then runs the confirming stub. The world, its state directory with it,
-/// stands outside `/tmp` ([`outside_tmp`]), so what the lane's grants do not
-/// bind stays readable to the lane as the rest of the tree is.
+/// that writes what it reached into `probe-<item>.txt` in its worktree, or
+/// in the folder `PROBE_OUT` names, then runs the confirming stub. The
+/// world, its state directory with it, stands outside `/tmp`
+/// ([`outside_tmp`]), so what the lane's grants do not bind stays readable
+/// to the lane as the rest of the tree is.
 #[cfg(target_os = "linux")]
 struct Confined {
     dir: tempfile::TempDir,
@@ -12336,6 +12337,19 @@ fn a_codex_lane_on_a_seat_linked_outside_its_grants_runs_unconfined_by_name() {
         assert!(probe.contains("folder=sessions written"), "{item}: {probe}");
     }
     assert!(shared.join("sessions/probe").is_file());
+    // A read-only lane holds no path only while its grants hold it.
+    let mut request = launch_request("KEN-CR", world.runner.state_dir());
+    request["harness"] = json!("codex");
+    request["account"] = json!(linked.display().to_string());
+    request["read_only"] = json!(true);
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(
+        (&observation["cause"], &observation["detail"]),
+        (&json!("read-only-unconfined"), &json!("linked-seat")),
+        "{report}"
+    );
 }
 
 /// The pane hands the lane a temporary-folder variable naming a host folder,
@@ -12704,6 +12718,39 @@ fn a_lane_writes_its_item_s_folder_and_is_refused_the_state_directory_another_it
         "file=ken-o refused".to_owned(),
     ] {
         assert!(probe.contains(&line), "{line}: {probe}");
+    }
+}
+
+/// A `read_only` lane's confinement binds its checkout read-only bar its
+/// `tmp`: in a linked worktree it is refused a tracked file and the common
+/// git folder and writes its `tmp`, where a writing lane beside it writes
+/// all three.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_read_only_lane_writes_its_checkout_s_tmp_and_nothing_else_of_its_checkout() {
+    let world = Confined::new();
+    let common = world.runner.state_dir().join(".git");
+    for (item, read_only, checkout) in [("KEN-W", false, "written"), ("KEN-O", true, "refused")] {
+        let wt = world.linked_worktree(&item.to_ascii_lowercase());
+        let out = wt.join("tmp");
+        world.probe_env("PROBE_OUT", &out.display().to_string());
+        world.file_env(&format!(
+            "{} {} {}",
+            wt.join("tracked.txt").display(),
+            common.join(format!("planted-{item}")).display(),
+            out.join("scratch.txt").display()
+        ));
+        let mut request = launch_request(item, &wt);
+        request["read_only"] = json!(read_only);
+        world.launch(&request);
+        let probe = world.probe_in(&out, item, 1);
+        for line in [
+            format!("file=tracked.txt {checkout}"),
+            format!("file=planted-{item} {checkout}"),
+            "file=scratch.txt written".to_owned(),
+        ] {
+            assert!(probe.contains(&line), "{item}: {line}: {probe}");
+        }
     }
 }
 
