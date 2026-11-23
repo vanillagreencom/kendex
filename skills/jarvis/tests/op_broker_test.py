@@ -914,7 +914,6 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                 else:
                     self.assertEqual(module.chain_caller(pid, recorded, read), expected)
 
-    @unittest.skipUnless(sys.platform == "linux", "only Linux names a jarvis-session caller")
     def test_record_read_past_its_bound_names_its_stderr(self):
         # A runtime wrapper that builds its program before it answers opens its stderr with setup-building; a
         # read the bound ends journals that line, never an empty cause.
@@ -930,6 +929,23 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
             "op-broker: record=unreadable operation=agent-runtime-controller-status cause=TimeoutExpired",
             "op-broker: stderr=agent-runtime: setup-building key=k run=/s"])
 
+    def test_session_call_past_its_deadline_names_its_stderr(self):
+        # jarvis-session's one deadline ends a wrapper still building its program; the call journals the stderr it
+        # held under the operation's line and its TimeoutExpired stands, so the caller's record-unreadable stands.
+        with patch.dict(os.environ, {"JARVIS_BASH": shutil.which("bash")}):
+            module = load("lib/session.py")
+        building = self.executable("building", "import sys,time\n"
+            "sys.stderr.write('orch-runtime: setup-building key=k run=/s\\n'); sys.stderr.flush(); time.sleep(30)\n")
+        session = SimpleNamespace(deadline=module.time.monotonic() + 1, home=str(self.root), env=dict(os.environ))
+        journal = io.StringIO()
+        with redirect_stderr(journal), self.assertRaises(subprocess.TimeoutExpired):
+            module.Session.run(session, [str(building), "state", "path", "--fleet"], check=False)
+        lines = journal.getvalue().splitlines()
+        self.assertEqual(len(lines), 2, lines)
+        self.assertRegex(lines[0], r"^jarvis-session: operation=\S+/building state path timeout=")
+        self.assertEqual(lines[1], "orch-runtime: setup-building key=k run=/s")
+
+    @unittest.skipUnless(sys.platform == "linux", "only Linux names a jarvis-session caller")
     def test_controller_record_states(self):
         module = load("lib/op_fifo.py")
         own = (os.getpid(), start_ticks(os.getpid()))

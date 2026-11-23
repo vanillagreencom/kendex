@@ -2650,7 +2650,10 @@ reuse_respects_session_lease() {
   # detection: moving its branch here would invalidate a running proof.
   # Partial installs may lack the live reader. Only the printed line live=none
   # admits reuse: the runtime prints a run it cannot read as a held run, and a
-  # runtime that cannot answer, such as one setup has not built, holds too.
+  # runtime that cannot answer holds too. Without cargo an unbuilt runtime
+  # answers 69 and holds the reuse; with cargo the wrapper builds it first at
+  # this unbounded call, and the reuse waits on that build and is judged on
+  # its answer.
   # A runtime that runs this package names itself in ORCH_RUNTIME_BINARY and
   # is asked in place of the wrapper, whose cached build may not exist.
   local live_reader="$SCRIPT_DIR/../../orch/scripts/orch-runtime" activity_cause="" live_answer=""
