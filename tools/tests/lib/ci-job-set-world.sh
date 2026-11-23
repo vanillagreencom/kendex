@@ -95,7 +95,8 @@ LINUX='["ubuntu-latest"]'
 BOTH='["ubuntu-latest","macos-latest"]'
 ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[]"
 ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL skipped_suites=[] rust_targets=[\"agent-runtime/*\",\"orch/*\"]"
-# `render` and `trivial` run the one verify job.
+# `render` and `trivial` run the one verify job and skip every suite, none
+# in the fixture checkouts the row is read in.
 VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[] rust_targets=[]"
 # Every measured class runs cargo_linux and bot_instructions. The shell
 # shards run per package, on the runners LEGS names: none, linux or both;

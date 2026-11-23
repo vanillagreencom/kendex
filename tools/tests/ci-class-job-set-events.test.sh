@@ -498,38 +498,43 @@ agent-runtime=none orch-runtime=queue|$with_leg|["agent-runtime"]
 agent-runtime=queue|$group_shards|[]
 ROWS
 [ "$group_rows" -eq 2 ] || { echo "the merge-group publication table read $group_rows rows" >&2; exit 1; }
-# A render or trivial row runs no suite and skips none, so the leg it gains
-# must skip its own: given the emitted skips, the orch-state step runs none
-# of the suites run-all.sh places in that shard on Linux. The group's
-# selection records the same skips, so the push at its head counts none of
-# them proved. Where nothing is owed the row is the verify row, whose empty
-# skips would keep the leg's whole shard. CLASS|PATH|STATES|SHARDS|OWED|LEG
+# A render or trivial row has no reach and skips every suite, so the leg it
+# gains where a build is owed runs none of the suites run-all.sh places in
+# that shard on Linux, and a row selecting the whole roster keeps them all.
+# The group's selection records the same skips, so the push at its head
+# counts no skipped suite proved. CLASS|PATH|STATES|SHARDS|QUEUE|OWED|LEG
 ORCH_CANDIDATES="$(cd "$ROOT" && git ls-files -- ':(glob)skills/orch/tests/*.sh' | awk '!/\/run-all\.sh$/')"
 LEG_ALL="$(cd "$ROOT" && RUNNER_OS=Linux bash skills/orch/tests/run-all.sh --shard-of <<<"$ORCH_CANDIDATES" |
   awk '$1 == "orch-state" { print $2 }' | paste -sd ' ' -)"
 [ -n "$LEG_ALL" ] || { echo "run-all.sh places no suite in orch-state on Linux" >&2; exit 1; }
-leg_runs() { # SKIPS — the orch-state suites the shard step runs under SKIPS, space-joined
+leg_runs() { # SKIPS — the orch-state suites the shard step runs under SKIPS, space-joined, or `refused`
   local kept suite runs=""
+  # A skip list --suite-list refuses fails the shard step, so it is no
+  # empty run.
   # shellcheck disable=SC2086 # one candidate per word
-  kept=" $(cd "$ROOT" && SKIPPED_SUITES="$1" "$JOB_SET" --suite-list $ORCH_CANDIDATES | paste -sd ' ' -) "
+  if ! kept=" $(cd "$ROOT" && SKIPPED_SUITES="$1" "$JOB_SET" --suite-list $ORCH_CANDIDATES 2>"$TMP/leg-err" | paste -sd ' ' -) "; then
+    printf 'refused'
+    return 0
+  fi
   for suite in $LEG_ALL; do
     case "$kept" in *" $suite "*) runs="${runs:+$runs }$suite" ;; esac
   done
   printf '%s' "$runs"
 }
+check "control: a skip list --suite-list refuses reads as refused" refused "$(leg_runs '"[]"')"
 verify_rows=0
-while IFS='|' read -r class path states shards owed leg; do
+while IFS='|' read -r class path states shards queue owed leg; do
   verify_rows=$((verify_rows + 1))
   lines="$(tr ' ' '\n' <<<"$(group_select "$states" "$JOB_SET" "$class" "$path")")"
   skips="$(field skipped_suites <<<"$lines")"
   check "merge-group publication on $class $path: $states" \
-    "shards=$shards queue_macos_shards=[] runtime_publish=$(owed_publish "$owed") leg=$leg selection_skips=$skips" \
+    "shards=$shards queue_macos_shards=$queue runtime_publish=$(owed_publish "$owed") leg=$leg selection_skips=$skips" \
     "shards=$(field shards <<<"$lines") queue_macos_shards=$(field queue_macos_shards <<<"$lines") runtime_publish=$(field runtime_publish <<<"$lines") leg=$(leg_runs "$skips") selection_skips=$(jq -c .skipped_suites "$GROUP_SELECTION" 2>/dev/null)"
 done <<ROWS
-render|README.md|agent-runtime=none orch-runtime=queue|["orch-state"]|["agent-runtime"]|
-trivial|docs/architecture/merge-rail.md|agent-runtime=none|["orch-state"]|["agent-runtime"]|
-trivial|CHANGELOG.md|agent-runtime=none orch-runtime=none|["orch-state"]|["agent-runtime","orch-runtime"]|
-render|README.md|agent-runtime=queue|[]|[]|$LEG_ALL
+render|README.md|agent-runtime=none orch-runtime=queue|["orch-state"]|[]|["agent-runtime"]|
+trivial|docs/architecture/merge-rail.md|agent-runtime=none|["orch-state"]|[]|["agent-runtime"]|
+standard|.github/AGENTS.md|agent-runtime=none|$ROSTER|$QUEUE_ALL|["agent-runtime"]|$LEG_ALL
+render|README.md|agent-runtime=queue|[]|[]|[]|
 ROWS
 [ "$verify_rows" -eq 4 ] || { echo "the render and trivial publication table read $verify_rows rows" >&2; exit 1; }
 # Control: a selector whose filter admits no merge-group run owes the build
