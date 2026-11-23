@@ -328,6 +328,20 @@ fn spent_429(alias: &str) -> Value {
     row
 }
 
+/// A Codex 429 row served from a kept figure half an hour old that states
+/// its 5-hour window alone, at `session` percent and resetting an hour on:
+/// no plan window reads, so nothing measured the account. The figure is
+/// past the usage TTL, since one within it is served as a fresh reading
+/// and the 429 never shows.
+fn short_429(alias: &str, session: u64) -> Value {
+    let mut row = refused_429(alias);
+    row["harness"] = json!("codex");
+    row["weekly_pct"] = Value::Null;
+    row["session_5h_pct"] = json!(session);
+    row["usage_age_s"] = json!(1800);
+    row
+}
+
 /// A local row whose usage query was refused with a 401 or 403 that no
 /// profile read confirmed as an ended plan.
 fn refused_401(alias: &str) -> Value {
@@ -711,6 +725,11 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
         bool,
         Option<(&'static str, &'static str, bool)>,
     );
+    let unreachable_codex = |alias: &str| {
+        let mut row = unreachable(alias);
+        row["harness"] = json!("codex");
+        row
+    };
     let entry = "claude:standard:high";
     let claude = ("claude", "fable", "aclaude");
     let rows: Vec<Row> = vec![
@@ -763,6 +782,26 @@ fn an_overseer_walk_with_no_measured_room_keeps_one_account_nothing_measured() {
             entry,
             vec![measured("aclaude", 96, 5), spent_429("bclaude")],
             claude,
+            true,
+            None,
+            true,
+            None,
+        ),
+        (
+            "a Codex 429 account whose kept figure states a 5-hour window alone",
+            "",
+            vec![unreachable_codex("acodex"), short_429("bcodex", 40)],
+            ("codex", "", "acodex"),
+            true,
+            None,
+            true,
+            Some(("bcodex", "caller", true)),
+        ),
+        (
+            "a Codex 429 account whose kept figure reads its 5-hour window spent",
+            "",
+            vec![unreachable_codex("acodex"), short_429("bcodex", 100)],
+            ("codex", "", "acodex"),
             true,
             None,
             true,

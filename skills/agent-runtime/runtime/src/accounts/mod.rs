@@ -508,11 +508,28 @@ impl AccountRow {
         )
     }
 
-    /// The reset of the row's spent 5-hour window, the listing's
-    /// `session_spent_until`, while it is ahead of `now`.
+    /// The reset of the row's spent 5-hour window while it is ahead of
+    /// `now`, the later where both hold: the listing's
+    /// `session_spent_until`, which the harness's own session-limit report
+    /// sets, or the reading's own 5-hour figure at or past 100 as the
+    /// listing rounds it. The figure is read whether or not a plan window
+    /// reads, so a 429 served from a figure that states the 5-hour window
+    /// alone is no fallback while that window is spent.
     fn session_spent_until(&self, now: u64) -> Option<String> {
-        string(&self.raw, "session_spent_until")
-            .filter(|reset| reset_epoch(Some(reset)).is_some_and(|at| at > now))
+        let figure = number(&self.raw, SESSION.field)
+            .filter(|pct| *pct >= 100.0)
+            .and_then(|_| {
+                self.raw
+                    .get("resets")
+                    .and_then(|r| string(r, SESSION.bucket))
+            });
+        [string(&self.raw, "session_spent_until"), figure]
+            .into_iter()
+            .flatten()
+            .filter_map(|reset| Some((reset_epoch(Some(&reset))?, reset)))
+            .filter(|(at, _)| *at > now)
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, reset)| reset)
     }
 
     /// The row's identity:
@@ -1080,7 +1097,7 @@ fn model_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
     if !row.measured() {
         return None;
     }
-    let Some(model) = model.filter(|m| !m.is_empty()) else {
+    if model.is_none_or(str::is_empty) {
         return row
             .headroom_pct
             .zip(row.binding_bucket.clone())
@@ -1090,21 +1107,41 @@ fn model_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
                 resets_at: row.binding_resets_at.clone(),
                 label: row.rated_label().map(str::to_owned),
             });
-    };
-    let resets = |key: &str| row.raw.get("resets").and_then(|r| string(r, key));
-    let mut bindings = Vec::new();
-    for window in WINDOWS.iter().filter(|w| w.bucket != MODEL) {
-        if let Some(pct) = number(&row.raw, window.field) {
-            bindings.push(Binding {
-                bucket: window.bucket.to_owned(),
-                pct,
-                resets_at: resets(window.bucket),
-                label: None,
-            });
-        }
     }
-    bindings.extend(model_buckets(row, model));
-    max_binding(bindings)
+    max_binding(plan_windows(row, model, false))
+}
+
+/// The plan windows of a measured row a lane on `model` spends, each of
+/// which can stop it: the shared windows of [`WINDOWS`] and the model
+/// windows [`model_buckets`] names; with no model, or under the floor
+/// ([`lane_binding`]), the reader's model window too, the fullest any model
+/// spends, as the reader's own binding reads it. The binding is the
+/// fullest of them, so a launch judges the age of each beside it.
+fn plan_windows(row: &AccountRow, model: Option<&str>, floor: bool) -> Vec<Binding> {
+    if !row.measured() {
+        return Vec::new();
+    }
+    let model = model.filter(|m| !m.is_empty());
+    let resets = |key: &str| row.raw.get("resets").and_then(|r| string(r, key));
+    let mut windows: Vec<Binding> = WINDOWS
+        .iter()
+        .filter(|w| w.bucket != MODEL || model.is_none() || floor)
+        .filter_map(|w| {
+            Some(Binding {
+                bucket: w.bucket.to_owned(),
+                pct: number(&row.raw, w.field)?,
+                resets_at: resets(w.bucket),
+                label: (w.bucket == MODEL)
+                    .then(|| row.rated_label())
+                    .flatten()
+                    .map(str::to_owned),
+            })
+        })
+        .collect();
+    if let Some(model) = model {
+        windows.extend(model_buckets(row, model));
+    }
+    windows
 }
 
 /// `model_bindings($model)`: the model-scoped windows whose label names
@@ -1224,9 +1261,9 @@ pub struct Projection {
 }
 
 impl Projection {
-    /// A start on a 5-hour window the harness's own session-limit report
-    /// holds spent: that window full until `reset`, the wall and the retry
-    /// time a refused start names.
+    /// A start on a spent 5-hour window
+    /// ([`AccountRow::session_spent_until`]): that window full until
+    /// `reset`, the wall and the retry time a refused start names.
     fn spent(reset: &str) -> Projection {
         Projection {
             headroom: 0.0,
@@ -1865,37 +1902,44 @@ fn judge(
         controllers,
     };
     let burn = f64::from(settings.burn_pct_per_hour);
+    let project = |b: &Binding| projection(row, b, &spenders, burn, now);
     // A start is judged on the windows that can stop it: the binding plan
     // window, and the 5-hour window beside it where the reading carries
     // one, the less projected room deciding (the binding at a tie).
-    let session = req.launch().then(|| session_window(row)).flatten();
-    let projections: Vec<Projection> = binding
+    let session = req
+        .launch()
+        .then(|| session_window(row))
+        .flatten()
+        .filter(|_| binding.is_some());
+    let projection = binding
         .iter()
-        .chain(session.as_ref().filter(|_| binding.is_some()))
-        .map(|b| projection(row, b, &spenders, burn, now))
-        .collect();
-    let projection = projections
-        .iter()
-        .min_by(|a, b| a.headroom.total_cmp(&b.headroom))
-        .cloned();
+        .chain(session.as_ref())
+        .map(project)
+        .min_by(|a, b| a.headroom.total_cmp(&b.headroom));
     // A reading older than one lane at a window's burn takes to spend the
     // room it shows on that window below the bound vouches for no room
-    // there. A provider's row states no reading time, and the provider
-    // protocol serves a backed-off reading's figures only while that
-    // reading is fresh (orch's lane-host schema, Accounts rows), so it is
-    // judged on its figures alone.
+    // there, on every window that can stop the start: each plan window the
+    // lane spends beside the binding, a model window a measured weekly burn
+    // leaves behind included, and the 5-hour window. A provider's row
+    // states no reading time, and the provider protocol serves a
+    // backed-off reading's figures only while that reading is fresh (orch's
+    // lane-host schema, Accounts rows), so it is judged on its figures
+    // alone.
     let stale = req
         .launch()
         .then_some(row.usage_age_s)
         .flatten()
+        .filter(|_| binding.is_some())
         .and_then(|age| {
-            projections
+            plan_windows(row, req.model.as_deref(), req.binding_floor)
                 .iter()
+                .chain(session.as_ref())
+                .map(project)
                 .find(|p| age / 3600.0 * p.burn >= max - p.window.pct)
                 .map(|p| (age, p.window.bucket.clone()))
         });
-    // A 5-hour window the harness's own session-limit report holds spent
-    // admits no start until its reset, whatever the figures hold.
+    // A spent 5-hour window admits no start until its reset, whatever the
+    // other figures hold.
     let spent = req.launch().then(|| row.session_spent_until(now)).flatten();
     let projection = match &spent {
         Some(reset) => binding.as_ref().map(|_| Projection::spent(reset)),
@@ -2162,14 +2206,15 @@ pub fn pick(
 /// query was refused with a 429 and kept no figure, or one the judge read
 /// too old to vouch for room ([`Judged::usage_stale`]), a sign-in standing
 /// for it ([`resolve`] drops one holding none from an overseer's walk,
-/// which opens here), and whose 5-hour window no session-limit report
-/// holds spent, the fewest claims first,
+/// which opens here), and whose 5-hour window neither a session-limit
+/// report nor its kept figure holds spent
+/// ([`AccountRow::session_spent_until`]), the fewest claims first,
 /// then listing order. A 429 from the usage endpoint shows the token was
 /// accepted and the plan answered; the token endpoint's 429 posted no
 /// usage query, and an unreachable endpoint, a 401 or 403 and a reading
 /// with no data show neither, so they are never taken. A spent window
-/// admits no start until its reset, and with no figure the judge reads it
-/// unmeasured rather than walled, so it is refused here. Nothing measured
+/// admits no start until its reset, and with no plan window read the judge
+/// reads it unmeasured rather than walled, so it is refused here. Nothing measured
 /// the account taken, so the walk names it unmeasured.
 fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
     if !req.for_overseer || req.lane.is_some() {

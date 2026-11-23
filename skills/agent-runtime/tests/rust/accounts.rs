@@ -2331,14 +2331,17 @@ fn two_refreshers_under_the_lock_fetch_once() {
 /// burn (5 points of the 5-hour window, 5 × 5/168 of the week) must leave
 /// it under the bound (95), and a reading older than that lane takes to
 /// spend the room a window shows below the bound admits nothing until a
-/// fresh one, on the week as on the 5-hour window. The model window (30)
-/// has room on every row; an account that reports no 5-hour window is
+/// fresh one, on each window at its own burn: the week, the 5-hour window
+/// and the model window, which goes stale first where the week's measured
+/// burn is below the set one. An account that reports no 5-hour window is
 /// judged on the others alone. A running lane's own question reads the
 /// week alone, whatever the reading's age. A stale reading's detail leads
-/// with its key and keeps the reading's own. Each row: the case, the
-/// 5-hour figure, the week, the status and the reading's age in seconds,
-/// then the verdict of a fresh pick, of a relaunch and of the running
-/// question, and the reset a walled pick names.
+/// with its key, names the window that went stale and keeps the reading's
+/// own. Each row: the case, the 5-hour figure, the week, the model window,
+/// the week's measured burn a point an hour, the status and the reading's
+/// age in seconds, then the verdict of a fresh pick, of a relaunch and of
+/// the running question, the reset a walled pick names and the window a
+/// stale reading names.
 #[test]
 fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
     let world = World::new(&[]);
@@ -2348,127 +2351,197 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
         &'a str,
         Option<u64>,
         u64,
+        u64,
+        Option<f64>,
         &'a str,
         u64,
         (&'a str, &'a str, &'a str),
         Option<&'a str>,
+        Option<&'a str>,
     );
-    let rows: [Row; 11] = [
+    let rows: [Row; 12] = [
         (
             "5-hour at 98",
             Some(98),
             20,
+            30,
+            None,
             "ok",
             0,
             ("walled", "walled", "room"),
             Some(&session),
+            None,
         ),
         (
             "5-hour at 90, an hour to the bound",
             Some(90),
             20,
+            30,
+            None,
             "ok",
             0,
             ("walled", "walled", "room"),
             Some(&session),
+            None,
         ),
         (
             "5-hour with room",
             Some(50),
             20,
+            30,
+            None,
             "ok",
             0,
             ("room", "room", "room"),
+            None,
             None,
         ),
         (
             "no 5-hour window",
             None,
             20,
+            30,
+            None,
             "ok",
             0,
             ("room", "room", "room"),
+            None,
             None,
         ),
         (
             "no 5-hour window, the week walled",
             None,
             96,
+            30,
+            None,
             "ok",
             0,
             ("walled", "walled", "walled"),
             Some(&weekly),
+            None,
         ),
         (
             "no 5-hour window, 1 point of room on the week read 8 hours ago",
             None,
             94,
+            30,
+            None,
             "ok",
             8 * 3600,
             ("unmeasured", "unmeasured", "room"),
             None,
+            Some("weekly"),
+        ),
+        (
+            "1 point of room on the week and the model window read 8 hours ago, the week burning 0.1 an hour",
+            None,
+            94,
+            94,
+            Some(0.1),
+            "ok",
+            8 * 3600,
+            ("unmeasured", "unmeasured", "room"),
+            None,
+            Some("model"),
         ),
         (
             "15 points of room read 4 hours ago",
             Some(80),
             20,
+            30,
+            None,
             "ok",
             4 * 3600,
             ("unmeasured", "unmeasured", "room"),
             None,
+            Some("session"),
         ),
         (
             "15 points of room read 2 hours ago",
             Some(80),
             20,
+            30,
+            None,
             "ok",
             2 * 3600,
             ("room", "room", "room"),
+            None,
             None,
         ),
         (
             "a 429 served from a figure 4 hours old",
             Some(80),
             20,
+            30,
+            None,
             "rate_limited",
             4 * 3600,
             ("unmeasured", "unmeasured", "room"),
             None,
+            Some("session"),
         ),
         (
             "a 429 served from a figure 10 minutes old",
             Some(50),
             20,
+            30,
+            None,
             "rate_limited",
             600,
             ("room", "unmeasured", "room"),
+            None,
             None,
         ),
         (
             "the fresh reading after the 429",
             Some(80),
             20,
+            30,
+            None,
             "ok",
             0,
             ("room", "room", "room"),
             None,
+            None,
         ),
     ];
     let request = claude(Some("claude-fable-5-1"));
-    for (case, five_hour, week, status, age, (fresh, relaunch, running), reset) in rows {
+    for (
+        case,
+        five_hour,
+        week,
+        model,
+        week_rate,
+        status,
+        age,
+        (fresh, relaunch, running),
+        reset,
+        stale_window,
+    ) in rows
+    {
         let mut row = measured("a", week, 0);
         row["session_5h_pct"] = json!(five_hour);
         row["resets"]["session"] = json!(five_hour.map(|_| session.clone()));
         row["model_buckets"] =
-            json!([{"label": "Fable 5.1", "pct": 30, "resets_at": weekly.clone()}]);
+            json!([{"label": "Fable 5.1", "pct": model, "resets_at": weekly.clone()}]);
         row["status"] = json!(status);
         row["refused_endpoint"] = json!((status == "rate_limited").then_some("usage"));
         row["usage_age_s"] = json!(age);
         row["detail"] = json!("planted detail");
+        // A measured rate on the week is one lane's: a lane live on the
+        // account since before the sample.
+        let mut charged = FleetFacts::default();
+        if let Some(rate) = week_rate {
+            row["usage_rate_state"] = json!("measured");
+            row["usage_rate_pct_per_min"] = json!(rate / 60.0);
+            let canon = agent_runtime::accounts::wall::canon(row["config_dir"].as_str().unwrap());
+            charged.charges = [(canon.clone(), 1)].into_iter().collect();
+            charged.started = [(canon, vec![now() - age - 3600])].into_iter().collect();
+        }
         for (relaunched, expected) in [(false, fresh), (true, relaunch)] {
             let facts = FleetFacts {
                 relaunch: relaunched,
-                ..FleetFacts::default()
+                ..charged.clone()
             };
             let answer = judged(&world, std::slice::from_ref(&row), &request, &facts);
             let (got, walled_at) = match &answer {
@@ -2495,7 +2568,7 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             lane: Some(dir.to_owned()),
             ..request.clone()
         };
-        let facts = FleetFacts::default();
+        let facts = charged;
         let answer = judged(&world, std::slice::from_ref(&row), &own, &facts);
         assert_eq!(word(&answer), running, "{case}, running: {answer:?}");
         // The named launch reads the record a refused start prints.
@@ -2506,9 +2579,11 @@ fn a_launch_admits_an_account_only_on_fresh_readings_of_every_window() {
             let record = j.record();
             let detail = record["detail"].as_str().unwrap_or_default();
             let (key, prior) = detail.split_once("; ").unwrap_or((detail, ""));
+            let mut fields = key.split(' ');
+            let window = fields.find_map(|f| f.strip_prefix("window="));
             assert_eq!(
-                (key.split(' ').next(), prior),
-                (Some("usage-stale"), "planted detail"),
+                (key.split(' ').next(), window, prior),
+                (Some("usage-stale"), stale_window, "planted detail"),
                 "{case}: {record}"
             );
         }
