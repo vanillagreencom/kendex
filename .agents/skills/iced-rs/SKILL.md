@@ -114,6 +114,8 @@ See [Redraw vs rebuild](references/animation.md#redraw-vs-rebuild).
 
 Overlay layers (`stack` children beyond the base) must not affect base-layer widget structure. Never change base-layer construction based on overlay presence.
 
+The one exception is a `float` popover pushed after its trigger in a `column` that holds only the trigger, so no child follows the float. See `references/widget-float.md` § Anchoring to a trigger.
+
 ### Overlay starvation
 
 Stacked `mouse_area(...).interaction(...)` layers can block underlying hover/move handlers even without `opaque(...)`.

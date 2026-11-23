@@ -11,10 +11,19 @@ Check the built-ins before implementing `Overlay`:
 | You want | Use |
 |---|---|
 | A simple tooltip | `iced::widget::tooltip` |
-| A popover/menu anchored to a trigger | `iced::widget::pick_list`, `combo_box`, or `float` |
+| A choice list anchored to a trigger | `iced::widget::pick_list` or `combo_box` |
+| A popover under a trigger | `float` after the trigger (`widget-float.md` § Anchoring to a trigger), or the template the list below names |
 | A modal dialog with scrim | `stack![base, opaque(scrim_and_dialog)]` |
 | Drag ghost during DnD | `pin` widget + absolute positioning |
 | Context menu | `mouse_area` that opens a `float` or `stack` layer |
+
+Use the [copy-paste overlay template](#copy-paste-overlay-template) instead of `float` for a popover under a trigger when any of these holds:
+
+- The open popover must cover the content after the trigger without moving it. A float keeps its layout footprint.
+- The popover must flip above the trigger, or otherwise place itself from the trigger's size. Float's `translate` never receives the trigger's bounds; the template's `overlay()` computes them as `layout.bounds() + translation`.
+- The popover must extend past an enclosing `scrollable`. Float clips its floating layer to the scrollable's visible bounds; the template lays out against the window.
+
+For a popover under the trigger, swap the template's vertical order in `Overlay::layout()`: below preferred, above as the fallback.
 
 Use the [modal example](../examples/modal/src/main.rs) for the full scrim and dialog nesting.
 
