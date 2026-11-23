@@ -144,9 +144,9 @@ export PUSH_BEFORE PUSH_AFTER MAIN_ONLY_SUITES
 mkdir -p "$TMP/gh-stub"
 cat >"$TMP/gh-stub/gh" <<'STUB'
 #!/usr/bin/env bash
-# `gh api --paginate URL` for a listing and `gh api URL` for an artifact's
-# zip, served from GH_WORLD; a `fail` file there is an API outage, and a URL
-# the world has no response for is GitHub's 404.
+# `gh api --paginate URL` for a listing and `gh api URL` for a run record or
+# an artifact's zip, served from GH_WORLD; a `fail` file there is an API
+# outage, and a URL the world has no response for is GitHub's 404.
 set -eu
 case "$#:${1-}:${2-}" in
   3:api:--paginate) url=$3 ;;
@@ -156,6 +156,16 @@ esac
 [ ! -e "$GH_WORLD/fail" ] || { echo 'gh: HTTP 502' >&2; exit 1; }
 # A runtime build's listing by name: runtime-<runtime> in the world names
 # the one artifact's state, published from main where the file is absent.
+# The state's run is 100 plus its place in `states`, and its record differs
+# from a published one in the legs the state names; the artifact's
+# workflow_run mirrors the record's legs GitHub copies onto it.
+RUNS='def states: ["published", "expired", "fork", "queue", "pull-request-main", "other-workflow", "run-unread"];
+  def run($state): {id: (100 + (states | index($state) // error("no state \($state)"))),
+    event: (if $state == "queue" then "merge_group" elif $state == "fork" or $state == "pull-request-main"
+      then "pull_request" else "push" end),
+    head_branch: (if $state == "queue" then "gh-readonly-queue/main/pr-1-0" else "main" end),
+    path: (if $state == "other-workflow" then ".github/workflows/lock-record.yml" else ".github/workflows/skill-tests.yml" end),
+    repository: {id: 1}, head_repository: {id: (if $state == "fork" then 2 else 1 end)}};'
 case "$#:$url" in
   3:repos/*/actions/artifacts\?name=*)
     artifact="${url#*name=}"
@@ -165,11 +175,19 @@ case "$#:$url" in
     case "$state" in
       unread) echo 'gh: HTTP 502' >&2; exit 1 ;;
       none) echo '{"total_count":0,"artifacts":[]}' ;;
-      *) jq -cn --arg name "$artifact" --arg state "$state" '{total_count: 1, artifacts: [{name: $name,
-          expired: ($state == "expired"), workflow_run: {repository_id: 1,
-            head_repository_id: (if $state == "fork" then 2 else 1 end),
-            head_branch: (if $state == "queue" then "gh-readonly-queue/main/pr-1-0" else "main" end)}}]}' ;;
+      *) jq -cn --arg name "$artifact" --arg state "$state" "$RUNS"'run($state) as $run | {total_count: 1,
+          artifacts: [{name: $name, expired: ($state == "expired"), workflow_run: {id: $run.id,
+            repository_id: $run.repository.id, head_repository_id: $run.head_repository.id,
+            head_branch: $run.head_branch}}]}' ;;
     esac
+    exit 0 ;;
+  2:repos/*/actions/runs/*)
+    state="$(jq -nr --argjson id "${url##*/}" "$RUNS"'if $id >= 100 then states[$id - 100] // empty else empty end')"
+    case "$state" in
+      '') echo 'gh: HTTP 404' >&2; exit 1 ;;
+      run-unread) echo 'gh: HTTP 502' >&2; exit 1 ;;
+    esac
+    jq -cn --arg state "$state" "$RUNS"'run($state)'
     exit 0 ;;
 esac
 case "$#:$url" in
@@ -380,9 +398,9 @@ check "push route: one-target owes another orch target" true "$(in_list rust_tar
 check "push route: one-target owes the other runtime whole" true "$(in_list rust_targets 'agent-runtime/*')"
 
 # THE RUNTIME PUBLICATION: a push owes each package runtime build whose
-# `<name>-<key>` has no unexpired artifact from a run on this repository's
-# main, whatever its group proved, and runs the orch-state leg that publishes
-# it. STATES|OWED: each runtime's listing state in the world, and the names
+# `<name>-<key>` has no unexpired artifact from a push run of this workflow
+# on this repository's main, whatever its group proved, and runs the
+# orch-state leg that publishes it. STATES|OWED: each runtime's listing state in the world, and the names
 # owed; each owed name carries the key lib/key.sh gives the head's sources.
 runtime_key() { # RUNTIME_DIR
   (cd "$PUSH_REPO" && refuse() { exit 1; } && . skills/agent-runtime/scripts/lib/key.sh && agent_runtime_key "$1")
@@ -409,20 +427,22 @@ done <<'ROWS'
 agent-runtime=none|["agent-runtime"]
 agent-runtime=fork orch-runtime=expired|["agent-runtime","orch-runtime"]
 agent-runtime=queue orch-runtime=unread|["agent-runtime","orch-runtime"]
+agent-runtime=pull-request-main|["agent-runtime"]
+agent-runtime=other-workflow orch-runtime=run-unread|["agent-runtime","orch-runtime"]
 ROWS
-[ "$publish_rows" -eq 3 ] || { echo "the publication table read $publish_rows rows" >&2; exit 1; }
-# Control: a selector that takes any repository's artifact as main's counts
-# a fork's upload as published.
-mkdir -p "$TMP/forked/tools"
-cp -R "$ROOT/tools/lib" "$TMP/forked/tools/lib"
-cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$ROOT/tools/guard" "$TMP/forked/tools/"
-awk '{ n += sub(/ and \.workflow_run\.head_repository_id == \.workflow_run\.repository_id/, "") } { print } END { exit n != 1 }' \
-  "$JOB_SET" >"$TMP/forked/tools/ci-job-set" ||
-  { echo "the fork check is no longer one condition in $JOB_SET" >&2; exit 1; }
-chmod +x "$TMP/forked/tools/ci-job-set"
-publish_world agent-runtime=fork
-push_select publish "$TMP/forked/tools/ci-job-set" >/dev/null
-check "control: a selector taking a fork's artifact owes no agent-runtime build" '[]' "$(field runtime_publish <"$TMP/push-out")"
+[ "$publish_rows" -eq 5 ] || { echo "the publication table read $publish_rows rows" >&2; exit 1; }
+# Control: a selector that takes any event's run as main's counts a
+# pull-request run whose head branch is named main as published.
+mkdir -p "$TMP/any-event/tools"
+cp -R "$ROOT/tools/lib" "$TMP/any-event/tools/lib"
+cp "$ROOT/tools/rust-reads" "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$ROOT/tools/guard" "$TMP/any-event/tools/"
+awk '{ n += sub(/^PUBLISHED_RUN=.\.event == "push" and /, "PUBLISHED_RUN=\047") } { print } END { exit n != 1 }' \
+  "$JOB_SET" >"$TMP/any-event/tools/ci-job-set" ||
+  { echo "the event check is no longer one condition in $JOB_SET" >&2; exit 1; }
+chmod +x "$TMP/any-event/tools/ci-job-set"
+publish_world agent-runtime=pull-request-main
+push_select publish "$TMP/any-event/tools/ci-job-set" >/dev/null
+check "control: a selector taking any event's run owes no agent-runtime build" '[]' "$(field runtime_publish <"$TMP/push-out")"
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.
