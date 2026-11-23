@@ -159,11 +159,13 @@ esac
 # The state's run is 100 plus its place in `states`, and its record differs
 # from a published one in the legs the state names; the artifact's
 # workflow_run mirrors the record's legs GitHub copies onto it.
-RUNS='def states: ["published", "expired", "fork", "queue", "pull-request-main", "other-workflow", "run-unread"];
+RUNS='def states: ["published", "expired", "fork", "queue", "pull-request-main", "feature-push", "other-workflow",
+    "run-unread"];
   def run($state): {id: (100 + (states | index($state) // error("no state \($state)"))),
     event: (if $state == "queue" then "merge_group" elif $state == "fork" or $state == "pull-request-main"
       then "pull_request" else "push" end),
-    head_branch: (if $state == "queue" then "gh-readonly-queue/main/pr-1-0" else "main" end),
+    head_branch: (if $state == "queue" then "gh-readonly-queue/main/pr-1-0" elif $state == "feature-push" then "feature"
+      else "main" end),
     path: (if $state == "other-workflow" then ".github/workflows/lock-record.yml" else ".github/workflows/skill-tests.yml" end),
     repository: {id: 1}, head_repository: {id: (if $state == "fork" then 2 else 1 end)}};'
 case "$#:$url" in
@@ -428,9 +430,10 @@ agent-runtime=none|["agent-runtime"]
 agent-runtime=fork orch-runtime=expired|["agent-runtime","orch-runtime"]
 agent-runtime=queue orch-runtime=unread|["agent-runtime","orch-runtime"]
 agent-runtime=pull-request-main|["agent-runtime"]
+agent-runtime=feature-push|["agent-runtime"]
 agent-runtime=other-workflow orch-runtime=run-unread|["agent-runtime","orch-runtime"]
 ROWS
-[ "$publish_rows" -eq 5 ] || { echo "the publication table read $publish_rows rows" >&2; exit 1; }
+[ "$publish_rows" -eq 6 ] || { echo "the publication table read $publish_rows rows" >&2; exit 1; }
 # Control: a selector that takes any event's run as main's counts a
 # pull-request run whose head branch is named main as published.
 mkdir -p "$TMP/any-event/tools"
