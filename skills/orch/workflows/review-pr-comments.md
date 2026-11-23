@@ -483,7 +483,7 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
    - Record the panel. One holding every `first_panel` reviewer carries `domain_reasons`:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"verification","agents":[PANEL_AGENTS_JSON],"reason":"pr-comments fix round: [DOMAINS]","external":false}'
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"verification","agents":[PANEL_AGENTS_JSON],"reason":"pr-comments fix round: [DOMAINS]","external":false,"external_skip":"pr-comments fix pass runs no external review"}'
    ```
 
 2. Delegate and collect it as [review-pr.md](review-pr.md) § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`.

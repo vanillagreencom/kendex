@@ -708,7 +708,7 @@ fn exists_answers_the_record_and_its_key_for_a_standing_and_a_missing_record() {
 fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_the_ceilings() {
     let store = Store::new();
     store.init(ITEM);
-    let panel = r#"{"agents": ["rev-a"], "reason": "test"}"#;
+    let panel = r#"{"agents": ["rev-a"], "reason": "test", "external": true}"#;
     let cap = |setting: &str, env: &[(&str, &str)]| -> String {
         let result = store.ok_env(&["state", "cap", setting, "--item", ITEM], env);
         format!(
@@ -724,8 +724,7 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
     assert_eq!(cap("REVIEW_MAX_CYCLES", &[]), "at-cap 1/1");
     // At the cap the workflow's rereview write records the uncounted
     // verification panel, and its reply names the panel the lane reads back.
-    let past =
-        json!({"op": "record-panel", "panel": "rereview", "agents": ["rev-b"], "reason": "test"});
+    let past = json!({"op": "record-panel", "panel": "rereview", "agents": ["rev-b"], "reason": "test", "external": true});
     assert_eq!(store.op_ok(&past)["pointer"], "/verification_panel");
     let doc = store.doc(&store.item_path(ITEM));
     assert_eq!(
@@ -806,7 +805,7 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
     let four = panel(
         "first",
         json!(["r1", "r2", "r3", "r4"]),
-        json!({"external": false}),
+        json!({"external": false, "external_skip": "none"}),
     );
     assert_eq!(store.op_refused(&four).0, "panel-bound");
     let unmarked = panel("first", json!(["r1"]), json!({}));
@@ -817,7 +816,11 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
         json!({"external": true}),
     );
     assert_eq!(store.op_refused(&three_external).0, "panel-bound");
-    let twice = panel("first", json!(["r1", "r1"]), json!({"external": false}));
+    let twice = panel(
+        "first",
+        json!(["r1", "r1"]),
+        json!({"external": false, "external_skip": "none"}),
+    );
     assert_eq!(store.op_refused(&twice).0, "panel-agents");
     store.op_ok(&panel(
         "first",
@@ -827,7 +830,7 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
     let copy = panel(
         "verification",
         json!(["r1", "r2"]),
-        json!({"external": false}),
+        json!({"external": false, "external_skip": "none"}),
     );
     let (key, line) = store.op_refused(&copy);
     assert_eq!(key, "panel-copy");
@@ -835,7 +838,7 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
     let reasoned = panel(
         "verification",
         json!(["r1", "r2"]),
-        json!({"external": false, "domain_reasons": {"r1": "fs", "r2": "docs"}}),
+        json!({"external": false, "external_skip": "none", "domain_reasons": {"r1": "fs", "r2": "docs"}}),
     );
     store.op_ok(&reasoned);
     assert_eq!(
@@ -861,6 +864,45 @@ fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_
     assert_eq!(key, "unknown-cap");
     let (key, _) = store.refused(&["state", "cap", "CI_FIX_MAX_CYCLES", "--item", ITEM]);
     assert_eq!(key, "cap-count-required");
+}
+
+/// On every tier a panel says whether the opposite-provider review runs,
+/// and one that does not names why, so a skipped second opinion reads back
+/// from the record as skipped and for what reason.
+#[test]
+fn a_panel_on_every_tier_says_whether_the_external_review_ran_and_why_not() {
+    let store = Store::new();
+    store.init(ITEM);
+    let skipped = "claude: room check refused — agent-runtime exited 1";
+    let rows: [(Value, Option<&str>); 5] = [
+        (json!({}), Some("panel-external")),
+        (json!({"external": false}), Some("panel-external-skip")),
+        (
+            json!({"external": false, "external_skip": " "}),
+            Some("panel-external-skip"),
+        ),
+        (
+            json!({"external": true, "external_skip": skipped}),
+            Some("panel-external-skip"),
+        ),
+        (json!({"external": false, "external_skip": skipped}), None),
+    ];
+    for (rest, refusal) in rows {
+        let mut request =
+            json!({"op": "record-panel", "panel": "first", "agents": ["r1"], "reason": "t"});
+        for (key, value) in rest.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        match refusal {
+            Some(want) => assert_eq!(store.op_refused(&request).0, want, "{rest}"),
+            None => {
+                store.op_ok(&request);
+            }
+        }
+    }
+    let panel = &store.doc(&store.item_path(ITEM))["first_panel"];
+    assert_eq!(panel["external"], false);
+    assert_eq!(panel["external_skip"], skipped);
 }
 
 /// The takeover read is exactly the last `ORCH_TAKEOVER_ROWS` rows but the
@@ -1288,6 +1330,34 @@ fn findings_query_counts_a_shared_cause_key_and_leaves_an_unbound_request_unknow
     assert_eq!(key, "finding-requests");
 }
 
+/// A recorded review finding keeps its artifact item's priority, read back
+/// from the record once the artifact is gone.
+#[test]
+fn findings_record_keeps_a_review_findings_priority_past_its_artifact() {
+    let store = Store::new();
+    store.init(ITEM);
+    let artifact = store.write_file(
+        "review-reviewer-correctness-T.json",
+        &json!({"blockers": [{"id": "B1", "location": "src/x.rs (`f`)", "priority": 1}]})
+            .to_string(),
+    );
+    let source = json!({"round_id": "R1", "artifact": artifact, "array": "blockers", "index": 0,
+        "identity": ["artifact", artifact, "blockers", 0]});
+    let review =
+        json!({"kind": "review", "location": "src/x.rs (`f`)", "priority": 1, "source": source});
+    let check = json!({"kind": "validation", "check": "cargo test",
+        "source": {"round_id": "R1", "receipt": "r.json", "identity": ["receipt", "R1", "r.json", "cargo test"]}});
+    let batch = store.write_file("b1.json", &json!({"records": [review, check]}).to_string());
+    assert_eq!(
+        store.ok(&["state", "findings", "record", "--item", ITEM, &batch])["recorded"],
+        2
+    );
+    std::fs::remove_file(&artifact).unwrap();
+    let records = store.doc(&store.item_path(ITEM))["finding_occurrences"]["records"].clone();
+    assert_eq!(records[0]["priority"], 1);
+    assert_eq!(records[1].get("priority"), None);
+}
+
 /// The progress report is named by the UTC minute under the setting's
 /// directory, created on the read, `-succession` for a succession's; a
 /// local key names no issue and two mints differ.
@@ -1475,7 +1545,7 @@ fn increment_set_now_and_set_git_head_write_the_count_the_clock_and_the_head() {
 fn findings_record_keeps_the_first_class_of_an_identity_and_a_conflict_leaves_coverage_unknown() {
     let store = Store::new();
     store.init(ITEM);
-    let review = json!({"kind": "review", "location": "src/x.rs (`f`)",
+    let review = json!({"kind": "review", "location": "src/x.rs (`f`)", "priority": 2,
         "source": {"round_id": "R1", "artifact": "a.json", "identity": ["artifact", "a.json", "blockers", 0]}});
     let check = json!({"kind": "validation", "check": "cargo test",
         "source": {"round_id": "R1", "receipt": "r.json", "identity": ["receipt", "R1", "r.json", "cargo test"]}});
@@ -1498,9 +1568,9 @@ fn findings_record_keeps_the_first_class_of_an_identity_and_a_conflict_leaves_co
     );
     assert_eq!(doc["finding_occurrences"]["prior"], "none");
 
-    let other_class = json!({"kind": "review", "location": "src/y.rs (`g`)",
+    let other_class = json!({"kind": "review", "location": "src/y.rs (`g`)", "priority": 2,
         "source": {"round_id": "R2", "artifact": "a.json", "identity": ["artifact", "a.json", "blockers", 0]}});
-    let fresh = json!({"kind": "review", "location": "src/z.rs (`h`)",
+    let fresh = json!({"kind": "review", "location": "src/z.rs (`h`)", "priority": 3,
         "source": {"round_id": "R2", "artifact": "c.json", "identity": ["artifact", "c.json", "blockers", 3]}});
     let conflict = store.write_file(
         "b2.json",
@@ -1521,7 +1591,7 @@ fn findings_record_keeps_the_first_class_of_an_identity_and_a_conflict_leaves_co
 
     let fresh_store = Store::new();
     fresh_store.init("KEN-2");
-    let unbound = json!({"kind": "review", "location": "TBD", "source": {"round_id": "R1", "artifact": "a.json", "identity": ["artifact", "a.json", "blockers", 1]}});
+    let unbound = json!({"kind": "review", "location": "TBD", "priority": 4, "source": {"round_id": "R1", "artifact": "a.json", "identity": ["artifact", "a.json", "blockers", 1]}});
     let batch = fresh_store.write_file("b3.json", &json!({"records": [unbound]}).to_string());
     let result = fresh_store.ok(&["state", "findings", "record", "--item", "KEN-2", &batch]);
     assert_eq!(result["recorded"], 0);

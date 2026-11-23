@@ -61,7 +61,7 @@ The Owner column names the writer. An `op` request is `orch-runtime op --item [I
 | `dev_delegated_at`, `review_delegated_at` | number | `record-round` step `delegated` with `round: dev`, `ci` or `review` | The delegation's epoch second: a dev or CI round's, or a review round's. |
 | `cycles` | number | `record-round` step `counted` with `counter: fix` | Fix rounds run. |
 | `rereview_cycles` | number | `record-panel` with `panel: rereview` below the cap | Re-review cycles entered. |
-| `first_panel`, `rereview_panel`, `verification_panel` | object | `record-panel` with `panel: first`, `rereview` or `verification` | `{agents, reason, external?, domain_reasons?}`: distinct reviewers and a non-empty reason. |
+| `first_panel`, `rereview_panel`, `verification_panel` | object | `record-panel` with `panel: first`, `rereview` or `verification` | `{agents, reason, external, external_skip?, domain_reasons?}`: distinct reviewers and a non-empty reason. |
 | `submit_cycles` | number | `state increment` from [submit-pr.md](../workflows/submit-pr.md) | Re-submit loops run. |
 | `dev_round_id`, `review_round_id`, `ci_round_id` | string | `begin-round` with `kind: dev`, `review` or `ci` | The round token, minted before each delegation and carried in it. |
 | `stages` | object[] | `begin-round`, `record-validation-admission`, `accept-result`, `reconcile-round`, `validate stop`, `record-push`, `orch-runtime validate start`, `dev-return check` | One entry per round or validation run ([§ Stages](#stages)). |
@@ -113,7 +113,9 @@ The members' rules, in the table's order:
 - `review_delegated_at`: `review-artifact check --delegated-at` takes it as the freshness boundary.
 - `cycles`: summaries read it; it decides no cap.
 - `rereview_cycles`: recording the rereview panel raises it in the same write below the `REVIEW_MAX_CYCLES` limit. At the limit the write records `verification_panel` instead and raises nothing.
-- `first_panel`, `rereview_panel`, `verification_panel`: on a `small` item, a panel carries a boolean `external` and at most three reviewers, the external lane counted.
+- `first_panel`, `rereview_panel`, `verification_panel`: every panel carries a boolean `external`, whether the opposite-provider review runs beside the reviewers. An older record may lack it.
+- `first_panel`, `rereview_panel`, `verification_panel`: a panel with `external` false carries `external_skip`, the non-empty reason it did not run ([review-pr.md § 2.1](../workflows/review-pr.md#21-external-review-availability)); one with `external` true carries none. A write that breaks this refuses `panel-external-skip`.
+- `first_panel`, `rereview_panel`, `verification_panel`: on a `small` item, a panel holds at most three reviewers, the external lane counted.
 - `first_panel`, `rereview_panel`, `verification_panel`: a later panel that holds every `first_panel` reviewer needs `domain_reasons` saying why the fix diff concerns each.
 - `dev_round_id`, `review_round_id`, `ci_round_id`: a `dev` or `review` round opens a stage.
 - `dev_round_id`, `review_round_id`, `ci_round_id`: a `ci` round opens none and keys its cleanup in `round_prunes`.
@@ -131,7 +133,7 @@ The members' rules, in the table's order:
 - `fixed_items`, `escalated_items`, `declined_items`: a move first drops the entry from each named `drop` bucket, so an item stands in one bucket.
 - `fixed_items`, `escalated_items`, `declined_items`: a `commit` of `dropped:<sha>` marks a fix whose commit a rebase dropped: cite the upstream equivalent, never the SHA.
 - `escalated_items`: an entry's `outcome` is `blocked` or `skipped`; absent reads as blocked.
-- `pr_comment_review`: `iterations` counts the bot triage passes `REVIEW_MAX_EXTERNAL_ROUNDS` bounds.
+- `pr_comment_review`: `iterations` counts the bot triage passes `REVIEW_MAX_EXTERNAL_ROUNDS` bounds. The merge cycle's `lanes[].cycle.rounds.bot` copies it, so it counts those passes, not Copilot reviews.
 - `pr_comment_review`: the arrays, each with its entry kind, are `fixes[]` (`fix`), `issues_created[]` (`issue` with `origin: triage`), `skipped[]` (`skip`), `replied[]` (`reply`), `proposed_rules[]` (`proposed-rule`, each rule once), `patched_causes[]` (`patched-cause`, `{cause, commit, location, owner?}`) and `frozen_causes[]` (`frozen-cause`, `{cause, issue}`).
 - `pr_comment_review`: [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) reads the cause entries.
 - `pr_review_baseline`: a thread whose id is absent here is new.
@@ -617,10 +619,10 @@ This is the admission and completion contract for a review producer that feeds a
    5. Under dry-run, report the proposed observations and unavailable provenance, and write nothing.
 
 ```json
-{"records":[{"kind":"review","location":"src/x.rs (`f`)","owner":"src/shared.rs (`rule`)","source":{"round_id":"R","artifact":"tmp/review-reviewer-correctness-T.json","array":"blockers","index":0,"identity":["artifact","tmp/review-reviewer-correctness-T.json","blockers",0]}}]}
+{"records":[{"kind":"review","location":"src/x.rs (`f`)","owner":"src/shared.rs (`rule`)","priority":2,"source":{"round_id":"R","artifact":"tmp/review-reviewer-correctness-T.json","array":"blockers","index":0,"identity":["artifact","tmp/review-reviewer-correctness-T.json","blockers",0]}}]}
 ```
 
-Leave out an absent `owner`. Set `source.round_id` from the original batch token. The identity takes one of these forms:
+Leave out an absent `owner`. Copy `priority` from the accepted artifact item the finding came from: the record keeps it once the artifact is gone. Set `source.round_id` from the original batch token. The identity takes one of these forms:
 
 - an original local review: `["artifact", original_path, array, index]`;
 - an inline or PR-level copy: `["native", source_type, original_id]`, preferring the original comment id and using a thread-only id once;
