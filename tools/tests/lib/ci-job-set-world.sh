@@ -43,14 +43,15 @@ check() { # DESC EXPECTED ACTUAL
 
 # ci-job-set reads the Rust source of the checkout it runs in: this one,
 # unless SELECT_IN names another; SELECT_WITH names a copy to run instead.
-# SELECT_EVENT is the event, pull_request unless set. SELECT_ARG is the one
-# argument passed, none unless set; the workflow's changes job passes
-# --event-parity.
+# SELECT_EVENT is the event, pull_request unless set. SELECT_ARG is the
+# arguments passed, blank-separated, none unless set; the workflow's changes
+# job passes --event-parity --runtime-publish.
 selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or the refusal key
   local class="$1" docs="$2" paths="$3" out="$TMP/selection" status=0 arg="${SELECT_ARG:-}"
   : >"$out"
+  # shellcheck disable=SC2086 # one argument per word
   (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
-    EVENT="${SELECT_EVENT-pull_request}" GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" ${arg:+"$arg"} 2>"$TMP/selection-err") || status=$?
+    EVENT="${SELECT_EVENT-pull_request}" GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" $arg 2>"$TMP/selection-err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
       "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/selection-err" | head -1)"

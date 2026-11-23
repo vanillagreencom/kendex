@@ -690,6 +690,26 @@ cargo-tests-windows|schedule|yes
 cargo-tests-windows|workflow_dispatch|yes
 ROWS
 
+# The orch-state Linux leg stages the runtime builds the changes job owes
+# on a merge group, so a key is published before main moves, and on a push
+# for one still owed; never on a pull request or a night, and never where
+# nothing is owed. EVENT|PUBLISH|RUNS
+publish_if="$(job_steps "$WORKFLOW" skill-suites-shard | awk -F '\t' '$1 == "runtime-publish" { print $2 }')"
+[ -n "$publish_if" ] && [ "$publish_if" != none ] ||
+  { echo "skill-suites-shard has no runtime-publish step condition: '$publish_if'" >&2; exit 1; }
+while IFS='|' read -r event publish runs; do
+  check "the runtime-publish step runs on $event with runtime_publish $publish: $runs" "$runs" \
+    "$(gh_eval value "$(jq -cn --arg e "$event" --arg p "$publish" '{github: {event_name: $e},
+      matrix: {shard: "orch-state"}, runner: {os: "Linux"},
+      needs: {changes: {result: "success", outputs: {runtime_publish: $p}}}}')" "$publish_if")"
+done <<'ROWS'
+merge_group|[{"name":"orch-runtime","key":"k"}]|true
+push|[{"name":"orch-runtime","key":"k"}]|true
+pull_request|[{"name":"orch-runtime","key":"k"}]|false
+schedule|[{"name":"orch-runtime","key":"k"}]|false
+merge_group|[]|false
+ROWS
+
 # The secrets scan in the content-scan job judges each group and pull
 # request commit against its own parents, which only the whole history
 # (depth 0) holds.

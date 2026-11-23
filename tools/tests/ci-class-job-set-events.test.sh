@@ -49,7 +49,8 @@ ROWS
 # Event parity: a copy that plants the macOS legs on the merge group alone is
 # refused by the --event-parity call on either event. A call without the flag
 # derives its one event alone, so the same copy answers it.
-# ARGUMENT|EVENT|EXPECTED; an argument other than --event-parity is refused.
+# ARGUMENT|EVENT|EXPECTED; an argument other than --event-parity or
+# --runtime-publish is refused.
 mkdir -p "$TMP/parity/tools"
 cp -R "$ROOT/tools/lib" "$TMP/parity/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/parity/tools/"
@@ -460,13 +461,15 @@ check "control: a selector taking any event's run owes no agent-runtime build" '
 # owes the same builds and adds the orch-state leg to its Linux shards in
 # roster order, never to its macOS list, so the group that proves a head
 # publishes its keys before main moves. The path selects shards on both
-# runners and no orch-state leg of its own.
+# runners and no orch-state leg of its own. Each call is the changes job's.
 GROUP_PATH=skills/youtube-publish/scripts/youtube-publish
-group_select() { # STATES [SELECTOR] — the selection over GROUP_PATH in a world from all-proved
+GROUP_SELECTION="$TMP/group-selection.json"
+group_select() { # STATES [SELECTOR [CLASS PATH]] — the selection, micro over GROUP_PATH unless named, in a world from all-proved
   publish_world "$1"
+  : >"$GROUP_SELECTION"
   PATH="$TMP/gh-stub:$PATH" GH_WORLD="$TMP/push/publish" GITHUB_REPOSITORY=vanillagreencom/kendex \
-    SELECT_IN="$PUSH_REPO" SELECT_WITH="${2:-$JOB_SET}" SELECT_EVENT=merge_group SELECT_ARG=--runtime-publish \
-    selection micro false "$GROUP_PATH"
+    CI_SELECTION="$GROUP_SELECTION" SELECT_IN="$PUSH_REPO" SELECT_WITH="${2:-$JOB_SET}" SELECT_EVENT=merge_group \
+    SELECT_ARG="--event-parity --runtime-publish" selection "${3:-micro}" false "${4:-$GROUP_PATH}"
 }
 group_base="$(SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group selection micro false "$GROUP_PATH")"
 group_shards="$(field shards <<<"$(tr ' ' '\n' <<<"$group_base")")"
@@ -495,6 +498,40 @@ agent-runtime=none orch-runtime=queue|$with_leg|["agent-runtime"]
 agent-runtime=queue|$group_shards|[]
 ROWS
 [ "$group_rows" -eq 2 ] || { echo "the merge-group publication table read $group_rows rows" >&2; exit 1; }
+# A render or trivial row runs no suite and skips none, so the leg it gains
+# must skip its own: given the emitted skips, the orch-state step runs none
+# of the suites run-all.sh places in that shard on Linux. The group's
+# selection records the same skips, so the push at its head counts none of
+# them proved. Where nothing is owed the row is the verify row, whose empty
+# skips would keep the leg's whole shard. CLASS|PATH|STATES|SHARDS|OWED|LEG
+ORCH_CANDIDATES="$(cd "$ROOT" && git ls-files -- ':(glob)skills/orch/tests/*.sh' | awk '!/\/run-all\.sh$/')"
+LEG_ALL="$(cd "$ROOT" && RUNNER_OS=Linux bash skills/orch/tests/run-all.sh --shard-of <<<"$ORCH_CANDIDATES" |
+  awk '$1 == "orch-state" { print $2 }' | paste -sd ' ' -)"
+[ -n "$LEG_ALL" ] || { echo "run-all.sh places no suite in orch-state on Linux" >&2; exit 1; }
+leg_runs() { # SKIPS — the orch-state suites the shard step runs under SKIPS, space-joined
+  local kept suite runs=""
+  # shellcheck disable=SC2086 # one candidate per word
+  kept=" $(cd "$ROOT" && SKIPPED_SUITES="$1" "$JOB_SET" --suite-list $ORCH_CANDIDATES | paste -sd ' ' -) "
+  for suite in $LEG_ALL; do
+    case "$kept" in *" $suite "*) runs="${runs:+$runs }$suite" ;; esac
+  done
+  printf '%s' "$runs"
+}
+verify_rows=0
+while IFS='|' read -r class path states shards owed leg; do
+  verify_rows=$((verify_rows + 1))
+  lines="$(tr ' ' '\n' <<<"$(group_select "$states" "$JOB_SET" "$class" "$path")")"
+  skips="$(field skipped_suites <<<"$lines")"
+  check "merge-group publication on $class $path: $states" \
+    "shards=$shards queue_macos_shards=[] runtime_publish=$(owed_publish "$owed") leg=$leg selection_skips=$skips" \
+    "shards=$(field shards <<<"$lines") queue_macos_shards=$(field queue_macos_shards <<<"$lines") runtime_publish=$(field runtime_publish <<<"$lines") leg=$(leg_runs "$skips") selection_skips=$(jq -c .skipped_suites "$GROUP_SELECTION" 2>/dev/null)"
+done <<ROWS
+render|README.md|agent-runtime=none orch-runtime=queue|["orch-state"]|["agent-runtime"]|
+trivial|docs/architecture/merge-rail.md|agent-runtime=none|["orch-state"]|["agent-runtime"]|
+trivial|CHANGELOG.md|agent-runtime=none orch-runtime=none|["orch-state"]|["agent-runtime","orch-runtime"]|
+render|README.md|agent-runtime=queue|[]|[]|$LEG_ALL
+ROWS
+[ "$verify_rows" -eq 4 ] || { echo "the render and trivial publication table read $verify_rows rows" >&2; exit 1; }
 # Control: a selector whose filter admits no merge-group run owes the build
 # the queue run published.
 filter_copy no-queue '\(\.event == "merge_group" and ' '(false and '

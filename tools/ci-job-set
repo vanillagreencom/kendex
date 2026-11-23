@@ -33,7 +33,8 @@
 #                   on a class selection, also publish runtime_publish and
 #                   add the leg that uploads it, so the merge group that
 #                   proves a head publishes its runtime builds before main
-#                   moves. The `changes` job passes it; the suites and
+#                   moves; the leg runs no suite the selection skips. The
+#                   `changes` job passes it; the suites and
 #                   tools/guard, which ask for many selections over
 #                   fixtures and have no GitHub to read, do not. A push
 #                   computes runtime_publish whatever, and a schedule
@@ -79,9 +80,11 @@
 # workflow-owned dedicated declarations; cache_compile selects build inputs.
 # runtime_publish names the package runtime builds the head has no published
 # artifact for, and adds the leg that publishes them; no proof subtracts it.
-# The merge group at the head published them already, so this owes one only
-# for a commit that reached main without a merge group, an owner repair
-# under D029, or for a group whose upload failed or expired.
+# The merge group at the head published them already: its publishing leg is
+# a required `CI` leg, so a failed staging or upload ejects the group. This
+# owes one only for a commit that reached main without a merge group, such
+# as an owner repair under D029, an artifact that expired after the group
+# read it, or a listing or run record this push could not read.
 # main-proof=read|none|unread reports proof availability on stderr.
 #
 # THE NIGHT ROUTE, for EVENT=schedule: nightly=false only where the latest
@@ -140,7 +143,9 @@
 #     script derives the selection at both events and refuses
 #     `event-parity` where they differ. A push selects no class row; the
 #     push route above answers it. The publishing leg --runtime-publish
-#     adds is no part of the class selection.
+#     adds is no part of the class selection: it runs no suite that
+#     selection skips, and a row that skips none, a render or trivial one,
+#     skips the leg's own suites.
 #   - The compile lanes (cargo_lint, cargo_windows_check) run no test, so
 #     they run only where a build input changed: a path other than prose
 #     under a tools/rust-reads `build` or `include` row.
@@ -154,7 +159,8 @@
 #     lands it. Any path under .github/ and either runner (RUNNERS) selects
 #     every shard whole.
 #   - A `render` or `trivial` diff runs bot_instructions, the one
-#     seconds-long verify job, whose steps its lane entry below lists. The
+#     seconds-long verify job, whose steps its lane entry below lists, and
+#     under --runtime-publish the publishing leg where a build is owed. The
 #     classifier proved a `render` diff by re-rendering it, and a `trivial`
 #     one is inside the docs path set and its line ceiling, or a plan of any
 #     size.
@@ -222,7 +228,8 @@
 #                       be read proves no publication. Where the list is not
 #                       empty, the `shards=` list holds PUBLISH_SHARD, whose
 #                       Linux leg builds the runtimes and publishes each
-#                       listed build.
+#                       listed build, and `skipped_suites=` holds each suite
+#                       of that leg the selection did not keep.
 #
 # DOCS_ONLY is read and validated on every class, and it changes one thing: a
 # `standard` diff whose every path the docs verdict accepts (docs/,
@@ -370,7 +377,8 @@ SELECTION_ARTIFACT=ci-selection
 # The shards whose steps hand --suite-list no candidate, so a green leg
 # proves the shard whole and the skip lists never narrow it.
 LISTLESS_SHARDS="guards-scans node pi-claude-bridge"
-# The package runtimes a push publishes, `<binary name>:<source tree>`, as
+# The package runtimes runtime_publish names for a merge group or a push to
+# publish, `<binary name>:<source tree>`, as
 # skills/orch/scripts/setup builds them. skill-tests.yml uploads each name
 # in a step of its own, so a runtime added here adds its step there.
 RUNTIMES="agent-runtime:skills/agent-runtime/runtime orch-runtime:skills/orch/runtime"
@@ -433,6 +441,24 @@ with_publisher() { # LIST
   [ "$RUNTIME_PUBLISH" != '[]' ] || { printf '%s' "$1"; return 0; }
   jq -c --arg add "$PUBLISH_SHARD" --arg roster "$SHARDS" '
     . as $list | [$roster | split(" ")[] | select(. as $s | $s == $add or ($list | index($s)))]' <<<"$1"
+}
+
+# The JSON list of the suites run-all.sh --shard-of places in PUBLISH_SHARD
+# on Linux, the publishing leg's one runner. A placement that cannot be read
+# skips none, so the leg runs its whole battery, as select_shards keeps every
+# suite of a shard it cannot place.
+publisher_suites() {
+  local suites placed
+  suites="$(universe)" || return 1
+  if ! placed="$(printf '%s\n' "$suites" | awk '/^skills\/orch\/tests\//' |
+    RUNNER_OS=Linux bash skills/orch/tests/run-all.sh --shard-of 2>/dev/null)"; then
+    printf 'ci-job-set: orch-shards=unread os=Linux\n' >&2
+    printf '[]'
+    return 0
+  fi
+  printf '%s\n' "$placed" | jq -Rcs --arg shard "$PUBLISH_SHARD" '
+    [split("\n")[] | split(" ") | select(length == 2 and .[0] == $shard) | .[1]]' ||
+    die publisher-suites-unread "jq could not list the publishing leg's suites"
 }
 
 # Every universe suite with each shard whose steps run it on each runner, one
@@ -1210,18 +1236,30 @@ if [ "$macos_on" = true ]; then
   done
 fi
 
+skipped="$(sel_get "$now" skipped_suites)"
+rust="$(sel_get "$now" rust_targets)"
+
 # The runtime builds this head owes, and the Linux leg that publishes them,
-# added after the macOS list so no macOS leg is added with it.
+# added after the macOS list so no macOS leg is added with it. An empty skip
+# list on a row that leaves the leg out is a render or trivial row's, which
+# runs no suite, so the leg it gains skips its own suites; a measured row's
+# list already skips every suite no selected shard runs. The group's
+# selection carries the widened list, so the push at its head counts none of
+# those suites proved.
 publish_line=""
 if [ "$publish" = true ]; then
   RUNTIME_PUBLISH="$(runtime_publish)" || exit 2
+  if [ "$RUNTIME_PUBLISH" != '[]' ] && [ "$skipped" = '[]' ]; then
+    case "$now_shards" in
+      *"\"$PUBLISH_SHARD\""*) ;;
+      *) skipped="$(publisher_suites)" || exit 2 ;;
+    esac
+  fi
   now_shards="$(with_publisher "$now_shards")" || die publisher-unadded "jq could not add the publishing leg"
   publish_line="runtime_publish=$RUNTIME_PUBLISH"
 fi
 
 # shellcheck disable=SC2086 # one `lane=value` word per job
-skipped="$(sel_get "$now" skipped_suites)"
-rust="$(sel_get "$now" rust_targets)"
 emit "$now_shards" "[$queue]" "$skipped" '' "$rust" $jobs ${publish_line:+"$publish_line"}
 # The group's selection, which the push at its head reads.
 [ -z "${CI_SELECTION:-}" ] ||

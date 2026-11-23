@@ -19,8 +19,10 @@ name: Skill Tests
 # the changed packages select, and every gated `if:` in this file reads one
 # of those lines. Of the gated jobs, a `render` or `trivial` diff runs the
 # bot-instructions job alone, whose steps the bot_instructions lane entry in
-# `tools/ci-job-set` lists. Every other diff, and a `trivial` one changing a
-# path tools/rust-reads names, runs that job, the shell shards its packages
+# `tools/ci-job-set` lists, and where its head owes a runtime build, the
+# orch-state leg that publishes it and runs no suite. Every other diff, and
+# a `trivial` one changing a path tools/rust-reads names, runs that job, the
+# shell shards its packages
 # select and each other lane as `tools/ci-job-set` selects it; the invariant
 # comment there is the one statement of what each lane runs. The changes job
 # publishes the suites outside the diff's reach as `skipped_suites`, and
@@ -891,9 +893,12 @@ jobs:
 
       # A merge group publishes each package runtime build its head has no
       # artifact for, tools/ci-job-set's runtime_publish, from this one leg,
-      # so every key is published before main moves to the head. A main push
-      # publishes a key no run published yet: a commit that reached main
-      # without a merge group, or a group whose upload failed. `<name>-<key>` holds
+      # so every key is published before main moves to the head. The leg is
+      # one `CI` holds: a missing binary or a failed upload fails it and
+      # ejects the group. A main push publishes a key still owed: a commit
+      # that reached main without a merge group, such as an owner repair
+      # under D029, an artifact that expired after the group read it, or a
+      # listing or run record the push could not read. `<name>-<key>` holds
       # the binary under that name and its sha256 beside it as
       # `<name>-<key>.sha256`, the key lib/key.sh gives. A lane-host
       # provider in another repository of this organization (Fleet) fetches
