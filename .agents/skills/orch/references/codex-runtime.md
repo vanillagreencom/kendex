@@ -138,16 +138,16 @@ For each incomplete reviewer, launch its one watchdog through [waiter-launch.md 
 .agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- .agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID] < /dev/null
 ```
 
-- Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog).
+- Take `[SECS]`, re-arming and the required-measurement allowance from [review-cycle.md § Reviewer wait](review-cycle.md#reviewer-wait).
 - Each watchdog replaces a background one.
 - A lane ends its turn and handles each `job-end` mail as it arrives. A session that is no lane holds every completion inside the turn as § Delegated round wait does.
-- After each completion, sweep all run directories for nonempty `wait.exit` files, and run § 3.2's filesystem sweep and due actions.
+- After each completion, sweep all run directories for nonempty `wait.exit` files, and run the filesystem sweep of [review-cycle.md § Deadlines](review-cycle.md#deadlines) and the due actions of its [§ Deadline actions](review-cycle.md#deadline-actions).
 - Read each completed run's `wait.exit` and `wait.log`.
-- § 3.2 owns refusal replacement, and § 3.1 owns artifact acceptance. An agent message alone never releases a watchdog wait.
+- [review-cycle.md § Wake source replacement](review-cycle.md#wake-source-replacement) owns refusal replacement, and [review-pr.md § 3.1](../workflows/review-pr.md#31-completion) owns artifact acceptance. An agent message alone never releases a watchdog wait.
 
 ## Process-owned reviewers
 
-Read when [review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers) receives `alternate-review` from `orch-runtime admission --item [ITEM] --attached-launch`. This route runs each mandatory canonical review domain as a separate Codex session. Every required domain not yet launched starts in the same wave, each through its own admission (step 4). That workflow keeps panel selection, original-batch provenance, deadlines, the one re-delegation and artifact acceptance. An advisory external reviewer cannot replace a required domain.
+Read when [review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers) receives `alternate-review` from `orch-runtime admission --item [ITEM] --attached-launch`. This route runs each mandatory canonical review domain as a separate Codex session. Every required domain not yet launched starts in the same wave, each through its own admission (step 4). That workflow and [review-cycle.md](review-cycle.md) keep panel selection, original-batch provenance, deadlines, the one re-delegation and artifact acceptance. An advisory external reviewer cannot replace a required domain.
 
 1. Read the lane's own model and effort with `.agents/skills/orch/scripts/orch-runtime session`. From its `model=` and `effort=` lines, bind `[MODEL_AND_EFFORT_FLAGS]` as `-m [MODEL] -c model_reasoning_effort=[EFFORT]` (agent-runtime `harness.rs` `Harness::model_words`). A refusal line stops this route: report its key to the caller.
 2. Bind `[PERMISSION_FLAG]` to the permission word of the lane's own launch line: `--dangerously-bypass-approvals-and-sandbox` under the `bypass` posture, `--approve-for-me` where the lane carries it, nothing under `native`.
@@ -155,7 +155,7 @@ Read when [review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers) rec
    - Select no other model, effort, account, provider or executable.
    - A missing `codex` stops this route: report it to the caller.
 3. Make a fresh `[JOB_DIR]` as [waiter-launch.md § Launch](waiter-launch.md#launch) makes `[RUN_DIR]`. With the harness file-write tool, save the complete `DELEGATION:` prompt as `[JOB_DIR]/delegation.md`: the installed canonical role's full instructions and workflow, then review-pr's complete delegation with its minted artifact path, range, decisions and re-review context. A role name or a shortened request is not enough.
-4. Run [review-pr.md § Process launch admission](../workflows/review-pr.md#process-launch-admission) immediately before every launch, a replacement included. An earlier `alternate-review` verdict is no fresh reading.
+4. Run [review-cycle.md § Process launch admission](review-cycle.md#process-launch-admission) immediately before every launch, a replacement included. An earlier `alternate-review` verdict is no fresh reading.
 5. Launch from the owned worktree:
 
 ```bash
@@ -172,9 +172,9 @@ The job's files are the [run files](waiter-launch.md#run-files) with `review` fo
 - Hold its completion through [waiter-launch.md § Completion](waiter-launch.md#completion), reading `review` for `wait`.
 - Keep § Reviewer round wait's artifact watchdog running.
 - The process's end and the measurement evidence in its log supply liveness.
-- review-pr § 3 owns acceptance, failure and deadline actions; neither a launch nor a last message is acceptance.
+- [review-cycle.md § Process-owned review](review-cycle.md#process-owned-review) owns acceptance, failure and deadline actions; neither a launch nor a last message is acceptance.
 
-For review-pr § 3.1's process collection, run the assigned-file check only after a zero exit. `[CHECK_BOUNDARY]` is the original batch's evidence boundary, or its stricter rejection boundary under § 3.2. Read the log beside the result. A failed exit read or a nonzero exit supplies no artifact verdict, and leaves the required evidence unread under that workflow's failure route:
+For [review-cycle.md § Process-owned completion](review-cycle.md#process-owned-completion)'s process collection, run the assigned-file check only after a zero exit. `[CHECK_BOUNDARY]` is the original batch's evidence boundary, or its stricter rejection boundary under [review-cycle.md § Wake source](review-cycle.md#wake-source) step 4. Read the log beside the result. A failed exit read or a nonzero exit supplies no artifact verdict, and leaves the required evidence unread under that workflow's failure route:
 
 ```bash
 sh -c 'code=$(cat "$1/review.exit") || exit 2; case "$code" in 0) ;; *) printf "codex-review: execution-exit=%s\n" "$code" >&2; exit 1 ;; esac; exec .agents/skills/orch/scripts/orch-runtime review-artifact --text check --file "$2" --worktree "$3" --delegated-at "$4" --issue "$5"' sh "[JOB_DIR]" "[ASSIGNED_ARTIFACT_PATH]" "[WORKTREE_PATH]" "[CHECK_BOUNDARY]" "[ISSUE_ID]"
