@@ -44,7 +44,7 @@ The harness's control feeds a pattern the dialect **refuses** through the vector
 **Every set of ids or predicates that appears in more than one file is derived from one named source.** Neither "compare them by reading" nor "keep them in sync" counts.
 
 - A set still kept by hand in two files is held by a validator that reds when the copies diverge.
-- That validator is a stopgap under code-quality § Over-Engineering, not an answer: its row names the item that derives one copy from the other, or says none is filed.
+- That validator is a stopgap under code-quality § Over-Engineering, not an answer: its row names the item that derives one copy from the other.
 
 **"Derived" covers two different things, and a row says which.**
 
@@ -57,10 +57,10 @@ Its sites, and which answer each takes:
 
 | Set | Answer | Deriving item |
 |-----|--------|---------------|
-| Doctrine block ids | Stopgap: `doctrine-routing` | None filed |
+| Doctrine block ids | Stopgap: `doctrine-routing` | KEN-5592 |
 | Which block reaches which destination, and in what order | Derived, read at run time | – |
-| Content refusals | Stopgap: `toml-refusals.test.sh` | None filed |
-| The Qodo verbs `[bot-instructions.cadence] qodo_commands` accepts | Stopgap: `toml-refusals.test.sh` | None filed |
+| Content refusals | Stopgap: `toml-refusals.test.sh` | KEN-5592 |
+| The Qodo verbs `[bot-instructions.cadence] qodo_commands` accepts | Stopgap: `toml-refusals.test.sh` | KEN-5592 |
 | The marker line | Derived, one statement | – |
 | The routing table's own shape | `doctrine-routing` | – |
 | Validator test protection | § Controls | – |

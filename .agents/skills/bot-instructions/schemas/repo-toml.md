@@ -191,7 +191,7 @@ The table itself stays until the package is gone, because a render with no `[bot
 | `qodo_commands` | array of string | `["/agentic_review"]` | `[github_app] pr_commands` |
 | `qodo_push_trigger` | bool | `false` | `[github_app] handle_push_trigger` |
 
-Each `qodo_commands` entry is a bare verb from this set, which is the one statement of it; `qodo-parity` reads its Role column:
+Each `qodo_commands` entry is a bare verb from this set:
 
 | Verb | Line | Role |
 |------|------|------|
@@ -201,6 +201,8 @@ Each `qodo_commands` entry is a bare verb from this set, which is the one statem
 | `/describe` | Merge | not review |
 | `/improve` | Merge | not review |
 
+- `constants.QODO_VERBS` encodes this set and its Role column by hand, and `qodo-parity` reads that constant.
+- `tests/toml-refusals.test.sh` holds this table against that constant, a stopgap `validators.md` § Cross-file sets lists.
 - `qodo-parity` requires guidance in the section a **review** verb reads, and this render writes it for both.
 - A verb in the other half reads a section this render leaves alone, so its presence is not a finding: `/agentic_describe` and `/describe` write the pull request body, and `/improve` reads `[pr_code_suggestions]`.
 - The vendor's documented default, `["/agentic_describe", "/agentic_review"]`, passes.

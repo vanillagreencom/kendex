@@ -1,7 +1,7 @@
 """Literals more than one module needs, written once.
 
-Anything here that also appears in the spec is cited from the spec rather than
-restated there, per `validators.md` § Cross-file sets.
+Where a spec table also states one, as `repo-toml.md` does `QODO_VERBS`, the
+two are hand-kept copies, a stopgap `validators.md` § Cross-file sets lists.
 """
 
 PACKAGE = "bot-instructions"
