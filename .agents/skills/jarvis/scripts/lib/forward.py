@@ -58,6 +58,8 @@ HOST_CAUSES = ("mailbox-missing", "overseer-absent", "overseer-unreadable")
 # Causes no retry clears: the drain reports each once as an event.
 TERMINAL = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen", "stop")
 UNREACHABLE = "main-unreachable"
+# The main printed its reached line and had not answered by the deadline.
+MAIN_SLOW = "main-slow"
 SESSION_ID = re.compile(r"vgs-voice:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.ASCII)
 BOOT_ID = None
 
@@ -283,8 +285,11 @@ def replaced(state, first):
     return False
 
 
-def host_call(role, deadline, script, args, data=None):
-    """Synchronous SSH call to the main, shared by forwards and a satellite's owner-ask operations."""
+def host_call(role, deadline, script, args, data=None, reached=None):
+    """Synchronous SSH call to the main, shared by forwards and a satellite's owner-ask operations.
+
+    REACHED is a stderr line SCRIPT prints on the main before its work: a
+    timeout after that line is MAIN_SLOW, and one before it UNREACHABLE."""
     remaining = deadline - time.monotonic()
     if remaining < 1:
         return UNREACHABLE, "budget-spent"
@@ -294,7 +299,9 @@ def host_call(role, deadline, script, args, data=None):
         result = watch.run(command, data=data, operation="forward-host", timeout=remaining)
     except watch.Failure as error:
         if error.record["key"][1] == "timeout":
-            return UNREACHABLE, "timeout"
+            # subprocess.run's TimeoutExpired carries the stderr read so far, always as bytes.
+            partial = (getattr(error.__cause__, "stderr", None) or b"").decode(errors="replace")
+            return (MAIN_SLOW if reached is not None and reached in partial.split("\n") else UNREACHABLE), "timeout"
         return "send-failed", error.record["detail"]
     if result.returncode == 255:
         return UNREACHABLE, result.stderr.strip().split("\n", 1)[0]

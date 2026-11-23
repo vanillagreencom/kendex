@@ -19,6 +19,17 @@ import watch
 # VGS replaces one page per view. Its 15-second child bound leaves one
 # second here for a structured failure to reach that caller.
 CALL_SECONDS = 14
+# A satellite keeps this share of its own deadline for the SSH connect, the
+# main's start and the answer's return, and gives the main the rest, so the
+# main answers with its own cause first. The main's list needs about 9 s at
+# the 0.42 s per tracker read measured on the main home on 2026-11-22. The
+# trip, run on 2026-11-23 through host_call to a real sshd and jarvis-session
+# with a near-zero main budget, took 0.42 s on loopback. Behind a proxy that
+# delayed each direction, it took 1.2 s at a 100 ms round trip and 2.8 s at
+# 300 ms. Counting the TCP handshake the proxy skips, a trip costs 0.42 s plus
+# about 8.8 round trips, so this share holds to about a 180 ms round trip. A
+# slower trip reports as main-slow.
+TRANSPORT_SECONDS = 2
 PAGE_ROWS = 32
 PAGE_BYTES = 16 * 1024
 # KEN-5390 adds Reply and Done; until then every row reports them refused.
@@ -70,12 +81,15 @@ for root in "$@"; do
     '{root: $root, pending: $pending, outward: $outward}'
 done
 """
+REACHED = "owner-asks: main-reached"
 MAIN = '''set -euo pipefail
+printf '%%s\\n' %(reached)s >&2
 cd -- "$1"
 home=$1
-shift
-exec env JARVIS_OWNER_ASK_MAIN=1 "$BASH" .agents/skills/jarvis/scripts/jarvis-session owner-asks "$@" --home "$home"
-'''
+budget=$2
+shift 2
+exec env JARVIS_OWNER_ASK_MAIN=1 JARVIS_OWNER_ASK_BUDGET="$budget" "$BASH" .agents/skills/jarvis/scripts/jarvis-session owner-asks "$@" --home "$home"
+''' % {"reached": shlex.quote(REACHED)}
 
 
 class Unavailable(ValueError):
@@ -451,7 +465,9 @@ def main(args, session_type, refusal_type):
     try:
         session = session_type(args.home)
         session.path = session.path.with_name("owner-asks.json")
-        session.deadline = time.monotonic() + CALL_SECONDS
+        # A main called by a satellite stops at the satellite's budget for it.
+        budget = float(os.environ.get("JARVIS_OWNER_ASK_BUDGET", CALL_SECONDS))
+        session.deadline = time.monotonic() + min(CALL_SECONDS, budget)
         settings = watch.config(session.env["JARVIS_BASH"], session.home)
         role = watch.role(settings)
         data = sys.stdin.read() if args.action != "list" else None
@@ -460,21 +476,25 @@ def main(args, session_type, refusal_type):
         if role.kind == "satellite":
             if os.environ.get("JARVIS_OWNER_ASK_MAIN"):
                 raise Unavailable("The selected main is configured as a satellite.")
-            argv = [args.action]
+            argv = ["%.3f" % (session.deadline - time.monotonic() - TRANSPORT_SECONDS), args.action]
             if args.action == "list":
                 argv += ["--view", args.view]
                 if args.cursor is not None:
                     argv += ["--cursor", args.cursor]
             else:
                 argv += ["--id", args.id]
-            cause, result = forward.host_call(role, session.deadline, MAIN, argv, data)
+            cause, result = forward.host_call(role, session.deadline, MAIN, argv, data, reached=REACHED)
             if cause != "ok":
-                raise source_failure("main-home", role.dest + ":" + role.home,
-                                     watch.Failure("main-home", "transport", cause, result))
+                place = role.dest + ":" + role.home
+                failure = source_failure("main-home", place, watch.Failure("main-home", "transport", cause, result))
+                if cause == forward.MAIN_SLOW:
+                    raise Unavailable("The main home at " + place + " did not answer before the satellite's deadline.",
+                                      failure.diagnostic)
+                raise failure
             # The main prints the same bounded public response. No local
             # copy of its state or interpretation of its receipt is kept.
             sys.stdout.write(result.stdout)
-            sys.stderr.write(result.stderr)
+            sys.stderr.write(result.stderr.replace(REACHED + "\n", "", 1))
             return result.returncode
         owner = OwnerAsks(session, Sources(session, settings))
         with session.locked():
