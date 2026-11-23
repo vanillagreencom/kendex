@@ -92,5 +92,5 @@ Read the linked workflow or reference for the task before acting.
 To draft product videos, posts or outreach:
 
 - Launch `publicist` with a task file or an attached prompt.
-- Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types).
+- Before a publisher setup launch, get the consumer's approval under [Authority](references/decisions.md#authority) and [Message types](references/communication.md#message-types). The setup task reads [workflows/setup-publishers.md](workflows/setup-publishers.md).
 - Carry the approval record and named publisher selections in the setup task file.
