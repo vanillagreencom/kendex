@@ -193,9 +193,6 @@ OUT="$(PATH="$NOCARGO" AGENT_RUNTIME_CACHE="$TMP_ROOT/cache-empty" "$WRAPPER" ve
 assert_eq "$RC|$(cat "$TMP_ROOT/err")|$OUT|$(calls)" "69|orch-runtime: setup-required key=$KEY run=$ORCH/scripts/setup||$before" \
   'wrapper on a computer with no cargo exits 69, names the key and the setup to run, and prints no reply'
 if [ ! -e "$TMP_ROOT/cache-empty" ]; then pass 'wrapper with no cargo writes no cache'; else fail 'wrapper with no cargo writes no cache'; fi
-AGENT_RUNTIME_NO_BUILD=1 run "$TMP_ROOT/cache-empty" "$WRAPPER" version
-assert_eq "$RC|$ERR|$OUT|$(calls)" "69|orch-runtime: setup-required key=$KEY run=$ORCH/scripts/setup||$before" \
-  'wrapper asked to build nothing refuses as with no cargo, though cargo is there'
 
 # The checkout moves to new orch runtime sources by a plain fast-forward, as
 # a person's or an automation's pull moves it, and the next call answers.
@@ -220,6 +217,8 @@ run "$MC" "$MOVED/skills/orch/scripts/orch-runtime" version
 MOVED_KEY="$(key_of "$(grep '^orch-runtime-setup: key=' "$TMP_ROOT/err")")"
 assert_eq "$RC|$OUT|$(calls)" "0|fake-binary argv=version|$((before + 1))" \
   'after a fast-forward past an orch runtime change the next call builds it once and answers' "$TMP_ROOT/err"
+assert_eq "$(head -n 1 "$TMP_ROOT/err")" "orch-runtime: setup-building key=$MOVED_KEY run=$MOVED/skills/orch/scripts/setup" \
+  'the call names the runtime and key it builds on its first stderr line'
 assert_contains "$ERR" "orch-runtime-setup: key=$MOVED_KEY binary=$MC/bin/orch-runtime-$MOVED_KEY" "the build's line goes to stderr"
 if [ "$MOVED_KEY" != "$KEY" ] && [ -x "$MC/bin/orch-runtime-$MOVED_KEY" ]; then pass 'the build placed the moved sources'"'"' own key'; else fail 'the build placed the moved sources'"'"' own key' "$MOVED_KEY"; fi
 
@@ -227,6 +226,10 @@ if [ "$MOVED_KEY" != "$KEY" ] && [ -x "$MC/bin/orch-runtime-$MOVED_KEY" ]; then 
 printf '// failing\n' >>"$MOVED/skills/orch/runtime/src/lib.rs"
 FAKE_CARGO_EXIT=1 run "$MC" "$MOVED/skills/orch/scripts/orch-runtime" version
 assert_eq "$RC|$OUT" '69|' 'a call whose build fails exits 69 with no reply'
+case "$(head -n 1 "$TMP_ROOT/err")" in
+  "orch-runtime: setup-building key="*" run=$MOVED/skills/orch/scripts/setup") pass 'a call whose build fails names the build first' ;;
+  *) fail 'a call whose build fails names the build first' "$ERR" ;;
+esac
 case "${ERR##*$'\n'}" in
   'orch-runtime-setup: build-failed status=1 key='*) pass "the setup's refusal is the call's last stderr line" ;;
   *) fail "the setup's refusal is the call's last stderr line" "$ERR" ;;

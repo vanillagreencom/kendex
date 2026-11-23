@@ -102,7 +102,7 @@ fn unconfined() -> Vec<&'static str> {
 fn ready_names_a_host_without_the_confinement_and_its_fix() {
     let dir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(dir.path()).unwrap();
-    let no_bwrap = std::ffi::OsString::from(support::path_without(&root.join("bin"), "bwrap"));
+    let no_bwrap = std::ffi::OsString::from(support::path_without(&root.join("bin"), &["bwrap"]));
     let (lines, code) = ready_in(&root, &["--duty", "launch"], &[("PATH", &no_bwrap)]);
     assert_eq!(
         (lines, code),
@@ -180,7 +180,8 @@ fn ready_names_a_codex_seat_linked_outside_its_grants() {
 }
 
 /// `orch-runtime ready` judges every duty's programs on this computer:
-/// agent-runtime's real wrapper finding its key unbuilt names orch's setup,
+/// agent-runtime's real wrapper finding its key unbuilt on a computer
+/// without cargo, where it builds nothing, names orch's setup,
 /// a mailbox program and a worktree program that are gone name the
 /// packages' install, a missing `tmux` names its install for every duty
 /// that opens or reads a pane, and a duty that lacks nothing reads `ready`;
@@ -192,7 +193,8 @@ fn ready_names_what_each_duty_lacks_and_its_fix() {
     let root = fs::canonicalize(dir.path()).unwrap();
     let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let wrapper = packages.join("agent-runtime/scripts/agent-runtime");
-    let no_tmux = std::ffi::OsString::from(support::path_without(&root.join("bin"), "tmux"));
+    let no_tmux =
+        std::ffi::OsString::from(support::path_without(&root.join("bin"), &["tmux", "cargo"]));
     let cache = root.join("cache");
     let gone = root.join("gone");
     let (lines, code) = ready_in(
@@ -361,7 +363,7 @@ fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
         )
     );
     let bin = root.join("no-runner");
-    let no_runner = std::ffi::OsString::from(support::path_without(&bin, "setsid"));
+    let no_runner = std::ffi::OsString::from(support::path_without(&bin, &["setsid"]));
     let _ = fs::remove_file(bin.join("systemd-run"));
     let no_setsid = |duty: &str| {
         let mut lines = vec![format!(
@@ -385,7 +387,7 @@ fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
 fn without(absent: &str, args: &[&str]) -> (PathBuf, tempfile::TempDir, Output) {
     let dir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(dir.path()).unwrap();
-    let path = support::path_without(&root.join("bin"), absent);
+    let path = support::path_without(&root.join("bin"), &[absent]);
     let mut command = support::isolated();
     command
         .args(["--state-dir", &root.display().to_string()])

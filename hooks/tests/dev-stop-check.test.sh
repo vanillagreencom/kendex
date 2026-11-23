@@ -51,6 +51,12 @@ cleanup() {
     kill -TERM "$PLANTED" 2>/dev/null || :
     wait "$PLANTED" 2>/dev/null || :
   fi
+  # A detached build an unbuilt row started holds its claim until it ends.
+  local n=0
+  while [ "$n" -lt 120 ] && [ -n "$(find "$TMP_ROOT/cache.unbuilt/build" -maxdepth 2 -name '*.lock' 2>/dev/null)" ]; do
+    sleep 0.25
+    n=$((n + 1))
+  done
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
@@ -203,7 +209,9 @@ transcript hold-only "$(claude_hold "$RUN_LIVE")"
 # source, which the walk stops short of. `global` installs it under a harness
 # root moved out of the home (CODEX_HOME elsewhere), beside the home's shared
 # tree. `unbuilt` is the `orch` install on a host with cargo whose runtime
-# cache holds no build, where the real reader answers its setup line.
+# cache holds no build, where the hook starts the build through the real
+# setup's --detach and answers its line; the planted cargo fails at once, so
+# every build there ends within the row.
 world_hook() { # WORLD -> the hook's path
   case "$1" in
     shared | codex) printf '%s' "$TMP_ROOT/world.$1/.codex/hooks/dev-stop-check.sh" ;;
@@ -278,7 +286,7 @@ farm() { # NAME TOOL...
 FARM_NO_JQ="$(farm no-jq git cat grep awk)"
 FARM_NONE="$(farm none)"
 # agent-runtime's planted cargo, first on PATH for the unbuilt rows, so a
-# reader that built would run no real build.
+# build the hook or its reader starts runs no real build.
 FARM_CARGO="$TMP_ROOT/farm.cargo"
 mkdir -p "$FARM_CARGO"
 ln -s "$TEST_DIR/../../skills/agent-runtime/tests/setup/cargo" "$FARM_CARGO/cargo"
@@ -354,7 +362,7 @@ stop_rows() {
     case "$under" in
       wait) grep -Fxq -- "$(world_reader "$world") validate entry --wait --run-dir $RUN_LIVE" "$ERR_FILE" && extra=" under=wait" || extra=" under=none" ;;
       cause) grep -Fxq -- "orch-runtime: stub cannot read" "$ERR_FILE" && extra=" under=cause" || extra=" under=none" ;;
-      setup) grep -q -- "^orch-runtime: setup-required key=" "$ERR_FILE" && extra=" under=setup" || extra=" under=none" ;;
+      setup) grep -Eq -- "^orch-runtime-setup: runtime-(building|unbuilt) " "$ERR_FILE" && extra=" under=setup" || extra=" under=none" ;;
     esac
     if [ "$first_want" = - ] && { [ -s "$OUT_FILE" ] || [ -s "$ERR_FILE" ]; }; then
       extra="$extra output=present"
@@ -533,8 +541,9 @@ stop_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_ro
 # word instead, every row naming the verb's start passes unheld.
 stop_control matcher-word "$HOOK" 'local flag prefix="orch-runtime($DQUOTE|$SQUOTE)? +validate +entry"' \
   'prefix="dev-validate-run($DQUOTE|$SQUOTE)?"' HOOK stop_rows "${LIVE_STOP_LABELS[@]}"
-# A hook that lets its reader build answers no setup line within its timeout.
-stop_control built-on-call "$HOOK" 'export AGENT_RUNTIME_NO_BUILD=1' 'unset AGENT_RUNTIME_NO_BUILD' HOOK stop_rows \
+# A hook that hands an unbuilt runtime to its reader has the wrapper build it
+# in the foreground, past the hook's timeout, and answers no detached setup.
+stop_control built-on-call "$HOOK" 'JUDGED=""' 'JUDGED=1' HOOK stop_rows \
   'a reader whose runtime is not built holds the stop with its setup line' \
   'a reader whose runtime is not built on a continued stop is reported, not held'
 form_control running-newline 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' \

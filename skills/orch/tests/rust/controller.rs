@@ -2420,7 +2420,7 @@ fn a_controller_start_with_no_tmux_refuses_before_it_claims() {
     runner.init_fleet();
     let record = runner.state_dir().join("workflow-state-oversee.json");
     let before = std::fs::read_to_string(&record).unwrap();
-    let no_tmux = path_without(&runner.state_dir().join("no-tmux"), "tmux");
+    let no_tmux = path_without(&runner.state_dir().join("no-tmux"), &["tmux"]);
     let out = runner.op_fleet_env(
         &json!({
             "op": "start-controller",
@@ -2455,7 +2455,7 @@ fn a_transfer_or_a_stop_with_no_tmux_refuses_before_any_job() {
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let (sleepers, log) = sleeper_world(runner.state_dir());
-    let no_tmux = path_without(&runner.state_dir().join("no-tmux"), "tmux");
+    let no_tmux = path_without(&runner.state_dir().join("no-tmux"), &["tmux"]);
     runner.env.extend([
         (
             "PATH".to_owned(),

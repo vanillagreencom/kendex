@@ -118,8 +118,9 @@ Inside the boundary:
 ## Build and run
 
 - `scripts/agent-runtime` runs the binary built from the sources beside it.
-- Without that binary, on a computer with cargo, it runs `scripts/setup` first, its lines on stderr, then answers. A failed build exits 69 with the setup's refusal as the last stderr line.
-- With no cargo, or with `AGENT_RUNTIME_NO_BUILD` set by a caller that must answer at once, such as a harness hook, it builds nothing. It prints `agent-runtime: setup-required key=<key> run=<path to scripts/setup>` on stderr and exits 69.
+- Without that binary, on a computer with cargo, it prints `agent-runtime: setup-building key=<key> run=<path to scripts/setup>` on stderr, runs `scripts/setup` with its lines on stderr, then answers. A failed build exits 69 with the setup's refusal as the last stderr line.
+- With no cargo it builds nothing. It prints `agent-runtime: setup-required key=<key> run=<path to scripts/setup>` on stderr and exits 69.
+- A caller that must answer before a build could end, such as a harness hook, reads the key and the cache through `scripts/lib/key.sh` first. Where the binary is absent it runs `setup --detach` instead of the wrapper.
 - `setup --help` states every answer and cause of `setup` and `setup --detach`.
 - `setup --runtime DIR --name NAME` builds another skill's runtime crate that depends on this one.
 - That skill's wrapper computes the key through `scripts/lib/key.sh`.

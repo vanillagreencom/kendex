@@ -157,6 +157,31 @@ pub fn tool_path(prefixes: &[&Path]) -> String {
     parts.join(":")
 }
 
+/// A test child's `PATH` on which the programs `absent` alone are missing:
+/// `bin` made to hold a link to every other program [`tool_path`] names,
+/// the first of each name, so the isolated tools still stand ahead of the
+/// inherited path. A program already in `bin`, such as a row's fixture,
+/// is kept.
+pub fn path_without(bin: &Path, absent: &[&str]) -> String {
+    std::fs::create_dir_all(bin).unwrap();
+    let path = tool_path(&[]);
+    for dir in std::env::split_paths(&path) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if absent.iter().any(|a| name == *a)
+                || std::fs::symlink_metadata(bin.join(&name)).is_ok()
+            {
+                continue;
+            }
+            std::os::unix::fs::symlink(entry.path(), bin.join(&name)).unwrap();
+        }
+    }
+    bin.display().to_string()
+}
+
 /// `text` as the executable `path`, written by a child process. A file this
 /// test process holds open for writing is held by every other test thread's
 /// child between its fork and its exec as well, and running it then fails

@@ -5,8 +5,9 @@
 # the wrapper of a crate that depends on this one, such as orch's
 # scripts/orch-runtime) runs this script first where cargo is on PATH, and
 # otherwise names it; a caller that must answer while the binary is missing,
-# such as a harness hook, asks the wrapper to build nothing and runs
-# --detach, which starts the build beside it and answers at once.
+# such as a harness hook, finds it absent through lib/key.sh before calling
+# the wrapper and runs --detach instead, which starts the build beside it and
+# answers at once.
 set -euo pipefail
 
 usage() {

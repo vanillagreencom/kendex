@@ -477,27 +477,6 @@ pub fn isolated_row(name: &str) -> bool {
     false
 }
 
-/// A test child's `PATH` on which `absent` alone is missing: `bin` made to
-/// hold a link to every other program [`tool_path`] names, the first of
-/// each name, so the isolated tools still stand ahead of the inherited path.
-pub fn path_without(bin: &Path, absent: &str) -> String {
-    std::fs::create_dir_all(bin).unwrap();
-    let path = tool_path(&[]);
-    for dir in std::env::split_paths(&path) {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if name == absent || std::fs::symlink_metadata(bin.join(&name)).is_ok() {
-                continue;
-            }
-            std::os::unix::fs::symlink(entry.path(), bin.join(&name)).unwrap();
-        }
-    }
-    bin.display().to_string()
-}
-
 pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
