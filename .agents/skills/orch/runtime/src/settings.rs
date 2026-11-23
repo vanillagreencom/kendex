@@ -225,8 +225,9 @@ const DEFAULT_CI_FIX_MAX_CYCLES: u64 = 6;
 /// The minutes to the account's wall, at the measured rate, the overseer
 /// hands off at; 0 is no rate mark.
 pub const OVERSEER_WALL_MINUTES_KEY: &str = "ORCH_OVERSEER_WALL_MINUTES";
-/// The percent of its cgroup's memory cap the overseer's harness process
-/// hands off at; unset is no memory mark.
+/// The percent of the memory cap of its own cgroup, or of the level
+/// `ORCH_OVERSEER_MEMORY_CGROUP` names, the overseer's harness process hands
+/// off at; unset is no memory mark.
 pub const OVERSEER_MEMORY_PCT_KEY: &str = "ORCH_OVERSEER_MEMORY_PCT";
 /// The name of the control group on the harness process's path whose cap
 /// the memory mark judges; unset judges the group the process runs in.

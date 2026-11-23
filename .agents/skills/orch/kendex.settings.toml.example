@@ -604,9 +604,17 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 # keeps it.
 # AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT = "5"
 
-# The percent of its cgroup's memory cap at which the overseer's harness
-# process hands over. Unset or 0 sets no memory mark.
+# The percent of the memory cap at which the overseer's harness process
+# hands over. The cap judged is that of the process's own cgroup, or of the
+# level ORCH_OVERSEER_MEMORY_CGROUP names. Unset or 0 sets no memory mark.
 # ORCH_OVERSEER_MEMORY_PCT = "90"
+
+# The name of the cgroup on the harness process's path whose cap the memory
+# mark judges: the nearest group so named, the process's own included.
+# Unset judges the process's own cgroup. A judged group that keeps no cap
+# sets no mark, and a name no group on the path carries reads the mark
+# unmeasured.
+# ORCH_OVERSEER_MEMORY_CGROUP = "tmux.service"
 
 # How many checks pass before a warning nobody has acted on is reported
 # again. The first time it appears is always reported.

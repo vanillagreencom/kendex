@@ -9689,7 +9689,7 @@ fn the_memory_mark_judges_its_own_group_or_named_level_never_a_shared_slice() {
         &'a [(&'a str, u64, u64)],
         (MarkKey, &'a str),
     );
-    let rows: [Row; 7] = [
+    let rows: [Row; 8] = [
         (
             "a full shared slice over an uncapped scope",
             None,
@@ -9713,6 +9713,12 @@ fn the_memory_mark_judges_its_own_group_or_named_level_never_a_shared_slice() {
             Some("user@1000.service"),
             &[(MANAGER, 900, 1000), (SHARED, 990, 1000)],
             reached("90"),
+        ),
+        (
+            "a named level that is the own scope",
+            Some("tmux.service"),
+            &[(SCOPE, 850, 1000), (MANAGER, 100, 1000)],
+            reached("85"),
         ),
         (
             "a named level judged over a full own scope",

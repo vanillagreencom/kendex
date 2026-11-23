@@ -352,9 +352,9 @@ pub enum Level<'a> {
 /// cap on the path is read: a parent slice every session shares fills with
 /// the others' memory, and a hand-over frees none of it. `Live(None)`
 /// where that group keeps no cap; `Gone` where `proc_root` holds no such
-/// pid; unreadable where the group's cap or charge could not be read or
-/// parsed, and `cgroup-level-off-path` where no group on the path carries
-/// the named level, which is never a group without a cap.
+/// pid; unreadable where the group, its cap or its charge could not be
+/// read or parsed, and `cgroup-level-off-path` where no group on the path
+/// carries the named level, which is never a group without a cap.
 pub fn memory_at(
     proc_root: &Path,
     cgroup_root: &Path,
