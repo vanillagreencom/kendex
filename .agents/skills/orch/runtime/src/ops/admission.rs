@@ -21,8 +21,9 @@
 //! a holder whose set cannot be read blocks `holder-unreadable
 //! read=touched`. `changelog.d/` paths never count, and a path the request
 //! names in scope is left out of the comparison. A `read_only` lane, whose
-//! confinement binds its checkout read-only, touches none of its sources'
-//! paths: it meets no holder and its record holds none, while the tier
+//! confinement binds its checkout read-only, is no holder, by a shared path
+//! or by the blockers it carries, and its first launch touches none of its
+//! sources' paths: it meets no holder and records none, while the tier
 //! still classifies them.
 //!
 //! A holder a first launch would join is in its review where it owns an
@@ -731,15 +732,21 @@ fn holder_branch(fleet: &Path, holder: &str) -> Result<Option<String>> {
         .map(str::to_owned))
 }
 
-/// The one lane of the request's repository, not `done`, that carries every
-/// launch blocker, as its item or a joined one: the lane a blocked candidate
-/// ships with. None, or two, is no such lane.
+/// Whether a lane can hold a path or take a joined item: one of the
+/// request's repository, not `done`, and not `read_only`, whose confinement
+/// lets it write neither its own change nor a joined one's.
+fn holds(lane: &Lane, repo: Option<&str>) -> bool {
+    lane.status != LaneStatus::Done && !lane.read_only && same_repo(lane, repo)
+}
+
+/// The one lane that [`holds`] and carries every launch blocker, as its
+/// item or a joined one: the lane a blocked candidate ships with. None, or
+/// two, is no such lane.
 fn carrier(lanes: &[Lane], blockers: &[String], repo: Option<&str>) -> Option<usize> {
-    let mut found = lanes.iter().enumerate().filter(|(_, lane)| {
-        lane.status != LaneStatus::Done
-            && same_repo(lane, repo)
-            && blockers.iter().all(|b| lane.carries(b))
-    });
+    let mut found = lanes
+        .iter()
+        .enumerate()
+        .filter(|(_, lane)| holds(lane, repo) && blockers.iter().all(|b| lane.carries(b)));
     match (found.next(), found.next()) {
         (Some((index, _)), None) => Some(index),
         _ => None,
@@ -1055,7 +1062,7 @@ pub(super) fn judge(
             cause,
         };
     for (index, lane) in lanes.iter().enumerate().filter(|_| !touched.is_empty()) {
-        if lane.item == a.item || lane.status == LaneStatus::Done || !same_repo(lane, a.repo) {
+        if lane.item == a.item || !holds(lane, a.repo) {
             continue;
         }
         let read;

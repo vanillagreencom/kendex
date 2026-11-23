@@ -181,6 +181,7 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 - On the other surfaces, judge the same rule yourself.
 - The touched set is the item's Location paths, the paths the brief names and the paths the request adds.
 - A path the request's `in_scope` names as an append-only addition holds nothing.
+- A `read_only` launch touches nothing, and its lane holds nothing ([lane-directive.md § A read-only launch](../references/lane-directive.md#a-read-only-launch)).
 - The launch judges a holder by its lane's liveness:
 
 | The holder's lane | The launch |

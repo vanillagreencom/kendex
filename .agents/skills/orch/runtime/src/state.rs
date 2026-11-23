@@ -678,8 +678,10 @@ pub struct Lane {
     /// The touched set the admission judged: the union
     /// of the item's Location paths, the brief's paths, the change-scope
     /// paths over the named range and the paths a running lane added,
-    /// sorted and unique, and empty for a `read_only` lane, which writes
-    /// none of them. `None` on a record written with no judgement.
+    /// sorted and unique, and empty where a `read_only` launch is judged,
+    /// which writes none of them. A relaunch is not judged and keeps the
+    /// record's set, `read_only` or not, a set no holder judgement reads of a
+    /// `read_only` lane. `None` on a record written with no judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched: Option<Vec<String>>,
     /// The paths the launch named in scope: a file the brief names as an

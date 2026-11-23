@@ -1484,7 +1484,8 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
 /// Beside a running hosted holder of its item's Location path, the lane
 /// that writes is refused `join-unreachable`; the read-only one meets no
 /// holder and is recorded `read_only` with an empty touched set, which its
-/// relaunch keeps. The tier still classifies the Location paths: a
+/// relaunch keeps, while a launch over its `done` record naming none
+/// records a writing lane. The tier still classifies the Location paths: a
 /// read-only brief requesting `micro` over an instruction file is refused
 /// `tier-narrower`. A read-only lane this machine cannot confine, on a
 /// Copilot harness or a host, is refused `read-only-unconfined`. Each
@@ -1561,6 +1562,27 @@ fn a_read_only_lane_meets_no_holder_and_one_this_machine_cannot_confine_is_refus
     let out = fleet.op(&launch("KEN-P", &checkout));
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
     assert_eq!(fleet.lane("KEN-P")["read_only"], true);
+
+    // Over its `done` record, the hosted holder stopped, a launch naming no
+    // `read_only` is the item's next phase: a writing lane holding the
+    // Location paths.
+    let mut lanes = fleet.fleet()["lanes"].as_array().unwrap().clone();
+    for lane in &mut lanes {
+        lane["status"] = json!(if lane["item"] == "KEN-P" {
+            "done"
+        } else {
+            "stopped"
+        });
+    }
+    fleet.write_lanes(lanes);
+    let out = fleet.op(&launch("KEN-P", &checkout));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let lane = fleet.lane("KEN-P");
+    assert_eq!(
+        (&lane["read_only"], &lane["touched"]),
+        (&Value::Null, &json!(["skills/x/SKILL.md", "src/r.sh"])),
+        "{lane}"
+    );
 }
 
 /// Two candidates of one pass sharing a path, launched one after the other:
@@ -1614,12 +1636,27 @@ fn two_candidates_of_one_pass_ride_the_first_ones_lane() {
     );
 }
 
-/// A `linear` candidate whose one launch blocker is the item of a running
-/// lane before its review ships with that lane: it joins it in place of
-/// `launch-blocked`, its body naming no path.
+/// A running lane before its review takes the candidate tied to it: a
+/// `linear` candidate whose one launch blocker is its item, its body naming
+/// no path, joins it in place of `launch-blocked`. A holder that owns an
+/// open pull request is in its review, and a `read_only` one writes nothing
+/// and takes no join: the blocked candidate then refuses `launch-blocked`,
+/// one sharing its recorded path (a relaunch over a writing record keeps
+/// the set) launches beside it, and the holder's record and mailbox stand.
 #[test]
-fn a_candidate_blocked_by_a_running_lanes_item_joins_that_lane() {
-    for owns_pull in [true, false] {
+fn a_candidate_tied_to_a_running_lane_joins_it_unless_it_is_in_review_or_read_only() {
+    #[derive(Debug)]
+    enum Tie {
+        Blocker,
+        File,
+    }
+    for (tie, owns_pull, read_only, joins) in [
+        (Tie::Blocker, false, false, true),
+        (Tie::Blocker, true, false, false),
+        (Tie::Blocker, false, true, false),
+        (Tie::File, false, true, false),
+    ] {
+        let row = format!("{tie:?} owns_pull={owns_pull} read_only={read_only}");
         let mut fleet = Fleet::new();
         fleet.init_fleet();
         let root = fleet.checkout("h", None);
@@ -1627,8 +1664,14 @@ fn a_candidate_blocked_by_a_running_lanes_item_joins_that_lane() {
         let mut held = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
         held["mail_root"] = json!(root.display().to_string());
         held["repo"] = json!("o/r");
+        if read_only {
+            held["read_only"] = json!(true);
+        }
         fleet.write_lanes(vec![held]);
-        fleet.item_under("CC-1", "", &["KEN-H"]);
+        match tie {
+            Tie::Blocker => fleet.item_under("CC-1", "", &["KEN-H"]),
+            Tie::File => fleet.item("CC-1", "`src/a.sh`", 0, &[]),
+        }
         let pulls = if owns_pull {
             vec![fake_pull(8, "KEN-H", &["src/a.sh"])]
         } else {
@@ -1637,24 +1680,39 @@ fn a_candidate_blocked_by_a_running_lanes_item_joins_that_lane() {
         fleet.gh_api(&gh_map(&pulls));
         let mut request = launch("CC-1", &fleet.checkout("c", None));
         request["repo"] = json!("o/r");
-        let before = std::fs::read(fleet.fleet_path()).unwrap();
+        let before = fleet.fleet();
+        let before_bytes = std::fs::read(fleet.fleet_path()).unwrap();
         let out = fleet.op(&request);
-        if owns_pull {
-            let (key, fields) = refusal(&out);
-            assert_eq!(key, "launch-blocked", "{fields:?}");
-            assert_eq!(std::fs::read(fleet.fleet_path()).unwrap(), before);
-            assert!(inbox(&root, "KEN-H").is_empty());
-        } else {
+        if joins {
             let answer = reply(&out);
-            assert_eq!(answer["ok"], true, "{}", stderr(&out));
+            assert_eq!(answer["ok"], true, "{row}: {}", stderr(&out));
             let report = joined_or_launched(&answer);
             assert_eq!(
                 (&report["op"], &report["holder"]),
-                (&json!("joined"), &json!("KEN-H"))
+                (&json!("joined"), &json!("KEN-H")),
+                "{row}"
             );
             assert_eq!(fleet.lane("KEN-H")["carried"][0]["item"], "CC-1");
-            assert_eq!(inbox(&root, "KEN-H").len(), 1);
+            assert_eq!(inbox(&root, "KEN-H").len(), 1, "{row}");
+            continue;
         }
+        match tie {
+            Tie::Blocker => {
+                let (key, fields) = refusal(&out);
+                assert_eq!(key, "launch-blocked", "{row}: {fields:?}");
+                assert_eq!(
+                    std::fs::read(fleet.fleet_path()).unwrap(),
+                    before_bytes,
+                    "{row}: nothing written"
+                );
+            }
+            Tie::File => {
+                assert_eq!(reply(&out)["ok"], true, "{row}: {}", stderr(&out));
+                assert_eq!(fleet.lane("CC-1")["touched"], json!(["src/a.sh"]), "{row}");
+                assert_eq!(fleet.lane("KEN-H"), before["lanes"][0], "{row}");
+            }
+        }
+        assert!(inbox(&root, "KEN-H").is_empty(), "{row}");
     }
 }
 

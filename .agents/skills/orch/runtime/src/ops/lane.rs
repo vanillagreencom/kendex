@@ -118,7 +118,8 @@ pub struct LaunchLane {
     pub desktop: bool,
     /// The lane writes no repository file: its confinement binds the
     /// checkout read-only bar its `tmp` scratch, so its admission holds no
-    /// path. Recorded as `read_only` and kept as `desktop` is. Only a
+    /// path. Recorded as `read_only`: a relaunch keeps the record's whatever
+    /// it names, and a launch over a `done` record takes this one. Only a
     /// launch this machine confines can hold it; any other refuses
     /// `read-only-unconfined`.
     #[serde(default)]
