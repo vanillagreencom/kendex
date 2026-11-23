@@ -118,10 +118,10 @@ pub struct LaunchLane {
     pub desktop: bool,
     /// The lane writes no repository file: its confinement binds the
     /// checkout read-only bar its `tmp` scratch, so its admission holds no
-    /// path. Recorded as `read_only`: a relaunch keeps the record's whatever
-    /// it names, and a launch over a `done` record takes this one. Only a
-    /// launch this machine confines can hold it; any other refuses
-    /// `read-only-unconfined`.
+    /// path. Read only where the launch is judged, a first launch or one
+    /// over a `done` record, and recorded as `read_only`; a relaunch takes
+    /// the record's and ignores this one. Only a launch this machine
+    /// confines can hold it; any other refuses `read-only-unconfined`.
     #[serde(default)]
     pub read_only: bool,
     /// The opening instruction, read by the harness at its start. Not a
@@ -1389,8 +1389,13 @@ pub(super) fn launch_lane(
     }
     // A read-only lane holds no path, which stands only where this
     // machine's confinement binds its checkout read-only: a launch it
-    // cannot confine would write under an empty touched set.
-    let read_only = r.read_only || relaunch.is_some_and(|index| lanes[index].read_only);
+    // cannot confine would write under an empty touched set. It is decided
+    // where the launch is judged: a relaunch, unjudged, keeps the record's,
+    // so a writing record never turns read-only over the set it holds.
+    let read_only = match relaunch {
+        Some(index) => lanes[index].read_only,
+        None => r.read_only,
+    };
     if read_only && let Some(cause) = r.unconfined_cause()? {
         return Err(Error::from(agent_runtime::Error::refused(
             "read-only-unconfined",

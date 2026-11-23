@@ -21,10 +21,11 @@
 //! a holder whose set cannot be read blocks `holder-unreadable
 //! read=touched`. `changelog.d/` paths never count, and a path the request
 //! names in scope is left out of the comparison. A `read_only` lane, whose
-//! confinement binds its checkout read-only, is no holder, by a shared path
-//! or by the blockers it carries, and its first launch touches none of its
-//! sources' paths: it meets no holder and records none, while the tier
-//! still classifies them.
+//! confinement binds its checkout read-only, takes no join on either side:
+//! it is no holder, by a shared path or by the blockers it carries, and its
+//! first launch touches none of its sources' paths, so it meets no holder
+//! and records none while the tier still classifies them, and refuses
+//! `launch-blocked` on any launch blocker, whatever lane carries it.
 //!
 //! A holder a first launch would join is in its review where it owns an
 //! open pull request of the item's repository: one its record names by its
@@ -995,11 +996,15 @@ pub(super) fn judge(
         }
         if tracker == "linear" {
             // A first launch whose every blocker one lane carries ships
-            // with that lane where it stands live before its review.
+            // with that lane where it stands live before its review. A
+            // read-only one ships with none: a writing holder would run its
+            // brief outside the confinement it asked for.
             match launch_blockers(a.item, &item, |parent| {
                 (reads.item)(&reads.clis, tracker, parent, a.repo)
             }) {
-                Err(Error::LaunchBlocked { item, blockers }) if a.checkout.is_some() => {
+                Err(Error::LaunchBlocked { item, blockers })
+                    if a.checkout.is_some() && !a.read_only =>
+                {
                     match carrier(lanes, &blockers, a.repo) {
                         Some(index) => blocked = Some((index, blockers)),
                         None => return Err(Error::LaunchBlocked { item, blockers }),

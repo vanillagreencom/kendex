@@ -105,8 +105,8 @@ A request naming `read_only: true` launches a lane whose confinement binds its c
 
 - Its first launch judges an empty touched set: it meets no holder, and its record holds no path.
 - The tier is still judged over the paths a writing lane's touched set would hold ([oversee.md § 2. Select Work](../workflows/oversee.md#2-select-work), Shared files).
-- A read-only lane is no holder and takes no join: a launch sharing a path with it passes it, and one whose launch blockers it alone carries refuses `launch-blocked`.
-- A relaunch keeps the record's `read_only` and touched set (§ Recovery relaunch), and a launch over a `done` record takes its request's.
+- A read-only lane takes no join on either side. A launch sharing a path with it passes it, and one whose launch blockers it alone carries refuses `launch-blocked`. A read-only launch with any launch blocker refuses `launch-blocked`, whatever lane carries it.
+- `read_only` is decided where the launch is judged. A relaunch keeps the record's `read_only` and touched set whatever it names (§ Recovery relaunch): one naming `read_only: true` over a writing record launches a writing lane. A launch over a `done` record is judged, and takes its request's.
 
 ### After the lane is recorded `preparing`
 
@@ -244,7 +244,7 @@ A relaunch sends the item's `launch-lane` request again over its standing record
 - A relaunch without `refresh` drops the record's `refresh`.
 - The confirmed launch writes `harness`, `account`, `model` and `effort` from the request, each null where the request names none: carry each one the replacement keeps.
 - Left out, `tracker`, `repo`, `over_cap`, `permission` and `obligation` keep the record's value.
-- A recorded `desktop` or `read_only` stands whatever the request names.
+- A recorded `desktop` stands whatever the request names, and so does the record's `read_only`, set or not.
 - A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
 - A relaunch is not judged by the [Ancestor gate](skill-rules.md#ancestor-gate) or the file-overlap hold; it keeps the record's touched sets and tier.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.
