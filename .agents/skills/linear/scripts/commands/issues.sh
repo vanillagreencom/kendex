@@ -3374,18 +3374,16 @@ block_issue() {
         return 1
     fi
 
-    # Add blocked-by relation. The relation is what holds the launch, so its
-    # rejection cannot be reported as a successful block. The label stays:
-    # on an issue with no blocking relation it holds orch's selection until
-    # `issues unblock` removes it.
+    # Add blocked-by relation. A rejected relation is not a successful block.
+    # The label applied above stays on the issue.
     local relation_result
     if ! relation_result=$(add_relation "$issue_id" --blocked-by "$blocker"); then
         jq -cn --arg id "$issue_id" --arg blocker "$blocker" \
-            '{error: ("Blocking relation could not be created between " + $id + " and " + $blocker + " - the blocked label was applied and no blocking relation holds the issue; the label holds it from orch selection until issues unblock removes it")}' >&2
+            '{error: ("Blocking relation could not be created between " + $id + " and " + $blocker + " - the blocked label was applied; no blocking relation to " + $blocker + " was created")}' >&2
         return 1
     fi
     if [ "$(echo "$relation_result" | jq -r '.success // .already_exists // false')" != "true" ]; then
-        echo "$relation_result" | jq -c '{error: "Blocking relation was rejected - the blocked label was applied and no blocking relation holds the issue; the label holds it from orch selection until issues unblock removes it", data: .}' >&2
+        echo "$relation_result" | jq -c --arg blocker "$blocker" '{error: ("Blocking relation was rejected - the blocked label was applied; no blocking relation to " + $blocker + " was created"), data: .}' >&2
         return 1
     fi
 
