@@ -270,6 +270,8 @@ pub const CLAUDE_TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 /// router supplies one (`pi-extensions/pi-claude-bridge/src/query-options.ts`);
 /// a Pi launch on its own `anthropic/` provider bills no named seat
 /// ([`crate::harness::Harness::pool`]) and is given no sign-in to clear for.
+/// The mailbox's cloud-session send (`lane-mail`, `lm_send_channel`) clears
+/// the same names, so a directive reaches the session this account created.
 pub const CLAUDE_OUTRANKING: [&str; 13] = [
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",

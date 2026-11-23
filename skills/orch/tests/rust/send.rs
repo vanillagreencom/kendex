@@ -1526,9 +1526,12 @@ fn a_cloud_launch_from_a_checkout_whose_origin_is_off_github_makes_no_worktree()
 /// token setting declares, since a cloud session runs on the claude.ai
 /// login a declared `setup-token` cannot stand in for: on an account the
 /// setting declares a file for, the token the launch inherited is cleared,
-/// none is exported, and the session is created.
+/// none is exported, and the session is created. A directive the same
+/// caller then sends goes to that session on the same login, the inherited
+/// token cleared again, since a send under another account's token could
+/// not reach it.
 #[test]
-fn a_cloud_launch_on_a_declared_account_signs_in_by_its_stored_login() {
+fn a_cloud_launch_and_its_directive_sign_in_by_the_accounts_stored_login() {
     let dir = tempfile::tempdir().unwrap();
     let world = cloud_world(dir.path());
     let init = world.run(&["state", "init", "--fleet"], &[]);
@@ -1552,6 +1555,39 @@ fn a_cloud_launch_on_a_declared_account_signs_in_by_its_stored_login() {
         std::fs::read_to_string(&signed).unwrap(),
         "token=unset\n",
         "{report}"
+    );
+    let directive = dir.path().join("directive.txt");
+    std::fs::write(&directive, TEXT).unwrap();
+    std::fs::remove_file(&log).unwrap();
+    let sent = world.run(
+        &[
+            "send",
+            "--item",
+            "CC-40",
+            "--file",
+            &directive.display().to_string(),
+        ],
+        &[
+            ("CLAUDE_CLOUD_LOG", log.as_path()),
+            ("CLAUDE_CLOUD_SIGN_IN_LOG", signed.as_path()),
+            ("CLAUDE_CODE_OAUTH_TOKEN", Path::new("inherited")),
+            ("LANE_MAIL_CLI", &real_lane_mail()),
+        ],
+    );
+    assert_eq!(result(&sent)["send"]["result"], "sent", "{}", stderr(&sent));
+    assert_eq!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        one_call(&world.account),
+        "the directive is queued into the created session under its account"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&signed).unwrap(),
+        "token=unset\ntoken=unset\n",
+        "the send signs in as the create did: {}",
+        stderr(&sent)
     );
 }
 
