@@ -1,7 +1,8 @@
 //! `agent-runtime session load` through the executable, over session files
-//! in the shape each harness records: Copilot CLI's a recorded 1.0.112 log
-//! with its values blanked, the others built from the sources
-//! `session::entries` and `context::response` name.
+//! in the shape each harness records. Copilot CLI has a recorded 1.0.112
+//! log with its values blanked and a built file; every other harness's
+//! file is built from the sources `session::entries` and
+//! `context::response` name.
 
 #[path = "isolation.rs"]
 mod isolation;
@@ -71,6 +72,11 @@ const ROWS: &[Row] = &[
         start: 12540,
         more: || {
             vec![
+                // The UserMessage's text.
+                (
+                    "/context/0/bytes",
+                    json!({"basis": "measured", "value": 18}),
+                ),
                 (
                     "/sections/0/read",
                     json!({"kind": "file", "file": "a/SKILL.md"}),
@@ -110,7 +116,7 @@ const ROWS: &[Row] = &[
     Row {
         harness: "copilot",
         fixture: "load/copilot.jsonl",
-        start: 20100,
+        start: 20130,
         more: || {
             vec![
                 // The turn as the CLI sent it, its datetime included.
@@ -126,6 +132,10 @@ const ROWS: &[Row] = &[
                     "/sections/0/tokens",
                     json!({"basis": "measured", "value": 12}),
                 ),
+                (
+                    "/sections/1/read",
+                    json!({"kind": "file", "file": "/w/b/SKILL.md"}),
+                ),
             ]
         },
     },
@@ -133,15 +143,7 @@ const ROWS: &[Row] = &[
         harness: "pi",
         fixture: "load/pi.jsonl",
         start: 10070,
-        more: || {
-            vec![
-                // The turn and the extension's text after it.
-                (
-                    "/context/0/bytes",
-                    json!({"basis": "measured", "value": 18 + 13}),
-                ),
-            ]
-        },
+        more: Vec::new,
     },
 ];
 

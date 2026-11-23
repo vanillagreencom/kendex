@@ -10,11 +10,13 @@
 //! The four sources are the first user turn (the thread's first delivery),
 //! later user turns, rule reads (a tool call that reads a Markdown file, a
 //! `jarvis-section` section or a skill) and every other tool result.
-//! Harness-added text joins the item before it in the record where the
-//! record holds it apart, as [`Entry::Text`] names it on Claude Code and
-//! Pi; Copilot CLI's is inside the turn's own text. Codex records its own
+//! Harness-added text joins the item before it where the record holds it
+//! apart as [`Entry::Text`] names it, on Claude Code; Copilot CLI's is
+//! inside the turn's own text. Codex records its own
 //! (`<environment_context>` and the like) as `message` items that also
-//! repeat each user turn, and this reader leaves them out of the bytes.
+//! repeat each user turn, and Pi an extension's as `custom_message`
+//! entries, which need not belong to the item before them; this reader
+//! leaves both out of the bytes.
 //!
 //! A source's bytes are measured from the record, and unclear where a
 //! result's text is not its row's (a Copilot skill's body). Its tokens are
@@ -52,8 +54,8 @@ pub enum Figure {
     /// Derived from measured figures by this module's attribution rule.
     Attributed { value: u64 },
     /// The record holds the figure only inside a share this reader cannot
-    /// settle to one source, item or section, or outside the row that
-    /// names its item: never zero.
+    /// settle to one source, item or section, or does not hold the text
+    /// the item added, such as a Copilot skill's body: never zero.
     Unclear,
     /// The harness gives no reading of the figure: never zero.
     Unsupported,
@@ -549,10 +551,11 @@ struct Rules {
 /// a skill load, and in a shell command each `jarvis-section` and each
 /// Markdown operand of a [`PRINTERS`] program. A command splits at each
 /// `;`, `&`, `|` and newline, quoted or not, so a heading holding one reads
-/// as [`Read::Unreadable`]; `>&` and `&>` redirect and split nothing, and
-/// a redirection's target is no operand. A segment that reads no rule, and
-/// a `cat` operand that is not Markdown, is more output; another printer's
-/// other operands are taken for its script or count.
+/// as [`Read::Unreadable`]; `>&` and `&>` redirect and split nothing. An
+/// output redirection's target and a heredoc's or here-string's word are
+/// no operand; an input redirection's file is one. A segment that reads
+/// no rule, and a `cat` operand that is not Markdown, is more output;
+/// another printer's other operands are taken for its script or count.
 fn rule_reads(action: &Action) -> Rules {
     let command = match action {
         Action::Read(path) if path.ends_with(".md") => {
@@ -594,15 +597,20 @@ fn rule_reads(action: &Action) -> Rules {
                     }))
             }
             name if PRINTERS.contains(&name) => {
-                // A redirection's target is no operand.
                 let mut target = false;
                 for word in words.map(|word| word.trim_matches(['\'', '"'])) {
                     if std::mem::take(&mut target) || word.starts_with('-') {
                         continue;
                     }
-                    if word.contains(['<', '>']) {
+                    if word.contains('>') || word.contains("<<") {
                         target = word.ends_with(['<', '>']);
-                    } else if word.ends_with(".md") {
+                        continue;
+                    }
+                    let word = word.strip_prefix('<').unwrap_or(word);
+                    if word.is_empty() {
+                        continue;
+                    }
+                    if word.ends_with(".md") {
                         rules.reads.push(Read::File {
                             file: word.to_owned(),
                         });
@@ -668,6 +676,14 @@ mod tests {
             ),
             (shell("cat b.md c.txt"), vec![file("b.md")], true),
             (shell("cat a.md 2>/dev/null"), vec![file("a.md")], false),
+            (shell("cat a.md &>/dev/null"), vec![file("a.md")], false),
+            (shell("cat a.md > b.md"), vec![file("a.md")], false),
+            (shell("cat < a.md"), vec![file("a.md")], false),
+            (
+                shell("sed -n '1,80p' <docs/a.md"),
+                vec![file("docs/a.md")],
+                false,
+            ),
             (shell("git log -1 -- notes.md"), vec![], true),
         ];
         for (action, reads, more) in rows {

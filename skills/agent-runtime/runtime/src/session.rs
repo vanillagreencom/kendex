@@ -580,8 +580,7 @@ pub enum Entry {
     /// Text the harness added to the context beside a turn or a result:
     /// each text block of a Claude Code `user` row that is not a turn,
     /// such as a skill body a slash command expands to, marked `isMeta`
-    /// (measured on Claude Code 2.1.330), and a Pi `custom_message`, an
-    /// extension's text that enters the context.
+    /// (measured on Claude Code 2.1.330).
     Text { bytes: u64 },
     /// A tool call the model made.
     Call { id: String, action: Action },
@@ -661,7 +660,7 @@ pub fn tree_link(harness: Harness, row: &Value) -> Option<(&str, Option<&str>)> 
 /// - Pi (Pi 1.6.0's session format and message type documentation):
 ///   a turn's entry `id`; an assistant message's `toolCall` blocks,
 ///   `read` naming `path` and `bash` `command`; a `toolResult` message's
-///   text by `toolCallId`; a `custom_message`'s `content`.
+///   text by `toolCallId`.
 pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
     fn text(value: Option<&Value>) -> &str {
         value.and_then(Value::as_str).unwrap_or_default()
@@ -799,11 +798,6 @@ pub fn entries(harness: Harness, row: &Value) -> Vec<Entry> {
         Harness::Pi => {
             if let Some(turn) = turn(row.get("id")) {
                 return vec![turn];
-            }
-            if kind == "custom_message" {
-                return vec![Entry::Text {
-                    bytes: text_bytes(row.get("content"), "text"),
-                }];
             }
             let Some(message) = row.get("message").filter(|_| kind == "message") else {
                 return Vec::new();

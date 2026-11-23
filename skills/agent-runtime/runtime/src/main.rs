@@ -295,8 +295,9 @@ enum SessionOp {
     /// turn) left, the context by source (`first-delivery`, `later-turns`,
     /// `rule-reads`, `tool-results`) and each rule section it read. Every
     /// figure names its `basis`: `measured`, `attributed`, `unclear` (a
-    /// share the reader cannot settle to one owner) or `unsupported` (no
-    /// reading from the harness).
+    /// share the reader cannot settle to one owner, or an item whose text
+    /// the record does not hold, such as a Copilot skill's body) or
+    /// `unsupported` (no reading from the harness).
     /// Refuses `session-branched` for a Pi file holding a branch and
     /// `session-usage-unread` for a usage count that is no whole number.
     Load {
