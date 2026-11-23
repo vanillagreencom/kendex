@@ -1,6 +1,6 @@
 # Merge-pr restack cycle
 
-Run this cycle when the base, not CI, blocks a pull request. Two verdicts route here: a `conflicting` `queue-watch` verdict in [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) step 1, and the `worktree-push-base-conflict` refusal of [submit-pr.md](submit-pr.md) § 2 step 1.
+Run this cycle when the base, not CI, blocks a pull request. Two verdicts route here: a `conflicting` `queue-watch` verdict in [merge-contracts.md § Queue wait](../references/merge-contracts.md#queue-wait), and the `worktree-push-base-conflict` refusal of [submit-pr.md](submit-pr.md) § 2 step 1.
 
 - A submit-pr caller runs steps 1-3, then continues its own workflow.
 - A merge-pr caller runs steps 1-4, and step 4 returns it to merge-pr.md.
@@ -19,7 +19,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
 
    - Read its node id and live arm with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json id,autoMergeRequest`.
    - Where `autoMergeRequest` is set, first disable auto-merge with `github.sh merge-queue-mutation disablePullRequestAutoMerge [PR_NODE_ID]`.
-   - Then read the PR's `mergeQueueEntry` with the GraphQL query of merge-pr.md § 5 step 1's Entry-ahead wait, given this PR's number and its repository's owner and name.
+   - Then read the PR's `mergeQueueEntry` with the GraphQL query of [merge-contracts.md § Entry-ahead wait](../references/merge-contracts.md#entry-ahead-wait), given this PR's number and its repository's owner and name.
    - Where the entry is non-null, call `github.sh merge-queue-mutation dequeuePullRequest [PR_NODE_ID]`.
    - Then read `autoMergeRequest` and `mergeQueueEntry` again. Either one still set hands back without pushing.
 

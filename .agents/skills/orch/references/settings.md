@@ -93,7 +93,7 @@ The keys' rules, in the table's order:
 - `ORCH_OVERSEER_REVIEW_LOGIN`: each approval records it, and its read-back matches it.
 - `ORCH_OVERSEER_REVIEW_LOGIN`: unset, `approve-head` refuses before any call.
 - `CI_WAIT_MAX_SECS`: set it above the longest required job.
-- `QUEUE_WAIT_ARMED_MINUTES`: `workflows/merge-pr.md` reads it through `orch-env`.
+- `QUEUE_WAIT_ARMED_MINUTES`: [merge-contracts.md § Armed budget](merge-contracts.md#armed-budget) reads it through `orch-env`.
 - `QUEUE_WAIT_REACH_CMD`: its input is the group head's failed check names, one per line.
 - `QUEUE_WAIT_REACH_CMD`: `QUEUE_REACH_CLASS`, `QUEUE_REACH_DOCS_ONLY` and `QUEUE_REACH_PATHS` (a file of paths) describe the change.
 - `QUEUE_WAIT_REACH_CMD`: the command prints `outside NAME` or `within NAME` per check and exits 0.

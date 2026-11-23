@@ -146,7 +146,7 @@ Report: what was fixed, the validate status, and any unrelated failures.
 
 ## 4. Merge-Group Failures
 
-The Recovery cycle of [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) step 1 hands this workflow a merge-group run as `[RUN_ID]`. The run has no pull request; it runs on GitHub's temporary queue branch. Its head carries this pull request's commits on top of those of the pull requests queued ahead. Read each of these as its own tool call:
+[merge-contracts.md § Recovery cycle](../references/merge-contracts.md#recovery-cycle) hands this workflow a merge-group run as `[RUN_ID]`. The run has no pull request; it runs on GitHub's temporary queue branch. Its head carries this pull request's commits on top of those of the pull requests queued ahead. Read each of these as its own tool call:
 
 1. The group's head, `[GROUP_HEAD]`:
 
@@ -243,7 +243,7 @@ Every other outcome stops here and never reaches the wait below:
 - A red local run is the fix's failure: report it and stop.
 - A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. On a `run-live` refusal, take the wait or stop route of [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate), then start the reproduction again. Report any other unproved reproduction and stop.
 
-The pull-request wait proves nothing about a merge-group fix. The caller re-arms only under the re-queue rule of the Recovery cycle in [merge-pr.md § 5](merge-pr.md#5-execute-the-merge).
+The pull-request wait proves nothing about a merge-group fix. The caller re-arms only under [merge-contracts.md § Re-queue rule](../references/merge-contracts.md#re-queue-rule).
 
 ### 5.3 CI wait
 
@@ -262,7 +262,7 @@ A `pr-not-open` refusal means the pull request is closed or merged: report its `
 **One rerun per head.** On `status=complete` with `verdict=fail`, rerun a transient runner failure once on the pull request's head before routing the result.
 
 - Follow One rerun per head in [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery), with `[STATE_KEY]` as the key.
-- Never rerun a merge group's run; a same-head re-queue under the re-queue rule of [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) takes its place.
+- Never rerun a merge group's run; a same-head re-queue under [merge-contracts.md § Re-queue rule](../references/merge-contracts.md#re-queue-rule) takes its place.
 - Where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then request it:
 
 ```bash

@@ -1,6 +1,6 @@
 # Merge attempt
 
-Read when [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1 takes the direct attempt, and when it or [submit-pr.md](../workflows/submit-pr.md) § 2 step 5 records a merge decision. Section and step numbers below are merge-pr.md's. The attempt keeps that workflow's bindings, among them `[PREPARED_HEAD]`, `[MERGE_REPO_SLUG]`, `[ITEM_DIR]` and the gate mode, and its stop and unarm rules.
+Read when [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1 takes the direct attempt, and when it or [submit-pr.md](../workflows/submit-pr.md) § 2 step 5 records a merge decision. Section and step numbers below are merge-pr.md's. The attempt keeps that workflow's bindings, among them `[PREPARED_HEAD]`, `[MERGE_REPO_SLUG]`, `[ITEM_DIR]` and the gate mode, and the stop and unarm rules of [merge-contracts.md § Stop routes](merge-contracts.md#stop-routes).
 
 ## Direct attempt
 
@@ -12,7 +12,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 The JSON's `mergeable` routes first:
 
-- `CONFLICTING` ends the attempt before any wait. Write `[PREPARED_HEAD]` and the word `conflict` in `## Merge decision` by § Record the merge decision, with no route line. Then take merge-pr.md § 5 step 1's Restack cycle. A conflict never spends the pending bound below.
+- `CONFLICTING` ends the attempt before any wait. Write `[PREPARED_HEAD]` and the word `conflict` in `## Merge decision` by § Record the merge decision, with no route line. Then take [merge-contracts.md § Restack cycle](merge-contracts.md#restack-cycle). A conflict never spends the pending bound below.
 - `MERGEABLE` and `UNKNOWN` go on to the wait.
 
 The wait is the runtime's `verify-pr` operation over the PR's current head. Run it through [Waiter launch](waiter-launch.md). Repeat it at most once every 180 seconds while `result.status` is `pending` or `unreadable`, within the lane's CI budget `CI_WAIT_MAX_SECS` ([settings.md § Review and CI](settings.md#review-and-ci)). `[OWNER/REPO]` is `[MERGE_REPO_SLUG]`:
@@ -33,7 +33,7 @@ The lane owns this wait on the approved head. Read its completion file:
 - `status=pending` or `status=unreadable` at the budget: re-read the head with merge-pr.md § 5 step 1's endpoint read.
   - A moved head returns to § 3 for a fresh readiness check and approval.
   - Otherwise add one to `[CI_PENDING_COUNT]`. While it is below `[CI_PENDING_LIMIT]=3`, relaunch through Waiter launch.
-  - At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, the pending checks and the wait logs. Then unarm by § 1 and hand back.
+  - At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, the pending checks and the wait logs. Then unarm by merge-contracts.md § Stop routes and hand back.
   - Never attempt the merge on that pending bound.
 - `status=complete` with `verdict=fail`: rerun a transient runner failure once per head before the attempt. [submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key.
 
@@ -92,7 +92,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 Exit `0` merged the prepared head: continue to merge-pr.md § 5 step 2.
 
-Exit `75` means GitHub queued or armed the PR: take the `queue-watch` wait below merge-pr.md § 5 step 1's `--auto` arm.
+Exit `75` means GitHub queued or armed the PR: take [merge-contracts.md § Queue wait](merge-contracts.md#queue-wait).
 
 Exit `1` (`BLOCKED`): classify the refusal.
 
@@ -104,6 +104,6 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 - Where it prints `retry: same-head`, add one to `[MERGE_RETRY_COUNT]`.
   - While it is below `[MERGE_RETRY_LIMIT]=3`, re-enter merge-pr.md § 5 step 1. Its thread read and review call run before each new attempt, and its endpoint read routes a moved head.
-  - At the limit, record `merge-refusal-retry-limit`, gate `merge`. Put the last attempt's `BLOCKED` or `pr-merge:` stderr line first, then the head, each attempt's exit and stderr, and each classifier output. Unarm by § 1 and hand back.
+  - At the limit, record `merge-refusal-retry-limit`, gate `merge`. Put the last attempt's `BLOCKED` or `pr-merge:` stderr line first, then the head, each attempt's exit and stderr, and each classifier output. Unarm by merge-contracts.md § Stop routes and hand back.
   - Such a refusal never returns to § 3.2.
 - Without that line, return to § 3.2 with the cause and its printed detail.

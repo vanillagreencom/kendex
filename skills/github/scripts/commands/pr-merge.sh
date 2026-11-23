@@ -97,8 +97,8 @@ Merge-mode exit codes:
   blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
 
 Exit 75 is volatile:
-  A queue ejection can disarm merge state. Block on the orch runtime's queue watch, .agents/skills/orch/scripts/orch-runtime queue-watch --item ITEM --repo OWNER/REPO --pr <N> --poll <secs> --max-wait <secs>, before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does.
-  Route verdicts through orch merge-pr.md § 5 step 1's table, named by SKILL.md § PR Merge Outcomes; this skill's scripts/pr-watch.sh still reports fleet attention.
+  A queue ejection can disarm merge state. Block on the orch runtime's queue watch, .agents/skills/orch/scripts/orch-runtime queue-watch --item ITEM --repo OWNER/REPO --pr <N> --poll <secs> --max-wait <secs>, before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-contracts.md § Queue wait does.
+  Route verdicts through orch merge-contracts.md § Queue wait's table, named by SKILL.md § PR Merge Outcomes; this skill's scripts/pr-watch.sh still reports fleet attention.
   Re-arm only through the merge route of orch merge-pr.md § 5 step 1 after
   that route: the workflow picks the direct attempt or an explicit queue
   arm after its readiness and approval checks.
@@ -794,7 +794,7 @@ volatile_note() {
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; follow orch merge-pr.md § 5 for PR #$pr_num" >&2
     local reducer="GH_REPO=$repo .agents/skills/github/scripts/pr-watch.sh (disarmed lines)"
     [ -n "$repo" ] || reducer=".agents/skills/github/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
-    echo "  Block on the orch runtime's queue watch once, .agents/skills/orch/scripts/orch-runtime queue-watch --item ITEM --repo ${repo:-OWNER/REPO} --pr $pr_num, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, which picks the direct attempt or an explicit queue arm after readiness and approval checks" >&2
+    echo "  Block on the orch runtime's queue watch once, .agents/skills/orch/scripts/orch-runtime queue-watch --item ITEM --repo ${repo:-OWNER/REPO} --pr $pr_num, with a poll interval and budget sized as orch merge-contracts.md § Queue wait does; route its verdict by that same section, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, which picks the direct attempt or an explicit queue arm after readiness and approval checks" >&2
 }
 
 exit_queued() {

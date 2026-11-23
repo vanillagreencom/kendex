@@ -109,7 +109,7 @@ Outcomes and routes:
 - Full contract: `pr-merge --help`.
 - Exit `75` is volatile:
   - The caller arms one exact head and waits on that head with the orch runtime's `queue-watch`.
-  - Orch's `merge-pr.md` § 5 step 1 maps its verdicts to routes.
+  - Orch's `references/merge-contracts.md` § Queue wait maps its verdicts to routes.
   - An unrecognized verdict is never re-armed.
 - If `can_merge` is false with no `issues`, read `state`.
 - `pr-merge` resolves no review thread.

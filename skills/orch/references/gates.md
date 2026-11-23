@@ -186,9 +186,9 @@ How each tool's replies route:
   - A `fail` verdict takes the one rerun per head of [submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery) before ci-fix.
   - The merge state is read through `pr-merge --check` before the first call, and `CONFLICTING` takes the workflow's `conflict` route, never the wait.
 - `copilot-wait`: its bound and its reply's routes are [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse)'s.
-- `queue-watch`: one wait bounded by `--max-wait`, its reply's `status`, `verdict` and `cause` routed by [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1's table.
+- `queue-watch`: one wait bounded by `--max-wait`, its reply's `status`, `verdict` and `cause` routed by the table of [merge-contracts.md § Queue wait](merge-contracts.md#queue-wait).
 
-Per-verdict routing lives in the workflows: `submit-pr.md` § 4 and § 5, `merge-pr.md` § 5, and [merge-attempt.md](merge-attempt.md).
+Per-verdict routing lives in the workflows, `submit-pr.md` § 4 and § 5 and `merge-pr.md` § 5, and in [merge-attempt.md](merge-attempt.md) and [merge-contracts.md](merge-contracts.md).
 
 `blocked` is an approval, a `proceeded` or an `off` that the runtime refuses to publish, under either mode, while a `regression-against-main` entry stands open in `escalated_items[]`.
 
