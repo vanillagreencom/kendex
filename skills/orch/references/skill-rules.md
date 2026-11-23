@@ -32,7 +32,7 @@ Omit `name` from a reviewer's `Agent` call, or start the name with the reviewer'
 - Never derive a class from an estimate, a workflow tier (`micro`, `small`, `standard`), complexity or a risk category.
 - Choose effort per task; a class holds no effort.
 
-A fleet launch states the class and its reason on the `launch-lane` request ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)).
+A fleet launch states the class and its reason on the `launch-lane` request ([lane-launch.md § Lane directive](lane-launch.md#lane-directive)).
 
 When the lane's brief names `Model class:`, carry that field on each dev, review or QA delegation:
 
@@ -501,7 +501,7 @@ No person reads a lane's pane. The overseer learns a lane's state from `lane-mai
 - A lane follows the mode its brief states.
 - A lane whose brief states none reads `orch-env ORCH_LANE_OUTPUT quiet`.
 
-The mode governs a lane: a session whose launch brief names a lane status file and a mailbox ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A session with no such brief has a person at its pane and prints as written, whatever the setting.
+The mode governs a lane: a session whose launch brief names a lane status file and a mailbox ([lane-launch.md § Lane directive](lane-launch.md#lane-directive)). A session with no such brief has a person at its pane and prints as written, whatever the setting.
 
 Under `quiet`:
 
@@ -514,19 +514,19 @@ Under `quiet`:
   - That folder is the parent of the `result.path` that `orch-runtime state path --item [ISSUE_ID]` prints.
   - The case covers merge-pr's own later steps (§ 6 Present Results) and a caller's steps after it ([micro.md](../workflows/micro.md) § 5).
   - The condition decides the destination, so a block's citation names this rule alone.
-  - The overseer reads the file as [oversee.md](../workflows/oversee.md) § Bounded lane reads states.
+  - The overseer reads the file as [oversee-reads.md](oversee-reads.md) § Bounded lane reads states.
 - A block standing ahead of an ask gate is that ask's own file. Write it, then send it as `lane-mail ask --file [PATH]` ([§ Lane mail](#lane-mail)): the question carries the block, and the pane carries one line.
 
 The lane status file is never a block destination.
 
-- Under [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) it carries the current step, the blocker, the handoff paths, the validation minutes per round, the review line and the merge-attempt record (exit, exact head and returned route), and nothing else.
+- Under [lane-launch.md § Lane directive](lane-launch.md#lane-directive) it carries the current step, the blocker, the handoff paths, the validation minutes per round, the review line and the merge-attempt record (exit, exact head and returned route), and nothing else.
 - Each rewrite keeps the review line and that record.
 
 Never suppress harness output. The prompt, the usage banner, dialogs and the end-of-turn line stay as the harness prints them.
 
 The watch hands each event the pane lines that event's handling reads and no more, capped by `ORCH_WATCH_TAIL_LINES`.
 
-- [oversee.md](../workflows/oversee.md) § Bounded lane reads takes that payload as the lane's state.
+- [oversee-reads.md](oversee-reads.md) § Bounded lane reads takes that payload as the lane's state.
 - [oversee-events.md § Event kinds](oversee-events.md#event-kinds) names the lines each kind carries.
 - Under `quiet` those lines are the step lines and the `output: [PATH]` lines.
 

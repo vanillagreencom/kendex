@@ -64,7 +64,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 Record the decision after each attempt, here or in submit-pr.md § 2 step 5, before routing its exit.
 
 - Keep the attempt's exit, its `--expected-head` value and its `merge-route: admin|queue cause=...` line.
-- A lane ([skill-rules.md § Lane Output](skill-rules.md#lane-output)) stores them in the lane status file under [oversee.md § 3 Lane directive](../workflows/oversee.md#lane-directive).
+- A lane ([skill-rules.md § Lane Output](skill-rules.md#lane-output)) stores them in the lane status file under [lane-launch.md § Lane directive](lane-launch.md#lane-directive).
 - A session outside a lane keeps the durable record in the PR body alone and reports failures in that section's output mode.
 
 On exit `1`, first apply [merge-pr-restack.md § Unarm at a stop](../workflows/merge-pr-restack.md#unarm-at-a-stop) with `[STATE_KEY]` and `[STOP_DIR]=[WORKTREE_PATH]/tmp`.

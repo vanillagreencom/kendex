@@ -8,7 +8,7 @@ A hosted lane can wait for its own queued pull request, for another pull request
 
 - Park it to stop sandbox billing; the park keeps its disk and session.
 - Park when the lane's notice names its queue wait, a dependency hold, its ask or a hold with no wait.
-- A `heartbeat` also shows queue waits from the lane's status file ([oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads)).
+- A `heartbeat` also shows queue waits from the lane's status file ([oversee-reads.md § Bounded lane reads](oversee-reads.md#bounded-lane-reads)).
 - The park is a `close-lane` request with a park `mode`. Write it with the harness file tool and run it as [lane-reach.md § Lane close](lane-reach.md#lane-close) states.
 - The close's own reads decide admission.
 

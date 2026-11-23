@@ -1,6 +1,6 @@
 # Micro Workflow
 
-The tier for a change of a few lines. One agent reads the item, edits, commits, pushes, opens the pull request and arms it. No dev subagent, review cycle, QA cycle or validation battery runs. [oversee.md](oversee.md) § Item Tier assigns the tier through `orch-runtime tier`. A `small` item runs [small.md](small.md); every other item runs [start.md](start.md).
+The tier for a change of a few lines. One agent reads the item, edits, commits, pushes, opens the pull request and arms it. No dev subagent, review cycle, QA cycle or validation battery runs. [lane-launch.md](../references/lane-launch.md) § Item Tier assigns the tier through `orch-runtime tier`. A `small` item runs [small.md](small.md); every other item runs [start.md](start.md).
 
 | Command | Flow |
 |---------|------|
@@ -27,7 +27,7 @@ The cost of the check decides whether the overseer or a lane makes a change, nev
 - A change the commit chain checks in its diff-scoped pass is this tier's.
 - A change whose check needs a build or a test run takes a lane in its own sandbox. A lane is keyed by a tracker item, so `directive-[ID]` never runs as a lane.
   - The overseer files the change as a tracker item from the directive, as it files an item an `owner-note` asks for ([oversee-events.md § File one item alone](../references/oversee-events.md#file-one-item-alone)).
-  - That item launches under its own key, at the tier [oversee.md](oversee.md) § Item Tier assigns it, with neither the directive's branch nor its pull request. Its lane makes the change again from the item.
+  - That item launches under its own key, at the tier [lane-launch.md](../references/lane-launch.md) § Item Tier assigns it, with neither the directive's branch nor its pull request. Its lane makes the change again from the item.
 
 The admission that launched the run reads the tier once, and the tier floors the run. The admission judges a later edit by the paths it touches. § 4 reads the class of the pushed range, its production lines included.
 
@@ -60,7 +60,7 @@ For a tracker item, any answer but `local` refuses the run here:
 
 1. Read, activate or change nothing ([SKILL.md](../SKILL.md) § The Cycle, Item work stays in lanes).
 2. Report `micro-control-host host=[HOST]` as the first line.
-3. As the next line, report the fix: launch the item as a hosted lane through [oversee.md](oversee.md) § 3 Lane directive, Placement, with its `/orch micro [ISSUE_ID]` brief.
+3. As the next line, report the fix: launch the item as a hosted lane through [lane-launch.md](../references/lane-launch.md) § Lane directive, Placement, with its `/orch micro [ISSUE_ID]` brief.
 
 A directed change continues on any answer.
 
@@ -281,7 +281,7 @@ A `dequeued` verdict routes to that step's late-findings triage.
     3. Re-enter this section from its top on the new head: `[HEAD_SHA]` and `[MICRO_HEAD]` bind again, and the new head gets only the repository's own review.
   - A fix that needs a path outside the admitted set asks the admission for it before any edit.
     - A lane asks through its ask route ([skill-rules.md § Lane asks](../references/skill-rules.md#lane-asks)).
-    - The overseer judges the path against the fleet's holders through `orch-runtime admit` ([oversee.md § 2 Select Work](oversee.md#2-select-work)). The admission widens the lane's record or refuses.
+    - The overseer judges the path against the fleet's holders through `orch-runtime admit` ([lane-launch.md § Shared files](../references/lane-launch.md#shared-files)). The admission widens the lane's record or refuses.
     - The overseer's own run admits a path the directive's change needs and nothing else.
     - A refused path, or a path condition 3 excludes, escapes (condition 5).
 
@@ -334,7 +334,7 @@ Then, for the directed change:
 
 1. Where a pull request exists (conditions 5 to 9), close it, which deletes its branch on GitHub and in the checkout: `env -u GH_REPO -u GITHUB_REPOSITORY gh pr close [PR_NUMBER] --delete-branch`.
 2. Otherwise, once the diff stands on the item, return the checkout to `[BASE_BRANCH]` and delete the branch. At condition 4, first run `git -C [MAIN_REPO_ROOT] reset --hard`. Then run `git -C [MAIN_REPO_ROOT] checkout [BASE_BRANCH]` and `git -C [MAIN_REPO_ROOT] branch -D [BRANCH]`.
-3. The filed item launches as a lane through [oversee.md § 3 Lane directive](oversee.md#lane-directive), at the tier § Item Tier there assigns its body. It never launches through the routes below, and never on the control host.
+3. The filed item launches as a lane through [lane-launch.md § Lane directive](../references/lane-launch.md#lane-directive), at the tier § Item Tier there assigns its body. It never launches through the routes below, and never on the control host.
 4. The directive's run records no `review_floor`.
 5. A `fallback cause=no-files` on the filed item's lane head is that lane's own condition 9, recorded and relaunched under the item's key.
 
@@ -346,7 +346,7 @@ At condition 9, a tracker item records the promised round as the review floor [r
 
 Then set `[BRIEF]` to `small` and relaunch as `/orch small [ISSUE_ID]`: one internal review round, then the fallback approval of [copilot-head-notices.md § Fallback approval](../references/copilot-head-notices.md#fallback-approval) with no further Copilot request.
 
-At every other condition, the item relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch's state. `[BRIEF]` is that answer's `brief=` word.
+At every other condition, the item relaunches at the next class up, as [lane-launch.md](../references/lane-launch.md) § Item Tier assigns it from the branch's state. `[BRIEF]` is that answer's `brief=` word.
 
 A directed change takes the directed-change steps above and none of the routes below. For a tracker item, take the route for where the checkout leaves it:
 

@@ -245,7 +245,7 @@ The fleet record's `controller` member keeps the controller's check by the same 
 
 ## Oversee state
 
-The fleet record `workflow-state-oversee.json` holds the init object and the members below. `orch-runtime state init --fleet` creates it. The watch reads it as its `--file` ([oversee.md § Lane record](../workflows/oversee.md#lane-record)).
+The fleet record `workflow-state-oversee.json` holds the init object and the members below. `orch-runtime state init --fleet` creates it. The watch reads it as its `--file` ([lane-launch.md § Lane record](../references/lane-launch.md#lane-record)).
 
 | Field | Type | Owner | Meaning |
 |---|---|---|---|
@@ -401,7 +401,7 @@ The retention is `ORCH_RECORD_RETENTION_DAYS` days past a record's stamp. [setti
 | Standing instructions, `standing[]` | The successor overseer, through `orch-runtime state get --fleet /standing`, and `orch-runtime report render`. | None: a row leaves when the overseer lifts it. |
 | Overseer handoff file, `handoffs/OVERSEER-HANDOFF.md` | The successor overseer, at [oversee-takeover.md § 1](../workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff). | None. |
 | Lane records, `lanes[]` | The watch, the close, the overseer, and every rollup of a lane's times. | Judged by the record's recorded end. |
-| Lane status file, `tmp/lane-status-[ISSUE_ID].md` under the lane's `mail_root` | The overseer, through [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads), and the watch. | Leaves with the lane's worktree. |
+| Lane status file, `tmp/lane-status-[ISSUE_ID].md` under the lane's `mail_root` | The overseer, through [oversee-reads.md § Bounded lane reads](../references/oversee-reads.md#bounded-lane-reads), and the watch. | Leaves with the lane's worktree. |
 | Lane mailbox, `tmp/lane-mail/[ISSUE_ID]/` | The lane and the overseer, through `lane-mail`, whose `--help` defines the envelope. | No retention removes it. |
 | Overseer mailbox, `tmp/lane-mail/overseer/` | The overseer, the owner relay and peers, through `lane-mail`. | Each retention pass runs `lane-mail compact --item overseer` before its prune. |
 | Overseer session rows, `session-[SERVER_PID]-[PANE].jsonl` in the overseer mailbox | The watch, registration and succession. | [§ Prune](#prune). |
@@ -425,7 +425,7 @@ The records' rules, in the table's order:
 - Lane records: the kept worktree stays.
 - Lane records: once every record of an item has left, the item's record leaves too.
 - Lane records: the fleet's first record stays.
-- Lane status file: its shape is [oversee.md § Lane directive](../workflows/oversee.md#lane-directive)'s.
+- Lane status file: its shape is [lane-launch.md § Lane directive](../references/lane-launch.md#lane-directive)'s.
 - Lane status file: the item's close-out removes one standing directly in the state directory.
 - Lane mailbox: `worktree remove` moves it to the main checkout's `tmp/lane-mail/` (`worktree remove --help`).
 - Lane mailbox: the close-out archives it and removes nothing.

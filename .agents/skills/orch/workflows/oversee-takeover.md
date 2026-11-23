@@ -93,6 +93,6 @@ The fleet's record is the oversee state ([workflow-state.md § Oversee state](..
 
 ## 3. Handle delivered events
 
-1. On delivery, read [oversee.md § 4](oversee.md#4-watch-and-advance)'s Bounded lane reads, Bounded issue reads and Judgement at every event only where the event needs them. Then read [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules) and the current [event kind](../references/oversee-events.md#event-kinds) alone.
-2. Before selecting or launching work, read [oversee.md §§ 1-3](oversee.md#1-resolve-the-launch-surface). Before stopping or preparing a succession, read [oversee.md § 5](oversee.md#5-stop). Read only the route the action needs.
+1. On delivery, read [oversee-reads.md](../references/oversee-reads.md) § Bounded lane reads or § Bounded issue reads, and [oversee.md § 4](oversee.md#4-watch-and-advance)'s Judgement at every event, only where the event needs them. Then read [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules) and the current [event kind](../references/oversee-events.md#event-kinds) alone.
+2. Before selecting or launching work, read [oversee.md §§ 1-3](oversee.md#1-resolve-the-launch-surface) and the [lane-launch.md](../references/lane-launch.md) sections its § 3 names. Before stopping or preparing a succession, read [oversee.md § 5](oversee.md#5-stop). Read only the route the action needs.
 3. After handling the event, keep following the watch under § 2.

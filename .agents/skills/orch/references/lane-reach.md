@@ -137,7 +137,7 @@ A lane holding an unanswered ask refuses the close as `ask-unanswered`. Answer t
 .agents/skills/mailbox/scripts/lane-mail send --item [ITEM] --re [ASK_ID] --file [PATH]
 ```
 
-For a lane whose record carries `host`, add `--root [MAIL_ROOT] --host`, under the mailbox rule of [oversee.md § Lane record](../workflows/oversee.md#lane-record). A `keep-sandbox` close refuses `ask-unanswered` on a running hosted lane and on a `stopped` record, whatever the item's verdict: the kept sandbox can be relaunched into a session that reads the reply.
+For a lane whose record carries `host`, add `--root [MAIL_ROOT] --host`, under the mailbox rule of [lane-launch.md § Lane record](lane-launch.md#lane-record). A `keep-sandbox` close refuses `ask-unanswered` on a running hosted lane and on a `stopped` record, whatever the item's verdict: the kept sandbox can be relaunched into a session that reads the reply.
 
 ### Records with no identity
 
@@ -162,7 +162,7 @@ On the surfaces of [oversee.md § 1](../workflows/oversee.md#1-resolve-the-launc
 
 ## Per harness
 
-Launching, resuming and the harness's own dialogs stay per harness. Every lane launches through the runtime's `launch-lane` into a tmux window ([oversee.md § 3](../workflows/oversee.md#3-launch)), and [oversee.md § Bounded lane reads](../workflows/oversee.md#bounded-lane-reads) reads its state. The keys the launch and dialog answers below name reach a dialog one key per call:
+Launching, resuming and the harness's own dialogs stay per harness. Every lane launches through the runtime's `launch-lane` into a tmux window ([oversee.md § 3](../workflows/oversee.md#3-launch)), and [oversee-reads.md § Bounded lane reads](oversee-reads.md#bounded-lane-reads) reads its state. The keys the launch and dialog answers below name reach a dialog one key per call:
 
 - A hosted lane whose host declares `pane=verb` takes each key through its provider:
 

@@ -1,6 +1,6 @@
 # Lane directive
 
-Read the matching section when [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) cannot choose an account or launch a lane. Read § Recovery relaunch when [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch) brings back a dead, walled or handed-off lane. A refusal prints `orch-runtime: KEY field=value ...` on stderr. A launch that failed after it was recorded carries the key as its observation's `cause`. [settings.md](settings.md) holds the settings named here.
+Read the matching section when [lane-launch.md § Lane directive](lane-launch.md#lane-directive) cannot choose an account or launch a lane. Read § Recovery relaunch when [oversee.md § Recovery relaunch](../workflows/oversee.md#recovery-relaunch) brings back a dead, walled or handed-off lane. A refusal prints `orch-runtime: KEY field=value ...` on stderr. A launch that failed after it was recorded carries the key as its observation's `cause`. [settings.md](settings.md) holds the settings named here.
 
 ## No lane has room
 
@@ -92,7 +92,7 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `launch-class-missed`: launch at `standard` or above.
 - `launch-model-missing`, `launch-effort-missing`: name the model and effort the account was judged on.
 - `permission-unrepresentable`: name a spelling the harness takes, or leave `permission` out to run the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture.
-- `account-spent`, `account-walled`, `account-reserved`, `account-retired`, `account-unmeasured`, `account-unjudged`: read the answer as § No lane has room does. Then choose another account, never the same one, through [oversee.md § Lane directive](../workflows/oversee.md#lane-directive) step 3.
+- `account-spent`, `account-walled`, `account-reserved`, `account-retired`, `account-unmeasured`, `account-unjudged`: read the answer as § No lane has room does. Then choose another account, never the same one, through [lane-launch.md § Lane directive](lane-launch.md#lane-directive) step 3.
 - `cap-reached`: § Caps.
 
 ### A joined launch
@@ -104,7 +104,7 @@ A first launch whose touched set meets a live lane of the same repository before
 A request naming `read_only: true` launches a lane whose confinement binds its checkout and its common git folder read-only, the checkout's `tmp` alone writable. Name it for a lane whose brief changes no repository file, such as a plan or a tracker-comment lane.
 
 - Its first launch judges an empty touched set: it meets no holder, and its record holds no path.
-- The tier is still judged over the paths a writing lane's touched set would hold ([oversee.md § 2. Select Work](../workflows/oversee.md#2-select-work), Shared files).
+- The tier is still judged over the paths a writing lane's touched set would hold ([lane-launch.md § Shared files](lane-launch.md#shared-files)).
 - A read-only lane takes no join on either side. A launch sharing a path with it passes it, and one whose launch blockers it alone carries refuses `launch-blocked`. A read-only launch with any launch blocker refuses `launch-blocked`, whatever lane carries it.
 - `read_only` is decided where the launch is judged. A relaunch keeps the record's `read_only` and touched set whatever it names (§ Recovery relaunch): one naming `read_only: true` over a writing record launches a writing lane. A launch over a `done` record is judged, and takes its request's.
 
@@ -170,7 +170,7 @@ A cloud launch held as `cloud-create-unknown`, `worktree-create-unknown` or `wor
 - Keep the file until the launch settles.
 - A launch with no `brief_file` starts the lane on the start workflow for its item, which continues from the item's handoff record.
 
-The brief opens the lane's workflow, `/orch start [ITEM]` or the tier's verb, in the form its harness takes ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). A first launch reads the tier the brief states, by its verb or its one `item-tier` line; a relaunch keeps the record's.
+The brief opens the lane's workflow, `/orch start [ITEM]` or the tier's verb, in the form its harness takes ([lane-launch.md § Lane directive](lane-launch.md#lane-directive)). A first launch reads the tier the brief states, by its verb or its one `item-tier` line; a relaunch keeps the record's.
 
 The launch closes a local or hosted lane's brief with these, in order:
 
@@ -187,7 +187,7 @@ The root launch or continuity directive supplies the item's original obligation 
 - A record that binds none takes the stated object. A request naming none keeps the record's binding.
 - A first launch naming `repo` and no `obligation` records the item as its own parent: a fresh item.
 - A record with no accepted mapping stays unknown. Never reconstruct one from a title, a current parent or the checkout's repository.
-- A surface-2 record carries the binding as [oversee.md § Lane record](../workflows/oversee.md#lane-record) writes it.
+- A surface-2 record carries the binding as [lane-launch.md § Lane record](lane-launch.md#lane-record) writes it.
 
 Keep the binding through same-item launches, retries, relaunches, park and resume, account or model recovery, and context handoff. Reparenting does not rewrite the original parent. A replacement item names its predecessor's complete object as its launch request's `obligation`, or in its surface-2 record; its own item key stays separate. A cross-fleet transfer carries its accepted mapping where no retained record reaches the successor. Report a contradiction to root; never rewrite a known binding. A separate obligation needs a new tracker item or an explicit root disposition.
 
