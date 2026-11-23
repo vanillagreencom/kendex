@@ -288,8 +288,8 @@ function readFile(path: string): FileRead {
 
 /** What the computer's key file gave for `EXA_API_KEY`: its last value, no
  * nonempty value, the error that stopped the read, or a path that is not
- * absolute. Only that one line is kept, so no other key the file holds is
- * held in memory. */
+ * absolute. The whole file is read, but only the one `EXA_API_KEY` value is
+ * kept, so the memoized settings inputs hold no other key the file holds. */
 type KeyFileRead = { kind: "key"; key: string } | { kind: "key-missing" } | { kind: "unreadable"; error: string } | { kind: "not-absolute" };
 
 // Literal `KEY=value` lines, as deep-research's key-file reader takes them:
