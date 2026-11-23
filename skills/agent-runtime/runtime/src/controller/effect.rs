@@ -1868,6 +1868,10 @@ fn deliver_brief(
 /// and the record naming no controller, and the reconcile runs the step
 /// again; the watch found or launched goes on the wire as `overseer.watch`.
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the session's idle shell closes once the controller is published and its pane kept, after the publication has consumed the operation handle"
+)]
 fn publish(
     mut operation: Operation,
     successor: &Successor,

@@ -20,6 +20,7 @@ disallowed-methods = [
     { path = "agent_runtime::host::tmux::new_window", reason = "a window is opened only through the operation handle, its acquisition written first, or the session command's own launch" },
     { path = "agent_runtime::host::tmux::send_line", reason = "a pane is typed into only through the operation handle's token or the session command's own delivery" },
     { path = "agent_runtime::host::tmux::send_key", reason = "a key is sent only through the operation handle's token or the session command's own delivery" },
+    { path = "agent_runtime::effects::close_idle_shell", reason = "the session's idle shell is closed only by the controller's publication, once its runner is published and its pane kept" },
     # processes
     { path = "agent_runtime::process::stop_tree", reason = "a process is signalled only through the operation handle's token, `signalled` written first, or the session command's exact stop" },
     { path = "agent_runtime::process::stop_identities", reason = "a process is signalled only through the operation handle's token, `signalled` written first, or the session command's exact stop" },
