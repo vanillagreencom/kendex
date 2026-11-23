@@ -248,8 +248,8 @@ fn strings(value: &Value) -> Vec<String> {
 }
 
 /// One measured local Claude row at `alias`, `used` percent on its weekly
-/// window (the binding, resetting 60 hours on), and the 5-hour figure the
-/// endpoint still sends at `session` percent, which no judgement reads.
+/// window (the binding, resetting 60 hours on), and its 5-hour window at
+/// `session` percent, resetting an hour on, which a launch alone judges.
 fn measured(alias: &str, used: u64, session: u64) -> Value {
     let weekly = stamp(now() + 60 * 3600);
     json!({

@@ -1033,6 +1033,16 @@ pub(crate) const WINDOWS: [Window; 3] = [
 /// [`WINDOWS`] is a window shared by every model.
 pub(crate) const MODEL: &str = "model";
 
+/// The 5-hour window, which can stop a session hours before any plan
+/// window. Only the launch question reads it: the listing rates no reading
+/// on it, so a roster line and a running session's own question read the
+/// plan windows alone.
+pub(crate) const SESSION: Window = Window {
+    bucket: "session",
+    field: "session_5h_pct",
+    hours: 5.0,
+};
+
 /// `wall_rank`: the order two windows at one percentage are told apart by.
 fn wall_rank(bucket: &str) -> usize {
     WINDOWS
@@ -1144,8 +1154,26 @@ fn reset_epoch(stamp: Option<&str>) -> Option<u64> {
 fn window_hours(bucket: &str) -> f64 {
     WINDOWS
         .iter()
+        .chain([&SESSION])
         .find(|w| w.bucket == bucket)
         .map_or(168.0, |w| w.hours)
+}
+
+/// The 5-hour window of a measured row, where its reading carries one: an
+/// account whose provider states none is judged on its plan windows alone.
+fn session_window(row: &AccountRow) -> Option<Binding> {
+    if !row.measured() {
+        return None;
+    }
+    Some(Binding {
+        bucket: SESSION.bucket.to_owned(),
+        pct: number(&row.raw, SESSION.field)?,
+        resets_at: row
+            .raw
+            .get("resets")
+            .and_then(|r| string(r, SESSION.bucket)),
+        label: None,
+    })
 }
 
 /// The projected room of one account on the window that binds it: the
@@ -1195,9 +1223,9 @@ pub struct Projection {
 }
 
 impl Projection {
-    /// A start on a spent 5-hour window: that window full until `reset`,
-    /// the wall and the retry time a refused start names. No rate or room
-    /// is read from it: below spent, the window is used in full.
+    /// A start on a 5-hour window the harness's own session-limit report
+    /// holds spent: that window full until `reset`, the wall and the retry
+    /// time a refused start names.
     fn spent(reset: &str) -> Projection {
         Projection {
             headroom: 0.0,
@@ -1821,28 +1849,49 @@ fn judge(
         facts.seats.get(&row.canon).copied().unwrap_or(0)
     };
     let seat = seats > 0;
-    let projection = binding.as_ref().map(|b| {
-        projection(
-            row,
-            b,
-            &Spenders {
-                claims,
-                sampled,
-                candidate: match (req.launch(), req.for_overseer) {
-                    (false, _) => Candidate::None,
-                    (true, false) => Candidate::Lane,
-                    (true, true) => Candidate::Controller,
-                },
-                seats,
-                controllers,
-            },
-            f64::from(settings.burn_pct_per_hour),
-            now,
-        )
-    });
-    // A spent 5-hour window admits no start until its reset, whatever the
-    // plan windows hold; a running lane's or controller's own question
-    // never reads it.
+    let spenders = Spenders {
+        claims,
+        sampled,
+        candidate: match (req.launch(), req.for_overseer) {
+            (false, _) => Candidate::None,
+            (true, false) => Candidate::Lane,
+            (true, true) => Candidate::Controller,
+        },
+        seats,
+        controllers,
+    };
+    let burn = f64::from(settings.burn_pct_per_hour);
+    // A start is judged on the windows that can stop it: the binding plan
+    // window, and the 5-hour window beside it where the reading carries
+    // one, the less projected room deciding (the binding at a tie).
+    let session = req.launch().then(|| session_window(row)).flatten();
+    let projections: Vec<Projection> = binding
+        .iter()
+        .chain(session.as_ref().filter(|_| binding.is_some()))
+        .map(|b| projection(row, b, &spenders, burn, now))
+        .collect();
+    let projection = projections
+        .iter()
+        .min_by(|a, b| a.headroom.total_cmp(&b.headroom))
+        .cloned();
+    // A reading older than one lane at a window's burn takes to spend the
+    // room it shows on that window below the bound vouches for no room
+    // there. A provider's row states no reading time, and the provider
+    // protocol serves a backed-off reading's figures only while that
+    // reading is fresh (orch's lane-host schema, Accounts rows), so it is
+    // judged on its figures alone.
+    let stale = req
+        .launch()
+        .then_some(row.usage_age_s)
+        .flatten()
+        .and_then(|age| {
+            projections
+                .iter()
+                .find(|p| age / 3600.0 * p.burn >= max - p.window.pct)
+                .map(|p| (age, p.window.bucket.clone()))
+        });
+    // A 5-hour window the harness's own session-limit report holds spent
+    // admits no start until its reset, whatever the figures hold.
     let spent = req.launch().then(|| row.session_spent_until(now)).flatten();
     let projection = match &spent {
         Some(reset) => binding.as_ref().map(|_| Projection::spent(reset)),
@@ -1873,8 +1922,10 @@ fn judge(
         Some(admitted) if !admitted.contains(&row.config_dir) => "cloud-repo-unset",
         Some(_) | None => verdict,
     };
+    let refused_relaunch = facts.relaunch && row.status == "rate_limited";
+    let stale = stale.filter(|_| verdict == "room" && reads == Reads::Wall("room"));
     let verdict = match verdict {
-        "room" if facts.relaunch && row.status == "rate_limited" => "unmeasured",
+        "room" if refused_relaunch || stale.is_some() => "unmeasured",
         verdict => verdict,
     };
     let score = if let Some(grant) = &grant {
@@ -1895,6 +1946,13 @@ fn judge(
     };
     let mut row = row.clone();
     row.state_end(today);
+    if let Some((age, bucket)) = stale.filter(|_| !refused_relaunch) {
+        let detail = format!("usage-stale age_s={age} window={bucket}");
+        if let Some(raw) = row.raw.as_object_mut() {
+            raw.insert("detail".to_owned(), Value::from(detail.as_str()));
+        }
+        row.detail = Some(detail);
+    }
     Judged {
         row,
         verdict: verdict.to_owned(),
