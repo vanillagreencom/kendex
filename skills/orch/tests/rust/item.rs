@@ -966,12 +966,7 @@ mod dev_artifacts {
         result(&w.call(
             &["round", "stamp"],
             "ci",
-            &[
-                "--item",
-                "1",
-                "repair parser",
-                "app CLI",
-            ],
+            &["--item", "1", "repair parser", "app CLI"],
         ));
         let ci = w.finished_run("ci", "full");
         fs::write(
