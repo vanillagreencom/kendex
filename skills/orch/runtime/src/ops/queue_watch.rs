@@ -573,7 +573,8 @@ struct QueueRead {
     enabled_at: Option<String>,
     entry_position: Option<i64>,
     entry_head: Option<String>,
-    /// The live group ahead of a headless `QUEUED` or `UNMERGEABLE` entry.
+    /// The live group ahead of a headless `QUEUED` or `UNMERGEABLE` entry,
+    /// or of a `MERGEABLE` entry whose own group passed.
     ahead: Option<u64>,
 }
 
@@ -588,9 +589,14 @@ impl QueueRead {
                 let state = entry.state.unwrap_or_default();
                 let position = entry.position;
                 let head = entry.head.and_then(|h| h.oid);
-                let headless_hold =
-                    matches!(state.as_str(), "QUEUED" | "UNMERGEABLE") && head.is_none();
-                let ahead = if headless_hold {
+                let held = match state.as_str() {
+                    "QUEUED" | "UNMERGEABLE" => head.is_none(),
+                    // Its own group passed; GitHub merges it only after the
+                    // entries ahead, so its flat check count is no stall.
+                    "MERGEABLE" => head.is_some(),
+                    _ => false,
+                };
+                let ahead = if held {
                     entry
                         .queue
                         .and_then(|q| q.entries)

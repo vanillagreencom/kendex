@@ -764,6 +764,50 @@ fn held_behind_a_live_group_names_the_entry_ahead() {
     );
 }
 
+/// A `MERGEABLE` entry whose own group passed waits for the live group
+/// ahead: its flat check count with nothing running names that entry, never
+/// `stalled`, which the workflow would route to a recovery cycle.
+#[test]
+fn a_passed_entry_behind_a_live_group_names_the_entry_ahead_never_stalled() {
+    let mut body = held_behind(9);
+    let entry = &mut body["body"]["data"]["repository"]["pullRequest"]["mergeQueueEntry"];
+    entry["state"] = json!("MERGEABLE");
+    entry["headCommit"] = json!({"oid": QUEUE_HEAD});
+    let reads = [
+        Some((1, 0)),
+        Some((2, 0)),
+        Some((2, 0)),
+        Some((2, 0)),
+        Some((2, 0)),
+    ];
+    let mut world = World::new();
+    world.queue(body).check_runs(reads[0]);
+    let request = world.request(1, reads.len() as u64);
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        for read in &reads[1..] {
+            world.check_runs(*read).write();
+            clock.pass(secs(1));
+        }
+        clock.release(secs(1));
+    });
+    assert_eq!(
+        (
+            reply.verdict,
+            reply.cause,
+            reply.progressing,
+            reply.queue_ahead_pr
+        ),
+        (
+            "queued",
+            Some("blocked_by_entry_ahead"),
+            Some(false),
+            Some(9)
+        ),
+        "{reply:?}"
+    );
+}
+
 /// Membership lost for one poll and back the next is GitHub's view catching
 /// up: below the confirmation count it routes nothing, and the deadline
 /// reports the entry, not an ejection.
@@ -1423,11 +1467,11 @@ fn progress_is_read_from_the_heads_check_runs_and_a_failed_read_is_never_zero() 
 }
 
 /// A hold is named only by a live group ahead of a headless `QUEUED` or
-/// `UNMERGEABLE` entry: a group behind this entry, an entry ahead without a
-/// head, or another entry state proves no hold, and an entry with its own
-/// group keeps its progress reading.
+/// `UNMERGEABLE` entry, or of a passed `MERGEABLE` one: a group behind this
+/// entry, an entry ahead without a head, or another entry state proves no
+/// hold, and a queued entry with its own group keeps its progress reading.
 #[test]
-fn a_hold_is_named_only_by_a_live_group_ahead_of_a_headless_entry() {
+fn a_hold_is_named_only_by_a_live_group_ahead_of_a_held_entry() {
     let entry = |edit: fn(&mut Value)| -> Value {
         let mut body = held_behind(9);
         edit(&mut body["body"]["data"]["repository"]["pullRequest"]["mergeQueueEntry"]);
