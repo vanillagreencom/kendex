@@ -77,7 +77,15 @@ Run each read over every sampled transcript or lane and its linked transcript.
 
 Each read counts and checks these records:
 
+- **Session load**:
+  - Run `.agents/skills/agent-runtime/scripts/agent-runtime session load --harness HARNESS --file FILE` on each sampled session's own file: its transcript, or Copilot CLI's `events.jsonl`.
+  - If it answers `setup-required`, take the setup route in agent-runtime's SKILL.md § Build and run, then run it again.
+  - Report the tokens at Start, the context by source and the sections read from its reply, each figure with the `basis` the reply names.
+  - Report a figure whose basis is `unclear`, `unsupported`, `absent` or `unread` as that basis with its cause, never as zero.
+  - A refusal leaves the read unread, with the refusal's key as its cause.
+  - Read no transcript by hand for these figures.
 - **Context loaded twice**:
+  - Start from the `sections` the session load lists.
   - Count successful reads of the same file, skill or instruction text within one session.
   - Cite both read records and compare the returned text.
   - Check whether a change or a new task required the repeat.

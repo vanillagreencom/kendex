@@ -31,6 +31,7 @@ pub mod intent;
 )]
 pub mod journal;
 pub mod launch;
+pub mod load;
 pub mod observe;
 #[allow(
     clippy::disallowed_methods,

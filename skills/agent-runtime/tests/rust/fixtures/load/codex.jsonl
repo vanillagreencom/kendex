@@ -1,0 +1,10 @@
+{"type":"session_meta","payload":{"id":"x1","cwd":"/w","source":"cli"}}
+{"type":"turn_context","payload":{"turn_id":"t-1","cwd":"/w","model":"gpt-6.1-sol","effort":"high"}}
+{"type":"event_msg","payload":{"type":"item_completed","thread_id":"x1","turn_id":"t-1","item":{"type":"UserMessage","id":"u1","content":[{"type":"text","text":"Start the session."}]}}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"jarvis-section skills/jarvis/persona.md 'Conduct'\",\"workdir\":\"/w\"}","call_id":"call_1"}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":12000,"cached_input_tokens":0,"output_tokens":80,"reasoning_output_tokens":0,"total_tokens":12080},"last_token_usage":{"input_tokens":12000,"cached_input_tokens":0,"output_tokens":80,"reasoning_output_tokens":0,"total_tokens":12080},"model_context_window":400000},"rate_limits":null}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"## Conduct\n\nThe rules."}}
+{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** End Patch","call_id":"call_2"}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":24500,"cached_input_tokens":12000,"output_tokens":120,"reasoning_output_tokens":0,"total_tokens":24620},"last_token_usage":{"input_tokens":12500,"cached_input_tokens":12000,"output_tokens":40,"reasoning_output_tokens":0,"total_tokens":12540},"model_context_window":400000},"rate_limits":null}}
+{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_2","output":[{"type":"input_text","text":"Success."}]}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":37200,"cached_input_tokens":24500,"output_tokens":140,"reasoning_output_tokens":0,"total_tokens":37340},"last_token_usage":{"input_tokens":12700,"cached_input_tokens":12500,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":12720},"model_context_window":400000},"rate_limits":null}}
