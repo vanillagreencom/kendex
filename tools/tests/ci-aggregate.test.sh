@@ -16,7 +16,8 @@
 #      publishes and the lanes ci-job-set selects are one set, compared by
 #      name, and each aggregate, on its own, holds every job it needs to the
 #      lane or event condition that job's own `if:` reads; and the changes
-#      job calls tools/ci-job-set with --event-parity. Its installer command
+#      job calls tools/ci-job-set with --event-parity and --runtime-publish.
+#      Its installer command
 #      runs the trusted checkout's installer with rolling-main and CLI-only
 #      flags.
 #   2. the job set: each job's own `if:` and the shard matrix's `os:` and
@@ -130,17 +131,18 @@ ROWS
 OUTPUT_NAME='needs\.changes\.outputs\.[a-z_]+'
 
 # The selection's one call per workflow run is where the event-parity check
-# runs: tools/ci-job-set derives the other event only when asked, so a
-# changes job calling it bare would never refuse a selection that differs by
-# event.
+# runs and the merge group reads the runtime builds it owes: tools/ci-job-set
+# does each only when asked, so a changes job calling it bare would never
+# refuse a selection that differs by event, and its merge group would
+# publish no runtime build.
 job_set_calls() { # WORKFLOW — each tools/ci-job-set call in the changes job
   awk '
     /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == "changes:"); next }
     in_job && /^ +run: tools\/ci-job-set/ { sub(/^ +run: /, ""); print }
   ' "$1"
 }
-check "the changes job asks tools/ci-job-set for the event-parity check" \
-  "tools/ci-job-set --event-parity" "$(job_set_calls "$WORKFLOW")"
+check "the changes job asks tools/ci-job-set for the event-parity check and the runtime publication" \
+  "tools/ci-job-set --event-parity --runtime-publish" "$(job_set_calls "$WORKFLOW")"
 
 # The workflow supplies the flags; these fixtures only record the call.
 # Match the real installer's file mode so direct execution fails here too.
@@ -686,6 +688,26 @@ cargo-tests-windows|merge_group|yes
 cargo-tests-windows|push|no
 cargo-tests-windows|schedule|yes
 cargo-tests-windows|workflow_dispatch|yes
+ROWS
+
+# The orch-state Linux leg stages the runtime builds the changes job owes
+# on a merge group, so a key is published before main moves, and on a push
+# for one still owed; never on a pull request or a night, and never where
+# nothing is owed. EVENT|PUBLISH|RUNS
+publish_if="$(job_steps "$WORKFLOW" skill-suites-shard | awk -F '\t' '$1 == "runtime-publish" { print $2 }')"
+[ -n "$publish_if" ] && [ "$publish_if" != none ] ||
+  { echo "skill-suites-shard has no runtime-publish step condition: '$publish_if'" >&2; exit 1; }
+while IFS='|' read -r event publish runs; do
+  check "the runtime-publish step runs on $event with runtime_publish $publish: $runs" "$runs" \
+    "$(gh_eval value "$(jq -cn --arg e "$event" --arg p "$publish" '{github: {event_name: $e},
+      matrix: {shard: "orch-state"}, runner: {os: "Linux"},
+      needs: {changes: {result: "success", outputs: {runtime_publish: $p}}}}')" "$publish_if")"
+done <<'ROWS'
+merge_group|[{"name":"orch-runtime","key":"k"}]|true
+push|[{"name":"orch-runtime","key":"k"}]|true
+pull_request|[{"name":"orch-runtime","key":"k"}]|false
+schedule|[{"name":"orch-runtime","key":"k"}]|false
+merge_group|[]|false
 ROWS
 
 # The secrets scan in the content-scan job judges each group and pull

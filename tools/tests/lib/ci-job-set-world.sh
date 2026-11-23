@@ -43,14 +43,15 @@ check() { # DESC EXPECTED ACTUAL
 
 # ci-job-set reads the Rust source of the checkout it runs in: this one,
 # unless SELECT_IN names another; SELECT_WITH names a copy to run instead.
-# SELECT_EVENT is the event, pull_request unless set. SELECT_ARG is the one
-# argument passed, none unless set; the workflow's changes job passes
-# --event-parity.
+# SELECT_EVENT is the event, pull_request unless set. SELECT_ARG is the
+# arguments passed, blank-separated, none unless set; the workflow's changes
+# job passes --event-parity --runtime-publish.
 selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or the refusal key
   local class="$1" docs="$2" paths="$3" out="$TMP/selection" status=0 arg="${SELECT_ARG:-}"
   : >"$out"
+  # shellcheck disable=SC2086 # one argument per word
   (cd "${SELECT_IN:-$ROOT}" && CHANGE_CLASS="$class" DOCS_ONLY="$docs" CHANGED_PATHS="$paths" \
-    EVENT="${SELECT_EVENT-pull_request}" GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" ${arg:+"$arg"} 2>"$TMP/selection-err") || status=$?
+    EVENT="${SELECT_EVENT-pull_request}" GITHUB_OUTPUT="$out" "${SELECT_WITH:-$JOB_SET}" $arg 2>"$TMP/selection-err") || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'exit=%s %s' "$status" \
       "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/selection-err" | head -1)"
@@ -94,7 +95,8 @@ LINUX='["ubuntu-latest"]'
 BOTH='["ubuntu-latest","macos-latest"]'
 ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[]"
 ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL skipped_suites=[] rust_targets=[\"agent-runtime/*\",\"orch/*\"]"
-# `render` and `trivial` run the one verify job.
+# `render` and `trivial` run the one verify job and skip every suite, none
+# in the fixture checkouts the row is read in.
 VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[] rust_targets=[]"
 # Every measured class runs cargo_linux and bot_instructions. The shell
 # shards run per package, on the runners LEGS names: none, linux or both;

@@ -19,8 +19,10 @@ name: Skill Tests
 # the changed packages select, and every gated `if:` in this file reads one
 # of those lines. Of the gated jobs, a `render` or `trivial` diff runs the
 # bot-instructions job alone, whose steps the bot_instructions lane entry in
-# `tools/ci-job-set` lists. Every other diff, and a `trivial` one changing a
-# path tools/rust-reads names, runs that job, the shell shards its packages
+# `tools/ci-job-set` lists, and where its head owes a runtime build, the
+# orch-state leg that publishes it and runs no suite. Every other diff, and
+# a `trivial` one changing a path tools/rust-reads names, runs that job, the
+# shell shards its packages
 # select and each other lane as `tools/ci-job-set` selects it; the invariant
 # comment there is the one statement of what each lane runs. The changes job
 # publishes the suites outside the diff's reach as `skipped_suites`, and
@@ -154,12 +156,14 @@ jobs:
   # check nothing will report.
   #
   # The class is read on merge_group alone. A pull request runs no lane, and
-  # a manual dispatch runs the nightly jobs whole without this job. On a push
+  # a manual dispatch runs the nightly jobs whole without this job. A merge
+  # group also publishes the package runtime builds its head has no
+  # published artifact for. On a push
   # to main only the root checkout and the select step run: tools/ci-job-set
   # reads the same-head merge group's jobs and published selection, which
   # `actions: read` admits, and publishes the suites, shards and targets
   # that group left unproved, selected across the coalesced push range,
-  # and the package runtime builds no main run has published yet.
+  # and the package runtime builds no run has published yet.
   # A schedule publishes the decision to run the full night. The root
   # checkout there is main itself.
   changes:
@@ -315,8 +319,10 @@ jobs:
       # class runs and one place to change it. It runs in the workspace root,
       # the group's tree, whose crates/ tools/rust-reads reads.
       # --event-parity refuses a selection that differs by event, once per
-      # run here rather than on every call the suites make. On a push the
-      # class inputs are empty and the token reads the merge group's jobs.
+      # run here rather than on every call the suites make. --runtime-publish
+      # has the merge group read which runtime builds its head owes. On a
+      # push the class inputs are empty and the token reads the merge group's
+      # jobs.
       - id: select
         env:
           RUSTUP_TOOLCHAIN: stable
@@ -326,7 +332,7 @@ jobs:
           EVENT: ${{ env.EVENT }}
           GH_TOKEN: ${{ github.token }}
           CI_SELECTION: ${{ runner.temp }}/ci-selection.json
-        run: tools/ci-job-set --event-parity
+        run: tools/ci-job-set --event-parity --runtime-publish
       # The group's selection, for the push at its head to read: the one
       # record of the suites and targets this run left out. A lost upload
       # costs that push its whole roster, never this group its result.
@@ -885,26 +891,33 @@ jobs:
           echo "AGENT_RUNTIME_CACHE=$cache" >>"$GITHUB_ENV"
           AGENT_RUNTIME_CACHE="$cache" skills/orch/scripts/setup
 
-      # A main push publishes each package runtime build its head has no
-      # artifact for, tools/ci-job-set's runtime_publish, from this one leg:
-      # `<name>-<key>` holds the binary under that name and its sha256 beside
-      # it as `<name>-<key>.sha256`, the key lib/key.sh gives. A lane-host
+      # A merge group publishes each package runtime build its head has no
+      # artifact for, tools/ci-job-set's runtime_publish, from this one leg,
+      # so every key is published before main moves to the head. The leg is
+      # one `CI` holds: a missing binary or a failed upload fails it and
+      # ejects the group. A main push publishes a key still owed: a commit
+      # that reached main without a merge group, such as an owner repair
+      # under D029, an artifact that expired after the group read it, or a
+      # listing or run record the push could not read. `<name>-<key>` holds
+      # the binary under that name and its sha256 beside it as
+      # `<name>-<key>.sha256`, the key lib/key.sh gives. A lane-host
       # provider in another repository of this organization (Fleet) fetches
       # these by name to fill a shared runtime cache. It counts only an
       # unexpired artifact whose run record, read at actions/runs/<id>, has
-      # event push, head_branch main, head_repository.id equal to
-      # repository.id and path .github/workflows/skill-tests.yml, the
-      # filter runtime_publish applies as PUBLISHED_RUN: a pull-request run
-      # whose head branch is named main runs code no review accepted, a
-      # fork's pull-request run can upload any name, and the bundled sha256
-      # checks the transfer, not who made the artifact. A change to the
-      # name, the files, the filter or the leg's event is told to its
-      # overseer before it lands.
+      # head_repository.id equal to repository.id, path
+      # .github/workflows/skill-tests.yml, and event push with head_branch
+      # main or event merge_group with a head_branch under
+      # gh-readonly-queue/main/, the filter runtime_publish applies as
+      # PUBLISHED_RUN: a pull-request run whose head branch is named main
+      # runs code no review accepted, a fork's pull-request run can upload
+      # any name, and the bundled sha256 checks the transfer, not who made
+      # the artifact. A change to the name, the files, the filter or the
+      # leg's events is told to its overseer before it lands.
       # They publish before the suites, so a suite's failure keeps no build
       # from the machines that run main.
       - name: the runtime builds main has no artifact for, staged
         id: runtime-publish
-        if: matrix.shard == 'orch-state' && runner.os == 'Linux' && github.event_name == 'push' && needs.changes.result == 'success' && needs.changes.outputs.runtime_publish != '[]'
+        if: matrix.shard == 'orch-state' && runner.os == 'Linux' && (github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.result == 'success' && needs.changes.outputs.runtime_publish != '[]'
         env:
           PUBLISH: ${{ needs.changes.outputs.runtime_publish }}
         run: |

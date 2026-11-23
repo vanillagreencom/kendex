@@ -58,8 +58,13 @@ done
 whole="$(row "$W" "$GUIDE" "$WHOLE")"
 check "row: the copy that cannot read the reach skips nothing" "[]" "${whole#*|}"
 check "row: and runs every shard" "$ROSTER" "$(sed 's/.* shards=\([^ ]*\).*/\1/' <<<"${whole%|*}")"
-check "row: render skips none" "[]" \
-  "$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
+# A render row has no reach, so it skips every suite, those the guide's
+# measured row runs among them.
+render_skipped="$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
+for suite in declared plain slashed folder reader; do
+  check "row: render skips the $suite suite" true \
+    "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$render_skipped")"
+done
 
 # THE LIST: the candidates a step runs, by whole path, in argument order:
 # each one the skips do not name.
