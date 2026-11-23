@@ -1614,6 +1614,7 @@ mod tests {
             identity: None,
             home: None,
             home_implicit: false,
+            idle_shell: None,
         };
         run(
             &path,

@@ -29,11 +29,12 @@ use crate::effects::prepare::{
 use crate::effects::{
     Binding, Bootstrap, Claimant, Companion, EffectOutcome, Identity, Observed, OpenRefusal,
     Operation, Pane, Polled, ProcessRead, Proof, Published, Recovered, Server, SessionFloor, State,
-    Stop, Target, TurnConfirm, WindowClose, Wire, Word, opening_observation, overseer_target_of,
-    read_intent, read_overseer,
+    Stop, Target, TurnConfirm, WindowClose, Wire, Word, close_idle_shell, opening_observation,
+    overseer_target_of, read_intent, read_overseer,
 };
 use crate::error::{Error, Result};
 use crate::harness::Harness;
+use crate::host::tmux;
 use crate::intent::{BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Phase};
 use crate::launch::{ClaudeSignIn, Compaction, LaunchCommand, Permission, Resume};
 use crate::observe::WallKind;
@@ -905,13 +906,21 @@ fn names_pane_on(overseer: &Overseer, server: &Server) -> bool {
         && number("server_start") == Some(server.start)
 }
 
-/// Whether the launch may run in the session's idle shell on `server`: a
-/// start's and a transfer's alike, never where the record names a pane on
-/// that server, since that pane is the predecessor's, whose window the
-/// retirement closes. A stopped record names none, and one written before
-/// the server restarted names a pane on another.
-fn adopts_idle_shell(overseer: &Overseer, server: &Server) -> bool {
-    !names_pane_on(overseer, server)
+/// The idle shell the publication closes: the session's one pane where it
+/// is an idle shell ([`tmux::sole_idle_shell`]), read before the
+/// controller's window opens beside it, for a start and a transfer alike.
+/// None where the record names a pane on that server: that pane is the
+/// predecessor's, whose window the retirement closes. A stopped record names
+/// none, and one written before its server restarted names a pane on
+/// another. A listing that does not answer names none, so the shell stands.
+fn idle_shell(overseer: &Overseer, server: &Server, session: &str) -> Option<String> {
+    if names_pane_on(overseer, server) {
+        return None;
+    }
+    match tmux::sole_idle_shell(server, session) {
+        Reading::Live(Some(shell)) => Some(shell.id),
+        Reading::Live(None) | Reading::Gone | Reading::Unreadable { .. } => None,
+    }
 }
 
 fn succeed(
@@ -1073,7 +1082,7 @@ fn succeed(
     // reconcile at `opening` with a dead owner adopts the runner by
     // its receipt, and before retirement that is still an
     // abandon.
-    let opening = match operation.opening(
+    let mut opening = match operation.opening(
         &server,
         &floor,
         brief,
@@ -1083,18 +1092,11 @@ fn succeed(
         Ok(opening) => opening,
         Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
+    opening.idle_shell = idle_shell(&overseer, &server, &session);
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
     })?;
-    let alone = adopts_idle_shell(&overseer, &server);
-    let window = operation.open_window(
-        &server,
-        &session,
-        pending.window(),
-        &command,
-        &opening,
-        alone,
-    )?;
+    let window = operation.open_window(&server, &session, pending.window(), &command, &opening)?;
     let pane = match window {
         Ok(pane) => pane,
         // Refused before the launcher was asked: `arm` failed before the
@@ -1115,8 +1117,7 @@ fn succeed(
         }
         // A window that opened and could not be typed into: closed again by
         // its exact id, the failure completes; a close the host did not
-        // answer leaves the recorded pane for the reconcile at `opening`. An
-        // idle shell whose line did not run is left as it stands.
+        // answer leaves the recorded pane for the reconcile at `opening`.
         Err(OpenRefusal::LineUnsent { refusal }) => {
             let mut outcome = operation.settle(
                 Word::Failed,
@@ -1350,9 +1351,9 @@ fn succeed(
     // one. Focus is presentation: an unread answer or a refused select
     // changes nothing of the hand-over.
     if let Some(previous) = overseer.extra.get("pane").and_then(Value::as_str)
-        && crate::host::tmux::window_in_front(&server, previous)
+        && tmux::window_in_front(&server, previous)
     {
-        let _ = crate::host::tmux::select_window(&pane);
+        let _ = tmux::select_window(&pane);
     }
     // The predecessor's recorded handles become obligations of the intent at
     // the start of its retirement, written before the first signal; the
@@ -1970,6 +1971,15 @@ fn publish(
     let record = operation.record_path().to_path_buf();
     match operation.publish(Published::Successor, opened, &identity, observation)? {
         Ok(mut outcome) => {
+            // The session's idle shell goes only now, the controller
+            // published and its pane kept: before, an abandon or the
+            // runner's exit would take the session with a window that stood
+            // alone. With its pane not kept the shell stands, so the
+            // harness's exit leaves the session standing.
+            let shell = opened.idle_shell.as_deref().filter(|_| kept.is_none());
+            if let Some(cause) = shell.and_then(|shell| close_idle_shell(pane, shell)) {
+                outcome.annotate("idle_shell", json!(cause));
+            }
             if let Some(cause) = kept {
                 outcome.annotate("pane_kept", json!(cause));
             }
@@ -2699,144 +2709,5 @@ fn recorded_runner(phase: &Phase) -> Option<Identity> {
         | Phase::Delivering { opened, .. }
         | Phase::Delivered { opened, .. } => opened.identity.clone(),
         Phase::Opening { .. } | Phase::CloudCreate { .. } | Phase::Preparing { .. } => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::effects::testing;
-    use crate::host::tmux;
-
-    /// The windows a session holds once the controller's launch ran over it,
-    /// the session made as fleet makes one: a single idle shell, its window
-    /// named `shell`. `record` is the controller record, given the server.
-    /// Returns the shell's pane, the launch's, and each window's pane and
-    /// name.
-    fn launch_over_idle_shell(
-        record: impl Fn(&Server) -> Value,
-    ) -> (String, String, Vec<(String, String)>) {
-        let dir = tempfile::tempdir().unwrap();
-        let private = tmux::Private::start(dir.path());
-        let server = &private.0;
-        let shell = private.idle_shell();
-        tmux::rename_window(&shell, "shell").unwrap();
-        let overseer: Overseer = serde_json::from_value(record(server)).unwrap();
-
-        let settings = testing::settings(dir.path());
-        let env = crate::journal::Env {
-            now_secs: 1,
-            now_nanos: 1_000_000_000,
-            nonce: 77,
-            owner: None,
-        };
-        let path = dir.path().join(crate::record::FLEET_FILE_NAME);
-        let run = testing::run(
-            &path,
-            &settings,
-            &env,
-            dir.path(),
-            dir.path().join("lane-mail"),
-            &crate::clock::SystemClock,
-        );
-        let intent = json!({
-            "id": "start-controller:1-1", "op": "start-controller", "target": "controller",
-            "revision": 0, "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed"
-        });
-        let mut fleet: Value = serde_json::from_str(testing::FLEET).unwrap();
-        fleet["intents"] = json!([intent]);
-        std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let intent: Intent = serde_json::from_value(intent).unwrap();
-        let mut operation = Operation::open(
-            &run,
-            &intent,
-            Bootstrap::Launch {
-                launch: None,
-                harness: Some(Harness::Claude),
-                auxiliary: None,
-            },
-        )
-        .unwrap();
-        let opening = operation
-            .opening(server, &SessionFloor::Baseline(vec![]), None, None, false)
-            .unwrap();
-        let command = LaunchCommand {
-            program: "/bin/sleep".to_owned(),
-            args: vec!["30".to_owned()],
-            env: Default::default(),
-            env_remove: vec![],
-            env_files: Default::default(),
-            cwd: dir.path().to_path_buf(),
-            brief_arg: None,
-            brief_path: None,
-            confinement: None,
-        };
-        let alone = adopts_idle_shell(&overseer, server);
-        let Ok(Ok(launched)) =
-            operation.open_window(server, "t", "overseer", &command, &opening, alone)
-        else {
-            panic!("the launch's window opened");
-        };
-        let Reading::Live(windows) = tmux::list_windows(server, "t") else {
-            panic!("the session's windows read");
-        };
-        let windows = windows
-            .into_iter()
-            .map(|(_, pane, name)| (pane, name))
-            .collect();
-        (shell.id, launched.id, windows)
-    }
-
-    /// A start over a stopped record, or a transfer whose record names its
-    /// predecessor on a server since restarted, runs in the session's idle
-    /// shell and leaves one window, named as a new one would be. A record
-    /// naming a pane on the session's own server names the predecessor's, so
-    /// the launch opens its own window beside the shell.
-    #[test]
-    fn the_idle_shell_is_adopted_under_the_launch_name_unless_the_record_names_a_pane_on_its_server()
-     {
-        type Record = fn(&Server) -> Value;
-        let rows: [(&str, Record, bool); 3] = [
-            ("start, stopped record", |_| json!({}), true),
-            (
-                "transfer, server restarted",
-                |server| {
-                    json!({
-                        "pane": "%0",
-                        "server": u64::from(server.pid) + 1,
-                        "server_start": server.start,
-                    })
-                },
-                true,
-            ),
-            (
-                "transfer, predecessor on this server",
-                |server| {
-                    json!({
-                        "pane": "%0",
-                        "server": server.pid,
-                        "server_start": server.start,
-                    })
-                },
-                false,
-            ),
-        ];
-        for (row, record, adopted) in rows {
-            let (shell, launched, windows) = launch_over_idle_shell(record);
-            if adopted {
-                assert_eq!(launched, shell, "{row}");
-                assert_eq!(windows, vec![(shell, "overseer".to_owned())], "{row}");
-            } else {
-                assert_ne!(launched, shell, "{row}");
-                assert_eq!(
-                    windows,
-                    vec![
-                        (shell, "shell".to_owned()),
-                        (launched, "overseer".to_owned())
-                    ],
-                    "{row}"
-                );
-            }
-        }
     }
 }

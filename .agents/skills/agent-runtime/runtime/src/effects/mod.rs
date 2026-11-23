@@ -62,7 +62,7 @@ mod obligations;
 pub mod prepare;
 mod receipt;
 #[cfg(test)]
-pub(crate) mod testing;
+mod testing;
 mod window;
 
 use std::collections::BTreeMap;
@@ -89,7 +89,9 @@ pub use host::{process_var, register_controller};
 pub use job::{Claimant, Companion};
 pub use obligations::{EffectOutcome, Published, Wire, Word};
 pub use obligations::{JobHandle, SidecarRead};
-pub use window::{OpenRefusal, Polled, Recovered, TurnConfirm, opening_observation};
+pub use window::{
+    OpenRefusal, Polled, Recovered, TurnConfirm, close_idle_shell, opening_observation,
+};
 
 use obligations::{Discharge, Obligations, PaneRef, Terminal};
 

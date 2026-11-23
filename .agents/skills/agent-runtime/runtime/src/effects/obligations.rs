@@ -1518,6 +1518,7 @@ mod tests {
                 baseline: Vec::new(),
                 pane: pane.map(str::to_owned),
                 adopted: false,
+                idle_shell: None,
                 asked,
                 home: None,
                 home_implicit: false,

@@ -27,9 +27,7 @@ use crate::intent::{Obligation, Opening, Phase, Role};
 /// possibly opened that the record names as such;
 /// `LineUnsent` is a window that opened, recorded at `opening`, whose line
 /// could not be typed, its one pane closed again by exact id and that close
-/// discharged by its own answer, so the caller judges what stands; for the
-/// session's idle shell, a line not typed or whose receipt never came, the
-/// shell left standing.
+/// discharged by its own answer, so the caller judges what stands.
 pub enum OpenRefusal {
     Refused(crate::Error),
     Unanswered { refusal: crate::Error },
@@ -106,6 +104,26 @@ pub fn opening_observation(op: &str, note: &str, cause: Option<&str>) -> Value {
         observation["cause"] = json!(cause);
     }
     observation
+}
+
+/// Close the window of `shell`, the idle shell its session held alone before
+/// `runner`'s window opened beside it ([`Opening::idle_shell`]), once the
+/// runner is published and its pane kept past its harness: the session then
+/// holds the runner's window alone, and no program held its last window
+/// while the launch could still be abandoned. A shell that no longer stands
+/// alone in its window as an idle shell is the person's again and stands.
+/// The cause is returned where the shell stands or its close went unread;
+/// none where it closed or was already gone.
+pub fn close_idle_shell(runner: &Pane, shell: &str) -> Option<String> {
+    match tmux::lone_idle_shell_pane(&runner.server, shell) {
+        Reading::Live(Some(shell)) => match tmux::kill_window(&shell) {
+            Close::Closed | Close::AlreadyGone => None,
+            Close::Unreadable { cause } => Some(cause),
+        },
+        Reading::Live(None) => Some("shell-in-use".to_owned()),
+        Reading::Gone => None,
+        Reading::Unreadable { cause } => Some(cause.to_owned()),
+    }
 }
 
 /// Whether the recorded pane may still be about to register at `now`: the
@@ -215,6 +233,7 @@ impl Operation<'_> {
             baseline,
             pane: None,
             adopted: false,
+            idle_shell: None,
             asked: false,
             home: home.map(|h| h.display().to_string()),
             home_implicit,
@@ -273,13 +292,6 @@ impl Operation<'_> {
     /// whose line could not be typed, or whose `new-window` failed after
     /// printing its pane, has its one pane closed again by exact
     /// id and that close discharged by its own answer.
-    ///
-    /// A launch `alone` over a session whose one window is an idle shell
-    /// ([`tmux::sole_idle_shell`]) runs its line in that shell instead, and
-    /// the shell's window takes `name`, so the session holds the
-    /// controller's window alone under the name a new one would have. A
-    /// listing that does not answer opens a window as every other case
-    /// does: a window of the effect's own touches nothing of the session's.
     pub fn open_window(
         &mut self,
         server: &Server,
@@ -287,7 +299,6 @@ impl Operation<'_> {
         name: &str,
         command: &LaunchCommand,
         opening: &Opening,
-        alone: bool,
     ) -> Result<std::result::Result<Pane, OpenRefusal>> {
         let receipt_path = self.receipt_path();
         self.write()?;
@@ -297,9 +308,6 @@ impl Operation<'_> {
             Ok(line) => line,
             Err(e) => return Ok(Err(OpenRefusal::Refused(e))),
         };
-        if alone && let Reading::Live(Some(shell)) = tmux::sole_idle_shell(server, session) {
-            return self.run_in_idle_shell(shell, name, &line, opening, &receipt_path);
-        }
         let asked = Opening {
             asked: true,
             ..opening.clone()
@@ -449,76 +457,6 @@ impl Operation<'_> {
     ) -> std::result::Result<(), crate::Error> {
         self.check_pane_token(pane)?;
         tmux::set_window_option(pane.key(), name, value)
-    }
-
-    /// Type the launch line into `shell`, the session's idle shell, a pane
-    /// this effect did not open: recorded `adopted` before the line is
-    /// typed, and the effect's own pane only once its receipt names it,
-    /// within the launch bound. A line the person typed and left unsent
-    /// reads idle, so one interrupt key is pressed first: every shell
-    /// [`crate::process::is_shell`] names discards its pending line on it and
-    /// prompts again, and the runtime runs only the line it wrote. Until the
-    /// receipt nothing of the effect closes or stops the shell, since it may
-    /// still be the person's: a line refused before its paste leaves the
-    /// shell standing as it is, its name among it. Once the receipt names
-    /// it, its window takes `name`.
-    fn run_in_idle_shell(
-        &mut self,
-        shell: Pane,
-        name: &str,
-        line: &str,
-        opening: &Opening,
-        receipt_path: &Path,
-    ) -> Result<std::result::Result<Pane, OpenRefusal>> {
-        let role = self.principal_role();
-        self.obligations
-            .add(Obligation::Receipt, role, self.harness);
-        self.record_phase(Phase::Opening {
-            opening: Opening {
-                pane: Some(shell.id.clone()),
-                adopted: true,
-                ..opening.clone()
-            },
-        })?;
-        if let Err(refusal) =
-            tmux::send_key(&shell, "C-c").and_then(|()| tmux::send_line(&shell, line))
-        {
-            self.read_receipt()?;
-            return Ok(Err(OpenRefusal::LineUnsent { refusal }));
-        }
-        let deadline = self.now() + self.run.settings.verify.get()?;
-        loop {
-            if let Ok(receipt::Reading::Present(registered)) =
-                receipt::read(receipt_path, &self.intent_id)
-                && registered.pane == shell.id
-            {
-                self.obligations.adopt(
-                    PaneRef {
-                        pane: shell.id.clone(),
-                        server: opening.server,
-                        server_start: Some(opening.server_start),
-                    },
-                    role,
-                    self.harness,
-                );
-                self.write()?;
-                // A refused rename leaves the launch standing: the line
-                // already runs in the pane, and a rename of a window the
-                // receipt just named is refused only for a window or server
-                // gone or a host that does not answer, which the caller's
-                // wait on the pane reads next.
-                let _ = tmux::rename_window(&shell, name);
-                return Ok(Ok(shell));
-            }
-            if self.now() >= deadline {
-                break;
-            }
-            self.sleep(POLL);
-        }
-        self.read_receipt()?;
-        Ok(Err(OpenRefusal::LineUnsent {
-            refusal: crate::Error::refused("receipt-unwritten", &[("pane", &shell.id)]),
-        }))
     }
 
     /// Read the pane's receipt where it still stands: a
@@ -738,9 +676,10 @@ impl Operation<'_> {
                     self.write()?;
                     return Ok(recovered);
                 };
-                // A shell the effect typed into is not its own until its
-                // receipt names it: past the bound the line never ran there,
-                // and the shell stands as it was.
+                // A shell an earlier runtime typed into ([`Opening::adopted`])
+                // is not the effect's own until its receipt names it: past the
+                // bound the line never ran there, and the shell stands as it
+                // was.
                 if opening.adopted {
                     let recovered = if within_bound(
                         opening,
@@ -979,6 +918,75 @@ impl Operation<'_> {
 mod tests {
     use super::*;
 
+    /// The session's idle shell, its window beside the runner's, is closed
+    /// at the publication only while it stands alone in its window at its
+    /// prompt: a shell running a command, or sharing its window with
+    /// another pane, is the person's again and stands, said by its cause.
+    #[test]
+    fn the_idle_shell_closes_only_while_it_stands_alone_at_its_prompt() {
+        type Use = fn(&tmux::Private, &Pane);
+        let rows: [(&str, Use, Option<&str>); 3] = [
+            ("alone at its prompt", |_, _| {}, None),
+            (
+                "running a command",
+                |private, shell| {
+                    tmux::send_line(shell, "sleep 30").unwrap();
+                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    while private
+                        .ask(&[
+                            "display-message",
+                            "-p",
+                            "-t",
+                            &shell.id,
+                            "#{pane_current_command}",
+                        ])
+                        .trim()
+                        != "sleep"
+                    {
+                        assert!(std::time::Instant::now() < deadline, "the command runs");
+                        std::thread::sleep(POLL);
+                    }
+                },
+                Some("shell-in-use"),
+            ),
+            (
+                "sharing its window",
+                |private, shell| {
+                    private.ask(&["split-window", "-d", "-t", &shell.id]);
+                },
+                Some("shell-in-use"),
+            ),
+        ];
+        for (row, used, cause) in rows {
+            let dir = tempfile::tempdir().unwrap();
+            let private = tmux::Private::start(dir.path());
+            let shell = private.idle_shell();
+            let runner = tmux::new_window(&private.0, "t", "overseer", dir.path())
+                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            used(&private, &shell);
+            let windows = || {
+                let Reading::Live(windows) = tmux::list_windows(&private.0, "t") else {
+                    panic!("{row}: the windows read");
+                };
+                windows
+                    .into_iter()
+                    .map(|(window, _, _)| window)
+                    .collect::<Vec<_>>()
+            };
+            let before = windows();
+            assert_eq!(
+                close_idle_shell(&runner, &shell.id).as_deref(),
+                cause,
+                "{row}"
+            );
+            let expected = match cause {
+                None => vec![runner.window.clone()],
+                Some(_) => before,
+            };
+            assert_eq!(windows(), expected, "{row}");
+        }
+    }
+
     #[test]
     fn a_confined_receipt_recovers_the_harness_below_its_wrapper() {
         let dir = tempfile::tempdir().unwrap();
@@ -1042,7 +1050,7 @@ mod tests {
             confinement: None,
         };
         let pane = operation
-            .open_window(server, "t", "wrapped", &command, &opening, false)
+            .open_window(server, "t", "wrapped", &command, &opening)
             .unwrap()
             .ok()
             .expect("the wrapper's window opened");
