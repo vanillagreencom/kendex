@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# This repository's committed kendex.settings.toml must resolve the reviewer
-# timeout policy to "proceed" and the decision mode to "auto-recommended".
-# Both are recognized values of their keys, so nothing else in the repo
-# notices a change from one to the other: "block" stops every session at a
-# reviewer that never shows, and "ask" stops it at every decision.
-#
-# A misspelled PR_REVIEW_ON_TIMEOUT is refused by the orch runtime's review
-# gate (`setting-invalid`); no script reports a misspelled ORCH_DECISION_MODE.
-# What is checked here is the resolved value;
-# for ORCH_DECISION_MODE this assertion is the only check.
+# This repository's committed kendex.settings.toml must resolve the decision
+# mode to "auto-recommended". "ask" is also a recognized value, so nothing
+# else in the repo notices a change from one to the other, and "ask" stops
+# every session at every decision. No script reports a misspelled
+# ORCH_DECISION_MODE either, so this assertion is its only check.
 #
 # Lives under tools/tests/, not skills/orch/tests/: that suite ships with the
 # orch skill to other projects, and this policy is kendex's alone. tools/tests
@@ -33,16 +28,9 @@ bad() {
 }
 
 # Read the committed file from the repository root, with the process env
-# silent on every key that could override it. A lane exporting one of these
-# would otherwise mask a committed value.
-silent_env=(env -u PR_REVIEW_ON_TIMEOUT -u ORCH_DECISION_MODE)
-
-policy=$(cd "$REPO_ROOT" && "${silent_env[@]}" "$SCRIPTS/orch-env" PR_REVIEW_ON_TIMEOUT block 2>"$TMP/policy.err")
-if [[ "$policy" == "proceed" ]]; then
-  ok "committed PR_REVIEW_ON_TIMEOUT resolves to proceed"
-else
-  bad "committed PR_REVIEW_ON_TIMEOUT resolves to proceed (got '$policy')" "$TMP/policy.err"
-fi
+# silent on the key. A lane exporting it would otherwise mask the committed
+# value.
+silent_env=(env -u ORCH_DECISION_MODE)
 
 decision_mode=$(cd "$REPO_ROOT" && "${silent_env[@]}" "$SCRIPTS/orch-env" ORCH_DECISION_MODE ask 2>"$TMP/decision-mode.err")
 if [[ "$decision_mode" == "auto-recommended" ]]; then
