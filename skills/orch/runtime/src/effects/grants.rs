@@ -71,9 +71,10 @@ const OWN_RUNTIME_CACHE: &str = "runtime-cache";
 /// How long `gh auth token` may take.
 const GH_BOUND: Duration = Duration::from_secs(30);
 
-/// The second-opinion roster where the setting names none: the script's
-/// own default.
-const DEFAULT_REVIEW_TARGETS: &str = "claude codex";
+/// The second-opinion roster where the setting names none: `DEFAULT_MODELS`
+/// in `skills/second-opinion/scripts/second-opinion`, copied because the
+/// script states it only in its help prose.
+const DEFAULT_REVIEW_TARGETS: &str = "claude codex pi-copilot pi-copilot-gpt";
 
 /// The lane's private folder: its mailbox under its root, made before the
 /// window, written by the lane and its overseer alone.
@@ -953,7 +954,11 @@ mod tests {
     fn the_review_names_the_roster_s_other_harnesses() {
         assert_eq!(
             review_harnesses(None, Harness::Codex),
-            vec![Harness::Claude]
+            vec![Harness::Claude, Harness::Copilot]
+        );
+        assert_eq!(
+            review_harnesses(None, Harness::Pi),
+            vec![Harness::Claude, Harness::Codex, Harness::Copilot]
         );
         assert_eq!(
             review_harnesses(Some("codex, pi-copilot-gpt opencode"), Harness::Pi),

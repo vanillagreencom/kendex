@@ -184,7 +184,7 @@ Launch settings and Codex compaction: [skill-rules.md](skill-rules.md) § Coordi
 | `ORCH_LANE_CLOUD_REPOS` | `<name>=<owner>/<repo>` pairs: the repository each account can reach. | unset |
 | `ORCH_LANE_CLOSE_SECS` | Seconds a lane stop waits after SIGTERM before SIGKILL. | `15` |
 | `ORCH_LANE_WRITABLE` | Further folders a confined local lane may write, `:`-separated, each absolute or `~/`. | unset |
-| `SECOND_OPINION_MODELS` | The second-opinion roster a lane's review walks. | `claude codex` |
+| `SECOND_OPINION_MODELS` | The second-opinion roster a lane's review walks. | `claude codex pi-copilot pi-copilot-gpt` |
 | `ORCH_MODEL_RECOVERY_LIMIT` | Model recoveries that may relaunch a lane since its last reset. | `3` |
 | `AGENT_RUNTIME_TMUX_VERIFY_SECS` | Seconds a launch waits for the harness to come up at its composer, and the bound of each pane wait. | `15` |
 | `AGENT_RUNTIME_JOB_CLAIM_SECS` | Seconds a transfer's or a stop's caller waits for its detached job to claim the intent. | `15` |
