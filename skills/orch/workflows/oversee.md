@@ -136,10 +136,20 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
 ## 2. Select Work
 
-1. Select unblocked, non-terminal development items from the tracker.
+1. Select unblocked, non-terminal development items from the tracker, read live through every page.
+   - For a Linear tracker, run each line below in its own tool call. The first writes the whole read to ignored scratch storage, the second prints one row per item with no description, and the last removes the read.
+   - `[STATES]` names the team's open states but Verifying and Triage, comma-separated, as `linear.sh statuses list --team [TEAM]` lists them.
+   - An item with an id in `blocked_by_open` (the sixth column), or with the `blocked` label, is blocked.
    - Leave out Verifying items: the verification pass owns their post-merge readings.
-   - Follow `start.md` for container selection.
+   - Follow `start.md` for container selection. An item another row names as its parent (the fifth column) is a container, unless its `in_pr_bundle` (the fourth column) is true.
    - A GitHub item labeled `blocked` is no candidate.
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --state [STATES] --select owed --max > tmp/oversee-select-source.json
+   jq -r '.[] | [.id, .state, (.priority // 0), .in_pr_bundle, .parent_id, (.blocked_by_open | join(",")), (.labels | join(","))] | @tsv' tmp/oversee-select-source.json
+   rm -f tmp/oversee-select-source.json
+   ```
+
 2. Where code shows a dependency that holds an item, first record its blocking relation under the linear skill's `SKILL.md` § Blocked Label vs Issue Relations.
    - The launch's admission applies the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to a `linear` item, reading the item and every container ancestor.
    - [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) holds its refusals; a relaunch is judged as [§ Recovery relaunch](../references/lane-directive.md#recovery-relaunch) states.

@@ -101,8 +101,8 @@ pub struct TrackerInventory {
     pub owed: Vec<OwedItem>,
     /// The Verifying items and the containers whose children all ended.
     pub verifying: Vec<VerifyingItem>,
-    /// The team's open items with no open blocker that no lane holds and
-    /// the launch queue does not name, sorted.
+    /// The team's open items with no open blocker, relation or label, that
+    /// no lane holds and the launch queue does not name, sorted.
     pub open_unblocked: Vec<String>,
 }
 
@@ -127,26 +127,43 @@ pub type Shared = Arc<Mutex<Latest>>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OwedState {
+    Backlog,
+    Todo,
     InProgress,
     InReview,
     Verifying,
 }
 
 impl OwedState {
-    fn of_name(name: &str) -> Option<OwedState> {
-        match name {
-            "In Progress" => Some(OwedState::InProgress),
-            "In Review" => Some(OwedState::InReview),
-            "Verifying" => Some(OwedState::Verifying),
+    /// A started state by the name orch gives it; work not yet begun by
+    /// its tracker type, since a team names its Backlog and Todo states as
+    /// it likes. Triage is the triage pass's, never owed.
+    fn of_item(name: &str, state_type: &str) -> Option<OwedState> {
+        match (state_type, name) {
+            ("backlog", _) => Some(OwedState::Backlog),
+            ("unstarted", _) => Some(OwedState::Todo),
+            (_, "In Progress") => Some(OwedState::InProgress),
+            (_, "In Review") => Some(OwedState::InReview),
+            (_, "Verifying") => Some(OwedState::Verifying),
             _ => None,
         }
     }
 
     pub fn word(self) -> &'static str {
         match self {
+            OwedState::Backlog => "backlog",
+            OwedState::Todo => "todo",
             OwedState::InProgress => "in-progress",
             OwedState::InReview => "in-review",
             OwedState::Verifying => "verifying",
+        }
+    }
+
+    /// Work no lane has begun, owed only where it can start.
+    fn unstarted(self) -> bool {
+        match self {
+            OwedState::Backlog | OwedState::Todo => true,
+            OwedState::InProgress | OwedState::InReview | OwedState::Verifying => false,
         }
     }
 }
@@ -394,6 +411,18 @@ struct OpenItem {
     parent_id: String,
     created_at: String,
     blocked_by_open: Vec<String>,
+    labels: Vec<String>,
+}
+
+/// The label the linear package's `issues block` sets for a blocker that is
+/// no tracker item.
+const BLOCKED_LABEL: &str = "blocked";
+
+impl OpenItem {
+    /// Held by an open blocking relation or by the `blocked` label.
+    fn blocked(&self) -> bool {
+        !self.blocked_by_open.is_empty() || self.labels.iter().any(|l| l == BLOCKED_LABEL)
+    }
 }
 
 /// `issues bulk-get --format=raw`: the public result, one node per asked
@@ -1154,7 +1183,14 @@ fn read_list(
             .values()
             .map(|(parent, kind)| (parent.as_str(), kind.as_str())),
     );
-    let inventory = inventory_of(&items, &containers, fleet, read_at);
+    // Every item an open item or a child read names as its parent: a
+    // container, whose children are the work (`start.md`).
+    let parents: BTreeSet<&str> = state_types
+        .values()
+        .map(|(parent, _)| parent.as_str())
+        .filter(|parent| !parent.is_empty())
+        .collect();
+    let inventory = inventory_of(&items, &containers, &parents, fleet, read_at);
     Ok(Answered::Value((items, inventory)))
 }
 
@@ -1184,10 +1220,12 @@ fn priority_word(priority: &Nullable<u64>) -> String {
 /// The inventory the heartbeat and verification read, from the open items
 /// and the fleet: the owed rows (`LANE_RUNNING_JQ`), the Verifying items
 /// and containers, the open unblocked items no lane holds. An item joined to
-/// a lane is that lane's, as its own item is.
+/// a lane is that lane's, as its own item is. `containers` are those whose
+/// children all ended, `parents` every item with a child.
 fn inventory_of(
     items: &[OpenItem],
     containers: &BTreeSet<String>,
+    parents: &BTreeSet<&str>,
     fleet: &FleetState,
     read_at: u64,
 ) -> TrackerInventory {
@@ -1199,7 +1237,7 @@ fn inventory_of(
         let state = if container {
             Some(OwedState::Verifying)
         } else {
-            OwedState::of_name(&item.state)
+            OwedState::of_item(&item.state, &item.state_type)
         };
         let Some(state) = state else { continue };
         let priority = priority_word(&item.priority);
@@ -1218,6 +1256,11 @@ fn inventory_of(
             continue;
         }
         if fleet.launch_queue.contains(&item.id) {
+            continue;
+        }
+        if state.unstarted()
+            && (item.blocked() || (parents.contains(item.id.as_str()) && !item.in_pr_bundle))
+        {
             continue;
         }
         let record = last_lane(&item.id);
@@ -1265,7 +1308,7 @@ fn inventory_of(
     owed.sort_by(|a, b| a.id.cmp(&b.id));
     let open_unblocked = items
         .iter()
-        .filter(|i| i.blocked_by_open.is_empty() && !held.contains(i.id.as_str()))
+        .filter(|i| !i.blocked() && !held.contains(i.id.as_str()))
         .map(|i| i.id.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()

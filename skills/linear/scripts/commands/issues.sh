@@ -74,7 +74,7 @@ List Options:
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd|UTC>  Filter by created date; UTC is YYYY-MM-DDTHH:MM:SSZ
   --select <name>      full (default), triage (identity and creation), or owed
-                        (priority, state, verification and container facts).
+                        (priority, state, labels, verification and container facts).
                         triage and owed use safe output and pages of 250.
   --limit <n>           Max results (default: 75); a larger value spans pages,
                         and a read that leaves rows unread says so on stderr
@@ -646,6 +646,7 @@ list_issues() {
     triage) fields='identifier createdAt'; page=250 ;;
     owed)
         fields='id identifier title description priority state { name type } parent { identifier } createdAt
+labels { pageInfo { hasNextPage endCursor } nodes { name } }
 '"$ISSUE_BLOCKED_BY_FIELDS"
         page=250
         ;;
@@ -701,7 +702,7 @@ list_issues() {
     elif [[ "$selection" == owed ]]; then
         jq "$ISSUE_RELATION_JQ"'[.issues.nodes[] | {id: .identifier, title, description,
           in_pr_bundle: issue_in_pr_bundle(.description), priority, state: .state.name, state_type: .state.type, parent_id: (.parent.identifier // ""),
-          created_at: .createdAt, blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes)}]' <<<"$result"
+          created_at: .createdAt, blocked_by_open: issue_blocked_by_open_ids(.inverseRelations.nodes), labels: [(.labels.nodes // [])[] | .name]}]' <<<"$result"
         return
     fi
 

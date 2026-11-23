@@ -35,6 +35,7 @@ use orch_runtime::error::Error;
 use orch_runtime::schedule::Duty;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::watch::github;
+use orch_runtime::watch::heartbeat;
 use orch_runtime::watch::tracker::{self, Context, OwedState, Shared, TerminalState};
 use orch_runtime::watch::verifying;
 use orch_runtime::watch::{
@@ -252,7 +253,7 @@ fn item(
 ) -> Value {
     json!({"id": id, "title": id, "description": "", "in_pr_bundle": false, "priority": priority,
         "state": state, "state_type": state_type, "parent_id": "", "created_at": created_at,
-        "blocked_by_open": blocked_by})
+        "blocked_by_open": blocked_by, "labels": []})
 }
 
 /// The triage world the recorded watch ran.
@@ -2011,6 +2012,99 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
         inventory.owed.iter().all(|row| row.id != "KEN-2"),
         "KEN-2, in progress, is joined to a running lane: not owed: {:?}",
         inventory.owed.iter().map(|row| &row.id).collect::<Vec<_>>()
+    );
+}
+
+/// Work not yet begun that can start is owed: with an empty queue and no
+/// lane, the heartbeat names each Todo and Backlog item no open blocker
+/// holds, and leaves out one a relation or the `blocked` label holds, a
+/// container (its child is the work) and a Triage item.
+#[test]
+fn the_heartbeat_names_each_startable_todo_and_backlog_item_as_owed() {
+    let mut world = World::new();
+    let open = |id: &str, state: &str, state_type: &str, priority: Value, blocked_by: &[&str]| {
+        item(
+            id,
+            "2026-08-16T00:00:00Z",
+            state,
+            state_type,
+            priority,
+            blocked_by,
+        )
+    };
+    let mut labelled = open("KEN-4", "Backlog", "backlog", json!(2), &[]);
+    labelled["labels"] = json!(["skills", "blocked"]);
+    let mut child = open("KEN-6", "Todo", "unstarted", json!(2), &[]);
+    child["parent_id"] = json!("KEN-5");
+    let items = vec![
+        open("KEN-1", "Todo", "unstarted", json!(2), &[]),
+        open("KEN-2", "Backlog", "backlog", Value::Null, &[]),
+        open("KEN-3", "Todo", "unstarted", json!(1), &["KEN-1"]),
+        labelled,
+        open("KEN-5", "Todo", "unstarted", json!(1), &[]),
+        child,
+        open("KEN-7", "Triage", "triage", json!(1), &[]),
+    ];
+    let childless = |id: &str, kind: &str| json!({"identifier": id, "state": {"type": kind}, "children": {"nodes": []}});
+    world.linear("statuses list", statuses());
+    world.linear("issues list", json!({"body": items}));
+    world.linear(
+        "issues bulk-get",
+        json!({"body": {"issues": {"nodes": [
+            childless("KEN-1", "unstarted"), childless("KEN-2", "backlog"),
+            childless("KEN-3", "unstarted"), childless("KEN-4", "backlog"),
+            {"identifier": "KEN-5", "state": {"type": "unstarted"},
+             "children": {"nodes": [{"identifier": "KEN-6", "state": {"type": "unstarted"}}]}},
+            childless("KEN-6", "unstarted"), childless("KEN-7", "triage")
+        ]}}}),
+    );
+    quiet_github(&mut world);
+    let clock = FakeClock::new();
+    let ctx = world.context(world.settings(&[]), None);
+    let shared = ctx.shared.clone();
+    let mut tracker_body = tracker::body(ctx);
+    let mut baseline = Baseline::default();
+    pass(&mut tracker_body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    let mut heartbeat_body = heartbeat::body(heartbeat::Context {
+        settings: world.settings(&[]),
+        path: world.fleet_path(),
+        max_loops: 25,
+        interval: Duration::from_secs(240),
+        since: None,
+        repos: Vec::new(),
+        gh: world.dir.path().join("gh"),
+        shared,
+        verifying: verifying::Lines::default(),
+        locking: Locking::FLOCK,
+        nonce: 7,
+        owner: None,
+    });
+    let produced = pass_as(
+        Duty::Heartbeat,
+        &mut heartbeat_body,
+        &mut baseline,
+        &clock,
+        SINCE_EPOCH + 1000,
+    )
+    .unwrap();
+    let lines = rendered(&produced);
+    let owed: Vec<&str> = lines
+        .iter()
+        .map(String::as_str)
+        .filter(|l| l.starts_with("owed "))
+        .collect();
+    assert_eq!(
+        owed,
+        [
+            "owed KEN-1 state=todo priority=2 lane=none verdict=queue",
+            "owed KEN-2 state=backlog priority=- lane=none verdict=queue",
+            "owed KEN-6 state=todo priority=2 lane=none verdict=queue",
+        ],
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"open-unblocked count=5 items=KEN-1,KEN-2,KEN-5,KEN-6,KEN-7".to_owned()),
+        "the `blocked` label holds KEN-4 as a relation holds KEN-3: {lines:?}"
     );
 }
 

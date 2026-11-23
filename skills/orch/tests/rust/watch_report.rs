@@ -4153,7 +4153,7 @@ fn report_render_lists_the_verifying_items_its_own_tracker_read_finds() {
     let item = |id: &str, state: &str| {
         json!({"id": id, "title": id, "description": "", "in_pr_bundle": false, "priority": 2,
             "state": state, "state_type": "started", "parent_id": "",
-            "created_at": "2026-09-20T00:00:00Z", "blocked_by_open": []})
+            "created_at": "2026-09-20T00:00:00Z", "blocked_by_open": [], "labels": []})
     };
     world.plant(
         "linear.json",
