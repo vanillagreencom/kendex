@@ -66,7 +66,13 @@ enum Verb {
     /// Open a tmux window on the named socket and session, start the
     /// harness the intent file describes in it, and write the launch record.
     /// An intent naming its account and no home runs under the home that
-    /// account names, its trust record for the directory written first.
+    /// account names, its trust record for the directory written first. A
+    /// launch billing a named Claude home (a Claude intent's home or
+    /// account, a Pi `pi-claude/` intent's account) signs in as that home
+    /// alone: by the token file `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`
+    /// declares for it, else its stored login, the inherited Claude
+    /// credentials cleared; a home holding neither refuses
+    /// `successor-not-signed-in` before any window opens.
     Launch {
         #[arg(long)]
         intent: PathBuf,
@@ -762,6 +768,7 @@ struct AccountSettings {
     home: Option<String>,
     copilot_home: Option<String>,
     preference: String,
+    tokens: settings::Judged<Vec<(String, PathBuf)>>,
     /// The notice of each private env file line the load passed over, for
     /// the verb to say ahead of its reply.
     skipped: Vec<String>,
@@ -786,13 +793,15 @@ impl AccountSettings {
         };
         let values = settings::layered(&roots.project, &environment, true, &keys)?;
         let skipped = values.skipped();
+        let controller = settings::ControllerSettings::read(&values);
         let loaded = AccountSettings {
             skipped,
             accounts: settings::AccountSettings::read(&values),
             state: settings::account_state_dir(&values),
             home: values.get(settings::HOME_KEY).map(str::to_owned),
             copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
-            preference: settings::ControllerSettings::read(&values).preference,
+            preference: controller.preference,
+            tokens: controller.account_tokens,
             project: roots.project,
         };
         // Every verb reads the account keys first: a value outside its form
@@ -817,6 +826,7 @@ impl AccountSettings {
             home: self.home.as_deref(),
             copilot_home: self.copilot_home.as_deref(),
             controller_preference: &self.preference,
+            account_tokens: &self.tokens,
         }
     }
 }
@@ -1835,6 +1845,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     path: intent.clone(),
                     source,
                 })?;
+            intent.claude_sign_in = claude_sign_in(&intent)?;
             prepare_home(&mut intent)?;
             let command = launch::build(&intent)?;
             if let Some(brief) = &command.brief_path
@@ -2363,6 +2374,44 @@ impl HandOverSettings {
             opener_session: |_| Ok(None),
         }
     }
+}
+
+/// The sign-in of the named Claude home `intent` bills, as the reader
+/// judges it ([`agent_runtime::accounts::usage::SignIn::launch`]), `None`
+/// for an intent billing none: the setting is read from the current
+/// directory's project only then, so a value that does not read refuses no
+/// other launch.
+fn claude_sign_in(intent: &LaunchIntent) -> Result<Option<launch::ClaudeSignIn>> {
+    use agent_runtime::accounts::usage;
+    let named = match intent
+        .harness
+        .billed(intent.model.as_deref().unwrap_or_default())
+    {
+        Some(Harness::Claude) if intent.harness == Harness::Claude => {
+            intent.home.as_ref().or(intent.account.as_ref())
+        }
+        Some(Harness::Claude) => intent.account.as_ref(),
+        Some(Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
+    };
+    let Some(home) = named else {
+        return Ok(None);
+    };
+    let cwd = std::env::current_dir().map_err(|e| Error::io("read", ".", e))?;
+    let roots = settings::roots(&cwd)?;
+    let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let keys = settings::Keys {
+        read: &[settings::ENGINE_KEYS],
+        load: &[],
+    };
+    let values = settings::layered(&roots.project, &environment, true, &keys)?;
+    let files = usage::token_files(&settings::ControllerSettings::read(&values).account_tokens)?;
+    let home = home.display().to_string();
+    let now = clock::Clock::wall(&clock::SystemClock)
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    usage::sign_in(Harness::Claude, &home, &files, now)
+        .launch(&home, &files)
+        .map(Some)
 }
 
 /// A launch that names its account and no home runs, before its window

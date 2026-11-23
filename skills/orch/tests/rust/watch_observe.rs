@@ -1269,7 +1269,7 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     let spent = root.join("eclaude");
     let picked = root.join("bclaude");
     for account in [&spent, &picked] {
-        std::fs::create_dir_all(account).unwrap();
+        plant_credential(account);
     }
     let binaries = format!("claude={}", walled_stub(&root).display());
     let request = json!({
@@ -6345,7 +6345,7 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     let old_account = dir.path().join("old-account");
     let new_account = dir.path().join("new-account");
     std::fs::create_dir_all(&old_account).unwrap();
-    std::fs::create_dir_all(&new_account).unwrap();
+    plant_credential(&new_account);
     let mut record = relaunchable(lane_record(
         "KEN-4",
         "gh-4",
@@ -6600,7 +6600,7 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         let old_account = dir.path().join("old-account");
         let new_account = dir.path().join("new-account");
         std::fs::create_dir_all(&old_account).unwrap();
-        std::fs::create_dir_all(&new_account).unwrap();
+        plant_credential(&new_account);
         let mut record = relaunchable(lane_record(
             "KEN-4",
             "gh-4",

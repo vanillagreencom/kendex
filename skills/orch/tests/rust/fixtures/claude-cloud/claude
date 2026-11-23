@@ -4,7 +4,8 @@
 # `lane-mail`. It appends its argv, its CLAUDE_CONFIG_DIR and the stdin text
 # to $CLAUDE_CLOUD_LOG (one call is three lines, so a row counts the sends
 # the session took), the nested-session marker it inherited to
-# $CLAUDE_CLOUD_PARENT_LOG where set, copies $CLAUDE_CLOUD_SNAPSHOT_OF to
+# $CLAUDE_CLOUD_PARENT_LOG where set, the Claude token it inherited to
+# $CLAUDE_CLOUD_SIGN_IN_LOG where set (`unset` where it holds none), copies $CLAUDE_CLOUD_SNAPSHOT_OF to
 # $CLAUDE_CLOUD_SNAPSHOT where both are set (the fleet record as it stands
 # while the CLI runs, the barrier a row reads the owed stage through), makes
 # the directory $CLAUDE_CLOUD_SEAL read-only where set (the mark that
@@ -22,6 +23,7 @@ if [ -n "${CLAUDE_CLOUD_HOLD:-}" ]; then
   read -r -t 30 -u 3 _ || :
 fi
 [ -z "${CLAUDE_CLOUD_PARENT_LOG:-}" ] || printf 'parent-marker=%s\n' "${CLAUDECODE-}" >> "$CLAUDE_CLOUD_PARENT_LOG"
+[ -z "${CLAUDE_CLOUD_SIGN_IN_LOG:-}" ] || printf 'token=%s\n' "${CLAUDE_CODE_OAUTH_TOKEN-unset}" >> "$CLAUDE_CLOUD_SIGN_IN_LOG"
 [ "${CLAUDE_CLOUD_KILL:-}" != parent ] || CLAUDE_CLOUD_KILL=$PPID
 [ -z "${CLAUDE_CLOUD_KILL:-}" ] || kill -KILL -- "$CLAUDE_CLOUD_KILL"
 if [ -n "${CLAUDE_CLOUD_SNAPSHOT:-}" ] && [ -n "${CLAUDE_CLOUD_SNAPSHOT_OF:-}" ]; then

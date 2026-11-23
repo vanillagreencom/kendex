@@ -1,7 +1,7 @@
 //! Process-protocol tests of the `agent-runtime` executable: they run the
 //! built binary against fixtures this harness owns.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn binary() -> PathBuf {
@@ -133,6 +133,7 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
         extra_args: Vec::new(),
         program: None,
         grants: None,
+        claude_sign_in: None,
     };
     let flag = "--dangerously-skip-permissions".to_owned();
     let bypass = build(&intent(Permission::Bypass)).unwrap();
@@ -1681,6 +1682,7 @@ fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_we
                 real.display()
             ),
         );
+        plant_login(&root.join("home"));
         let intent = root.join("intent.json");
         std::fs::write(
             &intent,
@@ -1750,6 +1752,7 @@ fn a_launch_whose_record_cannot_be_written_closes_its_window_or_names_the_one_it
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let pane = PrivatePane::behind_path(&root);
+        plant_login(&root.join("home"));
         let intent = root.join("intent.json");
         std::fs::write(
             &intent,
@@ -1853,6 +1856,7 @@ fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswere
                 real.display()
             ),
         );
+        plant_login(&root.join("home"));
         let intent = root.join("intent.json");
         std::fs::write(
             &intent,
@@ -1907,6 +1911,7 @@ fn a_launch_whose_uid_cannot_be_read_refuses_and_names_no_socket() {
         &shims.join("id"),
         "#!/bin/bash\necho 'id: unread' >&2\nexit 1\n",
     );
+    plant_login(&root.join("home"));
     let intent = root.join("intent.json");
     std::fs::write(
         &intent,
@@ -2788,7 +2793,7 @@ fn a_launch_under_a_waiting_shell_records_the_harness_itself() {
         ),
     );
     let home = dir.path().join("home");
-    std::fs::create_dir_all(&home).unwrap();
+    plant_login(&home);
     let intent = dir.path().join("intent.json");
     std::fs::write(
         &intent,
@@ -2829,6 +2834,229 @@ fn a_launch_under_a_waiting_shell_records_the_harness_itself() {
         result["harness_process"]["start"],
         identity_reading(harness_pid)["start"]
     );
+}
+
+/// A Claude stored login in `home`, which a launch billing that home signs
+/// in with where no token file is declared for it.
+fn plant_login(home: &Path) {
+    std::fs::create_dir_all(home).unwrap();
+    std::fs::write(
+        home.join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"planted","subscriptionType":"max"}}"#,
+    )
+    .unwrap();
+}
+
+/// `agent-runtime launch` of an intent billing a named Claude home, a
+/// Claude intent's home or account or a Pi `pi-claude/` intent's account,
+/// signs in as that home whatever the tmux server's environment holds: the
+/// server's token never reaches the harness, the token file the setting
+/// declares for the home does, and a home it declares nothing for signs in
+/// by its stored login, no token in the environment. A home holding no
+/// sign-in, a declared file absent, empty or unreadable among them, refuses
+/// before any window opens, naming the home, the cause and the file. Each
+/// row: the case, the harness and the field naming the home, the declared
+/// file, whether the home holds a stored login, and the token the harness
+/// holds or the refusal's cause.
+#[test]
+fn a_launch_naming_a_claude_home_signs_in_as_that_home_alone() {
+    #[derive(Clone, Copy)]
+    enum File {
+        None,
+        Held,
+        Absent,
+        Empty,
+        Directory,
+    }
+    enum Want {
+        Holds(Option<&'static str>),
+        Refused(&'static str),
+    }
+    let rows = [
+        (
+            "a Claude home by file",
+            "claude",
+            "home",
+            File::Held,
+            false,
+            Want::Holds(Some("file-token")),
+        ),
+        (
+            "a Claude home by login",
+            "claude",
+            "home",
+            File::None,
+            true,
+            Want::Holds(None),
+        ),
+        (
+            "a Claude account by file",
+            "claude",
+            "account",
+            File::Held,
+            false,
+            Want::Holds(Some("file-token")),
+        ),
+        (
+            "a Claude account by login",
+            "claude",
+            "account",
+            File::None,
+            true,
+            Want::Holds(None),
+        ),
+        (
+            "a Pi seat by file",
+            "pi",
+            "account",
+            File::Held,
+            false,
+            Want::Holds(Some("file-token")),
+        ),
+        (
+            "a Pi seat by login",
+            "pi",
+            "account",
+            File::None,
+            true,
+            Want::Holds(None),
+        ),
+        (
+            "a declared file absent",
+            "claude",
+            "home",
+            File::Absent,
+            true,
+            Want::Refused("declared-token-absent"),
+        ),
+        (
+            "a declared file empty",
+            "claude",
+            "home",
+            File::Empty,
+            true,
+            Want::Refused("declared-token-absent"),
+        ),
+        (
+            "a declared directory",
+            "claude",
+            "home",
+            File::Directory,
+            true,
+            Want::Refused("declared-token-unreadable"),
+        ),
+        (
+            "neither",
+            "claude",
+            "home",
+            File::None,
+            false,
+            Want::Refused("no-credential"),
+        ),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let pane = PrivatePane::start(dir.path());
+    pane.tmux(&[
+        "set-environment",
+        "-g",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "inherited",
+    ]);
+    for (n, (case, harness, field, file, stored, want)) in rows.into_iter().enumerate() {
+        let row = dir.path().join(format!("row{n}"));
+        let seen = row.join("seen-token");
+        let program = row.join("bin").join(harness);
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        write_executable(
+            &program,
+            format!(
+                "#!/bin/bash\nprintf '%s\\n' \"${{CLAUDE_CODE_OAUTH_TOKEN-unset}}\" > '{seen}.part' && mv '{seen}.part' '{seen}'\nread -r _\n",
+                seen = seen.display()
+            ),
+        );
+        let home = row.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        if stored {
+            plant_login(&home);
+        }
+        let token = row.join("home.token");
+        match file {
+            File::Held => std::fs::write(&token, "file-token\n").unwrap(),
+            File::Empty => std::fs::write(&token, "\n").unwrap(),
+            File::Directory => std::fs::create_dir_all(&token).unwrap(),
+            File::None | File::Absent => {}
+        }
+        let mut body = serde_json::json!({"harness": harness, "cwd": row, "program": program});
+        body[field] = serde_json::json!(home);
+        if harness == "pi" {
+            body["model"] = serde_json::json!("pi-claude/claude-fable-5-1");
+        }
+        let intent = row.join("intent.json");
+        std::fs::write(&intent, body.to_string()).unwrap();
+        let setting = match file {
+            File::None => String::new(),
+            File::Held | File::Absent | File::Empty | File::Directory => {
+                format!("{}={}", home.display(), token.display())
+            }
+        };
+        let windows = pane.tmux(&["list-windows", "-a", "-F", "#{window_id}"]);
+        let out = Command::new(binary())
+            .current_dir(&row)
+            .args(["launch", "--intent"])
+            .arg(&intent)
+            .arg("--record")
+            .arg(row.join("record.json"))
+            .arg("--socket")
+            .arg(&pane.socket)
+            .args(["--session", &pane.session, "--window-name", "lane"])
+            .env("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", &setting)
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
+            panic!("{case}: no reply: {}", String::from_utf8_lossy(&out.stderr))
+        });
+        match want {
+            Want::Holds(holds) => {
+                assert_eq!(reply["ok"], true, "{case}: {reply}");
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                let text = loop {
+                    if let Ok(text) = std::fs::read_to_string(&seen) {
+                        break text;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "{case}: the harness never ran"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                };
+                assert_eq!(text.trim_end(), holds.unwrap_or("unset"), "{case}");
+            }
+            Want::Refused(cause) => {
+                assert_eq!(
+                    reply["refusal"]["key"], "successor-not-signed-in",
+                    "{case}: {reply}"
+                );
+                let mut fields = vec![
+                    serde_json::json!(["account", home.display().to_string()]),
+                    serde_json::json!(["cause", cause]),
+                ];
+                if !matches!(file, File::None) {
+                    fields.push(serde_json::json!(["file", token.display().to_string()]));
+                }
+                assert_eq!(
+                    reply["refusal"]["fields"],
+                    serde_json::json!(fields),
+                    "{case}: {reply}"
+                );
+                assert_eq!(
+                    pane.tmux(&["list-windows", "-a", "-F", "#{window_id}"]),
+                    windows,
+                    "{case}: no window opened"
+                );
+                assert!(!seen.exists(), "{case}: the harness never ran");
+            }
+        }
+    }
 }
 
 /// An adoption records the harness identity read in the pane's foreground,
@@ -3324,6 +3552,7 @@ impl ConfinedWorld {
         for dir in [&rt, &wt, &seat] {
             std::fs::create_dir_all(dir).unwrap();
         }
+        plant_login(&seat);
         let lanes = rt.join("tmux");
         let display = rt.join("wayland-1");
         agent_runtime::host::tmux::start_private_server(&lanes, "lanes", &root)

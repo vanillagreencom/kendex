@@ -1522,6 +1522,75 @@ fn a_cloud_launch_from_a_checkout_whose_origin_is_off_github_makes_no_worktree()
     );
 }
 
+/// A cloud session signs in by its folder's stored login whatever the
+/// token setting declares, since a cloud session runs on the claude.ai
+/// login a declared `setup-token` cannot stand in for: on an account the
+/// setting declares a file for, the token the launch inherited is cleared,
+/// none is exported, and the session is created. A directive the same
+/// caller then sends goes to that session on the same login, the inherited
+/// token cleared again, since a send under another account's token could
+/// not reach it.
+#[test]
+fn a_cloud_launch_and_its_directive_sign_in_by_the_accounts_stored_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let world = cloud_world(dir.path());
+    let init = world.run(&["state", "init", "--fleet"], &[]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let token = dir.path().join("eclaude.token");
+    std::fs::write(&token, "file-token\n").unwrap();
+    let setting = format!("{}={}", world.account.display(), token.display());
+    let log = dir.path().join("claude.log");
+    let signed = dir.path().join("sign-in.log");
+    let report = effect_report(&world.launch(
+        "CC-40",
+        &[
+            ("CLAUDE_CLOUD_LOG", log.as_path()),
+            ("CLAUDE_CLOUD_SIGN_IN_LOG", signed.as_path()),
+            ("CLAUDE_CODE_OAUTH_TOKEN", Path::new("inherited")),
+            ("AGENT_RUNTIME_ACCOUNT_TOKEN_FILES", Path::new(&setting)),
+        ],
+    ));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        std::fs::read_to_string(&signed).unwrap(),
+        "token=unset\n",
+        "{report}"
+    );
+    let directive = dir.path().join("directive.txt");
+    std::fs::write(&directive, TEXT).unwrap();
+    std::fs::remove_file(&log).unwrap();
+    let sent = world.run(
+        &[
+            "send",
+            "--item",
+            "CC-40",
+            "--file",
+            &directive.display().to_string(),
+        ],
+        &[
+            ("CLAUDE_CLOUD_LOG", log.as_path()),
+            ("CLAUDE_CLOUD_SIGN_IN_LOG", signed.as_path()),
+            ("CLAUDE_CODE_OAUTH_TOKEN", Path::new("inherited")),
+            ("LANE_MAIL_CLI", &real_lane_mail()),
+        ],
+    );
+    assert_eq!(result(&sent)["send"]["result"], "sent", "{}", stderr(&sent));
+    assert_eq!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        one_call(&world.account),
+        "the directive is queued into the created session under its account"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&signed).unwrap(),
+        "token=unset\ntoken=unset\n",
+        "the send signs in as the create did: {}",
+        stderr(&sent)
+    );
+}
+
 /// A cloud session arms git hooks only where the claim root's committed
 /// policy runs the `git-hooks` stage, read before anything is made: unset
 /// names the installer in the description, a policy without the stage

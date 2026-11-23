@@ -28,14 +28,14 @@ use crate::effects::prepare::{
 };
 use crate::effects::{
     Binding, Bootstrap, Claimant, Companion, EffectOutcome, Identity, Observed, OpenRefusal,
-    Operation, Pane, Polled, ProcessRead, Proof, Published, Recovered, Server, SessionFloor,
-    SignIn, State, Stop, Target, TurnConfirm, WindowClose, Wire, Word, opening_observation,
-    overseer_target_of, read_intent, read_overseer,
+    Operation, Pane, Polled, ProcessRead, Proof, Published, Recovered, Server, SessionFloor, State,
+    Stop, Target, TurnConfirm, WindowClose, Wire, Word, opening_observation, overseer_target_of,
+    read_intent, read_overseer,
 };
 use crate::error::{Error, Result};
 use crate::harness::Harness;
 use crate::intent::{BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Phase};
-use crate::launch::{Compaction, LaunchCommand, Permission, Resume};
+use crate::launch::{ClaudeSignIn, Compaction, LaunchCommand, Permission, Resume};
 use crate::observe::WallKind;
 use crate::reading::Reading;
 use crate::settings::{ControllerSettings, EngineSettings, LaunchSettings};
@@ -86,31 +86,6 @@ pub struct Run<'a> {
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     Error::refused(key, fields)
 }
-
-/// The variable a declared token file's text is exported under.
-const CLAUDE_TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
-
-/// The environment sources Claude Code ranks above `CLAUDE_CODE_OAUTH_TOKEN`
-/// (https://code.claude.com/docs/en/authentication § Authentication
-/// precedence, ranks 1 to 3), which a launch signing in by a declared token
-/// file clears, so the token it exports is the one used. `apiKeyHelper`,
-/// rank 4, and a gateway sign-in are settings and stored sessions, which no
-/// launch environment reaches.
-const CLAUDE_OUTRANKING_TOKEN: [&str; 5] = [
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_API_KEY",
-];
-
-/// The endpoint a declared account's launch also clears: with a claude.ai
-/// login and no gateway credential, Claude Code sends the login's token in
-/// `Authorization` to the endpoint `ANTHROPIC_BASE_URL` names
-/// (https://code.claude.com/docs/en/llm-gateway-protocol § Request
-/// headers), so an inherited one would receive the account's subscription
-/// token.
-const CLAUDE_TOKEN_ENDPOINT: &str = "ANTHROPIC_BASE_URL";
 
 /// The operation handle over a controller intent, its set started from the
 /// controller operation's own bootstrap.
@@ -418,8 +393,9 @@ struct Successor {
     /// seat is on, and the account records' root it is recorded under.
     seat: Option<String>,
     account_state: crate::settings::Judged<PathBuf>,
-    /// The token file the account declares, which the launch exports.
-    token_file: Option<PathBuf>,
+    /// The sign-in of the named Claude account the launch bills, the one
+    /// answer the succession judged it by.
+    claude_sign_in: Option<ClaudeSignIn>,
 }
 
 impl Successor {
@@ -429,48 +405,43 @@ impl Successor {
     /// prepared by the lane launch's own rule (`launch::launch_home`) with
     /// its trust record and harness gate, on the home it keeps (`kept`):
     /// `served` is the home the fleet server its window opens on hands its
-    /// panes. A named Claude or Codex account must sign the harness in
-    /// (`sign_in`) before any trust record is written into it, so an
-    /// account with no credential is no candidate and is left as it was; a
-    /// sign-in nothing here reads is the first turn's to judge, said in the
-    /// note that comes back. A named Claude account the settings declare a
-    /// token file for signs in by that file, and a refusal names it. The
+    /// panes. A named account billing Claude, a Pi `pi-claude/` seat among
+    /// them, or Codex must hold a sign-in at `now`
+    /// ([`crate::accounts::usage::sign_in`]) before any trust record is
+    /// written into it, so an account with none is no candidate and is left
+    /// as it was, and a refusal names a declared file; a sign-in nothing
+    /// here reads is the first turn's to judge, said in the note that comes
+    /// back. The launch signs in by the answer the judgement read. The
     /// program and brief are checked by the effect that builds the command.
     fn from_pending(
         settings: &Settings,
         pending: &crate::controller::Pending,
         served: Option<&Path>,
-        sign_in: &dyn Fn(Harness, &Path, Option<&Path>) -> SignIn,
+        now: u64,
     ) -> std::result::Result<(Successor, Option<Value>), Unready> {
+        use crate::accounts::usage::{self, SignIn, TokenFiles};
         let (harness, cwd) = Self::checked(pending)?;
-        let token_file = match (harness, pending.account.as_deref()) {
-            (Harness::Claude, Some(account)) => crate::accounts::usage::declared_token_file(
-                &settings.controller.account_tokens.get()?,
-                account,
-            )?,
-            (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => None,
-        };
-        let file = token_file.as_deref().map(|f| f.display().to_string());
-        let note = match (harness, pending.account.as_deref()) {
-            (Harness::Claude | Harness::Codex, Some(account)) => {
-                match sign_in(harness, Path::new(account), token_file.as_deref()) {
-                    SignIn::Held => None,
-                    SignIn::Token(var) => Some(json!({"token": var})),
-                    SignIn::File => Some(json!({"token_file": file})),
-                    SignIn::Unjudged { cause } => Some(json!({"unjudged": cause})),
-                    SignIn::Missing { cause } => {
-                        let mut fields = vec![("account", account), ("cause", cause)];
-                        if let Some(file) = &file {
-                            fields.push(("file", file));
-                        }
-                        return Err(Unready::Refused(refused(
-                            "successor-not-signed-in",
-                            &fields,
-                        )));
+        let billed = harness.billed(pending.model.as_deref().unwrap_or_default());
+        let (note, claude_sign_in) = match (billed, pending.account.as_deref()) {
+            (Some(billed @ (Harness::Claude | Harness::Codex)), Some(account)) => {
+                let files = match billed {
+                    Harness::Claude => usage::token_files(&settings.controller.account_tokens)?,
+                    Harness::Codex | Harness::Copilot | Harness::Pi => TokenFiles::none(),
+                };
+                let answer = usage::sign_in(billed, account, &files, now);
+                let note = match &answer {
+                    SignIn::TokenFile(file) => {
+                        Some(json!({"token_file": file.display().to_string()}))
                     }
-                }
+                    SignIn::Unjudged { cause } => Some(json!({"unjudged": cause})),
+                    SignIn::StoredLogin | SignIn::Missing { .. } => None,
+                };
+                let launch = answer.launch(account, &files)?;
+                (note, (billed == Harness::Claude).then_some(launch))
             }
-            (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => None,
+            (Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None, _) => {
+                (None, None)
+            }
         };
         let homes = launch_home(
             &settings.inherited(),
@@ -488,7 +459,7 @@ impl Successor {
             ),
         )?;
         let successor = Successor {
-            token_file,
+            claude_sign_in,
             ..Self::of(settings, pending, harness, cwd, homes)?
         };
         Ok((successor, note))
@@ -567,7 +538,7 @@ impl Successor {
             resume_file: pending.resume_file.as_deref().map(PathBuf::from),
             seat: pending.account.clone().filter(|a| !a.is_empty()),
             account_state: settings.engine.account_state.clone(),
-            token_file: None,
+            claude_sign_in: None,
         })
     }
 
@@ -587,9 +558,9 @@ impl Successor {
     /// harness's own compaction off where it has a word for it, since orch's
     /// handoff mark judges the window, and the brief held for delivery once
     /// the runner is at its composer. A resume continues the recorded session in the
-    /// harness's own resume form and fixes no fresh id. A declared token
-    /// file is exported for the harness alone, the sources that outrank it
-    /// and an endpoint that would receive it cleared.
+    /// harness's own resume form and fixes no fresh id. The account's
+    /// sign-in rides to the builder, which clears what would outrank it and
+    /// exports a declared token file for the harness alone.
     fn command(&self, settings: &Settings, session_id: Option<&str>) -> Result<LaunchCommand> {
         let compaction = match self.harness.compaction_off_words() {
             Some(_) => Compaction::Off,
@@ -616,9 +587,10 @@ impl Successor {
                 },
                 extra_args: &self.extra_args,
                 opener: &(settings.opener)(self.harness, self.model.as_deref()),
+                claude_sign_in: self.claude_sign_in.clone(),
             },
         )?;
-        let mut command = if self.resume.is_none() && !self.cleared {
+        let command = if self.resume.is_none() && !self.cleared {
             command
         } else {
             if self.cleared {
@@ -632,19 +604,6 @@ impl Successor {
             }
             crate::launch::build(&intent)?
         };
-        if let Some(file) = &self.token_file {
-            command
-                .env_files
-                .insert(CLAUDE_TOKEN_VAR.to_owned(), file.clone());
-            for name in CLAUDE_OUTRANKING_TOKEN
-                .into_iter()
-                .chain([CLAUDE_TOKEN_ENDPOINT])
-            {
-                if !command.env_remove.iter().any(|n| n == name) {
-                    command.env_remove.push(name.to_owned());
-                }
-            }
-        }
         Ok(command)
     }
 
@@ -1009,21 +968,22 @@ fn succeed(
         }
         Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
     };
-    let sign_in = |harness: Harness, account: &Path, declared: Option<&Path>| {
-        operation.sign_in(&server, &session, harness, account, declared)
+    let (successor, sign_in_note) = match Successor::from_pending(
+        run.settings,
+        &pending,
+        served.as_deref(),
+        operation.wall_secs(),
+    ) {
+        Ok(successor) => successor,
+        Err(Unready::Refused(e)) => return Ok(failed_before_retirement_refused(operation, &e)),
+        Err(Unready::Gate(cause)) => {
+            return Ok(failed_before_retirement_cause(
+                operation,
+                GATE_REFUSED,
+                &cause,
+            ));
+        }
     };
-    let (successor, sign_in_note) =
-        match Successor::from_pending(run.settings, &pending, served.as_deref(), &sign_in) {
-            Ok(successor) => successor,
-            Err(Unready::Refused(e)) => return Ok(failed_before_retirement_refused(operation, &e)),
-            Err(Unready::Gate(cause)) => {
-                return Ok(failed_before_retirement_cause(
-                    operation,
-                    GATE_REFUSED,
-                    &cause,
-                ));
-            }
-        };
     // The runner's session is fixed, or the sessions that already stand
     // are read, before the window opens. A resume's session is the fixed
     // one, and its file must already stand under the home: a session the

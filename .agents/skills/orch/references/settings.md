@@ -263,7 +263,7 @@ The keys' rules, in the table's order:
 | `ORCH_OVERSEER_MEMORY_PCT` | The percent of its cgroup's memory cap at which the overseer's harness hands off. | unset: no memory mark |
 | `AGENT_RUNTIME_CONTROLLER_SUCCESSION` | `on` or `off`: whether a controller may ask for its own succession. | `on` |
 | `AGENT_RUNTIME_CONTROLLER_PREFERENCE` | The `harness:model:effort` entries a succession walks for the successor. | `claude:standard:high,codex:standard:high` |
-| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | `<account dir>=<token file>` pairs, both absolute: the file each Claude account's successor signs in with. | unset |
+| `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` | `<account dir>=<token file>` pairs, both absolute: the file each Claude account signs in with. | unset |
 | `ORCH_WAKE_PROCESS`, `ORCH_WAKE_START` | For a controller with no live watch claim: a regular expression over each process's command line that names the process that wakes the controller, and the start command its turn end prints where none runs. | unset |
 
 The keys' rules, in the table's order:
@@ -271,8 +271,11 @@ The keys' rules, in the table's order:
 - `AGENT_RUNTIME_CONTROLLER_SUCCESSION`: under `off`, `request-transfer` refuses before any intent persists.
 - `AGENT_RUNTIME_CONTROLLER_PREFERENCE`: unset, a context mark's succession walks the controller's own entry alone.
 - `AGENT_RUNTIME_CONTROLLER_PREFERENCE`: the grammar is the example's § Fleet.
-- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: the successor's launch exports the file's text as `CLAUDE_CODE_OAUTH_TOKEN` in its own window and clears the variables that outrank it.
-- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a declared account whose file is missing or empty refuses `successor-not-signed-in` with `cause=declared-token-absent file=<path>`.
+- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: the successor walk and the transfer judge a declared account by its file alone, and any other account by its stored login. A declared account whose file holds no token, or an undeclared account holding no stored login, is no candidate.
+- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a successor's, a local lane's or `agent-runtime launch`'s launch on a declared account exports the file's text as `CLAUDE_CODE_OAUTH_TOKEN` in its own window.
+- `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: a cloud session signs in by its account's stored login whatever the setting declares, and exports no file.
+- Every launch on a named Claude account clears the Claude credentials its window inherits that would outrank the account's own sign-in. A token the tmux server's environment holds signs no named account in.
+- A successor's, a local lane's or `agent-runtime launch`'s launch on a named Claude account holding no sign-in refuses `successor-not-signed-in` before any window opens. A declared account whose file is missing or empty refuses with `cause=declared-token-absent file=<path>`.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: the value names paths, never a token.
 - `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`: declare it in `kendex.settings.toml` `[env]`, `.env.local` or the tmux server's environment, which every successor inherits; a successor does not inherit its predecessor's own environment.
 

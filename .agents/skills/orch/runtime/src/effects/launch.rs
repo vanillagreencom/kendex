@@ -18,7 +18,8 @@ use std::time::Duration;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
 use agent_runtime::launch::{
-    Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool, Resume, shell_quote,
+    ClaudeSignIn, Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool, Resume,
+    shell_quote,
 };
 use agent_runtime::reading::Reading;
 use agent_runtime::trust;
@@ -469,6 +470,33 @@ struct LaunchPrep {
     unrebased: bool,
 }
 
+/// The sign-in of the named Claude account a local lane bills, a Pi
+/// `pi-claude/` seat among them, at `now`, as the reader judges it
+/// ([`agent_runtime::accounts::usage::SignIn::launch`]): the window's
+/// inherited credentials never sign it in, and an account holding no
+/// sign-in refuses before any window opens. A lane billing no named Claude
+/// account signs in as it did.
+fn lane_sign_in(
+    settings: &Settings,
+    harness: Harness,
+    r: &LaunchLane,
+    now: u64,
+) -> agent_runtime::Result<Option<ClaudeSignIn>> {
+    use agent_runtime::accounts::usage;
+    let billed = harness.billed(r.model.as_deref().unwrap_or_default());
+    let Some(account) = r
+        .account
+        .as_deref()
+        .filter(|_| billed == Some(Harness::Claude))
+    else {
+        return Ok(None);
+    };
+    let files = usage::token_files(&settings.controller.account_tokens)?;
+    usage::sign_in(Harness::Claude, account, &files, now)
+        .launch(account, &files)
+        .map(Some)
+}
+
 /// Resolve everything a local launch can refuse before it opens a window:
 /// the harness, the fleet server and session, the working directory, the
 /// home with its trust record and harness gate, the program and the brief
@@ -560,6 +588,7 @@ fn prepare_launch(
             },
             extra_args: &permission,
             opener: &super::opener_env(harness, r.model.as_deref()),
+            claude_sign_in: lane_sign_in(settings, harness, r, operation.wall_secs())?,
         },
     )?;
     lane_words(&mut intent, &cwd);
@@ -1393,6 +1422,7 @@ fn hosted_command(
             session_id: None,
             extra_args: &permission,
             opener: &super::opener_env(harness, r.model.as_deref()),
+            claude_sign_in: None,
         },
     )?;
     intent.program = None;
@@ -1765,6 +1795,15 @@ fn cloud_launch(
             session_id: None,
             extra_args: &[],
             opener: &super::opener_env(Harness::Claude, r.model.as_deref()),
+            // A cloud session always uses the subscription's own login, and
+            // a `setup-token` can only make model requests
+            // (https://code.claude.com/docs/en/authentication § Authentication
+            // precedence and § Generate a long-lived token), so the session
+            // signs in by the folder's stored login whatever the token
+            // setting declares: the inherited credentials are cleared
+            // (`cloud_create` carries the clear as `env -u` words) and no
+            // file is exported.
+            claude_sign_in: Some(ClaudeSignIn::StoredLogin),
         },
     )?;
     let answer_by = operation.stamp_after(CLOUD_BOUND);
@@ -2811,6 +2850,7 @@ mod tests {
                 extra_args: Vec::new(),
                 program: None,
                 grants: None,
+                claude_sign_in: None,
             };
             let cwd = intent.cwd.clone();
             lane_words(&mut intent, &cwd);

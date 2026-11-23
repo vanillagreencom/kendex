@@ -84,8 +84,8 @@ pub use host::{
     default_home, fixed_file, fixed_id_file, heal_controller, owner,
 };
 pub use host::{Observed, fleet_sockets, overseer_socket, proof_of, server_at};
-pub use host::{SignIn, process_var, register_controller};
 pub use host::{poll_until, server_home, session_owner};
+pub use host::{process_var, register_controller};
 pub use job::{Claimant, Companion};
 pub use obligations::{EffectOutcome, Published, Wire, Word};
 pub use obligations::{JobHandle, SidecarRead};

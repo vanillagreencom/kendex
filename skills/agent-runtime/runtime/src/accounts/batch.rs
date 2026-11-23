@@ -520,6 +520,7 @@ mod tests {
             home: None,
             copilot_home: None,
             controller_preference: "",
+            account_tokens: &crate::settings::Judged::of("tokens", Ok(Vec::new())),
         };
         let read = accounts.get().unwrap();
         let mut ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();

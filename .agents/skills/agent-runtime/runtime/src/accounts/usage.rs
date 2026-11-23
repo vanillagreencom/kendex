@@ -20,6 +20,7 @@ use serde_json::{Map, Value, json};
 
 use super::wall::canon;
 use crate::harness::Harness;
+use crate::launch::ClaudeSignIn;
 use crate::settings;
 
 /// Five hours: a Codex window more than half again as long is its weekly
@@ -595,15 +596,10 @@ pub fn expired(expires_ms: u64, now: u64) -> bool {
     expires_ms > 0 && expires_ms <= now * 1000
 }
 
-/// Whether a home holds a sign-in on this machine, as a session opened here
-/// under it signs in. The account walk reads a home's stored login
-/// ([`stored_login`]); a controller's transfer reads the same answer except
-/// on a Claude home a declared token file signs in, which it judges by that
-/// file alone ([`declared_token`]).
+/// The stored login of a home on this machine ([`stored_login`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoredLogin {
-    /// The home holds a credential whose login has not expired, or its
-    /// declared token file holds a token.
+    /// The home holds a credential whose login has not expired.
     Held,
     /// The home holds nothing the harness signs in with.
     Missing { cause: &'static str },
@@ -642,47 +638,130 @@ pub fn stored_login(harness: Harness, dir: &str, now: u64) -> StoredLogin {
     }
 }
 
-/// The token file `pairs` (`AGENT_RUNTIME_ACCOUNT_TOKEN_FILES`) declares
-/// for the home `dir`, the two sides matched by their one spelling
-/// ([`canon`]). Two declarations matching one home refuse
-/// `setting-invalid`, since either file could be its.
-pub fn declared_token_file(
-    pairs: &[(String, PathBuf)],
-    dir: &str,
-) -> crate::error::Result<Option<PathBuf>> {
-    let dir = canon(dir);
-    let matched: Vec<&(String, PathBuf)> = pairs
-        .iter()
-        .filter(|(declared, _)| canon(declared) == dir)
-        .collect();
-    match matched.as_slice() {
-        [] => Ok(None),
-        [(_, file)] => Ok(Some(file.clone())),
-        _ => Err(settings::value_refusal(
-            settings::ACCOUNT_TOKEN_FILES_KEY,
-            &matched
-                .iter()
-                .map(|(dir, file)| format!("{dir}={}", file.display()))
-                .collect::<Vec<_>>()
-                .join(","),
-        )),
+/// The token files `AGENT_RUNTIME_ACCOUNT_TOKEN_FILES` declares, each home
+/// in its one spelling ([`canon`]), checked whole once so a lookup cannot
+/// fail.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenFiles(Vec<(String, PathBuf)>);
+
+impl TokenFiles {
+    /// No declaration: the set a caller whose billed harness is not Claude
+    /// reads with, so a malformed setting refuses no other harness.
+    pub fn none() -> TokenFiles {
+        TokenFiles(Vec::new())
+    }
+
+    /// The file declared for the home `dir`.
+    pub fn declared(&self, dir: &str) -> Option<&Path> {
+        let dir = canon(dir);
+        self.0
+            .iter()
+            .find(|(declared, _)| *declared == dir)
+            .map(|(_, file)| file.as_path())
     }
 }
 
-/// The sign-in a declared token file gives a session opened here, judged
-/// on the file alone, since the launch exports its text over anything the
-/// session inherits: held where that text less trailing newlines, as the
-/// launch's `$(cat FILE)` takes it, is non-empty.
-pub fn declared_token(file: &Path) -> StoredLogin {
+/// The declared pairs as a lookup, or `setting-invalid`: a value outside
+/// the key's form, or two pairs naming one home in two spellings, since
+/// either file could then be its.
+pub fn token_files(
+    setting: &settings::Judged<Vec<(String, PathBuf)>>,
+) -> crate::error::Result<TokenFiles> {
+    let pairs = setting.get()?;
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    for (i, (dir, file)) in pairs.iter().enumerate() {
+        let home = canon(dir);
+        if let Some(j) = files.iter().position(|(seen, _)| *seen == home) {
+            return Err(settings::value_refusal(
+                settings::ACCOUNT_TOKEN_FILES_KEY,
+                &[&pairs[j], &pairs[i]]
+                    .iter()
+                    .map(|(dir, file)| format!("{dir}={}", file.display()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ));
+        }
+        files.push((home, file.clone()));
+    }
+    Ok(TokenFiles(files))
+}
+
+/// The sign-in a session opened here on a home starts with, the one answer
+/// the walk, the roster, the keep and a controller's transfer read. An
+/// environment token never counts: a named Claude home's launch clears the
+/// inherited ones, and the walk and the roster read no window's
+/// environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignIn {
+    /// The home's stored login is held.
+    StoredLogin,
+    /// The home's declared token file holds a token, which its launch
+    /// exports.
+    TokenFile(PathBuf),
+    /// The home holds nothing the harness signs in with.
+    Missing { cause: &'static str },
+    /// Nothing here reads this sign-in: the first turn alone judges it.
+    Unjudged { cause: &'static str },
+}
+
+/// The sign-in of the home `dir` for a session billing `billed`, at `now`:
+/// a Claude home with a declared token file is judged by that file alone,
+/// since its launch exports the file's text over its stored login, so no
+/// other source stands in for a file that is wrong; any other home by its
+/// stored login ([`stored_login`]).
+pub fn sign_in(billed: Harness, dir: &str, files: &TokenFiles, now: u64) -> SignIn {
+    if billed == Harness::Claude
+        && let Some(file) = files.declared(dir)
+    {
+        return declared_token(file);
+    }
+    match stored_login(billed, dir, now) {
+        StoredLogin::Held => SignIn::StoredLogin,
+        StoredLogin::Missing { cause } => SignIn::Missing { cause },
+        StoredLogin::Unjudged { cause } => SignIn::Unjudged { cause },
+    }
+}
+
+impl SignIn {
+    /// How a launch on the home `dir` this answer judged signs in, the one
+    /// projection a successor, a local lane and `agent-runtime launch` read:
+    /// a held token file is exported, and a held stored login, or one
+    /// nothing here reads, which the first turn judges, is the launch's own
+    /// once the inherited credentials are cleared. A home holding nothing
+    /// refuses `successor-not-signed-in` before any window opens, with the
+    /// home, the cause and the file `files` declares for it; a Codex home's
+    /// launch reads that refusal alone.
+    pub fn launch(self, dir: &str, files: &TokenFiles) -> crate::error::Result<ClaudeSignIn> {
+        match self {
+            SignIn::StoredLogin | SignIn::Unjudged { .. } => Ok(ClaudeSignIn::StoredLogin),
+            SignIn::TokenFile(file) => Ok(ClaudeSignIn::TokenFile(file)),
+            SignIn::Missing { cause } => {
+                let file = files.declared(dir).map(|f| f.display().to_string());
+                let mut fields = vec![("account", dir), ("cause", cause)];
+                if let Some(file) = &file {
+                    fields.push(("file", file));
+                }
+                Err(crate::error::Error::refused(
+                    "successor-not-signed-in",
+                    &fields,
+                ))
+            }
+        }
+    }
+}
+
+/// The sign-in a declared token file gives: held where its text less
+/// trailing newlines, as the launch's `$(cat FILE)` takes it, is
+/// non-empty.
+fn declared_token(file: &Path) -> SignIn {
+    let absent = SignIn::Missing {
+        cause: "declared-token-absent",
+    };
     match std::fs::read(file) {
-        Ok(text) if text.iter().any(|b| *b != b'\n') => StoredLogin::Held,
-        Ok(_) => StoredLogin::Missing {
-            cause: "declared-token-absent",
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => StoredLogin::Missing {
-            cause: "declared-token-absent",
-        },
-        Err(_) => StoredLogin::Missing {
+        Ok(text) if text.iter().any(|b| *b != b'\n') => SignIn::TokenFile(file.to_path_buf()),
+        Ok(_) => absent,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => absent,
+        Err(_) => SignIn::Missing {
             cause: "declared-token-unreadable",
         },
     }
@@ -909,17 +988,17 @@ mod tests {
         std::fs::write(path("empty"), "").unwrap();
         std::fs::write(path("newlines"), "\n\n").unwrap();
         std::fs::create_dir(path("directory")).unwrap();
-        let absent = StoredLogin::Missing {
+        let absent = SignIn::Missing {
             cause: "declared-token-absent",
         };
         let rows = [
-            ("planted", StoredLogin::Held),
-            ("empty", absent),
-            ("newlines", absent),
+            ("planted", SignIn::TokenFile(path("planted"))),
+            ("empty", absent.clone()),
+            ("newlines", absent.clone()),
             ("absent", absent),
             (
                 "directory",
-                StoredLogin::Missing {
+                SignIn::Missing {
                     cause: "declared-token-unreadable",
                 },
             ),

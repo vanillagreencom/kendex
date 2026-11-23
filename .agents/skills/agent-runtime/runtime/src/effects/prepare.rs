@@ -14,7 +14,9 @@ use crate::confine::Confinement;
 use crate::error::{Error, Result};
 use crate::harness::Harness;
 use crate::host::{self, Place};
-use crate::launch::{Brief, Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool};
+use crate::launch::{
+    Brief, ClaudeSignIn, Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool,
+};
 use crate::settings::{EngineSettings, LaunchSettings};
 use crate::trust;
 
@@ -77,6 +79,9 @@ pub struct Spec<'a> {
     /// The caller's own words, appended as given.
     pub extra_args: &'a [String],
     pub opener: &'a OpenerEnv,
+    /// The sign-in of the named Claude account the launch bills
+    /// (`LaunchIntent::claude_sign_in`).
+    pub claude_sign_in: Option<ClaudeSignIn>,
 }
 
 /// The intent the harness launches under, built from a spec and the settings
@@ -132,6 +137,7 @@ pub fn build_launch(
         extra_args: spec.extra_args.to_vec(),
         program: engine.harness_binaries.get()?.remove(&spec.harness),
         grants: None,
+        claude_sign_in: spec.claude_sign_in.clone(),
     };
     let command = crate::launch::build(&intent)?;
     Ok((intent, command))

@@ -146,7 +146,8 @@ Overseer side:
               session. A session route refuses as lane-foreign where --root
               is no checkout of this repository, and queues a --directive
               into the session through `claude -p --cloud SESSION
-              --output-format json` under the account, the file on
+              --output-format json` under the account's stored login,
+              the inherited Claude credentials cleared, the file on
               stdin, printing `lane-mail: sent item=ITEM channel=session
               session=ID` on an {ok: true} answer. An answer whose error
               says the session is archived refuses as session-archived, any
@@ -1393,8 +1394,16 @@ lm_send_channel() {
   { [ -n "$account" ] && [ -n "$session" ]; } || refuse session-unrecorded "$ITEM"
   rc=0
   # The send is the Claude CLI's, so the account rides in Claude's variable:
-  # a session kind launches a Claude lane alone.
-  out="$(env "CLAUDE_CONFIG_DIR=$account" claude -p --cloud "$session" --output-format json <"$FILE" 2>"$WORK_DIR/claude.err")" || rc=$?
+  # a session kind launches a Claude lane alone. The create signed in by the
+  # account's stored login with every credential Claude ranks above it
+  # cleared, so the send clears the same names, mirrored from agent-runtime's
+  # `launch::CLAUDE_OUTRANKING`: a credential the caller inherited would send
+  # as its own account, which cannot reach this account's session.
+  out="$(env -u CLAUDE_CODE_USE_BEDROCK -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_FOUNDRY \
+    -u CLAUDE_CODE_USE_ANTHROPIC_AWS -u CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD -u CLAUDE_CODE_USE_MANTLE \
+    -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_PROFILE \
+    -u ANTHROPIC_FEDERATION_RULE_ID -u ANTHROPIC_ORGANIZATION_ID -u ANTHROPIC_BASE_URL \
+    "CLAUDE_CONFIG_DIR=$account" claude -p --cloud "$session" --output-format json <"$FILE" 2>"$WORK_DIR/claude.err")" || rc=$?
   # The CLI's own error words decide an archived session; any other answer
   # that is no {ok: true} is a send that failed, carried with those words.
   answer="$(jq -r 'if .ok == true then "sent" elif (.error // "" | tostring | test("archived"; "i")) then "archived" else "failed" end' <<<"$out" 2>/dev/null)" || answer=failed

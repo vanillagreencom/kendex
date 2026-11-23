@@ -430,6 +430,11 @@ fn chosen(reply: &Value) -> Option<String> {
         .then(|| reply["record"]["config_dir"].as_str().unwrap().to_owned())
 }
 
+/// No declared token file: a pick whose session opens nowhere reads none.
+fn no_tokens() -> Judged<Vec<(String, PathBuf)>> {
+    Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(Vec::new()))
+}
+
 /// The chooser's request for a Claude launch with `model`.
 fn claude(model: Option<&str>) -> PickRequest {
     PickRequest {
@@ -445,6 +450,192 @@ fn named(dir: &str, req: PickRequest) -> PickRequest {
         projected: true,
         ..req
     }
+}
+
+/// One sign-in reader decides for a session opening here: the overseer
+/// walk's choice, its 429 fallback, the caller's keep (its named pick)
+/// and the roster's reading of which row stands all read it, so a home
+/// signed in only by its declared token file is chosen on the provider's
+/// measured room, taken as a 429 fallback and found by name, and a home
+/// holding nothing it signs in with is none of these, whatever the provider
+/// measured. A declared file that holds no token is no sign-in even beside
+/// a stored login; a login nothing reads leaves the home on its own row.
+/// Each row: the case, the home's credential file, its declared token file,
+/// then whether the chooser picks the home on a provider row of room,
+/// whether the fallback takes it on a provider row refused with a 429, and
+/// whether its named pick finds a record.
+#[test]
+fn a_session_opening_here_is_judged_by_one_sign_in_reader_in_every_pick() {
+    #[derive(Clone, Copy)]
+    enum Token {
+        None,
+        Held,
+        Absent,
+    }
+    type Row = (
+        &'static str,
+        Option<&'static str>,
+        Token,
+        (bool, bool, bool),
+    );
+    let credential = r#"{"claudeAiOauth":{"accessToken":"planted","subscriptionType":"max"}}"#;
+    let rows: Vec<Row> = vec![
+        ("a token file only", None, Token::Held, (true, true, true)),
+        (
+            "a declared file holding no token beside a stored login",
+            Some(credential),
+            Token::Absent,
+            (false, false, false),
+        ),
+        (
+            "a stored login only",
+            Some(credential),
+            Token::None,
+            (true, true, true),
+        ),
+        ("neither", None, Token::None, (false, false, false)),
+        (
+            "a login nothing reads",
+            Some("not json\n"),
+            Token::None,
+            (false, false, true),
+        ),
+    ];
+    let world = World::new(&[]);
+    let settings = world.settings.accounts.get().unwrap();
+    let dir = world.dir("tclaude");
+    let request = |lane: Option<&str>| PickRequest {
+        for_overseer: true,
+        opens_here: true,
+        lane: lane.map(str::to_owned),
+        ..claude(None)
+    };
+    let listing = |provider: &str| {
+        let mut local = measured("tclaude", 0, 0);
+        local["config_dir"] = json!(dir);
+        for key in ["headroom_pct", "wall", "session_5h_pct", "weekly_pct"] {
+            local[key] = Value::Null;
+        }
+        local["status"] = json!("no_credentials");
+        local["verdict"] = json!("unmeasured");
+        let mut remote = measured("tclaude", 20, 0);
+        remote["config_dir"] = json!(dir);
+        remote["measured_through"] = json!("host");
+        if provider == "429" {
+            for key in ["headroom_pct", "wall", "session_5h_pct", "weekly_pct"] {
+                remote[key] = Value::Null;
+            }
+            remote["status"] = json!("rate_limited");
+            remote["refused_endpoint"] = json!("usage");
+            remote["verdict"] = json!("unmeasured");
+        }
+        self::rows(&[local, remote], &world.settings)
+    };
+    let fallback = |answer: &PickAnswer| match answer {
+        PickAnswer::None { fallback, .. } => fallback.as_ref().map(|j| j.row.config_dir.clone()),
+        _ => None,
+    };
+    let token = world.path().join("tclaude.token");
+    for (case, stored, declared, (chosen, taken, found)) in rows {
+        std::fs::create_dir_all(&dir).unwrap();
+        let credentials = Path::new(&dir).join(".credentials.json");
+        match stored {
+            Some(text) => std::fs::write(&credentials, text).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&credentials);
+            }
+        }
+        let _ = std::fs::remove_file(&token);
+        if let Token::Held = declared {
+            std::fs::write(&token, "planted-token\n").unwrap();
+        }
+        let mut pairs = Vec::new();
+        if !matches!(declared, Token::None) {
+            pairs.push((dir.clone(), token.clone()));
+        }
+        let tokens = Judged::of(settings::ACCOUNT_TOKEN_FILES_KEY, Ok(pairs));
+        let pick = |rows: &[AccountRow], lane: Option<&str>| {
+            accounts::pick(
+                rows,
+                &request(lane),
+                &FleetFacts::default(),
+                &settings,
+                &tokens,
+                now(),
+            )
+        };
+        let room = pick(&listing("room"), None);
+        let refused = pick(&listing("429"), None);
+        let named = pick(&listing("room"), Some(&dir));
+        assert_eq!(
+            picked(&room),
+            chosen.then(|| dir.clone()),
+            "{case}: {room:?}"
+        );
+        assert_eq!(
+            fallback(&refused),
+            taken.then(|| dir.clone()),
+            "{case}: {refused:?}"
+        );
+        assert_eq!(named != PickAnswer::NoRecord, found, "{case}: {named:?}");
+    }
+}
+
+/// A setting declaring one home twice in two spellings judges no account
+/// for a session opening here, as the transfer refuses it, and reads none
+/// at all for a pick of a session opening elsewhere or billing no Claude
+/// account.
+#[test]
+fn a_token_setting_naming_one_home_twice_judges_no_session_opening_here() {
+    let world = World::new(&[]);
+    let settings = world.settings.accounts.get().unwrap();
+    let mut row = measured("tclaude", 20, 0);
+    row["config_dir"] = json!(world.dir("tclaude"));
+    let mut codex = measured("tcodex", 20, 0);
+    codex["harness"] = json!("codex");
+    codex["config_dir"] = json!(world.dir("tcodex"));
+    std::fs::create_dir_all(world.dir("tcodex")).unwrap();
+    std::fs::write(
+        Path::new(&world.dir("tcodex")).join("auth.json"),
+        r#"{"tokens":{"access_token":"planted"}}"#,
+    )
+    .unwrap();
+    let rows = rows(&[row, codex], &world.settings);
+    let token = world.path().join("tclaude.token");
+    let tokens = Judged::of(
+        settings::ACCOUNT_TOKEN_FILES_KEY,
+        Ok(vec![
+            (world.dir("tclaude"), token.clone()),
+            (format!("{}/", world.dir("tclaude")), token),
+        ]),
+    );
+    let pick = |req: PickRequest| {
+        accounts::pick(
+            &rows,
+            &req,
+            &FleetFacts::default(),
+            &settings,
+            &tokens,
+            now(),
+        )
+    };
+    let here = pick(PickRequest {
+        opens_here: true,
+        ..claude(None)
+    });
+    assert!(matches!(here, PickAnswer::Unjudged { .. }), "{here:?}");
+    assert!(
+        picked(&pick(claude(None))).is_some(),
+        "a session opening elsewhere reads no sign-in"
+    );
+    assert!(
+        picked(&pick(PickRequest {
+            opens_here: true,
+            ..PickRequest::new(Harness::Codex)
+        }))
+        .is_some(),
+        "a Codex session reads no token file"
+    );
 }
 
 /// The provider's `reserved=1` row with the most room is never the lane, is
@@ -463,6 +654,7 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
         &req,
         &FleetFacts::default(),
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -475,6 +667,7 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
         &req,
         &FleetFacts::default(),
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(picked(&alone), None);
@@ -635,6 +828,7 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
             &claude(model),
             &facts,
             &world.settings.accounts.get().unwrap(),
+            &no_tokens(),
             now(),
         )
     };
@@ -774,6 +968,7 @@ fn judged(world: &World, listing: &[Value], req: &PickRequest, facts: &FleetFact
         req,
         facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     )
 }
@@ -1132,7 +1327,7 @@ fn an_overseers_choice_takes_an_account_another_controller_sits_on_where_it_has_
         let headroom = judged.projection.as_ref().unwrap().headroom;
         let expected = 90.0 - f64::from(1 + others) * controller;
         assert!((headroom - expected).abs() < 1e-9, "{others}: {headroom}");
-        let answer = accounts::pick(&rows, &req, &facts, &settings, now());
+        let answer = accounts::pick(&rows, &req, &facts, &settings, &no_tokens(), now());
         match verdict {
             "room" => assert_eq!(picked(&answer), Some(dir.clone()), "{answer:?}"),
             _ => assert_eq!(
@@ -1279,6 +1474,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &claude(None),
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1306,6 +1502,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &claude(None),
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1318,6 +1515,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &claude(None),
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1367,6 +1565,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &pi,
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1380,6 +1579,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &pi,
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert!(
@@ -1410,6 +1610,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         &claude(None),
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(picked(&loose).as_deref(), Some("/home/me/.aclaude"));
@@ -1422,6 +1623,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         &trigger,
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert!(
@@ -1436,6 +1638,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         },
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert!(matches!(&named, PickAnswer::Walled(_)), "{named:?}");
@@ -1455,6 +1658,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         &sonnet,
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1470,6 +1674,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         },
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert!(
@@ -1502,6 +1707,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         &claude(None),
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1532,6 +1738,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         &named("/home/me/.late", claude(None)),
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     let PickAnswer::Lane(late_judged) = &late_judged else {
@@ -1549,6 +1756,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         &claude(None),
         &facts,
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1575,7 +1783,14 @@ fn a_lane_is_charged_one_hour_and_a_controller_its_spend_to_the_reset() {
     let rows = rows(&[week], &world.settings);
     let facts = FleetFacts::default();
     let settings = world.settings.accounts.get().unwrap();
-    let lane = accounts::pick(&rows, &claude(Some("opus")), &facts, &settings, now());
+    let lane = accounts::pick(
+        &rows,
+        &claude(Some("opus")),
+        &facts,
+        &settings,
+        &no_tokens(),
+        now(),
+    );
     let PickAnswer::Lane(judged) = &lane else {
         panic!("a lane on the account has room: {lane:?}");
     };
@@ -1586,7 +1801,7 @@ fn a_lane_is_charged_one_hour_and_a_controller_its_spend_to_the_reset() {
         min_headroom_pct: Some(5),
         ..claude(Some("opus"))
     };
-    let chosen = accounts::pick(&rows, &controller, &facts, &settings, now());
+    let chosen = accounts::pick(&rows, &controller, &facts, &settings, &no_tokens(), now());
     assert_eq!(
         exclusions(&chosen),
         vec![("/home/me/.2claude".to_owned(), "walled".to_owned())],
@@ -1597,6 +1812,7 @@ fn a_lane_is_charged_one_hour_and_a_controller_its_spend_to_the_reset() {
         &named("/home/me/.2claude", controller),
         &facts,
         &settings,
+        &no_tokens(),
         now(),
     );
     let PickAnswer::Walled(judged) = &named else {
@@ -1755,6 +1971,7 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
         &req,
         &FleetFacts::default(),
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -1767,6 +1984,7 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
         &req,
         &FleetFacts::default(),
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(picked(&alone), None);
@@ -1782,6 +2000,7 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
         },
         &FleetFacts::default(),
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         now(),
     );
     assert_eq!(
@@ -2223,6 +2442,7 @@ fn a_five_hour_window_at_99_is_no_wall_and_a_spent_one_admits_no_start_until_its
         &claude(None),
         &FleetFacts::default(),
         &world.settings.accounts.get().unwrap(),
+        &no_tokens(),
         later + 1,
     );
     assert_eq!(
