@@ -125,7 +125,7 @@ Write and rebuild State by these rules:
 - Change a State entry with the single `progress-log` call under [Progress records](#progress-records).
   - It replaces the whole entry or removes it and appends the record under the same file lock and write.
   - Put the account in the record, never append it to the old State text.
-- Update session-only state when it changes: an unfinished operation's next step, a running lane's identity or result path, a temporary instruction or its end event, report coverage, or a hold.
+- Update a State entry when its value changes, such as an unfinished operation's next step, a lane's run directory, report coverage or a hold.
   - Change only the affected lines.
   - Append the state-change record in the same write.
   - Advance the checkpoint's covered log range with the update.
