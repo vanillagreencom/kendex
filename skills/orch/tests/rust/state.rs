@@ -697,14 +697,15 @@ fn exists_answers_the_record_and_its_key_for_a_standing_and_a_missing_record() {
     assert_eq!(key, "record-missing");
 }
 
-/// The cap verdict flips to `at-cap` on the count the `rereview_panel` write
-/// refuses on, so the setting is the number of entries allowed; the write
-/// raises `rereview_cycles` itself and a refused write spends nothing; a
-/// `small` item holds the caps to its ceilings and its panels to three
-/// reviewers with the external lane counted. A pointer write of a panel is
-/// `record-panel`'s write, held to the panel's rules and shape alike.
+/// The cap verdict flips to `at-cap` on the count past which the
+/// `rereview_panel` write records the verification panel, so the setting is
+/// the number of entries allowed; the write raises `rereview_cycles` itself
+/// and a write past the cap spends nothing; a `small` item holds the caps to
+/// its ceilings and its panels to three reviewers with the external lane
+/// counted. A pointer write of a panel is `record-panel`'s write, held to the
+/// panel's rules and shape alike.
 #[test]
-fn cap_flips_where_the_rereview_panel_write_refuses_and_tier_small_holds_the_ceilings() {
+fn cap_flips_where_the_rereview_panel_write_stops_counting_and_tier_small_holds_the_ceilings() {
     let store = Store::new();
     store.init(ITEM);
     let panel = r#"{"agents": ["rev-a"], "reason": "test"}"#;
@@ -721,11 +722,18 @@ fn cap_flips_where_the_rereview_panel_write_refuses_and_tier_small_holds_the_cei
     let entered = store.ok(&["state", "set", "--item", ITEM, "/rereview_panel", panel]);
     assert_eq!(entered["rereview_cycles"], 1);
     assert_eq!(cap("REVIEW_MAX_CYCLES", &[]), "at-cap 1/1");
-    let (key, line) = store.refused(&["state", "set", "--item", ITEM, "/rereview_panel", panel]);
-    assert_eq!(key, "cycle-cap");
-    assert_eq!(line, "orch-runtime: cycle-cap count=1 limit=1");
+    // At the cap the workflow's rereview write records the uncounted
+    // verification panel, and its reply names the panel the lane reads back.
+    let past =
+        json!({"op": "record-panel", "panel": "rereview", "agents": ["rev-b"], "reason": "test"});
+    assert_eq!(store.op_ok(&past)["pointer"], "/verification_panel");
     let doc = store.doc(&store.item_path(ITEM));
-    assert_eq!(doc["rereview_cycles"], 1, "a refused write spends nothing");
+    assert_eq!(
+        doc["rereview_cycles"], 1,
+        "a write past the cap spends nothing"
+    );
+    assert_eq!(doc["verification_panel"]["agents"], json!(["rev-b"]));
+    assert_eq!(doc["rereview_panel"]["agents"], json!(["rev-a"]));
     assert_eq!(
         cap("REVIEW_MAX_CYCLES", &[("REVIEW_MAX_CYCLES", "4")]),
         "below 1/4"

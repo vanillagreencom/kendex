@@ -77,8 +77,9 @@ pub struct Panel {
 }
 
 /// Record one of the review's panels. The rereview panel is the re-review
-/// cycle: it raises `rereview_cycles` in the same write and refuses at
-/// `REVIEW_MAX_CYCLES`.
+/// cycle: below `REVIEW_MAX_CYCLES` it raises `rereview_cycles` in the same
+/// write, and at the cap it is recorded as the verification panel, which
+/// the cap does not gate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecordPanel {
@@ -187,16 +188,15 @@ pub(crate) fn panel_write(
         record::set(doc, field, value.clone());
         return Ok(json!({"pointer": format!("/{field}"), "value": value}));
     }
+    // The count, not the caller, decides whether this re-review spends a
+    // cycle or is the uncounted verification pass past the cap.
     let entered = count_at(path, doc, "/rereview_cycles")?;
     let limit = Cap::ReviewMaxCycles.limit(store, tier(doc))?;
     if entered >= limit {
-        return Err(refused(
-            "cycle-cap",
-            &[
-                ("count", &entered.to_string()),
-                ("limit", &limit.to_string()),
-            ],
-        ));
+        let past = PanelKind::Verification.field();
+        record::set(doc, past, value.clone());
+        let pointer = format!("/{past}");
+        return Ok(json!({"pointer": pointer, "value": value, "rereview_cycles": entered}));
     }
     record::set(doc, field, value.clone());
     record::set(doc, "rereview_cycles", entered + 1);

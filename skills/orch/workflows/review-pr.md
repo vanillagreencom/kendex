@@ -704,7 +704,7 @@ A finding that leaves the fix set is never dropped. Decline it per [finding-disp
 The scoped panel is the reviewers whose domains the fix diff touches, the reviewers whose defect classes the round fixed (the blocker finders), and external review when available. A domain counts when the fix diff changes code or text that reviewer reads, not when the item's first diff did. Record it, with `external` set to the cycle's `EXTERNAL_REVIEW_REQUESTED`:
 
 - the correction route of § At The Cap writes `"panel":"verification"`;
-- otherwise write `"panel":"rereview"` while budget remains, or `"panel":"verification"` for the past-budget verification pass this section permits.
+- every other entry writes `"panel":"rereview"`. Below the cap the write raises `rereview_cycles`, the count § At The Cap reads. At the cap it records `verification_panel` and raises nothing, and the reply's `pointer` names the panel it wrote.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"rereview","agents":[PANEL_AGENTS_JSON],"reason":"[DOMAINS_TOUCHED] + blocker finders + external","external":[EXTERNAL_REVIEW_REQUESTED]}'
@@ -715,7 +715,7 @@ A panel holding every `first_panel` reviewer adds `"domain_reasons": {"[AGENT]":
 **The loop ends** when two consecutive cycles surface no new blocker, at the cap-0 exit, or when § At The Cap ends it.
 
 - The cap bounds new cycles, never verification.
-- A fix diff no reviewer has seen gets one focused verification pass, scoped to that diff. The loop's last fix round has budget for it. Past the budget it takes `verification_panel`, which the cap does not gate.
+- A fix diff no reviewer has seen gets one focused verification pass, scoped to that diff. Past the cap the rereview write records it as `verification_panel`, which the cap does not gate.
 - That pass's items re-enter § 4, where the fix set decides what still delegates.
 - In wave mode the panel replaces `[AGENTS]` for the cycle and the wave rules apply unchanged.
 
