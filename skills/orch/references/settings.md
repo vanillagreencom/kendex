@@ -236,7 +236,7 @@ The keys' rules, in the table's order:
 - `AGENT_RUNTIME_ACCOUNT_RETIRE`: a provider row's `plan-ends` replaces the entry for that account.
 - `AGENT_RUNTIME_ACCOUNT_RETIRE`: the judge reads this key at each pick, and the provider's row through the usage cache (`AGENT_RUNTIME_USAGE_TTL`).
 - `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: the judge weighs a launch on the projected room of the binding window and of the 5-hour window where the reading carries one; the smaller decides.
-- `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: a launch reads an account `unmeasured` where its reading is older than one lane, at the burn its projection charges a window, takes to spend the room that window shows below this bound.
+- `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: a launch reads an account it would otherwise read `room` as `unmeasured` where its reading is older than one lane, at the burn its projection charges a window, takes to spend the room that window shows below this bound.
 - `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: the projection charges the window, for each live lane on the account and for the candidate, the burn below until the window's reset.
 - `AGENT_RUNTIME_ACCOUNT_MAX_PCT`: a pick's `--max-pct` replaces this key.
 - `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`: the 5-hour window is charged all of it an hour, a week 5/168 of it, a month 5/720.
