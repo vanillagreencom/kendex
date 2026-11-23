@@ -992,10 +992,10 @@ class SessionContract(unittest.TestCase):
         # brief unsent past the bound (its Enter swallowed here, then pressed
         # by hand as the live run did); a runtime can die at the paste.
         scoped_tmux = reached_through_path(self.root)
-        fault = self.root / "start-fault"
+        fault, answered = self.root / "start-fault", self.root / "start-answered"
         shim = Path(self.env["PATH"].split(os.pathsep)[0]) / "tmux"
         shim.write_text("#!" + sys.executable + "\n"
-                        "import os, signal, subprocess, sys\nfrom pathlib import Path\n"
+                        "import os, signal, subprocess, sys, time\nfrom pathlib import Path\n"
                         "fault = Path(" + repr(str(fault)) + ")\n"
                         "mode = fault.read_text() if fault.exists() else ''\n"
                         "real = [" + repr(scoped_tmux) + ", *sys.argv[1:]]\n"
@@ -1003,6 +1003,13 @@ class SessionContract(unittest.TestCase):
                         "    data = sys.stdin.buffer.read()\n"
                         "    if mode in ('swallow', 'kill') and b'jarvis/SKILL.md' in data:\n"
                         "        if mode == 'kill':\n"
+                        # The kill waits for Start's answer: a kill before
+                        # Start's last status read lets that read settle the
+                        # dead start and answer running.
+                        "            deadline = time.monotonic() + 90\n"
+                        "            while not Path(" + repr(str(answered)) + ").exists():\n"
+                        "                if time.monotonic() >= deadline: sys.exit(124)\n"
+                        "                time.sleep(0.05)\n"
                         "            fault.unlink()\n"
                         "            os.kill(os.getppid(), signal.SIGKILL)\n"
                         "            sys.exit(1)\n"
@@ -1015,8 +1022,12 @@ class SessionContract(unittest.TestCase):
         shim.chmod(0o755)
         for mode in ("swallow", "kill"):
             with self.subTest(mode=mode):
+                answered.unlink(missing_ok=True)
                 fault.write_text(mode)
-                answer, code = self.call("start", mode="new")
+                try:
+                    answer, code = self.call("start", mode="new")
+                finally:
+                    answered.touch()
                 self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
                 deadline = time.monotonic() + 90
                 while list(self.record.parent.glob("start-request-*.json")) and time.monotonic() < deadline:
