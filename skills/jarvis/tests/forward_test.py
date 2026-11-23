@@ -8,7 +8,9 @@ import io
 import json
 import os
 from pathlib import Path
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -43,6 +45,27 @@ REQUEST_AT = "2026-11-02T14:03:07.120Z"
 CONFIRMED_AT = "2026-11-02T14:03:21Z"
 OPERATION = "vgs-audit:2026-11-02T14:03:07.120Z#3:op-7"
 DAY = 86400
+# A test-only entry to jarvis-session that says on stderr when its wait first
+# sleeps, having read the forward open: the barrier before a later store.
+WAIT_SHIM = r'''
+import runpy, sys, types
+lib = sys.argv[1]
+sys.path.insert(0, lib)
+import forward
+real = forward.time.sleep
+said = []
+def sleep(seconds):
+    if not said:
+        said.append(True)
+        print("shim: waiting", file=sys.stderr, flush=True)
+    real(seconds)
+clock = types.ModuleType("time")
+clock.__dict__.update(vars(forward.time))
+clock.sleep = sleep
+forward.time = clock
+sys.argv = [lib + "/session.py", *sys.argv[2:]]
+runpy.run_path(sys.argv[0], run_name="__main__")
+'''
 
 
 def satellite_status(output):
@@ -208,6 +231,24 @@ class Forward(MailWorld):
         result = self.forward(record)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
+
+    def waiting(self, key, timeout):
+        """A forward-wait on KEY, with no --timeout when TIMEOUT is None, that has read it open and now waits."""
+        limit = () if timeout is None else ("--timeout", str(timeout))
+        process = subprocess.Popen([sys.executable, "-B", "-c", WAIT_SHIM, self.scripts / "lib", "forward-wait",
+                                    "--key", key, *limit, "--home", self.satellite],
+                                   cwd=self.satellite, env=dict(self.env, JARVIS_BASH=BASH), text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        def cleanup():
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
+        self.addCleanup(cleanup)
+        # A wait that spins without sleeping never writes the barrier line.
+        ready, _, _ = select.select([process.stderr], [], [], 60)
+        self.assertTrue(ready, "forward-wait wrote no barrier line within 60 s")
+        self.assertEqual(process.stderr.readline(), "shim: waiting\n")
+        return process
 
     def test_record_delivers(self, only=None):
         # Main and Slack consume these payload bytes; expected strings do not use the producer's encoder.
@@ -640,6 +681,69 @@ class Forward(MailWorld):
         self.forward(self.record())
         self.assertNotIn(text, self.outbox_path().read_text().replace("\\n", "\n"))
 
+    def test_wait_returns_the_stored_outcome(self):
+        invalid = dict(self.env, JARVIS_MAIN_HOST="main.example")
+
+        def drain(env=None):
+            result = self.jarvis("forward-drain", env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        def answered(record, _=None):
+            self.answer(self.landed(record), "Answer text for " + record["request"]["ref"])
+            drain()
+
+        def unseen(record, _=None):
+            self.age("delivered_at", 7, record)
+            drain()
+
+        def held(record, _=None):
+            drain(invalid)
+
+        def stopped(_, process):
+            process.send_signal(signal.SIGTERM)
+
+        # Each row: name, what is stored before the wait, what happens while it
+        # waits, its timeout (None passes no --timeout), then its exit status,
+        # state and cause. A hold the owner fixes is not final: the wait stays
+        # for the answer a later drain reads.
+        rows = (("answer stored before the wait", answered, None, 1, 0, "answered", None),
+                ("answer stored during an untimed wait", None, answered, None, 0, "answered", None),
+                ("hold fixed and answered during the wait", held, answered, 60, 0, "answered", None),
+                ("hold at the timeout", held, None, 1, 75, "delivered", "setting-invalid"),
+                ("closed unanswered during the wait", None, unseen, 60, 1, "failed", "answer-unseen"),
+                ("timeout", None, None, 1, 75, "delivered", None),
+                ("signal", None, stopped, 60, 143, None, None))
+        for name, before, during, timeout, code, state, cause in rows:
+            with self.subTest(row=name):
+                record = self.record()
+                key = self.key(record)
+                self.delivered(record)
+                if before:
+                    before(record)
+                if during:
+                    process = self.waiting(key, timeout)
+                    during(record, process)
+                    untouched = (self.outbox_path().read_bytes(), self.ssh_calls())
+                    stdout, stderr = process.communicate(timeout=60)
+                    result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+                else:
+                    untouched = (self.outbox_path().read_bytes(), self.ssh_calls())
+                    result = self.jarvis("forward-wait", "--key", key, "--timeout", str(timeout))
+                self.assertEqual(result.returncode, code, result.stderr)
+                # The wait writes nothing and calls nothing.
+                self.assertEqual((self.outbox_path().read_bytes(), self.ssh_calls()), untouched)
+                if state is None:
+                    self.assertEqual(result.stdout, "")
+                    continue
+                answers = [row["answer"] for row in self.status()["answers"] if row["key"] == key]
+                self.assertEqual(json.loads(result.stdout),
+                                 {"v": 1, "key": key, "state": state, "cause": cause,
+                                  "answer": answers[0] if state == "answered" else None})
+                self.assertNotIn("Answer text", result.stdout)
+        unknown = self.jarvis("forward-wait", "--key", "forward-" + "0" * 64, "--timeout", "1")
+        self.assertEqual((unknown.returncode, unknown.stderr.split("\n")[0]),
+                         (2, "jarvis-session: forward-wait=refused cause=key-unknown"))
+
     @unittest.skipUnless(Path("/proc/self/stat").exists(), "session grants require /proc")
     def test_session_grant_and_stop_isolation(self):
         first = self.session_record()
@@ -885,6 +989,7 @@ class Forward(MailWorld):
         invalid = dict(self.env, JARVIS_MAIN_HOST="main.example")
         rows = (("main forward", ("forward", "--record", record), main, "forward", "role-main"),
                 ("main drain", ("forward-drain",), main, "forward-drain", "role-main"),
+                ("main wait", ("forward-wait", "--key", "forward-" + "0" * 64), main, "forward-wait", "role-main"),
                 ("invalid forward", ("forward", "--record", record), invalid, "forward", "setting-invalid"))
         for name, args, env, verb, cause in rows:
             with self.subTest(row=name):
@@ -929,6 +1034,16 @@ class Forward(MailWorld):
              'unreachable = False\n        for entry in queued:',
              'unreachable = False\n        if stopped is not None:\n            self.record(queued, *stopped)\n            return\n        for entry in queued:'),
             ("test_retained_answers", "lib/forward.py", 'entry["answer"] = retained', 'entry["answer"] = dict(retained, text="")'),
+            # A wait that takes a held open forward for a final failure leaves before its answer.
+            ("test_wait_returns_the_stored_outcome", "lib/forward.py",
+             '            if closed:\n', '            if closed or entry.get("cause") in FAILURES:\n'),
+            # A wait with no --timeout leaves at once.
+            ("test_wait_returns_the_stored_outcome", "lib/forward.py",
+             'deadline = None if timeout is None else time.monotonic() + timeout',
+             'deadline = time.monotonic() + (timeout or 0)'),
+            # A signal kills an unguarded wait with no status of its own.
+            ("test_wait_returns_the_stored_outcome", "lib/forward.py",
+             'signal.signal(number, interrupted)', 'pass'),
             ("test_session_grant_and_stop_isolation", "lib/forward.py",
              'not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"])', 'False'),
             # A send that drops the delivery key lands a lost-receipt retry twice.

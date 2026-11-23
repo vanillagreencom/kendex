@@ -3,7 +3,8 @@
 The outbox is machine-local and is the one record of each forward. `forward`
 checks the caller's record, enqueues the request and makes the first attempt.
 The watch loop runs `forward-drain`, which retries delivery and reads the
-main's answers.
+main's answers. `forward-wait` reads one forward's outcome there and writes
+nothing.
 """
 import calendar
 from contextlib import contextmanager
@@ -15,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import signal
 import stat
 import sys
 import time
@@ -55,8 +57,16 @@ cd -- "$1"
 # The host refusal keys a forward names as its cause; any other refusal takes
 # the operation's own cause.
 HOST_CAUSES = ("mailbox-missing", "overseer-absent", "overseer-unreadable")
-# Causes no retry clears: the drain reports each once as an event.
-TERMINAL = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen", "stop")
+# Causes the drain reports as `forward-failed`. The first four leave the
+# forward open, and a later drain's retry or read can still deliver and answer
+# it; only answer-unseen and stop close one.
+FAILURES = ("mailbox-missing", "send-failed", "setting-invalid", "receipts-missed", "answer-unseen", "stop")
+# The standard library has no portable file-change notice, so a wait reads
+# the outbox at this period: a local read, beside the drain's 5 s cadence
+# while an answer is due.
+WAIT_CHECK_SECONDS = 1
+# A wait ended by the caller's timeout; a signal ends one with 128 + its number.
+WAIT_TIMEOUT = 75
 UNREACHABLE = "main-unreachable"
 # The main printed its reached line and had not answered by the deadline.
 MAIN_SLOW = "main-slow"
@@ -493,7 +503,7 @@ class Forwarder:
                 state["last_answer"] = latest[1]
 
     def events(self):
-        """One forward-failed block per kept entry whose cause no retry clears, a closed answer-unseen one included,
+        """One forward-failed block per kept entry whose cause is in FAILURES, a closed answer-unseen one included,
         and one forward-unreachable block while the loop's last collection could not reach the main.
 
         The watch's pass cursor appends a printed block once, so a closed
@@ -516,7 +526,7 @@ class Forwarder:
             if kept(entry, now) and entry.get("answer"):
                 blocks.append(watch.event("forward-answer", request=entry["request"], key=entry["key"],
                                           answer=entry["answer"]["answer"]))
-            if kept(entry, now) and entry.get("cause") in TERMINAL:
+            if kept(entry, now) and entry.get("cause") in FAILURES:
                 fields = {"request": entry["request"], "key": entry["key"], "cause": entry["cause"]}
                 if entry.get("detail"):
                     fields["detail"] = entry["detail"]
@@ -617,12 +627,46 @@ class Forwarder:
                 "cause": "setting-invalid" if self.role.kind == "invalid" else reach.get("cause"),
                 "last_answer": state.get("last_answer"), "requests": requests, "answers": answers}
 
+    def wait(self, key, timeout):
+        """KEY's outcome once the drain stores its answer or closes it unanswered, or its open state at TIMEOUT seconds.
+
+        An open forward held on a cause in FAILURES is not final: a later
+        drain can still deliver and answer it, so the wait goes on.
+        The answer is its id, matched to `status --main`'s answers row; its
+        text stays there. Returns (outcome, exit code).
+        """
+        self.satellite()
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            entry = find(self.outbox.read(), key)
+            closed = entry is not None and entry_state(entry) == "closed"
+            if entry is None or closed and not kept(entry, watch.epoch()):
+                raise Refusal("key-unknown", "")
+            outcome = {"v": 1, "key": key, "state": "failed", "answer": None, "cause": entry.get("cause")}
+            if entry.get("answer"):
+                return dict(outcome, state="answered", answer=entry["answer"]["answer"], cause=None), 0
+            if closed:
+                # An entry closed before answers were kept holds neither answer nor cause.
+                return dict(outcome, cause=entry.get("cause") or "answered-already"), 1
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                return dict(outcome, state=entry_state(entry)), WAIT_TIMEOUT
+            time.sleep(WAIT_CHECK_SECONDS if remaining is None else min(WAIT_CHECK_SECONDS, remaining))
+
+
+def interrupted(number, _):
+    raise SystemExit(128 + number)
+
 
 def main(args, home_state):
-    """Run forward, forward-drain or status --main for the parsed ARGS; return the exit code.
+    """Run forward, forward-drain, forward-wait or status --main for the parsed ARGS; return the exit code.
 
     home_state(home) is the home's state directory, the session record's.
     """
+    if args.verb == "forward-wait":
+        # A caller's cancel is a status of its own, never a traceback.
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(number, interrupted)
     try:
         home = str(Path(args.home).resolve(strict=True))
         forwarder = Forwarder(os.environ["JARVIS_BASH"], home, home_state(home))
@@ -633,6 +677,10 @@ def main(args, home_state):
         if args.verb == "forward-drain":
             sys.stdout.write(forwarder.drain(args.collection))
             return 0
+        if args.verb == "forward-wait":
+            outcome, code = forwarder.wait(args.key, args.timeout)
+            print(json.dumps(outcome, separators=(",", ":")), flush=True)
+            return code
         print(json.dumps(forwarder.status(), separators=(",", ":")), flush=True)
         return 0
     except Refusal as refusal:
