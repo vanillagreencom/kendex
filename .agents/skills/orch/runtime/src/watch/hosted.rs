@@ -2130,16 +2130,56 @@ pub fn cloud_start_stall(lane: &Lane, pass: &Pass, out: &mut Produced) {
 
 // --- the hosted files -------------------------------------------------------
 
-/// The lane's root on its host, the record's `mail_root`; none for a record
-/// naming no root.
-fn root_of(lane: &Lane) -> Option<&str> {
-    lane.mail_root.as_deref().filter(|r| !r.is_empty())
+/// Where a hosted lane's files are on its host, as its record names it.
+enum Root<'a> {
+    /// The record's `mail_root`, the root its host named.
+    Host(&'a str),
+    /// A record naming no root: the lane keeps no files there.
+    Unnamed,
+    /// A `mail_root` still the checkout the launch ran from ([`root_pending`]).
+    Pending,
+}
+
+/// The cause every hosted read answers for a [`Root::Pending`] lane.
+const ROOT_PENDING: &str = "root-pending";
+
+impl<'a> Root<'a> {
+    /// The root, else what a file read under it answers: an unnamed root
+    /// holds no file, and a pending one is unread, never absent, since the
+    /// lane's files stand somewhere its record does not name.
+    fn path<T>(self) -> Result<&'a str, Answer<T>> {
+        match self {
+            Root::Host(root) => Ok(root),
+            Root::Unnamed => Err(Answer::Gone),
+            Root::Pending => Err(Answer::Unreadable {
+                cause: ROOT_PENDING.to_owned(),
+            }),
+        }
+    }
+}
+
+fn root_of(lane: &Lane) -> Root<'_> {
+    match lane.mail_root.as_deref().filter(|r| !r.is_empty()) {
+        None => Root::Unnamed,
+        Some(_) if root_pending(lane) => Root::Pending,
+        Some(root) => Root::Host(root),
+    }
+}
+
+/// Whether the record's `mail_root` is still the checkout the launch ran
+/// from (`checkout`), so no path under it is the host's: a launch moves it
+/// to the lane's root on its host only once the host answers, and a launch
+/// the reconcile confirmed keeps it.
+pub fn root_pending(lane: &Lane) -> bool {
+    lane.mail_root.is_some()
+        && lane.mail_root.as_deref() == lane.extra.get("checkout").and_then(Value::as_str)
 }
 
 /// The lane's status file through the provider, under its root on its host.
 pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
-    let Some(root) = root_of(lane) else {
-        return Answer::Gone;
+    let root = match root_of(lane).path() {
+        Ok(root) => root,
+        Err(answer) => return answer,
     };
     fetch(
         scripts,
@@ -2154,8 +2194,9 @@ pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// host has not, confirmed by `touch`, is the worktree the lane's own
 /// close-out removed.
 pub fn worktree(scripts: &Path, lane: &Lane) -> Answer<()> {
-    let Some(root) = root_of(lane) else {
-        return Answer::Gone;
+    let root = match root_of(lane).path() {
+        Ok(root) => root,
+        Err(answer) => return answer,
     };
     match fetch(scripts, host_of(lane), &lane.item, &format!("{root}/.git")) {
         Answer::Live(_) => Answer::Live(()),
@@ -2182,19 +2223,6 @@ pub fn step(scripts: &Path, lane: &Lane) -> String {
 /// not written, or one that could not be read, counts nothing and the read's
 /// failure is said.
 pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> (Counters, Reading<Document>) {
-    let Some(root) = root_of(lane) else {
-        return (Counters::unread(), Reading::Gone);
-    };
-    let host = host_of(lane);
-    let runs = match fetch(
-        scripts,
-        host,
-        &lane.item,
-        &format!("{root}/tmp/validation-runs"),
-    ) {
-        Answer::Live(text) => validation_runs_of(&text),
-        Answer::Gone | Answer::Unreadable { .. } => None,
-    };
     let unread = |out: &mut Produced, cause: String| {
         fail(
             out,
@@ -2206,6 +2234,21 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> (Counters, R
                 cause: STATE_UNREAD,
             },
         )
+    };
+    let root = match root_of(lane) {
+        Root::Host(root) => root,
+        Root::Unnamed => return (Counters::unread(), Reading::Gone),
+        Root::Pending => return unread(out, ROOT_PENDING.to_owned()),
+    };
+    let host = host_of(lane);
+    let runs = match fetch(
+        scripts,
+        host,
+        &lane.item,
+        &format!("{root}/tmp/validation-runs"),
+    ) {
+        Answer::Live(text) => validation_runs_of(&text),
+        Answer::Gone | Answer::Unreadable { .. } => None,
     };
     let state = match fetch(
         scripts,
@@ -2309,8 +2352,9 @@ fn clone_of(gitfile: &str) -> Option<PathBuf> {
 /// same places the handoff reads. A record in either means the close-out
 /// may still be running. Absence must be confirmed in both places.
 pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
-    let Some(root) = root_of(lane) else {
-        return Answer::Gone;
+    let root = match root_of(lane).path() {
+        Ok(root) => root,
+        Err(answer) => return answer,
     };
     let dir = match configured_state_dir(scripts, lane, root) {
         Ok(Some((dir, _))) => dir,
@@ -2417,8 +2461,10 @@ pub fn retained_clone(fleet: &Path, item: &str) -> Result<Option<PathBuf>, Strin
 /// [`CLONE_ROW`] where it moved.
 pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffReading, String> {
     let scripts = pass.scripts;
-    let Some(root) = root_of(lane) else {
-        return Ok(HandoffReading::None);
+    let root = match root_of(lane) {
+        Root::Host(root) => root,
+        Root::Unnamed => return Ok(HandoffReading::None),
+        Root::Pending => return Err(format!("cause={ROOT_PENDING}")),
     };
     let places =
         match configured_state_dir(scripts, lane, root).map_err(|c| format!("cause={c}"))? {
@@ -2457,8 +2503,9 @@ pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffRe
 /// A lane's session rows through the provider: the file the lane's hook
 /// writes under its root's mailbox on the host.
 pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
-    let Some(root) = root_of(lane) else {
-        return Answer::Gone;
+    let root = match root_of(lane).path() {
+        Ok(root) => root,
+        Err(answer) => return answer,
     };
     fetch(
         scripts,

@@ -1226,6 +1226,14 @@ fn handoffs(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
         let item = lane.item.as_str();
         let reading = match hosts.of(lane).map(|caps| caps.files) {
             Ok(Files::Local) => handoff_standing(pass.state_dir, lane),
+            // A launch whose host has not named the root yet: the pass reads
+            // nothing and keeps the row, so a record already said is not said
+            // again. Past preparing, a pending root is the read's failure.
+            Ok(Files::Verb)
+                if lane.status == LaneStatus::Preparing && hosted::root_pending(lane) =>
+            {
+                continue;
+            }
             Ok(Files::Verb) if lane.status.in_flight() => match hosted::handoff(pass, lane, out) {
                 Ok(reading) => reading,
                 Err(fields) => {
