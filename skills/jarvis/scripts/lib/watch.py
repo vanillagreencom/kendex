@@ -475,7 +475,8 @@ def owner_unread(bash, root, cursor, count, now, reported, events):
     if count <= cursor:
         return []
     _, rows = mailbox_events(bash, root, "to-lane", cursor)
-    owned = [row for row in rows if owner_row(row) and now - instant(row["at"]).timestamp() >= OWNER_WAIT_SECS]
+    owned = [row for row in rows if owner_row(row) and not row.get("answered")
+             and now - instant(row["at"]).timestamp() >= OWNER_WAIT_SECS]
     events.extend(event("owner-unread", id=row["id"], at=row["at"])
                   for row in owned if row["id"] not in reported)
     return [row["id"] for row in owned]

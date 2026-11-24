@@ -280,7 +280,7 @@ fn alert_text(pane: &str, unread: &str, said: &Event) -> String {
     let why = why.strip_prefix("EVENT ").unwrap_or(&why);
     let line = line_for(OVERSEER_TARGET);
     format!(
-        "{why}: the overseer in pane {pane} is idle with mail it has not read, newest unread={unread}, and the watch could not wake it, so nothing acts on that mail until a turn runs in that pane. Type one line into pane {pane}, such as: {line} The remedy for this line is under idle-unread in the orch skill's references/oversee-events.md.\n"
+        "{why}: the overseer in pane {pane} is idle with mail past its read cursor that has no recorded reply, newest unread={unread}, and the watch could not wake it, so nothing acts on that mail until a turn runs in that pane. Type one line into pane {pane}, such as: {line} The remedy for this line is under idle-unread in the orch skill's references/oversee-events.md.\n"
     )
 }
 

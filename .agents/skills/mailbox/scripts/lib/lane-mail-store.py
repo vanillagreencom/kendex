@@ -35,6 +35,8 @@ READ_JQ = OBJECTS_JQ + r'''
 . as $in | objects(.lane) as $lane | objects(.over) as $over
 | [$lane[].envelope | select(.kind == "answer") | .re // empty] as $answered
 | [$lane[].envelope | select(overseer_mail_class == "close") | .re] as $closed
+| (if $in.receipts and $in.item == "overseer" then
+     [$over[].envelope] | mailbox_answers else {} end) as $replies
 | (if $in.after == "" then 0 else ($in.after | tonumber) end) as $after
 | (if $in.seen > $in.lane.count and $in.lane.count > 0 then $in.lane.count else $in.seen end) as $seen
 | (if $in.verb == "inbox" then
@@ -62,6 +64,7 @@ READ_JQ = OBJECTS_JQ + r'''
       + (if $in.receipts then
           ["receipts cursor=\($in.receipt) count=\($in.lane.count) first=\($in.lane.first)"]
           + [$lane[] | .envelope as $e | select($e | mailbox_directive_receipt)
+              | select(.line <= $seen or ($replies[$e.id] | not))
               | "\(.line) \($e.id) \(($e.at | at_epoch) // "")"]
         elif $in.directives then [$lane[] | select(.line > $seen and .envelope.kind == "directive") | .envelope | tojson]
         else [] end)), cursor: null, lowered: null, clamped: null}

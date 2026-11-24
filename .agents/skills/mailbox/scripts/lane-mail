@@ -192,7 +192,8 @@ Overseer side:
               seconds, empty where `at` does not parse. The cursor is the
               receipt: a directive on a line at or below N is one the lane
               has read. A directive whose id is outside the item alphabet is
-              not listed
+              not listed. For the overseer, a directive past the cursor with
+              a recorded reply is also omitted
   drain-many --file REQUEST [--host]
               one process draining every lane named in REQUEST, one line per
               lane, `<item> <after> <root>` (the root is the
@@ -230,10 +231,12 @@ Overseer side:
               and `mail_class` on to-lane records from the shared mailbox rule,
               answered asks and their answers included. Without --box, hold
               an owner ask whose tracker outcome is pending for up to 300
-              seconds from its `at`. With --box, read
-              that file alone: print its header (below), then its envelopes
+              seconds from its `at`. With --box, print that file's header
+              (below), then its envelopes
               whose `line` is past --after N (0 when not given), in file
-              order. Logical numbers survive compaction, so a watcher keeps
+              order. For the overseer, --box to-lane adds answered:true
+              where the outbound mailbox records a reply to that envelope.
+              Logical numbers survive compaction, so a watcher keeps
               each box's last `line` or `count` and passes it back as N.
               --mark-read is the Jarvis read: local --item overseer with
               --box to-overseer. After printing the selected envelopes,
@@ -2017,7 +2020,7 @@ lm_header() { # FILE
 # The parsing JSON objects among FILE's lines. A terminated line that does not
 # parse is dropped here and counted above. Events name BOX to carry logical
 # line numbers before that filtering, aligned with the Jarvis session's seen count.
-lm_objects() { # FILE [BOX [AFTER]]
+lm_objects() { # FILE [BOX [AFTER [OUTBOUND]]]
   local count=0 numbers=/dev/null snapshot=false now=0
   [ "$ITEM" != overseer ] || mailbox_warn_legacy "$1" || return 2
   if [ -n "${2:-}${3:-}" ]; then
@@ -2032,10 +2035,11 @@ lm_objects() { # FILE [BOX [AFTER]]
   # before cursor selection, while keeping the ask's original logical position.
   jq -c -R -n --arg box "${2:-}" --arg after "${3:-}" --argjson count "$count" \
     --argjson snapshot "$snapshot" --argjson now "$now" \
-    --slurpfile numbers "$numbers" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"'
+    --rawfile outbound "${4:-/dev/null}" --slurpfile numbers "$numbers" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ$OWNER_TRACKER_JQ"'
     [inputs | input_line_number as $physical | (fromjson? // empty) | objects
       | {physical: $physical, envelope: .}] as $rows
     | [$rows[].envelope | select(owner_private)] as $private
+    | ($outbound | split("\n") | [.[] | fromjson? | objects] | mailbox_answers) as $answers
     | $rows[] | .physical as $physical | .envelope
     | owner_tracker_public
     | owner_tracker_record($private)
@@ -2046,6 +2050,7 @@ lm_objects() { # FILE [BOX [AFTER]]
     | select($after == "" or $numbers[$physical - 1] > ($after | tonumber))
     | if $box == "" then . else . + {box: $box, line: $numbers[$physical - 1], count: $count}
         + (if $box == "to-lane" then {mail_class: overseer_mail_class} else {} end)
+        + (if (.id | type) == "string" and $answers[.id] then {answered: true} else {} end)
       end' <"$1"
 }
 
@@ -2420,7 +2425,7 @@ lm_ask_find() { # ID
 # notice's append takes its own lock after this read. The id matches a line of
 # CLASS in TO_LANE, the box's to-lane.jsonl, or an owner ask in TO_OVERSEER
 # where one is named.
-lm_ref_find() { # ID CLASS TO_LANE [TO_OVERSEER]
+lm_ref_find() { # ID CLASS TO_LANE [TO_OVERSEER]; empty CLASS accepts any line
   local id="$1" class="$2" lane="$3" path ref_json
   shift 2
   for path in "$@"; do
@@ -2433,7 +2438,7 @@ lm_ref_find() { # ID CLASS TO_LANE [TO_OVERSEER]
       lm_fetch "$path" "$WORK_DIR/lane.raw"
       lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
       ref_json="$(lm_objects "$WORK_DIR/lane.jsonl" |
-        jq -c --arg id "$id" --arg class "$class" "$MAILBOX_CLASS_JQ"' select(.id == $id and overseer_mail_class == $class)' |
+        jq -c --arg id "$id" --arg class "$class" "$MAILBOX_CLASS_JQ"' select(.id == $id and ($class == "" or overseer_mail_class == $class))' |
         awk 'NR == 1')" || refuse file-unreadable "$path"
     else
       lm_ask_find "$id" || ASK_JSON=""
@@ -2447,7 +2452,7 @@ lm_ref_find() { # ID CLASS TO_LANE [TO_OVERSEER]
     orch_release_lock
     [ -z "$ref_json" ] || return 0
   done
-  refuse ref-unknown "$id"
+  return 1
 }
 
 # Refuses `resolved-already` where a close of MSGID stands in to-lane.jsonl.
@@ -2872,7 +2877,7 @@ case "$VERB" in
       # answer nothing the owner wrote. The note is judged by the class the
       # watch reports it under, so a line the watch calls a peer's is never
       # the owner's here.
-      lm_ref_find "$REF" owner-note "$TO_LANE" "$TO_OVERSEER"
+      lm_ref_find "$REF" owner-note "$TO_LANE" "$TO_OVERSEER" || refuse ref-unknown "$REF"
     fi
     [ -z "$ATTACH" ] || lm_attach_confined
     OWNER_TRACKER_ACTIVE=0
@@ -3061,6 +3066,22 @@ case "$VERB" in
       lm_fetch "$ROOT/.git" "$WORK_DIR/root.git"
       [ "$LM_FETCH_ABSENT" -eq 0 ] || REFUSE_EXTRA="root=$ROOT" refuse worktree-absent "$ITEM"
     fi
+    RECORD_REPLY=0
+    if [ -n "$MSGID" ] && [ "$ITEM" != overseer ] && [ -n "$OWN_ROOT" ] &&
+       [ -f "$OWN_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" ]; then
+      # Ordinary lane asks are in the lane's box. Record a copy only
+      # when the send answers a note held in the overseer's own mailbox.
+      SEND_ITEM="$ITEM"
+      SEND_HOST="$HOST"
+      ITEM=overseer
+      HOST=0
+      lm_box "$OWN_ROOT"
+      lm_plain
+      if lm_ref_find "$MSGID" "" "$TO_LANE"; then RECORD_REPLY=1; fi
+      ITEM="$SEND_ITEM"
+      HOST="$SEND_HOST"
+      lm_box "$ROOT"
+    fi
     # The envelope is built first and judged whole; lm_envelope writes the id
     # into the work directory and prints the line, so a refusal below leaves
     # nothing in any mailbox.
@@ -3096,6 +3117,12 @@ case "$VERB" in
       lm_append_local "$TO_LANE" "$LINE"
     fi
     lm_sent
+    if [ "$RECORD_REPLY" -eq 1 ]; then
+      ITEM=overseer
+      HOST=0
+      lm_box "$OWN_ROOT"
+      lm_append_local "$TO_OVERSEER" "$LINE" :
+    fi
     ;;
 
   resolve)
@@ -3214,8 +3241,14 @@ case "$VERB" in
       case "$EVENT_BOX" in to-lane) EVENT_FILE="$TO_LANE" ;; to-overseer) EVENT_FILE="$TO_OVERSEER" ;; esac
       lm_fetch "$EVENT_FILE" "$WORK_DIR/events.raw"
       lm_terminated "$WORK_DIR/events.raw" "$WORK_DIR/events.jsonl"
+      OUTBOUND=""
+      if [ "$ITEM:$EVENT_BOX" = overseer:to-lane ]; then
+        lm_fetch "$TO_OVERSEER" "$WORK_DIR/outbound.raw"
+        lm_terminated "$WORK_DIR/outbound.raw" "$WORK_DIR/outbound.jsonl"
+        OUTBOUND="$WORK_DIR/outbound.jsonl"
+      fi
       lm_header "$WORK_DIR/events.jsonl"
-      lm_objects "$WORK_DIR/events.jsonl" "$EVENT_BOX" "$AFTER" || refuse file-unreadable "$EVENT_FILE"
+      lm_objects "$WORK_DIR/events.jsonl" "$EVENT_BOX" "$AFTER" "$OUTBOUND" || refuse file-unreadable "$EVENT_FILE"
       if [ "$MARK_READ" -eq 1 ]; then
         COUNT="$(lm_count "$WORK_DIR/events.jsonl")" || refuse file-unreadable "$EVENT_FILE"
         mkdir -p -- "$BOX" || refuse write-failed "$BOX"
@@ -3247,7 +3280,7 @@ case "$VERB" in
       HOST=0
       lm_box "$OWN_ROOT"
       lm_plain
-      lm_ref_find "$MSGID" peer "$TO_LANE"
+      lm_ref_find "$MSGID" peer "$TO_LANE" || refuse ref-unknown "$MSGID"
       HOST="$PEER_HOST"
       lm_box "$ROOT"
     fi

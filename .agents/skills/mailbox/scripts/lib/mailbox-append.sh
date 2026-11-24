@@ -158,7 +158,14 @@ def overseer_mail_class:
   elif .kind == "answer" and (.by | type) == "string" then "resolution"
   elif ((.from // "") | . != "" and . != "owner") then "peer"
   elif .kind == "answer" then "stray"
-  else "owner-note" end;'
+  else "owner-note" end;
+# Outbound mail records replies after delivery. Exact ids let a reply clear
+# its own note without acknowledging earlier notes above the read cursor.
+def mailbox_answers:
+  reduce (.[] | if .kind == "notice" and .to == "owner" then .ref
+                elif .kind == "answer" then .re else empty end
+                | strings | select(length > 0)) as $id ({}; .[$id] = true);
+'
 
 # The pre-1.3 resolve producer wrote an answer without a closes field.
 mailbox_legacy_notice() { # ID

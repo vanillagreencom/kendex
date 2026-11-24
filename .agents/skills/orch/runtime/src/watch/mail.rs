@@ -23,7 +23,8 @@
 //! The wake's slot ([`UNREAD_KIND`]): for each target read,
 //! a row of that kind, identity the target, stands while the target's box
 //! holds lines past the target's own read cursor, its value the newest
-//! unread envelope's id, and is cleared once the box is read. The cursor is
+//! unread envelope's id. For the overseer, an envelope with an outbound
+//! reply also counts as read. The cursor is
 //! read where `lane-mail` keeps it and never moved: a lane's through the
 //! drain's receipts, the lead's from its `to-lane.cursor` file, since the
 //! verbs that read it either move a stale one (`inbox --peek`) or read
@@ -42,8 +43,8 @@
 //! turn clears the row once no record of the item stands short of `done`.
 //!
 //! Between full turns the body asks to run each second and reads the
-//! overseer box alone when its byte size moved, so
-//! an owner's note waits a second rather than the mail interval.
+//! overseer box alone when its inbound or outbound byte size moved. Owner
+//! notes and overseer replies take effect on the next poll.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
@@ -163,8 +164,8 @@ pub struct MailDuty {
     config: Config,
     /// The start of the last full turn; the next is due an interval after.
     last_full: Option<Instant>,
-    /// The overseer box's byte size at the last read, `None` for no box.
-    box_size: Option<Option<u64>>,
+    /// The overseer box's inbound and outbound byte sizes at the last read.
+    box_sizes: Option<[Option<u64>; 2]>,
 }
 
 /// One target a turn could not read: the item key, [`OVERSEER_TARGET`] or
@@ -583,7 +584,7 @@ impl MailDuty {
             mailbox,
             config,
             last_full: None,
-            box_size: None,
+            box_sizes: None,
         }
     }
 
@@ -618,7 +619,7 @@ impl MailDuty {
     }
 
     /// One turn: every box on a full turn, else the overseer box alone
-    /// where its size moved; what it delivers, and each target it could
+    /// where either file's size moved; what it delivers, and each target it could
     /// not read. The fleet record alone fails the turn whole.
     pub fn turn(&mut self, tick: &Tick) -> Result<(Produced, Vec<Refused>)> {
         let full = self.full_due(tick);
@@ -626,10 +627,14 @@ impl MailDuty {
         if full {
             self.lanes_turn(tick, &mut turn)?;
         }
-        match box_size(&self.config.overseer_box()) {
+        let overseer = self.config.overseer_dir();
+        let sizes = box_size(&self.config.overseer_box()).and_then(|inbound| {
+            box_size(&overseer.join("to-overseer.jsonl")).map(|outbound| [inbound, outbound])
+        });
+        match sizes {
             Err(e) => turn.refuse(OVERSEER_TARGET, e),
-            Ok(size) => {
-                if full || self.box_size != Some(size) {
+            Ok(sizes) => {
+                if full || self.box_sizes != Some(sizes) {
                     if full {
                         self.resolve_due_asks(&mut turn);
                     }
@@ -637,7 +642,7 @@ impl MailDuty {
                     // Taken before the read, so a note landing during it
                     // moves the size again and the next poll reads it; a
                     // refused read waits for the next full turn.
-                    self.box_size = Some(size);
+                    self.box_sizes = Some(sizes);
                 }
             }
         }
@@ -1073,18 +1078,26 @@ impl MailDuty {
                 .render(),
             );
         }
-        if events.count > read {
-            let newest = events
-                .envelopes
-                .iter()
-                .rev()
-                .find(|e| past(e.line, read))
-                .and_then(|e| e.line.map(|line| (line, e.id())));
+        // Skip answered tail rows. An absent logical line still uses the
+        // existing index fallback when the events read carries no envelope.
+        let mut count = events.count;
+        let mut newest = None;
+        for envelope in events.envelopes.iter().rev() {
+            if count <= read || envelope.line != Some(count) {
+                break;
+            }
+            if !envelope.answered {
+                newest = Some((count, envelope.id()));
+                break;
+            }
+            count -= 1;
+        }
+        if count > read {
             turn.set(
                 baseline,
                 UNREAD_KIND,
                 OVERSEER_TARGET,
-                unread_value(newest, events.count),
+                unread_value(newest, count),
             );
         } else {
             turn.clear(baseline, UNREAD_KIND, OVERSEER_TARGET);

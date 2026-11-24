@@ -239,6 +239,9 @@ pub struct Envelope {
     /// `events --box to-lane` alone: the shared mailbox rule's class.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mail_class: Option<String>,
+    /// Overseer to-lane events with a recorded outbound reply.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub answered: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_posted: Option<bool>,
     /// An owner ask alone (`pending --to owner`): the tracker item it was
