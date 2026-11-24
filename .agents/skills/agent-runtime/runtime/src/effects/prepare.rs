@@ -411,10 +411,12 @@ pub fn launch_home(
 
 /// The home a launch outside the fleet runs under on `account`, its trust
 /// record for `cwd` made there as [`launch_home`] makes it: the account where
-/// its variable is the harness's home, else `None`, the account riding in
-/// its own variable under a home that asks no trust. No harness gate is
-/// asked, since it judges what a lane's or a controller's session needs, and
-/// no runtime is built.
+/// its variable is the harness's home, and the account on a Pi model naming
+/// a provider nothing bills, which is the Pi root holding that provider's
+/// key ([`Harness::names_unbilled_provider`]); else `None`, the account
+/// riding in its own variable under a home that asks no trust. No harness
+/// gate is asked, since it judges what a lane's or a controller's session
+/// needs, and no runtime is built.
 pub fn opener_home(
     harness: Harness,
     account: &Path,
@@ -422,7 +424,9 @@ pub fn opener_home(
     cwd: &Path,
     bypass: bool,
 ) -> Result<Option<PathBuf>> {
-    if harness.account_var(model) != harness.home_var() {
+    if harness.account_var(model) != harness.home_var()
+        && !harness.names_unbilled_provider(model.unwrap_or_default())
+    {
         return Ok(None);
     }
     prepare_trust(harness, account, cwd, bypass).map(|trusted| Some(trusted.home))

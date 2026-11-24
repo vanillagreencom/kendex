@@ -457,7 +457,10 @@ impl Launcher<'_> {
             Path::new("systemd-run"),
             "launch",
             &args,
-            &runner_env(&env),
+            host::Place {
+                cwd: None,
+                env: &runner_env(&env),
+            },
             JOB_LAUNCH_TIMEOUT,
         ) {
             Ok(out) if out.status.success() => {
@@ -1545,7 +1548,10 @@ fn probe_manager() -> Runner {
         Path::new("systemd-run"),
         "probe",
         &["--user", "--quiet", "--collect", "true"],
-        &runner_env(&env),
+        host::Place {
+            cwd: None,
+            env: &runner_env(&env),
+        },
         JOB_LAUNCH_TIMEOUT,
     ) {
         Ok(out) if out.status.success() => Runner::Unit(String::new()),

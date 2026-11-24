@@ -64,7 +64,28 @@ class TaskContract(unittest.TestCase):
         self.configure()
         shutil.copyfile(ROOT / "skills/orch/tests/fixtures/tier-model/kendex", self.bin / "kendex")
         self.bin.joinpath("kendex").chmod(0o755)
-        native = ("#!" + sys.executable + "\nimport json,os,signal,sys\nfrom pathlib import Path\n"
+        # Pi's credential check answers as pi 1.6.0's `pi auth check --model
+        # M --json` did on recorded runs: ready at exit 0 where the root's
+        # auth.json holds a key for the model's provider or the environment
+        # holds its PROVIDER_API_KEY, else not_ready at exit 1; with no
+        # model, exit 2 and no JSON. A `!command` key is held where its
+        # command, run in the check's environment, exits 0 with output. A
+        # root holding `unanswered` gives no answer.
+        native = ("#!" + sys.executable + "\nimport json,os,signal,subprocess,sys\nfrom pathlib import Path\n"
+                  + "if sys.argv[1:3]==['auth','check']:\n"
+                  + " root=Path(os.environ['PI_CODING_AGENT_DIR'])\n"
+                  + " if (root/'unanswered').exists(): sys.exit(3)\n"
+                  + " provider=sys.argv[sys.argv.index('--model')+1].split('/')[0]\n"
+                  + " if not provider: sys.exit(2)\n"
+                  + " auth=json.loads((root/'auth.json').read_text()) if (root/'auth.json').exists() else {}\n"
+                  + " key=auth.get(provider,{}).get('key','')\n"
+                  + " if key.startswith('!'):\n"
+                  + "  ran=subprocess.run(key[1:],shell=True,capture_output=True,text=True)\n"
+                  + "  key=ran.stdout.strip() if ran.returncode==0 else ''\n"
+                  + " held=bool(key) or provider.upper().replace('-','_')+'_API_KEY' in os.environ\n"
+                  + " print(json.dumps({'status':'ready','provider':provider,'authType':'api_key'} if held else"
+                  + " {'status':'not_ready','provider':provider,'reason':'credentials_not_configured'}))\n"
+                  + " sys.exit(0 if held else 1)\n"
                   + "keys={'CLAUDE_CONFIG_DIR','CODEX_HOME','COPILOT_HOME','PI_CODING_AGENT_DIR','JARVIS_BROWSER_PROFILE','JARVIS_BROWSER_PORT','JARVIS_TASK_SCRATCH','WAYLAND_DISPLAY','DISPLAY'}\n"
                   + "row={'harness':Path(sys.argv[0]).name,'cwd':str(Path.cwd()),'argv':sys.argv[1:],'env_keys':list(os.environ),'env':{k:os.environ[k] for k in keys if k in os.environ}}\n"
                   + "Path(" + repr(str(self.home)) + ",'ack-'+os.environ['JARVIS_TASK_ID']+'.json').write_text(json.dumps(row))\n"
@@ -424,6 +445,64 @@ sys.exit(task.main())
                 self.assertFalse(Path(record["scratch"]).exists())
                 self.assertEqual(result.read_text(), "Output: checked\n")
 
+    def test_a_pi_task_on_a_provider_nothing_measures_starts_on_its_key(self):
+        # A named Pi root on a provider no reader measures: its stored key
+        # starts the task, read unmeasured, on that root, and so does a key
+        # command that reads what the task window's environment holds; no
+        # key in the root, whatever the caller's environment holds, or a
+        # check that gave no answer, refuses before any window opens; a
+        # model naming no provider is refused unread, with no key read.
+        model = "openai/gpt-6.2-astra"
+        stored = {"openai": {"type": "api_key", "key": "placeholder"}}
+        unkeyed = {"cause": "provider-key", "status": "not_ready", "reason": "credentials_not_configured",
+                   "retry_at": None}
+        rows = (("key stored", model, stored, {}, None, None),
+                ("key absent", model, {}, {}, "account-unmeasured", unkeyed),
+                ("key in the caller's environment", model, {}, {"OPENAI_API_KEY": "placeholder"},
+                 "account-unmeasured", unkeyed),
+                # The window's environment keeps the agent socket, so a key
+                # command that reaches an agent through it resolves there.
+                ("key command through the window's agent socket", model,
+                 {"openai": {"type": "api_key", "key": '!test -n "$SSH_AUTH_SOCK" && echo placeholder'}},
+                 {"SSH_AUTH_SOCK": str(self.root / "agent.sock")}, None, None),
+                ("check unanswered", model, None, {}, "account-unjudged", None),
+                ("class word", "sonnet", stored, {}, "account-unmeasured", None),
+                ("native default", "1", stored, {}, "account-unmeasured", None))
+        for index, (case, asked, auth, caller, refusal, cause) in enumerate(rows):
+            with self.subTest(case=case):
+                root = self.root / ("pi-root-" + str(index))
+                root.mkdir()
+                if auth is None:
+                    root.joinpath("unanswered").touch()
+                else:
+                    root.joinpath("auth.json").write_text(json.dumps(auth))
+                self.env.update(caller)
+                try:
+                    answer = self.call("launch", "--name", "keyed-" + str(index), "--harness", "pi", "--model", asked,
+                                       "--task-file", self.task_file, "--result-file", self.home / "result-keyed.md",
+                                       "--account", root, success=refusal is None)
+                finally:
+                    for name in caller:
+                        del self.env[name]
+                if refusal is None:
+                    self.assertEqual((answer["account"], answer["reading"], answer["state"]),
+                                     (str(root), "unmeasured", "running"))
+                    observed = self.acknowledgement(answer)
+                    self.assertEqual(observed["env"]["PI_CODING_AGENT_DIR"], str(root))
+                    self.assertEqual(observed["argv"][observed["argv"].index("--model") + 1], model + ":high")
+                    self.call("complete", "--id", answer["id"], "--outcome", "failed")
+                    self.call("cleanup", "--id", answer["id"])
+                else:
+                    lines = answer.stderr.splitlines()
+                    refused = [i for i, line in enumerate(lines) if line.startswith("jarvis-task: refused=")]
+                    self.assertEqual(len(refused), 1, answer.stderr)
+                    self.assertTrue(lines[refused[0]].startswith("jarvis-task: refused=" + refusal + " "), answer.stderr)
+                    printed = json.loads(lines[refused[0] + 1])
+                    self.assertIsInstance(printed, dict, answer.stderr)
+                    self.assertEqual(printed.get("refusal"), cause, answer.stderr)
+                    self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
+                                     [self.terminal["window"]])
+
     def test_failed_pick_releases_task_scratch(self):
         self.plant("codex", 99)
         refused = self.launch("codex", success=False)
@@ -702,6 +781,9 @@ sys.exit(task.main())
              "test_a_short_task_is_judged_up_to_the_wall_and_on_its_projected_wall"),
             ("short-projected", "task.py", (('(["--projected"] if args.account else [])', '[]'),),
              "test_a_short_task_is_judged_up_to_the_wall_and_on_its_projected_wall"),
+            ("admit-unbilled", "task.py", (('pick += ["--account", args.account, "--admit-unbilled", window]',
+                'pick += ["--account", args.account]'),),
+             "test_a_pi_task_on_a_provider_nothing_measures_starts_on_its_key"),
             ("live-front", "task.py", (('            self.tmux("select-window", "-t", live["window"], socket=terminal["server"], check=False)',
                 '            pass'),), "test_cleanup_front_window"),
             ("front-only", "task.py", (("        if not front:", "        if False:"),), "test_cleanup_front_window"),

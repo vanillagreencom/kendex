@@ -758,7 +758,9 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             match &step {
                 Step::Caller(c) => {
                     let pick_model = c.pick_model.clone().unwrap_or_default();
-                    if c.harness.billed(&pick_model).is_none() && !pick_model.contains('/') {
+                    if c.harness.billed(&pick_model).is_none()
+                        && !c.harness.names_unbilled_provider(&pick_model)
+                    {
                         return Err(refused(
                             "caller-account-unknown",
                             &[(
@@ -925,6 +927,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 // binding bucket, never a model's window.
                 binding_floor: overseer && !matches!(harness, Harness::Claude | Harness::Pi),
                 admit_unread_scope: overseer,
+                provider_key: None,
                 // An overseer runs here; a lane does where its host opens
                 // it in a window of this machine.
                 opens_here: overseer || launch == Some("window"),
