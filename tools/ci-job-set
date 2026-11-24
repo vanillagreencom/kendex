@@ -20,6 +20,7 @@
 #
 # Usage: tools/ci-job-set [--event-parity] [--runtime-publish]
 #        tools/ci-job-set --suite-list CANDIDATE...
+#        tools/ci-job-set --all-rust-targets
 #
 #   --event-parity  also derive the selection at every other event and refuse
 #                   `event-parity` where one differs. The `changes` job of
@@ -278,6 +279,28 @@ if [ "${1-}" = --suite-list ]; then
       *) printf '%s\n' "$candidate" ;;
     esac
   done
+  exit 0
+fi
+
+# Every target of every skill runtime, as the workflow's Rust step reads a
+# whole manifest: `<package>/*`.
+all_targets() {
+  local manifest list="" package
+  for manifest in skills/*/runtime/Cargo.toml; do
+    [ -f "$manifest" ] || continue
+    package="${manifest#skills/}"
+    list="$list,\"${package%%/*}/*\""
+  done
+  printf '[%s]' "${list#,}"
+}
+
+# --all-rust-targets prints that list on one line. The orch-rest leg's
+# runtime selection reads it where the changes job published no
+# rust_targets: a night, a manual dispatch or a failed changes job.
+if [ "${1-}" = --all-rust-targets ]; then
+  [ "$#" -eq 1 ] || exit 2
+  all_targets
+  printf '\n'
   exit 0
 fi
 
@@ -835,18 +858,6 @@ reach_read() {
   done <<<"$(printf '%s\n' "$out" | sed -n 's/^target //p')"
   REACH_TARGETS="[${list#,}]"
   REACH_READ=true
-}
-
-# Every target of every skill runtime, as the workflow's Rust step reads a
-# whole manifest: `<package>/*`.
-all_targets() {
-  local manifest list="" package
-  for manifest in skills/*/runtime/Cargo.toml; do
-    [ -f "$manifest" ] || continue
-    package="${manifest#skills/}"
-    list="$list,\"${package%%/*}/*\""
-  done
-  printf '[%s]' "${list#,}"
 }
 
 # Every shell suite a shard step can hand --suite-list, one per line.

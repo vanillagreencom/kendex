@@ -1744,14 +1744,23 @@ step_block() { # WORKFLOW STEP DIR ; that block's path, or `no-step` / `two-step
   printf '%s\n' "$block"
 }
 # The selection step both the lockfile check and the targets step read, run
-# over RUST_TARGETS as the changes job published it, its step outputs left
-# in DIR/selection.out for the step under test to take as its env.
+# in DIR/work over RUST_TARGETS as the changes job published it, its step
+# outputs left in DIR/selection.out for the step under test to take as its
+# env. The tree holds a third runtime beside both shipped ones, which a
+# fallback that discovers no runtime from the tree leaves out, and a skill
+# with no runtime, which discovery must leave out.
 SELECTION_STEP="the package runtimes the reach selects"
 runtime_selection() { # WORKFLOW RUST_TARGETS DIR ; nothing, or the refusal and status 1
-  local block
+  local block package
   block="$(step_block "$1" "$SELECTION_STEP" "$3/selection-blocks")" || { printf 'selection-%s\n' "$block"; return 1; }
+  for package in agent-runtime orch third; do
+    mkdir -p "$3/work/skills/$package/runtime"
+    : > "$3/work/skills/$package/runtime/Cargo.toml"
+  done
+  mkdir -p "$3/work/skills/linear/scripts" "$3/work/tools"
+  ln -s "$ROOT/tools/ci-job-set" "$3/work/tools/ci-job-set"
   : > "$3/selection.out"
-  (RUST_TARGETS="$2" GITHUB_OUTPUT="$3/selection.out" "$BASH" "$block") >"$3/selection.log" 2>&1 ||
+  (cd "$3/work" && RUST_TARGETS="$2" GITHUB_OUTPUT="$3/selection.out" "$BASH" "$block") >"$3/selection.log" 2>&1 ||
     { printf 'selection-refused\n'; return 1; }
 }
 selection_output() { # DIR NAME ; that output's value
@@ -1830,7 +1839,7 @@ esac
 exit 0
 STUB
   chmod +x "$run/bin/cargo" "$run/bin/lists-tests" "$run/bin/lists-none"
-  for package in agent-runtime orch; do
+  for package in agent-runtime orch third; do
     mkdir -p "$run/work/skills/$package/tests/privacy"
     printf 'printf "%%s\\n" "%s privacy" >> "$STUB_RAN"\ncase ",$STUB_FAILING," in *",%s privacy,"*) echo "pass: 0  fail: 1"; exit 1 ;; esac\necho "pass: 1  fail: 0"\n' \
       "$package" "$package" > "$run/work/skills/$package/tests/privacy/privacy-cases.sh"
@@ -1848,12 +1857,13 @@ STUB
   LC_ALL=C sort "$run/ran" | paste -sd, -
 }
 LISTED='agent-runtime --test controller,agent-runtime privacy,orch --doc,orch --lib,orch privacy'
+BOTH_WHOLE='agent-runtime --lib,agent-runtime --test one,agent-runtime --test two,agent-runtime privacy,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy'
 while IFS='|' read -r label targets failing expected; do
   check "the targets step: $label" "$expected" "$(targets_step "$WORKFLOW" "$targets" "$failing")"
 done <<TARGETS
 every listed unit passes, the doctests of a listed lib among them|["agent-runtime/controller","orch/lib"]||green: $LISTED
 a whole manifest runs each test executable that lists a test, and its doctests|["orch/*"]||green: orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
-no classifier ran, so both whole manifests run|||green: agent-runtime --lib,agent-runtime --test one,agent-runtime --test two,agent-runtime privacy,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
+no classifier ran, so every runtime the tree has runs whole|||green: $BOTH_WHOLE,third --lib,third --test one,third --test two,third privacy
 a failed target reds the step|["agent-runtime/controller","orch/lib"]|agent-runtime --test controller|red: $LISTED
 a failed privacy harness reds the step|["agent-runtime/controller","orch/lib"]|orch privacy|red: $LISTED
 a failed fmt or clippy reds the step and stops no unit|["agent-runtime/controller","orch/lib"]|agent-runtime fmt,orch clippy|red: $LISTED
@@ -1905,10 +1915,6 @@ deny_step() { # WORKFLOW RUST_TARGETS FAILING ; `green|red: <package> <policy>,.
   block="$(step_block "$1" "$DENY_STEP" "$run/blocks")" || { printf '%s\n' "$block"; return 0; }
   runtime_selection "$1" "$2" "$run" || return 0
   mkdir -p "$run/bin"
-  for package in agent-runtime orch; do
-    mkdir -p "$run/work/skills/$package/runtime"
-    : > "$run/work/skills/$package/runtime/Cargo.toml"
-  done
   cp "$ROOT/skills/agent-runtime/runtime/deny.toml" "$run/work/skills/agent-runtime/runtime/deny.toml"
   # A package fails where FAILING names it; a policy path naming no file is
   # recorded as missing, as cargo-deny refuses a config it cannot read.
@@ -1948,20 +1954,20 @@ while IFS='|' read -r label targets failing expected; do
 done <<DENY_BODY
 a listed target holds its own package alone|["orch/lib"]||green: orch $DENY_POLICY
 targets of both packages hold each once|["agent-runtime/controller","agent-runtime/lib","orch/*"]||green: $BOTH_HELD
-no list published holds both runtimes|||green: $BOTH_HELD
 a failed package reds the step and stops no other|["agent-runtime/lib","orch/lib"]|agent-runtime|red: $BOTH_HELD
 DENY_BODY
 plant "$WORKFLOW" "failed packages=\${failed# }\" >&2; exit 1; }" "failed packages=\${failed# }\" >&2; }" \
   "$TMP/deny-unfailed.yml" "skill-suites-shard/$DENY_STEP"
 check "must-fail: a failed package that ends without exit 1 leaves the step green" "green: $BOTH_HELD" \
   "$(deny_step "$TMP/deny-unfailed.yml" '["agent-runtime/lib","orch/lib"]' agent-runtime)"
-# Both steps hold the set the selection step reads, so a selection whose
-# fallback names one runtime narrows both together where no list was published.
-plant "$WORKFLOW" '[\"agent-runtime/*\",\"orch/*\"]' '[\"orch/*\"]' "$TMP/selection-one.yml" \
-  "skill-suites-shard/$SELECTION_STEP"
-check "must-fail: a selection of one runtime narrows the lockfile check and the targets step alike" \
-  "green: orch $DENY_POLICY|green: orch --doc,orch --lib,orch --test one,orch --test two,orch privacy" \
-  "$(deny_step "$TMP/selection-one.yml" '' '')|$(targets_step "$TMP/selection-one.yml" '' '')"
+# Both steps hold the set the selection step reads, so a fallback written
+# out by hand in place of the tree's discovery leaves the third runtime out
+# of both together where no list was published.
+plant "$WORKFLOW" '"$(tools/ci-job-set --all-rust-targets)"' "'[\"agent-runtime/*\",\"orch/*\"]'" \
+  "$TMP/selection-literal.yml" "skill-suites-shard/$SELECTION_STEP"
+check "must-fail: a hand-written fallback leaves a runtime out of the lockfile check and the targets step alike" \
+  "green: $BOTH_HELD|green: $BOTH_WHOLE" \
+  "$(deny_step "$TMP/selection-literal.yml" '' '')|$(targets_step "$TMP/selection-literal.yml" '' '')"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.

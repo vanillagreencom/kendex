@@ -1052,8 +1052,9 @@ jobs:
       # The package runtimes the orch-rest leg holds, read once for the
       # lockfile check and the Rust targets step below so the two cannot hold
       # different sets: the targets tools/ci-job-set's `rust_targets` lists,
-      # or every target of both runtimes where the changes job published
-      # none, as on a night, a manual dispatch or a failed changes job.
+      # or, where the changes job published none, as on a night, a manual
+      # dispatch or a failed changes job, every target of every runtime the
+      # tree has, as that script discovers them for a merge group.
       - name: the package runtimes the reach selects
         id: runtime-selection
         if: ${{ !cancelled() && matrix.shard == 'orch-rest' && needs.changes.outputs.rust_targets != '[]' }}
@@ -1061,7 +1062,12 @@ jobs:
           RUST_TARGETS: ${{ needs.changes.result == 'success' && needs.changes.outputs.rust_targets || '' }}
         run: |
           set -euo pipefail
-          targets="$(jq -c . <<<"${RUST_TARGETS:-[\"agent-runtime/*\",\"orch/*\"]}")"
+          targets="$RUST_TARGETS"
+          if [ -z "$targets" ]; then
+            targets="$(tools/ci-job-set --all-rust-targets)" ||
+              { echo "runtime-selection: discovery-failed" >&2; exit 1; }
+          fi
+          targets="$(jq -c . <<<"$targets")"
           packages="$(jq -r '.[] | split("/")[0]' <<<"$targets" | sort -u | paste -sd' ' -)"
           [ -n "$packages" ] || { echo "runtime-selection: no-package targets=$targets" >&2; exit 1; }
           printf 'targets=%s\npackages=%s\n' "$targets" "$packages" >>"$GITHUB_OUTPUT"
