@@ -236,8 +236,11 @@ case "$TOOL" in
 esac
 
 edited_file() { # PATH — resolve the parent, including parents yet to be made
-  local path=$1 parent suffix
-  [ -z "$WINDOWS_PATHS" ] || path=${path//\\//}
+  local path=$1 normalized parent suffix
+  if [ -n "$WINDOWS_PATHS" ]; then
+    normalized=${path//\\//}
+    if [[ "$normalized" =~ $absolute_root ]]; then path=$normalized; fi
+  fi
   [[ "$path" == /* || "$path" =~ $absolute_root ]] || path="$BASE/$path"
   parent=${path%/*}
   suffix=/${path##*/}
