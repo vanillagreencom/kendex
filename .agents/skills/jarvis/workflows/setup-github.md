@@ -23,8 +23,7 @@ Use the [home layout](../references/home-layout.md) for home paths.
    - Add an ignore entry if needed.
    - Check again after adding one.
    - Resolve a tracked file or failed check before accepting the token.
-   - Create or protect the destination with mode 600.
-   - Then write `GH_TOKEN` through Secret transfer.
+   - Then write `GH_TOKEN` through [Secret transfer](../references/accounts-and-secrets.md#secret-transfer), which protects the destination before writing.
    - Preserve other entries.
 6. **Jarvis**: Prepare the proof process with the selected token in its environment through Secret transfer, or the signed-in `gh` home for the login route.
    - A bare `gh` process does not load the project's private env file.

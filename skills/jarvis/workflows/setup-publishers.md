@@ -5,10 +5,7 @@
 
 ## Steps
 
-Install approved third-party selections on the consumer through `kendex add`.
-
-- Keep their source files with their publishers.
-- Do not copy them into the kendex catalog.
+Install approved third-party selections in the consumer through `kendex add`. Keep their source files with their publishers.
 
 1. Before each install command, resolve the publisher's selected full commit.
 2. Read its complete licence at that commit.
@@ -24,13 +21,14 @@ Install approved third-party selections on the consumer through `kendex add`.
 6. Select the consumer's project and environment.
 7. Install for `claude,codex,copilot,pi` with the commands below.
 
-| Publisher and selection | Licence | Acceptance for this install |
-|---|---|---|
-| `heygen-com/skills`: `heygen/heygen-avatar`, `heygen/heygen-video` | MIT | Both skills must load in Claude Code, Codex, Copilot CLI and Pi. |
-| `heygen-com/hyperframes`: the core set in the command below | Apache-2.0 | Each selected skill must load in Claude Code, Codex, Copilot CLI and Pi. |
-| `coreyhaines31/marketingskills`: `marketing-skills/video`, `marketing-skills/social`, `marketing-skills/copywriting`, `marketing-skills/cold-email`, `marketing-skills/ads` | MIT | Each selected skill must load in Claude Code, Codex, Copilot CLI and Pi. |
-| Consumer checkout of `google/skills`: `skills/ads/google-ads-api-quickstart` | Apache-2.0 | The skill must load in Claude Code, Codex, Copilot CLI and Pi. |
-| Consumer checkout of `google/skills`: `skills/ads/google-ads-api-mcp-setup` | Apache-2.0 | The skill must load in Claude Code, Codex, Copilot CLI and Pi. |
+| Source | Required licence |
+|---|---|
+| `heygen-com/skills` | MIT |
+| `heygen-com/hyperframes` | Apache-2.0 |
+| `coreyhaines31/marketingskills` | MIT |
+| Consumer checkout of `google/skills` | Apache-2.0 |
+
+For each Google Ads skill, set `google_checkout` to the absolute path of the consumer's checkout of `google/skills`. Apply the pre-install commit and licence checks above to that checkout before each install. Keep it unchanged and available as the local source.
 
 ```sh
 kendex add "heygen-com/skills@$heygen_commit" --skill heygen/heygen-avatar,heygen/heygen-video --harness claude,codex,copilot,pi --yes --leave
@@ -39,13 +37,6 @@ kendex add "coreyhaines31/marketingskills@$marketing_commit" --skill marketing-s
 kendex add "$google_checkout/skills/ads/google-ads-api-quickstart" --skill google-ads-api-quickstart --harness claude,codex,copilot,pi --yes --leave
 kendex add "$google_checkout/skills/ads/google-ads-api-mcp-setup" --skill google-ads-api-mcp-setup --harness claude,codex,copilot,pi --yes --leave
 ```
-
-Google's plugin registry omits the Ads skills. The consumer retains an unchanged checkout of `google/skills` at its checked full commit.
-
-- Set `google_checkout` to its absolute path.
-- Confirm that commit before each local-folder install.
-- Read its licence before each local-folder install.
-- Keep the checkout unchanged and available as the local source.
 
 After each install:
 
@@ -62,5 +53,5 @@ Then assign and check the skills:
    - Preserve its existing same-catalog assignments.
 2. Run `kendex apply` in that consumer.
 3. Check the rendered agent's required paths or Claude preload names against each installed native name.
-4. Then use each harness's native skill list or loader to check every selection. A file on disk alone does not prove loading.
+4. Then check that every selected skill loads in Claude Code, Codex, Copilot CLI and Pi through each harness's native skill list or loader.
 5. Stop setup and report the failed skill and harness if any selection fails.

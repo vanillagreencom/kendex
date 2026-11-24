@@ -20,12 +20,10 @@ Before acting, read [Secret transfer](../references/accounts-and-secrets.md#secr
 5. **Jarvis**: Get the user's repository, item, remote clone and harness account paths the inventory contract needs.
    - Add the approved host entry to the project's inventory, and change no other entry.
    - In `kendex.settings.toml` under `[env]`, set `LANE_HOST_SSH_INVENTORY` to that file and `ORCH_LANE_HOST` to the installed `.agents/skills/orch/scripts/lane-host-ssh` executable.
-   - Resolve its path from the project, not from one machine's layout.
+   - Resolve the executable path from the project.
 6. **Jarvis**: Run `.agents/skills/orch/scripts/orch-runtime host list` with the saved project settings.
-   - Require success.
    - Match the returned repository and item, and the SSH target, to the approved inventory entry.
    - Confirm the state is `hosted` or `available`.
-   - This read validates the inventory and contacts its configured targets.
    - A failed read, missing row or mismatch leaves setup unresolved.
 7. **Jarvis**: Run `.agents/skills/orch/scripts/orch-runtime host capabilities`.
    - Read the validated capabilities under `schemas/lane-host.md` § Host kinds, and confirm `kind=ssh`.
