@@ -50,7 +50,7 @@ Before § 4, repeat the § 2 check on the tree the review left. `tier=small` con
 
 ## 4. Submit
 
-`ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication). Keep § 3's local validation and internal review, report the pushed commit, and take start-worktree.md § 5's direct-delivery route.
+`ORCH_DELIVERY=push-base` takes [base-publication.md](base-publication.md). Keep § 3's local validation and internal review, report the pushed commit, and take start-worktree.md § 5's direct-delivery route.
 
 Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most. For this item, `orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]` answers 2 even where a project setting raises it, and keeps a lower setting. At that cap, [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply.
 

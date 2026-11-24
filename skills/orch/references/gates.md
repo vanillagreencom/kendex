@@ -26,10 +26,10 @@ Under `off`, the call answers one of:
 
 Record the gate not applicable only on `off`.
 
-- Under the `off` gate mode, open review threads still stop the merge. Submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists.
+- Under the `off` gate mode, open review threads still stop the merge. Gate 3 of [publication.md § Merge gates](publication.md#merge-gates) applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists.
 - Required CI checks, commit guards, exact-head checks and conflict refusal hold in both modes.
 - The merge path still refuses a `CHANGES_REQUESTED` review at its readiness check.
-- Under `approval`, an unresolved thread holds the call at `comments` even beside an approval, as submit-pr's gate 3 and merge-pr's thread read ([thread-read.md](thread-read.md)) refuse an open thread.
+- Under `approval`, an unresolved thread holds the call at `comments` even beside an approval, as gate 3 of [publication.md § Merge gates](publication.md#merge-gates) and merge-pr's thread read ([thread-read.md](thread-read.md)) refuse an open thread.
 - A base rule that requires thread resolution also refuses one.
 
 The call reads its settings at its start, in the order of [settings.md § Where a setting is set](settings.md#where-a-setting-is-set). `PR_REVIEW_ON_TIMEOUT` and `ORCH_COPILOT_HOLD_SECS` are in [settings.md](settings.md). The two settings below belong to this gate alone; their defaults are in [settings.md § Review and CI](settings.md#review-and-ci):
@@ -183,7 +183,7 @@ How each tool's replies route:
 - `verify-review`: `pending` repeated; `complete` and `unreadable` routed by each step.
 - `verify-pr`:
   - `pending` or `unreadable` repeated through [Waiter launch](waiter-launch.md); `complete` routed by `submit-pr.md` § 5's result table.
-  - A `fail` verdict takes the one rerun per head of [submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery) before ci-fix.
+  - A `fail` verdict takes [publication.md § One rerun per head](publication.md#one-rerun-per-head) before ci-fix.
   - The merge state is read through `pr-merge --check` before the first call, and `CONFLICTING` takes the workflow's `conflict` route, never the wait.
 - `copilot-wait`: its bound and its reply's routes are [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse)'s.
 - `queue-watch`: one wait bounded by `--max-wait`, its reply's `status`, `verdict` and `cause` routed by the table of [merge-contracts.md § Queue wait](merge-contracts.md#queue-wait).

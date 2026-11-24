@@ -1,6 +1,6 @@
 # Merge attempt
 
-Read when [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1 takes the direct attempt, and when it or [submit-pr.md](../workflows/submit-pr.md) § 2 step 5 records a merge decision. Section and step numbers below are merge-pr.md's. The attempt keeps that workflow's bindings, among them `[PREPARED_HEAD]`, `[MERGE_REPO_SLUG]`, `[ITEM_DIR]` and the gate mode, and the stop and unarm rules of [merge-contracts.md § Stop routes](merge-contracts.md#stop-routes).
+Read when [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1 takes the direct attempt, and when it or [submit-pr.md § 2](../workflows/submit-pr.md#2-push-and-submit) step 5 records a merge decision. Section and step numbers below are merge-pr.md's. The attempt keeps that workflow's bindings, among them `[PREPARED_HEAD]`, `[MERGE_REPO_SLUG]`, `[ITEM_DIR]` and the gate mode, and the stop and unarm rules of [merge-contracts.md § Stop routes](merge-contracts.md#stop-routes).
 
 ## Direct attempt
 
@@ -35,7 +35,7 @@ The lane owns this wait on the approved head. Read its completion file:
   - Otherwise add one to `[CI_PENDING_COUNT]`. While it is below `[CI_PENDING_LIMIT]=3`, relaunch through Waiter launch.
   - At the limit, record `merge-ci-pending-limit`, gate `ci`, with the head, the pending checks and the wait logs. Then unarm by merge-contracts.md § Stop routes and hand back.
   - Never attempt the merge on that pending bound.
-- `status=complete` with `verdict=fail`: rerun a transient runner failure once per head before the attempt. [submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key.
+- `status=complete` with `verdict=fail`: rerun a transient runner failure once per head before the attempt. [publication.md § One rerun per head](publication.md#one-rerun-per-head) reads and records it, with `[ISSUE_ID]` being `[STATE_KEY]`.
 
 **One rerun per head.** Where the item's recorded `ci_rerun.head` is not the verdict's `result.head` (`[HEAD]`), record the rerun, then request it:
 
@@ -61,7 +61,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 
 ## Record the merge decision
 
-Record the decision after each attempt, here or in submit-pr.md § 2 step 5, before routing its exit.
+Record the decision after each attempt, here or in the arm of submit-pr.md § 2 step 5, before routing its exit.
 
 - Keep the attempt's exit, its `--expected-head` value and its `merge-route: admin|queue cause=...` line.
 - A lane ([skill-rules.md § Lane Output](skill-rules.md#lane-output)) stores them in the lane status file under [lane-launch.md § Lane directive](lane-launch.md#lane-directive).

@@ -400,7 +400,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    **The direct attempt.** Follow [merge-attempt.md § Direct attempt](../references/merge-attempt.md#direct-attempt) for the CI wait on the approved head, its pending bound, the exact-head attempt and its exit routing. Its exit `75` takes [merge-contracts.md § Queue wait](../references/merge-contracts.md#queue-wait).
 
-   **Record the merge decision.** After each attempt here or in [submit-pr.md](submit-pr.md) § 2 step 5, apply [merge-attempt.md § Record the merge decision](../references/merge-attempt.md#record-the-merge-decision) before you route its exit.
+   **Record the merge decision.** After each attempt here or in the arm of [submit-pr.md](submit-pr.md) § 2 step 5, apply [merge-attempt.md § Record the merge decision](../references/merge-attempt.md#record-the-merge-decision) before you route its exit.
 
    **The `--auto` arm** takes only that same head:
 
@@ -422,7 +422,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
    Before tracker completion or worktree cleanup, post the merge summary through [post-summary.md § 1](post-summary.md#1-post-the-summary), with this PR's and item's caller context.
 
-   - A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) passes no `pr_number`, so the summary goes on the Linear item alone. A direct delivery of a GitHub-tracked item posts no summary.
+   - A direct delivery ([base-publication.md](base-publication.md)) passes no `pr_number`, so the summary goes on the Linear item alone. A direct delivery of a GitHub-tracked item posts no summary.
    - Include the Validation Routes of every actual round and run under [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file), the fix and restack runs since the previous summary among them.
    - After the merge-group CI passes, keep the original pending, failed and no-verdict rows. Record that CI proof separately, by its run reference.
    - Post each bundled child's rows on its own item, through the same comment interface. A validation-routing Done-when box reads the rows where [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file) **Where the records live** places them.
@@ -464,7 +464,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
    Write `[EVIDENCE_FILE]` under the checkout's `tmp/`: one `N: text` line per selected box, the text citing the recorded proof.
 
    - On a pull-request delivery, take `[MET_BOXES]` and those lines from the body's `## Done-when evidence` section.
-   - A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) creates no pull request and reads no body.
+   - A direct delivery ([base-publication.md](base-publication.md)) creates no pull request and reads no body.
    - Include an already-ticked box whose Evidence line needs adding, from the attached evidence file that holds its proof.
    - Select `[MET_BOXES]` under the acceptance rule. Write `all` only where that rule accepts every box. Otherwise list the box numbers in section order from 1, comma-separated.
    - Where no box needs a tick or an Evidence line, omit both `--done-when-met` and `--evidence-file`.

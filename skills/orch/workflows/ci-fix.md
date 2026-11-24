@@ -261,7 +261,7 @@ A `pr-not-open` refusal means the pull request is closed or merged: report its `
 
 **One rerun per head.** On `status=complete` with `verdict=fail`, rerun a transient runner failure once on the pull request's head before routing the result.
 
-- Follow One rerun per head in [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery), with `[STATE_KEY]` as the key.
+- Follow [publication.md § One rerun per head](../references/publication.md#one-rerun-per-head), with `[ISSUE_ID]` being `[STATE_KEY]`.
 - Never rerun a merge group's run; a same-head re-queue under [merge-contracts.md § Re-queue rule](../references/merge-contracts.md#re-queue-rule) takes its place.
 - Where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then request it:
 

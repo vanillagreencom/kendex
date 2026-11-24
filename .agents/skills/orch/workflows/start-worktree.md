@@ -199,7 +199,7 @@ Then report once that the early open failed, with the line submit-pr or the read
 
 ## 5. Finalize
 
-After a successful `push-base` delivery, submit-pr's § 2.1 has already completed the tracker and sent the pushed-commit notice. Run § 5.4, then end: this section records no stop, writes no summaries and merges nothing.
+After a successful `push-base` delivery, [base-publication.md](base-publication.md) has already completed the tracker and sent the pushed-commit notice. Run § 5.4, then end: this section records no stop, writes no summaries and merges nothing.
 
 ### 5.1 Record The Final Stop
 

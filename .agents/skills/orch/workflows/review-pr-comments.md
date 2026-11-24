@@ -521,7 +521,7 @@ git -C "[WORKTREE_PATH]" log -1 --oneline
 
 **The description matches the head.** At the end of a round, the pull request body describes the commits on the head and names every issue § 6.2 filed this round. Nothing else regenerates it after the first round.
 
-1. Rebuild it per [submit-pr.md](submit-pr.md) § 2 step 3.
+1. Rebuild it per [publication.md § PR body](../references/publication.md#pr-body).
 2. Post it with `pr-edit-body` until both hold.
 
 ### 6.2 Create Issues
@@ -668,7 +668,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "
   - After § 6.3, restart this § 7.2 from its Copilot wait, review call, reviews read and route selection, the body check included. A pushed head's body findings take their own pass, with that head as their source.
   - Keep the handled body items with their source-reviewed heads for the skip decision and the notices.
   - Complete § 8 before returning to the caller with the current head and whether the pass pushed. Discard every route selected before the pass.
-- Exit `1` with any other rule's line: rewrite the replies by [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates).
+- Exit `1` with any other rule's line: rewrite the replies by gate 3 of [publication.md § Merge gates](../references/publication.md#merge-gates).
 - Exit `2` reached no verdict: report its first stderr line and send nothing.
 - Before an exit `0`, no notice this step sends goes out, and no step ends on an approved head.
 - Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice:

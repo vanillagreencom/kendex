@@ -8,7 +8,7 @@ Post the session summary to the pull request and the tracker. Hand context to th
 | `post-summary [ISSUE_ID]` | Post for a specific issue |
 | (from start-worktree or merge-pr) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 3) or `"self"` (the default); `issue_id`, the workflow-state key: the normalized issue ID, never the bare GitHub issue number; `pr_number`, absent for a direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)).
+**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 3) or `"self"` (the default); `issue_id`, the workflow-state key: the normalized issue ID, never the bare GitHub issue number; `pr_number`, absent for a direct delivery ([base-publication.md](base-publication.md)).
 
 **Every path**, before you render the summary:
 

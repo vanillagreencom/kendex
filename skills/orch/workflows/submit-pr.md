@@ -1,6 +1,6 @@
 # Submit PR Workflow
 
-Publish one item's branch: validate and review it locally, push, open or update the pull request, triage review comments, wait for the review gate, verify CI and confirm the merge gates. Under `push-base` delivery, § 2.1 publishes to the base branch instead, and no pull-request section runs.
+Publish one item's branch as a pull request: validate and review it locally, push, open or update the pull request, triage review comments, wait for the review gate, verify CI and confirm the merge gates. [publication.md](../references/publication.md) holds the pull request body, the arm, the CI rerun and the merge-gate contracts that these steps apply.
 
 - Run each review wait and each `verify-pr` call through [Waiter launch](../references/waiter-launch.md).
 - A [review call](../references/gates.md#the-review-call) that reads only its `mode` or its `request` runs directly.
@@ -23,7 +23,7 @@ Resolve the decision mode once for every post-PR choice in this workflow:
 
 - `.agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text` prints `ISSUE_ID`.
 - `.agents/skills/worktree/scripts/worktree exists` and `worktree path` give `[DIR]`.
-- Where no worktree exists and you are inside the pull request's checkout, `auto-recommended` creates one and logs the choice; `ask` asks first.
+- Where no worktree exists and you are inside the pull request's checkout, `auto-recommended` creates one and logs the choice. `ask` asks first.
 
 With no argument, `[DIR]` is `.`. `WT_PATH` is what `.agents/skills/orch/scripts/git-context repo-root "[DIR]"` prints.
 
@@ -31,7 +31,7 @@ With no argument, `[DIR]` is `.`. `WT_PATH` is what `.agents/skills/orch/scripts
 
 1. Bind `ISSUE_ID` from `git-context issue-from-branch .`.
 2. Run `.agents/skills/orch/scripts/orch-runtime state exists --item [ISSUE_ID]`.
-3. Where it reports no record, read the branch with `git-context branch [WT_PATH]`, then create the record with `orch-runtime state init --item [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`.
+3. Where it reports no record, read the branch with `git-context branch [WT_PATH]`. Then create the record with `orch-runtime state init --item [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`.
 
 **Every path** resolves `TRACKER` and `ISSUE_REF` from `ISSUE_ID` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). It resolves `SUB_ISSUE_REF` the same way from each completed sub-issue's ID.
 
@@ -48,11 +48,11 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-Stop before pushing when:
+Stop before pushing when any of these holds:
 
 - the branch is empty (detached HEAD);
 - the branch is the base branch;
-- the working tree is dirty; or
+- the working tree is dirty;
 - the committed diff against the base is empty.
 
 In the managed lifecycle, return a failed preflight to the caller, so the dev agent can normalize the branch and clean the worktree.
@@ -85,11 +85,11 @@ Read only the receipt at its returned `path`, through `orch-runtime dev-return -
 - A valid `ci` receipt for the current commit accepts the completed local edits, with required CI pending after publication.
   - Start no `DEV_VALIDATE_CMD` for it.
   - After publication, § 5 and § 5.1 read the pull request's required CI.
-  - Where the change is queue-only, that run proves no head; the merge-group run the receipt's record names by `ci-event=merge_group` proves it ([merge-pr.md § 5](merge-pr.md#5-execute-the-merge)).
+  - Where the change is queue-only, that run proves no head. The merge-group run the receipt's record names by `ci-event=merge_group` proves it ([merge-pr.md § 5](merge-pr.md#5-execute-the-merge)).
 - A failing dev validation artifact blocks submission. Report it and start no validation run.
 - Never re-run a dev `no-verdict` result for the current commit.
   - With `validate_mode` `ci`, it goes on with required CI pending after publication, as a `ci` receipt does.
-  - With `validate_mode` `full` or `range`, no required CI holds its proof: it is unproved, blocks the push and starts no run.
+  - With `validate_mode` `full` or `range`, no required CI holds its proof. It is unproved, blocks the push and starts no run.
 - In a project whose own policy forbids orch's validation runner, reuse a dev `pass` as it stands where its `commit` is the current HEAD and its `validate_mode` is `full`.
   - Its receipt comes from a [foreground validation record](../schemas/dev-return.md#foreground-validation-record).
   - Ask the runtime nothing and start no run.
@@ -145,7 +145,7 @@ SUBMIT_VALIDATE_MODE="${SUBMIT_VALIDATE_MODE#validate-mode=}"
 
 Drain what a review bot would surface before the pull request exists.
 
-**Skip if** `lifecycle` is `"managed"`, or a PR number argument was given (§ 3 triages the comments that arrived). Otherwise ask the committed policy whether the local review runs:
+**Skip if** `lifecycle` is `"managed"`, or a PR number argument was given: § 3 triages the comments that arrived. Otherwise ask the committed policy whether the local review runs:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime validate policy --base-checkout "[REVIEW_BASE_CHECKOUT]" --stage local-review
@@ -182,8 +182,10 @@ Otherwise:
 | Result | Action |
 |---|---|
 | `ok == true` | Route the findings below |
-| `reason == "valid_undermeasured"` | Report its `measurement_failed` string, and `measurement_suppressed` where present, with the findings; never treat the pass as clean |
+| `reason == "valid_undermeasured"` | Report the measurement failure with the findings, as below |
 | `ok == false`, or a nonzero exit | Report `reason` and its `detail`, and go to § 2 |
+
+On `valid_undermeasured`, report its `measurement_failed` string, and `measurement_suppressed` where present, with the findings. Never treat the pass as clean.
 
 The local review is advisory. It never blocks submission, and none of those outcomes is a pass.
 
@@ -191,9 +193,9 @@ The local review is advisory. It never blocks submission, and none of those outc
 2. Disposition every finding per [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow), Step 0 first. Only what survives enters the fix set.
 3. Complete the shared contract for this batch before you take any route below.
 
-- No blockers and no `category: "fix"` or `category: "issue"` suggestions: go to § 2.
-- Blockers and fix-category suggestions: `⤵ workflows/dev-fix.md § 1-3 → § 1.2 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (the blockers and fix-category suggestions) and `source: local-review`.
-- `category: "issue"` suggestions, and the fix round's escalated items that clear the filing bar of [finding-disposition.md](../../reviewer/references/finding-disposition.md):
+- With no blockers and no `category: "fix"` or `category: "issue"` suggestions, go to § 2.
+- Send blockers and fix-category suggestions to `⤵ workflows/dev-fix.md § 1-3 → § 1.2 tail`, with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (the blockers and fix-category suggestions) and `source: local-review`.
+- File the `category: "issue"` suggestions, and the fix round's escalated items that clear the filing bar of [finding-disposition.md](../../reviewer/references/finding-disposition.md):
   1. Build an audit-input file at `tmp/audit-local-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "local-review"`.
   2. Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination), then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`.
   3. Each escalated item takes the `origin` its `outcome` maps to in [review-pr.md](review-pr.md) § 8.
@@ -219,7 +221,7 @@ Read the delivery setting in `[WORKTREE_PATH]` before any pull-request read or p
 ```
 
 - `pr`, or no value, takes the steps below.
-- `push-base` takes § 2.1 instead, also where a tier enters only steps 1-4.
+- `push-base` takes [base-publication.md](base-publication.md) instead and runs no pull-request section, also where a tier enters only steps 1-4.
 - A failed setting read stops publication.
 
 **A cut after the last review pass.**
@@ -236,15 +238,13 @@ Read the delivery setting in `[WORKTREE_PATH]` before any pull-request read or p
 
 Record whether `autoMergeRequest` is set.
 
-- While workflow state `pr_order` reads `open-first` or `push-first`, an armed pull request was armed before its internal review returned. Unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1; its hand-back pushes nothing and returns to the caller.
+- While workflow state `pr_order` reads `open-first` or `push-first`, an armed pull request was armed before its internal review returned. Unarm it first by [merge-pr-restack.md](merge-pr-restack.md) step 1. Its hand-back pushes nothing and returns to the caller.
 - After § 6.1 confirms every merge gate, an armed standalone submit enters [merge-pr.md](merge-pr.md) from its entry point.
 - An armed managed submit returns that recorded decision with its final result, and the caller's merge stage owns the lifecycle.
 
-Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto` is never the arm.
+1. **Push.** With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, the first pass after the internal review of the pull request [start-worktree.md](start-worktree.md) § 2.1 opened runs § 3's triage first.
 
-1. **Push.** With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, the first pass after the internal review runs § 3's triage first. That is the review of the pull request [start-worktree.md](start-worktree.md) § 2.1 opened.
-
-   - Run `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context, `[PR_NUMBER]` being the `number` the `pr view` read above printed.
+   - Run `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context. `[PR_NUMBER]` is the `number` the `pr view` read above printed.
    - Its fix round commits on top of the internal review's, and its `record-push` request (that workflow's § 6.1) carries both.
    - It resolves its own fix SHAs through `.rebase_map` before its replies cite them.
    - The triage returns to the push request below, never to the start of this step.
@@ -291,53 +291,7 @@ Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto
 
    `{"status":"no_pr","number":null}` means create one in step 4. A failed read exits 1: stop and report it.
 
-3. **Build the PR body.** Write it to `[WORKTREE_PATH]/tmp/pr-body-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`) with the harness file-write tool or `apply_patch`, never redirection or a heredoc. Bind that path as `BODY_FILE`:
-
-   ```markdown
-   ## Summary
-   [1-3 bullets describing the changes]
-
-   ## Merge danger
-   - **Door:** [one-way or two-way. A change that deletes data, migrates a format or changes a published contract is one-way.]
-   - **Blast radius:** [who breaks if this is wrong]
-
-   ## Context
-   - **[DECISION_ID]**: [ONE_LINE_SUMMARY] — `[DECISION_FILE_PATH]`
-   - **Research**: [TITLE] — `[RESEARCH_FILE_PATH]`
-
-   ## Completed Issues
-   - Closes [ISSUE_REF] - [TITLE]
-     - Closes [SUB_ISSUE_REF] - [SUB_TITLE]
-
-   ## Done-when evidence
-   [N]: [PROOF]
-
-   ## Created Issues
-   - [ISSUE_ID] - [TITLE] — Project: [PROJECT]
-
-   ## QA Metrics
-   [Results from the QA agents that ran — project-configurable.]
-
-   ## Merge decision
-   [Pending the merge attempt. The lane records the returned merge-route line here.]
-
-   ## Proposed rules
-   [Each string in workflow state `pr_comment_review.proposed_rules`.]
-
-   ## Test Plan
-   [Before-and-after evidence: the test that failed before and passes now, or the command output before and after.]
-   ```
-
-   - Keep `## Merge decision` and `## Merge danger`: every change has a Door answer.
-   - On an existing pull request, keep its recorded merge decision through body updates. Use the pending text only before any attempt is recorded.
-   - Omit the other empty sections.
-   - Write one `N: text` line under `## Done-when evidence` for each branch-provable Done-when box. `N` is the box's number in section order from 1; the text is its proving artifact at the head.
-   - Keep the `## Done-when evidence` section current on every body update. The runtime's close reads it where the lane cannot complete the item.
-   - Include each proposed rule once, and do not perform it.
-   - Take decision paths only from `decisions search --issue [ISSUE_ID]`.
-   - Check each decision path with `test -f [DECISION_FILE_PATH]`, one command per path. Omit a path that fails.
-   - Include qualified started bundle children in the child `Closes` lines: this pull request carries their implementation.
-   - For a GitHub item, save its live body from `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body` under `tmp/` on every body build. Its classification under [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution) picks `Refs` or `Closes`. A failed read stops the body build.
+3. **Build the PR body** by [publication.md § PR body](../references/publication.md#pr-body). Bind the file's path as `BODY_FILE`.
 
 4. **Create or update the pull request.**
 
@@ -358,9 +312,9 @@ Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto
 
    **Push-first ready head.** With `pr_order` reading `push-first-returned`:
 
-   - Confirm the internal review's verdict is `pass`.
-   - Run [the review call](../references/gates.md#the-review-call) once from `[WORKTREE_PATH]` with `[MARK_READY]` `true`. It marks a draft ready.
-   - Route its `request` by [gates.md § Copilot requests](../references/gates.md#copilot-requests).
+   1. Confirm the internal review's verdict is `pass`.
+   2. Run [the review call](../references/gates.md#the-review-call) once from `[WORKTREE_PATH]` with `[MARK_READY]` `true`. It marks a draft ready.
+   3. Route its `request` by [gates.md § Copilot requests](../references/gates.md#copilot-requests).
 
    Route the reply:
 
@@ -374,189 +328,54 @@ Arm only through `github.sh pr-merge --auto` (step 5). A raw `gh pr merge --auto
 
    After those writes, run step 1's **Published-head route**.
 
-5. **Arm auto-merge** as soon as the pull request exists, on every pass through this section, for a pull request that will take the queue. The arm reads [merge-pr.md](merge-pr.md) § 5 step 1's merge route. It arms nothing where that route takes the pull request past the queue.
+5. **Arm auto-merge** on every pass through this section. [publication.md § Arm auto-merge](../references/publication.md#arm-auto-merge) states when the arm runs, its skips and what each exit means.
 
-   - **Skip if** `.agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto` prints anything but `auto`.
-   - **Skip if** workflow state `pr_order` reads `open-first` or `push-first`: the internal review of the pull request [start-worktree.md](start-worktree.md) § 2.1 opened has not returned. The pass after [review-pr.md](review-pr.md) § 9 arms it.
+   **Skip if** a skip condition of that section holds.
 
-   Read the bot token as [merge-pr.md § 4](merge-pr.md#4-prepare) does:
+   1. Read the bot token as [merge-pr.md § 4](merge-pr.md#4-prepare) does. On `.configured: false`, arm nothing here: merge-pr.md § 4 decides whose name a merge lands under, and that workflow's § 4 and § 5 make the arm.
 
-   - On `.configured: false`, arm nothing here.
-   - [merge-pr.md § 4](merge-pr.md#4-prepare) decides whose name a merge lands under, and that workflow's § 4 and § 5 make the arm.
+      ```bash
+      .agents/skills/github/scripts/github.sh bot-token
+      ```
 
-   ```bash
-   .agents/skills/github/scripts/github.sh bot-token
-   ```
+   2. Detach orphaned children before any arm.
+      - **Skip if** workflow state already records `children_detached`: the detach runs once per item.
+      - Run [merge-pr.md § 4.1](merge-pr.md#41-detach-orphaned-children) for this item, `[ISSUE]` being `[ISSUE_ID]`, with its skip conditions and its per-orphan ask. A lane sends that ask through its ask gate.
+      - An abort there arms nothing. Skip the rest of this step; [merge-pr.md](merge-pr.md) § 4.1 runs the detach again.
+      - Record the detach once it completes, or once the conditions of § 4.1 skip it:
 
-   Detach orphaned children before any arm:
+      ```bash
+      .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"children-detached"}'
+      ```
 
-   - Run [merge-pr.md § 4.1](merge-pr.md#41-detach-orphaned-children) for this item, `[ISSUE]` being `[ISSUE_ID]`, with its skip conditions and its per-orphan ask. A lane sends that ask through its ask gate.
-   - **Skip if** workflow state already records `children_detached`: the detach runs once per item.
-   - An abort there arms nothing. Skip the rest of this step; [merge-pr.md](merge-pr.md) § 4.1 runs the detach again.
-   - Record the detach once it completes, or once § 4.1's own conditions skip it:
+   3. Read the pushed head as `[HEAD_SHA]`:
 
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"children-detached"}'
-   ```
+      ```bash
+      git -C "[WORKTREE_PATH]" rev-parse HEAD
+      ```
 
-   Read the pushed head as `[HEAD_SHA]`, then arm:
+   4. Arm:
 
-   ```bash
-   git -C "[WORKTREE_PATH]" rev-parse HEAD
-   ```
+      ```bash
+      env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --expected-head [HEAD_SHA]
+      ```
 
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" pr-merge [PR_NUMBER] --auto --expected-head [HEAD_SHA]
-   ```
+   5. Before you route the exit, record the merge decision as publication.md § Arm auto-merge states, with `[HEAD_SHA]`, this call's exit and its returned route.
+   6. Route the exit:
 
-   Before you route the exit, apply [merge-attempt.md § Record the merge decision](../references/merge-attempt.md#record-the-merge-decision) with `[HEAD_SHA]`, this call's exit and its returned route.
+      | Exit | Action |
+      |---|---|
+      | `75` | Continue with the CI wait, the gate wait and § 6.1 |
+      | `0` | Continue |
+      | `1` | Continue unarmed |
 
-   - For that instruction, `[STATE_KEY]` is `[ISSUE_ID]` and `[MAIN_REPO_ROOT]` is this worktree.
-   - On exit `1`, that instruction confirms removal of any earlier arm before this routing.
-
-   | Exit and line | Meaning and action |
-   |---|---|
-   | `75` | Armed. Continue with the CI wait, the gate wait and § 6.1; GitHub holds the merge as `pr-merge --help` § Approvals and review threads states |
-   | `0` | Merged. § 6 enters [merge-pr.md](merge-pr.md), whose § 3.2 takes a merged pull request straight to its post-merge steps |
-   | `1` | Armed nothing. Continue unarmed; [merge-pr.md](merge-pr.md) § 5 takes the merge after § 6.1 |
-
-   On exit `1`, report an `arm: no-merge-gate=` line once. `unverified` is a failed read of the base branch's rules, and any other gap names the setting that fixes it (`pr-merge --help`).
+      On exit `1`, report the `arm: no-merge-gate=` line once.
 
 Once the pull request exists, this run is a continuing action. Before you enter another post-PR gate, clear any stop a capped run left:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [ISSUE_ID]
 ```
-
-### 2.1 Base publication
-
-Under `ORCH_DELIVERY=push-base`, `orch-runtime pr order` answers `review-first`, so no early pull request exists.
-
-**Open post-merge boxes.** **Skip if** `TRACKER=none` ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)): a directed change has no item to read.
-
-- Before any other step here, read the root item live.
-- For a single bundle, also read each non-canceled child the commit implements.
-- Use `.agents/skills/linear/scripts/linear.sh issues get [ID]` for Linear and `gh issue view [N] --repo [OWNER/REPO] --json body` for GitHub.
-
-Save each read body or description under `tmp/` and classify it with `linear.sh done-when parse --description-file [FILE]`, as [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution) reads its answer. An item answered with an open post-merge box or any `errors` takes the PR route:
-
-1. Write `[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md` with one `delivery-post-merge: issue=[ID] route=pr` line per such item, and print it.
-2. Send it: `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-post-merge-[ISSUE_ID].md"`.
-3. Stop. The stop prepares, pushes and completes nothing. The overseer relaunches the item with `ORCH_DELIVERY=pr`.
-
-A failed read or classification stops publication. An absent linear package is neither: [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution) states its outcome.
-
-**Review check.** Apply § 6.1 gate 1 before preparation.
-
-- Bind `[LIFECYCLE]` to `managed` or `self`.
-- For a managed caller, bind `[REVIEW_VERDICT]` to the internal review's returned verdict.
-- A standalone caller needs a non-empty `json_paths` record; § 1.2's advisory local review does not count.
-- A micro item keeps its internal-review exception.
-
-```bash
-if ! BASE_REVIEW_STATE="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])"; then
-  exit 1
-fi
-BASE_REVIEW_STATE="$(jq -c '.result.value | {tier: (.tier // "standard"), json_paths: (.json_paths // [])}' <<<"$BASE_REVIEW_STATE")"
-if ! jq -e --arg lifecycle "[LIFECYCLE]" --arg verdict "[REVIEW_VERDICT]" '.tier == "micro" or (if $lifecycle == "managed" then $verdict == "pass" else (.json_paths | length) > 0 end)' <<<"$BASE_REVIEW_STATE" >/dev/null; then
-  printf 'delivery-review: issue=%s state=unaccepted\n' '[ISSUE_ID]' >&2
-  exit 1
-fi
-```
-
-A refused review check publishes nothing:
-
-- Run [review-pr.md § 1-9](review-pr.md), then repeat this check with its result.
-- Keep the tier's local validation.
-
-**Prepare.**
-
-1. Bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`.
-2. Write `[WORKTREE_PATH]/tmp/base-prepare-[ISSUE_ID].json` with the harness file tool as `{"op": "record-push", "mode": "prepare", "worktree": "[WORKTREE_PATH]"}`, then run it:
-
-   ```bash
-   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/base-prepare-[ISSUE_ID].json
-   ```
-
-   The request runs the worktree skill's preparation, its normal commit hooks and SHA reconciliation. It returns before validation and transport.
-
-3. Bind `[BASE]`, `[PREPARED_BASE]` and `[PREPARED_HEAD]` from the reply's `prepared` receipt: its `base`, `before` and `commit`.
-4. Apply [SKILL.md § The Cycle](../SKILL.md#the-cycle)'s rules reload after a rebase at once, against `[BOUND_HEAD]`.
-5. If the new rules require edits or review, complete that work and restart this section.
-6. Keep the receipt's values across this pause.
-
-**Publish.** Write `[WORKTREE_PATH]/tmp/base-publish-[ISSUE_ID].json` with the harness file tool as `{"op": "record-push", "mode": "publish", "worktree": "[WORKTREE_PATH]", "base": "[PREPARED_BASE]", "head": "[PREPARED_HEAD]"}`, then run it:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/base-publish-[ISSUE_ID].json
-```
-
-The request refuses a head that moved from `[PREPARED_HEAD]`, before validation and again after it. It validates the prepared head locally over the range from the prepared base, then publishes through the worktree skill's pinned base transport without rebasing. A micro item takes the tier check first, which refuses any range that is not micro. Where the consumer's committed policy runs the `git-hooks` stage, the armed commit chain stands in for the micro item's range validation. Otherwise the range validation runs too.
-
-- Exit 0: read the reply's `delivery` receipt. Its `commit` is `[PUSHED_SHA]` and its `at` is `[PUSHED_AT]`.
-- A refusal exits 1 with its key, and a failed push exits with its status.
-- A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal in the reply's `push` output returns to [merge-pr-restack.md](merge-pr-restack.md). That route returns here after its guarded restack and rules reload.
-- A red validation publishes nothing. A failed push sends no completion notice.
-
-**Verification.** Verify the published head where it stands. The verification is pinned to `[PUSHED_SHA]`, never the branch's later head or a pull request. `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` answers from `[WORKTREE_PATH]`, whatever the item's tracker.
-
-```bash
-jq -cn --arg repo "[OWNER/REPO]" --arg base "[BASE]" --arg head "[PUSHED_SHA]" \
-  '{op: "verify-head", repo: $repo, base: $base, head: $head, required_only: true}' \
-  > "[WORKTREE_PATH]/tmp/verify-request-[ISSUE_ID].json"
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request "[WORKTREE_PATH]/tmp/verify-request-[ISSUE_ID].json"
-```
-
-| Reply | Action |
-|--------|--------|
-| `ok` true, `result.status` `complete` | Bind `[VERDICT]` to `result.verdict` |
-| `ok` true, `result.status` `pending` | Not final: repeat the call, as below |
-| `ok` true, `result.status` `unreadable` | Run the call once more, as below |
-| `ok` false | Report the refusal's key with the pushed SHA in the completion notice. Do not repeat transport |
-
-- On `complete`, the op records a `fail` on a published head as read. Name it in the completion notice. Its fix is a new item.
-- On `pending`, the op runs no wait of its own. Repeat the same call every 180 seconds until `CI_WAIT_MAX_SECS` seconds have passed since the first call (`.agents/skills/orch/scripts/orch-env CI_WAIT_MAX_SECS 600`). A `pending` reply at that point is unconfirmed: record nothing, and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice.
-- On `unreadable`, if it repeats, record nothing and write `verification: head=[PUSHED_SHA] unconfirmed` in the completion notice. Never record a verdict that did not arrive.
-
-The op records a `complete` verdict in the same call ([workflow-state.md](../schemas/workflow-state.md) `verification`). Make no separate `record-verification` call.
-
-**Linear completion**, Linear only. Read the common checkout before you enter the reused step, a standalone caller included:
-
-```bash
-.agents/skills/orch/scripts/git-context common-root "[WORKTREE_PATH]"
-```
-
-Stop on a nonzero exit. Bind the printed path as `[MAIN_REPO_ROOT]`. Substitute the value into each later command: a shell variable does not survive a separate tool call. Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone, with these bindings:
-
-- `[ISSUE]` is this session's root `[ISSUE_ID]`, and `[MERGED_AT]` is the receipt's `[PUSHED_AT]`.
-- Its merge summary runs [post-summary.md § 1](post-summary.md#1-post-the-summary) with no `pr_number`. The summary goes to the Linear item alone.
-- Skip both of its `gh pr view` reads, the timestamp and the body: this delivery has no pull request.
-- Write `[EVIDENCE_FILE]` and select `[MET_BOXES]` as that step states for a direct delivery.
-- Use its `issues complete --post-merge-at` command.
-- For the in-PR bundle, repeat the completion for each non-canceled child the pushed commit implements.
-- Follow that step's container close.
-
-**GitHub completion**, GitHub only. Use this session's resolved tracker and repository. Bind `[ISSUE_NUMBER]` to the root GitHub item's number from Tracker Resolution, then run:
-
-```bash
-gh issue close [ISSUE_NUMBER] --repo "[OWNER/REPO]" --reason completed
-```
-
-- Repeat that command with each qualified started bundle child's resolved number and repository: the children a PR body's `Closes` lines would include.
-- Item commits need no closing trailer.
-- A GitHub-tracked direct delivery posts no summary.
-- Report a tracker failure with the pushed SHA, and do not repeat transport.
-
-**Completion notice.** Write `[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md` with three parts: `Pushed [PUSHED_SHA] to [BASE].`, the verification line `verification: head=[PUSHED_SHA] verdict=[VERDICT]` or its unconfirmed form, and the tracker completion result. Send it through the lane mailbox:
-
-```bash
-.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file "[WORKTREE_PATH]/tmp/delivery-[ISSUE_ID].md"
-```
-
-Return the receipt to the caller.
-
-- A managed caller retires its agents through [start-worktree.md § 5.4](start-worktree.md#54-retire-agents), then ends.
-- A standalone caller ends here.
 
 ---
 
@@ -575,8 +394,9 @@ Do not wait for a bot's re-review round.
 
 ### 3.1 Re-submit set
 
-The re-submit set is the issues this session filed for work the cap did not deny. Some filings stand in for a fix the cap refused: one made at or past `REVIEW_MAX_EXTERNAL_ROUNDS`, or deferred instead of fixed.
+The re-submit set is the issues this session filed for work the cap did not deny.
 
+- Some filings stand in for a fix the cap refused: one made at or past `REVIEW_MAX_EXTERNAL_ROUNDS`, or deferred instead of fixed.
 - Record such a filing in `pr_comment_review.issues_created` and report it in the PR body. It never enters the set.
 
 Tell work the item's goal needs from separable work of another concern.
@@ -593,7 +413,7 @@ Implement the re-submit set before merge, in at most two re-submit cycles:
 At a `result.value` of 2 or more, go to § 3.2 with the note "max re-submit cycles reached, the re-submit set may need manual implementation". Otherwise:
 
 1. Increment the count: `orch-runtime state increment --item [ISSUE_ID] /submit_cycles`.
-2. Implement through `⤵ workflows/dev-start.md § 1-4`, managed, with the same `worktree` and `issue_id`. A `no-change` return adds nothing to the set. Skip the review and go to step 4.
+2. Implement through `⤵ workflows/dev-start.md § 1-4`, managed, with the same `worktree` and `issue_id`. A `no-change` return adds nothing to the set: skip the review and go to step 4.
 3. Review through `⤵ workflows/review-pr.md § 1-9`, managed, with the same `worktree` and `issue_id`.
 4. Re-enter § 2 to push and update the PR body with the new `Closes` lines.
 
@@ -635,8 +455,8 @@ The review gate runs before CI verification, on every repository. Named stops be
 
 - Bind `[REVIEW_BASE_CHECKOUT]` by [gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing).
 - Run [the review call](../references/gates.md#the-review-call) once from `[WORKTREE_PATH]` with `[MARK_READY]` `false`.
-- Its reply's `mode`, `approval` or `off`, is `GATE_MODE`. The runtime records it on the item; never derive it here.
-- A refusal, or a second `unreadable` reply with no `mode`, gives no mode: report it and do not guess one.
+- Its reply's `mode`, `approval` or `off`, is `GATE_MODE`. The runtime records it on the item: never derive it here.
+- A refusal, or a second `unreadable` reply with no `mode`, gives no mode. Report it and do not guess one.
 - On `approval`, route the reply's `request` by [gates.md § Copilot requests](../references/gates.md#copilot-requests) before the verdict.
 
 The gate reads only GitHub-native review state, from any reviewer, human or bot.
@@ -656,22 +476,24 @@ The gate reads only GitHub-native review state, from any reviewer, human or bot.
    | Reply | Action |
    |-------|--------|
    | `approved` | Clear the review-wait budget, then go to step 2 |
-   | `proceeded` | The reviewer-down answer under `PR_REVIEW_ON_TIMEOUT=proceed`: clear the review-wait budget, record `reviewer-down` (below), then go to step 2 |
+   | `proceeded` | Clear the review-wait budget, record `reviewer-down` (below), then go to step 2 |
    | `changes_requested` or `comments` | Run the triage pass, then the Restart check |
    | `blocked` | Record `review-regression-open` and stop, as below |
    | `copilot-error` | Route as [gates.md § Copilot requests](../references/gates.md#copilot-requests) says, then enter the Restart check |
-   | `timeout` | `auto-recommended` logs `Keep waiting` and enters the Restart check. `ask` asks, as below |
+   | `timeout` | Route by the decision mode, as below |
    | `unreadable` | Run the call once more, as below |
-   | refusal `pr-not-open` | The pull request is closed or merged: report its `state` and stop |
+   | refusal `pr-not-open` | Report the pull request's `state` and stop |
 
-   - `proceeded`: CI and gate 3 still apply in full. Orch posts no status and makes no review evidence.
+   - `proceeded` is the reviewer-down answer under `PR_REVIEW_ON_TIMEOUT=proceed`. CI and gate 3 still apply in full. Orch posts no status and makes no review evidence.
    - `blocked`: a regression-against-main blocker stands open on the item, its location in `reason` ([gates.md § Which waiter answers which state](../references/gates.md#which-waiter-answers-which-state)). No restart meets the gate while it stands.
      1. Record `review-regression-open` through `post-pr-stop`, naming that location, as the Restart check's `at-cap` row records its stop.
      2. Post the rendered comment.
      3. Return `MERGE_READY = false` and skip § 5.
    - `copilot-error`: the approval gate stays unmet until an approval arrives.
-   - `timeout` under `ask`: present `Force merge` \| `Keep waiting` \| `Stop here`, with `Keep waiting` recommended, and route the answer by **On `timeout` under `ask`** below.
-   - `unreadable`: if it repeats, `auto-recommended` records `review-gate-read-failed`; `ask` presents `Keep waiting` \| `Stop here`, with `Keep waiting` recommended.
+   - `timeout` under `auto-recommended`: log `Keep waiting` and enter the Restart check.
+   - `timeout` under `ask`: present `Force merge` \| `Keep waiting` \| `Stop here`, with `Keep waiting` recommended. Route the answer by **On `timeout` under `ask`** below.
+   - `unreadable`: if it repeats, `auto-recommended` records `review-gate-read-failed`. `ask` presents `Keep waiting` \| `Stop here`, with `Keep waiting` recommended.
+   - `pr-not-open`: the pull request is closed or merged.
 
    Record the reviewer-down answer:
 
@@ -753,7 +575,7 @@ Its JSON's `mergeable` routes first:
 - `CONFLICTING` takes the `conflict` row of the table below.
 - `MERGEABLE`, and `UNKNOWN` while GitHub still computes mergeability, go on to the first call.
 
-The runtime's `verify-pr` operation gives the pull request's CI verdict. One call reads the pull request's current head, base and state. It judges that head as § 2.1's `verify-head` judges a pinned head, and records the verdict itself with `source: verify-pr`.
+The runtime's `verify-pr` operation gives the pull request's CI verdict. One call reads the pull request's current head, base and state. It judges that head as the `verify-head` of [base-publication.md § 5](base-publication.md#5-verify-the-published-head) judges a pinned head, and records the verdict itself with `source: verify-pr`.
 
 - Run it through [Waiter launch](../references/waiter-launch.md), within the lane's CI budget `CI_WAIT_MAX_SECS`.
 - Repeat it while `result.status` is `pending` or `unreadable`, no more often than every 180 seconds.
@@ -768,18 +590,20 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
 
 | Result | Action |
 |--------|--------|
-| `conflict` | `mergeable` read `CONFLICTING` before the first call. The base, not CI, is the blocker: restack, as below |
+| `conflict` | Restack, as below |
 | `status=complete`, `verdict=pass` | Go to § 6 |
-| `status=complete`, `verdict=none` | Run the coverage check below. Only its exit 0 lets you record `ci: none` in workflow state and go to § 6 |
+| `status=complete`, `verdict=none` | Run the coverage check below |
 | `status=complete`, `verdict=fail` | Go to § 5.1 |
 | `status=pending` or `status=unreadable` at the budget | Run the call once more, as below |
-| refusal `pr-not-open` | The pull request is closed or merged: report its `state` and stop |
+| refusal `pr-not-open` | Report the pull request's `state` and stop |
 
-- `conflict`:
-  1. Run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3; a red run there hands back.
+- `conflict`: `mergeable` read `CONFLICTING` before the first call, so the base, not CI, is the blocker.
+  1. Run [merge-pr-restack.md](merge-pr-restack.md) steps 1-3. A red run there hands back.
   2. That push is a fix-up push: take the § 4 Restart check, then re-enter § 5 at its merge-state read.
   3. Never route a conflict into § 5.1 or the budget row.
-- `pending` or `unreadable` at the budget: if it repeats, `auto-recommended` records `ci-status-unconfirmed`; `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended.
+- `verdict=none`: only the coverage check's exit 0 lets you record `ci: none` in workflow state and go to § 6.
+- `pending` or `unreadable` at the budget: if it repeats, `auto-recommended` records `ci-status-unconfirmed`. `ask` presents `Skip CI` \| `Retry` \| `Abort`, with `Retry` recommended.
+- `pr-not-open`: the pull request is closed or merged.
 
 A step accepted under an `authorization` (§ 4 step 1) takes the budget row's `auto-recommended` action under either mode.
 
@@ -800,31 +624,7 @@ fi
 
 Its reply's `limit` is `MAX_CYCLES`.
 
-**One rerun per head.** Rerun a transient runner failure, such as a lost runner or a dependency install that timed out, once per head before any fix round. Read the recorded rerun:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /ci_rerun/head
-```
-
-- When its `result.value` is the verdict's `result.head`, this head had its rerun: go to Run Workflow.
-- Otherwise record the rerun for this head, then ask for it. Write the record before the ask, never after.
-- `[HEAD]` is the verdict's `result.head`. `ci-rerun --help` says which failed run it reruns:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"ci-rerun","head":"[HEAD]"}'
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
-```
-
-On a `rerun run=[RUN_ID]` line:
-
-- Return to the § 5 call after the interval § 5 keeps between calls, never at once. The § 5 call then reads the rerun attempt as the current run.
-- Before you return, record the run on the item:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"ci-rerun-run","head":"[HEAD]","run":[RUN_ID]}'
-```
-
-A `no-rerun` line, or exit `1`, goes to Run Workflow.
+Take [publication.md § One rerun per head](../references/publication.md#one-rerun-per-head) first. Its `verify-pr` call is the § 5 call, and its next route is Run Workflow below.
 
 **Run Workflow**: `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5.1 tail` with context `worktree`, `lifecycle: "managed"` and `issue_id`. Ci-fix pushes, re-confirms the § 4 gate at the new head, and only then re-verifies CI. It reads the gate at the new head through the review call, whose `mode` is the item's recorded one.
 
@@ -844,35 +644,13 @@ Keep routing failures back into ci-fix until CI passes or `MAX_CYCLES` is spent.
 
 ### 6.1 Merge Gates
 
-A pull request merges on exactly four deterministic gates. Gates 2 and 4 check results § 5 and § 4 already recorded; do not run the waits again. Gate 3 is a final live check.
+Judge the four gates of [publication.md § Merge gates](../references/publication.md#merge-gates), and set `MERGE_READY` as that section states. Read the recorded gate mode there once, for gate 4 and the § 7 report.
 
-| # | Gate | Check |
-|---|------|-------|
-| 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
-| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` after its coverage check passes (met with a `CI: none configured` note in the summary) |
-| 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0`, every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`), and `check-review-replies` exits 0 |
-| 4 | Reviewer-gate verdict | `approval`: § 4 ended `approved`, or a recorded `pr_approval.forced` or `pr_approval.reviewer_down` meets it. `off`: not applicable |
-
-**Gate 4 reads the recorded mode**, the one the runtime records per base ([gates.md § Gate-mode routing](../references/gates.md#gate-mode-routing)). Read it for gate 4 and the § 7 report:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /pr_review/mode
-```
-
-**Gate 1**, standalone only:
-
-```bash
-STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {json_paths: (.json_paths // []), cycles: (.cycles // 0)}' <<<"$STATE_READ"
-```
-
-Empty `json_paths` means no internal review is recorded. Report the unmet gate and recommend `orch review-pr [PR_NUMBER]`.
+**Gate 1**: a managed run reads the verdict of the review its caller ran. A standalone run reads `json_paths` with that section's command.
 
 **Gate 2** is the recorded § 5 result.
 
-- Raw `gh pr checks` output is never the gate.
-- On a `pr-merge --check` refusal, run `.agents/skills/github/scripts/github.sh ci-classify-refusal [PR_NUMBER]`. Report its `cause:` line with its detail; `ci-classify-refusal --help` gives the output contract.
-
-**Gate 3**, the final live check. Replying to every bot comment stays § 3's hygiene rule, not a gate in any mode.
+**Gate 3**, the final live check:
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-threads [PR_NUMBER] --unresolved
@@ -904,17 +682,14 @@ Then read what the replies say, live:
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
 ```
 
-- Exit `1` prints one line per failing rule. Rewrite each reply it counts as one of the three dispositions in [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow).
+- On exit `1`, rewrite the replies by gate 3 of [publication.md § Merge gates](../references/publication.md#merge-gates).
 - Send every `suppressed-entry` through the body-finding route of [review-pr-comments.md § 7.2](review-pr-comments.md#72-copilot-head-route) with managed context.
   - Complete its triage pass and its §§ 7.2-8, then return here with the current head and whether the pass pushed.
   - If it pushed commits, re-confirm the gates as the thread pass above does.
-- A reply or comment counts only from the pull request's author, the identity the check runs as, or an `OWNER`, `MEMBER` or `COLLABORATOR` of the repository. Post it under one of those identities. `check-review-replies --help` names which replies do not count; the command reports them on stderr.
 - Run the command once more. A second exit `1` records `review-replies-unmet`.
-- Exit `2` reached no verdict. Report its first stderr line; the gate is unmet.
+- On exit `2`, report its first stderr line. The gate is unmet.
 
 **Gate 4**: check the recorded § 4 result under the mode read above.
-
-`MERGE_READY = true` only when all four gates are met.
 
 **No stop leaves an armed pull request.** Once `MERGE_READY` is false, by these gates or by a stop that sent the run here, take [merge-pr-restack.md § Unarm at a stop](merge-pr-restack.md#unarm-at-a-stop). Take it before § 6.2 or § 7 reports the stop, with `[STATE_KEY]` being `[ISSUE_ID]` and `[STOP_DIR]` being `[WORKTREE_PATH]/tmp`.
 

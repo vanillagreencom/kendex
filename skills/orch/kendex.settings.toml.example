@@ -15,7 +15,7 @@ ORCH_APPLE_LABELS = "ios macos"
 # tier's local validation and internal review, then fast-forward pushes the
 # resolved base branch without a pull request. The pushed commit's record:
 # references/oversee-events.md § Direct-push cycle records. When an item
-# takes the PR route instead: workflows/submit-pr.md § 2.1.
+# takes the PR route instead: workflows/base-publication.md § 1.
 # ORCH_DELIVERY = "push-base"
 
 # The folder where the per-issue state of a piece of work is kept. A folder
