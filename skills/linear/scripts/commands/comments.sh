@@ -56,6 +56,11 @@ Create Options:
   --no-attribution      Post the body as supplied, with no attribution line,
                         so its first line is the caller's: an owner ask
                         opens with the owner's mention
+  --id <uuid>           The new comment's own ID, a UUID v4 the caller mints.
+                        Linear keeps an ID unique, so a create resent after an
+                        unconfirmed answer cannot post a second comment; read
+                        `comment(id:)` through `linear.sh graphql` to learn
+                        whether the first one landed
   --attach <path>       Upload a file to Linear and reference it in the body
                         (repeatable). Images embed as ![name](assetUrl); other
                         files append a [name](assetUrl) markdown link. Composes
@@ -290,6 +295,7 @@ create_comment() {
     local body_file=""
     local parent_id=""
     local attributed=1
+    local comment_id=""
     local attach_paths=()
 
     while [[ $# -gt 0 ]]; do
@@ -298,6 +304,7 @@ create_comment() {
             --body-file) body_file="$2"; shift 2 ;;
             --parent) parent_id="$2"; shift 2 ;;
             --no-attribution) attributed=0; shift ;;
+            --id) comment_id="$2"; shift 2 ;;
             --attach)
                 if [ -z "${2-}" ]; then
                     echo '{"error": "--attach requires a path argument"}' >&2
@@ -375,6 +382,7 @@ create_comment() {
     local input_parts=("\"issueId\": \"$comment_issue_id\"" "\"body\": $escaped_body")
 
     [ -n "$parent_id" ] && input_parts+=("\"parentId\": \"$parent_id\"")
+    [ -n "$comment_id" ] && input_parts+=("\"id\": $(jq -Rn --arg id "$comment_id" '$id')")
 
     local input_json
     input_json=$(IFS=,; echo "{${input_parts[*]}}")

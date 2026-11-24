@@ -108,8 +108,12 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
  result=subprocess.run(argv)
  sys.exit(result.returncode)
 """
-    # -I: a -c program imports from its working directory otherwise.
-    command = ("python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
+    # -I: a -c program imports from its working directory otherwise. exec:
+    # the host's bash -s reads its script from the stream that carries the
+    # command's own stdin after it, so a shell left running past a bootstrap
+    # that failed would run that stdin as script. Bash's exec builtin replaces
+    # the shell, and a non-interactive shell exits where exec cannot run.
+    command = ("exec python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
                " \"$BASH\" " + shlex.join([json.dumps(list(shell_args)), entry, *map(str, args)]))
     payload = json.dumps({"files": files})
     if stdin:

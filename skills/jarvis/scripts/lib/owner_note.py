@@ -19,15 +19,16 @@ FOOTER = ("Before you act on this note or delegate it: check its facts against t
 # mktemp file this same ssh call removes on exit, sent or refused. Arguments
 # after ROOT join the send: a forward passes its --delivery-id there. The
 # ${1+"$@"} form keeps an empty list legal under set -u on a Bash 3.2 host.
+# Only the send runs inside the checkout, from a subshell: mktemp, cat and
+# the trap's rm resolve their names outside it.
 HOST_SEND = """set -euo pipefail
 root="$1"
 shift
-cd -- "$root"
-[ -f %(mail)s ] || { printf 'owner-note: mailbox-missing=%%s\\n' "$root" >&2; exit 2; }
+[ -f "$root"/%(mail)s ] || { printf 'owner-note: mailbox-missing=%%s\\n' "$root" >&2; exit 2; }
 note="$(mktemp)"
 trap 'rm -f -- "$note"' EXIT
 cat >"$note"
-"$BASH" %(mail)s send --item overseer --directive --file "$note" ${1+"$@"}
+(cd -- "$root" && exec "$BASH" %(mail)s send --item overseer --directive --file "$note" ${1+"$@"})
 """ % {"mail": LANE_MAIL}
 
 

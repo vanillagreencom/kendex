@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -32,8 +33,10 @@ CALL_SECONDS = 14
 TRANSPORT_SECONDS = 2
 PAGE_ROWS = 32
 PAGE_BYTES = 16 * 1024
-# KEN-5390 adds Reply and Done; until then every row reports them refused.
-UNBUILT = "Reply and Done are not available yet; KEN-5390 adds them."
+# A Done click is the owner's claim. The delegate who reads it decides
+# completion, so the claim says so where the delegate reads it.
+DONE_CLAIM = "Done claim; delegate verification is still required."
+DELIVERY_UNCONFIRMED = "Delivery is not confirmed; retry with the same request identity and text."
 # The caller's mailbox code over each root's data. Each registered root
 # answers one record and each distinct mailbox one read, so the caller can
 # prove the read complete. jq carries every path and payload as a JSON
@@ -52,8 +55,11 @@ for root in "$@"; do
   # metadata with no work tree, a bare or .git directory. Outside every
   # repository it dies with 128, git's status for every fatal error, so that
   # outcome is known only by the first line of its untranslated die text.
+  # Git's trace variables, GIT_TRACE and every GIT_TRACE_* and GIT_TRACE2*
+  # name in git(1) § Debugging, can print to stderr ahead of the die text.
   status=0
-  inside="$(LC_ALL=C git -C "$root" rev-parse --is-inside-work-tree 2>"$work/probe")" || status=$?
+  inside="$(for name in $(compgen -e); do case $name in GIT_TRACE*) unset "$name" ;; esac; done
+    LC_ALL=C git -C "$root" rev-parse --is-inside-work-tree 2>"$work/probe")" || status=$?
   first=
   IFS= read -r first <"$work/probe" || true
   case "$status:$inside:$first" in
@@ -74,13 +80,37 @@ for root in "$@"; do
     [ "$known" != "$common" ] || continue 2
   done
   seen+=("$common")
-  cd -- "$common"
-  "$BASH" "$mail" pending --item overseer --root "$common" --to owner >"$work/pending"
-  "$BASH" "$mail" events --item overseer --root "$common" --box to-overseer >"$work/outward"
+  # Only lane-mail runs inside the checkout: a bare name resolved there could
+  # meet a PATH entry relative to that folder.
+  (
+    cd -- "$common"
+    "$BASH" "$mail" pending --item overseer --root "$common" --to owner >"$work/pending"
+    "$BASH" "$mail" events --item overseer --root "$common" --box to-overseer >"$work/outward"
+  )
   jq -cn --arg root "$common" --rawfile pending "$work/pending" --rawfile outward "$work/outward" \
     '{root: $root, pending: $pending, outward: $outward}'
 done
 """
+# The owner's answer to one mailbox ask, through the caller's lane-mail as the
+# destination account. The text arrives on stdin, after a host's command and
+# closure. lane-mail names its sender's repository from its working folder,
+# so it alone runs inside the checkout, from a subshell; mktemp, cat and the
+# trap's rm resolve their names outside it.
+MAILBOX_ANSWER = r"""set -euo pipefail
+mail=$1
+root=$2
+shift 2
+note="$(mktemp)"
+trap 'rm -f -- "${note:?}"' EXIT
+cat >"$note"
+(cd -- "$root" && exec "$BASH" "$mail" send --item overseer --root "$root" --file "$note" "$@")
+"""
+# lane-mail's refusals of an answer to an ask closed, or compacted after closing.
+CLOSED = re.compile(r"lane-mail: (?:resolved-already|ask-unknown)=")
+# A reply comment by the identity the main minted for it. Linear's
+# Query.comment "returns an error if no accessible comment matches", which
+# linear.sh graphql exits 2 for.
+COMMENT_READ = "query OwnerReply($id: String!) { comment(id: $id) { id parent { id } issue { id } } }"
 REACHED = "owner-asks: main-reached"
 MAIN = '''set -euo pipefail
 printf '%%s\\n' %(reached)s >&2
@@ -171,19 +201,27 @@ def mirrored(ask):
 
 
 class Sources:
-    """The one owner of every owner-ask source read.
+    """The one owner of every owner-ask source read and answer.
 
     Each command is the caller's own package code with the caller's settings,
     run as the destination's account. A destination supplies data alone: its
     project registry and each root's mailbox files. Linear runs on the main,
-    beside the caller's credentials."""
+    beside the caller's credentials.
+
+    An answer goes where its ask was read, so no credential crosses machines.
+    A mailbox ask's answer is data in the destination's own mailbox, written
+    with no credential; whatever carries it further, that destination's own
+    relay or tracker mirror, runs there with its own settings. A tracker item
+    is one the main's own Linear credential read, so the same credential
+    replies in the same workspace."""
 
     def __init__(self, session, settings):
         self.session, self.settings = session, settings
         # Encoded at the first host read; a host read sends it once per destination and collect.
         self.closure = None
 
-    def call(self, target, root, package, script, args=(), shell_args=()):
+    def call(self, target, root, package, script, args=(), shell_args=(), data=None, check=True):
+        """The command's result; DATA is its stdin, after a host's command and closure."""
         operation = package + "/" + script
         place = target.key + (":" + str(root) if root is not None else "")
         name = package + "/scripts/" + script
@@ -192,18 +230,25 @@ class Sources:
                 # Only mailbox code runs on a host: lane-mail and its library.
                 if self.closure is None:
                     self.closure = watch.package_files(watch.MAILBOX_FILES)
-                command, payload = watch.remote_command(self.closure, name, args, stdin=True, shell_args=shell_args)
                 # The login shell parses only "bash -s": fish turns \\ inside
                 # single quotes into \, so a quoted command reaches bash
                 # changed. POSIX sh's INPUT FILES leaves a shell reading stdin
                 # directly after its command, so the closure after the
-                # command's line reaches the bootstrap unread by bash.
-                result = watch.run(watch.host_args(target, "bash -s"), data=command + "\n" + payload,
-                                   operation=operation, timeout=self.remaining())
+                # command's line reaches the bootstrap unread by bash. With
+                # DATA, the closure rides fd 3 inside the command and DATA
+                # follows it, the command's own stdin.
+                if data is None:
+                    command, payload = watch.remote_command(self.closure, name, args, stdin=True, shell_args=shell_args)
+                    result = watch.run(watch.host_args(target, "bash -s"), data=command + "\n" + payload,
+                                       operation=operation, timeout=self.remaining())
+                else:
+                    command, _ = watch.remote_command(self.closure, name, args, shell_args=shell_args)
+                    result = watch.run(watch.host_args(target, "bash -s"), data=command + data,
+                                       operation=operation, timeout=self.remaining())
             else:
                 result = watch.run([self.session.env["JARVIS_BASH"], *shell_args, watch.LIB.parents[2] / name, *args],
-                                   root or self.session.home, operation=operation, timeout=self.remaining())
-            if result.returncode:
+                                   self.session.home, data, operation=operation, timeout=self.remaining())
+            if check and result.returncode:
                 raise watch.child_failure(operation, result)
             return result
         except (OSError, watch.Failure) as error:
@@ -318,16 +363,71 @@ class Sources:
             raise Unavailable("The request sources changed during the read; refresh from the first page.")
         return second
 
+    def deliver(self, route, body, key, retry):
+        """Add BODY to the conversation ROUTE names once per KEY: True once it
+        stands there, False where the mailbox ask closed first. Unavailable
+        while the outcome is unknown, which a retry with KEY settles."""
+        try:
+            if route["source"] == "mailbox":
+                return self.answer(route, body, key)
+            return self.reply(route, body, key, retry)
+        except (Unavailable, ValueError, TypeError, KeyError) as error:
+            raise Unavailable(DELIVERY_UNCONFIRMED, error.diagnostic if isinstance(error, Unavailable)
+                              else watch.failure("owner-asks-delivery", error).record) from error
+
+    def answer(self, route, body, key):
+        # lane-mail judges a repeated delivery id under the mailbox lock and
+        # names the answer that landed, before it judges closure.
+        delivery = "owner-ask-" + key
+        target = next((target for target in watch.destinations(self.settings) if target.key == route["destination"]), None)
+        if target is None:
+            raise Unavailable("The ask's destination is no longer declared.")
+        result = self.call(target, route["root"], "mailbox", "lane-mail", [route["root"], "--re", route["ask"], "--delivery-id", delivery],
+                           shell_args=["-c", MAILBOX_ANSWER, "owner-asks"], data=body, check=False)
+        if watch.send_receipt(result, delivery):
+            return True
+        if result.returncode == 2 and CLOSED.match(result.stderr):
+            return False
+        raise source_failure("mailbox/lane-mail", target.key + ":" + route["root"], watch.child_failure("mailbox/lane-mail", result))
+
+    def reply(self, route, body, key, retry):
+        # KEY is the comment's own id, Linear's CommentCreateInput.id ("The
+        # identifier in UUID v4 format"), unique per entity, so a resend after
+        # an unanswered create cannot post twice; a retry reads it first.
+        local = watch.Destination("local", None, None)
+        if retry:
+            read = self.call(local, None, "linear", "linear.sh",
+                             ["graphql", "--query", COMMENT_READ, "--variables", encoded({"id": key})], check=False)
+            if read.returncode == 0:
+                comment = json.loads(read.stdout)["comment"]
+                if comment["issue"]["id"] != route["issueUuid"] or (comment["parent"] or {}).get("id") != route["thread"]:
+                    raise Unavailable("The reply identity names another comment.")
+                return True
+            if read.returncode != 2:
+                raise source_failure("linear/linear.sh", "local", watch.child_failure("linear/linear.sh", read))
+        with tempfile.NamedTemporaryFile(mode="w", dir=self.session.path.parent, suffix=".md") as file:
+            file.write(body)
+            file.flush()
+            # The text is the owner's own, as the mailbox answer's from=owner
+            # says on the other route: no agent attribution line opens it.
+            result = self.call(local, None, "linear", "linear.sh", ["comments", "create", route["issueUuid"], "--parent", route["thread"],
+                                                                    "--id", key, "--no-attribution", "--body-file", file.name])
+        created = json.loads(result.stdout)
+        if created["success"] is not True or created["data"]["comment"]["id"] != key:
+            raise Unavailable("The tracker did not confirm the reply.")
+        return True
+
 
 def source_rows(source):
-    rows = {}
+    """The rows by identity, and the conversation each one's answer goes to."""
+    rows, routes = {}, {}
     # Linear's GraphQL schema gives each comment an `id`, "the unique
     # identifier of the entity", and every read runs the caller's one Linear
     # credential: a comment id alone names its mirror.
     mirrors = {ask["tracker_comment"] for mailbox in source["mailboxes"]
                for ask in mailbox["outward"]["rows"] if mirrored(ask)}
 
-    def add(identity, kind, what, author, at, link, thread):
+    def add(identity, kind, what, author, at, link, thread, route):
         instant(at)
         if (not printable(author["id"]) or not printable(author["name"])
                 or link is not None and not http(link["url"])):
@@ -337,6 +437,7 @@ def source_rows(source):
             raise Unavailable("The request source contains an ambiguous duplicate identity.")
         rows[key] = {"id": key, "kind": kind, "what": what, "askedBy": author, "askedAt": at,
                      "link": link, "threadRef": digest(thread)}
+        routes[key] = route
 
     for mailbox in source["mailboxes"]:
         destination, root = mailbox["destination"], mailbox["root"]
@@ -346,7 +447,8 @@ def source_rows(source):
             identity = ["mailbox", destination, root, ask["id"]]
             add(identity, "fleet-approval" if ask.get("draft") else "jarvis-ask",
                 ask["text"], {"id": ask["from"], "name": ask["from"]}, ask["at"],
-                None if link is None else {"label": "Original ask", "url": link["url"]}, identity)
+                None if link is None else {"label": "Original ask", "url": link["url"]}, identity,
+                {"source": "mailbox", "destination": destination, "root": root, "ask": ask["id"]})
     tracker = source["tracker"]
     if tracker is not None:
         for request in tracker["requests"]:
@@ -356,8 +458,9 @@ def source_rows(source):
             add(["linear", tracker["workspace"], request["issueUuid"], comment["id"]], "tracker-item", comment["body"],
                 {"id": comment["user_id"], "name": comment["user"]}, comment["created_at"],
                 {"label": request["issue"], "url": comment["url"]},
-                ["linear", tracker["workspace"], request["issueUuid"], request["thread"]])
-    return rows
+                ["linear", tracker["workspace"], request["issueUuid"], request["thread"]],
+                {"source": "linear", "issueUuid": request["issueUuid"], "thread": request["thread"]})
+    return rows, routes
 
 
 class OwnerAsks:
@@ -378,7 +481,7 @@ class OwnerAsks:
 
     def current(self, state):
         source = self.sources.stable()
-        rows = source_rows(source)
+        rows, routes = source_rows(source)
         now = self.clock()
         # A complete read alone owns membership: an ask it no longer returns
         # was closed, compacted after closing, or sits in a root or on a host
@@ -389,19 +492,24 @@ class OwnerAsks:
                 del state["deltas"][key]
             self.session.write(state)
         for key, row in rows.items():
-            until = state["deltas"].get(key, {}).get("until")
-            snoozed = until is not None and instant(until) > now
-            row.update(state="snoozed" if snoozed else "open", snoozedUntil=until if snoozed else None,
-                       actions={"reply": {"allowed": False, "reason": UNBUILT},
-                                "done": {"allowed": False, "reason": UNBUILT},
-                                "later": {"allowed": True, "reason": ""}})
+            shown, until = self.shown(state["deltas"].get(key, {}), now)
+            row.update(state=shown, snoozedUntil=until,
+                       actions={action: {"allowed": True, "reason": ""} for action in ("reply", "done", "later")})
         revision = digest([state["homeId"], source, state["sequence"], rows])
         for row in rows.values():
             row["revision"] = revision
-        return rows, revision, now
+        return rows, routes, revision, now
+
+    @staticmethod
+    def shown(delta, now):
+        """A row's state and snooze time from its delta: a live snooze, else a Done claim, else open."""
+        until = delta.get("until")
+        if until is not None and instant(until) > now:
+            return "snoozed", until
+        return "checking" if delta.get("checking") else "open", None
 
     def page(self, state, view, cursor):
-        rows, revision, now = self.current(state)
+        rows, _, revision, now = self.current(state)
         ordered = sorted(rows.values(), key=lambda row: (instant(row["askedAt"]), row["id"]))
         active = [row for row in ordered if row["state"] != "snoozed"]
         snoozed = [row for row in ordered if row["state"] == "snoozed"]
@@ -436,34 +544,67 @@ class OwnerAsks:
     def receipt(self, request, kind, state, cause=""):
         return {"v": 1, "requestId": request["requestId"], "kind": kind, "state": state, "cause": cause}
 
-    def later(self, state, key, request):
-        payload = {"action": "later", "id": key, "request": request}
+    def act(self, state, action, key, request):
+        payload = {"action": action, "id": key, "request": request}
         previous = state["requests"].get(request["requestId"])
         if previous is not None:
             if previous["payload"] != payload:
                 return self.receipt(request, "refused", None, "This request identity already names different content.")
-            return previous["receipt"]
-        rows, revision, now = self.current(state)
+            if previous["receipt"] is not None:
+                return previous["receipt"]
+            # A saved delivery whose outcome is unknown. Its own delivery
+            # identity settles it; the revision it was sent at has moved on.
+            return self.deliver(state, previous, retry=True)
+        rows, routes, revision, now = self.current(state)
         row = rows.get(key)
 
-        def settle(kind, cause=""):
-            receipt = self.receipt(request, kind, "snoozed" if kind == "accepted" else row["state"] if row else None, cause)
+        def settle(kind, shown, cause=""):
+            receipt = self.receipt(request, kind, shown, cause)
             state["requests"][request["requestId"]] = {"payload": payload, "receipt": receipt}
             self.session.write(state)
             return receipt
 
         if row is None:
-            return settle("refused", "This ask is no longer open in the canonical source.")
+            return settle("refused", None, "This ask is no longer open in the canonical source.")
         if request["expectedRevision"] != revision:
-            return settle("refused", "The ask list changed; refresh it before acting.")
-        try:
-            if instant(request.get("until")) <= now:
-                raise ValueError("past")
-        except (ValueError, TypeError, OverflowError):
-            return settle("refused", "Choose a future absolute time with a timezone offset.")
-        state["sequence"] += 1
-        state["deltas"][key] = {"until": request["until"]}
-        return settle("accepted")
+            return settle("refused", row["state"], "The ask list changed; refresh it before acting.")
+        if action == "later":
+            try:
+                if instant(request.get("until")) <= now:
+                    raise ValueError("past")
+            except (ValueError, TypeError, OverflowError):
+                return settle("refused", row["state"], "Choose a future absolute time with a timezone offset.")
+            state["sequence"] += 1
+            state["deltas"][key] = dict(state["deltas"].get(key, {}), until=request["until"])
+            return settle("accepted", "snoozed")
+        text = request.get("text", "")
+        if not isinstance(text, str) or action == "reply" and not text.strip():
+            return settle("refused", row["state"], "Write the reply text for the original conversation.")
+        body = DONE_CLAIM + ("\n\n" + text if text.strip() else "") if action == "done" else text
+        entry = {"payload": payload, "receipt": None, "route": routes[key], "body": body, "key": str(uuid.uuid4())}
+        state["requests"][request["requestId"]] = entry
+        # The intent is durable before the external effect: a crash between
+        # the send and its receipt leaves a retry with the same identity.
+        self.session.write(state)
+        return self.deliver(state, entry, retry=False)
+
+    def deliver(self, state, entry, retry):
+        payload = entry["payload"]
+        key, request = payload["id"], payload["request"]
+        if not self.sources.deliver(entry["route"], entry["body"], entry["key"], retry):
+            entry["receipt"] = self.receipt(request, "refused", "closed",
+                                            "This ask is closed in its mailbox, so this request added nothing to it.")
+        elif payload["action"] == "done":
+            # The claim replaces any snooze. The row stays checking until a
+            # complete read omits it: the delegate closed it.
+            state["sequence"] += 1
+            state["deltas"][key] = {"checking": True}
+            entry["receipt"] = self.receipt(request, "accepted", "checking")
+        else:
+            # A reply changes no visibility and never closes the ask.
+            entry["receipt"] = self.receipt(request, "accepted", self.shown(state["deltas"].get(key, {}), self.clock())[0])
+        self.session.write(state)
+        return entry["receipt"]
 
 
 def main(args, session_type, refusal_type):
@@ -510,7 +651,7 @@ def main(args, session_type, refusal_type):
                 request = json.loads(data)
                 if not isinstance(request, dict) or not printable(request.get("requestId")) or not printable(request.get("expectedRevision")):
                     raise Unavailable("The action needs a printable request identity and revision.")
-                result = owner.later(state, args.id, request)
+                result = owner.act(state, args.action, args.id, request)
         print(encoded(result))
         return 0
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, OverflowError, watch.DestinationRefusal, refusal_type) as error:
