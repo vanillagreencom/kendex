@@ -269,12 +269,15 @@ KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$PI_PROJECT" \
   check 'project Pi through a symlinked harness folder' pi-project \
     "$(pi_edit "$PI_PROJECT/Panel.qml" pi-project)" 'ui-copy-note: path=Panel.qml'
 
-# The relative command from engine::targets::direct_command can open a hook
-# from the checkout, but its sibling reader is outside the global install.
-install_skills "$REPO/rel-codex/skills"
-CODEX_HOME=rel-codex FIXTURE_INSTALL="$REPO" FIXTURE_COMMAND='bash "rel-codex/hooks/ui-copy-note.sh"' \
-  check 'relative Codex home cannot establish global identity' codex-relative \
-    "$(edit Edit "$REPO" shell/Panel.qml codex-relative)" 'ui-copy-note: reader=install-layout'
+# A relative registration from engine::targets::direct_command cannot
+# establish an install identity, even with a Codex project path suffix.
+for relative_home in rel-codex ./rel-codex/.codex; do
+  install_skills "$REPO/$relative_home/skills"
+  printf -v command 'bash %q' "$relative_home/hooks/ui-copy-note.sh"
+  CODEX_HOME="$relative_home" FIXTURE_INSTALL="$REPO" FIXTURE_COMMAND="$command" \
+    check "relative Codex home $relative_home cannot establish install identity" codex-relative \
+      "$(edit Edit "$REPO" shell/Panel.qml "codex-relative-${relative_home##*/}")" 'ui-copy-note: reader=install-layout'
+done
 
 ALIASED="$TMP_ROOT/aliased"
 install_skills "$ALIASED/.agents/skills"

@@ -140,13 +140,17 @@ case "${KENDEX_HOOK_SCOPE-}" in
       NATIVE_ROOT=$CLAUDE_ROOT
       HARNESS=claude
     else
-      case "$HOOK_PATH" in
-        */.claude/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.claude/hooks/ui-copy-note.sh}; HARNESS=claude ;;
-        */.codex/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.codex/hooks/ui-copy-note.sh}; HARNESS=codex ;;
-        *)
-          session_notice reader install-layout "No Claude Code or Codex registration runs $HOOK_PATH, and no KENDEX_HOOK_SCOPE names the Pi registration that ran it. A Pi install needs the pi-hooks carrier that sets it."
-          ;;
-      esac
+      # The Codex project renderer (engine::targets::project_parts) passes an absolute script path.
+      if [[ "$HOOK_PATH" == */.claude/hooks/ui-copy-note.sh ]]; then
+        PROJECT_INSTALL=${HOOK_PATH%/.claude/hooks/ui-copy-note.sh}
+        HARNESS=claude
+      elif [[ "$HOOK_PATH" == */.codex/hooks/ui-copy-note.sh ]] &&
+          [[ "$HOOK_PATH" == /* || "$HOOK_PATH" =~ $absolute_root ]]; then
+        PROJECT_INSTALL=${HOOK_PATH%/.codex/hooks/ui-copy-note.sh}
+        HARNESS=codex
+      else
+        session_notice reader install-layout "No Claude Code or Codex registration runs $HOOK_PATH, and no KENDEX_HOOK_SCOPE names the Pi registration that ran it. A Pi install needs the pi-hooks carrier that sets it."
+      fi
       PROJECT_INSTALL=$(physical_dir "${PROJECT_INSTALL:-/}" 2>&1) ||
         session_notice reader install-layout "$PROJECT_INSTALL"
       NATIVE_ROOT="${PROJECT_INSTALL%/}/.$HARNESS"
