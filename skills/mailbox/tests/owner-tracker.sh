@@ -68,7 +68,7 @@ done <<'ROWS'
 same_item_replaces|a re-ask on the item strikes the earlier question under a link to the new one and closes its ask as resolve does, the item keeping its label and assignee
 spellings_replaced|an earlier ask kept under the item's lower-case ref, its UUID or a former identifier is replaced through the tracker identity
 refused_before_post|a replaced question with no acting identity or another author refuses the ask before anything is appended or posted
-incomplete_retried|an edit that fails after the post leaves the earlier ask open and incomplete until a pass retries the same comment and closes it
+incomplete_retried|an edit that fails after the post leaves the earlier ask open and incomplete until a pass retries the same comment and closes it, the replacing ask open or closed since
 absent_closes|a replaced question comment the tracker holds no longer closes its ask with no edit
 no_team_refused|a re-ask replacing a question comment where Linear has no team is refused whole, while an ask replacing none still posts
 explicit_replaces|--replaces closes a chat-only ask or an ask on another item, and an item ask leaves another item's open ask alone

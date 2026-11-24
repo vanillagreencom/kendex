@@ -232,6 +232,14 @@ class Case:
         """Listed still, and gone by the time its comments are read."""
         self.write("vanished", self.read("vanished") + [issue])
 
+    def clear(self, issue):
+        """ISSUE as the watch leaves an item whose last open ask on it closed:
+        the owner label dropped and the assignee cleared (clear_owner_item)."""
+        items = self.read("items")
+        items[issue]["assignee"] = ""
+        items[issue]["labels"] = [label for label in items[issue]["labels"] if label != "owner-gated"]
+        self.write("items", items)
+
     def flag(self, name, on):
         path = self.state / name
         path.touch() if on else path.unlink(missing_ok=True)
@@ -285,6 +293,12 @@ class Overseer:
     def pending(self):
         result = self.run("pending", "--item", "overseer", "--to", "owner")
         return {row["id"]: row for row in map(json.loads, result.stdout.splitlines())}
+
+    def asks(self):
+        """Every owner ask, open or closed, as the mailbox's reads fold it."""
+        result = self.run("events", "--item", "overseer")
+        return {row["id"]: row for row in map(json.loads, result.stdout.splitlines())
+                if row.get("box") == "to-overseer" and row.get("kind") == "ask"}
 
     def lines(self):
         return len(self.rows("to-overseer.jsonl")), len(self.rows("to-lane.jsonl"))
@@ -441,29 +455,40 @@ def refused_marks(case, facts):
 
 
 def incomplete(case, facts):
-    """T4: a mark that fails after the post leaves the earlier ask open until a pass retries it."""
+    """T4: a mark that fails after the post leaves the earlier ask open until a
+    pass retries it, whether the replacing ask is still open (KEN-7) or was
+    closed before the retry (KEN-8)."""
     overseer = case.checkout()
-    first, _ = overseer.item_ask("KEN-7")
-    first_comment = overseer.comment(first)
-    before = case.body(first_comment)
+    issues = ("KEN-7", "KEN-8")
+    first = {issue: overseer.item_ask(issue)[0] for issue in issues}
+    comment = {issue: overseer.comment(first[issue]) for issue in issues}
+    before = {issue: case.body(comment[issue]) for issue in issues}
+    unmarked = lambda: all(case.body(comment[issue]) == before[issue] for issue in issues)
     case.flag("fail-update", True)
-    second, stderr = overseer.item_ask("KEN-7", text="Approve half of it?\n")
-    held = (set(overseer.pending()) == {first, second} and overseer.pending()[second]["replacement"] == "incomplete"
-            and "lane-mail: replace-unclosed id=%s cause=comment-update" % first in stderr.splitlines()
-            and case.body(first_comment) == before)
-    # A pass while the edit still fails leaves it as it was.
+    second, held = {}, True
+    for issue in issues:
+        second[issue], stderr = overseer.item_ask(issue, text="Approve half of it?\n")
+        held &= ("lane-mail: replace-unclosed id=%s cause=comment-update" % first[issue] in stderr.splitlines()
+                 and overseer.pending()[second[issue]]["replacement"] == "incomplete")
+    overseer.resolve(second["KEN-8"])
+    standing = {first["KEN-7"], second["KEN-7"], first["KEN-8"]}
+    held &= set(overseer.pending()) == standing and unmarked()
+    # A pass while the edit still fails leaves both as they were.
     overseer.owner_answers()
-    held &= set(overseer.pending()) == {first, second} and case.body(first_comment) == before
+    held &= set(overseer.pending()) == standing and unmarked()
     case.flag("fail-update", False)
     calls = len(case.calls())
     read = overseer.owner_answers()
     retried = case.calls()[calls:]
+    asks = overseer.asks()
     facts["incomplete_retried"] = (
-        held and read.ok() and set(overseer.pending()) == {second} and first in overseer.closes()
-        and overseer.pending()[second]["replacement"] == "in-force"
-        and marked(case.body(first_comment), before, case.url(overseer.comment(second)))
-        and ["comments update %s" % first_comment] == [" ".join(c.split()[:3]) for c in retried
-                                                     if c.startswith("comments update ")])
+        held and read.ok() and set(overseer.pending()) == {second["KEN-7"]}
+        and {first[issue] for issue in issues} <= set(overseer.closes())
+        and all(asks[second[issue]]["replacement"] == "in-force" for issue in issues)
+        and all(marked(case.body(comment[issue]), before[issue], case.url(overseer.comment(second[issue])))
+                for issue in issues)
+        and sorted("comments update %s" % comment[issue] for issue in issues)
+        == sorted(" ".join(c.split()[:3]) for c in retried if c.startswith("comments update ")))
 
 
 def absent(case, facts):
@@ -513,15 +538,34 @@ def explicit(case, facts):
 # --- answers ----------------------------------------------------------------
 
 
-def replaced_reply(case, facts):
-    """T8: a reply under the replaced question reaches the open replacement."""
-    overseer = case.checkout()
-    first, _ = overseer.item_ask("KEN-7")
-    first_comment = overseer.comment(first)
-    second, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
-    under = case.reply("KEN-7", first_comment, "A")
-    read = overseer.owner_answers()
-    facts["replaced_reply"] = read.headed(under, first, second, "A")
+# T8: a reply under the first question of a replacement chain reaches the one
+# open ask, opening with the line naming both. Each row: its fact, the asks in
+# order as (item or None for a chat ask, index of the ask it names with
+# --replaces or None), and the items the watch clears once their last open ask
+# closed. An ask with an item replaces the open ask on that item by itself.
+REPLACED = (
+    ("replaced_reply", (("KEN-7", None), ("KEN-7", None)), ()),
+    ("chat_replaced", (("KEN-7", None), (None, 0)), ("KEN-7",)),
+    ("other_item_replaced", (("KEN-7", None), ("KEN-9", 0)), ("KEN-7",)),
+    ("chain_first_replaced", (("KEN-8", None), ("KEN-7", 0), ("KEN-7", None)), ("KEN-8",)),
+)
+
+
+def replaced_route(fact, steps, cleared):
+    def scenario(case, facts):
+        overseer = case.checkout()
+        asks = []
+        for number, (issue, replaces) in enumerate(steps):
+            extra = ("--replaces", asks[replaces]) if replaces is not None else ()
+            text = "Approve step %d?\n" % number
+            asks.append((overseer.item_ask(issue, *extra, text=text) if issue else overseer.ask(*extra, text=text))[0])
+        for issue in cleared:
+            case.clear(issue)
+        under = case.reply(steps[0][0], overseer.comment(asks[0]), "A")
+        read = overseer.owner_answers()
+        facts[fact] = set(overseer.pending()) == {asks[-1]} and read.headed(under, asks[0], asks[-1], "A")
+    scenario.__name__ = fact
+    return scenario
 
 
 def threads(case, facts):
@@ -539,14 +583,19 @@ def threads(case, facts):
 
 
 def flat(case, facts):
-    """T10: a top-level comment after the current question reaches its ask;
-    one with no open question before it is left out."""
+    """T10: a top-level comment after the current question reaches its ask,
+    after a re-ask the newest question's ask with no opening line; one with no
+    open question before it is left out."""
     overseer = case.checkout()
     early = case.reply("KEN-7", None, "context")
     first, _ = overseer.item_ask("KEN-7")
     after = case.reply("KEN-7", None, "approve")
     read = overseer.owner_answers()
-    facts["flat_comment"] = read.plain(after, first, "approve") and read.left_out(early)
+    second, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    later = case.reply("KEN-7", None, "approve half")
+    again = overseer.owner_answers()
+    facts["flat_comment"] = (read.plain(after, first, "approve") and read.left_out(early)
+                             and again.plain(later, second, "approve half"))
 
 
 def missing_item(case, facts):
@@ -590,10 +639,11 @@ def retention(case, facts):
 
 GROUPS = {
     "ask": ((same_item, ("KEN-7", "KEN-8")), (spellings, ("KEN-7",)), (refused_marks, ("KEN-7",)),
-            (incomplete, ("KEN-7",)), (absent, ("KEN-7",)), (no_team, ("KEN-7", "KEN-8")),
+            (incomplete, ("KEN-7", "KEN-8")), (absent, ("KEN-7",)), (no_team, ("KEN-7", "KEN-8")),
             (explicit, ("KEN-7", "KEN-8", "KEN-9"))),
-    "answers": ((replaced_reply, ("KEN-7",)), (threads, ("KEN-7",)), (flat, ("KEN-7",)),
-                (missing_item, ("KEN-7", "KEN-8"))),
+    "answers": tuple((replaced_route(fact, steps, cleared), sorted({issue for issue, _ in steps if issue}))
+                     for fact, steps, cleared in REPLACED)
+               + ((threads, ("KEN-7",)), (flat, ("KEN-7",)), (missing_item, ("KEN-7", "KEN-8"))),
     "compact": ((retention, ("KEN-7",)),),
 }
 

@@ -260,14 +260,19 @@ OWNER_REPLACING_JQ='def owner_replacing: .issue == null or .tracker_posted == tr
 # the latest such ask where several did, `replaced` naming the ask the
 # question was asked for. A question no row names is no longer open: its ask
 # closed and no open ask replaced it. An own row's comment is null only on a
-# record from before posted asks kept their comment id.
+# record from before posted asks kept their comment id. `item` is the item
+# ref whose comments hold the question, with the UUID it was asked under
+# where the ask recorded one: a replaced question's item can be one no open
+# ask is on.
 OWNER_QUESTION_JQ="$OWNER_REPLACING_JQ"'def owner_questions:
   map(select(.kind == "ask" and .to == "owner")) as $asks
-  | [$asks[] | select(.tracker_posted == true) | {comment: .tracker_comment, ask: .id, issue, replaced: null}] as $own
+  | [$asks[] | select(.tracker_posted == true) | {comment: .tracker_comment, ask: .id, issue, replaced: null,
+      item: {ref: .issue, uuid: .identity.uuid}}] as $own
   | $own + ([$asks[] | select(owner_replacing) | . as $by | (.replaces // [])[]
         | select((.tracker_comment | type) == "string")
         | select(.tracker_comment as $comment | all($own[]; .comment != $comment))
-        | {comment: .tracker_comment, ask: $by.id, issue: null, replaced: .id}]
+        | {comment: .tracker_comment, ask: $by.id, issue: null, replaced: .id,
+          item: (if .identity != null then {ref: .identity.identifier, uuid: .identity.uuid} else null end)}]
       | group_by(.comment) | map(last));'
 
 # One description format serves the ask and the watch's read and close.
