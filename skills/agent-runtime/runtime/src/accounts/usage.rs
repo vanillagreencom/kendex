@@ -248,7 +248,10 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
 /// whose figure does not read leaves the other unread too. `credits`
 /// is the balance spent past the plan windows with the body's
 /// `spend_control.reached` beside it; a flag or balance that does not
-/// parse is null, which the credit rule never reads as room.
+/// parse is null, which the credit rule never reads as room. The
+/// [Codex rate-limit protocol] treats absent and null spend controls as unavailable.
+///
+/// [Codex rate-limit protocol]: https://github.com/openai/codex/blob/b392250f487949a79931ef4f7871bfdacc19c6e9/codex-rs/app-server-protocol/src/protocol/v2/account.rs#L809
 pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
     let round = |p: f64| p.floor();
     let flag = |v: Option<&Value>| v.and_then(Value::as_bool).map_or(Value::Null, Value::from);
