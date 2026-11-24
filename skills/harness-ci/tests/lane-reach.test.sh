@@ -17,7 +17,7 @@ write_workflow() {
   local shape="$1" id cwd run lane needs
   cat <<'YAML'
 name: CI
-on: [merge_group, push]
+on: [pull_request, merge_group, push]
 jobs:
   changes:
     outputs:
@@ -36,7 +36,7 @@ jobs:
 YAML
   while IFS='|' read -r id cwd run; do
     case "$shape" in
-      no-cargo) [ "$id" != cargo ] || continue ;;
+      no-cargo|queue-prerequisite) [ "$id" != cargo ] || continue ;;
       web-only) [ "$id" = web ] || continue ;;
     esac
     lane="$id"
@@ -61,6 +61,9 @@ YAML
       - working-directory: tools/other
         run: bash ../shared.sh
 YAML
+    fi
+    if [ "$shape:$id" = queue-prerequisite:installed ]; then
+      printf '%s\n' '      - run: cat ./shared.mjs'
     fi
   done <<'ROWS'
 shell|.|bash ./tools/check.sh
@@ -150,6 +153,42 @@ git -C "$repo" checkout -qb fixture-static "$opted_base"
 write_workflow no-cargo >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'static shell, Vitest and installed-package lanes'
 static_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-symlink "$static_base"
+mkdir -p "$repo/other/subdir"
+ln -s other/subdir "$repo/link"
+: >"$repo/other/subdir/.gitkeep"
+printf 'old\n' >"$repo/other/input.txt"
+printf 'root\n' >"$repo/input.txt"
+printf 'cat ./link/../input.txt\n' >"$repo/tools/check.sh"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'shell input through a symlink and parent component'
+symlink_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-cargo-child "$opted_base"
+cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
+#[path = "../../spare/src/mod.rs"]
+mod external;
+
+#[test]
+fn checks_child() {
+    assert_eq!(external::child::value(), 42);
+}
+RS
+printf 'pub mod child;\n' >"$repo/cargo/spare/src/mod.rs"
+printf 'pub fn value() -> u8 { 42 }\n' >"$repo/cargo/spare/src/child.rs"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'Cargo compiles a child of an out-of-package module'
+cargo_child_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-queue-prerequisite "$static_base"
+write_workflow queue-prerequisite >"$repo/.github/workflows/ci.yml"
+printf '%s\n' 'shell:queue shared.mjs # reason: the queue also checks the shared module' \
+  >"$repo/.github/ci-lanes.conf"
+printf 'HARNESS_CI_QUEUE_PATHS = ""\n' >>"$repo/kendex.settings.toml"
+queue_reader=.agents/skills/harness-ci/scripts/lib/ci-lanes.sh
+mkdir -p "$repo/${queue_reader%/*}"
+cp "$HARNESS_CI_PACKAGE/scripts/lib/ci-lanes.sh" "$repo/$queue_reader"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a selected lane needs a queue-marked reader of a shared input'
+queue_prereq_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-shared-runtime "$static_base"
 cat >"$repo/web/check.test.mjs" <<'JS'
 import { expect, test, vi } from 'vitest'
@@ -301,6 +340,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     source|removed-source|shared-gate|shell-workdir|vitest-import|vitest-unread|vitest-external|installed|installed-push|shared-root-config)
       base="$static_base" ;;
     shared-runtime) base="$shared_runtime_base" ;;
+    shell-symlink) base="$symlink_base" ;;
+    cargo-external-child) base="$cargo_child_base" ;;
+    queue-prerequisite) base="$queue_prereq_base" ;;
     runtime-only) base="$runtime_base" ;;
     computed-import) base="$computed_base" ;;
     aggregate-render) base="$aggregate_base" ;;
@@ -321,6 +363,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     vitest-external|shared-runtime) printf 'export const shared = 43\n' >"$repo/$path" ;;
     runtime-only|computed-import) printf 'export const value = 43\n' >"$repo/$path" ;;
+    shell-symlink) printf 'physical\n' >"$repo/$path" ;;
+    cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
     vitest-inherited|push-unresolved)
       printf '{"compilerOptions":{"experimentalDecorators":false}}\n' >"$repo/$path" ;;
@@ -338,6 +382,19 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     [ "$head_status" = 1 ] || cat "$SANDBOX/head-vitest-log" >&2
     assert_eq "$label passes actual Vitest at base" 0 "$base_status"
     assert_eq "$label fails actual Vitest after the change" 1 "$head_status" ;;
+  shell-symlink)
+    assert_eq "$label follows the link before its parent component" physical \
+      "$(cd "$repo" && bash ./tools/check.sh)" ;;
+  cargo-external-child)
+    base_status=0 head_status=0
+    (cd "$trusted/cargo" && CARGO_TARGET_DIR="$SANDBOX/base-cargo-target" cargo test --offline --locked -p primary) \
+      >"$SANDBOX/base-cargo-log" 2>&1 || base_status=$?
+    (cd "$repo/cargo" && CARGO_TARGET_DIR="$SANDBOX/head-cargo-target" cargo test --offline --locked -p primary) \
+      >"$SANDBOX/head-cargo-log" 2>&1 || head_status=$?
+    [ "$base_status" = 0 ] || cat "$SANDBOX/base-cargo-log" >&2
+    [ "$head_status" = 101 ] || cat "$SANDBOX/head-cargo-log" >&2
+    assert_eq "$label passes actual Cargo at base" 0 "$base_status"
+    assert_eq "$label fails actual Cargo after the change" 101 "$head_status" ;;
   esac
   : >"$SANDBOX/action"
   : >"$SANDBOX/local"
@@ -363,6 +420,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     assert_eq "$label $lane" "${!lane}" "$actual"
     assert_eq "$label $lane local parity" "$actual" "$(verdict "$lane" "$SANDBOX/local")"
   done
+  if [ "$label" = queue-prerequisite ]; then
+    assert_eq "$label has queue proof" queue_only=true "$(sed -n '/^queue_only=/p' "$SANDBOX/action")"
+  fi
   if [ -n "$expected_gate" ]; then
     assert_eq "$label render class" "change_class=render" "$(sed -n '/^change_class=/p' "$SANDBOX/action")"
     assert_eq "$label action global gate" "$expected_gate" \
@@ -375,13 +435,16 @@ source|tools/input.sh|true||false|false
 removed-source|tools/input.sh|true||false|false
 shared-gate|tools/peer.sh|true||false|false
 shell-workdir|tools/other/context.sh|true||false|false
+shell-symlink|other/input.txt|true||false|false
 shell-unresolved|shared.mjs|true|true|true|true
 cargo-path-dependency|cargo/leaf/src/lib.rs|false|true|false|false
+cargo-external-child|cargo/spare/src/child.rs|false|true|false|false
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 vitest-import|web/café.mjs|false||true|false
 vitest-unread|web/spare-é.mjs|false||false|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
+queue-prerequisite|shared.mjs|true||true|true|pull_request
 shared-runtime|shared.mjs|true||true|true
 runtime-only|runtime-only.mjs|||true|
 computed-import|web/shared.mjs-runtime.mjs|||true|

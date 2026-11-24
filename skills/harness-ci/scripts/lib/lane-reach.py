@@ -182,11 +182,13 @@ class Evidence:
         return self.checkout_path(directory, path)
 
     def checkout_path(self, directory, path):
-        result = os.path.normpath(os.path.join(directory, path))
-        require(result not in {"..", "."} and not result.startswith("../"), "path-outside-repo")
-        for parent in (Path(result), *Path(result).parents):
-            require(self.files.get(parent.as_posix()) not in {"120000", "160000"},
+        original = Path(directory) / path
+        # Check each original prefix before a later '..' can hide a link.
+        for prefix in (original, *original.parents):
+            require(self.files.get(os.path.normpath(prefix)) not in {"120000", "160000"},
                     "indirect-path")
+        result = os.path.normpath(original)
+        require(result not in {"..", "."} and not result.startswith("../"), "path-outside-repo")
         return result
 
     def cargo_reads(self, args, directory):
@@ -281,9 +283,11 @@ class Evidence:
                 reads.add(source)
                 rust = self.blob(source)
                 # Literal includes and #[path] modules can leave the package tree.
-                includes = r'(?:\binclude(?:_str|_bytes)?\s*!\s*\(\s*|\bpath\s*=\s*)"([^"\\]+)"'
-                for target in re.findall(includes, rust):
+                includes = r'\b(?:(include(?:_str|_bytes)?)\s*!\s*\(\s*|path\s*=\s*)"([^"\\]+)"'
+                for macro, target in re.findall(includes, rust):
                     edge = self.resolve(Path(source).parent.as_posix(), target)
+                    if macro in {"", "include"}:
+                        require(under(edge, scope), "cargo-external-module")
                     self.blob(edge)
                     if edge.endswith(".rs"):
                         sources.add(edge)
@@ -563,6 +567,27 @@ def derived(evidence, exceptions, settings):
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
+
+    def keep_prerequisites(outcomes):
+        # A shared lane runs its entire group. Keep each running job's gated
+        # ancestors, including dependencies through jobs without gates.
+        selected = {name for name, lane in lane_by_job.items() if outcomes[lane] != "miss"}
+        selected.update(name for name in jobs if name not in lane_by_job
+                        and jobs[name].get("if", "") not in {"always()", "${{ always() }}"})
+        visited = set()
+        while selected:
+            name = selected.pop()
+            if name in visited:
+                continue
+            visited.add(name)
+            for dependency in needs_by_job[name]:
+                if dependency in lane_by_job:
+                    outcomes[lane_by_job[dependency]] = "prerequisite"
+                    selected.update(job for job, lane in lane_by_job.items()
+                                    if lane == lane_by_job[dependency])
+                selected.add(dependency)
+        return outcomes
+
     require(evidence.authority == evidence.compared, "comparison-base-differs")
     require(evidence.changed, "no-changed-paths")
     authority = {path, ".github/ci-lanes.conf", "Cargo.toml", "Cargo.lock",
@@ -584,11 +609,11 @@ def derived(evidence, exceptions, settings):
     # changing its blob. Both ends of a removed or moved file are in the diff.
     if evidence.changed & authority or any(Path(name).name == ".gitattributes"
                                           for name in evidence.changed):
-        return retain_all
+        return keep_prerequisites(retain_all)
 
     owners = {name: {evidence.owner(name)} for name in evidence.changed if name.startswith(RENDER)}
     if any(None in packages for packages in owners.values()):
-        return retain_all
+        return keep_prerequisites(retain_all)
     if evidence.rendered:
         for name, packages in owners.items():
             if name in evidence.proved_head_ownership:
@@ -613,29 +638,12 @@ def derived(evidence, exceptions, settings):
             # The legacy claim pass gives us lane names across the diff.
             hits = evidence.changed
         if any(first_reader.setdefault(path, lane) != lane for path in hits | unresolved):
-            return retain_all
+            return keep_prerequisites(retain_all)
         if unresolved:
             outcomes[lane] = "unread"
         elif hits and outcomes[lane] == "miss":
             outcomes[lane] = "hit"
-    # A shared lane runs its entire group. Keep each running job's gated
-    # ancestors, including dependencies through jobs without gates.
-    selected = {name for name, lane in lane_by_job.items() if outcomes[lane] != "miss"}
-    selected.update(name for name in jobs if name not in lane_by_job
-                    and jobs[name].get("if", "") not in {"always()", "${{ always() }}"})
-    visited = set()
-    while selected:
-        name = selected.pop()
-        if name in visited:
-            continue
-        visited.add(name)
-        for dependency in needs_by_job[name]:
-            if dependency in lane_by_job:
-                outcomes[lane_by_job[dependency]] = "prerequisite"
-                selected.update(job for job, lane in lane_by_job.items()
-                                if lane == lane_by_job[dependency])
-            selected.add(dependency)
-    return outcomes
+    return keep_prerequisites(outcomes)
 
 
 def trusted_push(authority, head):
