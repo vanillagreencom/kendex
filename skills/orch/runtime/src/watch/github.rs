@@ -1625,6 +1625,13 @@ pub(super) fn report_merges(
                 continue;
             };
             for lane in lanes {
+                if lane.tracker.as_deref() == Some("github")
+                    && lane.repo.as_deref().is_some_and(|lane_repo| {
+                        !lane_repo.is_empty() && !lane_repo.eq_ignore_ascii_case(repo)
+                    })
+                {
+                    continue;
+                }
                 let pr = recorded(lane)
                     .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
                     .map(|(_, number)| number);

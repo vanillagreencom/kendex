@@ -5457,9 +5457,6 @@ fn report_completed_reads_the_lanes_own_repository() {
         return;
     }
     let world = World::new();
-    world.write_fleet(&json!({"issue_id":"oversee","lanes":[
-        {"item":"KEN-25","status":"done","repo":"Lane/Repo","launched_at":"2026-10-01T06:00:00Z"}
-    ]}));
     let mut ctx = world.report_context();
     ctx.settings.reads.connected_repos = vec!["other/repo".to_owned()];
     let now = epoch("2026-10-01T14:00:00Z");
@@ -5475,23 +5472,40 @@ fn report_completed_reads_the_lanes_own_repository() {
     }
     let lane_search = search("lane");
     planted["repos/lane/repo/pulls/51"] = json!({"body":{
-        "number":51,"state":"closed","title":"Wire the lane","body":"",
+        "number":51,"state":"closed","title":"fix(KEN-25): Wire the lane","body":"",
         "merged_at":"2026-10-01T07:00:00Z","merge_commit_sha":null,"author_association":"NONE",
         "base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"},"user":null,
-        "head":{"sha":"0000000000000000000000000000000000000000","ref":"ken-25",
+        "head":{"sha":"0000000000000000000000000000000000000000","ref":"issue-42",
             "repo":{"full_name":"lane/repo","owner":{"login":"lane","type":"User"}}}
     }});
     planted[&lane_search] = json!({"body":{"total_count":1,"incomplete_results":false,
         "items":[{"number":51,"pull_request":{}}]}});
     world.plant("gh.json", &planted);
-    let body = report::render(&ctx, now).unwrap();
-    let completed = section(&body, "Completed");
-    assert!(
-        completed.contains(
-            "- KEN-25: Wire the lane ([lane/repo#51](https://github.com/lane/repo/pull/51))."
-        ),
-        "{completed}"
-    );
+    for (linear_repo, github_repo, matches_issue) in [
+        ("Lane/Repo", Some("owner/repo"), false),
+        ("owner/repo", Some("Lane/Repo"), true),
+        ("Lane/Repo", None, true),
+    ] {
+        world.write_fleet(&json!({"issue_id":"oversee","lanes":[
+            {"item":"KEN-25","tracker":"linear","status":"done","repo":linear_repo,
+                "launched_at":"2026-10-01T06:00:00Z"},
+            {"item":"issue-42","tracker":"github","status":"done","repo":github_repo,
+                "launched_at":"2026-10-01T06:00:00Z"}
+        ]}));
+        let body = report::render(&ctx, now).unwrap();
+        let completed = section(&body, "Completed");
+        let pull =
+            "fix(KEN-25): Wire the lane ([lane/repo#51](https://github.com/lane/repo/pull/51)).";
+        assert!(
+            completed.contains(&format!("- KEN-25: {pull}")),
+            "{completed}"
+        );
+        assert_eq!(
+            completed.contains(&format!("- issue-42: {pull}")),
+            matches_issue,
+            "{github_repo:?}: {completed}"
+        );
+    }
 
     planted.as_object_mut().unwrap().remove(&lane_search);
     world.plant("gh.json", &planted);
