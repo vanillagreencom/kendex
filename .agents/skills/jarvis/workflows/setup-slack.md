@@ -22,12 +22,13 @@ Use the [home layout](../references/home-layout.md) for home paths.
    - Check that Git ignores the file and does not track it.
    - If needed, add its path to `.gitignore` and check again before writing.
    - If Git tracks it or the checks fail, resolve that problem before accepting credentials.
+   - Create the selected private env file with mode `600` or set that mode on the existing file before writing either credential.
 5. **Jarvis**: Send a private decision request for `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`.
    - Request their password-manager references or a protected transfer file under Secret transfer.
 6. **Person**: Supply the bot token and app-level token through that private transfer route.
    - Supply the test channel ID.
    - Invite the app to that channel.
-7. **Jarvis**: Write both values to the selected private env file through [Secret transfer](../references/accounts-and-secrets.md#secret-transfer), which protects the destination before writing.
+7. **Jarvis**: Write both values to the selected persistent env file. Use [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) for the credential handoff and any temporary transfer file.
    - Preserve other entries.
    - Check file permissions without reading the values into output.
 8. **Jarvis**: Prepare a test message.

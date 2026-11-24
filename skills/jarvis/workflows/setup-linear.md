@@ -18,12 +18,13 @@ Use the [home layout](../references/home-layout.md) for home paths.
    - Check that Git ignores the file and does not track it.
    - If needed, add its path to `.gitignore` and check again before writing.
    - If Git tracks it or the checks fail, resolve that problem before accepting credentials.
+   - Create the selected private env file with mode `600` or set that mode on the existing file before writing the credential.
 4. **Jarvis**: Request one credential choice privately under Message types.
    - Use the installed Linear package's credential order.
    - Request password-manager references or a protected transfer file under Secret transfer.
 5. **Person**: Supply the selected credential through that private transfer route.
    - For the client pair, enable client credentials tokens in the application's Linear settings.
-6. **Jarvis**: Write the chosen credential to the selected private env file through [Secret transfer](../references/accounts-and-secrets.md#secret-transfer), which protects the destination before writing.
+6. **Jarvis**: Write the chosen credential to the selected persistent env file. Use [Secret transfer](../references/accounts-and-secrets.md#secret-transfer) for the credential handoff and any temporary transfer file.
    - Preserve other entries.
    - Check for a different credential or inherited value that would take precedence under the README's rules.
    - Resolve an actor conflict with the person before using it.
