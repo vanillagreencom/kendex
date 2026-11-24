@@ -1299,17 +1299,21 @@ mod push {
         assert_eq!(repo.message(), "feat(KEN-2): the first child");
     }
 
+    fn read_only_slot_queue(repo: &Repo) {
+        let queue = repo.main.join("tmp/nested-slots/queue");
+        fs::create_dir_all(&queue).unwrap();
+        let mut permissions = fs::metadata(&queue).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&queue, permissions).unwrap();
+    }
+
     #[test]
     fn confined_publication_leaves_validation_to_the_overseer_before_starting_a_run() {
         let range = "DEV_VALIDATE_RANGE_CMD = \"touch ../../main/tmp/nested-slots/queue/slot\"\nDEV_VALIDATE_CMD = \"true\"\n";
         let repo = Repo::new("KEN-1", &format!("{BASE}{range}"));
         repo.link_agents();
         repo.record(json!({}));
-        let queue = repo.main.join("tmp/nested-slots/queue");
-        fs::create_dir_all(&queue).unwrap();
-        let mut permissions = fs::metadata(&queue).unwrap().permissions();
-        permissions.set_readonly(true);
-        fs::set_permissions(&queue, permissions).unwrap();
+        read_only_slot_queue(&repo);
         let receipt = prepared(&repo);
         let out = repo.op_env(
             &repo.item,
@@ -1388,10 +1392,14 @@ mod push {
         let receipt = prepared(&repo);
         let (out, runner) = std::thread::scope(|scope| {
             let publication = scope.spawn(|| {
-                repo.op(json!({
-                    "op": "record-push", "mode": "publish", "worktree": repo.wt,
-                    "base": receipt["before"], "head": receipt["commit"],
-                }))
+                repo.op_env(
+                    &repo.item,
+                    &json!({
+                        "op": "record-push", "mode": "publish", "worktree": repo.wt,
+                        "base": receipt["before"], "head": receipt["commit"],
+                    }),
+                    &[(agent_runtime::confine::CONFINED_VAR, "1")],
+                )
             });
             let bound = std::time::Instant::now() + std::time::Duration::from_secs(60);
             while !repo.wt.join("tmp/validation-ready").exists() {
@@ -1431,10 +1439,13 @@ mod push {
         let repo = Repo::new("KEN-1", BASE);
         repo.link_agents();
         repo.record(json!({"tier": "micro"}));
+        read_only_slot_queue(&repo);
         let receipt = prepared(&repo);
-        let out = repo.op(
-            json!({"op": "record-push", "mode": "publish", "worktree": repo.wt,
+        let out = repo.op_env(
+            &repo.item,
+            &json!({"op": "record-push", "mode": "publish", "worktree": repo.wt,
             "base": receipt["before"], "head": receipt["commit"]}),
+            &[(agent_runtime::confine::CONFINED_VAR, "1")],
         );
         let reply = result(&out);
         assert!(

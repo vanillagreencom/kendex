@@ -45,6 +45,7 @@ const PENDING: &str = "kendex-restack-validation";
 const FOLD_MESSAGE: &str = "kendex-fold-message";
 const RESTACK: &str = "restack-reconcile";
 const PUSHED: &str = "sha-reconcile";
+const SLOT_QUEUE: &str = "tmp/nested-slots/queue";
 
 /// One mode of the push, tagged by `mode`. `args` are the worktree skill's
 /// own push flags, forwarded verbatim and in order: its `push --help` is
@@ -863,6 +864,44 @@ fn micro_tier(settings: &Settings, worktree: &Path, base: &str, head: &str) -> R
     Ok(())
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the confined publication reads effective access without writing to the consumer's nested-slot queue"
+)]
+fn slot_queue_read_only(common: &Path) -> Result<bool> {
+    let queue = common.join(SLOT_QUEUE);
+    match fs::metadata(&queue) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Ok(false),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(agent_runtime::Error::io("slot-queue-read", &queue, e).into()),
+    }
+    // Mode bits cannot see the read-only mount a confined lane inherits.
+    let out = host::run_tagged_in(
+        TAG,
+        "test",
+        Path::new("test"),
+        "slot-queue-access",
+        &["-w", SLOT_QUEUE],
+        Place {
+            cwd: Some(common),
+            env: &[],
+        },
+        READ,
+    )?;
+    match out.status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err(refuse(
+            "delivery-validate",
+            &[
+                ("cause", "slot-queue-access"),
+                ("queue", &queue.display().to_string()),
+            ],
+        )),
+    }
+}
+
 /// The publication's validation of the exact prepared head: the runtime's
 /// own detached validation entry over the range from the prepared base.
 /// The publisher waits for one follow budget. A run that has yet to pass
@@ -971,6 +1010,7 @@ pub fn run(
     flags: &settings::Flags,
     env: &Env,
     locking: Locking,
+    confined: bool,
 ) -> Result<Pushed> {
     let item = state::item_of(path).unwrap_or_default().to_owned();
     if !valid_item(&item) {
@@ -1134,6 +1174,12 @@ pub fn run(
                 && Stages::read(&at_worktree.roots.common, flags.private_env)?
                     .runs(Stage::GitHooks);
             if !chain_proves {
+                if confined && slot_queue_read_only(&at_worktree.roots.common)? {
+                    return Err(refuse(
+                        "delivery-validate",
+                        &[("cause", "confined"), ("route", "overseer-run-validation")],
+                    ));
+                }
                 reply.validation = Some(validate_range(&worktree, base, prepared)?);
             }
             let after = head(&worktree)?;
