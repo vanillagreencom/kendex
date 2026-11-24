@@ -2413,6 +2413,7 @@ push-assigned-prefix|claude|-|2|refused=push-remote;assignment=ORCH_GH_READ_TOKE
 push-assigned-env|claude|-|2|refused=push-remote;assignment=GH_TOKEN;reason=unresolved-remote|env GH_TOKEN=x git push origin HEAD
 push-assigned-shell|claude|-|2|refused=push-remote;assignment=ORCH_GH_PUSH_TOKEN_FILE;reason=unresolved-remote|ORCH_GH_PUSH_TOKEN_FILE=/f bash -c 'git push origin HEAD'
 push-assigned-export|claude|-|2|refused=push-remote;assignment=GH_TOKEN;reason=unresolved-remote|export GH_TOKEN=x; git push origin HEAD
+push-assigned-export-print|claude|-|2|refused=push-remote;assignment=GH_TOKEN;reason=unresolved-remote|export -p GH_TOKEN=x; git push origin HEAD
 push-assigned-declare|claude|-|2|refused=push-remote;assignment=GH_CONFIG_DIR;reason=unresolved-remote|declare -x GH_CONFIG_DIR=/f; git push
 push-assigned-typeset|claude|-|2|refused=push-remote;assignment=XDG_CONFIG_HOME;reason=unresolved-remote|typeset -x XDG_CONFIG_HOME=/f; bash -c 'git push origin HEAD'
 push-after-or-list-export|claude|-|2|refused=push-remote;assignment=TEST_MODE;reason=unresolved-remote|export TEST_MODE=sample || :; git push origin HEAD

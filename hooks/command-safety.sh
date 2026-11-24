@@ -982,7 +982,7 @@ environment_producer() { # command kind
           mode=clean
           if [ "$1" = shell ] && [ "$program_pos" = "$builtin_head" ]; then
             case "$program:$flags" in
-              export:*n* | *:*f* | *:*p*) ;;
+              export:*n* | *:*f* | declare:*p* | typeset:*p*) ;;
               export:* | *:*x*) declared_exports=$declared_assignments ;;
             esac
           fi
