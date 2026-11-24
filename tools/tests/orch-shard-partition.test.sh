@@ -210,11 +210,17 @@ for tool in "$ROOT"/tools/*; do
   [[ "${tool##*/}" != rust-reads ]] || continue
   ln -s "$tool" "$PART/tools/${tool##*/}"
 done
-# The roster sandbox has no Cargo workspace. Record the dependency call,
-# while the reader's own suite checks its metadata and source derivation.
+# These sandboxes have no Cargo workspace. Record the build preparation call
+# and return a complete, unrelated target roster for the shell routing probes.
 cat > "$PART/tools/rust-reads" <<'SH'
 #!/bin/sh
-[ "$*" = '--cli-smoke .' ] || exit 2
+case "$*" in
+  '--cli-smoke --ci-targets .')
+    printf 'package-root\tcrates/demo\tdemo\ntarget-root\tcrates/demo/src/lib.rs\tdemo\tlib\tdemo\ncomplete\t2\n'
+    exit ;;
+  '--cli-smoke .') ;;
+  *) exit 2 ;;
+esac
 [ -z "${TOOLS_PREP_RECORD:-}" ] || printf 'prepare\n' >> "$TOOLS_PREP_RECORD"
 printf 'metadata\n'
 if [ "${TOOLS_PREP_RESULT:-0}" -ne 0 ]; then
@@ -1486,6 +1492,10 @@ runtime_selection() { # WORKFLOW RUST_TARGETS DIR ; nothing, or the refusal and 
     : > "$3/work/skills/$package/runtime/Cargo.toml"
   done
   mkdir -p "$3/work/skills/linear/scripts" "$3/work/tools"
+  git -C "$3/work" init -q || return 1
+  git -C "$3/work" add -- skills || return 1
+  git -C "$3/work" -c user.name=fixture -c user.email=fixture@example.invalid -c core.hooksPath=/dev/null \
+    commit -qm 'Declare the runtime manifests' || return 1
   ln -s "$ROOT/tools/ci-job-set" "$3/work/tools/ci-job-set"
   : > "$3/selection.out"
   (cd "$3/work" && RUST_TARGETS="$2" GITHUB_OUTPUT="$3/selection.out" "$BASH" "$block") >"$3/selection.log" 2>&1 ||
