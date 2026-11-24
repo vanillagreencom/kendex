@@ -84,11 +84,12 @@ def destination_projects(destination, timeout=60):
     folder may end in a note's text. kendex 1.24.0, the package's kendex
     floor, lists a folder Git cannot classify as its own `git-unclassified`
     entry; an older kendex refuses the whole document for it."""
+    # The local argv stays a literal list at the call: the catalog guard's
+    # released-packages leg selects this package as a kendex caller from that shape.
     if destination.host:
-        argv = host_args(destination, "kendex project list --json")
+        text = checked(host_args(destination, "kendex project list --json"), operation="project-list", timeout=timeout)
     else:
-        argv = ["kendex", "project", "list", "--json"]
-    text = checked(argv, operation="project-list", timeout=timeout)
+        text = checked(["kendex", "project", "list", "--json"], operation="project-list", timeout=timeout)
     try:
         entries = []
         for entry in json.loads(text):
