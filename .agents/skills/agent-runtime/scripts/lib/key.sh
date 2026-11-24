@@ -25,12 +25,12 @@
 # `refuse KEY VALUE...` for the diagnostics: digest-tool-missing,
 # inputs-missing, inputs-unreadable, manifest-unreadable, digest-failed.
 #
-# A lane-host provider in another repository of this organization (Fleet)
-# keeps a protected copy of this file, computes the same keys with it and
-# installs the binaries its workers built at <cache>/bin/<name>-<key>. Its
-# copy cannot follow a change it was not told of: a change to the key's rule,
-# to this file's path or to the cache layout is told to that provider's
-# overseer before it lands.
+# Fleet's fleet-sync fills its runtime cache from main push Skill Tests
+# artifacts named orch-runtime-<key> and agent-runtime-<key>. Fleet relies on
+# the key agent_runtime_key computes, the <cache>/bin/<name>-<key> layout,
+# those artifact names, and the wrappers exiting 69 for a missing binary
+# without an EXIT trap of their own. Send changes to any of these dependencies
+# to Fleet's overseer by peer mail before they land.
 
 # agent_runtime_digest reads stdin and prints its sha256 hex. sha256sum is
 # coreutils; macOS ships shasum instead.
