@@ -1716,12 +1716,23 @@ fn wall(
     // The reset the banner states decides which event this is: pinned to the
     // first sighting, never to this pass, so a dayless clause names the day
     // the wall was seen on; a login wall has no reset.
+    let channel = match source {
+        WallSource::Pane => WallChannel::Pane,
+        WallSource::Rows => WallChannel::Row,
+    };
     let reset_at = if auth {
         None
     } else {
         reset::key(&text).and_then(|key| {
             let zone = (pass.readers.zone)(key.zone.as_deref())?;
-            reset::epoch(&key, first_seen, &zone)
+            let at = reset::epoch(&key, first_seen, &zone)?;
+            // After the printed clock has passed, its next occurrence can
+            // be tomorrow. A reset beyond the named window is unproven.
+            let five_hour = account_wall::harness_own_limit(&text, channel)
+                == Some(account_wall::LimitReport::FiveHour);
+            (!five_hour
+                || at.saturating_sub(first_seen) <= agent_runtime::accounts::usage::FIVE_HOURS_S)
+                .then_some(at)
         })
     };
     let passed = reset_at.is_some_and(|at| at <= pass.now);
@@ -1758,10 +1769,7 @@ fn wall(
                     now: pass.now,
                     first_seen,
                     banner: text.clone(),
-                    channel: match source {
-                        WallSource::Pane => WallChannel::Pane,
-                        WallSource::Rows => WallChannel::Row,
-                    },
+                    channel,
                 },
             )
             .map_err(crate::Error::from)

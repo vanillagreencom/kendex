@@ -689,38 +689,64 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
     );
 }
 
-/// The five-hour banner from KEN-5416's resume reading 2 writes its
-/// own dated account wall, with the reset read in the banner's zone.
+/// The five-hour banner from KEN-5416's resume reading 2 dates a wall
+/// only when the inferred reset fits the five-hour window.
 #[test]
 fn the_captured_claude_five_hour_banner_writes_a_dated_session_wall() {
     const CAPTURED: &str =
         "  ⎿ \u{a0}You've hit your 5-hour limit · resets 9:30pm (America/Los_Angeles)";
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", CAPTURED);
-    fleet.set_lanes(vec![lane_record(
-        "KEN-4",
-        "gh-4",
-        "claude",
-        &server,
-        &pane,
-        Some(&identity),
-        dir.path(),
-    )]);
-    lane_driver!(server, fleet, readers, driver);
-    let produced = driver.pass(&fleet.read());
-    assert_eq!(
-        event_lines(&produced),
-        vec!["EVENT usage-limit gh-4 /home/me/.eclaude resets=2027-01-16T05:30:00Z"]
-    );
-    let path = account_wall::session_wall_path(
-        &driver.settings.account_state.get().unwrap(),
-        "/home/me/.eclaude",
-    );
-    let recorded: AccountWall = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert_eq!(clock::iso_utc(recorded.resets_at), "2027-01-16T05:30:00Z");
-    assert_eq!(wall_record(&driver.settings), None);
+    for (seen, expected_reset) in [
+        // At midnight in the banner's zone, the next 9:30 pm is 21h30m away.
+        ("2027-01-15T08:00:00Z", None),
+        ("2027-01-16T00:30:00Z", Some("2027-01-16T05:30:00Z")),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", CAPTURED);
+        fleet.set_lanes(vec![lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        )]);
+        let now = clock::epoch_secs(seen).unwrap();
+        let started = |_: &Identity| Reading::Live(now - 1);
+        lane_driver!(server, fleet, readers, driver);
+        driver.now = now;
+        driver.readers.start_epoch = &started;
+        let produced = driver.pass(&fleet.read());
+        let path = account_wall::session_wall_path(
+            &driver.settings.account_state.get().unwrap(),
+            "/home/me/.eclaude",
+        );
+        if let Some(reset) = expected_reset {
+            let recorded: AccountWall =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            assert_eq!(
+                clock::iso_utc(recorded.resets_at),
+                reset,
+                "sighting at {seen}"
+            );
+        } else {
+            assert!(
+                !path.try_exists().unwrap(),
+                "sighting at {seen} must leave no dated account wall"
+            );
+        }
+        let reset_clause =
+            expected_reset.map_or_else(String::new, |reset| format!(" resets={reset}"));
+        assert_eq!(
+            event_lines(&produced),
+            [format!(
+                "EVENT usage-limit gh-4 /home/me/.eclaude{reset_clause}"
+            )]
+        );
+        assert_eq!(wall_record(&driver.settings), None);
+    }
 }
 
 /// The reset is pinned to the first sighting; once the clock passes it the
