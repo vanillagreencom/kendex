@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -44,12 +44,29 @@ function completeReport() {
   ].join("\n\n");
 }
 
-test("doctor reports runtime status", () => {
-  const result = spawnSync(process.execPath, [script, "doctor"], { encoding: "utf8" });
+test("doctor reports runtime status without invoking 1Password", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-doctor-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const opCalled = join(dir, "op-called");
+  writeFileSync(join(dir, "op"), '#!/bin/sh\nprintf invoked > "$DOCTOR_TEST_OP_MARKER"\nexit 1\n', { mode: 0o755 });
+  const reference = "op://fixture-vault/fixture-item/fixture-field";
+  const env = {
+    PATH: dir,
+    EXA_API_KEY: reference,
+    KENDEX_KEY_FILE: join(dir, "missing.env"),
+    DOCTOR_TEST_OP_MARKER: opCalled,
+  };
+  const result = spawnSync(process.execPath, [script, "doctor"], { encoding: "utf8", cwd: dir, env, timeout: 5000 });
+  assert.ifError(result.error);
+  assert.deepEqual(
+    { opCalled: existsSync(opCalled), referencePrinted: `${result.stdout}${result.stderr}`.includes(reference) },
+    { opCalled: false, referencePrinted: false },
+  );
   assert.equal(result.status, 0);
   const json = JSON.parse(result.stdout);
   assert.equal(json.ok, true);
   assert.equal(json.fetch, true);
+  assert.equal(json.exaApiKey, true);
 });
 
 test("help documents modes, context args, and sidecar behavior", () => {
