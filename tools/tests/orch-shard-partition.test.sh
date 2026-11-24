@@ -901,7 +901,7 @@ fi
 declared_shards="$(sed -n "s/^ \{8\}shard: .*'\[\(.*\)\]'.*\$/\1/p" "$WORKFLOW" |
   tr -d ' "' | tr ',' '\n' | sort -u)"
 if [[ -z "$declared_shards" ]]; then
-  bad "no shard list in $WORKFLOW, so no citation can be judged against it"
+  bad "the shard roster in $WORKFLOW is required to check suite ownership"
 fi
 
 JOB_SET="$ROOT/tools/ci-job-set"
@@ -1215,7 +1215,7 @@ suite_env() { # WORKFLOW CONTEXT FIELD
   gh_eval value "$2" "$expr" | jq -er 'select(type == "string")'
 }
 
-event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claims
+event_claims() { # WORKFLOW EVENT OS MAJOR [RESULT SELECTION] ; actual job/matrix/environment claims
   local wf="$1" event="$2" os="$3" major="$4" result=skipped ref=refs/heads/main ctx job needs expr running axes shards excluded job_shards step_routes matrix row_ctx temporal_ctx filters temporary shard declarations claims="$TMP/event-dedicated"
   [[ "$event" != merge_group ]] || { result=failure; ref=refs/heads/gh-readonly-queue/main/fixture; }
   # A failed changes job exercises the workflow's full fallback: the
@@ -1223,9 +1223,10 @@ event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claim
   # failed same-head proof read runs. tools/tests/ci-class-job-set-events
   # holds the proved complement.
   [[ "$event" != push ]] || result=failure
+  result="${5:-$result}"
   step_routes="$(shared_steps "$wf")" || return
   published_map "$wf" > "$TMP/event-map" || return
-  ctx="$(context_json "$event" "$result" '' "$TMP/event-map" "$ref")" || return
+  ctx="$(context_json "$event" "$result" "${6:-}" "$TMP/event-map" "$ref")" || return
   job_ifs "$wf" > "$TMP/event-job-ifs" || return
   job_needs "$wf" > "$TMP/event-job-needs" || return
   {
@@ -1266,14 +1267,16 @@ event_claims() { # WORKFLOW EVENT OS MAJOR ; actual job/matrix/environment claim
       excluded="$(excluded_shards "$wf" "$os")" || return
       job_shards="$(grep -xvF -f <(printf '%s\n' "$excluded") <<<"$shards")"
       [[ -n "$job_shards" ]] || continue
-      # Only the refresh block reads the remaining exception. Its ordinary
-      # matrix row has a shard and runner, and carries no suite override.
+      # Only the refresh block reads the exception inputs. Resolve them for
+      # its ordinary matrix row, then execute the roster once for this job.
       filters=''
+      temporary=''
       if grep -qxF refresh <<< "$job_shards"; then
         row_ctx="$(jq -c --arg os "$os" '.matrix = {shard: "refresh", os: $os}' <<< "$ctx")" || return
+        temporary="$(suite_env "$wf" "$row_ctx" TEMPORARY_SUITE)" || return
         filters="$(suite_env "$wf" "$row_ctx" MAIN_ONLY_FILTERS)" || return
       fi
-      MAIN_ONLY_FILTERS="$filters" suite_owners "$wf" files "$major" |
+      TEMPORARY_SUITE="$temporary" MAIN_ONLY_FILTERS="$filters" suite_owners "$wf" files "$major" |
         awk -F '\t' -v shards="$job_shards" '
           BEGIN { n = split(shards, names, "\n"); for (i = 1; i <= n; i++) count[names[i]]++ }
           { for (i = 0; i < count[$1]; i++) print }
@@ -1320,6 +1323,11 @@ for os in ubuntu-latest macos-latest; do
       "$expected" "$(cat "$TMP/event-claims")"
   done
   if [[ "$os" == ubuntu-latest ]]; then
+    # Same-head proof can stand the ordinary shards down while the adopter
+    # still runs. Use the successful selector output through the job mapping.
+    adopter_selection='shell_shards=false shell_os=[] shards=[] queue_macos_shards=[] main_suites=[{"suite":"adopt-refresh.test","shard":"refresh","os":"ubuntu-latest"}]'
+    check "a successful push selection runs its adopter with ordinary shards stood down" \
+      refresh/tests/adopt-refresh.test.sh "$(event_claims "$WORKFLOW" push "$os" "$major" success "$adopter_selection")"
     event_claims "$TMP/linear-unskipped.yml" merge_group "$os" "$major" > "$TMP/linear-unskipped"
     check "must-fail: the required Linux roster names a repeated suite" \
       skills/linear/tests/must-fail-controls.sh "$(uniq -d "$TMP/linear-unskipped")"

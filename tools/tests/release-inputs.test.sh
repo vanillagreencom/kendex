@@ -27,6 +27,20 @@ assert_eq() {
 assert_eq "$(triggers "$WF")" $'push\nworkflow_dispatch' triggers
 expr="$(job_ifs "$WF" | awk -F '\t' '$1 == "build" { print $2 }')"
 [ -n "$expr" ]
+needs="$(job_needs "$WF" | awk -F '\t' '$1 == "build" { print $2 }')"
+producer="$(awk '
+  /^  [A-Za-z0-9_-]+:/ { prepare = ($1 == "prepare:") }
+  prepare && /^      - / { id = "" }
+  prepare && /^        id: / { id = $2 }
+  prepare && /^        run: tools\/release-inputs / { print id }
+' "$WF")"
+[ -n "$producer" ]
+binding="$(awk '
+  /^  [A-Za-z0-9_-]+:/ { prepare = ($1 == "prepare:"); outputs = 0 }
+  prepare && /^    [^ ]/ { outputs = ($1 == "outputs:") }
+  outputs && /^      build: / { sub(/^      build: \$\{\{ /, ""); sub(/ \}\}$/, ""); print }
+' "$WF")"
+[ -n "$binding" ]
 targets="$(awk '/^  build:/ { active=1 } /^  publish:/ { active=0 } active && /^            target:/ { print $2 }' "$WF" | LC_ALL=C sort)"
 assert_eq "$targets" $'aarch64-apple-darwin\naarch64-unknown-linux-gnu\nx86_64-apple-darwin\nx86_64-pc-windows-msvc\nx86_64-unknown-linux-gnu' targets
 
@@ -38,11 +52,13 @@ git -c core.hooksPath=/dev/null commit --quiet -m base
 base="$(git rev-parse HEAD)"
 
 selected() { # TOOL EVENT BEFORE AFTER
-  local output ctx
+  local output steps published ctx
   output="$("$BASH" "$1" "$2" "$3" "$4")"
   case "$output" in build=true|build=false) ;; *) return 2 ;; esac
-  ctx="$(jq -cn --arg build "${output#build=}" '{needs: {prepare: {result: "success", outputs: {build: $build}}}}')"
-  printf 'build\tprepare\t%s\n' "$expr" | gh_eval jobs "$ctx"
+  steps="$(jq -cn --arg id "$producer" --arg build "${output#build=}" '{steps: {($id): {outputs: {build: $build}}}}')"
+  published="$(gh_eval value "$steps" "$binding")" || return
+  ctx="$(jq -cn --argjson build "$published" '{needs: {prepare: {result: "success", outputs: {build: ($build // "")}}}}')" || return
+  printf 'build\t%s\t%s\n' "$needs" "$expr" | gh_eval jobs "$ctx"
 }
 
 # Each path is a separate push; the multi-commit row below also catches a
