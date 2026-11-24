@@ -114,7 +114,6 @@ Usage: github-repository-settings <adopt|render|retire|setup-install|setup-retir
 Options: --repo PATH, --dry-run, --discover, --json, --help
 region-bounds forwards --input PATH to the shared library without repository settings.
 The bot-instructions library owns render, preview and check semantics.
-Check reports github-standard-check-location=hosted|local|unset on stderr.
 Exit codes: 0 clean, 1 findings, 2 could not complete.
 EOF
 }
@@ -186,30 +185,20 @@ if [ "$staged" = true ]; then
   trap 'rm -rf -- "$staged_settings"' EXIT
   rg_settings_index_sources "$staged_settings" || exit 2
 fi
-location="$(rg_setting GITHUB_STANDARD_CHECK_LOCATION '')" || exit 2
-review_default=off
-[ "$verb" != check ] || review_default=''
-review="$(rg_setting GITHUB_STANDARD_BOT_REVIEW "$review_default")" || exit 2
-case "$location" in
-  hosted|local|'') ;;
-  *) fail setting GITHUB_STANDARD_CHECK_LOCATION 'Choose hosted or local.' ;;
-esac
+# No arming record clones, so the committed setting is the adoption mark
+# check reads. It has no default: check takes an unset value as not adopted
+# and every write refuses it, so each write is one check judges.
+review="$(rg_setting GITHUB_STANDARD_BOT_REVIEW '')" || exit 2
 case "$verb:$review" in
-  *:off|check:) output=local ;;
+  *:off) output=local ;;
   *:on) output=full ;;
+  check:)
+    printf '%s\n' 'github-repository-settings: not-adopted=unset' \
+      'Set GITHUB_STANDARD_BOT_REVIEW to adopt review-file checks.' >&2
+    exit 0
+    ;;
   *) fail setting GITHUB_STANDARD_BOT_REVIEW 'Choose off or on.' ;;
 esac
-if { [ "$verb" = adopt ] || [ "$verb" = setup-install ]; } && [ -z "$location" ]; then
-  fail setting GITHUB_STANDARD_CHECK_LOCATION 'Choose hosted or local before adoption.'
-fi
-if [ "$verb" = check ]; then
-  printf 'github-standard-check-location=%s\n' "${location:-unset}" >&2
-  if [ -z "$location" ] && [ -z "$review" ]; then
-    printf '%s\n' 'github-repository-settings: not-adopted=unset' \
-      'Set GITHUB_STANDARD_CHECK_LOCATION and GITHUB_STANDARD_BOT_REVIEW to adopt review-file checks.' >&2
-    exit 0
-  fi
-fi
 # Core uses this installer for setup, ordinary render and one-run refresh.
 # Every invocation keeps the shared renderer's marker gate; takeover is adopt.
 [ "$verb" != setup-install ] || args[0]=render

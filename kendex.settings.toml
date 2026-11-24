@@ -89,12 +89,6 @@ GITHUB_STANDARD_CONTEXTS = "CI"
 # This repository uses remote review and keeps the full review output.
 GITHUB_STANDARD_BOT_REVIEW = "on"
 
-# This repository checks in hosted CI: the required "CI" context runs the
-# tools/guard lanes in the merge group. The local commit chain still runs
-# the staged review-file check. No default: setup and adopt refuse while it
-# is empty.
-GITHUB_STANDARD_CHECK_LOCATION = "hosted"
-
 # This repository sets no HARNESS_CI_PER_PUSH_REASON, so every change is
 # queue-only (docs/decisions/D027-merge-queue-proves-every-change.md); what a
 # reason would change: skills/harness-ci/README.md.

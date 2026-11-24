@@ -174,19 +174,19 @@ for review_row in \
   "new-incomplete|0|2|yes|fixture=new-review|both|rc=2 $NEW_BAD;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
   "new-unexecutable|0|0|no|fixture=new-review|both|rc=2 $NEW;$(broken github-repository-settings);$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS" \
   "neither-installed|-|-|yes||none|rc=0 $BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "new-unconfigured|0|0|yes|github-standard-check-location=local\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|both|rc=0 $NEW;github-standard-check-location=local;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "new-older-attested|0|2|yes|github-standard-check-location=unset\\nbot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|both|rc=0 $NEW;github-standard-check-location=unset;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "new-unattested|0|2|yes|github-standard-check-location=hosted\\nbot-instructions: unconfigured=kendex.toml|both|rc=2 $NEW;github-standard-check-location=hosted;bot-instructions: unconfigured=kendex.toml;pre-commit: unattested=github-repository-settings:kendex.toml;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"; do
+  "new-unconfigured|0|0|yes|bot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|both|rc=0 $NEW;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-older-attested|0|2|yes|bot-instructions: unconfigured=kendex.toml\\nbot-instructions: renders=none|both|rc=0 $NEW;pre-commit: not-adopted=github-repository-settings:kendex.toml;$BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "new-unattested|0|2|yes|bot-instructions: unconfigured=kendex.toml|both|rc=2 $NEW;bot-instructions: unconfigured=kendex.toml;pre-commit: unattested=github-repository-settings:kendex.toml;$(incomplete 'github-repository-settings check --staged' 2);$BATCH_OK;$LOCAL_NONE;$ERRORS"; do
   IFS='|' read -r label old_status new_status executable new_record armed expect <<<"$review_row"
   repo "review-$label"
   [ "$old_status" = - ] || tree bot-instructions fixture=old-review "$old_status"
   if [ "$new_status" != - ]; then
-    # The wrapper emits its location on stderr. The library emits records
-    # on stdout without command arguments, unlike the fixture identity line.
+    # The library emits records on stdout without command arguments, unlike
+    # the fixture identity line.
     tree github-repository-settings fixture=new-review "$new_status"
-    if [[ "$new_record" == github-standard-check-location=* ]]; then
-      printf '#!/bin/sh\nprintf "%%b\\n" "%s" >&2\nprintf "%%b\\n" "%s"\nexit %s\n' \
-        "${new_record%%\\n*}" "${new_record#*\\n}" "$new_status" >"$R/.agents/skills/github-repository-settings/scripts/github-repository-settings"
+    if [[ "$new_record" == bot-instructions:* ]]; then
+      printf '#!/bin/sh\nprintf "%%b\\n" "%s"\nexit %s\n' \
+        "$new_record" "$new_status" >"$R/.agents/skills/github-repository-settings/scripts/github-repository-settings"
     fi
     [ "$executable" = yes ] || chmod -x "$R/.agents/skills/github-repository-settings/scripts/github-repository-settings"
   fi

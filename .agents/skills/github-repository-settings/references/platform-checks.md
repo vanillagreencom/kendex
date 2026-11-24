@@ -70,16 +70,16 @@ What each case reports, and what to do:
   - Listed: `kendex apply` names this package's setup.
 - The consumer refresh run, review files adopted:
   - Only as review-gate's dependency: with `GITHUB_STANDARD_BOT_REVIEW = "on"`, bot-instructions' output matches this package's files. With `"off"`, the refresh pull request restores bot-instructions' output.
-  - Listed: without a committed `GITHUB_STANDARD_CHECK_LOCATION`, this package's setup refuses and the run stops with `refresh-error=bot-instructions-render`.
+  - Listed: without a committed `GITHUB_STANDARD_BOT_REVIEW`, this package's setup refuses and the run stops with `refresh-error=bot-instructions-render`.
 - The consumer refresh run, no `[bot-instructions]` table and no marked review files:
   - Only as review-gate's dependency: the run logs `refresh-render=skipped package=bot-instructions cause=unconfigured` and continues.
-  - Listed: with a committed `GITHUB_STANDARD_CHECK_LOCATION`, the run logs the same skip and continues. Without it, the run stops with `refresh-error=bot-instructions-render`.
+  - Listed: with a committed `GITHUB_STANDARD_BOT_REVIEW`, the run logs the same skip and continues. Without it, the run stops with `refresh-error=bot-instructions-render`.
 
 Refresh does not configure review files. To add them to a repository with no `[bot-instructions]` table, follow bot-instructions' [add-repository workflow](../../bot-instructions/workflows/add-repository.md), which writes the table and adopts the existing files, then set this package up.
 
 A setup is recorded only in the clone that ran it. To set this package up:
 
-1. Choose `GITHUB_STANDARD_CHECK_LOCATION`.
+1. Choose `GITHUB_STANDARD_BOT_REVIEW`.
 2. Use Set up on this package's page, or run the `add` or `apply` that brings review-gate with `--allow-repo-effects`.
 
 Where this package arrives only as review-gate's dependency, a scripted `add --commit` or `apply --commit` without that flag, in a checkout where bot-instructions is set up, commits nothing, names the setup and exits 1.
