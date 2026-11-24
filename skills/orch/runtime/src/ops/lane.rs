@@ -3709,6 +3709,7 @@ mod tests {
             identity: None,
             home: None,
             home_implicit: false,
+            idle_shell: None,
         };
         let session = agent_runtime::intent::BoundSession {
             session_id: "0f6e".into(),

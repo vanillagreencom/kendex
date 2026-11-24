@@ -29,11 +29,12 @@ use crate::effects::prepare::{
 use crate::effects::{
     Binding, Bootstrap, Claimant, Companion, EffectOutcome, Identity, Observed, OpenRefusal,
     Operation, Pane, Polled, ProcessRead, Proof, Published, Recovered, Server, SessionFloor, State,
-    Stop, Target, TurnConfirm, WindowClose, Wire, Word, opening_observation, overseer_target_of,
-    read_intent, read_overseer,
+    Stop, Target, TurnConfirm, WindowClose, Wire, Word, close_idle_shell, opening_observation,
+    overseer_target_of, read_intent, read_overseer,
 };
 use crate::error::{Error, Result};
 use crate::harness::Harness;
+use crate::host::tmux;
 use crate::intent::{BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Phase};
 use crate::launch::{ClaudeSignIn, Compaction, LaunchCommand, Permission, Resume};
 use crate::observe::WallKind;
@@ -905,6 +906,23 @@ fn names_pane_on(overseer: &Overseer, server: &Server) -> bool {
         && number("server_start") == Some(server.start)
 }
 
+/// The idle shell the publication closes: the session's one pane where it
+/// is an idle shell ([`tmux::sole_idle_shell`]), read before the
+/// controller's window opens beside it, for a start and a transfer alike.
+/// None where the record names a pane on that server: that pane is the
+/// predecessor's, whose window the retirement closes. A stopped record names
+/// none, and one written before its server restarted names a pane on
+/// another. A listing that does not answer names none, so the shell stands.
+fn idle_shell(overseer: &Overseer, server: &Server, session: &str) -> Option<String> {
+    if names_pane_on(overseer, server) {
+        return None;
+    }
+    match tmux::sole_idle_shell(server, session) {
+        Reading::Live(Some(shell)) => Some(shell.id),
+        Reading::Live(None) | Reading::Gone | Reading::Unreadable { .. } => None,
+    }
+}
+
 fn succeed(
     run: &Run,
     intent_id: &str,
@@ -1064,7 +1082,7 @@ fn succeed(
     // reconcile at `opening` with a dead owner adopts the runner by
     // its receipt, and before retirement that is still an
     // abandon.
-    let opening = match operation.opening(
+    let mut opening = match operation.opening(
         &server,
         &floor,
         brief,
@@ -1074,21 +1092,11 @@ fn succeed(
         Ok(opening) => opening,
         Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
+    opening.idle_shell = idle_shell(&overseer, &server, &session);
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
     })?;
-    // A start may run in the session's idle shell, never in a pane the record
-    // names on this server: that is the predecessor's, whose window the
-    // retirement closes. A stopped record names none.
-    let alone = mode == Mode::Start && !names_pane_on(&overseer, &server);
-    let window = operation.open_window(
-        &server,
-        &session,
-        pending.window(),
-        &command,
-        &opening,
-        alone,
-    )?;
+    let window = operation.open_window(&server, &session, pending.window(), &command, &opening)?;
     let pane = match window {
         Ok(pane) => pane,
         // Refused before the launcher was asked: `arm` failed before the
@@ -1109,8 +1117,7 @@ fn succeed(
         }
         // A window that opened and could not be typed into: closed again by
         // its exact id, the failure completes; a close the host did not
-        // answer leaves the recorded pane for the reconcile at `opening`. An
-        // idle shell whose line did not run is left as it stands.
+        // answer leaves the recorded pane for the reconcile at `opening`.
         Err(OpenRefusal::LineUnsent { refusal }) => {
             let mut outcome = operation.settle(
                 Word::Failed,
@@ -1344,9 +1351,9 @@ fn succeed(
     // one. Focus is presentation: an unread answer or a refused select
     // changes nothing of the hand-over.
     if let Some(previous) = overseer.extra.get("pane").and_then(Value::as_str)
-        && crate::host::tmux::window_in_front(&server, previous)
+        && tmux::window_in_front(&server, previous)
     {
-        let _ = crate::host::tmux::select_window(&pane);
+        let _ = tmux::select_window(&pane);
     }
     // The predecessor's recorded handles become obligations of the intent at
     // the start of its retirement, written before the first signal; the
@@ -1861,6 +1868,10 @@ fn deliver_brief(
 /// and the record naming no controller, and the reconcile runs the step
 /// again; the watch found or launched goes on the wire as `overseer.watch`.
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the session's idle shell closes once the controller is published and its pane kept, after the publication has consumed the operation handle"
+)]
 fn publish(
     mut operation: Operation,
     successor: &Successor,
@@ -1964,6 +1975,15 @@ fn publish(
     let record = operation.record_path().to_path_buf();
     match operation.publish(Published::Successor, opened, &identity, observation)? {
         Ok(mut outcome) => {
+            // The session's idle shell goes only now, the controller
+            // published and its pane kept: before, an abandon or the
+            // runner's exit would take the session with a window that stood
+            // alone. With its pane not kept the shell stands, so the
+            // harness's exit leaves the session standing.
+            let shell = opened.idle_shell.as_deref().filter(|_| kept.is_none());
+            if let Some(cause) = shell.and_then(|shell| close_idle_shell(pane, shell)) {
+                outcome.annotate("idle_shell", json!(cause));
+            }
             if let Some(cause) = kept {
                 outcome.annotate("pane_kept", json!(cause));
             }

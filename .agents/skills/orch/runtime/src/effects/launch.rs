@@ -861,7 +861,7 @@ fn open_and_confirm(
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
     })?;
-    let pane = match operation.open_window(server, session, &r.item, command, &opening, false)? {
+    let pane = match operation.open_window(server, session, &r.item, command, &opening)? {
         Ok(pane) => pane,
         // Refused before the launcher was asked: `arm` failed before the
         // receipt or window was recorded, so nothing stands and the launch

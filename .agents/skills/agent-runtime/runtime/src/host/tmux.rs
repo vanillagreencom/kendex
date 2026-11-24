@@ -552,36 +552,55 @@ pub fn new_window(
 }
 
 /// The one pane of `session` where the session holds one window with one
-/// pane and that pane's shell holds its own terminal: a shell at its prompt
-/// with no foreground job, as a session stands before anything ran in it.
-/// `None` where a second window or pane stands, or the one pane stands dead
-/// or runs a command. One `list-panes` and one read of the shell's
-/// terminal group answer it. A typed but unsent line is not told from an
+/// pane and that pane's shell holds its own terminal with no process below
+/// it: a shell at its prompt with no job, foreground or background, as a
+/// session stands before anything ran in it. `None` where a second window
+/// or pane stands, or the one pane stands dead, runs a command or keeps a
+/// job: closing its window hangs up the shell, and an interactive bash
+/// hangs up its jobs in turn. One `list-panes`, one read of the shell's
+/// terminal group and one table read answer it. A typed but unsent line is not told from an
 /// empty prompt: neither tmux nor the kernel carries it. The session gone is
-/// `Gone`; a server, a listing or a process that does not answer is
+/// `Gone`; a server, a listing, a process or a table that does not answer is
 /// `Unreadable`.
 pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> {
+    let target = format!("={session}");
+    lone_idle_shell(server, &["-s", "-t", &target], |stderr| {
+        stderr.starts_with("can't find session")
+    })
+}
+
+/// The pane `id` where it stands alone in its window as an idle shell, read
+/// as [`sole_idle_shell`] reads a session's: `None` where its window holds
+/// another pane or the pane stands dead, runs a command or keeps a job,
+/// `Gone` where the pane is.
+pub fn lone_idle_shell_pane(server: &Server, id: &str) -> Reading<Option<Pane>> {
+    match lone_idle_shell(server, &["-t", id], names_missing_target) {
+        Reading::Live(Some(shell)) if shell.id == id => Reading::Live(Some(shell)),
+        Reading::Live(_) => Reading::Live(None),
+        Reading::Gone => Reading::Gone,
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+    }
+}
+
+/// The one pane the `list-panes` `scope` lists where it is an idle shell;
+/// `missing` names the answer that says the scope's target is gone.
+fn lone_idle_shell(
+    server: &Server,
+    scope: &[&str],
+    missing: fn(&str) -> bool,
+) -> Reading<Option<Pane>> {
     let client = match confirm(server) {
         Ok(client) => client,
         Err(e) => return Reading::Unreadable { cause: e.key() },
     };
     let socket = server.socket.display().to_string();
-    let target = format!("={session}");
-    let output = match run(
-        &client,
-        "list-panes",
-        &[
-            "-S",
-            &socket,
-            "list-panes",
-            "-s",
-            "-t",
-            &target,
-            "-F",
-            "#{pane_id}\t#{window_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{session_name}",
-        ],
-        None,
-    ) {
+    let mut args = vec!["-S", &socket, "list-panes"];
+    args.extend_from_slice(scope);
+    args.extend_from_slice(&[
+        "-F",
+        "#{pane_id}\t#{window_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{session_name}",
+    ]);
+    let output = match run(&client, "list-panes", &args, None) {
         Ok(output) => output,
         Err(_) => {
             return Reading::Unreadable {
@@ -590,7 +609,7 @@ pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> 
         }
     };
     if !output.status.success() {
-        return if stderr_text(&output).starts_with("can't find session") {
+        return if missing(&stderr_text(&output)) {
             Reading::Gone
         } else {
             Reading::Unreadable {
@@ -633,15 +652,30 @@ pub fn sole_idle_shell(server: &Server, session: &str) -> Reading<Option<Pane>> 
         return Reading::Live(None);
     }
     match crate::process::foreground_group(pid) {
-        Reading::Live(Some(group)) if group == pid => Reading::Live(Some(Pane {
-            server: server.clone(),
-            id: id.to_owned(),
-            window: window.to_owned(),
-            session: session.to_owned(),
-        })),
-        Reading::Live(_) | Reading::Gone => Reading::Live(None),
-        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+        Reading::Live(Some(group)) if group == pid => {}
+        Reading::Live(_) | Reading::Gone => return Reading::Live(None),
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
     }
+    // A background job leaves the shell holding its terminal, so only the
+    // processes below the shell tell it from a shell that keeps none.
+    let rows = match crate::process::table() {
+        Ok(rows) => rows,
+        Err(unread) => {
+            return Reading::Unreadable {
+                cause: unread.cause,
+            };
+        }
+    };
+    match crate::process::below(&rows, pid, &|_| true)[..] {
+        [(_, member)] if member == pid => {}
+        _ => return Reading::Live(None),
+    }
+    Reading::Live(Some(Pane {
+        server: server.clone(),
+        id: id.to_owned(),
+        window: window.to_owned(),
+        session: session.to_owned(),
+    }))
 }
 
 /// The pane a `new-window -P` line names, `%N @N session`. The ids are
@@ -1236,6 +1270,32 @@ impl Private {
     pub(crate) fn start(dir: &Path) -> Private {
         let server = start_private_server(&dir.join("t.sock"), "t", dir).expect("a server");
         Private(server)
+    }
+
+    /// Run `args` on the server, its answer's text.
+    pub(crate) fn ask(&self, args: &[&str]) -> String {
+        let client = confirm(&self.0).expect("the private server answers");
+        tmux(&client, &self.0.socket, "test", args).expect("the private server's answer")
+    }
+
+    /// The session's one pane respawned at `exec /bin/sh`, so its process is
+    /// the shell itself at its prompt, as a session's shell stands where its
+    /// maker opened it at the person's own shell; every other pane of this
+    /// server runs `sh -c /bin/sh`, which no reader takes for an idle shell.
+    /// Returned once [`sole_idle_shell`] reads it so.
+    pub(crate) fn idle_shell(&self) -> Pane {
+        self.ask(&["respawn-pane", "-k", "-t", "%0", "exec /bin/sh"]);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Reading::Live(Some(pane)) = sole_idle_shell(&self.0, "t") {
+                return pane;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the respawned shell reads idle"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 

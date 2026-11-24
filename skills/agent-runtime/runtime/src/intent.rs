@@ -181,16 +181,27 @@ pub struct Opening {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub baseline: Vec<String>,
-    /// The pane the effect's own `new-window` created, or the session's idle
-    /// shell it types into (`adopted`), recorded before the launch line is
-    /// typed into it; `None` until then.
+    /// The pane the effect's own `new-window` created, recorded before the
+    /// launch line is typed into it; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<String>,
-    /// `pane` is a shell the effect did not open: it becomes the effect's
+    /// `pane` is the session's idle shell, which an earlier runtime typed its
+    /// launch line into instead of opening a window: it becomes the effect's
     /// only once its receipt names it, so no close of the effect's reaches
-    /// it before the line ran there.
+    /// it before the line ran there. Nothing writes it now; an intent such a
+    /// runtime left at `opening` still reads it, so its reconcile never
+    /// closes the shell. Remove it once no fleet can hold such an intent
+    /// open: the first reconcile past the launch bound settles one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub adopted: bool,
+    /// The session's idle shell, its one pane before the controller's window
+    /// opened beside it, read then since it stands alone only until then:
+    /// the publication closes its window, so the session holds the
+    /// controller's alone. `None` for a lane, a session holding anything
+    /// more, or a record naming a pane on that server, whose window the
+    /// retirement closes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_shell: Option<String>,
     /// Whether the launcher has been asked for the window: written before
     /// `new-window` runs, so a phase with no pane and
     /// `asked` names a window possibly opened, and one without it nothing.
@@ -225,6 +236,7 @@ impl Opening {
             identity,
             home: self.home.clone(),
             home_implicit: self.home_implicit,
+            idle_shell: self.idle_shell.clone(),
         }
     }
 }
@@ -278,6 +290,10 @@ pub struct OpenedPane {
     /// The launch named no home ([`Opening::home_implicit`]).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub home_implicit: bool,
+    /// The session's idle shell the publication closes
+    /// ([`Opening::idle_shell`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_shell: Option<String>,
 }
 
 /// The runner's own native session file, bound once, before the brief is
