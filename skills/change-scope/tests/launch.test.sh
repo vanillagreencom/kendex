@@ -342,9 +342,11 @@ assert_settings_ranges() {
     git -C "$SETTINGS_REPO" commit -qm before --allow-empty
     base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
     printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
-    if [ "$row" = mixed ]; then
-      printf 'MODE="new"\n' >"$SETTINGS_REPO/script.sh"
-    fi
+    case "$row" in
+      mixed) printf 'MODE="new"\n' >"$SETTINGS_REPO/script.sh" ;;
+      mixed-manifest | mixed-local-manifest)
+        printf '[env]\nORDINARY = "new"\n' >"$SETTINGS_REPO/kendex.settings.toml" ;;
+    esac
     git -C "$SETTINGS_REPO" add -A
     git -C "$SETTINGS_REPO" commit -qm "$row"
     if [ "$row" = standard-path ]; then
@@ -364,38 +366,20 @@ assert_settings_ranges <<'SETTINGS'
 ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
 uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_LANE_OUTPUT = "normal"|micro cause=settings-only
 local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
-manifest|kendex.toml|is_source_catalog = true\n[marketplace]\ntags = ["official"]|is_source_catalog = true\n[marketplace]\ntags = ["curated"]|micro cause=settings-only
-standalone-consumer|kendex.toml|[install]\nmethod = "copy"|[install]\nmethod = "symlink"|micro cause=settings-only
-local-manifest|kendex-local.toml|"name" = "old"\n[skill-instructions]\norch = '''\nExisting instructions.\n'''|"name" = "new"\n[skill-instructions]\norch = '''\nExisting instructions.\n'''|micro cause=settings-only
+standalone-consumer|kendex.toml|[install]\nmethod = "copy"|[install]\nmethod = "symlink"|standard cause=configuration-source
+local-manifest|kendex-local.toml|name = "old"|name = "new"|standard cause=configuration-source
 ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
 size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORDINARY = "new"|standard cause=configuration-source
 at-ceiling|kendex.settings.toml|||micro cause=settings-only
 over-ceiling|kendex.settings.toml|||standard cause=configuration-source
 catalog|kendex.toml|is_source_catalog = false|is_source_catalog = true|standard cause=configuration-source
-quoted-catalog|kendex.toml|"is_source_catalog" = false|"is_source_catalog" = true|standard cause=configuration-source
 mixed|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|standard cause=configuration-source
+mixed-manifest|kendex.toml|[install]\nmethod = "copy"|[install]\nmethod = "symlink"|standard cause=configuration-source
+mixed-local-manifest|kendex-local.toml|name = "old"|name = "new"|standard cause=configuration-source
 claude|.claude/settings.json|{"permissions": {}}|{"permissions": {"allow": []}}|standard cause=configuration-source
 gemini|.gemini/settings.json|{"mcpServers": {}}|{"mcpServers": {"tool": {}}}|standard cause=configuration-source
 standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=configuration-source
 SETTINGS
-
-assert_settings_ranges <<'MANIFEST'
-basic-heading|kendex-local.toml|instructions = """\n### React\n[section]\n"""|instructions = """\n### Shell\n[section]\n"""|standard cause=configuration-source
-basic-bracket|kendex-local.toml|instructions = """\n[shared]\n### Heading\n"""|instructions = """\n[other]\n### Heading\n"""|standard cause=configuration-source
-literal-heading|kendex-local.toml|instructions = '''\n# Before\n### React\n[section]\n'''|instructions = '''\n# Before\n### Shell\n[section]\n'''|standard cause=configuration-source
-literal-assignment|kendex-local.toml|instructions = '''\nmode = "old"\n'''|instructions = '''\nmode = "new"\n'''|standard cause=configuration-source
-basic-escaped-delimiter|kendex-local.toml|instructions = """\nEmbedded \134""" stays in the string.\nmode = "old"\n"""|instructions = """\nEmbedded \134""" stays in the string.\nmode = "new"\n"""|standard cause=configuration-source
-beside-basic|kendex-local.toml|instructions = """\nEmbedded \134""" stays in the string.\n# Heading\n[section]\nclosing """" # comment '''\nmode = "old"|instructions = """\nEmbedded \134""" stays in the string.\n# Heading\n[section]\nclosing """" # comment '''\nmode = "new"|micro cause=settings-only
-beside-literal|kendex-local.toml|instructions = '''\n# Heading\n[section]\nclosing ''''' # comment """\nmode = 'old # literal'|instructions = '''\n# Heading\n[section]\nclosing ''''' # comment """\nmode = 'new # literal'|micro cause=settings-only
-single-line-comments|kendex-local.toml|mode = "old \134"quote\134" # literal" # comment """|mode = "new \134"quote\134" # literal" # comment '''|micro cause=settings-only
-array-comment|kendex-local.toml|tags = [\n  # old\n  "tag",\n]\nname = "one"|tags = [\n  # new\n  "tag",\n]\nname = "one"|standard cause=configuration-source
-beside-array|kendex-local.toml|tags = [\n  "] # literal", # } comment\n]\nname = "old"|tags = [\n  "] # literal", # } comment\n]\nname = "new"|micro cause=settings-only
-inline-table-comment|kendex-local.toml|metadata = { tags = [\n  # old\n  "tag",\n] }|metadata = { tags = [\n  # new\n  "tag",\n] }|standard cause=configuration-source
-beside-inline-table|kendex-local.toml|metadata = { tags = [\n  "{}[]", # """ comment\n] }\nname = "old"|metadata = { tags = [\n  "{}[]", # """ comment\n] }\nname = "new"|micro cause=settings-only
-unclosed-string|kendex-local.toml|instruction = """\nmode = "old"|instruction = """\nmode = "new"|standard cause=configuration-source
-mismatched-delimiter|kendex-local.toml|metadata = { tags = [\n  "one",\n} ]\nname = "old"|metadata = { tags = [\n  "one",\n} ]\nname = "new"|standard cause=configuration-source
-missing-value|kendex-local.toml|name = "old"|name = # absent|standard cause=configuration-source
-MANIFEST
 
 assert_unread_settings_ranges() {
   local kind partial path head base want

@@ -17,12 +17,12 @@
 # is a class already held, at or above micro; --path is classified by the
 # shared path rules' launch phase, no render proved, and an unmatched path
 # changes nothing; --base and --head classify the range's changed paths: a
-# settings- or manifest-only range within micro_max_production can clear
-# configuration-source when both endpoints prove edits to ordinary
-# assignments in existing regular files.
-# HARNESS_CI_*, ORCH_SIZE_* and is_source_catalog are protected. A Location
-# keeps its own class. A names-only inventory change under rendered roots is
-# left to the classifier,
+# range containing only kendex.settings.toml or .kendex/settings.toml
+# within micro_max_production can clear configuration-source when both
+# endpoints prove edits to ordinary assignments in existing regular files.
+# HARNESS_CI_*, ORCH_SIZE_* and is_source_catalog are protected. A changed
+# kendex.toml or kendex-local.toml takes standard. A Location keeps its own
+# class. A names-only inventory change under rendered roots is left to the classifier,
 # which answers standard for a range that adds a catalog source (its render
 # proof owns no catalog source) and reads a removal by its size, while a
 # changed lock is standard whatever the classifier answers; a range that
@@ -422,120 +422,43 @@ settings_note() {
   [ "${2:-}" != unreadable ] || configuration_unread "$1"
 }
 
-launch_key_admitted() { # KEY KIND
-  local key="$1" LC_ALL=C grammar='^[a-zA-Z0-9_-]+$'
-  if [ "$2" = manifest ]; then
-    case "$key" in
-      \"*\") key="${key:1:${#key}-2}" ;;
-      \'*\') key="${key:1:${#key}-2}" ;;
-    esac
-  else
-    grammar='^[a-zA-Z_][a-zA-Z0-9_]*$'
-  fi
-  case "$key" in HARNESS_CI_* | ORCH_SIZE_* | is_source_catalog) return 1 ;; esac
-  [[ "$key" =~ $grammar ]]
+launch_key_admitted() { # KEY
+  local LC_ALL=C grammar='^[a-zA-Z_][a-zA-Z0-9_]*$'
+  case "$1" in HARNESS_CI_* | ORCH_SIZE_* | is_source_catalog) return 1 ;; esac
+  [[ "$1" =~ $grammar ]]
 }
 
-# Track the lexical boundaries of manifest values. An assignment can leave the
-# residue only when it occupies its own line outside a multiline value.
-manifest_place_line() { # LINE
-  local text="$1" prefix quote
-  manifest_opaque=false
-  [ -z "$manifest_quote$manifest_brackets" ] || manifest_opaque=true
-  while :; do
-    case "$manifest_quote" in
-      '') prefix="${text%%[\"\'\[\]\{\}\#\\]*}" ;;
-      \" | '"""') prefix="${text%%[\"\\]*}" ;;
-      \' | "'''") prefix="${text%%\'*}" ;;
-    esac
-    text="${text#"$prefix"}"
-    [ -n "$text" ] || break
-    if [ -n "$manifest_quote" ]; then
-      case "$text" in
-        \\*) text="${text:2}" ;;
-        "$manifest_quote"*)
-          text="${text:${#manifest_quote}}"
-          if [ "${#manifest_quote}" -eq 3 ]; then
-            # A closing run may carry up to two quotes as string content.
-            quote="${manifest_quote:0:1}"
-            case "$text" in
-              "$manifest_quote"*) return 1 ;;
-              "$quote$quote"*) text="${text:2}" ;;
-              "$quote"*) text="${text:1}" ;;
-            esac
-          fi
-          manifest_quote="" ;;
-        *) text="${text:1}" ;;
-      esac
-      continue
-    fi
-    case "$text" in
-      \#*) break ;;
-      '"""'* | "'''"*)
-        manifest_quote="${text:0:3}"
-        manifest_opaque=true
-        text="${text:3}"
-        continue ;;
-      \"* | \'*) manifest_quote="${text:0:1}" ;;
-      \[*) manifest_brackets="]$manifest_brackets" ;;
-      \{*) manifest_brackets="}$manifest_brackets" ;;
-      \]* | \}*)
-        [ "${text:0:1}" = "${manifest_brackets:0:1}" ] || return 1
-        manifest_brackets="${manifest_brackets:1}" ;;
-      *) return 1 ;;
-    esac
-    text="${text:1}"
-  done
-  [ "${#manifest_quote}" -ne 1 ] || return 1
-  [ -z "$manifest_brackets" ] || manifest_opaque=true
-}
-
-# FILE without its comment lines, blank lines and admitted assignments at
-# RESIDUE, and each admitted key on stdout. The settings value reader
-# validates headers on the same bytes. A manifest keeps multiline values
-# and other ineligible syntax in the residue.
-# Returns 2 where the lines this loop read are not FILE's bytes: Bash's read
-# drops a NUL, as the reader's own loop does, and git counts a file holding
-# one as binary, so its lines escape the trivial ceiling. Returns 3 where
-# manifest value boundaries could not be established.
-settings_scan() { # FILE RESIDUE [settings|manifest]
+# FILE without its comment lines, blank lines and admitted [env]
+# assignments at RESIDUE, and each admitted key on stdout. The settings
+# value reader validates headers on the same bytes.
+# Returns 2 where the lines read are not FILE's bytes: Bash drops a NUL,
+# and git counts a file holding one as binary.
+settings_scan() { # FILE RESIDUE [launch]
   (
     exec 3>&1 1>&2
     # shellcheck source=lib/kendex-env.sh
     . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
     : >"$2" && : >"$2.read" || exit 1
     section=""
-    manifest_quote="" manifest_brackets=""
     while :; do
       newline=$'\n'
       IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
       printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
       kendex_trim trimmed "${line%$'\r'}"
-      if [ "${3:-}" = manifest ]; then
-        manifest_place_line "$trimmed" || exit 3
-        if [ "$manifest_opaque" = true ]; then
-          printf '%s%s' "$line" "$newline" >>"$2" || exit 1
-          continue
-        fi
-      fi
       case "$trimmed" in
         '' | '#'*) continue ;;
         '['*) section="${trimmed#\[}" section="${section%\]}" ;;
         *=*)
           kendex_trim key "${trimmed%%=*}"
-          if [ "${3:-}" = manifest ]; then
-            kendex_trim value "${trimmed#*=}"
-            case "$value" in '' | '#'*) exit 3 ;; esac
-          fi
-          if { [ "$#" -eq 2 ] && [ "$section" = env ] && settings_key_admitted "$key"; } ||
-            { [ "$#" -gt 2 ] && { [ "$3" = manifest ] || [ "$section" = env ]; } && launch_key_admitted "$key" "$3"; }; then
+          if [ "$section" = env ] &&
+            { { [ "$#" -eq 2 ] && settings_key_admitted "$key"; } ||
+              { [ "${3:-}" = launch ] && launch_key_admitted "$key"; }; }; then
             printf '%s\n' "$key" >&3
             continue
           fi ;;
       esac
       printf '%s\n' "$line" >>"$2" || exit 1
     done <"$1"
-    [ -z "$manifest_quote$manifest_brackets" ] || exit 3
     status=0
     cmp -s -- "$1" "$2.read" || status=$?
     case "$status" in
@@ -566,7 +489,7 @@ settings_values() { # FILE KEY...
 # SETTINGS_FILE_KEYS. Returns 1, with the admission line, where admission
 # refuses the file. A settings file with a multiline string delimiter is
 # outside the settings reader's grammar.
-settings_file_admitted() { # PATH [settings|manifest]
+settings_file_admitted() { # PATH [launch]
   local side rev status keys base_values head_values key line base_value head_value mode=""
   if ! : >"$work/settings-keys"; then
     settings_note "cause=settings-unreadable path=$1" unreadable
@@ -590,19 +513,17 @@ settings_file_admitted() { # PATH [settings|manifest]
     }
     [ "$#" -eq 1 ] || [ "$side" = base ] || [ "$mode" = "$REV_FILE_MODE" ] || return 1
     mode="$REV_FILE_MODE"
-    if [ "${2:-}" != manifest ]; then
-      status=0
-      grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
-      case "$status" in
-        0)
-          settings_note "cause=multiline-string path=$1 side=$side"
-          return 1 ;;
-        1) ;;
-        *)
-          settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
-          return 1 ;;
-      esac
-    fi
+    status=0
+    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
+    case "$status" in
+      0)
+        settings_note "cause=multiline-string path=$1 side=$side"
+        return 1 ;;
+      1) ;;
+      *)
+        settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
+        return 1 ;;
+    esac
     status=0
     settings_scan "$work/settings-$side" "$work/settings-residue-$side" "${@:2}" \
       >>"$work/settings-keys" || status=$?
@@ -610,9 +531,6 @@ settings_file_admitted() { # PATH [settings|manifest]
       0) ;;
       2)
         settings_note "cause=settings-bytes-dropped path=$1 side=$side" unreadable
-        return 1 ;;
-      3)
-        settings_note "cause=manifest-placement path=$1 side=$side"
         return 1 ;;
       *)
         settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
@@ -623,14 +541,6 @@ settings_file_admitted() { # PATH [settings|manifest]
     status=0
   else
     status=$?
-  fi
-  # The manifest residue keeps table lines, complete multiline values, and
-  # keys the proof cannot admit.
-  if [ "${2:-}" = manifest ]; then
-    case "$status" in
-      0 | 1) return "$status" ;;
-      *) settings_note "cause=settings-unreadable path=$1" unreadable; return 1 ;;
-    esac
   fi
   if ! keys="$(LC_ALL=C sort -u "$work/settings-keys")"; then
     settings_note "cause=settings-unreadable path=$1" unreadable
@@ -688,13 +598,11 @@ ceiling() { # KEY
 # Reuse the classifier's regular-file and changed-key proof for launch.
 # The PR's base tip owns its exclusions even when its merge base is older.
 launch_settings_range() ( # BASE HEAD REPO WORK
-  local base="$1" head="$2" repo="$3" work="$4" path kind limit numstat added removed lines=0
-  local base_rev head_rev="$2" changed="" candidates=""
+  local base="$1" head="$2" repo="$3" work="$4" path limit numstat added removed lines=0
+  local base_rev head_rev="$2" changed="" settings_paths="${BASE_SETTINGS_FILES// /$'\n'}"
   while IFS= read -r -d '' path; do
-    change_class_config_kind "$path" || return 1
-    [ "$CHANGE_CLASS_CONFIG_KIND" != registry ] || return 1
+    change_class_path_match "$path" "$settings_paths" || return 1
     changed="${changed:+$changed$'\n'}$path"
-    candidates="${candidates:+$candidates$'\n'}$CHANGE_CLASS_CONFIG_KIND:$path"
   done <"$work/paths"
   [ -n "$changed" ] || return 1
   unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS
@@ -705,9 +613,9 @@ launch_settings_range() ( # BASE HEAD REPO WORK
     configuration_unread "cause=settings-base-unreadable base=$base head=$head"
     return 1
   fi
-  while IFS=: read -r kind path; do
-    settings_file_admitted "$path" "$kind" || return 1
-  done <<<"$candidates"
+  while IFS= read -r path; do
+    settings_file_admitted "$path" launch || return 1
+  done <<<"$changed"
   if ! limit="$(ceiling micro_max_production)" || [ -z "$limit" ]; then
     configuration_unread "cause=settings-ceiling-unreadable"
     return 1
@@ -1334,27 +1242,22 @@ source_catalog_at() { # REV OUT
 
 # The manifest admission the header states, which owns the rule. Returns 1,
 # with the admission line, where it refuses the change.
-manifest_note() {
-  printf 'manifest-admission: admitted=false %s\n' "$1" >&2
-  [ "${2:-}" != unreadable ] || configuration_unread "$1"
-}
+manifest_note() { printf 'manifest-admission: admitted=false %s\n' "$1" >&2; }
 # The checker the header names, at MANIFEST_CHECKER: the base commit's
 # installed bot-instructions, out of a private checkout of that commit, as
 # a branch cannot choose the code that judges its manifest.
 MANIFEST_CHECKER=""
 manifest_checker() {
-  local tree="$work/manifest-checker" log="$work/manifest-checker-log" checker status=0 evidence=unreadable
+  local tree="$work/manifest-checker" log="$work/manifest-checker-log"
   if [ -z "$base_rev" ] || ! private_checkout "$tree" "$base_rev" "$log"; then
     cat -- "$log" >&2 2>/dev/null || true
-    manifest_note "cause=bot-instructions-unread side=base detail=checkout-failed" unreadable
+    manifest_note "cause=bot-instructions-unread side=base detail=checkout-failed"
     return 1
   fi
   MANIFEST_CHECKER="$tree/.agents/skills/bot-instructions"
-  checker="$MANIFEST_CHECKER/scripts/bot-instructions"
-  if [ ! -f "$checker" ] || [ ! -x "$checker" ]; then
-    rev_file "$base_rev" "${checker#"$tree/"}" "$work/checker-entry" || status=$?
-    [ "$status" -ne 2 ] || evidence=""
-    manifest_note "cause=bot-instructions-unread side=base detail=checker-absent" "$evidence"
+  if [ ! -f "$MANIFEST_CHECKER/scripts/bot-instructions" ] ||
+    [ ! -x "$MANIFEST_CHECKER/scripts/bot-instructions" ]; then
+    manifest_note "cause=bot-instructions-unread side=base detail=checker-absent"
     return 1
   fi
 }
@@ -1373,7 +1276,7 @@ manifest_render_check() { # SIDE REV
     1) cat -- "$work/manifest-check-$1" >&2; manifest_note "cause=bot-instructions-render side=$1" ;;
     *)
       [ ! -s "$work/manifest-check-$1" ] || cat -- "$work/manifest-check-$1" >&2
-      manifest_note "cause=bot-instructions-unread side=$1" unreadable ;;
+      manifest_note "cause=bot-instructions-unread side=$1" ;;
   esac
   return 1
 }
@@ -1394,7 +1297,7 @@ manifest_admission() {
       0) ;;
       1) manifest_note "cause=source-catalog side=$side"; return 1 ;;
       3) manifest_note "cause=manifest-not-regular side=$side"; return 1 ;;
-      *) manifest_note "cause=manifest-unreadable side=$side rev=${rev:-unresolved}" unreadable; return 1 ;;
+      *) manifest_note "cause=manifest-unreadable side=$side rev=${rev:-unresolved}"; return 1 ;;
     esac
   done
   manifest_checker || return 1
