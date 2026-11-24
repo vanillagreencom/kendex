@@ -5022,7 +5022,8 @@ fn report_in_progress_names_open_and_merged_pull_requests() {
         running("KEN-24", json!({"pending_pr": {"pr": 40, "repo": "owner/repo", "head": "abc"}})),
         running("KEN-25", json!({"repo": "Lane/Repo"})),
         running("KEN-4933", json!({})),
-        running("KEN-5544", json!({}))
+        running("KEN-5544", json!({})),
+        running("issue-42", json!({"tracker": "github", "repo": "Owner/Repo"}))
     ]}));
     let open = |repo: &str, number: u64, branch: &str, title: &str| {
         let owner = repo.split('/').next().unwrap();
@@ -5063,8 +5064,14 @@ fn report_in_progress_names_open_and_merged_pull_requests() {
     closed["state"] = json!("closed");
     let mut merged = open("owner/repo", 6828, "ken-5544", "Ship the fixes");
     merged["state"] = json!("closed");
-    merged["merged_at"] = json!("2026-09-30T20:02:00Z");
+    merged["merged_at"] = json!("2026-09-29T20:02:00Z");
     planted[head("owner/repo", "ken-5544")] = json!({"body": [closed, merged]});
+    planted[head("owner/repo", "issue-42")] =
+        json!({"body": [open("owner/repo", 42, "issue-42", "Own issue")]});
+    let mut other_issue = open("other/repo", 52, "issue-42", "Connected repo issue");
+    other_issue["state"] = json!("closed");
+    other_issue["merged_at"] = json!("2026-09-29T20:02:00Z");
+    planted[head("other/repo", "issue-42")] = json!({"body": [other_issue]});
     let mut ctx = world.report_context();
     ctx.settings.reads.connected_repos = vec!["other/repo".to_owned()];
     let now = epoch("2026-10-01T14:00:00Z");
@@ -5073,12 +5080,13 @@ fn report_in_progress_names_open_and_merged_pull_requests() {
         let body = report::render(&ctx, now).unwrap();
         let rows = section(&body, "In progress")
             .lines()
-            .filter(|l| l.starts_with("- KEN-"))
+            .filter(|l| l.starts_with("- KEN-") || l.starts_with("- issue-"))
             .map(str::to_owned)
             .collect();
         (rows, body)
     };
     let (listed, body) = rows(&planted);
+    assert!(body.contains("window: 2026-09-30T06:00:00Z to"), "{body}");
     assert_eq!(
         listed,
         [
@@ -5088,7 +5096,8 @@ fn report_in_progress_names_open_and_merged_pull_requests() {
             "- KEN-24: Running, owner/repo#40.",
             "- KEN-25: Running, lane/repo#51.",
             "- KEN-4933: Running, owner/repo#6793.",
-            "- KEN-5544: Running, owner/repo#6828."
+            "- KEN-5544: Running, owner/repo#6828.",
+            "- issue-42: Running, owner/repo#42."
         ],
         "{body}"
     );
@@ -5098,23 +5107,32 @@ fn report_in_progress_names_open_and_merged_pull_requests() {
     refused[key("lane/repo")] = json!({"exit": 1, "stderr": "HTTP 500"});
     let mut absent = planted.clone();
     absent.as_object_mut().unwrap().remove(&key("lane/repo"));
-    let mut refused_head = planted.clone();
-    refused_head[head("owner/repo", "ken-4933")] = json!({"exit": 1, "stderr": "HTTP 500"});
-    for (unread, read) in [
-        (refused, "report-open"),
-        (absent, "report-open"),
-        (refused_head, "report-head"),
-    ] {
+    for unread in [refused, absent] {
         let (listed, body) = rows(&unread);
-        assert_eq!(listed.len(), 7, "{body}");
+        assert_eq!(listed.len(), 8, "{body}");
         for row in listed.iter().filter(|row| !row.starts_with("- KEN-24:")) {
             assert!(
-                row.contains(": Running, pull request unread (") && row.contains(read),
+                row.contains(": Running, pull request unread (") && row.contains("report-open"),
                 "{body}"
             );
         }
         assert_eq!(listed[3], "- KEN-24: Running, owner/repo#40.", "{body}");
     }
+    let mut refused_head = planted;
+    refused_head[head("owner/repo", "ken-4933")] = json!({"exit": 1, "stderr": "HTTP 500"});
+    let (after_refusal, body) = rows(&refused_head);
+    assert_eq!(after_refusal.len(), listed.len(), "{body}");
+    assert_eq!(
+        after_refusal[6], "- KEN-5544: Running, owner/repo#6828.",
+        "{body}"
+    );
+    assert_eq!(after_refusal[..5], listed[..5], "{body}");
+    assert!(
+        after_refusal[5].starts_with("- KEN-4933: Running, pull request unread (")
+            && after_refusal[5].contains("report-head"),
+        "{body}"
+    );
+    assert_eq!(after_refusal[7], listed[7], "{body}");
 }
 
 /// Blocked names each standing row that holds launches while its end has

@@ -1104,10 +1104,10 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         });
         listed.push((lane, held, recorded));
     }
-    let unrecorded: BTreeSet<_> = listed
+    let unrecorded: BTreeMap<_, _> = listed
         .iter()
         .filter(|(_, _, recorded)| recorded.is_none())
-        .map(|(lane, _, _)| lane.item.as_str())
+        .map(|(lane, _, _)| (lane.item.as_str(), *lane))
         .collect();
     let pulls = if unrecorded.is_empty() {
         Ok(BTreeMap::new())
@@ -1118,10 +1118,9 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     for (lane, held, recorded) in listed {
         let pull = match recorded {
             Some(pull) => pull,
-            None => match &pulls {
-                Ok(own) => own
-                    .get(&lane.item)
-                    .map_or("no pull request".to_owned(), |keys| keys.join(", ")),
+            None => match pulls.as_ref().and_then(|own| own[&lane.item].as_ref()) {
+                Ok(keys) if keys.is_empty() => "no pull request".to_owned(),
+                Ok(keys) => keys.join(", "),
                 Err(e) => format!("pull request unread ({})", cell(&e.to_string())),
             },
         };

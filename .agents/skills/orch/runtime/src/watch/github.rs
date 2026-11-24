@@ -1600,6 +1600,18 @@ pub(super) struct Completion {
     pub title: String,
 }
 
+/// GitHub issue numbers are scoped to the lane's repository. Linear issue
+/// keys can name pull requests across repositories.
+fn report_lane_in_repo(lane: &Lane, recorded_pr: Option<&(String, u64)>, repo: &str) -> bool {
+    lane.tracker.as_deref() != Some("github")
+        || lane
+            .repo
+            .as_deref()
+            .filter(|repo| !repo.is_empty())
+            .or_else(|| recorded_pr.map(|(repo, _)| repo.as_str()))
+            .is_some_and(|lane_repo| lane_repo.eq_ignore_ascii_case(repo))
+}
+
 /// The lane items' own pull requests merged at or after `since` and before
 /// `until`, oldest first: one search per repository for its merges since
 /// the floor, bounded by the search endpoint's cap, each hit read by number
@@ -1634,15 +1646,8 @@ pub(super) fn report_merges(
             };
             for lane in lanes {
                 let recorded_pr = recorded(lane);
-                if lane.tracker.as_deref() == Some("github") {
-                    let lane_repo = lane
-                        .repo
-                        .as_deref()
-                        .filter(|repo| !repo.is_empty())
-                        .or_else(|| recorded_pr.as_ref().map(|(repo, _)| repo.as_str()));
-                    if lane_repo.is_none_or(|lane_repo| !lane_repo.eq_ignore_ascii_case(repo)) {
-                        continue;
-                    }
+                if !report_lane_in_repo(lane, recorded_pr.as_ref(), repo) {
+                    continue;
                 }
                 let pr = recorded_pr
                     .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
@@ -1668,13 +1673,17 @@ pub(super) fn report_merges(
 /// keys, in repository order then number order. The open list also finds
 /// pull requests that name the item outside its head branch. The branch
 /// read finds open and merged pull requests together, without a time floor.
+/// An open list failure affects every item. A branch failure affects its item.
 pub(super) fn report_pulls(
     gh: &Gh,
     repos: &[String],
     lanes: &[Lane],
-    items: &BTreeSet<&str>,
-) -> Result<BTreeMap<String, Vec<String>>> {
-    let mut own: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    items: &BTreeMap<&str, &Lane>,
+) -> Result<BTreeMap<String, Result<Vec<String>>>> {
+    let mut own: BTreeMap<_, _> = items
+        .keys()
+        .map(|&item| (item.to_owned(), Ok(Vec::new())))
+        .collect();
     for repo in repos {
         let owner = repo.split('/').next().unwrap_or(repo);
         let path = format!("repos/{repo}/pulls?state=open");
@@ -1687,7 +1696,7 @@ pub(super) fn report_pulls(
         let mut numbers: BTreeMap<&str, BTreeSet<u64>> = BTreeMap::new();
         for lane in lanes
             .iter()
-            .filter(|lane| items.contains(lane.item.as_str()))
+            .filter(|lane| items.contains_key(lane.item.as_str()))
         {
             let pr = recorded(lane)
                 .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
@@ -1698,19 +1707,28 @@ pub(super) fn report_pulls(
                 }
             }
         }
-        for &item in items {
-            for pull in branch_pulls(gh, repo, item, "all", "report-head")? {
+        for (item, result) in &mut own {
+            let Ok(keys) = result else { continue };
+            let lane = items[item.as_str()];
+            if !report_lane_in_repo(lane, recorded(lane).as_ref(), repo) {
+                continue;
+            }
+            let pulls = match branch_pulls(gh, repo, item, "all", "report-head") {
+                Ok(pulls) => pulls,
+                Err(cause) => {
+                    *result = Err(cause);
+                    continue;
+                }
+            };
+            let mut numbers = numbers.remove(item.as_str()).unwrap_or_default();
+            for pull in pulls {
                 if (pull.state == "open" || merged_at(&pull, None).is_some())
                     && lane_own(&pull, item, owner, None)
                 {
-                    numbers.entry(item).or_default().insert(pull.number);
+                    numbers.insert(pull.number);
                 }
             }
-        }
-        for (item, numbers) in numbers {
-            own.entry(item.to_owned())
-                .or_default()
-                .extend(numbers.into_iter().map(|number| format!("{repo}#{number}")));
+            keys.extend(numbers.into_iter().map(|number| format!("{repo}#{number}")));
         }
     }
     Ok(own)
