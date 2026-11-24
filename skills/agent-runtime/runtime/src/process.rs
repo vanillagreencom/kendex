@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::process::ExitStatusExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -291,49 +291,53 @@ pub fn identity(pid: u32) -> Reading<Identity> {
     }
 }
 
-/// A capped control group's charge and its cap. The charge counts every
-/// process under the group, so it is the figure the cap is enforced on.
+/// A capped control group's total charge (`current`), anonymous memory
+/// (`anon`), and cap (`max`), all in bytes.
 /// `oom_kill` is the OOM kills the caps read have made, from their
 /// `memory.events` `oom_kill`, `None` where one of them could not be read,
 /// which is no count of zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Memory {
     pub current: u64,
+    pub anon: u64,
     pub max: u64,
     pub oom_kill: Option<u64>,
 }
 
 impl Memory {
     fn fuller_than(self, other: Memory) -> bool {
-        u128::from(self.current) * u128::from(other.max)
-            > u128::from(other.current) * u128::from(self.max)
+        u128::from(self.anon) * u128::from(other.max)
+            > u128::from(other.anon) * u128::from(self.max)
     }
 }
 
 /// The capped group on the path of the control group `pid` runs in, under
-/// `cgroup_root`, that stands nearest its cap, read with that group's own
-/// charge: any cap on the path ends the process when its group fills.
+/// `cgroup_root`, with the highest anonymous-memory share of its cap.
 /// `Live(None)` where no cap stands on the path, so a reading there decides
 /// nothing; `Gone` where `proc_root` holds no such pid; unreadable where the
-/// group, a cap on the path or a capped group's charge could not be read or
-/// parsed, which is never a reading of zero. A `memory.max` of `max` is no
-/// cap; the root of the tree keeps none. The OOM kill count is read beside
-/// the charge and leaves the charge's reading standing where it is unread.
+/// group, a cap on the path, or a capped group's charge or anonymous memory
+/// could not be read or parsed. A `memory.max` of `max` is no cap. An unread
+/// OOM kill count leaves the memory reading standing.
 pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Option<Memory>> {
-    caps_of(proc_root, cgroup_root, pid).map(|(caps, oom_kill)| {
-        caps.into_iter()
-            .reduce(|fullest, capped| {
-                if capped.fuller_than(fullest) {
-                    capped
-                } else {
-                    fullest
-                }
-            })
-            .map(|fullest| Memory {
-                oom_kill,
-                ..fullest
-            })
-    })
+    let caps = match caps_of(proc_root, cgroup_root, pid) {
+        Reading::Live(caps) => caps,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    let mut fullest = None;
+    for (dir, cap) in &caps {
+        let memory = match cap.memory(dir) {
+            Ok(memory) => memory,
+            Err(cause) => return Reading::Unreadable { cause },
+        };
+        if fullest.is_none_or(|other| memory.fuller_than(other)) {
+            fullest = Some(memory);
+        }
+    }
+    Reading::Live(fullest.map(|memory| Memory {
+        oom_kill: kills_on_path(&caps),
+        ..memory
+    }))
 }
 
 /// The one control group on `pid`'s path whose cap a reading judges.
@@ -347,13 +351,13 @@ pub enum Level<'a> {
 }
 
 /// The cap of the one group `level` picks on the path of the control group
-/// `pid` runs in, under `cgroup_root`, read with that group's own charge
-/// and its own `memory.events` `oom_kill`. Unlike [`memory_of`], no other
+/// `pid` runs in, under `cgroup_root`, read with that group's charge,
+/// anonymous memory and `memory.events` `oom_kill`. Unlike [`memory_of`], no other
 /// cap on the path is read: a parent slice every session shares fills with
 /// the others' memory, and a hand-over frees none of it. `Live(None)`
 /// where that group keeps no cap; `Gone` where `proc_root` holds no such
-/// pid; unreadable where the group, its cap or its charge could not be
-/// read or parsed, and `cgroup-level-off-path` where no group on the path
+/// pid; unreadable where the group, its cap, charge or anonymous memory
+/// could not be read or parsed, and `cgroup-level-off-path` where no group on the path
 /// carries the named level, which is never a group without a cap.
 pub fn memory_at(
     proc_root: &Path,
@@ -382,12 +386,31 @@ pub fn memory_at(
     };
     let dir = cgroup_root.join(judged);
     match cap_at(&dir) {
-        Ok(Some(memory)) => Reading::Live(Some(Memory {
-            oom_kill: kills(&dir),
-            ..memory
-        })),
+        Ok(Some(cap)) => match cap.memory(&dir) {
+            Ok(memory) => Reading::Live(Some(Memory {
+                oom_kill: kills(&dir),
+                ..memory
+            })),
+            Err(cause) => Reading::Unreadable { cause },
+        },
         Ok(None) => Reading::Live(None),
         Err(cause) => Reading::Unreadable { cause },
+    }
+}
+
+/// The capped groups' OOM kill count, `Live(None)` when there is no cap.
+/// Death diagnosis uses the event counts independently of `memory.stat`.
+pub fn oom_kills(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Option<u64>> {
+    match caps_of(proc_root, cgroup_root, pid) {
+        Reading::Live(caps) if caps.is_empty() => Reading::Live(None),
+        Reading::Live(caps) => match kills_on_path(&caps) {
+            Some(count) => Reading::Live(Some(count)),
+            None => Reading::Unreadable {
+                cause: "oom-kill-unreadable",
+            },
+        },
+        Reading::Gone => Reading::Gone,
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
     }
 }
 
@@ -413,13 +436,13 @@ pub fn room(
         Err(_) => return Err(unreadable("meminfo-unreadable")),
     };
     let caps = match caps_of(proc_root, cgroup_root, pid) {
-        Reading::Live((caps, _)) => caps,
+        Reading::Live(caps) => caps,
         Reading::Gone => return Err(unreadable("pid-gone")),
         Reading::Unreadable { cause } => return Err(unreadable(cause)),
     };
     Ok(caps
         .iter()
-        .map(|cap| cap.max.saturating_sub(cap.current))
+        .map(|(_, cap)| cap.max.saturating_sub(cap.current))
         .fold(available, u64::min))
 }
 
@@ -438,10 +461,8 @@ fn mem_available(meminfo: &str) -> Option<u64> {
 }
 
 /// Every capped group on the path of the control group `pid` runs in, under
-/// `cgroup_root`, nearest first, each with its own charge, and the sum of
-/// their `memory.events` `oom_kill`, `None` where one of them could not be
-/// read; the readings [`memory_of`] states.
-fn caps_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<(Vec<Memory>, Option<u64>)> {
+/// `cgroup_root`, nearest first, each with its own charge.
+fn caps_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Vec<(PathBuf, Charge)>> {
     let path = match group_of(proc_root, pid) {
         Reading::Live(path) => path,
         Reading::Gone => return Reading::Gone,
@@ -449,20 +470,16 @@ fn caps_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<(Vec<Memor
     };
     let group = cgroup_root.join(path);
     let mut caps = Vec::new();
-    let mut oom_kill = Some(0u64);
     let mut dir = group.as_path();
     loop {
         match cap_at(dir) {
-            Ok(Some(cap)) => {
-                oom_kill = oom_kill.zip(kills(dir)).map(|(sum, n)| sum + n);
-                caps.push(cap);
-            }
+            Ok(Some(cap)) => caps.push((dir.to_path_buf(), cap)),
             Ok(None) => {}
             Err(cause) => return Reading::Unreadable { cause },
         }
         match dir.parent() {
             Some(parent) if dir != cgroup_root && parent.starts_with(cgroup_root) => dir = parent,
-            Some(_) | None => return Reading::Live((caps, oom_kill)),
+            Some(_) | None => return Reading::Live(caps),
         }
     }
 }
@@ -494,21 +511,47 @@ fn group_of(proc_root: &Path, pid: u32) -> Reading<String> {
     }
 }
 
-/// The cap of the group at `dir` with its charge, `oom_kill` unread;
+struct Charge {
+    current: u64,
+    max: u64,
+}
+
+impl Charge {
+    // cgroup v2's flat-keyed memory.stat names anonymous bytes under `anon`.
+    // https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files
+    fn memory(&self, dir: &Path) -> std::result::Result<Memory, &'static str> {
+        let stat =
+            fs::read_to_string(dir.join("memory.stat")).map_err(|_| "memory-stat-unreadable")?;
+        let anon = stat
+            .lines()
+            .find_map(|line| line.strip_prefix("anon "))
+            .and_then(|value| value.trim().parse().ok())
+            .ok_or("memory-anon-unparsed")?;
+        Ok(Memory {
+            current: self.current,
+            anon,
+            max: self.max,
+            oom_kill: None,
+        })
+    }
+}
+
+/// The cap of the group at `dir` with its charge.
 /// `None` where the group keeps no cap, a `memory.max` of `max` or none at
 /// all, as the root of the tree keeps none.
-fn cap_at(dir: &Path) -> std::result::Result<Option<Memory>, &'static str> {
+fn cap_at(dir: &Path) -> std::result::Result<Option<Charge>, &'static str> {
     let Some(max) = cgroup_figure(&dir.join("memory.max"))? else {
         return Ok(None);
     };
     match cgroup_figure(&dir.join("memory.current"))? {
-        Some(current) => Ok(Some(Memory {
-            current,
-            max,
-            oom_kill: None,
-        })),
+        Some(current) => Ok(Some(Charge { current, max })),
         None => Err("memory-current-unreadable"),
     }
+}
+
+fn kills_on_path(caps: &[(PathBuf, Charge)]) -> Option<u64> {
+    caps.iter()
+        .try_fold(0u64, |sum, (dir, _)| sum.checked_add(kills(dir)?))
 }
 
 /// One control-group figure: `None` for `max` or a file the group lacks.
@@ -1432,6 +1475,31 @@ mod tests {
         assert_eq!(page_size(&vector(&[(3, 64), (0, 0)])), None);
         assert_eq!(page_size(&vector(&[(6, 0), (0, 0)])), None);
         assert!(page_bytes().is_ok_and(|bytes| bytes.is_power_of_two()));
+    }
+
+    #[test]
+    fn a_capped_group_with_unread_anonymous_memory_is_unreadable() {
+        let temp = tempfile::tempdir().unwrap();
+        let proc_root = temp.path().join("proc");
+        let cgroup = temp.path().join("cgroup");
+        let dir = cgroup.join("scope");
+        fs::create_dir_all(proc_root.join("4242")).unwrap();
+        fs::write(proc_root.join("4242/cgroup"), "0::/scope\n").unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("memory.max"), "1000\n").unwrap();
+        fs::write(dir.join("memory.current"), "900\n").unwrap();
+        for (stat, cause) in [
+            (None, "memory-stat-unreadable"),
+            (Some("file 900\n"), "memory-anon-unparsed"),
+            (Some("anon broken\n"), "memory-anon-unparsed"),
+        ] {
+            if let Some(stat) = stat {
+                fs::write(dir.join("memory.stat"), stat).unwrap();
+            }
+            let unread = Reading::Unreadable { cause };
+            assert_eq!(memory_at(&proc_root, &cgroup, 4242, Level::Own), unread);
+            assert_eq!(memory_of(&proc_root, &cgroup, 4242), unread);
+        }
     }
 
     /// The room is the host's available memory or the least headroom under

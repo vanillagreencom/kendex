@@ -503,7 +503,8 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         (Some(_), None) => MemoryRead::Unmeasured("identity-unrecorded".to_owned()),
         (Some(pct), Some(identity)) => match (ask.memory)(identity, memory_level) {
             Reading::Live(Some(m)) if m.max > 0 => {
-                let used = u32::try_from(m.current.saturating_mul(100) / m.max).unwrap_or(u32::MAX);
+                let used =
+                    u32::try_from(u128::from(m.anon) * 100 / u128::from(m.max)).unwrap_or(u32::MAX);
                 if used >= pct {
                     MemoryRead::Reached { used, mark: pct }
                 } else {
@@ -633,9 +634,7 @@ pub struct Judges<'a> {
     /// The wall relaunch, the walled lane's close and its `launch-lane`
     /// (`lanes::Relaunch`), started as a detached job.
     pub relaunch: RelaunchStart<'a>,
-    /// The memory reading of the control-group path a pane's process runs
-    /// in, the kernel's under `/proc` and `/sys/fs/cgroup`: the caps' OOM
-    /// kill count a death is judged against.
+    /// The capped groups' OOM kill count on the pane process's cgroup path.
     pub memory: PaneMemoryRead<'a>,
 }
 
@@ -645,7 +644,7 @@ pub type WalkRead<'a> = &'a dyn Fn(&WalkRequest) -> crate::error::Result<walk::W
 pub type WallPickRead<'a> = &'a dyn Fn(&Path, Harness, &str, &str) -> Pick;
 /// The relaunch started as a detached job; `Err` the launcher's refusal.
 pub type RelaunchStart<'a> = &'a dyn Fn(&Relaunch) -> Result<(), String>;
-pub type PaneMemoryRead<'a> = &'a dyn Fn(u32) -> Reading<Option<Memory>>;
+pub type PaneMemoryRead<'a> = &'a dyn Fn(u32) -> Reading<Option<u64>>;
 
 /// The wall route's answer as the lanes pass reads it: the `config_dir`
 /// of the account picked, none where no account qualifies, else unjudged
@@ -1361,10 +1360,7 @@ fn dead_alert_text(record: &Record, source: Source, passes: u32, recovery: bool)
 fn oom_baseline(key: &str, pid: u32, pass: &Pass, out: &mut Produced) {
     let kept = pass.baseline.get(OOM_ROW, key);
     match (pass.judges.memory)(pid) {
-        Reading::Live(Some(Memory {
-            oom_kill: Some(count),
-            ..
-        })) => {
+        Reading::Live(Some(count)) => {
             let count = count.to_string();
             if kept != Some(count.as_str()) {
                 out.changes.push(set(OOM_ROW, key, count));
@@ -1381,10 +1377,7 @@ fn oom_baseline(key: &str, pid: u32, pass: &Pass, out: &mut Produced) {
 fn memory_cap(key: &str, pid: u32, pass: &Pass) -> Option<DeathCause> {
     let kept: u64 = pass.baseline.get(OOM_ROW, key)?.parse().ok()?;
     match (pass.judges.memory)(pid) {
-        Reading::Live(Some(Memory {
-            oom_kill: Some(count),
-            ..
-        })) if count > kept => Some(DeathCause::MemoryCap),
+        Reading::Live(Some(count)) if count > kept => Some(DeathCause::MemoryCap),
         Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. } => None,
     }
 }
@@ -2249,7 +2242,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             ))
         };
         let pane_memory = |pid: u32| {
-            agent_runtime::process::memory_of(Path::new("/proc"), Path::new("/sys/fs/cgroup"), pid)
+            agent_runtime::process::oom_kills(Path::new("/proc"), Path::new("/sys/fs/cgroup"), pid)
         };
         let relaunch = |r: &Relaunch| relaunch_through_runtime(r, tick.wall, tick.clock);
         let judges = Judges {

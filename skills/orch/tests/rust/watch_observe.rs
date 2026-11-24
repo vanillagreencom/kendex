@@ -32,7 +32,7 @@ use agent_runtime::controller::views::{Caller, MarkKind};
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, Pane, PaneState};
 use agent_runtime::observe::{self, ProcessReading};
-use agent_runtime::process::{Identity, Memory};
+use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::settings::{Roots, Succession};
@@ -2153,7 +2153,7 @@ fn reached_off(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
 
 /// The pane's memory reader of a row that plants no control group: no cap
 /// on the path.
-fn no_memory(_: u32) -> Reading<Option<Memory>> {
+fn no_memory(_: u32) -> Reading<Option<u64>> {
     Reading::Live(None)
 }
 
@@ -2903,7 +2903,7 @@ fn a_controller_marked_off_is_not_judged_dead() {
 /// says `cause=memory-cap` on its `overseer-dead` line and carries it on
 /// the `request-transfer {dead}` it asks. A count unchanged, a path with
 /// no cap and a count unread at the death say no cause. The reader is the
-/// real one over fixture `/proc` and cgroup files.
+/// real one over fixture `/proc` and cgroup files without `memory.stat`.
 #[test]
 fn a_dead_overseer_whose_caps_oom_kill_count_rose_is_dead_of_the_memory_cap() {
     let dir = tempfile::tempdir().unwrap();
@@ -2934,7 +2934,7 @@ fn a_dead_overseer_whose_caps_oom_kill_count_rose_is_dead_of_the_memory_cap() {
             }
         }
     };
-    let memory = |_: u32| agent_runtime::process::memory_of(&proc_root, &cgroup, 4242);
+    let memory = |_: u32| agent_runtime::process::oom_kills(&proc_root, &cgroup, 4242);
     for (case, live, dead, cause) in [
         (
             "rose",
