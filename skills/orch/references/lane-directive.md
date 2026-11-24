@@ -255,7 +255,8 @@ A relaunch sends the item's `launch-lane` request again over its standing record
 ### Resume or fresh
 
 - A local relaunch on the same harness and account resumes the session the record binds, with the brief as its next prompt.
-- A switched harness or account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`.
+- A local Claude Code relaunch on another account resumes that session too, where the request's account's home holds it.
+- A switched harness, any other switched account, a Pi lane, a session the destination home lacks, or a standing handoff record with `relaunch` `fresh` or none starts the harness fresh instead; the observation names the reason as `route_cause`.
 - A hosted relaunch always starts the harness fresh.
 
 Outside § Parked record, a host whose capability line declares `park=none` ([lane-host.md § Host kinds](../schemas/lane-host.md#host-kinds)) is asked neither `list` nor `start`: the launch goes straight to `create --relaunch`. A `park=verb` host is asked its `list`, which tells its sandbox's two states apart:

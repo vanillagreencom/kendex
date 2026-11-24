@@ -2833,15 +2833,16 @@ fn reconcile_cells(cells: Vec<Cell>) {
     }
 }
 
-/// A relaunch on another account than the bound session's recorded one
-/// starts fresh with `account-switched`; one whose destination home holds
-/// no file for the fixed id starts fresh with `session-absent`, its own
-/// cause, the account unchanged. The stub refuses a
-/// resume of a session its home does not hold, as the harness does, so a
-/// relaunch that resumed across accounts would fail here; one on the same
-/// account resumes the bound session.
+/// A relaunch on another account whose home lacks the bound session starts
+/// fresh with `account-switched`; one whose destination home holds no file
+/// for the fixed id starts fresh with `session-absent`, its own cause, the
+/// account unchanged. The stub refuses a resume of a session its home does
+/// not hold, as the harness does, so a relaunch that resumed across
+/// unshared accounts would fail here; one on the same account, or on an
+/// account whose `projects` leads to the same store, resumes the bound
+/// session.
 #[test]
-fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
+fn a_relaunch_resumes_where_its_account_holds_the_session_and_starts_fresh_elsewhere() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-resume");
@@ -2909,6 +2910,24 @@ fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
         missing["intent"]["observation"]["route_cause"],
         "session-absent"
     );
+    let held = missing["lane"]["session_id"].as_str().unwrap().to_owned();
+    effect_report(&runner.op_fleet(&terminal_close("KEN-R")));
+    // Another account whose `projects` leads to `b`'s: the bound session
+    // resumes there, on the new account. Its seat stands outside `/tmp`, as
+    // an operator's does, since the confinement mounts a private `/tmp`
+    // where a link under it would not stand.
+    let seats = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let c = seats.path().join("c");
+    plant_credential(&c);
+    std::os::unix::fs::symlink(b.join("projects"), c.join("projects")).unwrap();
+    let shared = effect_report(&runner.op_fleet(&request(&c)));
+    assert_eq!(shared["intent"]["outcome"], "confirmed", "{shared}");
+    assert_eq!(
+        shared["intent"]["observation"]["route"], "resume",
+        "{shared}"
+    );
+    assert_eq!(shared["lane"]["session_id"], held.as_str());
+    assert_eq!(shared["lane"]["account"], c.display().to_string());
 }
 
 /// A reconcile never confirms from the parent identity alone. A close whose

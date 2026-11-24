@@ -1,0 +1,19 @@
+#!/bin/bash
+# A stub harness for the redrawn-banner row, named `claude`: on `--resume ID`
+# it first draws the resumed session's history as Claude Code 2.1.330 drew a
+# limit-walled session resumed under another account's CLAUDE_CONFIG_DIR
+# (the resume reading attached to KEN-5416): the old last user turn, the
+# limit banner under it, a blank line, then the brief, the line's last
+# argument, as the new user turn. Then it runs as stub-resume, which draws
+# the composer.
+for word in "$@"; do
+  if [ "$word" = "--resume" ]; then
+    for brief in "$@"; do :; done
+    printf '\xe2\x9d\xaf /orch start KEN-4\n'
+    printf '  \xe2\x8e\xbf \xc2\xa0You'"'"'ve hit your weekly limit \xc2\xb7 resets Oct 4, 2027, 6pm (UTC)\n'
+    printf '\n'
+    printf '\xe2\x9d\xaf %s\n' "${brief%%$'\n'*}"
+    break
+  fi
+done
+exec "$(dirname "$0")/../stub-resume/claude" "$@"

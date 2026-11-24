@@ -6432,6 +6432,156 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     })));
 }
 
+/// A wall relaunch onto an account whose `projects` leads to the walled
+/// account's resumes the bound session, whose redrawn history holds the
+/// banner that walled it above the brief's turn. That banner is the old
+/// process's history on the new account, never its wall: no `usage-limit`,
+/// no second relaunch, no wall recorded for the new account and no first
+/// sighting left to mask a later wall, both as the route leaves the lane's
+/// row and after the gone window's read once the relaunch settled.
+#[test]
+fn a_resumed_relaunch_whose_screen_redraws_its_wall_is_no_wall_on_the_new_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut fleet = Fleet::new(&server);
+    fleet.runner.stub = fixtures().join("stub-resume-banner/claude");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let init = program("git")
+        .args(["-C", &checkout.display().to_string(), "init", "-q"])
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{}", stderr(&init));
+    fleet_origin(&fleet, &checkout);
+    let checkout = checkout.canonicalize().unwrap();
+    let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+    // The seats stand outside `/tmp`, as an operator's do, since the
+    // confinement mounts a private `/tmp` where a link under it would not
+    // stand; the new seat's `projects` leads to the old seat's.
+    let seats = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let old_account = seats.path().join("old-account");
+    let new_account = seats.path().join("new-account");
+    plant_credential(&new_account);
+    let session = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
+    let file =
+        agent_runtime::effects::fixed_file(Harness::Claude, &old_account, &checkout, session)
+            .unwrap();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        format!("{{\"type\":\"permission-mode\",\"sessionId\":\"{session}\"}}\n"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(old_account.join("projects"), new_account.join("projects")).unwrap();
+    // The window name the launch records, so the replacement keeps the
+    // lane's rows.
+    let name = "fleet:KEN-4";
+    let mut record = relaunchable(lane_record(
+        "KEN-4",
+        name,
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        &checkout,
+    ));
+    record["effort"] = json!("high");
+    record["account"] = json!(old_account.display().to_string());
+    record["session_id"] = json!(session);
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    let scripts = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
+    // The walled process started before the first pass's clock, every
+    // later one after it.
+    const FIRST_PASS: u64 = 1_800_000_000;
+    let walled = identity.pid;
+    let started = move |id: &Identity| match observe::start_epoch(id) {
+        Reading::Live(_) if id.pid == walled => Reading::Live(FIRST_PASS - 10),
+        Reading::Live(_) => Reading::Live(FIRST_PASS + 10),
+        other => other,
+    };
+    lane_driver!(server, fleet, readers, driver);
+    driver.readers.start_epoch = &started;
+    driver.scripts = scripts;
+    driver.pick = Pick::Lane(new_account.display().to_string());
+    assert_eq!(driver.now, FIRST_PASS);
+    let produced = driver.pass(&state);
+    assert_eq!(
+        driver.relaunches.borrow().len(),
+        1,
+        "{:?}",
+        lines(&produced)
+    );
+    let relaunch = driver.relaunches.borrow()[0].clone();
+    let out = run_relaunch(&fleet, &relaunch);
+    assert!(
+        out.status.success(),
+        "the relaunch's requests were refused: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr(&out)
+    );
+    let launched = fleet.runner.fleet();
+    let observation = launched["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["op"] == "launch-session")
+        .map(|i| i["observation"].clone())
+        .expect("the relaunch's launch is recorded");
+    assert_eq!(observation["route"], "resume", "{observation}");
+    let lane = &launched["lanes"][0];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane["account"], new_account.display().to_string(), "{lane}");
+    assert_eq!(lane["session_id"], session, "{lane}");
+    assert_eq!(lane["window"], name, "{lane}");
+    let replacement = lane["launch"]["pane"].as_str().unwrap().to_owned();
+    await_drawn(&server, &replacement, "weekly limit");
+    let wall = account_wall::account_wall_path(
+        &driver.settings.account_state.get().unwrap(),
+        &new_account.display().to_string(),
+    );
+    let quiet = |driver: &mut LaneDriver<'_>, sub_row: &str| {
+        for _ in 0..2 {
+            let produced = driver.pass(&fleet.read());
+            assert!(
+                !event_lines(&produced)
+                    .iter()
+                    .any(|l| l.starts_with("EVENT usage-limit")),
+                "{sub_row}: {:?}",
+                lines(&produced)
+            );
+        }
+        assert_eq!(driver.relaunches.borrow().len(), 1, "{sub_row}");
+        assert!(
+            !wall.exists(),
+            "{sub_row}: a wall recorded on the new account"
+        );
+        assert_eq!(driver.baseline.get("usage-limit", name), None, "{sub_row}");
+    };
+    quiet(&mut driver, "as the route left the row");
+    // The relaunch settles as its outcome reader leaves it, then the gone
+    // window of the snapshot read before it is judged.
+    std::fs::write(overseer::relaunch_exit_path(&relaunch.marker), "0\n").unwrap();
+    let settled = overseer::relaunch_outcomes(
+        lanes::watch_state_dir(&driver.settings.claim_store),
+        &fleet.read(),
+        driver.settings.watch.get().unwrap().prepare,
+        driver.now,
+        &driver.baseline,
+    );
+    apply(&mut driver.baseline, &settled);
+    assert!(!relaunch.marker.exists(), "the settled marker leaves");
+    driver.pass(&state);
+    quiet(&mut driver, "after the gone window's read");
+    effect_report(&fleet.runner.op_fleet(&json!({
+        "op": "close-owned-resources",
+        "item": "KEN-4",
+        "terminal": {"verdict": "completed", "source": "test"},
+    })));
+}
+
 /// The detached line as its starter runs it: the entry's word first, in the
 /// lane's checkout with the watch's session and the runner's environment.
 fn run_relaunch(fleet: &Fleet, relaunch: &Relaunch) -> std::process::Output {

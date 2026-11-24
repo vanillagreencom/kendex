@@ -12,7 +12,7 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 - orch reads each account's usage and picks the account a lane launches on. The watch reports usage limits and their resets.
 - Lanes can run on another machine through a host provider, with the same mailbox and watch. `lane-host-ssh` is the included provider for SSH hosts. What runs where, which credential each part spends, and how mail and handoff move on a hosted fleet: [docs/hosted-oversight.html](docs/hosted-oversight.html).
 - orch writes the overseer's status reports and times each merge against the target for its change class.
-- orch relaunches a stopped lane. The lane resumes its own agent session on the same account, or starts fresh from its handoff record on another.
+- orch relaunches a stopped lane. The lane resumes its own agent session on the same account, a local Claude Code lane also on another account whose home holds that session, and any other lane starts fresh from its handoff record.
 - Each review finding is fixed, filed as an issue or declined under [the reviewer's disposition rules](../reviewer/references/finding-disposition.md). Settings cap the review and CI-fix rounds.
 - [references/secret-value.ere](references/secret-value.ere) matches GitHub and Slack tokens and private-key headers, so scripts can refuse to send matching text or files.
 - Lanes run on Claude Code, Codex, Pi and Copilot CLI.
