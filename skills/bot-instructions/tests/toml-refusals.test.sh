@@ -153,9 +153,10 @@ BI="$added" expect_clause toml-schema '(marker refusal, [bot-instructions.repo] 
 
 # The tables are read as data, so a defect in one is refused rather than read
 # as a smaller set: a misspelt row label would otherwise drop every refusal of
-# that input, a cell other than `yes` or a dash would drop that predicate, and
-# a role other than `review` or `not review` would silence `qodo-parity` for
-# that verb. Each row is a copy of the package whose `schemas/repo-toml.md`
+# that input, a cell other than `yes` or a dash would drop that predicate, a
+# role other than `review` or `not review` would silence `qodo-parity` for
+# that verb, and a line before the blank that ends the table would otherwise
+# end it there, dropping that row and every row under it. Each row is a copy of the package whose `schemas/repo-toml.md`
 # carries one defect, `label~old~new~value` with `\n` for a newline in `new`,
 # asserted as the `spec` refusal naming the value it acted on, over a manifest
 # the running copy passes.
@@ -169,6 +170,8 @@ a content-refusal cell neither yes nor a dash~| `[bot-instructions.tone] coderab
 a content-refusal column naming no predicate~| Input string | heading |~| Input string | headline |~'headline'
 a second table headed Input string~**Refusals, not escapes.**~| Input string | heading |\n|---|---|\n| x | yes |\n\n**Refusals, not escapes.**~'Input string'
 a verb role neither review nor not review~| `/review` | Merge | review |~| `/review` | Merge | Review |~'Review'
+a content-refusal row indented one space~| `[[bot-instructions.exclusions.path]] reason` |~ | `[[bot-instructions.exclusions.path]] reason` |~[[bot-instructions.exclusions.path]] reason` |
+a content-refusal row without its leading pipe~| `[[bot-instructions.exclusions.path]] reason` |~`[[bot-instructions.exclusions.path]] reason` |~[[bot-instructions.exclusions.path]] reason` |
 ROWS
 n=0
 while IFS= read -r row; do
