@@ -104,17 +104,20 @@ async function loadEnvFile(path) {
   const fromProcess = new Set(Object.keys(process.env));
   for (const [key, assigned] of assignments(text)) {
     if (fromProcess.has(key)) continue;
-    let value = assigned;
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    process.env[key] = value;
+    process.env[key] = unquote(assigned);
   }
 }
 
-// `KEY=value` lines as written, in file order; quoting is the caller's grammar.
-function assignments(text) {
+function unquote(value) {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return value.slice(1, -1);
+  return value;
+}
+
+// Return raw assignments in file order. The last assignment to a name wins.
+function assignments(text, pattern = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/) {
   const found = [];
   for (const line of text.split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    const match = line.match(pattern);
     if (match) found.push([match[1], match[2]]);
   }
   return found;
@@ -272,14 +275,10 @@ async function loadEnv() {
 // the computer's key file answers only a name the environment leaves empty.
 // The value is returned, never assigned to process.env, so no process this
 // one starts inherits a key read from the key file.
-function resolveSecretRef(name) {
+function configuredSecret(name, { allowMissingKey = false } = {}) {
   const value = process.env[name];
-  if (value?.startsWith("op://")) {
-    const result = spawnSync("op", ["read", value], { encoding: "utf8" });
-    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
-    fail("secret-reference-unresolved", name, `${name} is a 1Password reference but could not be resolved. Install/sign in to the op CLI and run: op read '${value}'`);
-  }
-  if (value || KEY_FILE === undefined) return value;
+  if (value) return { source: "environment", value };
+  if (KEY_FILE === undefined) return undefined;
   // A set KENDEX_KEY_FILE, empty included, has to name a file: a relative
   // path would be read against whichever project the run started in.
   if (!isAbsolute(KEY_FILE)) fail("key-file-not-absolute", KEY_FILE, `KENDEX_KEY_FILE is ${JSON.stringify(KEY_FILE)}: it must be the absolute path of the computer's key file.`, { fix: "Set KENDEX_KEY_FILE to an absolute path." });
@@ -289,9 +288,25 @@ function resolveSecretRef(name) {
   } catch (error) {
     fail("key-file-unreadable", KEY_FILE, `${KEY_FILE}, the key file KENDEX_KEY_FILE names, could not be read (${error.code ?? error.message}).`, { fix: `Make ${KEY_FILE} readable by this user, with a ${name}=<key> line.` });
   }
-  const key = assignments(text).filter(([assigned]) => assigned === name).pop()?.[1];
-  if (!key) fail("key-file-key-missing", KEY_FILE, `${KEY_FILE}, the key file KENDEX_KEY_FILE names, holds no ${name} value.`, { fix: `Add a ${name}=<key> line to ${KEY_FILE}.` });
-  return key;
+  // The key file accepts optional export, a quoted value or a bare word,
+  // and whitespace after the value. Read it as data, as Pi web tools do.
+  const pattern = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/;
+  const assigned = assignments(text, pattern).filter(([assigned]) => assigned === name).pop()?.[1];
+  const key = unquote(assigned ?? "");
+  if (!key && !allowMissingKey) fail("key-file-key-missing", KEY_FILE, `${KEY_FILE}, the key file KENDEX_KEY_FILE names, holds no ${name} value.`, { fix: `Add a ${name}=<key> line to ${KEY_FILE}.` });
+  return key ? { source: "key-file", value: key } : undefined;
+}
+
+function resolveSecretRef(name) {
+  const credential = configuredSecret(name);
+  if (!credential) return undefined;
+  const { source, value } = credential;
+  if (source === "environment" && value.startsWith("op://")) {
+    const result = spawnSync("op", ["read", value], { encoding: "utf8" });
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+    fail("secret-reference-unresolved", name, `${name} is a 1Password reference but could not be resolved. Install/sign in to the op CLI and run: op read '${value}'`);
+  }
+  return value;
 }
 
 function parseArgs(argv) {
@@ -727,7 +742,8 @@ async function main() {
     return;
   }
   if (options.command === "doctor") {
-    jsonOut(process.stdout, { ok: true, node: process.version, fetch: typeof fetch === "function", exaApiKey: Boolean(process.env.EXA_API_KEY) });
+    const key = configuredSecret("EXA_API_KEY", { allowMissingKey: true });
+    jsonOut(process.stdout, { ok: true, node: process.version, fetch: typeof fetch === "function", exaApiKey: Boolean(key) });
     return;
   }
   if (options.command === "validate") { await validateCommand(options); return; }

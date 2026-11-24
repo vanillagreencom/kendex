@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { clearPackageConfigCache, recordProjectTrust } from "../src/package-config.js";
 import { loadSettings } from "../src/settings.js";
 import { createWebResearchToolDefinition } from "../src/tools/web-research.js";
 import { isolateEnvironment, settingsEnvironment, tempDir } from "./fixtures.js";
+
+const keyFileCases: Array<{ name: string; contents: string; key: string | null }> =
+	JSON.parse(readFileSync(new URL("key-file-cases.json", import.meta.url), "utf8"));
 
 // The key file sits outside the project, as a computer's private key file
 // does. The fetch stub records the key each Exa request sends and whether
@@ -32,11 +35,16 @@ test("KENDEX_KEY_FILE supplies EXA_API_KEY to the Exa request alone, after every
 		return sent.pop();
 	};
 
-	writeFileSync(keyFile, "PERPLEXITY_API_KEY=from-key-file\nEXA_API_KEY=from-key-file\n");
 	process.env.KENDEX_KEY_FILE = keyFile;
-	assert.deepEqual(await research(), { key: "from-key-file", env: null });
-	assert.equal(process.env.EXA_API_KEY, undefined);
-	assert.equal(loadSettings(project).apiKeys.perplexity, undefined, "only the EXA_API_KEY line is read");
+	for (const row of keyFileCases) {
+		await t.test(row.name, async () => {
+			writeFileSync(keyFile, `PERPLEXITY_API_KEY=other\n${row.contents}`);
+			clearPackageConfigCache();
+			assert.equal(loadSettings(project).apiKeys.exa, row.key ?? undefined);
+			assert.equal(loadSettings(project).apiKeys.perplexity, undefined, "only the EXA_API_KEY line is read");
+			if (row.key !== null) assert.deepEqual(await research(), { key: row.key, env: null });
+		});
+	}
 
 	// A key the project holds wins over the key file, and a key file with no
 	// key line costs such a project nothing.

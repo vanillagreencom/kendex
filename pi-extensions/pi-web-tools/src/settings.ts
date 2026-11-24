@@ -168,11 +168,14 @@ function parseEnvFile(text: string): SettingsRecord {
 	for (const line of text.split(/\r?\n/)) {
 		const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
 		if (!match) continue;
-		let value = match[2] ?? "";
-		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-		parsed[match[1]!] = value;
+		parsed[match[1]!] = unquote(match[2]!);
 	}
 	return parsed;
+}
+
+function unquote(value: string): string {
+	if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return value.slice(1, -1);
+	return value;
 }
 
 function projectEnvFiles(cwd: string): string[] {
@@ -292,8 +295,8 @@ function readFile(path: string): FileRead {
  * kept, so the memoized settings inputs hold no other key the file holds. */
 type KeyFileRead = { kind: "key"; key: string } | { kind: "key-missing" } | { kind: "unreadable"; error: string } | { kind: "not-absolute" };
 
-// Literal `KEY=value` lines, as deep-research's key-file reader takes them:
-// no quote stripping, since the file is not a dotenv file.
+// The key file accepts optional export, a quoted value or a bare word,
+// and whitespace after the value. Read it as data, as deep-research does.
 function readKeyFile(path: string): KeyFileRead {
 	if (!isAbsolute(path)) return { kind: "not-absolute" };
 	let text: string;
@@ -305,8 +308,8 @@ function readKeyFile(path: string): KeyFileRead {
 	}
 	let key: string | undefined;
 	for (const line of text.split(/\r?\n/)) {
-		const match = line.match(/^\s*EXA_API_KEY\s*=(.*)$/);
-		if (match) key = match[1]!.trim();
+		const match = line.match(/^\s*(?:export\s+)?EXA_API_KEY\s*=\s*(.*?)\s*$/);
+		if (match) key = unquote(match[1]!);
 	}
 	return key ? { kind: "key", key } : { kind: "key-missing" };
 }

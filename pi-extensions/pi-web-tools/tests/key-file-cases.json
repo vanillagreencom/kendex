@@ -1,0 +1,7 @@
+[
+  { "name": "export", "contents": "export EXA_API_KEY=k\n", "key": "k" },
+  { "name": "double quotes", "contents": "EXA_API_KEY=\"k\"\n", "key": "k" },
+  { "name": "single quotes", "contents": "EXA_API_KEY='k'\n", "key": "k" },
+  { "name": "trailing whitespace", "contents": "EXA_API_KEY=k   \n", "key": "k" },
+  { "name": "no key", "contents": "", "key": null }
+]
