@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.5.2
+
+- Notifications read the source tmux pane and preserve its window name when the locale is not UTF-8.
+
 ### 2.5.1
 
 - Session auto-rename on a GitHub Copilot enterprise login sends its request to the enterprise API host, as Pi's own requests do. It used the individual host, which refused the request, so the session kept its fallback name.
