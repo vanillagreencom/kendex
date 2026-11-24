@@ -107,8 +107,9 @@ def destination_roots(destination):
     """The registered folders a pass or a note may take, each with the Failure that stops it, else None.
 
     A readable folder that is not a linked worktree is a root. A folder Git
-    cannot classify is a root that fails alone with kendex's cause, as it did
-    when the human rows listed it plainly; other unreadable entries are skipped."""
+    cannot classify is a root whose Failure, kendex's cause, stops what needs
+    Git there, its mail read and a note to it; the presence hold reads no Git
+    and renews it. Other unreadable entries are skipped."""
     roots = []
     for entry in destination_projects(destination):
         if entry.state == "git-unclassified":
@@ -428,10 +429,9 @@ def presence_roots(permitted):
     if not permitted():
         return [(None, "skipped", None)]
     results = []
-    for root, unread in project_roots():
-        if unread is not None:
-            results.append((str(root), "failed", unread.record))
-            continue
+    # The hold reads settings and touches a file, never Git, so a folder
+    # Git cannot classify renews like any other root.
+    for root, _ in project_roots():
         try:
             results.append((str(root), hold(root, permitted), None))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

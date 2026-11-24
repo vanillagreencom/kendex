@@ -1089,15 +1089,18 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
             # The existing presence producers supply the finite target table.
             equal = self.project("another/home")
-            unclassified = self.root / "unclassified"
+            unclassified = self.project("unclassified")
             self.registry.write_text(listing(self.home, equal, self.peer,
                                              entry(unclassified, state="git-unclassified", cause="fatal:gitdir-moved")))
             for root in (self.home, equal, self.peer):
                 root.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "missing/hold"\n')
+            # The hold reads no Git, so a folder Git cannot classify still renews.
+            unclassified.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
             local = {root: (root, status, cause) for root, status, cause in self.module.presence_roots(lambda: True)}
-            self.assertTrue(all(status == "failed" for _, status, _ in local.values()))
-            # A folder Git cannot classify fails its own hold, beside the others.
-            self.assertEqual(local[str(unclassified)][2]["key"], ["project-list", "registration", "git-unclassified"])
+            self.assertEqual({root: status for root, (_, status, _) in local.items()},
+                             {str(self.home): "failed", str(equal): "failed", str(self.peer): "failed",
+                              str(unclassified): "ok"})
+            self.assertTrue(unclassified.joinpath("hold").is_file())
             self.executable("ssh", '#!/bin/sh\nexec '+BASH+' -s\n')
             self.settings["JARVIS_CONTROL_HOST"] = "host.example"
             probe = self.watch()

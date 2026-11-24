@@ -396,6 +396,9 @@ class OwnerNote(MailWorld):
             ("local-missing", "dot", {"dot": ".dot"}, ["--local"], [(".dot", True)], [], True, "no-overseer", None),
             ("host-missing", "dot", {"dot": ".dot"}, ["--host", "host.example"], [], [(".dot", True)], True, "no-overseer", None),
             ("host-unknown", "dot", {"dot": ".dot"}, ["--host", "unknown"], [(".dot", True)], [], True, "destination-unknown", None),
+            # A declared destination's root Git cannot classify refuses; no other side takes it.
+            ("host-unclassified", "dot", {"dot": ".dot"}, ["--host", "host.example"], [(".dot", True, "git-unclassified")],
+             [(".dot", True)], True, "registration-unclassified", None),
             ("fallback", "dot", {"dot": ".dot"}, [], [], [(".dot", True)], True, None, ("local", 0)),
             ("priority", "dot", {"dot": ".dot"}, [], [(".dot", True)], [(".dot", True)], True, None, ("remote", 0)),
         )

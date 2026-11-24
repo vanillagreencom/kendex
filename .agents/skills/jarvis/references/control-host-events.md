@@ -83,7 +83,7 @@ The loop prints one batch pointer without its body; the [session workflow](../wo
 - A root that lists but cannot be reached reports its failure once, and the other roots continue.
 - A folder git cannot classify, `state` `git-unclassified`, such as a linked worktree whose main checkout was moved or deleted, is such a root.
   - The mail pass reports `root-unreachable` once for it, with `root=` the folder and `cause=` the state then kendex's Git error.
-  - The presence pass reports `presence-renew-failed` once for it.
+  - The presence pass renews its hold as for any other root.
 - A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`. No other listing failure does.
 
 ## Restart and destination identity
