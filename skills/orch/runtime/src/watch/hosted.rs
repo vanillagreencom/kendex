@@ -153,6 +153,7 @@ pub struct Capabilities {
     pub files: Files,
     pub status: Status,
     pub pane: PaneKind,
+    pub land_here: bool,
     /// How the kind launches a lane (`launch=`); `None` where the line
     /// names none. The accounts judge admits a `cloud-session` host's
     /// account only with repository access.
@@ -263,6 +264,7 @@ impl Capabilities {
         }
         let of = |key: &str| given.get(key).copied().unwrap_or("");
         Ok(Capabilities {
+            land_here: of("land") == "lane",
             files: match of("files") {
                 "local" => Files::Local,
                 "verb" => Files::Verb,
@@ -461,18 +463,53 @@ pub(crate) fn worktree_head(
     item: &str,
     root: &str,
 ) -> Result<WorktreeHead, ()> {
-    let cat = |path: &str| match fetch(scripts, host, item, path) {
+    read_worktree_head(root, &|path| {
+        remote_file(scripts, host, item, Path::new(path))
+    })
+    .map_err(|_| ())
+    .and_then(|(head, _)| head.ok_or(()))
+}
+
+fn remote_file(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    path: &Path,
+) -> crate::Result<Option<String>> {
+    let path = path.display().to_string();
+    match fetch(scripts, host, item, &path) {
         Answer::Live(text) => Ok(Some(text)),
         Answer::Gone => Ok(None),
-        Answer::Unreadable { .. } => Err(()),
-    };
-    let gitfile = cat(&format!("{root}/.git"))?.ok_or(())?;
-    let line = gitfile.lines().next().ok_or(())?;
-    let (git_dir, common) = marker::git_dirs_of(line).ok_or(())?;
-    let head = cat(&format!("{}/HEAD", git_dir.display()))?.ok_or(())?;
-    let reference = head.trim().strip_prefix("ref: ").ok_or(())?;
-    let branch = reference.strip_prefix("refs/heads/").ok_or(())?.to_owned();
-    let commit_of = |name: &str| -> Result<Option<String>, ()> {
+        Answer::Unreadable { cause } => Err(crate::validate::files::unreadable(
+            "host-file",
+            format!("{path}: {cause}"),
+        )),
+    }
+}
+
+fn read_worktree_head(
+    root: &str,
+    cat: &dyn Fn(&str) -> crate::Result<Option<String>>,
+) -> crate::Result<(Option<WorktreeHead>, PathBuf)> {
+    let unavailable =
+        |what: &str| crate::validate::files::unreadable("worktree-head", format!("{root}: {what}"));
+    let gitfile = cat(&format!("{root}/.git"))?.ok_or_else(|| unavailable(".git absent"))?;
+    let (git_dir, common) =
+        marker::git_dirs_of(&gitfile).ok_or_else(|| unavailable("gitfile invalid"))?;
+    let head =
+        cat(&format!("{}/HEAD", git_dir.display()))?.ok_or_else(|| unavailable("HEAD absent"))?;
+    if matches!(head.trim().len(), 40 | 64) && head.trim().bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Ok((None, git_dir));
+    }
+    let reference = head
+        .trim()
+        .strip_prefix("ref: ")
+        .ok_or_else(|| unavailable("HEAD detached"))?;
+    let branch = reference
+        .strip_prefix("refs/heads/")
+        .ok_or_else(|| unavailable("branch ref invalid"))?
+        .to_owned();
+    let commit_of = |name: &str| -> crate::Result<Option<String>> {
         let sha = match cat(&format!("{}/{name}", common.display()))? {
             Some(text) => Some(text.trim().to_owned()),
             None => cat(&format!("{}/packed-refs", common.display()))?.and_then(|packed| {
@@ -484,13 +521,80 @@ pub(crate) fn worktree_head(
         };
         Ok(sha.filter(|s| !s.is_empty()))
     };
-    let head = commit_of(reference)?.ok_or(())?;
+    let head = commit_of(reference)?.ok_or_else(|| unavailable("branch ref absent"))?;
     let remote = commit_of(&format!("refs/remotes/origin/{branch}"))?;
-    Ok(WorktreeHead {
-        head,
-        branch,
-        remote,
-    })
+    Ok((
+        Some(WorktreeHead {
+            head,
+            branch,
+            remote,
+        }),
+        git_dir,
+    ))
+}
+
+pub(super) fn open_restack(
+    scripts: &Path,
+    lane: &Lane,
+    root: &str,
+) -> Result<Option<crate::ops::push::Restacked>, String> {
+    use crate::ops::push::{MAP, RestackLanding, Restacked};
+    use crate::validate::files::{self, RunFile};
+
+    let host = host_of(lane);
+    let read = |path: &Path| remote_file(scripts, host, &lane.item, path);
+    let (dir, _) = match configured_state_dir(scripts, lane, root)? {
+        Some(dirs) => dirs,
+        None => return Ok(None),
+    };
+    let worktree = Path::new(root);
+    let result: crate::Result<_> = (|| {
+        let mut state = None;
+        for place in handoff_places(&dir, &lane.item, Some(worktree)) {
+            let Some(text) = read(&place)? else { continue };
+            let doc =
+                doc_of(&text).ok_or_else(|| files::unreadable("restack-state", place.display()))?;
+            if standing_record(&doc).is_some() {
+                return Ok(None);
+            }
+            if state.is_none()
+                && let Some(landing) = RestackLanding::read(&doc, &lane.item, worktree)?
+            {
+                state = Some((landing, doc));
+            }
+        }
+        let Some((landing, doc)) = state else {
+            return Ok(None);
+        };
+        let (Some(git), git_dir) = read_worktree_head(root, &|name| read(Path::new(name)))? else {
+            return Ok(None);
+        };
+        let Some(map) = read(&git_dir.join(MAP))? else {
+            return Ok(None);
+        };
+        if doc.get("branch").and_then(Value::as_str) != Some(&git.branch)
+            || !landing.matches_map(&map, &git.head)?
+        {
+            return Ok(None);
+        }
+        let tmp = worktree.join("tmp");
+        let runs = match read(&tmp.join("validation-runs"))? {
+            Some(text) => super::lanes::validation_run_names(&text)
+                .ok_or_else(|| files::unreadable("run-index", tmp.display()))?
+                .into_iter()
+                .map(|name| RunFile::read_from(&tmp.join(name), &read))
+                .collect::<crate::Result<Vec<_>>>()?,
+            None => Vec::new(),
+        };
+        if !landing.ready(runs, &git.head, &read)? {
+            return Ok(None);
+        }
+        Ok(Some(Restacked {
+            head: git.head,
+            route: landing.route,
+        }))
+    })();
+    result.map_err(|cause| cause.to_string())
 }
 
 /// Probe a directory so the provider can report its transfer boundary
@@ -2881,6 +2985,7 @@ mod tests {
         assert_eq!(
             Capabilities::parse(&format!("{SSH}\n")),
             Ok(Capabilities {
+                land_here: true,
                 files: Files::Verb,
                 status: Status::Verb,
                 pane: PaneKind::Local,

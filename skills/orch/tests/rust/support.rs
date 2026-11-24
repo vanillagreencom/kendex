@@ -350,8 +350,8 @@ pub fn git_checkout(dir: &Path) {
     assert!(out.status.success(), "git init: {}", stderr(&out));
 }
 
-/// The map and exact worktree authorization emitted by a successful
-/// guarded restack of a published branch, before `record-push` consumes it.
+/// The files a guarded restack leaves between the rewrite and publication,
+/// with the original head bound by the item's admission.
 pub fn plant_restack(worktree: &Path, item: &str, branch: &str) -> (String, PathBuf) {
     let git = |args: &[&str]| {
         let output = program("git")
@@ -364,15 +364,6 @@ pub fn plant_restack(worktree: &Path, item: &str, branch: &str) -> (String, Path
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     };
     let head = git(&["rev-parse", "HEAD"]);
-    git(&["config", "extensions.worktreeConfig", "true"]);
-    for (key, value) in [("branch", branch), ("authorizedHead", &head)] {
-        git(&[
-            "config",
-            "--worktree",
-            &format!("kendex-restack.{key}"),
-            value,
-        ]);
-    }
     let map = PathBuf::from(git(&["rev-parse", "--absolute-git-dir"])).join("kendex-rebase-map");
     let old = "a".repeat(40);
     std::fs::write(&map, format!("rebase-hop:\nrebase-map: {old} {head}\n")).unwrap();
@@ -380,7 +371,9 @@ pub fn plant_restack(worktree: &Path, item: &str, branch: &str) -> (String, Path
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         path,
-        serde_json::json!({"issue_id": item, "worktree": worktree, "branch": branch}).to_string(),
+        serde_json::json!({"issue_id": item, "worktree": worktree, "branch": branch,
+            "restack_landing": {"original": old, "at": 1, "round": null, "route": "pr"}})
+        .to_string(),
     )
     .unwrap();
     (head, map)

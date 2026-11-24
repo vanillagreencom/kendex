@@ -308,6 +308,7 @@ impl LaneDriver<'_> {
             claim_store: &self.settings.claim_store,
             account_state: &self.settings.account_state,
             scripts: &self.scripts,
+            mail_cli: &self.settings.lane_mail_cli,
             route: &route,
             wall_pauses: &wall_pauses,
             hosted: &reads,
@@ -7470,6 +7471,8 @@ fn a_bound_codex_landing_asks_for_one_continuation_until_its_push() {
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     let run = root.join("tmp/dev-validate-restack");
+    driver.settings.lane_mail_cli =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mailbox/scripts/lane-mail");
     std::fs::create_dir(&run).unwrap();
     std::fs::write(
         run.join("start"),
@@ -7491,11 +7494,18 @@ fn a_bound_codex_landing_asks_for_one_continuation_until_its_push() {
         std::fs::write(run.join("timing"), timing).unwrap();
         assert_eq!(driver.pass(&state).failed.is_some(), unreadable);
         assert_eq!(driver.baseline.get("resume", "gh-1"), None, "{exit}");
-        driver.baseline = Baseline::default();
     }
-    std::fs::remove_dir_all(run).unwrap();
+    std::fs::remove_file(run.join("exit")).unwrap();
     assert!(event_lines(&driver.pass(&state)).is_empty());
-    let request = format!("restack|{head}");
+    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
+    std::fs::write(run.join("exit"), "guard-exit=0\n").unwrap();
+    std::fs::write(
+        run.join("timing"),
+        "seconds=1\nstarted-at=2026-11-22T00:00:00Z\nended-at=2026-11-22T00:00:01Z\n",
+    )
+    .unwrap();
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    let request = format!("restack|{head}|pr");
     assert_eq!(
         driver.baseline.get("resume", "gh-1"),
         Some(request.as_str())
@@ -7536,6 +7546,118 @@ fn a_bound_codex_landing_asks_for_one_continuation_until_its_push() {
     let wake = orch_runtime::watch::wake::body(&fleet.path(), &driver.settings)(&tick).unwrap();
     assert!(event_lines(&wake).is_empty());
     assert!(!orch_runtime::watch::wake::record_path(&fleet.path()).exists());
+}
+
+#[test]
+fn a_bound_codex_ssh_landing_wakes_on_its_route_and_respects_an_acknowledged_halt() {
+    if !isolated_row(
+        "a_bound_codex_ssh_landing_wakes_on_its_route_and_respects_an_acknowledged_halt",
+    ) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let server = Server::start(&root, "fleet");
+    let fleet = Fleet::new(&server);
+    let (world, host) = HostedWorld::ssh(&root, &server, &fleet, &["KEN-1"]);
+    let _lead = host.lead("KEN-1", "codex");
+    let worktree = host.lane_root("KEN-1");
+    let (head, _) = plant_restack(&worktree, "KEN-1", "ken-1");
+    let path = state::item_path(&worktree.join("tmp"), "KEN-1");
+    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    doc["restack_landing"]["route"] = json!("push-base");
+    std::fs::write(path, doc.to_string()).unwrap();
+
+    let client = root.join("ssh");
+    let received = root.join("received");
+    write_executable(
+        &client,
+        r#"#!/bin/bash
+printf '%s\n' '› previous turn' '› Type a prompt'
+while IFS= read -r line; do printf '%s\n' "$line" >> "$1"; done
+"#,
+    );
+    let pane = server.open_window(
+        "gh-1",
+        &root,
+        &format!("exec {} {}", client.display(), received.display()),
+    );
+    await_named(&server, &pane, "ssh");
+    await_drawn(&server, &pane, "Type a prompt");
+    let mut lane = hosted_lane(&root, "KEN-1", "gh-1", worktree.to_str().unwrap());
+    lane["host"] = json!(host.provider());
+    lane["harness"] = json!("codex");
+    lane["launch"] = json!({"pane": pane, "server": server.pid, "server_start": server.start});
+    fleet.set_lanes(vec![lane]);
+    fleet.set_overseer(json!({"server_socket": server.socket}));
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    driver.settings.agent_runtime = agent_runtime().to_path_buf();
+    driver.settings.lane_mail_cli = root.join("project/.agents/skills/mailbox/scripts/lane-mail");
+    let mail = worktree.join("tmp/lane-mail/KEN-1");
+    std::fs::create_dir_all(&mail).unwrap();
+    let directive = |halt: bool| {
+        let body = json!({"id":"d-1","kind":"directive","from":"overseer","halt":halt,"text":"owner directive"});
+        std::fs::write(mail.join("to-lane.jsonl"), format!("{body}\n")).unwrap();
+        std::fs::write(mail.join("to-lane.cursor"), "1\n").unwrap();
+    };
+    directive(true);
+    driver.pass(&state);
+    driver.pass(&state);
+    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
+    directive(false);
+    let asked = driver.pass(&state);
+    let row = format!("restack|{head}|push-base");
+    assert_eq!(
+        driver.baseline.get("resume", "gh-1"),
+        Some(row.as_str()),
+        "{:?}",
+        asked.failed
+    );
+    let clock = FakeClock::new();
+    let tick = orch_runtime::watch::Tick {
+        duty: orch_runtime::schedule::Duty::Wake,
+        now: clock.now(),
+        wall: driver.now,
+        baseline: &driver.baseline,
+        clock: &clock,
+    };
+    let fleet_path = fleet.path();
+    let mut wake = orch_runtime::watch::wake::body(&fleet_path, &driver.settings);
+    directive(true);
+    let held = wake(&tick).unwrap();
+    assert!(held.failed.is_none(), "{:?}", held.failed);
+    assert!(!received.exists());
+    directive(false);
+    let sent = wake(&tick).unwrap();
+    assert!(
+        sent.failed.is_none(),
+        "{:?} {:?}",
+        sent.failed,
+        lines(&sent)
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let read = loop {
+        if let Ok(text) = std::fs::read_to_string(&received)
+            && !text.is_empty()
+        {
+            break text;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "wake events: {:?}",
+            lines(&sent)
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        read.contains(&head) && read.contains("base-publication.md"),
+        "{read}"
+    );
+    assert!(event_lines(&wake(&tick).unwrap()).is_empty());
+    assert_eq!(std::fs::read_to_string(&received).unwrap(), read);
 }
 
 /// A hosted Copilot lane launched with allow-all keeps its session store on

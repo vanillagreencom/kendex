@@ -29,8 +29,8 @@
 //! the lane's name, its value the turn end it asks a resume for: a wall
 //! (`usage-limit|<identity>|<reset>`), for a lane [`resumable`] names whose
 //! wall's reset passed, an API error (`api-error|<key>`), for a lane
-//! [`reaches`] names, or a completed guarded restack (`restack|<head>`)
-//! waiting for its push in a local Codex lane. The wake types the resume sentence with the inbox
+//! [`reaches`] names, or a completed guarded restack (`restack|<head>|<route>`)
+//! waiting for publication in a Codex lane. The wake types the resume sentence with the inbox
 //! line once per row value: the mark keeps the value typed. A wall's resume
 //! waits for the lane's account, read through the close's own account read,
 //! to read room, and is typed past its usage banner (`deliver
@@ -209,10 +209,16 @@ impl Resume {
     /// The line typed for `target`: the resume sentence, then the inbox
     /// line, so the resumed turn reads the mail that waited too.
     fn line(&self, target: &str) -> String {
-        if let Some(head) = self.restack_head() {
+        if let Some((head, route)) = self.restack() {
             return format!(
-                "{} Continue the guarded restack workflow for {target} from its completed restack at {head}. Read or complete its validation and use the guarded record-push step when the workflow permits. Do not run the restack again.",
-                line_for(target)
+                "{} Continue the guarded restack workflow for {target} from the completed restack at {head}. {}",
+                line_for(target),
+                match route {
+                    crate::settings::Delivery::Pr =>
+                        "Follow merge-pr-restack.md from step 2's validation, then its guarded push if permitted.",
+                    crate::settings::Delivery::PushBase =>
+                        "Return to base-publication.md at its entry as merge-pr-restack.md specifies.",
+                }
             );
         }
         format!(
@@ -222,8 +228,24 @@ impl Resume {
         )
     }
 
-    fn restack_head(&self) -> Option<&str> {
-        self.row.strip_prefix("restack|")
+    fn restack(&self) -> Option<(&str, crate::settings::Delivery)> {
+        let (head, route) = self.row.strip_prefix("restack|")?.split_once('|')?;
+        let route = match route {
+            "pr" => crate::settings::Delivery::Pr,
+            "push-base" => crate::settings::Delivery::PushBase,
+            _ => return None,
+        };
+        Some((head, route))
+    }
+}
+
+impl crate::ops::push::Restacked {
+    pub(super) fn resume_row(&self) -> String {
+        let route = match self.route {
+            crate::settings::Delivery::Pr => "pr",
+            crate::settings::Delivery::PushBase => "push-base",
+        };
+        format!("restack|{}|{route}", self.head)
     }
 }
 
@@ -777,9 +799,11 @@ impl Wake {
                 }
                 continue;
             }
-            if let Some(head) = resume.restack_head() {
-                match super::lanes::open_restack(lane) {
-                    Ok(open) if open.as_deref() == Some(head) => {}
+            let caps = host_line(&mut lines, &scripts, lane);
+            if resume.cause == "restack" {
+                let mailbox = crate::effects::fleet_mailbox(&self.settings);
+                match super::lanes::open_restack(lane, &scripts, &mailbox.mail_program, caps) {
+                    Ok(Some(open)) if open.resume_row() == row => {}
                     Ok(_) => continue,
                     Err(cause) => {
                         super::lanes::fail(
@@ -790,7 +814,6 @@ impl Wake {
                     }
                 }
             }
-            let caps = host_line(&mut lines, &scripts, lane);
             if !resume.reaches(lane, caps) {
                 continue;
             }

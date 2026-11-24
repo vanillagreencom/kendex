@@ -296,12 +296,10 @@ pub(super) fn idle_check(
         .filter(|e| e.mailbox.as_deref() == Some("to-overseer"))
         .filter(|e| matches!(e.kind(), "ask" | "notice"))
         .count();
-    let halted = events
-        .iter()
-        .rfind(|e| e.mailbox.as_deref() == Some("to-lane") && e.kind() == "directive")
-        .is_some_and(|e| e.halt == Some(true));
+    let halted = crate::mailbox::last_directive_halts(&events);
     let open = if turn.harness == Harness::Codex && !halted {
-        let work = open_work(turn, vars, lane, item);
+        let work = open_work(turn, vars, lane, item)
+            .map_err(|cause| turn.refuse(Said::WorkflowUnreadable, &cause))?;
         if let Some(work @ (OpenWork::Validation(_) | OpenWork::Restacked(_))) = work {
             return Err(turn.refuse(Said::WorkflowOpen(work), ""));
         }
@@ -343,7 +341,7 @@ pub(super) fn idle_check(
     // one more turn.
     if continued && (recorded.held || turn.harness == Harness::Pi) {
         let open = if turn.harness == Harness::Codex {
-            open
+            Ok(open)
         } else {
             open_work(turn, vars, lane, item)
         };
@@ -371,9 +369,9 @@ fn idle_notice(
     item: &str,
     record: &Record,
     sent: usize,
-    open: Option<OpenWork>,
+    open: Result<Option<OpenWork>, String>,
 ) {
-    let identity = open.map_or_else(String::new, |work| work.identity());
+    let identity = work_detail(open);
     let text = Said::LaneIdle(item.to_owned()).text(&identity);
     let noticed = match Scratch::holding(&text) {
         Ok(scratch) => mailbox.notice(item, &lane.root, &scratch.0, None),
@@ -401,20 +399,23 @@ fn idle_notice(
     clippy::disallowed_methods,
     reason = "the bound lane's item snapshot for the stop answer and notice, read without writes"
 )]
-fn open_work(turn: &mut Turn, vars: &Vars, lane: &Lane, item: &str) -> Option<OpenWork> {
-    match files::live(&lane.root) {
-        Ok(Some((dir, _))) => return Some(OpenWork::Validation(dir)),
-        Ok(None) => {}
-        Err(cause) => turn.note(&Said::LaneRecord, &cause.to_string()),
+fn open_work(
+    turn: &mut Turn,
+    vars: &Vars,
+    lane: &Lane,
+    item: &str,
+) -> Result<Option<OpenWork>, String> {
+    if let Some((dir, _)) = files::live_for_stop(&lane.root).map_err(|e| e.to_string())? {
+        return Ok(Some(OpenWork::Validation(dir)));
     }
-    let settings = super::marks::marks_settings(turn, &lane.root, vars.private_env).ok()?;
+    let settings = super::marks::marks_settings(turn, &lane.root, vars.private_env)?;
     let path = state::item_path(&settings.state_dir, item);
     let result: crate::error::Result<_> = (|| {
         let Some(snapshot) = state::load(&path)? else {
             return Ok(None);
         };
-        if let Some(head) = crate::ops::push::open_restack(&snapshot.doc, item, &lane.root)? {
-            return Ok(Some(OpenWork::Restacked(head)));
+        if let Some(restack) = crate::ops::push::open_restack(&snapshot.doc, item, &lane.root)? {
+            return Ok(Some(OpenWork::Restacked(restack.head)));
         }
         let state = snapshot.view::<ItemState>(&path)?;
         Ok(state.stages.into_iter().rev().find_map(|stage| {
@@ -424,12 +425,14 @@ fn open_work(turn: &mut Turn, vars: &Vars, lane: &Lane, item: &str) -> Option<Op
             })
         }))
     })();
-    match result {
-        Ok(work) => work,
-        Err(cause) => {
-            turn.note(&Said::LaneRecord, &cause.to_string());
-            None
-        }
+    result.map_err(|e| e.to_string())
+}
+
+fn work_detail(work: Result<Option<OpenWork>, String>) -> String {
+    match work {
+        Ok(Some(work)) => work.identity(),
+        Ok(None) => String::new(),
+        Err(cause) => format!("workflow-open=unreadable {cause}"),
     }
 }
 
@@ -453,9 +456,10 @@ pub(super) fn stop_notice(turn: &mut Turn, vars: &Vars, lane: &Lane, told: &str,
         told: told.to_owned(),
     };
     let mut text = said.text(line);
-    if let Some(work) = open_work(turn, vars, lane, item) {
+    let detail = work_detail(open_work(turn, vars, lane, item));
+    if !detail.is_empty() {
         text.push('\n');
-        text.push_str(&work.identity());
+        text.push_str(&detail);
     }
     let noticed = match Scratch::holding(&text) {
         Ok(scratch) => Mailbox::new(reader).notice(item, &lane.root, &scratch.0, None),

@@ -547,6 +547,7 @@ pub struct Pass<'a> {
     /// The scripts directory: the relaunch's `orch-runtime` entry and the
     /// provider calls.
     pub scripts: &'a Path,
+    pub mail_cli: &'a Path,
     /// The wall route's calls and setting.
     pub route: &'a WallRoute<'a>,
     /// Record the lane walls this pass observed on the fleet record
@@ -1523,18 +1524,15 @@ fn observe_one(
                 format!("{pane_key}|{position:?}|{wake_at}|{}", hash_of(&slice)),
                 note.as_deref(),
             );
-            if prior == format!("{key}|reported") {
-                return reading;
-            }
+            let reported = prior == format!("{key}|reported");
             // A hosted lane's screen between a finished tool call and the
             // next reads the same, so only a local lane's is believed at once.
             let codex_after_turn = obs.lane.harness.as_deref() == Some("codex")
                 && hosted::host_of(obs.lane) == "local"
                 && obs.screen.as_deref().is_some_and(|s| s != slice);
-            if prior == key || codex_after_turn {
-                out.changes
-                    .push(set("lane-idle", lane, format!("{key}|reported")));
-                let restack = match open_restack(obs.lane) {
+            if prior == key || codex_after_turn || reported {
+                let caps = hosts.of(obs.lane).ok();
+                let restack = match open_restack(obs.lane, pass.scripts, pass.mail_cli, caps) {
                     Ok(restack) => restack,
                     Err(cause) => {
                         fail(
@@ -1544,14 +1542,22 @@ fn observe_one(
                         None
                     }
                 };
-                if let Some(head) = &restack
-                    && get(RESTACK_ASKED).as_ref() != Some(head)
+                if let Some(restack) = &restack
+                    && get(RESTACK_ASKED).as_ref() != Some(&restack.head)
                 {
-                    out.changes.push(set(RESTACK_ASKED, lane, head.clone()));
                     out.changes
-                        .push(set(wake::RESUME_KIND, lane, format!("restack|{head}")));
+                        .push(set("lane-idle", lane, format!("{key}|reported")));
+                    out.changes
+                        .push(set(RESTACK_ASKED, lane, restack.head.clone()));
+                    out.changes
+                        .push(set(wake::RESUME_KIND, lane, restack.resume_row()));
                     return reading;
                 }
+                if reported {
+                    return reading;
+                }
+                out.changes
+                    .push(set("lane-idle", lane, format!("{key}|reported")));
                 // A turn its provider's API ended, on a lane the wake reaches,
                 // is the wake's to resume once, with no line; the next such
                 // end is told and its row asks nothing more. A finished
@@ -1559,11 +1565,7 @@ fn observe_one(
                 let api_error = cause.as_deref() == Some("api-error");
                 let asked = get(wake::RESUME_KIND)
                     .is_some_and(|row| matches!(row.split('|').next(), Some("api-error" | "told")));
-                if api_error
-                    && !asked
-                    && restack.is_none()
-                    && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
-                {
+                if api_error && !asked && restack.is_none() && wake::reaches(obs.lane, caps) {
                     out.changes
                         .push(set(wake::RESUME_KIND, lane, format!("api-error|{key}")));
                     return reading;
@@ -1576,10 +1578,7 @@ fn observe_one(
                 }
                 out.events.push(Event::IdleAfterReturn {
                     lane: lane.clone(),
-                    note: restack
-                        .as_ref()
-                        .map(|head| format!("landing-step=restack-before-push head={head}"))
-                        .or(note),
+                    note,
                 });
                 out.events.extend(payload(bounded_tail(&slice, cap)));
                 hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
@@ -3064,18 +3063,45 @@ fn lane_counters(
     (counters, doc)
 }
 
-/// The pre-push step of a running Codex lane that the watch can read on
-/// this disk. The wake checks it again before attempting delivery.
-pub(super) fn open_restack(lane: &Lane) -> Result<Option<String>, String> {
+/// The owned pre-push step of a running Codex lane. Discovery and the
+/// pre-delivery recheck both respect the owner's last directive.
+pub(super) fn open_restack(
+    lane: &Lane,
+    scripts: &Path,
+    mail_cli: &Path,
+    caps: Option<Capabilities>,
+) -> Result<Option<crate::ops::push::Restacked>, String> {
+    let caps = caps.or_else(|| (hosted::host_of(lane) == "local").then(Capabilities::local));
     if lane.status != LaneStatus::Running
         || lane.harness.as_deref() != Some("codex")
-        || hosted::host_of(lane) != "local"
+        || !caps.is_some_and(|caps| caps.land_here)
+        || !wake::reaches(lane, caps)
     {
         return Ok(None);
     }
-    let Some(worktree) = lane.mail_root.as_deref().map(Path::new) else {
+    let Some(root) = lane.mail_root.as_deref() else {
         return Ok(None);
     };
+    let worktree = Path::new(root);
+    let restack = match caps.map(|caps| caps.files) {
+        Some(Files::Local) => local_restack(lane, worktree)?,
+        Some(Files::Verb) => hosted::open_restack(scripts, lane, root)?,
+        Some(Files::None) | None => return Ok(None),
+    };
+    if restack.is_some()
+        && crate::mailbox::Mailbox::new(mail_cli.to_path_buf())
+            .standing_halt(&lane.item, worktree, lane.mail_host())
+            .map_err(|cause| cause.to_string())?
+    {
+        return Ok(None);
+    }
+    Ok(restack)
+}
+
+fn local_restack(
+    lane: &Lane,
+    worktree: &Path,
+) -> Result<Option<crate::ops::push::Restacked>, String> {
     let state_dir = lane_state_dir(worktree)?;
     match handoff_standing(&state_dir, lane) {
         HandoffReading::None => {}
@@ -3158,6 +3184,10 @@ pub(super) fn doc_of(text: &str) -> Option<Document> {
 /// unique `dev-validate-<id>` per line, a final newline; any other shape
 /// is unread.
 pub fn validation_runs_of(text: &str) -> Option<usize> {
+    validation_run_names(text).map(|names| names.len())
+}
+
+pub(super) fn validation_run_names(text: &str) -> Option<Vec<&str>> {
     let rows: Vec<&str> = text.split('\n').collect();
     let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
         return None;
@@ -3172,7 +3202,7 @@ pub fn validation_runs_of(text: &str) -> Option<usize> {
         })
     });
     let unique: BTreeSet<&&str> = runs.iter().collect();
-    (well_formed && unique.len() == runs.len()).then_some(runs.len())
+    (well_formed && unique.len() == runs.len()).then(|| runs.to_vec())
 }
 
 /// The counts the `lane_state_rounds` read from the item's workflow state:

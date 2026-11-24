@@ -1978,6 +1978,42 @@ fn a_bound_codex_stop_holds_its_validation_until_the_run_ends() {
 }
 
 #[test]
+fn a_bound_codex_stop_preserves_an_unreadable_work_read_and_a_standing_halt() {
+    let world = World::launched();
+    world.bind(Some("lane"));
+    world.report("reported", "notice");
+    let run = world.lane.join("tmp/dev-validate-unreadable");
+    fs::create_dir(&run).unwrap();
+    fs::write(run.join("start"), "start=1\n").unwrap();
+    fs::write(run.join("command"), "wrong JSON\n").unwrap();
+    let stop = || {
+        world.mail(
+            "codex",
+            &[],
+            &of_session("lane", json!({"stop_hook_active": true})),
+        )
+    };
+    let held = stop();
+    assert_eq!(held.code, 2, "{}", held.stderr);
+    assert!(keyed(&held).contains("workflow-open=unreadable"));
+    assert!(
+        held.stderr.contains("command-identity") && held.stderr.contains(run.to_str().unwrap())
+    );
+    fs::write(run.join("exit"), "guard-exit=0\n").unwrap();
+    let state = orch_runtime::state::item_path(&world.lane.join("tmp"), ITEM);
+    fs::create_dir_all(state.parent().unwrap()).unwrap();
+    fs::write(&state, "unreadable\n").unwrap();
+    let held = stop();
+    assert_eq!(held.code, 2, "{}", held.stderr);
+    assert!(keyed(&held).contains("workflow-open=unreadable"));
+    assert!(held.stderr.contains(state.to_str().unwrap()));
+    world.direct("halt", "hold", true);
+    fs::write(world.lane_box().join("to-lane.cursor"), "1\n").unwrap();
+    let halted = stop();
+    assert_eq!(halted.code, 0, "{}", halted.stderr);
+}
+
+#[test]
 fn a_bound_codex_stop_holds_the_restack_and_an_idle_notice_names_the_remaining_round() {
     let world = World::launched();
     world.bind(Some("lane"));

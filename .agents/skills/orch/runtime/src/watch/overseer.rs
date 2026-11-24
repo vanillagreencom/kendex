@@ -2354,6 +2354,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 claim_store: &ctx.settings.claim_store,
                 account_state: &ctx.settings.account_state,
                 scripts: &judges.scripts,
+                mail_cli: &reach.mail_program,
                 route: &route,
                 wall_pauses: &wall_pauses,
                 hosted: &hosted_reads,

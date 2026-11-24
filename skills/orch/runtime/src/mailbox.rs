@@ -1191,11 +1191,34 @@ impl Mailbox {
     /// `events --item ITEM --root ROOT`: both boxes of the mailbox whole,
     /// each envelope naming the box it came from.
     pub fn events_of(&self, item: &str, root: &Path) -> Result<Vec<Envelope>, Refusal> {
+        self.events_at(item, root, None)
+    }
+
+    pub(crate) fn standing_halt(
+        &self,
+        item: &str,
+        root: &Path,
+        host: Option<&str>,
+    ) -> Result<bool, Refusal> {
+        self.events_at(item, root, host)
+            .map(|events| last_directive_halts(&events))
+    }
+
+    fn events_at(
+        &self,
+        item: &str,
+        root: &Path,
+        host: Option<&str>,
+    ) -> Result<Vec<Envelope>, Refusal> {
         const VERB: &str = "events";
         let root = root.display().to_string();
-        let stdout = self
-            .call(VERB, &["--item", item, "--root", &root])?
-            .ok(VERB)?;
+        let mut args = vec!["--item", item, "--root", &root];
+        let mut env = Vec::new();
+        if let Some(host) = host {
+            args.push("--host");
+            env.push(("ORCH_LANE_HOST", std::ffi::OsStr::new(host)));
+        }
+        let stdout = self.call_in(VERB, &args, &env, None)?.ok(VERB)?;
         stdout
             .lines()
             .filter(|l| !l.trim().is_empty())
@@ -1250,6 +1273,13 @@ impl Mailbox {
         }
         Err(reply(VERB, "attachment-unconfirmed", &answer.stdout))
     }
+}
+
+pub(crate) fn last_directive_halts(events: &[Envelope]) -> bool {
+    events
+        .iter()
+        .rfind(|e| e.mailbox.as_deref() == Some("to-lane") && e.kind() == "directive")
+        .is_some_and(|e| e.halt == Some(true))
 }
 
 /// The `lane-mail: sent item=... id=... monitor=...` receipt of a send that

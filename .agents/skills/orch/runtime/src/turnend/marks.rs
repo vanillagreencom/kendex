@@ -353,7 +353,9 @@ pub(super) fn session_record(turn: &mut Turn, lane: &Lane, vars: &Vars, payload:
 /// item's. A lane no launch recorded, and any other session naming no lane
 /// item, has no mark here. Settings that do not load and a handoff that
 /// cannot be read pass a turn end with the gap reported, and refuse an
-/// attached launch on that input; a lane's standing record passes both, the
+/// attached launch on that input. A Codex Stop leaves an unread item to
+/// the workflow gate, which reads the failure after honoring any halt.
+/// A lane's standing record passes both, the
 /// overseer's only where it names this session.
 fn mark_gate<'a>(
     turn: &mut Turn,
@@ -414,6 +416,7 @@ fn mark_gate<'a>(
         Some("stands") if judge.handoff_ends(&standing["record"]) => Ok(Gate::Stands),
         Some("stands" | "none") => Ok(Gate::Judge(Box::new(judge))),
         _ if halt => Err(judge.refuse_input(turn, "unreadable")),
+        _ if turn.harness == Harness::Codex && matches!(judge.seat, Seat::Lane) => Ok(Gate::NoMark),
         _ => {
             let file = judge.file.display().to_string();
             turn.note(&Said::HandoffUnreadable(file), "");

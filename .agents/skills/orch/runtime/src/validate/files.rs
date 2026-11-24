@@ -19,10 +19,23 @@ pub fn unreadable(read: &'static str, cause: impl ToString) -> Error {
 pub fn fields(path: &Path) -> Result<BTreeMap<String, String>> {
     let text = fs::read_to_string(path)
         .map_err(|e| unreadable("record", format!("{}: {e}", path.display())))?;
-    Ok(text
-        .lines()
+    Ok(parse_fields(&text))
+}
+
+fn parse_fields(text: &str) -> BTreeMap<String, String> {
+    text.lines()
         .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
-        .collect())
+        .collect()
+}
+
+pub(crate) type ReadFile<'a> = &'a dyn Fn(&Path) -> Result<Option<String>>;
+
+pub(crate) fn read_file(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(unreadable("file", format!("{}: {e}", path.display()))),
+    }
 }
 
 /// The battery's selection line opens with this, its own form: a refusal or
@@ -59,22 +72,24 @@ pub struct RunFile {
 }
 impl RunFile {
     pub fn read(dir: &Path) -> Result<Self> {
-        let sentinel = match fs::read_to_string(dir.join("exit")) {
-            Ok(s) if !s.trim().is_empty() => Some(s.trim_end().to_owned()),
-            Ok(_) => None,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(unreadable("sentinel-unreadable", e)),
+        Self::read_from(dir, &read_file)
+    }
+
+    pub(crate) fn read_from(dir: &Path, read: ReadFile<'_>) -> Result<Self> {
+        let part = |name, operation| read(&dir.join(name)).map_err(|e| unreadable(operation, e));
+        let sentinel = part("exit", "sentinel-unreadable")?
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim_end().to_owned());
+        let stopped = match part("stop", "stop-unreadable")?.as_deref() {
+            Some("stop-requested\n") => true,
+            None => false,
+            Some(_) => return Err(unreadable("stop-unreadable", dir.display())),
         };
-        let stopped = match fs::read_to_string(dir.join("stop")) {
-            Ok(text) if text == "stop-requested\n" => true,
-            Ok(_) => return Err(unreadable("stop-unreadable", dir.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => return Err(unreadable("stop-unreadable", e)),
-        };
+        let start = part("start", "start")?.ok_or_else(|| unreadable("start", dir.display()))?;
         Ok(Self {
             stopped,
             dir: dir.to_owned(),
-            start: fields(&dir.join("start"))?,
+            start: parse_fields(&start),
             sentinel,
         })
     }
@@ -103,17 +118,21 @@ impl RunFile {
         }
     }
     pub fn selection(&self) -> Result<(Option<String>, String)> {
+        self.selection_from(&read_file)
+    }
+
+    fn selection_from(&self, read: ReadFile<'_>) -> Result<(Option<String>, String)> {
         let fallback = match self.get("selection") {
             "all" => "all",
             "subset" => "subset",
             _ => "unreported",
         }
         .to_owned();
-        let log = match fs::read_to_string(self.dir.join("log")) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((None, fallback)),
-            Err(e) => return Err(unreadable("record-unreadable", e)),
-        };
+        let log =
+            match read(&self.dir.join("log")).map_err(|e| unreadable("record-unreadable", e))? {
+                Some(s) => s,
+                None => return Ok((None, fallback)),
+            };
         let Some(line) = selection_line(&log) else {
             return Ok((None, fallback));
         };
@@ -199,8 +218,12 @@ impl RunFile {
         serde_json::from_value(json!({"kind":"validate", "start":start, "end":end, "outcome":outcome, "run_dir":self.dir, "proof":proof})).map_err(Error::from)
     }
     pub fn record(&self) -> Result<String> {
+        self.record_from(&read_file)
+    }
+
+    pub(crate) fn record_from(&self, read: ReadFile<'_>) -> Result<String> {
         let mode = mode(self.get("validate-mode"))?;
-        let (lanes, selection) = self.selection()?;
+        let (lanes, selection) = self.selection_from(read)?;
         let mut line = format!(
             "validate-mode={} {}selection={selection} verdict={} head={} start={}",
             mode.word(),
@@ -212,7 +235,7 @@ impl RunFile {
         for key in ["class-base", "tree"] {
             self.append(&mut line, key);
         }
-        if let Some(t) = self.timing()? {
+        if let Some(t) = self.timing_from(read)? {
             line.push_str(&format!(
                 " seconds={} started-at={} ended-at={}",
                 t.seconds, t.started_at, t.ended_at
@@ -225,7 +248,7 @@ impl RunFile {
             self.append(&mut line, "ci-event");
         }
         let mut slow: Vec<String> = Vec::new();
-        for warning in self.warnings()?.lines() {
+        for warning in self.warnings_from(read)?.lines() {
             if let Some(step) = warning
                 .split(' ')
                 .find_map(|word| word.strip_prefix("step="))
@@ -241,19 +264,28 @@ impl RunFile {
     }
     /// The executor's warnings for a step or the run past its expected time.
     pub fn warnings(&self) -> Result<String> {
-        match fs::read_to_string(self.dir.join("warning")) {
-            Ok(text) => Ok(text),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-            Err(e) => Err(unreadable("warning-unreadable", e)),
-        }
+        self.warnings_from(&read_file)
+    }
+
+    fn warnings_from(&self, read: ReadFile<'_>) -> Result<String> {
+        read(&self.dir.join("warning"))
+            .map(Option::unwrap_or_default)
+            .map_err(|e| unreadable("warning-unreadable", e))
     }
     /// The ended run's timing record; a run with no sentinel has none yet.
     pub fn timing(&self) -> Result<Option<Timing>> {
+        self.timing_from(&read_file)
+    }
+
+    fn timing_from(&self, read: ReadFile<'_>) -> Result<Option<Timing>> {
         if self.sentinel.is_none() {
             return Ok(None);
         }
-        let timing =
-            fields(&self.dir.join("timing")).map_err(|e| unreadable("timing-unreadable", e))?;
+        let path = self.dir.join("timing");
+        let timing = read(&path)
+            .map_err(|e| unreadable("timing-unreadable", e))?
+            .ok_or_else(|| unreadable("timing-unreadable", path.display()))?;
+        let timing = parse_fields(&timing);
         let seconds = timing
             .get("seconds")
             .and_then(|v| v.parse::<u64>().ok())
@@ -457,13 +489,35 @@ pub(crate) fn runner_reading(run: &RunFile) -> Reading<u32> {
 }
 
 pub fn live(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
+    live_inner(worktree, false)
+}
+
+/// A stop can report a failed read with its cause. Starts keep their
+/// existing refusal on uncertain liveness to avoid overlapping jobs.
+pub(crate) fn live_for_stop(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
+    live_inner(worktree, true)
+}
+
+fn live_inner(worktree: &Path, strict: bool) -> Result<Option<(PathBuf, u32)>> {
     for run in runs(worktree)? {
+        if strict && run.get("start").parse::<u64>().is_err() {
+            return Err(unreadable("start", run.dir.display()));
+        }
         if run.sentinel.is_some() {
+            if strict {
+                run.verdict()?;
+            }
             continue;
         }
-        if super::run::command_reading(&run.dir)?
-            .is_some_and(|reading| !matches!(reading, Reading::Gone))
-        {
+        let command = super::run::command_reading(&run.dir)
+            .map_err(|e| unreadable("command-identity", format!("{}: {e}", run.dir.display())))?;
+        if let (true, Some(Reading::Unreadable { cause })) = (strict, command.as_ref()) {
+            return Err(unreadable(
+                "command-identity",
+                format!("{}: {cause}", run.dir.display()),
+            ));
+        }
+        if command.is_some_and(|reading| !matches!(reading, Reading::Gone)) {
             let pid = fs::read_to_string(run.dir.join("pid"))
                 .ok()
                 .and_then(|p| p.trim().parse().ok())
@@ -475,6 +529,12 @@ pub fn live(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
         }
         match runner_reading(&run) {
             Reading::Live(pid) => return Ok(Some((run.dir, pid))),
+            Reading::Unreadable { cause } if strict => {
+                return Err(unreadable(
+                    "runner",
+                    format!("{}: {cause}", run.dir.display()),
+                ));
+            }
             Reading::Unreadable { .. } => return Ok(Some((run.dir, 0))),
             Reading::Gone => {}
         }
