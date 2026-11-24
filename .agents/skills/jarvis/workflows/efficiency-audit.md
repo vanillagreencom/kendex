@@ -134,7 +134,6 @@ For guard delays and blocks:
   - Keep state `prepared for owner` while approval or confirmed delivery is pending.
 - List a guard for redesign or removal only when two or more confirmed blocks in the period found no defect.
   - Cite the run-log rows, the transcript evidence that confirms each block, and the diagnostic, flagged content and guard contract that show no defect.
-  - Exclude unconfirmed classifications from this count.
 - Apply [Decisions: Authority](../references/decisions.md#authority) to any later, separately delegated fix.
 - This audit writes only its report file. It changes no tracker item, audited record or running process. Process handling follows [Computer use: Desktop and terminal](../references/computer-use.md#desktop-and-terminal).
 
