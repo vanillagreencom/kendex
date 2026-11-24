@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """The curl the real linear.sh runs under `linear` beside it.
 
-It accepts one request, the `ListIssues` page that the report's
-`issues list --created-since S --max --format=safe` sends: the filter
-`{"createdAt": {"gte": S}}` alone, `includeArchived` false, the full
-selection's page of 75 and the cursor of the page before it. It reads the
-request as the package sends it, a curl config on stdin whose `data = ` line
-is the payload, and answers the pages planted in `linear-created.json` in the
-working directory, `{"since": S, "pages": [[node]], "code": N}`, as Linear
+It accepts the `ListIssues` pages of the report's three window reads:
+`issues list --created-since S --select full`, `--completed-since S --select
+triage` and `--canceled-since S --select triage`, each with `--max
+--format=safe`. A page is accepted when its filter is that read's
+`{"<field>": {"gte": S}}` alone, `includeArchived` false, the selection's
+page size (75 full, 250 triage) and the cursor of the read's page before it.
+It reads the request as the package sends it, a curl config on stdin whose
+`data = ` line is the payload, and answers the pages planted in
+`linear-created.json` in the working directory, `{"since": S, "reads":
+{"createdAt"|"completedAt"|"canceledAt": [[node]]}, "code": N}`, as Linear
 answers them, with `___HTTP_CODE___<code>` as `curl -s -w` prints it; a
 `code` other than 200 is served in place of every page. Every request is
 appended to `linear-created.log`, `{"handled": bool, "payload": ...}` per
@@ -18,22 +21,27 @@ import json
 import sys
 from pathlib import Path
 
+SIZES = {'createdAt': 75, 'completedAt': 250, 'canceledAt': 250}
+
 root = Path.cwd()
 config = sys.stdin.read()
 line = next(line for line in config.splitlines() if line.startswith('data = '))
 payload = json.loads(json.loads(line[len('data = '):]))
 world = json.loads((root / 'linear-created.json').read_text())
-pages = world['pages']
-cursors = [None] + ['page-%d' % n for n in range(2, len(pages) + 1)]
 variables = payload.get('variables') or {}
 after = variables.get('after')
+fields = list((variables.get('filter') or {}).keys())
+read = fields[0] if len(fields) == 1 and fields[0] in SIZES else None
+pages = world['reads'].get(read, []) if read else []
+cursors = [None] + ['%s-page-%d' % (read, n) for n in range(2, len(pages) + 1)]
 handled = (
-    payload.get('query', '').lstrip().startswith('query ListIssues(')
+    read is not None
+    and payload.get('query', '').lstrip().startswith('query ListIssues(')
     and after in cursors
     and variables == {
-        'filter': {'createdAt': {'gte': world['since']}},
+        'filter': {read: {'gte': world['since']}},
         'includeArchived': False,
-        'first': 75,
+        'first': SIZES[read],
         'after': after,
     }
 )

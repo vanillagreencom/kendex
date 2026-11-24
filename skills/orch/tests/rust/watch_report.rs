@@ -4490,15 +4490,18 @@ fn section<'a>(body: &'a str, name: &str) -> &'a str {
     rest.split_once("\n```\n").map_or(rest, |(text, _)| text)
 }
 
-/// The created count and the linked section read one list of every team's
-/// issues created since the window's start, through the real tracker CLI
-/// over a curl that answers that one request alone: a count over two pages
-/// and three teams that leaves out an issue dated past the render, the
-/// issues linked to a fleet item of any status by parent, blocks, blocked by
-/// or related, and both cells unread, the render still printing, when the
-/// read fails or the CLI is missing.
+/// Each Numbers count reads one list of every team's issues from the
+/// window's start, through the real tracker CLI over a curl that answers
+/// those reads alone: created by creation, verified by entry into a
+/// completed status and cancelled by entry into a canceled one, each a count
+/// over its own pages and teams that leaves out an issue dated past the
+/// render, and no merged row, since the tracker dates no merge. The linked
+/// section lists the created issues linked to a fleet item of any status by
+/// parent, blocks, blocked by or related. Every count and the linked section
+/// read unread, the render still printing, when the reads fail or the CLI is
+/// missing.
 #[test]
-fn report_counts_issues_created_and_linked_across_all_teams() {
+fn report_counts_issues_created_verified_and_cancelled_across_all_teams() {
     let world = World::new();
     let _ = world.report_context();
     let tracker = world.path().join("created");
@@ -4574,10 +4577,25 @@ fn report_counts_issues_created_and_linked_across_all_teams() {
             ),
         ],
     ]);
+    let closed = |id: &str, completed: Option<&str>, canceled: Option<&str>| json!({"identifier":id,"createdAt":"2026-09-01T00:00:00.000Z","completedAt":completed,"canceledAt":canceled});
+    let reads = json!({
+        "createdAt": pages,
+        "completedAt": [
+            [closed("OPS-41", Some("2026-10-01T10:00:00.000Z"), None)],
+            [
+                closed("KEN-42", Some("2026-10-02T10:00:00.000Z"), None),
+                closed("KEN-43", Some("2099-01-01T00:00:00.000Z"), None),
+            ],
+        ],
+        "canceledAt": [[
+            closed("FLT-44", None, Some("2026-10-03T10:00:00.000Z")),
+            closed("KEN-45", None, Some("2099-01-01T00:00:00.000Z")),
+        ]],
+    });
     let plant = |code: u16| {
         std::fs::write(
             tracker.join("linear-created.json"),
-            json!({"since":"2026-09-29T06:00:00Z","pages":pages,"code":code}).to_string(),
+            json!({"since":"2026-09-29T06:00:00Z","reads":reads,"code":code}).to_string(),
         )
         .unwrap();
     };
@@ -4586,13 +4604,13 @@ fn report_counts_issues_created_and_linked_across_all_teams() {
     let body = render_body(&world, &linear, &[]);
     let window = "window: 2026-09-29T06:00:00Z to ";
     for line in [
-        format!("- Issues merged: unread; source: Linear, all teams; {window}"),
         format!("- Issues created: 4; source: Linear, all teams; {window}"),
-        format!("- Issues verified: unread; source: Linear, all teams; {window}"),
-        format!("- Issues cancelled: unread; source: Linear, all teams; {window}"),
+        format!("- Issues verified: 2; source: Linear, all teams; {window}"),
+        format!("- Issues cancelled: 1; source: Linear, all teams; {window}"),
     ] {
         assert!(body.contains(&line), "{line}\n{body}");
     }
+    assert!(!body.contains("Issues merged"), "{body}");
     assert_eq!(
         section(&body, "Linked issues created"),
         concat!(
@@ -4606,7 +4624,7 @@ fn report_counts_issues_created_and_linked_across_all_teams() {
         "{body}"
     );
     // The Verifying list's read asks for the team first, which this curl
-    // refuses; every other request is the created read's.
+    // refuses; every other request is a window read's.
     let requests: Vec<Value> = lines(&tracker.join("linear-created.log"))
         .iter()
         .map(|l| serde_json::from_str::<Value>(l).unwrap())
@@ -4617,24 +4635,41 @@ fn report_counts_issues_created_and_linked_across_all_teams() {
                 .starts_with("query GetTeam(")
         })
         .collect();
+    let mut accepted: Vec<String> = requests
+        .iter()
+        .filter(|r| r["handled"] == true)
+        .filter_map(|r| r["payload"]["variables"]["filter"].as_object())
+        .flat_map(|filter| filter.keys().cloned())
+        .collect();
+    accepted.sort();
     assert_eq!(
-        requests
-            .iter()
-            .map(|r| r["handled"] == true)
-            .collect::<Vec<_>>(),
-        vec![true, true],
+        (accepted, requests.len()),
+        (
+            [
+                "canceledAt",
+                "completedAt",
+                "completedAt",
+                "createdAt",
+                "createdAt"
+            ]
+            .map(String::from)
+            .to_vec(),
+            5
+        ),
         "one request per page, each the one accepted form: {requests:?}"
     );
-    // A tracker answering 5xx, and a missing tracker CLI: both cells read
-    // unread and the report still renders.
+    // A tracker answering 5xx, and a missing tracker CLI: every count and
+    // the linked section read unread and the report still renders.
     plant(500);
     let unread = |body: &str| {
-        assert!(
-            body.contains(&format!(
-                "- Issues created: unread; source: Linear, all teams; {window}"
-            )),
-            "{body}"
-        );
+        for name in ["created", "verified", "cancelled"] {
+            assert!(
+                body.contains(&format!(
+                    "- Issues {name}: unread; source: Linear, all teams; {window}"
+                )),
+                "{name}\n{body}"
+            );
+        }
         let linked = section(body, "Linked issues created");
         assert!(
             linked.starts_with(&format!("- Unread; source: Linear, all teams; {window}"))

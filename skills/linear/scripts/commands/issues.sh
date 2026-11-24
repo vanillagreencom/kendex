@@ -73,7 +73,12 @@ List Options:
   --assignee <name|me|email>  Filter by assignee; addresses match exactly, ignoring case
   --updated-since <Nd>  Filter by updated date (e.g., "7d")
   --created-since <Nd|UTC>  Filter by created date; UTC is YYYY-MM-DDTHH:MM:SSZ
-  --select <name>      full (default), triage (identity and creation), or owed
+  --completed-since <Nd|UTC>  Filter by the time the issue entered a completed
+                        status, in the --created-since form
+  --canceled-since <Nd|UTC>  Filter by the time the issue entered a canceled or
+                        duplicate status, in the --created-since form
+  --select <name>      full (default), triage (identity, creation, completion
+                        and cancellation times), or owed
                         (priority, state, labels, blockers, verification and
                         container facts).
                         triage and owed use safe output and pages of 250.
@@ -644,7 +649,7 @@ list_issues() {
     linear_require_format "$selection" full triage owed || return 1
     [[ "$selection" == full ]] || linear_require_format "$FORMAT" safe || return 1
     case "$selection" in
-    triage) fields='identifier createdAt'; page=250 ;;
+    triage) fields='identifier createdAt completedAt canceledAt'; page=250 ;;
     owed)
         fields='id identifier title description priority state { name type } parent { identifier } createdAt
 labels { pageInfo { hasNextPage endCursor } nodes { name } }
@@ -698,7 +703,8 @@ labels { pageInfo { hasNextPage endCursor } nodes { name } }
     fi
 
     if [[ "$selection" == triage ]]; then
-        jq '[.issues.nodes[] | {id: .identifier, created_at: .createdAt}]' <<<"$result"
+        jq '[.issues.nodes[] | {id: .identifier, created_at: .createdAt,
+          completed_at: (.completedAt // ""), canceled_at: (.canceledAt // "")}]' <<<"$result"
         return
     elif [[ "$selection" == owed ]]; then
         jq "$ISSUE_RELATION_JQ"'[.issues.nodes[] | {id: .identifier, title, description,

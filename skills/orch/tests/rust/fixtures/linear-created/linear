@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The tracker CLI the report's created read runs: the real `linear.sh`, with
+# The tracker CLI the report's window reads run: the real `linear.sh`, with
 # the `curl` beside the path this was invoked as first on PATH, so a row
 # drives the package's own list, paging and safe formatter over the answers
 # that `curl` plants.

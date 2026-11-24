@@ -33,7 +33,7 @@ if [[ -n "${SELECTION_CASE:-}" ]]; then
       if (.query | contains("ContinueConnection")) then
         {data:{issue:{id:"uuid-1",inverseRelations:conn([blocker("KEN-open";"In Progress";"started"),blocker("KEN-verifying";"Verifying";"started"),blocker("KEN-done";"Done";"completed")];false;null)}}}
       elif .variables.after == "next" then
-        {data:{issues:conn([{identifier:"KEN-2",createdAt:"2026-08-15T09:01:00Z"}];false;null)}}
+        {data:{issues:conn([{identifier:"KEN-2",createdAt:"2026-08-15T09:01:00Z",completedAt:"2026-08-16T09:00:00Z",canceledAt:null}];false;null)}}
       else
         {data:{issues:conn([({id:"uuid-1",identifier:"KEN-1",title:"bundle root",description:"outcome\n**In-PR bundle**: yes",priority:2,
           state:{name:"Verifying",type:"started"},parent:{identifier:"KEN-parent"},createdAt:"2026-08-15T09:00:00Z"}
@@ -65,6 +65,9 @@ email assignee|--assignee Owner@Example.com|0|.assignee == {email: {eqIgnoreCase
 UTC scan floor|--created-since 2026-08-15T09:00:00Z|0|.createdAt == {gte: "2026-08-15T09:00:00Z"}
 day scan floor|--created-since 1d|0|.createdAt.gte | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")
 invalid UTC floor|--created-since 2026-02-30T09:00:00Z|1|none
+UTC completion floor|--completed-since 2026-08-15T09:00:00Z|0|. == {completedAt: {gte: "2026-08-15T09:00:00Z"}}
+UTC cancellation floor|--canceled-since 2026-08-15T09:00:00Z|0|. == {canceledAt: {gte: "2026-08-15T09:00:00Z"}}
+invalid completion floor|--completed-since 2026-08-15|1|none
 offset scan floor|--created-since 2026-08-15T09:00:00+00:00|1|none
 all projects|--all-projects --state Todo|0|has("project") | not
 no project|--no-project|0|.project == {null: true}
@@ -90,9 +93,9 @@ for selection in triage owed; do
             assert_jq "$selection: every issue page" "$out" 'map(.id) == ["KEN-1","KEN-2"]'
             assert_jq "$selection: pages of 250" "$(cat "$TMP_ROOT/calls")" 'select(.query | contains("ListIssues")) | .variables.first == 250'
             if [[ "$selection" == triage ]]; then
-                assert_jq 'triage: only identity and creation selected upstream' "$(cat "$TMP_ROOT/calls")" \
-                    '.query | capture("nodes \\{(?<fields>[^}]+)\\}").fields | split("\n") | join(" ") | split(" ") | map(select(length > 0)) | sort == ["createdAt","identifier"]'
-                assert_jq 'triage: required output fields' "$out" '.[0] == {id:"KEN-1",created_at:"2026-08-15T09:00:00Z"}'
+                assert_jq 'triage: only identity and lifecycle times selected upstream' "$(cat "$TMP_ROOT/calls")" \
+                    '.query | capture("nodes \\{(?<fields>[^}]+)\\}").fields | split("\n") | join(" ") | split(" ") | map(select(length > 0)) | sort == ["canceledAt","completedAt","createdAt","identifier"]'
+                assert_jq 'triage: required output fields' "$out" '. == [{id:"KEN-1",created_at:"2026-08-15T09:00:00Z",completed_at:"",canceled_at:""},{id:"KEN-2",created_at:"2026-08-15T09:01:00Z",completed_at:"2026-08-16T09:00:00Z",canceled_at:""}]'
             else
                 # The fixture supplies values without projecting the request.
                 # Check the wire fields owed_read needs, including their scope.
