@@ -31,9 +31,9 @@ function imageToolConfig(tool: Record<string, unknown>, options: NativeToolRewri
 }
 
 export function rewriteNativeOpenAiTools<T>(payload: T, options: NativeToolRewriteOptions = {}): NativeToolRewriteResult<T> {
-	if (!isRecord(payload) || !Array.isArray(payload.tools)) return { payload, rewritten: [] };
+	if (!isRecord(payload)) return { payload, rewritten: [] };
 	const rewritten: string[] = [];
-	const tools = payload.tools.map((candidate) => {
+	const rewriteTools = (tools: unknown[]) => tools.map((candidate) => {
 		if (!isRecord(candidate)) return candidate;
 		const name = toolName(candidate);
 		if (name === "image_generation") {
@@ -42,5 +42,11 @@ export function rewriteNativeOpenAiTools<T>(payload: T, options: NativeToolRewri
 		}
 		return candidate;
 	});
-	return { payload: { ...payload, tools } as T, rewritten };
+	const next: Record<string, unknown> = { ...payload };
+	if (Array.isArray(payload.tools)) next.tools = rewriteTools(payload.tools);
+	// A model with `additional_tools` declares its tools in input items, not the top-level list.
+	if (Array.isArray(payload.input)) {
+		next.input = payload.input.map((item) => (isRecord(item) && item.type === "additional_tools" && Array.isArray(item.tools) ? { ...item, tools: rewriteTools(item.tools) } : item));
+	}
+	return { payload: next as T, rewritten };
 }

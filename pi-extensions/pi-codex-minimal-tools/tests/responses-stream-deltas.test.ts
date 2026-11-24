@@ -7,11 +7,11 @@ const completed = { type: "response.completed", response: { id: "resp_1", status
 
 async function run(events: unknown[]) {
 	const output = createAssistantOutput();
-	const pushed: Array<{ type: string; delta?: string; text?: string }> = [];
+	const pushed: Array<{ type: string; delta?: string; text?: string; arguments?: unknown }> = [];
 	const stream = {
 		push(event: { type: string; delta?: string; contentIndex?: number }) {
-			const block = event.contentIndex === undefined ? undefined : output.content[event.contentIndex] as { text?: string; thinking?: string };
-			pushed.push({ type: event.type, delta: event.delta, text: block?.text ?? block?.thinking });
+			const block = event.contentIndex === undefined ? undefined : output.content[event.contentIndex] as { text?: string; thinking?: string; arguments?: unknown };
+			pushed.push({ type: event.type, delta: event.delta, text: block?.text ?? block?.thinking, arguments: structuredClone(block?.arguments) });
 		},
 	};
 	await processResponsesStream(asAsyncIterable(events), output, stream as never, model);
@@ -109,9 +109,10 @@ const argumentDeltas = Array.from('{"path":"/tmp/streamed","content":"body"}', (
 const argumentsJson = argumentDeltas.map((event) => event.delta).join("");
 const functionCall = { type: "function_call", id: "fc_1", call_id: "call_1", name: "write", arguments: "" };
 
-// Parsing work stays fixed however many deltas carry the arguments: a stream of
-// one delta per character parses at most once per completion event.
-test("streamed function-call arguments parse when the call completes", async (t) => {
+// Each delta is read once and the partial arguments show while the call streams; the
+// whole text is parsed once, at completion, so a stream of one delta per character
+// costs time linear in the argument length.
+test("streamed function-call arguments show as they arrive and parse once at completion", async (t) => {
 	const parse = t.mock.method(JSON, "parse");
 	const { output, pushed } = await run([
 		{ type: "response.output_item.added", output_index: 0, item: functionCall },
@@ -122,7 +123,30 @@ test("streamed function-call arguments parse when the call completes", async (t)
 	]);
 	const argumentParses = parse.mock.calls.filter((call) => call.arguments[0] === argumentsJson).length;
 	parse.mock.restore();
-	assert.equal(argumentParses, 2);
+	assert.equal(argumentParses, 1);
 	assert.deepEqual((output.content[0] as { arguments: unknown }).arguments, { path: "/tmp/streamed", content: "body" });
-	assert.equal(pushed.filter((event) => event.type === "toolcall_delta").map((event) => event.delta).join(""), argumentsJson);
+	const deltas = pushed.filter((event) => event.type === "toolcall_delta");
+	assert.equal(deltas.map((event) => event.delta).join(""), argumentsJson);
+	const pathClosed = argumentsJson.indexOf(",");
+	assert.equal((deltas[pathClosed]?.arguments as { path?: string } | undefined)?.path, "/tmp/streamed");
+	assert.equal(Object.keys(output.content[0]!).some((key) => key === "partialJson" || key === "customInput"), false, "no stream state on the block");
 });
+
+// The final arguments go through Pi's repairing parser; text that is still no JSON
+// object carries argumentsError, so validation shows the model what it sent.
+for (const row of [
+	{ name: "an invalid \\u escape keeps every field", text: '{"command":"\\usepackage","count":1}', arguments: { command: "\\usepackage", count: 1 }, error: false },
+	{ name: "malformed arguments carry argumentsError", text: '{"command":"ls"', arguments: {}, error: true },
+]) {
+	test(`completed function-call arguments: ${row.name}`, async () => {
+		const { output } = await run([
+			{ type: "response.output_item.added", output_index: 0, item: functionCall },
+			{ type: "response.function_call_arguments.delta", output_index: 0, delta: row.text },
+			{ type: "response.output_item.done", output_index: 0, item: { ...functionCall, arguments: row.text } },
+			completed,
+		]);
+		const toolCall = output.content[0] as { arguments: unknown; argumentsError?: string };
+		assert.deepEqual(toolCall.arguments, row.arguments);
+		assert.equal(typeof toolCall.argumentsError === "string" && toolCall.argumentsError.includes(row.text), row.error);
+	});
+}

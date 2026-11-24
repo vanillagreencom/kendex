@@ -1775,7 +1775,7 @@ jobs:
         if: matrix.shard == 'node' && !matrix.suite
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.87.1 @earendil-works/pi-coding-agent@0.87.1 @earendil-works/pi-tui@0.87.1 typebox 'undici@^7.29.1'
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@1.6.0 @earendil-works/pi-coding-agent@1.6.0 @earendil-works/pi-tui@1.6.0 typebox 'undici@^7.29.1'
           npm run typecheck
           npm test
 
