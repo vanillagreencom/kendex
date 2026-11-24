@@ -262,7 +262,7 @@ unclaimed_path=""
 derive_lanes() {
   local authority compared head exact result name index changed declaration_status=0
   [ -r "$HARNESS_CI_LIB_DIR/lane-reach.py" ] || return 3
-  case "$EVENT" in pull_request | merge_group) ;; *) return 3 ;; esac
+  case "$EVENT" in pull_request | merge_group | push) ;; *) return 3 ;; esac
   case "$lanes_cause" in docs-only | trivial) return 3 ;; esac
   [ -n "$base" ] && [ -s "$work/paths" ] || return 3
   case "$lane_state:${lane_legacy:-false}" in
@@ -316,7 +316,7 @@ derive_lanes() {
   ) >"$work/lane-exceptions" || return 2
 
   python3 "$HARNESS_CI_LIB_DIR/lane-reach.py" "$REPO" "$authority" "$compared" "$head" \
-    "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" >"$work/lane-reach" || return $?
+    "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" "$EVENT" >"$work/lane-reach" || return $?
   [ -s "$work/lane-reach" ] || return 2
   if [ -s "$exact" ]; then
     ci_lanes_read "$exact" || return 2

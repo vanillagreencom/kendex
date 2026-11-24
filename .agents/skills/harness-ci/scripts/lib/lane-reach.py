@@ -111,7 +111,9 @@ class Evidence:
             for entry in entries.values():
                 if not entry["enabled"]:
                     continue
-                emitted = entry["emitted"]
+                emitted = entry.get("emitted")
+                if emitted is None:
+                    continue
                 package = (entry["sourceRepo"], emitted["kind"], emitted["name"])
                 for path in inventory:
                     if path.startswith(RENDER) and any(
@@ -130,26 +132,28 @@ class Evidence:
             return self.proved_head_ownership.get(path)
         return None
 
-    def shell_reads(self, script, directory, reads):
-        if script in reads:
+    def shell_reads(self, script, directory, reads, visited):
+        invocation = (script, directory)
+        if invocation in visited:
             return
+        visited.add(invocation)
         reads.add(script)
         for line in self.blob(script).splitlines():
             args = words(line)
             if args:
-                self.shell_command(args, directory, reads)
+                self.shell_command(args, directory, reads, visited)
 
-    def shell_command(self, args, directory, reads):
+    def shell_command(self, args, directory, reads, visited):
         name, *operands = args
         if name in {"source", ".", "bash"} and len(operands) == 1:
             require(name == "bash" or "/" in operands[0], "shell-source-uses-path")
-            self.shell_reads(self.resolve(directory, operands[0]), directory, reads)
+            self.shell_reads(self.resolve(directory, operands[0]), directory, reads, visited)
         elif name.startswith("./") and not operands:
             script = self.resolve(directory, name)
             require(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
                     in [["#!/usr/bin/env bash"], ["#!/bin/bash"], ["#!/bin/sh"]],
                     "unsupported-script-interpreter")
-            self.shell_reads(script, directory, reads)
+            self.shell_reads(script, directory, reads, visited)
         elif name == "cat" and operands and all(literal(path) for path in operands):
             for path in operands:
                 reads.add(self.resolve(directory, path))
@@ -282,13 +286,12 @@ class Evidence:
         placed = {path for path in self.changed if any(
             under(path, Path(manifest).parent.as_posix()) for manifest in manifests
         )}
-        return reads, placed
+        return reads, placed | reads
 
     def vitest_reads(self, directory):
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
                 .decode().strip() == self.authority, "vitest-install-base-unavailable")
         members = {path for path in self.files if under(path, directory)}
-        relevant = {path for path in self.changed if under(path, directory)}
         for path in members:
             name = Path(path).name
             require(not name.startswith(("vitest.config.", "vite.config.", "vitest.workspace.",
@@ -315,10 +318,14 @@ class Evidence:
         require(binary.is_file(), "vitest-install-unavailable")
         if not (cwd / "node_modules").is_symlink():
             (cwd / "node_modules").symlink_to(upstream, target_is_directory=True)
-        reads = relevant - {path for path in relevant & members if MODULE.search(path)}
-        paths = relevant - reads
+        paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
+        reads = (self.changed - paths) | {
+            path for path in paths if under(path, directory) and not MODULE.search(path)
+        }
+        paths -= reads
+        placed = {path for path in self.changed if under(path, directory)}
         if not paths:
-            return reads, relevant
+            return reads, placed
 
         def listing(options, env=None):
             rows = json.loads(command([str(binary), "list", "--filesOnly", "--json", *options],
@@ -336,14 +343,18 @@ class Evidence:
         names = b"".join(os.fsencode(path) + b"\0" for path in sorted(paths))
         command(["git", "update-index", "--force-remove", "-z", "--stdin"],
                 self.checkout, data=names, env=env)
-        staged = command(["git", "diff", "--cached", "--name-only", "-z"], self.checkout, env=env)
-        require(set(staged.split(b"\0")) == set(names.split(b"\0")), "vitest-changed-paths-unread")
+        # Vitest's GitVCSProvider reads line-delimited names from this index.
+        # Git can still quote tabs and backslashes with quotePath disabled.
+        command(["git", "config", "--local", "core.quotePath", "false"], self.checkout)
+        staged = command(["git", "diff", "--cached", "--name-only"], self.checkout, env=env)
+        require(set(staged.split(b"\n")[:-1]) == {os.fsencode(path) for path in paths},
+                "vitest-changed-paths-unread")
         selected = listing(["--changed"], env)
         require(selected <= full and (paths & full) <= selected, "vitest-incomplete-related")
-        return reads | (paths if selected else set()), relevant
+        return reads | (paths if selected else set()), placed
 
 
-def yaml_jobs(source):
+def workflow_document(source):
     # BaseLoader preserves GitHub job IDs such as "on", "no" and "yes".
     import yaml
 
@@ -358,9 +369,7 @@ def yaml_jobs(source):
 
     WorkflowLoader.add_constructor("tag:yaml.org,2002:map", mapping)
     try:
-        document = yaml.load(source, Loader=WorkflowLoader)
-        require(not ({"defaults", "env"} & document.keys()), "opaque-workflow-defaults")
-        return document["jobs"]
+        return yaml.load(source, Loader=WorkflowLoader)
     except yaml.YAMLError as error:
         raise Unreadable("invalid-workflow") from error
 
@@ -381,18 +390,18 @@ def workflow(evidence):
                 "workflow-identity-unreadable")
         if path not in evidence.files and path not in evidence.changed:
             raise SystemExit(3)
-        jobs = yaml_jobs(evidence.blob(path))
-        return path, jobs, classifier_steps(jobs)
+        document = workflow_document(evidence.blob(path))
+        return path, document, classifier_steps(document["jobs"])
     found = []
     for path in sorted(evidence.files):
         if re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path):
             source = evidence.blob(path)
             if ".github/actions/change-class@" not in source:
                 continue
-            jobs = yaml_jobs(source)
-            steps = classifier_steps(jobs)
+            document = workflow_document(source)
+            steps = classifier_steps(document["jobs"])
             if steps:
-                found.append((path, jobs, steps))
+                found.append((path, document, steps))
     require(len(found) <= 1, "workflow-identity-ambiguous")
     if not found:
         raise SystemExit(3)
@@ -401,6 +410,10 @@ def workflow(evidence):
 
 def references(step, key, name, output):
     return step.get(key) == "${{ steps." + name + ".outputs." + output + " }}"
+
+
+def reads_lane_gate(condition):
+    return re.search(r"outputs.*lane_|results.*lane_", condition)
 
 
 def roster(jobs, classifier, step):
@@ -438,7 +451,9 @@ def roster(jobs, classifier, step):
                     "unmapped-lane-output")
             lane_by_job[name] = lane
         elif re.search(r"outputs.*(?:lane_|lanes)|results.*lane_", condition) or (
-            classifier in needs and condition not in {"", "always()", "${{ always() }}"}
+            classifier in needs and condition not in {
+                "", "always()", "${{ always() }}", "!cancelled()", "${{ !cancelled() }}",
+            }
         ):
             raise Unreadable("unsupported-lane-gate")
     require(lane_by_job, "derived-lanes-absent")
@@ -449,6 +464,7 @@ def job_reads(evidence, job):
     require(set(job) <= {"name", "if", "needs", "runs-on", "timeout-minutes",
                         "permissions", "steps", "defaults"}, "opaque-job")
     ordinary = set()
+    visited = set()
     readers = []
     default = job.get("defaults", {}).get("run", {})
     require(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
@@ -475,14 +491,16 @@ def job_reads(evidence, job):
                           ["npx", "--no-install", "vitest", "run"]):
                 readers.append(evidence.vitest_reads(directory))
             else:
-                evidence.shell_command(args, directory, ordinary)
+                evidence.shell_command(args, directory, ordinary, visited)
     return ordinary, readers
 
 
 def derived(evidence, exceptions, settings):
-    path, jobs, classifiers = workflow(evidence)
-    if not classifiers:
+    path, document, classifiers = workflow(evidence)
+    jobs = document["jobs"]
+    if not classifiers or not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
         raise SystemExit(3)
+    require(not ({"defaults", "env"} & document.keys()), "opaque-workflow-defaults")
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
     classifier, step = classifiers[0]
     lane_by_job, needs_by_job = roster(jobs, classifier, step)
@@ -502,7 +520,10 @@ def derived(evidence, exceptions, settings):
             if owner:
                 authority.update(name for name in evidence.changed if evidence.owner(name) == owner)
     outcomes = dict.fromkeys(lane_by_job.values(), "unread")
-    if evidence.changed & authority:
+    # Checkout attributes can change the bytes of a lane input without
+    # changing its blob. Both ends of a removed or moved file are in the diff.
+    if evidence.changed & authority or any(Path(name).name == ".gitattributes"
+                                          for name in evidence.changed):
         return outcomes
 
     job_evidence = {}
@@ -513,7 +534,7 @@ def derived(evidence, exceptions, settings):
             reads = ordinary | set().union(*(read for read, _ in readers))
             packages = {evidence.owner(path) for path in reads if path.startswith(RENDER)} - {None}
             job_evidence[name] = (reads, packages, bool(readers))
-            placed.update(reads)
+            placed.update(ordinary)
             placed.update(set().union(*(known for _, known in readers)))
         except UNAVAILABLE as error:
             print(f"lane-reach: job={name} cause={str(error).splitlines()[0]}", file=sys.stderr)
@@ -560,8 +581,23 @@ def derived(evidence, exceptions, settings):
     return outcomes
 
 
+def trusted_push(authority, head):
+    # The runner's push payload binds the default branch and both endpoints.
+    # A feature-branch parent must never become an executable graph input.
+    try:
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        branch = event["repository"]["default_branch"]
+        return bool(branch and event["ref"] == "refs/heads/" + branch and
+                    os.environ["GITHUB_REF"] == event["ref"] and event["forced"] is False and
+                    event["before"] == authority and event["after"] == head)
+    except UNAVAILABLE:
+        return False
+
+
 def main():
-    repo, authority, compared, head, work, trusted, rendered, settings = sys.argv[1:]
+    repo, authority, compared, head, work, trusted, rendered, settings, event = sys.argv[1:]
+    if event == "push" and not trusted_push(authority, head):
+        return 3
     try:
         evidence = Evidence(repo, authority, compared, head, work, trusted, rendered == "render")
         exceptions = set((Path(work) / "lane-exceptions").read_text().splitlines())

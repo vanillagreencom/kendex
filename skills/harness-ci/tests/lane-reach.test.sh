@@ -9,16 +9,14 @@ repo="$(new_repo lane-reach)"
 trusted="$SANDBOX/base"
 classifier="${ACTION_ROOT:-$root}"
 action="$root/.github/actions/change-class/classify"
-export GITHUB_REPOSITORY=example/lane-reach
-export GITHUB_WORKFLOW_REF="$GITHUB_REPOSITORY/.github/workflows/ci.yml@refs/heads/main"
-export GITHUB_JOB=changes
 python3 -c 'import tomllib, yaml'
 
-mkdir -p "$repo/.github/workflows" "$repo/tools" "$repo/web" "$repo/cargo" \
+mkdir -p "$repo/.github/workflows" "$repo/tools/other" "$repo/web" "$repo/cargo" \
   "$repo/.agents/skills/math/scripts" "$repo/.codex/skills/math" "$SANDBOX/bin"
 {
   cat <<'YAML'
 name: CI
+on: [merge_group, push]
 jobs:
   changes:
     outputs:
@@ -52,6 +50,13 @@ YAML
       - working-directory: $cwd
         run: $run
 YAML
+    if [ "$id" = shell ]; then
+      cat <<'YAML'
+      - run: bash ./tools/shared.sh
+      - working-directory: tools/other
+        run: bash ../shared.sh
+YAML
+    fi
   done <<'ROWS'
 shell|.|bash ./tools/check.sh
 shell_share|.|bash ./tools/peer.sh
@@ -59,21 +64,38 @@ cargo|cargo|cargo test -p primary
 web|web|./node_modules/.bin/vitest run
 installed|.|bash ./.agents/skills/math/scripts/check.sh
 ROWS
+  cat <<'YAML'
+  docs:
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: test -f ./README.md
+YAML
 } >"$repo/.github/workflows/ci.yml"
 
-printf '%s\n' 'source ./tools/outer.sh' >"$repo/tools/check.sh"
+printf '%s\n' 'cat ./tools/outer.sh' 'source ./tools/outer.sh' 'cat ./shared.mjs' >"$repo/tools/check.sh"
 printf '%s\n' 'source ./tools/input.sh' >"$repo/tools/outer.sh"
 printf '%s\n' 'true' >"$repo/tools/input.sh"
 printf '%s\n' 'true' >"$repo/tools/peer.sh"
+printf '%s\n' 'source ./context.sh' >"$repo/tools/shared.sh"
+printf '%s\n' 'true' >"$repo/context.sh"
+printf '%s\n' 'true' >"$repo/tools/other/context.sh"
+printf '%s\n' 'Fixture documentation' >"$repo/README.md"
 printf '%s\n' 'true' >"$repo/.agents/skills/math/scripts/check.sh"
 printf '%s\n' 'installed' >"$repo/.codex/skills/math/SKILL.md"
+reader=.agents/skills/harness-ci/scripts/change-class
+mkdir -p "$repo/${reader%/*}"
+printf '%s\n' '# HARNESS_CI_PER_PUSH_REASON is read by this render.' >"$repo/$reader"
 cat >"$repo/.kendex-generated.json" <<'JSON'
 [".agents/skills/math/scripts/check.sh",".codex/skills/math/SKILL.md"]
 JSON
 cat >"$repo/.kendex-lock.json" <<'JSON'
 {"entries":{
   "skill:math:claude":{"enabled":true,"sourceRepo":"example/catalog","emitted":{"kind":"skill","name":"math","paths":[".agents/skills/math"]}},
-  "skill:math:codex":{"enabled":true,"sourceRepo":"example/catalog","emitted":{"kind":"skill","name":"math","paths":[".agents/skills/math",".codex/skills/math"]}}
+  "skill:math:codex":{"enabled":true,"sourceRepo":"example/catalog","emitted":{"kind":"skill","name":"math","paths":[".agents/skills/math",".codex/skills/math"]}},
+  "mcp:native:copilot":{"enabled":true,"sourceRepo":"example/catalog"}
 }}
 JSON
 
@@ -97,20 +119,46 @@ printf '\n[dependencies]\nleaf = { path = "../leaf" }\n' >>"$repo/cargo/bridge/C
 (cd "$repo/cargo" && cargo generate-lockfile --offline)
 
 printf '%s\n' '{"type":"module","devDependencies":{"vitest":"4.1.11"}}' >"$repo/web/package.json"
-printf '%s\n' 'export { value } from "./input.mjs"' >"$repo/web/bridge.mjs"
-printf '%s\n' 'export const value = 42' >"$repo/web/input.mjs"
-printf '%s\n' 'export const spare = 42' >"$repo/web/spare.mjs"
+printf '%s\n' 'export { value } from /* test input */ "./café.mjs"' >"$repo/web/bridge.mjs"
+printf '%s\n' 'export const value = 42' >"$repo/web/café.mjs"
+printf '%s\n' 'export const spare = 42' >"$repo/web/spare-é.mjs"
+printf '%s\n' 'export const shared = 42' >"$repo/shared.mjs"
 cat >"$repo/web/check.test.mjs" <<'JS'
 import { expect, test } from 'vitest'
 import { value } from './bridge.mjs'
-test('module', () => expect(value).toBe(42))
+import { shared } from /* shared input */ '../shared.mjs'
+test('module', () => expect(value + shared).toBe(84))
 JS
 printf '%s\n' 'shell external.settings # reason: the external runner reads the setting' \
   >"$repo/.github/ci-lanes.conf"
 
 git -C "$repo" add -A
-git -C "$repo" commit -qm baseline
-base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" commit -qm 'queue default'
+queue_base="$(git -C "$repo" rev-parse HEAD)"
+printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "direct render landings"\n' >"$repo/kendex.settings.toml"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'per-push opt-back'
+opted_base="$(git -C "$repo" rev-parse HEAD)"
+cat >"$repo/.github/workflows/ci.yml" <<'YAML'
+name: CI
+on: merge_group
+env:
+  TEST_MODE: smoke
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    steps:
+      - id: classify
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+  ci:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+YAML
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'aggregate-only workflow'
+aggregate_base="$(git -C "$repo" rev-parse HEAD)"
 git clone --quiet "$repo" "$trusted"
 if [ -x "$root/ui/node_modules/.bin/vitest" ]; then
   modules="$root/ui/node_modules"
@@ -136,21 +184,43 @@ VERIFY
 chmod +x "$SANDBOX/bin/kendex"
 
 verdict() { sed -n "/^lane_$1=/s/^lane_$1=//p" "$2"; }
-while IFS='|' read -r label path shell cargo web installed; do
+while IFS='|' read -r label path shell cargo web installed event expected_gate; do
+  base="$opted_base"
+  push_ref=refs/heads/main
+  case "$label" in
+    aggregate-render) base="$aggregate_base" ;;
+    queued-render-push) base="$queue_base" ;;
+    feature-render-push) push_ref=refs/heads/feature ;;
+  esac
+  event="${event:-merge_group}"
+  git -C "$trusted" checkout -q --detach "$base"
   git -C "$repo" checkout -q -B row "$base"
   case "$label" in
     removed-source) git -C "$repo" rm -q -- "$path" ;;
+    checkout-attributes|nested-attributes) printf '*.sh eol=crlf\n' >"$repo/$path" ;;
+    vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
+    vitest-external) printf 'export const shared = 43\n' >"$repo/$path" ;;
     *) printf '\n' >>"$repo/$path" ;;
   esac
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$label"
   : >"$SANDBOX/action"
   : >"$SANDBOX/local"
-  PATH="$SANDBOX/bin:$PATH" CLASSIFIER="$classifier" EVENT=merge_group BASE="$base" HEAD=HEAD \
+  head="$(git -C "$repo" rev-parse HEAD)"
+  printf '{"ref":"%s","before":"%s","after":"%s","forced":false,"repository":{"default_branch":"main"}}\n' \
+    "$push_ref" "$base" "$head" >"$SANDBOX/event"
+  PATH="$SANDBOX/bin:$PATH" CLASSIFIER="$classifier" EVENT="$event" BASE="$base" HEAD="$head" \
+    GITHUB_REPOSITORY=example/lane-reach GITHUB_JOB=changes GITHUB_REF="$push_ref" \
+    GITHUB_WORKFLOW_REF="example/lane-reach/.github/workflows/ci.yml@$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
+    QUEUE_ONLY_DEFAULT=true \
     REPO="$repo" LANES_FROM="$trusted" GITHUB_OUTPUT="$SANDBOX/action" "$action" \
     >"$SANDBOX/stdout" 2>"$SANDBOX/action-log" || { cat "$SANDBOX/action-log"; exit 1; }
-  PATH="$SANDBOX/bin:$PATH" "$CHANGE_CLASS" --event merge_group --base "$base" --head HEAD \
-    --repo "$repo" --lanes-from "$trusted" --output "$SANDBOX/local" \
+  (
+    unset GITHUB_REPOSITORY GITHUB_JOB GITHUB_WORKFLOW_REF
+    PATH="$SANDBOX/bin:$PATH" GITHUB_REF="$push_ref" GITHUB_EVENT_PATH="$SANDBOX/event" \
+      "$CHANGE_CLASS" --event "$event" --base "$base" --head "$head" --queue-only-default true \
+      --repo "$repo" --lanes-from "$trusted" --output "$SANDBOX/local"
+  ) \
     >"$SANDBOX/stdout" 2>"$SANDBOX/local-log" || { cat "$SANDBOX/local-log"; exit 1; }
   for lane in shell cargo web installed; do
     actual="$(verdict "$lane" "$SANDBOX/action")"
@@ -158,20 +228,31 @@ while IFS='|' read -r label path shell cargo web installed; do
     assert_eq "$label $lane" "${!lane}" "$actual"
     assert_eq "$label $lane local parity" "$actual" "$(verdict "$lane" "$SANDBOX/local")"
   done
-  if [ "$label" = installed ]; then
-    assert_eq "installed render class" "change_class=render" "$(sed -n '/^change_class=/p' "$SANDBOX/action")"
-    assert_eq "installed render opens the global gate" "lanes=true" "$(sed -n '/^lanes=/p' "$SANDBOX/action")"
+  if [ -n "$expected_gate" ]; then
+    assert_eq "$label render class" "change_class=render" "$(sed -n '/^change_class=/p' "$SANDBOX/action")"
+    assert_eq "$label action global gate" "$expected_gate" \
+      "$(sed -n '/^lanes=/s/^lanes=//p; /^lanes_cause=/s/^lanes_cause=//p' "$SANDBOX/action" | paste -sd, -)"
+    assert_eq "$label CLI global gate" "$expected_gate" \
+      "$(sed -n '/^lanes=/s/^lanes=//p; /^lanes_cause=/s/^lanes_cause=//p' "$SANDBOX/local" | paste -sd, -)"
   fi
 done <<'ROWS'
 source|tools/input.sh|true|false|false|false
 removed-source|tools/input.sh|true|false|false|false
 shared-gate|tools/peer.sh|true|false|false|false
+shell-workdir|tools/other/context.sh|true|false|false|false
 cargo-path-dependency|cargo/leaf/src/lib.rs|false|true|false|false
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
-vitest-import|web/input.mjs|false|false|true|false
-vitest-unread|web/spare.mjs|false|false|false|false
-installed|.codex/skills/math/SKILL.md|true|false|false|true
+vitest-import|web/café.mjs|false|false|true|false
+vitest-unread|web/spare-é.mjs|false|false|false|false
+vitest-external|shared.mjs|true|false|true|false
+installed|.codex/skills/math/SKILL.md|true|false|false|true|merge_group|true,derived-reach
+installed-push|.codex/skills/math/SKILL.md|true|false|false|true|push|true,derived-reach
+queued-render-push|.codex/skills/math/SKILL.md|false|false|false|false|push|false,queue-only
+feature-render-push|.codex/skills/math/SKILL.md|false||||push|false,render
+aggregate-render|.codex/skills/math/SKILL.md|false||||merge_group|false,render
 unplaced-addition|unplaced.txt|false|true|true|false
 reasoned-exception|external.settings|true|true|true|false
+checkout-attributes|.gitattributes|true|true|true|true
+nested-attributes|tools/.gitattributes|true|true|true|true
 ROWS
 report "derived lane reach"
