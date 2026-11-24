@@ -2707,9 +2707,16 @@ reuse_respects_session_lease() {
     # No identity at all (no issue-usable ID and an empty env ladder) means
     # nothing was probed; proceed rather than refusing on silence.
     [[ "$rc" -eq 75 ]] || return 0
-    release_ended_session_lease "$wt" && return 0
+    local release_rc=0
+    release_ended_session_lease "$wt" || release_rc=$?
+    case "$release_rc" in
+      0) return 0 ;;
+      7 | 75) ;;
+      *) return 1 ;;
+    esac
     worktree_message lease-foreign "$wt" "Error: $wt is claimed by another session; refusing to reuse it." >&2
     [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" >&2
+    [[ -n "$SESSION_GUARD_RELEASE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
     echo "Coordinate with the owning session instead of reusing its worktree." >&2
     return 1
   fi
@@ -2717,12 +2724,33 @@ reuse_respects_session_lease() {
   return 0
 }
 
-# The guard judges, under its mutex, whether every session the lease records
-# has ended (--ended); a lease that records none must be past the TTL. Status
-# 1, the lease untouched, otherwise.
+# A release the guard judges under its mutex (--ended, --stale). Sets
+# SESSION_GUARD_RELEASE_ERR to the guard's keyed stderr and returns its
+# verdict: 0 released, 7 a session the lease records is live or cannot be
+# verified ended, 75 not yet stale. Any other exit is a guard that reached no
+# verdict, such as a mutex it could not take; that is reported here and
+# returns 1, so no caller reads it as another session's hold.
+SESSION_GUARD_RELEASE_ERR=""
+release_judged_session_lease() { # WT RELEASE-OPTION...
+  local wt="$1" rc=0
+  shift
+  SESSION_GUARD_RELEASE_ERR=""
+  SESSION_GUARD_RELEASE_ERR="$("$SESSION_GUARD" release "$wt" "$@" --repo "$PROJECT_ROOT" 2>&1 >/dev/null)" || rc=$?
+  case "$rc" in
+    0 | 7 | 75) return "$rc" ;;
+  esac
+  worktree_message lease-release-unjudged "path=$wt exit=$rc" "Error: the session guard could not judge the lease on $wt (exit $rc); it stays in place." >&2
+  [[ -z "$SESSION_GUARD_RELEASE_ERR" ]] || printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
+  return 1
+}
+
+# The guard judges whether every session the lease records has ended
+# (--ended); a lease that records none must be past the TTL. Returns
+# release_judged_session_lease's status.
 release_ended_session_lease() {
-  local wt="$1"
-  "$SESSION_GUARD" release "$wt" --ended --repo "$PROJECT_ROOT" >/dev/null 2>&1 || return 1
+  local wt="$1" rc=0
+  release_judged_session_lease "$wt" --ended || rc=$?
+  [[ "$rc" -eq 0 ]] || return "$rc"
   worktree_message lease-ended-released "$wt" "Released the guard lease of an ended session: $wt" >&2
 }
 
@@ -2732,16 +2760,31 @@ release_ended_session_lease() {
 # prunes a locked one). Anything else leaves it to the refusals below. With
 # no guard nothing is released, so the missing guard is no warning here.
 clear_removed_registration() {
-  local wt="$1" rc=0
+  local wt="$1" rc=0 err=""
   [[ -x "$SESSION_GUARD" ]] || return 0
+  # Status 1 is also the answer for a path git never registered, every fresh
+  # create's case, so it says nothing here.
   "$SESSION_GUARD" status "$wt" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
   case "$rc" in
     3) ;;
-    0 | 75) release_ended_session_lease "$wt" || return 0 ;;
+    0 | 75)
+      rc=0
+      release_ended_session_lease "$wt" || rc=$?
+      case "$rc" in
+        0) ;;
+        7 | 75)
+          # The guard's reason is the one cause the refusal below can name.
+          [[ -z "$SESSION_GUARD_RELEASE_ERR" ]] || printf '%s\n' "$SESSION_GUARD_RELEASE_ERR" >&2
+          return 0
+          ;;
+        *) return 0 ;;
+      esac
+      ;;
     *) return 0 ;;
   esac
-  if ! git -C "$PROJECT_ROOT" worktree prune >/dev/null 2>&1; then
+  if ! err="$(git -C "$PROJECT_ROOT" worktree prune 2>&1 >/dev/null)"; then
     worktree_message registration-prune-failed "$wt" "Warning: could not prune the registration of the removed worktree $wt." >&2
+    [[ -z "$err" ]] || sed 's/^/  /' <<<"$err" >&2
     return 0
   fi
   worktree_message registration-pruned "$wt" "Pruned the registration of the removed worktree $wt." >&2
@@ -2817,7 +2860,7 @@ cleanup_lease_permits_removal() {
     return 1
   fi
   local release_rc=0
-  "$SESSION_GUARD" release "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" --repo "$PROJECT_ROOT" >/dev/null 2>&1 || release_rc=$?
+  release_judged_session_lease "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" || release_rc=$?
   case "$release_rc" in
     0)
       worktree_message lease-stale-released "$wt" "Released stale session guard lease: $wt" >&2
@@ -2829,8 +2872,11 @@ cleanup_lease_permits_removal() {
       worktree_message cleanup-lease-session-held "$wt" "Skipped (guard lease is past the ${CLEANUP_TTL_MINUTES}m TTL, but a session it records is live or unverified): $wt" >&2
       return 1
       ;;
+    75)
+      worktree_message cleanup-lease-fresh "$wt" "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
+      return 1
+      ;;
   esac
-  worktree_message cleanup-lease-fresh "$wt" "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
   return 1
 }
 
