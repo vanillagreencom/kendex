@@ -23,8 +23,7 @@ Keep one obligations record in the consumer's private record store, at the locat
   - Apply [research.md:Legal answers](research.md#legal-answers) when the rule needs a legal answer.
 - When an obligation's next action depends on a document or approval, derive a preparation date from that dependency.
   - Include it in the obligation's entry in the consumer's existing calendar or reminder.
-- Keep unknowns unknown.
-  - Record a value the source does not give as unknown; never fill it from an estimate or a prior period.
+- Record a value the source does not give as unknown; never fill it from an estimate or a prior period.
 - Derive the next period from the rule itself, not by adding an interval to the last due date.
 - Leave an obligation at its status when its source or confirmation cannot be read.
   - Name the cause.

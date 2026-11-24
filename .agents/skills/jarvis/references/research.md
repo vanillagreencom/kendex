@@ -7,7 +7,6 @@
 - Use a third-party report to identify a question or supply evidence the original source does not publish.
   - Record its author, date, method and relevant limits.
   - Separate its inference from a checked fact.
-- Check a third-party claim against the original source when available.
 - State a conflict or missing source rather than presenting the report as official policy.
 - Apply [decisions.md:Evidence and risk](decisions.md#evidence-and-risk) to each vendor's current terms and AI-use policy before using its service.
 - For a long-form cited report, use the deep-research package when available.
