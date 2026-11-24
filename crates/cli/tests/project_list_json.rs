@@ -161,21 +161,21 @@ fn each_registered_folder_is_one_exact_entry() {
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn a_folder_git_cannot_answer_for_gets_its_own_entry() {
     type Break = fn(&Path);
-    let cases: [(&str, Break); 2] = [
-        ("malformed config", |folder| {
+    let cases: [(&str, &str, Break); 2] = [
+        ("malformed config", ".git/config", |folder| {
             git(folder, &["init", "--quiet"]);
             let config = folder.join(".git/config");
             let mut text = fs::read_to_string(&config).unwrap();
             text.push_str("[\n");
             fs::write(config, text).unwrap();
         }),
-        ("worktree whose main checkout is gone", |folder| {
+        ("worktree whose main checkout is gone", ".git", |folder| {
             let main = folder.with_file_name("main");
             repository_with_worktree(&main, folder);
             fs::rename(&main, main.with_file_name("moved")).unwrap();
         }),
     ];
-    for (case, break_it) in cases {
+    for (case, cause_path, break_it) in cases {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let folder = home.join("dev/app");
@@ -206,7 +206,7 @@ fn a_folder_git_cannot_answer_for_gets_its_own_entry() {
         assert_eq!(entries[0]["state"], "git-unclassified", "{case}");
         assert_eq!(entries[0].get("worktree"), Some(&Value::Null), "{case}");
         let cause = entries[0]["cause"].as_str().unwrap();
-        assert!(cause.contains(".git/"), "{case}: {cause}");
+        assert!(cause.contains(cause_path), "{case}: {cause}");
         assert_eq!(
             entries[1],
             json!({"folder": healthy.to_str().unwrap(), "state": "ok", "worktree": null}),
