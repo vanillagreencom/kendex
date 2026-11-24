@@ -879,6 +879,35 @@ class SessionContract(unittest.TestCase):
         return subprocess.run(["tmux", "-L", self.label, "list-windows", "-t", "=jarvis", "-F", "#{window_id}"],
                               capture_output=True, text=True, env=self.env).stdout.split()
 
+    def test_terminal_reads_the_pane_under_the_c_locale(self):
+        name = "café controller"
+        socket = self.stand_in(name.encode("utf-8"))
+        ids = self.tmux_read(socket, "display-message", "-p", "#{window_id} #{pane_id}")
+        self.assertEqual(ids.returncode, 0, ids.stderr)
+        window, pane = ids.stdout.split()
+        # Python picks the subprocess decoder from its own locale at startup.
+        probe = """
+import codecs
+import json
+import locale
+import runpy
+import sys
+
+assert codecs.lookup(locale.getpreferredencoding(False)).name == "ascii"
+script, home, socket, pane = sys.argv[1:]
+session = runpy.run_path(script)["Session"](home)
+status = {"live": True, "recorded": {"server_socket": socket, "pane": pane}}
+print(json.dumps(session.terminal(status)))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", probe, str(SKILLS / "jarvis/scripts/lib/session.py"), str(self.home), socket, pane],
+            env=self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"], "LC_ALL": "C", "PYTHONUTF8": "0"},
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         {"server": socket, "session": name, "window": window, "pane": pane})
+
     def test_start_status_stop_and_resume_on_the_controller_record(self):
         # The failure each step stops: a controller opened on the caller's own
         # server, a second launch beside a live one, a stop that ends the
@@ -896,6 +925,8 @@ class SessionContract(unittest.TestCase):
         private = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "#{socket_path}"], env=self.env,
                                  capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual((first["terminal"]["server"], first["terminal"]["session"]), (private, "jarvis"))
+        under_c, _ = self.call("status", env=self.env | {"LC_ALL": "C"})
+        self.assertEqual((under_c["state"], under_c["terminal"]), ("running", first["terminal"]))
         caller_panes = self.tmux_read(other, "list-panes", "-a", "-F", "#{pane_id}").stdout.split()
         self.assertEqual(len(caller_panes), 1, "the caller's server took a window")
         launched = self.started()

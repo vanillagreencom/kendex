@@ -156,12 +156,12 @@ class Session:
         self.emitted = False
         self.fleet_path = None
 
-    def run(self, argv, *, input=None, check=True, env=None, timeout=None):
+    def run(self, argv, *, input=None, check=True, env=None, timeout=None, encoding=None):
         remaining = self.deadline - time.monotonic() if timeout is None else timeout
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
         try:
-            result = subprocess.run(argv, input=input, text=True, capture_output=True,
+            result = subprocess.run(argv, input=input, text=True, encoding=encoding, capture_output=True,
                                     cwd=self.home, env=env or self.env, timeout=remaining)
         except subprocess.TimeoutExpired as error:
             # A call past its deadline keeps the stderr it held, such as a
@@ -182,12 +182,12 @@ class Session:
     def backend(self, verb, *args, check=True, env=None):
         return self.run([BASH, str(BACKEND), verb, *map(str, args)], check=check, env=env)
 
-    def tmux(self, *args, check=True, socket=None):
+    def tmux(self, *args, check=True, socket=None, encoding=None):
         # The server this starts reads the user's own tmux config, found by
         # tmux's own search, or runs on tmux's defaults where there is none:
         # the attached session looks and behaves as the user's others do.
         target = ["-S", socket] if socket else ["-L", self.label]
-        return self.run(["tmux", *target, *map(str, args)], check=check)
+        return self.run(["tmux", *target, *map(str, args)], check=check, encoding=encoding)
 
     def runtime(self, *args, timeout=None):
         """agent-runtime's reply to ARGS: (result, status, refusal key, stderr).
@@ -314,8 +314,9 @@ class Session:
             return None
         if not shutil.which("tmux"):
             raise Refusal("tmux-missing")
-        read = self.tmux("display-message", "-p", "-t", pane, "#{session_name}\t#{window_id}\t#{pane_id}",
-                         check=False, socket=socket)
+        # tmux replaces format tabs with underscores for a non-UTF-8 client.
+        read = self.tmux("-u", "display-message", "-p", "-t", pane, "#{session_name}\t#{window_id}\t#{pane_id}",
+                         check=False, socket=socket, encoding="utf-8")
         fields = read.stdout.strip().split("\t")
         if read.returncode or len(fields) != 3 or fields[2] != pane:
             return None
