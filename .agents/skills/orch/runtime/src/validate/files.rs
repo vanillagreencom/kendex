@@ -457,13 +457,35 @@ pub(crate) fn runner_reading(run: &RunFile) -> Reading<u32> {
 }
 
 pub fn live(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
+    live_inner(worktree, false)
+}
+
+/// A stop can report a failed read with its cause. Starts keep their
+/// existing refusal on uncertain liveness to avoid overlapping jobs.
+pub(crate) fn live_for_stop(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
+    live_inner(worktree, true)
+}
+
+fn live_inner(worktree: &Path, strict: bool) -> Result<Option<(PathBuf, u32)>> {
     for run in runs(worktree)? {
+        if strict && run.get("start").parse::<u64>().is_err() {
+            return Err(unreadable("start", run.dir.display()));
+        }
         if run.sentinel.is_some() {
+            if strict {
+                run.verdict()?;
+            }
             continue;
         }
-        if super::run::command_reading(&run.dir)?
-            .is_some_and(|reading| !matches!(reading, Reading::Gone))
-        {
+        let command = super::run::command_reading(&run.dir)
+            .map_err(|e| unreadable("command-identity", format!("{}: {e}", run.dir.display())))?;
+        if let (true, Some(Reading::Unreadable { cause })) = (strict, command.as_ref()) {
+            return Err(unreadable(
+                "command-identity",
+                format!("{}: {cause}", run.dir.display()),
+            ));
+        }
+        if command.is_some_and(|reading| !matches!(reading, Reading::Gone)) {
             let pid = fs::read_to_string(run.dir.join("pid"))
                 .ok()
                 .and_then(|p| p.trim().parse().ok())
@@ -475,6 +497,12 @@ pub fn live(worktree: &Path) -> Result<Option<(PathBuf, u32)>> {
         }
         match runner_reading(&run) {
             Reading::Live(pid) => return Ok(Some((run.dir, pid))),
+            Reading::Unreadable { cause } if strict => {
+                return Err(unreadable(
+                    "runner",
+                    format!("{}: {cause}", run.dir.display()),
+                ));
+            }
             Reading::Unreadable { .. } => return Ok(Some((run.dir, 0))),
             Reading::Gone => {}
         }

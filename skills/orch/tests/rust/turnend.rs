@@ -1939,6 +1939,118 @@ fn an_idle_turn_end_is_held_once_then_told_to_the_overseer() {
 }
 
 #[test]
+fn a_bound_codex_stop_holds_its_validation_until_the_run_ends() {
+    let world = World::launched();
+    world.bind(Some("lane"));
+    let run = world.lane.join("tmp/dev-validate-standing");
+    fs::create_dir(&run).unwrap();
+    fs::write(
+        run.join("start"),
+        format!("worktree={}\nstart=1\n", world.lane.display()),
+    )
+    .unwrap();
+    let pid = std::process::id();
+    let agent_runtime::reading::Reading::Live(owner) = agent_runtime::process::identity(pid) else {
+        panic!("the test process must have an identity");
+    };
+    fs::write(
+        run.join("runner"),
+        format!("runner=attached\npid={pid}\nstart={}\n", owner.start),
+    )
+    .unwrap();
+    fs::write(run.join("job.err"), "").unwrap();
+    world.report("reported", "notice");
+    for continued in [false, true, true] {
+        let payload = of_session("lane", json!({"stop_hook_active": continued}));
+        let out = world.mail("codex", &[], &payload);
+        assert_eq!(out.code, 2, "{}", out.stderr);
+        assert!(keyed(&out).contains(&format!("workflow-open=run-dir={}", run.display())));
+    }
+    let other = world.mail("codex", &[], &of_session("job", json!({})));
+    assert_eq!(other.code, 0, "{}", other.stderr);
+    fs::write(run.join("exit"), "guard-exit=0\n").unwrap();
+    let out = world.mail(
+        "codex",
+        &[],
+        &of_session("lane", json!({"stop_hook_active": true})),
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
+#[test]
+fn a_bound_codex_stop_preserves_an_unreadable_work_read_and_a_standing_halt() {
+    let world = World::launched();
+    world.bind(Some("lane"));
+    world.report("reported", "notice");
+    let run = world.lane.join("tmp/dev-validate-unreadable");
+    fs::create_dir(&run).unwrap();
+    fs::write(run.join("start"), "start=1\n").unwrap();
+    fs::write(run.join("command"), "wrong JSON\n").unwrap();
+    let stop = || {
+        world.mail(
+            "codex",
+            &[],
+            &of_session("lane", json!({"stop_hook_active": true})),
+        )
+    };
+    let held = stop();
+    assert_eq!(held.code, 2, "{}", held.stderr);
+    assert!(keyed(&held).contains("workflow-open=unreadable"));
+    assert!(
+        held.stderr.contains("command-identity") && held.stderr.contains(run.to_str().unwrap())
+    );
+    fs::write(run.join("exit"), "guard-exit=0\n").unwrap();
+    let state = orch_runtime::state::item_path(&world.lane.join("tmp"), ITEM);
+    fs::create_dir_all(state.parent().unwrap()).unwrap();
+    fs::write(&state, "unreadable\n").unwrap();
+    let held = stop();
+    assert_eq!(held.code, 2, "{}", held.stderr);
+    assert!(keyed(&held).contains("workflow-open=unreadable"));
+    assert!(held.stderr.contains(state.to_str().unwrap()));
+    world.direct("halt", "hold", true);
+    fs::write(world.lane_box().join("to-lane.cursor"), "1\n").unwrap();
+    let halted = stop();
+    assert_eq!(halted.code, 0, "{}", halted.stderr);
+}
+
+#[test]
+fn a_bound_codex_stop_holds_the_restack_and_an_idle_notice_names_the_remaining_round() {
+    let world = World::launched();
+    world.bind(Some("lane"));
+    let (head, map) = plant_restack(&world.lane, ITEM, ITEM);
+    let stop = |continued| {
+        world.mail(
+            "codex",
+            &[],
+            &of_session("lane", json!({"stop_hook_active": continued})),
+        )
+    };
+    let out = stop(true);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(keyed(&out).contains(&format!(
+        "workflow-open=landing-step=restack-before-push head={head}"
+    )));
+    fs::remove_file(map).unwrap();
+    let path = orch_runtime::state::item_path(&world.lane.join("tmp"), ITEM);
+    let mut doc: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    doc["stages"] = json!([{"kind":"dev","round_id":"round-17","start":1}]);
+    fs::write(path, doc.to_string()).unwrap();
+    let out = stop(false);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(keyed(&out).contains(&format!("idle={ITEM}")));
+    let out = stop(true);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let mail = fs::read_to_string(world.lane_box().join("to-overseer.jsonl")).unwrap();
+    let notice: Value = serde_json::from_str(mail.lines().last().unwrap()).unwrap();
+    assert!(
+        notice["text"]
+            .as_str()
+            .unwrap()
+            .contains("round-id=round-17 stage=dev")
+    );
+}
+
+#[test]
 fn a_report_since_the_last_judged_turn_end_passes_it() {
     let world = World::launched();
     let stop = |world: &World| world.mail("claude", &[], "{}");

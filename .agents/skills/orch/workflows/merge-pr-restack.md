@@ -30,7 +30,7 @@ With `ORCH_DELIVERY=push-base`, no pull request exists:
    ```
 
    - No issue worktree hands back.
-   - Before rebasing anything, ask whether a fix round is in flight. Write `[WT_PATH]/tmp/restack-live-round-[ISSUE].json` with the harness file tool as `{"op": "record-push", "mode": "check-live-round", "worktree": "[WT_PATH]"}`, then send it:
+   - Before rebasing anything, check whether a fix round is in flight and record the landing's starting head. Write `[WT_PATH]/tmp/restack-live-round-[ISSUE].json` with the harness file tool as `{"op": "record-push", "mode": "check-live-round", "worktree": "[WT_PATH]", "landing": true}`, then send it:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-live-round-[ISSUE].json

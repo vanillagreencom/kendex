@@ -28,7 +28,7 @@ use crate::error::{Error, Result};
 use crate::policy::{Stage, Stages};
 use crate::settings::{self, Settings};
 use crate::state;
-use crate::validate::files::RunFile;
+use crate::validate::files::{self, RunFile};
 use agent_runtime::journal::Env;
 
 /// The push transport's bound: a pre-push hook may run the whole battery.
@@ -41,6 +41,7 @@ pub const LIVE_EXIT: i32 = 3;
 /// The exit of a push whose answer was lost.
 pub const UNKNOWN_EXIT: i32 = 75;
 const MAP: &str = "kendex-rebase-map";
+const LANDING: &str = "restack_landing";
 const PENDING: &str = "kendex-restack-validation";
 const FOLD_MESSAGE: &str = "kendex-fold-message";
 const RESTACK: &str = "restack-reconcile";
@@ -73,6 +74,8 @@ pub enum RecordPush {
     },
     CheckLiveRound {
         worktree: PathBuf,
+        #[serde(default)]
+        landing: bool,
     },
     RecordRestackValidation {
         worktree: PathBuf,
@@ -87,7 +90,7 @@ impl RecordPush {
             | RecordPush::Checkpoint { worktree, .. }
             | RecordPush::Prepare { worktree }
             | RecordPush::Publish { worktree, .. }
-            | RecordPush::CheckLiveRound { worktree }
+            | RecordPush::CheckLiveRound { worktree, .. }
             | RecordPush::RecordRestackValidation { worktree, .. } => worktree,
         }
     }
@@ -339,21 +342,127 @@ fn live_round(doc: &Document, item: &str, worktree: &Path) -> Result<Option<Stri
 /// The worktree-private map every rewrite records its hops in, where the
 /// worktree skill asks git for it.
 fn map_file(worktree: &Path) -> Result<PathBuf> {
+    let refused = |cause: &str| {
+        refuse(
+            "restack-map-path",
+            &[
+                ("worktree", &worktree.display().to_string()),
+                ("cause", cause),
+            ],
+        )
+    };
     let path = git(worktree, "git-path", &["rev-parse", "--git-path", MAP])
-        .ok()
-        .filter(|p| !p.is_empty())
-        .ok_or_else(|| {
-            refuse(
-                "restack-map-path",
-                &[("worktree", &worktree.display().to_string())],
-            )
-        })?;
+        .map_err(|cause| refused(&cause))?;
+    if path.is_empty() {
+        return Err(refused("empty git path"));
+    }
     let path = PathBuf::from(path);
     Ok(if path.is_absolute() {
         path
     } else {
         worktree.join(path)
     })
+}
+
+/// The guarded restack workflow's admission, before it runs worktree.
+/// The consumed map binds the admission's original head to the rewritten
+/// head. A force-push lease remains the worktree publisher's authority.
+#[derive(Debug, Serialize, Deserialize)]
+struct RestackLanding {
+    original: String,
+    at: u64,
+    round: Option<String>,
+}
+
+impl RestackLanding {
+    fn read(doc: &Document, item: &str, worktree: &Path) -> Result<Option<Self>> {
+        let Some(value) = doc.get(LANDING) else {
+            return Ok(None);
+        };
+        bind(doc, item, worktree)?;
+        let landing: Self = serde_json::from_value(value.clone())
+            .map_err(|e| refuse("restack-landing-unreadable", &[("cause", &e.to_string())]))?;
+        let stopped = doc.get("post_pr_stop").and_then(|stop| stop["at"].as_u64());
+        let current = doc.get("dev_round_id").and_then(Value::as_str);
+        Ok(
+            (current == landing.round.as_deref() && stopped.is_none_or(|at| at < landing.at))
+                .then_some(landing),
+        )
+    }
+
+    fn matches_map(&self, text: &str, head: &str) -> Result<bool> {
+        let hops = match proof::hops(text) {
+            Ok(hops) => hops,
+            Err(e) if e.cause == "rebase-unmapped" => return Ok(false),
+            Err(e) => {
+                return Err(refuse(
+                    "rebase-map-unreadable",
+                    &[("cause", e.cause), ("line", &e.line.to_string())],
+                ));
+            }
+        };
+        let rewritten = hops.iter().fold(self.original.clone(), |sha, hop| {
+            let mapped = proof::remap(&sha, hop);
+            if mapped.starts_with("dropped:") {
+                hop.iter()
+                    .rev()
+                    .find(|(_, new)| new != "dropped")
+                    .map_or(mapped, |(_, new)| new.clone())
+            } else {
+                mapped
+            }
+        });
+        Ok(rewritten == head && rewritten != self.original)
+    }
+
+    /// The last validation for this head must have an acceptable native
+    /// result. A restack with no run yet still owes validation.
+    fn ready(&self, runs: Vec<RunFile>, head: &str) -> Result<bool> {
+        let run = runs
+            .into_iter()
+            .filter(|run| run.get("head") == head)
+            .max_by_key(|run| (run.get("start").parse::<u64>().ok(), run.dir.clone()));
+        let Some(run) = run else { return Ok(true) };
+        run.record()?;
+        Ok(matches!(run.verdict()?, "pass" | "pending"))
+    }
+}
+
+pub(crate) fn open_restack(doc: &Document, item: &str, worktree: &Path) -> Result<Option<String>> {
+    let Some(landing) = RestackLanding::read(doc, item, worktree)? else {
+        return Ok(None);
+    };
+    let map = map_file(worktree)?;
+    let text = match fs::read_to_string(&map) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refuse(
+                "rebase-map-unreadable",
+                &[
+                    ("path", &map.display().to_string()),
+                    ("cause", &error.to_string()),
+                ],
+            ));
+        }
+    };
+    let current = head(worktree)?;
+    if !landing.matches_map(&text, &current)?
+        || doc.get("branch").and_then(Value::as_str)
+            != Some(
+                git(
+                    worktree,
+                    "restack-branch",
+                    &["symbolic-ref", "--short", "HEAD"],
+                )
+                .map_err(|cause| refuse("restack-branch", &[("cause", &cause)]))?
+                .as_str(),
+            )
+        || !landing.ready(files::runs(worktree)?, &current)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(current))
 }
 
 /// Apply `hops` in order to the recorded commits, the item's `rebase_map`
@@ -444,6 +553,9 @@ fn consume(
             };
             let mut doc = snapshot.doc.clone();
             let reports = apply_hops(&mut doc, &hops, key);
+            if key == RESTACK {
+                record::delete(&mut doc, LANDING);
+            }
             record::store(path, &snapshot.doc, &doc, locking).map_err(|e| {
                 if e.key() == "record-changed" {
                     e.into()
@@ -1083,7 +1195,25 @@ pub fn run(
         }
     }
     match r {
-        RecordPush::CheckLiveRound { .. } => return Ok(reply),
+        RecordPush::CheckLiveRound { landing, .. } => {
+            if *landing {
+                let Some(before) = record else {
+                    return Err(refuse("restack-state", &[("issue", &item)]));
+                };
+                let landing = RestackLanding {
+                    original: head(&worktree)?,
+                    at: env.now_secs,
+                    round: before
+                        .get("dev_round_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                };
+                let mut after = before.clone();
+                record::set(&mut after, LANDING, serde_json::to_value(landing)?);
+                record::store(path, &before, &after, locking)?;
+            }
+            return Ok(reply);
+        }
         RecordPush::RecordRestackValidation { run_dir, .. } => {
             let at = head(&worktree)?;
             reply.stage = Some(

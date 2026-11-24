@@ -211,6 +211,9 @@ pub enum Said {
         routes: Box<Routes>,
         status_file: PathBuf,
     },
+    /// A Codex lane's own validation or landing is still open.
+    WorkflowOpen(OpenWork),
+    WorkflowUnreadable,
     /// The notice an idle continued turn sends its overseer.
     LaneIdle(String),
     IdleNotice(String),
@@ -388,6 +391,23 @@ pub enum Said {
     ToldUnrecorded(PathBuf),
 }
 
+#[derive(Debug, Clone)]
+pub enum OpenWork {
+    Validation(PathBuf),
+    Restacked(String),
+    Round { id: String, kind: &'static str },
+}
+
+impl OpenWork {
+    pub(super) fn identity(&self) -> String {
+        match self {
+            Self::Validation(dir) => format!("run-dir={}", dir.display()),
+            Self::Restacked(head) => format!("landing-step=restack-before-push head={head}"),
+            Self::Round { id, kind } => format!("round-id={id} stage={kind}"),
+        }
+    }
+}
+
 /// Whose model recovery started, as the explanation of a switch names what
 /// follows it: the controller's transfer, a fleet lane's relaunch, or a
 /// hosted lane's stop on its host.
@@ -494,6 +514,8 @@ impl Said {
             Said::NoticeUnwritten => ("notice", "unwritten".to_owned()),
             Said::QuestionTool { tool, .. } => ("question-tool", tool.clone()),
             Said::Idle { item, .. } => ("idle", item.clone()),
+            Said::WorkflowOpen(work) => ("workflow-open", work.identity()),
+            Said::WorkflowUnreadable => ("workflow-open", "unreadable".to_owned()),
             Said::LaneIdle(item) => ("lane-idle", item.clone()),
             Said::IdleNotice(item) => ("idle-notice", item.clone()),
             Said::IdleNoticeUnsent(status) => ("idle-notice-unsent", status.clone()),
@@ -752,6 +774,13 @@ impl Said {
                 routes.notice,
                 status_file.display()
             ),
+            Said::WorkflowOpen(OpenWork::Validation(dir)) => format!(
+                "wait for the lane's validation with `orch-runtime validate entry --wait --run-dir {}` and continue from its verdict.",
+                super::identity::shell_quoted(dir)
+            ),
+            Said::WorkflowOpen(OpenWork::Restacked(_)) => "continue from the completed restack on the delivery route named in merge-pr-restack.md.".to_owned(),
+            Said::WorkflowOpen(OpenWork::Round { .. }) => "continue the open workflow round.".to_owned(),
+            Said::WorkflowUnreadable => "the lane's open work could not be read. Resolve the failed read before ending the turn.".to_owned(),
             Said::LaneIdle(_) => "this lane ended a turn that a stop hook's refusal continued, with no lane-mail ask or notice sent and no lane status file update since its last judged turn end, no handoff recorded and no halt standing. This hook refuses that turn end no further.".to_owned(),
             Said::IdleNotice(_) => "this lane ended a continued turn with no lane-mail ask or notice sent and no lane status file update since its last judged turn end. The hook sends that fact to the overseer and ends the turn.".to_owned(),
             Said::IdleNoticeUnsent(status) => format!(

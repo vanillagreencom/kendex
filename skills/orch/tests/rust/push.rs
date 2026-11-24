@@ -311,6 +311,72 @@ mod push {
     use super::*;
 
     #[test]
+    fn guarded_unpublished_restack_holds_the_bound_codex_stop_until_publication() {
+        let repo = Repo::new("KEN-1", "");
+        let alias = repo.root.join("worktree-alias");
+        std::os::unix::fs::symlink(&repo.wt, &alias).unwrap();
+        repo.record(json!({"worktree": alias}));
+        let original = repo.head();
+        repo.advance("base-moved");
+        let admit = repo.op(
+            json!({"op":"record-push","mode":"check-live-round","worktree":repo.wt,"landing":true}),
+        );
+        assert!(admit.status.success(), "{}", stderr(&admit));
+        assert_eq!(repo.read()["restack_landing"]["original"], original);
+        let restack = program(worktree_cli())
+            .args(["create", "KEN-1", "--restack"])
+            .env("ORCH_RUNTIME_BINARY", support::binary())
+            .env("PATH", tool_path(&[&repo.root.join("bin")]))
+            .current_dir(&repo.main)
+            .output()
+            .unwrap();
+        assert!(restack.status.success(), "{}", stderr(&restack));
+        assert_ne!(repo.head(), original);
+        assert_eq!(repo.remote("ken-1"), "");
+        let lease = program("git")
+            .arg("-C")
+            .arg(&repo.wt)
+            .args([
+                "config",
+                "--worktree",
+                "--get",
+                "kendex-restack.authorizedHead",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(lease.status.code(), Some(1));
+
+        let markers = repo.main.join(".git/lane-mail");
+        fs::create_dir_all(&markers).unwrap();
+        fs::write(markers.join("ken-1"), format!("{}\n", repo.wt.display())).unwrap();
+        fs::create_dir_all(repo.wt.join("tmp/lane-mail/KEN-1")).unwrap();
+        let stop = isolated()
+            .args(["turn-end", "--hook-dir"])
+            .arg(repo.wt.join(".codex/hooks"))
+            .env("ORCH_STATE_DIR", &repo.state)
+            .env("LANE_MAIL_ITEM", "KEN-1")
+            .env("LANE_MAIL_CLI", skills().join("mailbox/scripts/lane-mail"))
+            .stdin(std::process::Stdio::null())
+            .current_dir(&repo.wt)
+            .output()
+            .unwrap();
+        assert_eq!(stop.status.code(), Some(2), "{}", stderr(&stop));
+        assert!(
+            stderr(&stop).contains(&format!(
+                "landing-step=restack-before-push head={}",
+                repo.head()
+            )),
+            "{}",
+            stderr(&stop)
+        );
+
+        let push = repo.op(json!({"op":"record-push","mode":"branch","worktree":repo.wt,"args":["--set-upstream"]}));
+        assert!(push.status.success(), "{}", stderr(&push));
+        assert!(repo.read().get("restack_landing").is_none());
+        assert_eq!(repo.remote("ken-1"), repo.head());
+    }
+
+    #[test]
     fn a_field_the_mode_cannot_honour_refuses_before_any_push() {
         let repo = Repo::new("KEN-1", "");
         repo.record(json!({}));

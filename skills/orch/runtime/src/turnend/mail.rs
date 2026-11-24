@@ -2,8 +2,8 @@
 //! and travel as context after a tool call, at a session start and at a
 //! prompt; a halt among them refuses every tool call but the one read that
 //! acknowledges it; a harness question tool is refused, since a dialog on a
-//! pane reaches no overseer; and a turn end with nothing reported since the
-//! last judged one is held once. The mailbox package owns the cursor and
+//! pane reaches no overseer. A bound Codex lead's open validation or landing
+//! holds its stop. Otherwise an unreported turn end is held once. The mailbox package owns the cursor and
 //! every read of the boxes ([`crate::mailbox`]); this module decides what
 //! the turn end answers.
 
@@ -13,13 +13,15 @@ use std::rc::Rc;
 
 use agent_runtime::reading::Reading;
 
-use super::answer::{self, Harness, Routes, Said};
+use super::answer::{self, Harness, OpenWork, Routes, Said};
 use super::identity::{Lane, Seat, shell_quoted};
 use super::payload::{Caller, Payload};
 use super::role::Binding;
 use super::{Answer, Arm, Flow, Turn, Vars};
 use crate::mailbox::{Mailbox, Noticed, Refusal};
 use crate::settings::{self, Flags};
+use crate::state::{self, ItemState};
+use crate::validate::files;
 use crate::watch::claim;
 use crate::watch::mail::overseer_dir;
 
@@ -244,7 +246,9 @@ pub(super) fn question_tool_check(
     Err(turn.refuse(said, ""))
 }
 
-/// The idle judge: a lane lead's turn end that reported nothing since the
+/// The idle judge: a bound Codex lead with validation or a landing open
+/// continues until that work closes or a halt stands. Otherwise, a lane
+/// lead's turn end that reported nothing since the
 /// last judged one is held once. A report is an ask or a notice the lane
 /// sent, counted against the record, or a status file update; a halt
 /// standing passes; a handoff record ends the run before this judge. A turn
@@ -296,6 +300,16 @@ pub(super) fn idle_check(
         .iter()
         .rfind(|e| e.mailbox.as_deref() == Some("to-lane") && e.kind() == "directive")
         .is_some_and(|e| e.halt == Some(true));
+    let open = if turn.harness == Harness::Codex && !halted {
+        let work = open_work(turn, vars, lane, item)
+            .map_err(|cause| turn.refuse(Said::WorkflowUnreadable, &cause))?;
+        if let Some(work @ (OpenWork::Validation(_) | OpenWork::Restacked(_))) = work {
+            return Err(turn.refuse(Said::WorkflowOpen(work), ""));
+        }
+        work
+    } else {
+        None
+    };
     let status_file = crate::state::status_file(&lane.root, item);
     let record = Record {
         path: lane.mail_root.join(item).join("sent-count"),
@@ -329,7 +343,12 @@ pub(super) fn idle_check(
     // continued is held as a fresh one, and the hold bounds the loop at
     // one more turn.
     if continued && (recorded.held || turn.harness == Harness::Pi) {
-        idle_notice(turn, &mailbox, lane, item, &record, sent);
+        let open = if turn.harness == Harness::Codex {
+            Ok(open)
+        } else {
+            open_work(turn, vars, lane, item)
+        };
+        idle_notice(turn, &mailbox, lane, item, &record, sent, open);
         return Ok(());
     }
     if !record.write(turn, Said::IdleHoldUnrecorded, sent, true) {
@@ -353,8 +372,10 @@ fn idle_notice(
     item: &str,
     record: &Record,
     sent: usize,
+    open: Result<Option<OpenWork>, String>,
 ) {
-    let text = Said::LaneIdle(item.to_owned()).text("");
+    let identity = work_detail(open);
+    let text = Said::LaneIdle(item.to_owned()).text(&identity);
     let noticed = match Scratch::holding(&text) {
         Ok(scratch) => mailbox.notice(item, &lane.root, &scratch.0, None),
         Err(cause) => {
@@ -373,6 +394,49 @@ fn idle_notice(
     };
     record.write(turn, Said::IdleNoticeUnrecorded, count, false);
     turn.note(&Said::IdleNotice(item.to_owned()), "");
+}
+
+/// The lane's live run, its pending restack, or the open workflow round
+/// recorded for its checkout. A round alone is context for a notice.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the bound lane's item snapshot for the stop answer and notice, read without writes"
+)]
+fn open_work(
+    turn: &mut Turn,
+    vars: &Vars,
+    lane: &Lane,
+    item: &str,
+) -> Result<Option<OpenWork>, String> {
+    if let Some((dir, _)) = files::live_for_stop(&lane.root).map_err(|e| e.to_string())? {
+        return Ok(Some(OpenWork::Validation(dir)));
+    }
+    let settings = super::marks::marks_settings(turn, &lane.root, vars.private_env)?;
+    let path = state::item_path(&settings.state_dir, item);
+    let result: crate::error::Result<_> = (|| {
+        let Some(snapshot) = state::load(&path)? else {
+            return Ok(None);
+        };
+        if let Some(head) = crate::ops::push::open_restack(&snapshot.doc, item, &lane.root)? {
+            return Ok(Some(OpenWork::Restacked(head)));
+        }
+        let state = snapshot.view::<ItemState>(&path)?;
+        Ok(state.stages.into_iter().rev().find_map(|stage| {
+            (stage.end.is_none() && stage.superseded != Some(true)).then_some(OpenWork::Round {
+                id: stage.round_id?,
+                kind: stage.kind.word(),
+            })
+        }))
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+fn work_detail(work: Result<Option<OpenWork>, String>) -> String {
+    match work {
+        Ok(Some(work)) => work.identity(),
+        Ok(None) => String::new(),
+        Err(cause) => format!("workflow-open=unreadable {cause}"),
+    }
 }
 
 /// The overseer told through the lane's own mailbox, as a notice from the
@@ -394,7 +458,13 @@ pub(super) fn stop_notice(turn: &mut Turn, vars: &Vars, lane: &Lane, told: &str,
         item: item.clone(),
         told: told.to_owned(),
     };
-    let noticed = match Scratch::holding(&said.text(line)) {
+    let mut text = said.text(line);
+    let detail = work_detail(open_work(turn, vars, lane, item));
+    if !detail.is_empty() {
+        text.push('\n');
+        text.push_str(&detail);
+    }
+    let noticed = match Scratch::holding(&text) {
         Ok(scratch) => Mailbox::new(reader).notice(item, &lane.root, &scratch.0, None),
         Err(cause) => {
             turn.note(&Said::StopNoticeUnsent("unwritten".to_owned()), &cause);

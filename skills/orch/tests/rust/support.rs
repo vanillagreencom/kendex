@@ -350,6 +350,35 @@ pub fn git_checkout(dir: &Path) {
     assert!(out.status.success(), "git init: {}", stderr(&out));
 }
 
+/// The files a guarded restack leaves between the rewrite and publication,
+/// with the original head bound by the item's admission.
+pub fn plant_restack(worktree: &Path, item: &str, branch: &str) -> (String, PathBuf) {
+    let git = |args: &[&str]| {
+        let output = program("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {}", stderr(&output));
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let head = git(&["rev-parse", "HEAD"]);
+    let map = PathBuf::from(git(&["rev-parse", "--absolute-git-dir"])).join("kendex-rebase-map");
+    let old = "a".repeat(40);
+    std::fs::write(&map, format!("rebase-hop:\nrebase-map: {old} {head}\n")).unwrap();
+    let path = orch_runtime::state::item_path(&worktree.join("tmp"), item);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        path,
+        serde_json::json!({"issue_id": item, "worktree": worktree, "branch": branch,
+            "restack_landing": {"original": old, "at": 1, "round": null}})
+        .to_string(),
+    )
+    .unwrap();
+    (head, map)
+}
+
 /// `program` behind a wrapper that runs it with the scratch home, no global
 /// or system git configuration, no `XDG_CONFIG_HOME` (git's attributes file
 /// and cargo's git configuration default under it, so the home's own

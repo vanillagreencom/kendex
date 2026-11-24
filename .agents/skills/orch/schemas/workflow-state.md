@@ -76,6 +76,7 @@ The Owner column names the writer. An `op` request is `orch-runtime op --item [I
 | `audit_issues_created` | string[] | `record-comment-ledger` entry `issue` with `origin: audit` | The issue ids the review's audit filed. |
 | `rebase_map` | object | `record-push` | Pre-rebase SHA to post-rebase SHA, or `dropped`, read from the worktree's `kendex-rebase-map`. |
 | `restacks` | number | `record-push` | Restack hops reconciled. |
+| `restack_landing` | object | `record-push` | The guarded restack's starting commit, round and time. The push consumes it with the rebase map. |
 | `push_attempt` | object | `record-push` | The push, written `attempted` before it starts. |
 | `restack_skips` | object[] | `record-pr-progress` step `restack-skip` | `{head, condition, validated_head, paths}` per restack whose re-test was skipped. |
 | `pr_order` | string | `record-pr-progress` step `order` | When the lane opens its pull request: `review-first`, `open-first`, `open-first-returned`, `open-first-pushed`, `push-first`, `push-first-returned` or `push-first-pushed`. |
