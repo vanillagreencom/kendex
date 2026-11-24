@@ -17,7 +17,12 @@
 # is a class already held, at or above micro; --path is classified by the
 # shared path rules' launch phase, no render proved, and an unmatched path
 # changes nothing; --base and --head classify the range's changed paths: a
-# names-only inventory change under rendered roots is left to the classifier,
+# range containing only kendex.settings.toml or .kendex/settings.toml
+# within micro_max_production can clear configuration-source when both
+# endpoints prove edits to ordinary assignments in existing regular files.
+# HARNESS_CI_*, ORCH_SIZE_* and is_source_catalog are protected. A changed
+# kendex.toml or kendex-local.toml takes standard. A Location keeps its own
+# class. A names-only inventory change under rendered roots is left to the classifier,
 # which answers standard for a range that adds a catalog source (its render
 # proof owns no catalog source) and reads a removal by its size, while a
 # changed lock is standard whatever the classifier answers; a range that
@@ -393,6 +398,7 @@ MANIFEST_ADMITTED=""
 SETTINGS_FILES=""
 SETTINGS_REFUSAL=""
 SETTINGS_FILE_KEYS=""
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS'
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -408,6 +414,164 @@ need_value() { # FLAG REMAINING NEXT
     -?*) die "cause=flag-used-as-value option=$1 value=$3" \
       "$1 needs a value, got the flag '$3'" ;;
   esac
+}
+
+configuration_unread() { printf 'configuration-unreadable: %s\n' "$1" >&2; }
+settings_note() {
+  printf 'settings-admission: admitted=false %s\n' "$1" >&2
+  [ "${2:-}" != unreadable ] || configuration_unread "$1"
+}
+
+launch_key_admitted() { # KEY
+  local LC_ALL=C grammar='^[a-zA-Z_][a-zA-Z0-9_]*$'
+  case "$1" in HARNESS_CI_* | ORCH_SIZE_* | is_source_catalog) return 1 ;; esac
+  [[ "$1" =~ $grammar ]]
+}
+
+# FILE without its comment lines, blank lines and admitted [env]
+# assignments at RESIDUE, and each admitted key on stdout. The settings
+# value reader validates headers on the same bytes.
+# Returns 2 where the lines read are not FILE's bytes: Bash drops a NUL,
+# and git counts a file holding one as binary.
+settings_scan() { # FILE RESIDUE [launch]
+  (
+    exec 3>&1 1>&2
+    # shellcheck source=lib/kendex-env.sh
+    . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
+    : >"$2" && : >"$2.read" || exit 1
+    section=""
+    while :; do
+      newline=$'\n'
+      IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
+      printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
+      kendex_trim trimmed "${line%$'\r'}"
+      case "$trimmed" in
+        '' | '#'*) continue ;;
+        '['*) section="${trimmed#\[}" section="${section%\]}" ;;
+        *=*)
+          kendex_trim key "${trimmed%%=*}"
+          if [ "$section" = env ] &&
+            { { [ "$#" -eq 2 ] && settings_key_admitted "$key"; } ||
+              { [ "${3:-}" = launch ] && launch_key_admitted "$key"; }; }; then
+            printf '%s\n' "$key" >&3
+            continue
+          fi ;;
+      esac
+      printf '%s\n' "$line" >>"$2" || exit 1
+    done <"$1"
+    status=0
+    cmp -s -- "$1" "$2.read" || status=$?
+    case "$status" in
+      0) ;;
+      1) exit 2 ;;
+      *) exit 1 ;;
+    esac
+  )
+}
+
+# KEY=value for each KEY the reader loads from FILE. Returns 1 where it
+# refuses FILE. The keys arrive as arguments, which no loaded key can
+# overwrite.
+settings_values() { # FILE KEY...
+  (
+    exec 3>&1 1>&2
+    # shellcheck source=lib/kendex-env.sh
+    . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
+    for key in "${@:2}"; do unset "$key" || exit 1; done
+    kendex_load_settings_file "$1" -- "${@:2}" || exit 1
+    for key in "${@:2}"; do
+      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
+    done
+  )
+}
+
+# The keys whose value differs between the range's endpoints of PATH, as
+# SETTINGS_FILE_KEYS. Returns 1, with the admission line, where admission
+# refuses the file. A settings file with a multiline string delimiter is
+# outside the settings reader's grammar.
+settings_file_admitted() { # PATH [launch]
+  local side rev status keys base_values head_values key line base_value head_value mode=""
+  if ! : >"$work/settings-keys"; then
+    settings_note "cause=settings-unreadable path=$1" unreadable
+    return 1
+  fi
+  for side in base head; do
+    rev="$base_rev"
+    [ "$side" = base ] || rev="$head_rev"
+    status=0
+    rev_file "$rev" "$1" "$work/settings-$side" || status=$?
+    case "$status" in
+      0) ;;
+      2) [ "$#" -eq 1 ] || return 1; : >"$work/settings-$side" || status=1 ;;
+      3)
+        settings_note "cause=settings-not-regular path=$1 side=$side"
+        return 1 ;;
+    esac
+    [ "$status" = 0 ] || [ "$status" = 2 ] || {
+      settings_note "cause=settings-unreadable path=$1 side=$side rev=${rev:-unresolved}" unreadable
+      return 1
+    }
+    [ "$#" -eq 1 ] || [ "$side" = base ] || [ "$mode" = "$REV_FILE_MODE" ] || return 1
+    mode="$REV_FILE_MODE"
+    status=0
+    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
+    case "$status" in
+      0)
+        settings_note "cause=multiline-string path=$1 side=$side"
+        return 1 ;;
+      1) ;;
+      *)
+        settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
+        return 1 ;;
+    esac
+    status=0
+    settings_scan "$work/settings-$side" "$work/settings-residue-$side" "${@:2}" \
+      >>"$work/settings-keys" || status=$?
+    case "$status" in
+      0) ;;
+      2)
+        settings_note "cause=settings-bytes-dropped path=$1 side=$side" unreadable
+        return 1 ;;
+      *)
+        settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
+        return 1 ;;
+    esac
+  done
+  if cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then
+    status=0
+  else
+    status=$?
+  fi
+  if ! keys="$(LC_ALL=C sort -u "$work/settings-keys")"; then
+    settings_note "cause=settings-unreadable path=$1" unreadable
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  if ! base_values="$(settings_values "$work/settings-base" $keys)"; then
+    settings_note "cause=settings-unparsed path=$1 side=base" unreadable
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then
+    settings_note "cause=settings-unparsed path=$1 side=head" unreadable
+    return 1
+  fi
+  case "$status" in
+    0) ;;
+    1) settings_note "cause=unadmitted-change path=$1"; return 1 ;;
+    *) settings_note "cause=unadmitted-change path=$1"; configuration_unread "cause=settings-unreadable path=$1"; return 1 ;;
+  esac
+  SETTINGS_FILE_KEYS=""
+  for key in $keys; do
+    base_value="" head_value=""
+    while IFS= read -r line; do
+      case "$line" in "$key="*) base_value="=${line#*=}" ;; esac
+    done <<<"$base_values"
+    while IFS= read -r line; do
+      case "$line" in "$key="*) head_value="=${line#*=}" ;; esac
+    done <<<"$head_values"
+    [ "$base_value" = "$head_value" ] || SETTINGS_FILE_KEYS="$SETTINGS_FILE_KEYS,$key"
+  done
 }
 
 # The launch arm's choice so far: the first input naming the widest class.
@@ -431,12 +595,60 @@ ceiling() { # KEY
   sed -n "s/^$1=\([0123456789][0123456789]*\)\$/\1/p" "$NARROW_CONF" | tail -1
 }
 
+# Reuse the classifier's regular-file and changed-key proof for launch.
+# The PR's base tip owns its exclusions even when its merge base is older.
+launch_settings_range() ( # BASE HEAD REPO WORK
+  local base="$1" head="$2" repo="$3" work="$4" path limit numstat added removed lines=0
+  local base_rev head_rev="$2" changed="" settings_paths="${BASE_SETTINGS_FILES// /$'\n'}"
+  while IFS= read -r -d '' path; do
+    change_class_path_match "$path" "$settings_paths" || return 1
+    changed="${changed:+$changed$'\n'}$path"
+  done <"$work/paths"
+  [ -n "$changed" ] || return 1
+  unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS
+  base_settings || { configuration_unread "$MEASURE_CAUSE"; return 1; }
+  set_globs "${HARNESS_CI_STANDARD_PATHS:-}"
+  path_matches any && return 1
+  if ! base_rev="$(git -C "$repo" merge-base "$base" "$head" 2>/dev/null)"; then
+    configuration_unread "cause=settings-base-unreadable base=$base head=$head"
+    return 1
+  fi
+  while IFS= read -r path; do
+    settings_file_admitted "$path" launch || return 1
+  done <<<"$changed"
+  if ! limit="$(ceiling micro_max_production)" || [ -z "$limit" ]; then
+    configuration_unread "cause=settings-ceiling-unreadable"
+    return 1
+  fi
+  if ! branch_size_numstat "$repo" "" "$head" numstat "$base"; then
+    configuration_unread "cause=settings-size-unreadable detail=$BRANCH_GROWTH_ERROR"
+    return 1
+  fi
+  while IFS=$'\t' read -r added removed path; do
+    [[ "$added" =~ ^[0-9]+$ && "$removed" =~ ^[0-9]+$ ]] || return 1
+    lines=$((lines + added))
+  done <<<"$numstat"
+  [ "$lines" -le "$limit" ]
+)
+
+launch_unread_configuration() { # STDERR_FILE
+  local failure
+  if ! failure="$(sed -n 's/^configuration-unreadable: //p' "$1")"; then
+    launch_consider standard "configuration-evidence-unreadable" unmeasured
+  elif [ -n "$failure" ]; then
+    failure="${failure%%$'\n'*}"
+    launch_consider standard "${failure#cause=}" unmeasured
+  else
+    return 1
+  fi
+}
+
 # The range's class as this script's own classifier reads it, the reading
 # review depth takes through the same reader, so the range's production lines
 # decide its cycle as they decide its review. A work item runs at micro or
 # wider, so a ranked class below micro reads as micro; an unranked one reaches
 # launch_consider, which refuses it.
-launch_range_class() { # BASE HEAD REPO STDERR_FILE
+launch_range_class() { # BASE HEAD REPO STDERR_FILE SETTINGS_RANGE
   local class rule
   if ! change_scope_read "$1" "$2" "$3" "$4"; then
     # The classifier's own cause, which the detail cannot carry.
@@ -446,6 +658,11 @@ launch_range_class() { # BASE HEAD REPO STDERR_FILE
   fi
   rule="branch-class class=$CHANGE_SCOPE_CLASS rule=${CHANGE_SCOPE_RULE#cause=}"
   class="$CHANGE_SCOPE_CLASS"
+  if [ "$5" = true ] && [ "$CHANGE_SCOPE_MEASURED" = true ] &&
+    [[ "$CHANGE_SCOPE_RULE" = cause=configuration-source\ * ]]; then
+    launch_unread_configuration "$4" || launch_consider micro settings-only
+    return 0
+  fi
   if change_scope_rank "$class" && ! change_scope_floor "$class"; then
     class=micro
   fi
@@ -458,7 +675,7 @@ launch_range_class() { # BASE HEAD REPO STDERR_FILE
 
 launch_class() { # ARG...
   local production="" body="" base="" head="" repo=. body_text delta="" path floor
-  local micro_max small_max paths=() floors=() launch_work
+  local micro_max small_max paths=() floors=() launch_work settings_range=false
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --production) need_value "$1" "$#" "${2:-}"; production="$2"; shift 2 ;;
@@ -539,14 +756,24 @@ launch_class() { # ARG...
       die "cause=scratch-unavailable" "a scratch directory could not be created"
     trap 'rm -rf -- "${LAUNCH_WORK:?}"' EXIT
     launch_work="$LAUNCH_WORK"
-    if ! git -C "$repo" diff --name-only -z --no-ext-diff --no-renames "$base...$head" -- \
+    if ! base="$(git -C "$repo" rev-parse --verify "$base^{commit}" 2>/dev/null)" ||
+      ! head="$(git -C "$repo" rev-parse --verify "$head^{commit}" 2>/dev/null)" ||
+      ! git -C "$repo" diff --name-only -z --no-ext-diff --no-renames "$base...$head" -- \
       >"$launch_work/paths" 2>/dev/null; then
       launch_consider standard branch-paths-unreadable unmeasured
     elif ! change_scope_location_load "$repo"; then
       launch_consider standard "$CHANGE_CLASS_CAUSE" unmeasured
     else
+      if launch_settings_range "$base" "$head" "$repo" "$launch_work" 2>"$launch_work/settings-err"; then
+        settings_range=true
+      else
+        launch_unread_configuration "$launch_work/settings-err" || true
+      fi
       while IFS= read -r -d '' path; do
         change_class_path "$path" launch
+        if [ "$settings_range" = true ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = configuration-source\ * ]]; then
+          continue
+        fi
         if [ "$path" = .kendex-generated.json ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = excluded-path\ * ]] &&
           change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then
           continue
@@ -558,7 +785,7 @@ launch_class() { # ARG...
       elif [ -n "$BRANCH_PROTECTION_KIND" ]; then
         launch_consider small "protection-removed kind=$BRANCH_PROTECTION_KIND path=$BRANCH_PROTECTION_PATH removed=$BRANCH_PROTECTION_REMOVED added=$BRANCH_PROTECTION_ADDED"
       fi
-      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"
+      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err" "$settings_range"
     fi
   fi
 
@@ -631,6 +858,9 @@ answer() { # CLASS FIELDS [measured]
   local rule quick=false
   if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
     rule="${2%% *}"
+    if [ "$1" = standard ] && [ "${3:-}" != measured ]; then
+      configuration_unread "$2"
+    fi
     settings_note "cause=class-$1 rule=${rule#cause=}"
     set -- standard "$SETTINGS_REFUSAL" measured
   fi
@@ -728,7 +958,6 @@ path_class_matches() { # PHASE CLASS
 # its own checkout's settings, which github.sh's router exports from the
 # working tree, so those are dropped and the base's alone decide.
 unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS'
 
 # The changed paths harness-only read, ahead of every refusal below.
 [ ! -s "$paths_file" ] || changed="$(cat -- "$paths_file")"
@@ -777,8 +1006,6 @@ fi
 # other tools may read it. The trivial rule below reads the ceiling where
 # any other path is beside the admitted files, and answer() turns any other
 # class an admitted change reaches into the refusal.
-settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
-
 # The keys a merge-group run reads from the base never qualify, the
 # allowlist itself included: their breakage stops the queue that would merge
 # the repair.
@@ -838,7 +1065,7 @@ settings_declarations() {
   local inventoried status path dir namespace admittable n=0 catalog=false owners=" "
   local rev="$BASE_REV" args=() refused="cause=declarations-unreadable step"
   if ! inventoried="$(cat -- "$work/base-inventory" 2>/dev/null)"; then
-    settings_note "$refused=inventory"
+    settings_note "$refused=inventory" unreadable
     return 1
   fi
   inventoried=$'\n'"$inventoried"$'\n'
@@ -847,11 +1074,11 @@ settings_declarations() {
   case "$status" in
     0) ;;
     1) catalog=true ;;
-    *) settings_note "$refused=manifest"; return 1 ;;
+    *) settings_note "$refused=manifest" unreadable; return 1 ;;
   esac
   if [ -z "$rev" ] || ! git -C "$repo" ls-tree -r -z --name-only --full-tree \
     "$rev" >"$work/declarations-tree" 2>/dev/null; then
-    settings_note "$refused=example"
+    settings_note "$refused=example" unreadable
     return 1
   fi
   while IFS= read -r -d '' path; do
@@ -870,14 +1097,14 @@ settings_declarations() {
     n=$((n + 1))
     status=0
     rev_file "$rev" "$path" "$work/declaration-$n" || status=$?
-    [ "$status" = 0 ] || { settings_note "$refused=example path=$path"; return 1; }
+    [ "$status" = 0 ] || { settings_note "$refused=example path=$path" unreadable; return 1; }
     # The line scan below cannot tell a comment from a line inside a
     # multiline string.
     status=0
     grep -qE "\"\"\"|'''" -- "$work/declaration-$n" || status=$?
-    [ "$status" = 1 ] || { settings_note "$refused=example path=$path"; return 1; }
+    [ "$status" = 1 ] || { settings_note "$refused=example path=$path" unreadable; return 1; }
     settings_values "$work/declaration-$n" >/dev/null ||
-      { settings_note "$refused=example path=$path"; return 1; }
+      { settings_note "$refused=example path=$path" unreadable; return 1; }
     admittable=1
     case "$inventoried" in *$'\n'"$path"$'\n'*) ;; *) admittable=0 ;; esac
     case "$inventoried" in *$'\n'"$dir/SKILL.md"$'\n'*) ;; *) admittable=0 ;; esac
@@ -937,148 +1164,10 @@ settings_declarations() {
       }
     }
   ' "${args[@]}")"; then
-    settings_note "$refused=example"
+    settings_note "$refused=example" unreadable
     return 1
   fi
   SETTINGS_DEFAULT_KEYS="${SETTINGS_DEFAULT_KEYS//$'\n'/ }"
-}
-
-# FILE without its comment lines, blank lines and admitted [env]
-# assignments, at RESIDUE, and each admitted key it assigns on stdout. The
-# reader validates headers; settings_values runs it on the same bytes.
-# Returns 2 where the lines this loop read are not FILE's bytes: Bash's read
-# drops a NUL, as the reader's own loop does, and git counts a file holding
-# one as binary, so its lines escape the trivial ceiling.
-settings_scan() { # FILE RESIDUE
-  (
-    exec 3>&1 1>&2
-    # shellcheck source=lib/kendex-env.sh
-    . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
-    : >"$2" && : >"$2.read" || exit 1
-    section=""
-    while :; do
-      newline=$'\n'
-      IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
-      printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
-      kendex_trim trimmed "${line%$'\r'}"
-      case "$trimmed" in
-        '' | '#'*) continue ;;
-        '['*) section="${trimmed#\[}" section="${section%\]}" ;;
-        *=*)
-          kendex_trim key "${trimmed%%=*}"
-          if [ "$section" = env ] && settings_key_admitted "$key"; then
-            printf '%s\n' "$key" >&3
-            continue
-          fi ;;
-      esac
-      printf '%s\n' "$line" >>"$2" || exit 1
-    done <"$1"
-    status=0
-    cmp -s -- "$1" "$2.read" || status=$?
-    case "$status" in
-      0) ;;
-      1) exit 2 ;;
-      *) exit 1 ;;
-    esac
-  )
-}
-
-# KEY=value for each KEY the reader loads from FILE. Returns 1 where it
-# refuses FILE. The keys arrive as arguments, which no loaded key can
-# overwrite.
-settings_values() { # FILE KEY...
-  (
-    exec 3>&1 1>&2
-    # shellcheck source=lib/kendex-env.sh
-    . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
-    for key in "${@:2}"; do unset "$key" || exit 1; done
-    kendex_load_settings_file "$1" -- "${@:2}" || exit 1
-    for key in "${@:2}"; do
-      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
-    done
-  )
-}
-
-# The keys whose value differs between the range's endpoints of PATH, as
-# SETTINGS_FILE_KEYS. Returns 1, with the admission line, where admission
-# refuses the file. The line scan cannot tell a comment from a line inside a
-# multiline string, so a multiline string delimiter at either endpoint
-# refuses the file.
-settings_file_admitted() { # PATH
-  local side rev status keys base_values head_values key line base_value head_value
-  if ! : >"$work/settings-keys"; then
-    settings_note "cause=settings-unreadable path=$1"
-    return 1
-  fi
-  for side in base head; do
-    rev="$base_rev"
-    [ "$side" = base ] || rev="$head_rev"
-    status=0
-    rev_file "$rev" "$1" "$work/settings-$side" || status=$?
-    case "$status" in
-      0) ;;
-      2) : >"$work/settings-$side" || status=1 ;;
-      3)
-        settings_note "cause=settings-not-regular path=$1 side=$side"
-        return 1 ;;
-    esac
-    [ "$status" = 0 ] || [ "$status" = 2 ] || {
-      settings_note "cause=settings-unreadable path=$1 side=$side rev=${rev:-unresolved}"
-      return 1
-    }
-    status=0
-    grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
-    case "$status" in
-      0)
-        settings_note "cause=multiline-string path=$1 side=$side"
-        return 1 ;;
-      1) ;;
-      *)
-        settings_note "cause=settings-unreadable path=$1 side=$side"
-        return 1 ;;
-    esac
-    status=0
-    settings_scan "$work/settings-$side" "$work/settings-residue-$side" \
-      >>"$work/settings-keys" || status=$?
-    case "$status" in
-      0) ;;
-      2)
-        settings_note "cause=settings-bytes-dropped path=$1 side=$side"
-        return 1 ;;
-      *)
-        settings_note "cause=settings-unreadable path=$1 side=$side"
-        return 1 ;;
-    esac
-  done
-  if ! keys="$(LC_ALL=C sort -u "$work/settings-keys")"; then
-    settings_note "cause=settings-unreadable path=$1"
-    return 1
-  fi
-  # shellcheck disable=SC2086
-  if ! base_values="$(settings_values "$work/settings-base" $keys)"; then
-    settings_note "cause=settings-unparsed path=$1 side=base"
-    return 1
-  fi
-  # shellcheck disable=SC2086
-  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then
-    settings_note "cause=settings-unparsed path=$1 side=head"
-    return 1
-  fi
-  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then
-    settings_note "cause=unadmitted-change path=$1"
-    return 1
-  fi
-  SETTINGS_FILE_KEYS=""
-  for key in $keys; do
-    base_value="" head_value=""
-    while IFS= read -r line; do
-      case "$line" in "$key="*) base_value="=${line#*=}" ;; esac
-    done <<<"$base_values"
-    while IFS= read -r line; do
-      case "$line" in "$key="*) head_value="=${line#*=}" ;; esac
-    done <<<"$head_values"
-    [ "$base_value" = "$head_value" ] || SETTINGS_FILE_KEYS="$SETTINGS_FILE_KEYS,$key"
-  done
 }
 
 # SETTINGS_FILES, the admitted files one per line in byte order, and
@@ -1094,7 +1183,7 @@ settings_admission() {
       return 1 ;;
   esac
   base_settings || {
-    settings_note "$MEASURE_CAUSE"
+    settings_note "$MEASURE_CAUSE" unreadable
     return 1
   }
   while IFS= read -r path; do
@@ -1107,7 +1196,7 @@ settings_admission() {
     esac
   done <<<"$changed"
   if ! files="$(printf '%s' "$files" | LC_ALL=C sort -u)"; then
-    settings_note "cause=settings-unreadable"
+    settings_note "cause=settings-unreadable" unreadable
     return 1
   fi
   settings_declarations || return 1

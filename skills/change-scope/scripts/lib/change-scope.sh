@@ -268,9 +268,11 @@ TAB="$(printf '\t')"
 # the link.
 rev_file() { # REV PATH OUT
   local listed kind blob
+  REV_FILE_MODE=""
   listed="$(git -C "$repo" ls-tree "$1" -- "$2" 2>/dev/null)" || return 1
   [ -n "$listed" ] || return 2
-  case "${listed%% *}" in
+  REV_FILE_MODE="${listed%% *}"
+  case "$REV_FILE_MODE" in
     100644 | 100755) ;;
     *) return 3 ;;
   esac

@@ -313,6 +313,104 @@ git -C "$RANGE" commit -qm source
 assert_eq "a range alone takes the classifier's class" "micro cause=branch-class class=micro rc=0" \
   "$(run_arm --base "$BASE" --head HEAD --repo "$RANGE")"
 
+SETTINGS_REPO="$(new_repo settings)"
+mkdir -p "$SETTINGS_REPO/.kendex" "$SETTINGS_REPO/.claude" "$SETTINGS_REPO/.gemini"
+for file in kendex.settings.toml .kendex/settings.toml; do
+  printf '[env]\nORDINARY = "old"\n' >"$SETTINGS_REPO/$file"
+done
+for file in kendex.toml kendex-local.toml; do
+  printf 'is_source_catalog = false\nname = "old"\n' >"$SETTINGS_REPO/$file"
+done
+printf 'MODE="old"\n' >"$SETTINGS_REPO/script.sh"
+git -C "$SETTINGS_REPO" add -A
+git -C "$SETTINGS_REPO" commit -qm base
+SETTINGS_BASE="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
+assert_settings_ranges() {
+  local row file before after want base count ci_class ci_note
+  while IFS='|' read -r row file before after want; do
+    [ -z "${SETTINGS_ROW:-}" ] || [ "$row" = "$SETTINGS_ROW" ] || continue
+    case "$row" in
+      at-ceiling | over-ceiling)
+        count="$MICRO_MAX"
+        [ "$row" != over-ceiling ] || count=$((count + 1))
+        before="$(awk -v n="$count" 'BEGIN {print "[env]"; for (i=1;i<=n;i++) printf "KEY_%d = \"old\"\n", i}')"
+        after="$(awk -v n="$count" 'BEGIN {print "[env]"; for (i=1;i<=n;i++) printf "KEY_%d = \"new\"\n", i}')" ;;
+    esac
+    git -C "$SETTINGS_REPO" checkout -q -f -B "$row" "$SETTINGS_BASE"
+    printf '%b\n' "$before" >"$SETTINGS_REPO/$file"
+    git -C "$SETTINGS_REPO" add -- "$file"
+    if [ "$file" = kendex-local.toml ]; then
+      printf 'schema = 8\nis_source_catalog = true\n' >"$SETTINGS_REPO/kendex.toml"
+      git -C "$SETTINGS_REPO" add -- kendex.toml
+    fi
+    git -C "$SETTINGS_REPO" commit -qm before --allow-empty
+    base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
+    printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
+    case "$row" in
+      mixed) printf 'MODE="new"\n' >"$SETTINGS_REPO/script.sh" ;;
+      mixed-manifest | mixed-local-manifest)
+        printf '[env]\nORDINARY = "new"\n' >"$SETTINGS_REPO/kendex.settings.toml" ;;
+    esac
+    git -C "$SETTINGS_REPO" add -A
+    git -C "$SETTINGS_REPO" commit -qm "$row"
+    if [ "$row" = standard-path ]; then
+      printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\nORDINARY = "new"\n' >"$SETTINGS_REPO/$file"
+    fi
+    assert_eq "settings range: $row" "$want rc=0" \
+      "$(run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
+    if [ "$row" = standalone-consumer ]; then
+      ci_class="$("$ARM" --event merge_group --base "$base" --head HEAD --repo "$SETTINGS_REPO" 2>"$SANDBOX/standalone-ci.err")"
+      ci_note="$(sed -n 's/^manifest-admission: admitted=false //p' "$SANDBOX/standalone-ci.err")"
+      assert_eq "standalone consumer CI refuses an absent checker" \
+        "change_class=standard cause=bot-instructions-unread side=base detail=checker-absent" "$ci_class $ci_note"
+    fi
+  done
+}
+assert_settings_ranges <<'SETTINGS'
+ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
+uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_LANE_OUTPUT = "normal"|micro cause=settings-only
+local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
+standalone-consumer|kendex.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
+local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
+ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
+size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORDINARY = "new"|standard cause=configuration-source
+at-ceiling|kendex.settings.toml|||micro cause=settings-only
+over-ceiling|kendex.settings.toml|||standard cause=configuration-source
+catalog|kendex.toml|is_source_catalog = false|is_source_catalog = true|standard cause=configuration-source
+mixed|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|standard cause=configuration-source
+mixed-manifest|kendex.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
+mixed-local-manifest|kendex-local.toml|schema = 8\n[install]\nmethod = "copy"|schema = 8\n[install]\nmethod = "symlink"|standard cause=configuration-source
+claude|.claude/settings.json|{"permissions": {}}|{"permissions": {"allow": []}}|standard cause=configuration-source
+gemini|.gemini/settings.json|{"mcpServers": {}}|{"mcpServers": {"tool": {}}}|standard cause=configuration-source
+standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=configuration-source
+SETTINGS
+
+assert_unread_settings_ranges() {
+  local kind partial path head base want
+  git -C "$SETTINGS_REPO" config uploadpack.allowFilter true
+  head="$(git -C "$SETTINGS_REPO" rev-parse ordinary)"
+  base="$(git -C "$SETTINGS_REPO" rev-parse ordinary^)"
+  for kind in declarations endpoint; do
+    partial="$SANDBOX/settings-partial-$kind"
+    git clone -q --no-checkout --filter=blob:none "file://$SETTINGS_REPO" "$partial"
+    git -C "$partial" config gc.auto 0
+    git -C "$partial" config maintenance.auto false
+    for path in .kendex-generated.json kendex.settings.toml .kendex/settings.toml; do
+      git -C "$partial" cat-file blob "$base:$path" >/dev/null
+    done
+    if [ "$kind" = declarations ]; then
+      git -C "$partial" cat-file blob "$head:kendex.settings.toml" >/dev/null
+      want="cause=declarations-unreadable step=manifest"
+    else
+      want="cause=settings-unreadable path=kendex.settings.toml side=head rev=$head"
+    fi
+    git -C "$partial" remote set-url origin "$SANDBOX/unreachable"
+    assert_eq "unreadable settings range: $kind" "change_class=standard class=standard measured=false delta=- $want rc=0" \
+      "$(ARM_RAW=true run_arm --base "$base" --head "$head" --repo "$partial")"
+  done
+}
+assert_unread_settings_ranges
+
 # Ranges of a measured size, each a branch off one base. The MEM-460 range
 # changes 7 files under one directory, 3 new and 4 modified, with 506
 # production lines added.
@@ -375,7 +473,7 @@ SIZED_ROWS
 }
 assert_sized_ranges
 ARM_BIN="$(mutant no-range-class change-scope \
-  '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err"' \
+  '      launch_range_class "$base" "$head" "$repo" "$launch_work/class-err" "$settings_range"' \
   '      launch_consider micro branch-class')" \
   control no-range-class assert_sized_ranges
 ARM_BIN="$(mutant narrow-unfloored change-scope '    class=micro' '    true')" \
