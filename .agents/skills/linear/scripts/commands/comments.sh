@@ -275,7 +275,7 @@ owner_requests() {
       def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
       {workspace: $workspace.urlKey, owner: $owner.id,
        discussions: ($items | map({key: .uuid, value: ($comments[.id] | map({id, parent_id, user_id,
-          opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
+          lines: (.body | gsub("\r\n"; "\n") | rtrimstr("\n") | split("\n") | .[:5])}))}) | from_entries),
        requests: [$items[] | . as $issue | $comments[.id][] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
           | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \

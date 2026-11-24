@@ -46,7 +46,7 @@ Next replaces the visible page; final pages alone have `complete=true` and a nul
 An answer goes to the conversation the row was read from, so no credential crosses machines:
 
 - A mailbox ask's answer is an owner answer in its own mailbox, `lane-mail send --re` with a delivery identity, run as for the reads. Writing it takes no credential. Whatever carries it further, that destination's own relay or tracker mirror, runs there with its own settings and credentials.
-- A tracker item was read with the main's own Linear credential, so the reply is a comment under the request's thread in the same workspace, posted with that credential. It holds the owner's text alone, with no agent attribution line. Its comment identity is a UUID the main mints.
+- A tracker item was read with the main's own Linear credential, so the reply is a comment under the exact question in the same workspace, posted with that credential. It holds the owner's text alone, with no agent attribution line. Its comment identity is a UUID the main mints.
 
 Reply sends the text. A tracker-only row leaves the list when the configured owner's reply reaches its exact question comment, the runtime marks that question closed, or a replacement settles it. Done sends a claim line, then any evidence text, for the delegate to verify, and the row reports `checking`. It calls no closure route and removes no tracker label. The row stays `checking` until a complete read omits it. Later on a checking row hides it until `until`, then it reports `checking` again. Done on a snoozed row ends the snooze.
 

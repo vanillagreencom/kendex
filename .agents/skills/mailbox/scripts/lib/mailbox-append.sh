@@ -291,7 +291,12 @@ def owner_question_parent($rows; $questions; $earlier):
 # Each fact belongs to this exact question. The replacement writer uses
 # the same rule to recognize a mark that landed on a previous attempt.
 def owner_question_settled($answered; $closed; $replaced):
-  $answered or $closed or $replaced or (.body | startswith("**Replaced** by "));'
+  def struck:
+    (.body | split("\n")) as $lines
+    | ($lines[0] | test("^\\*\\*Replaced\\*\\* by (a newer question|\\[the newer question\\]\\(https?://.+\\))\\. Answer that one only\\.$"))
+      and $lines[1] == ""
+      and ([$lines[2:][] | select(test("\\S"))] | length > 0 and all(.[]; test("^~~.*\\S.*~~$")));
+  $answered or $closed or $replaced or struck;'
 
 # One description format serves the ask and the watch's read and close.
 # The Linear file reader trims trailing newlines. Use --description and keep
@@ -530,7 +535,7 @@ owner_tracker_replace_actor() { # TRACKER WORK
 # Where a replaced ask's question comment stands, read by its exact id, in
 # OWNER_REPLACE_STATE: absent where `comments bulk-get` answers no such
 # comment, foreign where an identity other than ACTOR wrote it, marked where
-# it already opens with the replaced line, ready otherwise, and unread where
+# it already carries the replacement strike, ready otherwise, and unread where
 # a read fails. With `mark`, a ready comment is edited: its own lines struck
 # through under one line linking NEW_COMMENT, or saying a newer question
 # replaced it where the new ask has no comment, so the owner answers that one

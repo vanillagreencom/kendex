@@ -104,9 +104,10 @@ if operation == 'CreateComment':
         sys.exit(0)
     if outcome != 'failed':
         identifier = fields['issueId'][:-len('-uuid')]
+        actor = 'app-id' if 'Bearer tracker-app-fixture' in authorization else 'owner-id'
         database['issues'][identifier].append({
             'id': fields.get('id') or 'minted-%d' % len(database['issues'][identifier]), 'body': fields['body'],
-            'user_id': 'owner-id', 'user': 'Owner', 'user_email': 'owner@example.test',
+            'user_id': actor, 'user': 'Owner' if actor == 'owner-id' else 'Application', 'user_email': 'owner@example.test',
             'created_at': '2026-11-02T00:00:00Z', 'updated_at': '2026-11-02T00:00:00Z',
             'parent_id': fields.get('parentId'), 'url': 'https://linear.app/example/issue/' + identifier + '#reply'})
         path.write_text(json.dumps(database))
@@ -180,7 +181,7 @@ class CanonicalFixture:
 
     stable = owner_asks.Sources.stable
 
-    def collect(self):
+    def collect(self, requests=()):
         self.collections += 1
         return copy.deepcopy(self.data)
 
@@ -339,8 +340,8 @@ class OwnerAsksContract(unittest.TestCase):
 
     def test_reply_and_done_go_once_through_the_rows_own_conversation(self):
         # Each source's row answers through its own conversation: a mailbox
-        # ask through its mailbox, a tracker item through its request thread.
-        worlds = [("tracker", projection, {"source": "linear", "issueUuid": "issue-uuid", "thread": "request-0"}),
+        # ask through its mailbox, a tracker item under its question.
+        worlds = [("tracker", projection, {"source": "linear", "issueUuid": "issue-uuid", "question": "request-0"}),
                   ("mailbox", mailbox_projection,
                    {"source": "mailbox", "destination": "local", "root": "/canonical/repo", "ask": "mail-ask"})]
         actions = [("reply", "Use the second option.", "open", "Use the second option."),
@@ -358,8 +359,7 @@ class OwnerAsksContract(unittest.TestCase):
                 # An acknowledged request answers its receipt again and sends nothing.
                 self.assertEqual(self.act(action, row, "act-" + action, text=text), receipt)
                 self.assertEqual(len(self.source.deliveries), 1)
-                # Reply never closes or hides the ask; Done shows checking
-                # until a complete read omits it.
+                # The fake delivery does not change canonical source evidence.
                 after, = self.page()["rows"]
                 self.assertEqual((after["id"], after["state"]), (row["id"], shown))
         refusals = [("blank reply", "reply", {"text": " \n"}, True, "open"),
@@ -1076,25 +1076,37 @@ print(json.dumps(owner._presence('ssh:fixture')))
             '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
         mention = "https://linear.app/example/profiles/owner "
         answered = request_comment("answered", mention + "Answered through a reply chain")
-        closed = request_comment("closed", mention + "Closed by the runtime")
         replaced = request_comment("replaced", "**Replaced** by a newer question. Answer that one only.\n\n~~" + mention + "Old question~~")
         waiting = request_comment("waiting", mention + "Still needs an answer")
+        unstruck = request_comment("unstruck", "**Replaced** by a newer question. Answer that one only.\n\n" + mention + "A real question")
         discussion = dict(request_comment("discussion", "Could you confirm?"), parent_id="answered")
         owner = {"user_id": "owner-id", "user": "Owner", "user_email": "owner@example.test"}
         reply = dict(request_comment("reply", "Proceed"), parent_id="discussion", **owner)
-        close_mark = dict(request_comment("close-mark", "This question closed with no answer.\n"), parent_id="closed")
+        no_answer = "This question closed with no answer.\n"
+        runtime_marks = [
+            no_answer,
+            "This question closed on its answer.\n\n**Ruling**: Proceed\n",
+            "This question closed on your answer.\n\n**Decided by**: owner\n\n**Ruling**: Proceed\n",
+            "This question closed at its deadline with no answer, so its recommendation stands.\n\n**Decided by**: recommendation\n",
+        ]
+        closed = [record for i, body in enumerate(runtime_marks) for record in (
+            request_comment(f"closed-{i}", mention + "Closed by the runtime"),
+            dict(request_comment(f"close-mark-{i}", body), parent_id=f"closed-{i}"))]
         nonowner_reply = dict(request_comment("nonowner", "I can help"), parent_id="waiting")
+        quoted_mark = dict(request_comment("quoted-mark", no_answer), parent_id="waiting", user_id="peer")
+        malformed_mark = dict(request_comment("malformed-mark", no_answer + "That closure was premature."), parent_id="waiting")
         wrong_item_reply = dict(request_comment("wrong-item", "Proceed"), parent_id="waiting", **owner)
         top_level_answer = dict(request_comment("top-level", "Proceed"), **owner)
         done_claim = dict(request_comment("claim", owner_asks.DONE_CLAIM + "\n\nDone evidence"), parent_id="waiting", **owner)
-        self.tracker_api([answered, closed, replaced, waiting, discussion, reply, close_mark, nonowner_reply,
+        self.tracker_api([answered, *closed, replaced, waiting, unstruck, discussion, reply, nonowner_reply,
+                          quoted_mark, malformed_mark,
                           top_level_answer, done_claim], {"KEN-2": [wrong_item_reply]}, assigned=["KEN-1", "KEN-2"])
 
         result, page = self.run_cli()
 
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertEqual([row["link"]["url"] for row in page["rows"]], [waiting["url"]])
-        self.assertEqual(page["activeCount"], 1)
+        self.assertEqual({row["link"]["url"] for row in page["rows"]}, {waiting["url"], unstruck["url"]})
+        self.assertEqual(page["activeCount"], 2)
 
     def test_replacement_outcome_uses_the_predecessors_exact_comment_and_item(self):
         (self.home / "kendex.settings.toml").write_text(
@@ -1278,6 +1290,79 @@ sys.exit(result.returncode)
                                  {(replies[0]["id"], "KEN-1-uuid", original["id"])})
                 self.assertTrue(all("main-linear-key" in write["authorization"] for write in sent), sent)
                 self.assertEqual(len(sent), 2 if outcome == "failed" else 1)
+
+    def test_tracker_reply_settles_selected_question(self):
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
+        mention = "https://linear.app/example/profiles/owner "
+        outer = request_comment("outer", mention + "Outer question")
+        for case, parent, actor in (("nested", outer["id"], "owner-id"), ("application", None, "app-id")):
+            with self.subTest(case=case):
+                question = dict(request_comment("selected", mention + "Answer this question"), parent_id=parent)
+                database = self.tracker_api([outer, question], {"KEN-2": []}, assigned=["KEN-1", "KEN-2"])
+                if actor == "app-id":
+                    self.env.pop("LINEAR_API_KEY_OVERRIDE")
+                    self.env["LINEAR_APP_TOKEN"] = "tracker-app-fixture"
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                selected, = [row for row in page["rows"] if row["link"]["url"] == question["url"]]
+                if parent is not None:
+                    self.assertEqual(len({row["threadRef"] for row in page["rows"]}), 1)
+                result, receipt = self.act_cli("reply", selected, case, text="Proceed")
+                self.assertEqual((result.returncode, receipt.get("kind")), (0, "accepted"))
+                world = json.loads(database.read_text())
+                reply, = [comment for comment in world["issues"]["KEN-1"] if comment["body"].rstrip("\n") == "Proceed"]
+                self.assertEqual((reply["parent_id"], reply["user_id"]), (question["id"], actor))
+
+                if actor == "app-id":
+                    moved = copy.deepcopy(world)
+                    moved["issues"]["KEN-1"][-1]["parent_id"] = outer["id"]
+                    database.write_text(json.dumps(moved))
+                    result, page = self.run_cli()
+                    self.assertEqual((result.returncode, page.get("activeCount")), (0, 2))
+                    moved = copy.deepcopy(world)
+                    moved["issues"]["KEN-2"].append(moved["issues"]["KEN-1"].pop())
+                    database.write_text(json.dumps(moved))
+                    result, page = self.run_cli()
+                    self.assertEqual((result.returncode, page.get("activeCount")), (0, 2))
+                    database.write_text(json.dumps(world))
+
+                result, page = self.run_cli()
+                self.assertEqual((result.returncode, page.get("activeCount")), (0, 1), result.stderr + result.stdout)
+                remaining, = page["rows"]
+                self.assertEqual(remaining["link"]["url"], outer["url"])
+                if actor == "app-id":
+                    result, receipt = self.act_cli("done", remaining, "application-done", text="Evidence")
+                    self.assertEqual((result.returncode, receipt.get("state")), (0, "checking"))
+                    result, page = self.run_cli()
+                    checking, = page["rows"]
+                    self.assertEqual((result.returncode, checking["state"]), (0, "checking"))
+
+    def test_legacy_nested_reply_retries_at_its_saved_parent(self):
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
+        mention = "https://linear.app/example/profiles/owner "
+        outer = request_comment("outer", mention + "Outer question")
+        inner = dict(request_comment("inner", mention + "Inner question"), parent_id=outer["id"])
+        database = self.tracker_api([outer, inner])
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        selected, = [row for row in page["rows"] if row["link"]["url"] == inner["url"]]
+        path, = (self.root / "runtime").rglob("owner-asks.json")
+        state = json.loads(path.read_text())
+        request = {"requestId": "legacy", "expectedRevision": selected["revision"], "text": "Proceed"}
+        comment = "7cdde53c-3df9-4d9a-9772-20c93fa3e98f"
+        state["requests"]["legacy"] = {"key": comment, "body": request["text"], "receipt": None,
+            "payload": {"id": selected["id"], "action": "reply", "request": request},
+            "route": {"source": "linear", "issueUuid": "KEN-1-uuid", "thread": outer["id"]}}
+        path.write_text(json.dumps(state))
+
+        result, receipt = self.act_cli("reply", selected, "legacy", text=request["text"])
+        self.assertEqual((result.returncode, receipt.get("kind")), (0, "accepted"))
+        write, = [json.loads(line)["input"] for line in database.with_suffix(".writes").read_text().splitlines()]
+        self.assertEqual((write["id"], write["parentId"]), (comment, outer["id"]))
+        result, page = self.run_cli()
+        self.assertEqual((result.returncode, page.get("activeCount")), (0, 2))
 
     def test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget(self):
         # The main home's tracker as read on 2026-11-22: posted owner asks on

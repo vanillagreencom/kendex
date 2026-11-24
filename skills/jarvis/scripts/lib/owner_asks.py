@@ -109,18 +109,27 @@ cat >"$note"
 TRACKER_QUESTIONS = r"""set -euo pipefail
 . "$1"
 exec jq -c --arg done "$2" "$OWNER_QUESTION_JQ"'
-  def close_mark: .opening as $line | [
-    "This question closed with no answer.",
-    "This question closed on your answer.",
-    "This question closed at its deadline with no answer, so its recommendation stands.",
-    "This question closed on its answer."
-  ] | index($line) != null;
-  .tracker as $tracker | .closed as $closed | .replaced as $replaced
+  # The tracker watch writes the ruling as a direct reply from the account
+  # that posted the mailbox question. Match its body format as well as its author.
+  def close_mark($questions):
+    .parent_id as $parent
+    | if $parent == null or .user_id == "" or .user_id != $questions[$parent].comment.user_id then false
+      else .lines
+      | def ruling($at): length == $at or (.[$at] == "" and (.[$at + 1] // "" | startswith("**Ruling**: ")));
+      if .[0] == "This question closed with no answer." then length == 1
+      elif .[0] == "This question closed on its answer." then ruling(1)
+      elif .[0] == "This question closed on your answer." then .[1:3] == ["", "**Decided by**: owner"] and ruling(3)
+      elif .[0] == "This question closed at its deadline with no answer, so its recommendation stands."
+        then .[1:3] == ["", "**Decided by**: recommendation"] and ruling(3)
+      else false end end;
+  .tracker as $tracker | .closed as $closed | .replaced as $replaced | .replies as $replies
   | {workspace: $tracker.workspace, requests: [
       $tracker.requests | group_by(.issueUuid)[] | . as $requests | .[0].issueUuid as $issue
       | ($tracker.discussions[$issue] | INDEX(.id)) as $rows
       | (INDEX($requests[]; .comment.id)) as $questions
-      | (reduce ($rows[] | select(close_mark or (.user_id == $tracker.owner and .opening != $done))
+      | (reduce ($rows[] | .id as $id | select(
+                    if $replies | has($id) then [$issue, .parent_id] == $replies[$id]
+                    else close_mark($questions) or (.user_id == $tracker.owner and .lines[0] != $done) end)
                         | owner_question_parent($rows; $questions; false) | select(. != null)) as $id
            ({}; .[$id] = true)) as $answers
       | $requests[] | .comment.id as $id
@@ -221,6 +230,15 @@ def http(value):
 def mirrored(ask):
     """An outward row that names the tracker comment mirroring its ask."""
     return ask.get("tracker_posted") is True and bool(ask.get("tracker_comment"))
+
+
+def tracker_reply_parent(route):
+    # An outstanding request recorded by the old sender keeps its destination.
+    return route["question"] if "question" in route else route["thread"]
+
+
+def tracker_question(workspace, issue, comment):
+    return ["linear", workspace, issue, comment]
 
 
 class Sources:
@@ -354,7 +372,7 @@ class Sources:
                  "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
                  "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
 
-    def open_tracker(self, tracker, mailboxes):
+    def open_tracker(self, tracker, mailboxes, requests):
         if tracker is None:
             return None
         closed, replaced = {}, {}
@@ -371,12 +389,22 @@ class Sources:
                         item = (prior.get("identity") or {}).get("uuid")
                         if item and prior.get("tracker_comment"):
                             replaced.setdefault(item, {})[prior["tracker_comment"]] = True
+        replies = {}
+        for entry in requests:
+            route = entry.get("route", {})
+            if route.get("source") == "linear":
+                item, question = route["issueUuid"], tracker_reply_parent(route)
+                # For a legacy nested reply, the saved parent can belong to
+                # a different row. A retry still targets it, without settling it.
+                payload = entry["payload"]
+                matches = payload["id"] == digest(tracker_question(tracker["workspace"], item, question))
+                replies[entry["key"]] = [item, question] if payload["action"] == "reply" and matches else None
         result = self.call(watch.Destination("local", None, None), self.session.home, "mailbox", "lib/mailbox-append.sh",
                            [DONE_CLAIM], shell_args=["-c", TRACKER_QUESTIONS, "owner-asks"],
-                           data=encoded({"tracker": tracker, "closed": closed, "replaced": replaced}))
+                           data=encoded({"tracker": tracker, "closed": closed, "replaced": replaced, "replies": replies}))
         return json.loads(result.stdout)
 
-    def collect(self):
+    def collect(self, requests=()):
         targets = watch.destinations(self.settings)
         # The tracker and each destination are read side by side, so the
         # call's one deadline holds the longest chain of reads, not their sum.
@@ -394,10 +422,10 @@ class Sources:
                     comment = posted.get(ask["tracker_comment"])
                     if comment is not None:
                         mailbox["links"][ask["id"]] = comment
-        return {"config": config, "tracker": self.open_tracker(tracker, mailboxes), "mailboxes": mailboxes, "posted": posted}
+        return {"config": config, "tracker": self.open_tracker(tracker, mailboxes, requests), "mailboxes": mailboxes, "posted": posted}
 
-    def stable(self):
-        first, second = self.collect(), self.collect()
+    def stable(self, requests):
+        first, second = self.collect(requests), self.collect(requests)
         if digest(first) != digest(second):
             raise Unavailable("The request sources changed during the read; refresh from the first page.")
         return second
@@ -434,12 +462,14 @@ class Sources:
         # identifier in UUID v4 format"), unique per entity, so a resend after
         # an unanswered create cannot post twice; a retry reads it first.
         local = watch.Destination("local", None, None)
+        parent = tracker_reply_parent(route)
         if retry:
             read = self.call(local, None, "linear", "linear.sh",
                              ["graphql", "--query", COMMENT_READ, "--variables", encoded({"id": key})], check=False)
             if read.returncode == 0:
                 comment = json.loads(read.stdout)["comment"]
-                if comment["issue"]["id"] != route["issueUuid"] or (comment["parent"] or {}).get("id") != route["thread"]:
+                if (comment["id"] != key or comment["issue"]["id"] != route["issueUuid"]
+                        or (comment["parent"] or {}).get("id") != parent):
                     raise Unavailable("The reply identity names another comment.")
                 return True
             if read.returncode != 2:
@@ -449,7 +479,7 @@ class Sources:
             file.flush()
             # The text is the owner's own, as the mailbox answer's from=owner
             # says on the other route: no agent attribution line opens it.
-            result = self.call(local, None, "linear", "linear.sh", ["comments", "create", route["issueUuid"], "--parent", route["thread"],
+            result = self.call(local, None, "linear", "linear.sh", ["comments", "create", route["issueUuid"], "--parent", parent,
                                                                     "--id", key, "--no-attribution", "--body-file", file.name])
         created = json.loads(result.stdout)
         if created["success"] is not True or created["data"]["comment"]["id"] != key:
@@ -494,11 +524,11 @@ def source_rows(source):
             comment = request["comment"]
             if comment["id"] in mirrors:
                 continue
-            add(["linear", tracker["workspace"], request["issueUuid"], comment["id"]], "tracker-item", comment["body"],
+            add(tracker_question(tracker["workspace"], request["issueUuid"], comment["id"]), "tracker-item", comment["body"],
                 {"id": comment["user_id"], "name": comment["user"]}, comment["created_at"],
                 {"label": request["issue"], "url": comment["url"]},
                 ["linear", tracker["workspace"], request["issueUuid"], request["thread"]],
-                {"source": "linear", "issueUuid": request["issueUuid"], "thread": request["thread"]})
+                {"source": "linear", "issueUuid": request["issueUuid"], "question": comment["id"]})
     return rows, routes
 
 
@@ -519,7 +549,7 @@ class OwnerAsks:
         return state
 
     def current(self, state):
-        source = self.sources.stable()
+        source = self.sources.stable(state["requests"].values())
         rows, routes = source_rows(source)
         now = self.clock()
         # A complete read alone owns membership: an ask it no longer returns
@@ -658,7 +688,7 @@ class OwnerAsks:
             state["deltas"][key] = {"checking": True}
             entry["receipt"] = self.receipt(request, "accepted", "checking")
         else:
-            # A reply changes no visibility and never closes the ask.
+            # The receipt records delivery. A fresh canonical read updates membership.
             entry["receipt"] = self.receipt(request, "accepted", self.shown(state["deltas"].get(key, {}), self.clock())[0])
         self.session.write(state)
         return entry["receipt"]
