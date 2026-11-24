@@ -318,6 +318,19 @@ pub fn read(
     declaration: &Declaration,
     tree_of: &mut dyn FnMut(&str) -> Option<String>,
 ) -> ProofRead {
+    read_with_bound_run(stages, skips, r, declaration, tree_of, None).0
+}
+
+/// Also report an uncovered range base for the bound stage when it passed
+/// admission and was not voided, but the round's tree remains unproved.
+pub(super) fn read_with_bound_run(
+    stages: &[Stage],
+    skips: &[RestackSkip],
+    r: &ReadProof,
+    declaration: &Declaration,
+    tree_of: &mut dyn FnMut(&str) -> Option<String>,
+    bound_run: Option<usize>,
+) -> (ProofRead, Option<String>) {
     let current = if r.need == Need::Round && r.round.is_some() && r.exception.is_some() {
         tree_of("HEAD")
     } else {
@@ -334,6 +347,8 @@ pub fn read(
         excused: excused_runs(stages, r, current.as_deref()),
         exception: r.exception.as_ref(),
         tree_of,
+        bound_run,
+        unproved_range_base: None,
     };
     let answer = |proof: Verdict, rows: Vec<ProofRow>, skip: Option<RestackSkip>| ProofRead {
         need: r.need,
@@ -350,7 +365,7 @@ pub fn read(
         skip,
     };
     if let Some(rows) = reader.covers(&r.tree, r.base.as_deref(), &mut vec![r.tree.clone()]) {
-        return answer(Verdict::Complete, rows, None);
+        return (answer(Verdict::Complete, rows, None), None);
     }
     if r.need == Need::Restack
         && let Some(head) = r.head.as_deref()
@@ -366,14 +381,17 @@ pub fn read(
             .collect();
         for tree in trees {
             if let Some(rows) = reader.covers(&tree, None, &mut vec![tree.clone()]) {
-                return answer(Verdict::Complete, rows, Some(skip.clone()));
+                return (answer(Verdict::Complete, rows, Some(skip.clone())), None);
             }
         }
     }
     if let Some(row) = reader.pending(&r.tree) {
-        return answer(Verdict::Pending, vec![row], None);
+        return (answer(Verdict::Pending, vec![row], None), None);
     }
-    answer(Verdict::Missing, Vec::new(), None)
+    (
+        answer(Verdict::Missing, Vec::new(), None),
+        reader.unproved_range_base,
+    )
 }
 
 /// One read's rows, admission and the tree read it chains through.
@@ -388,6 +406,8 @@ struct Reader<'a> {
     excused: Vec<&'a Stage>,
     exception: Option<&'a Exception>,
     tree_of: &'a mut dyn FnMut(&str) -> Option<String>,
+    bound_run: Option<usize>,
+    unproved_range_base: Option<String>,
 }
 
 impl Reader<'_> {
@@ -452,16 +472,18 @@ impl Reader<'_> {
             if base == Some(from) {
                 return Some(vec![row]);
             }
-            let Some(next) = (self.tree_of)(from) else {
-                continue;
-            };
-            if next.is_empty() || visited.contains(&next) {
-                continue;
+            if let Some(next) = (self.tree_of)(from)
+                && !next.is_empty()
+                && !visited.contains(&next)
+            {
+                visited.push(next.clone());
+                if let Some(mut chain) = self.covers(&next, base, visited) {
+                    chain.insert(0, row);
+                    return Some(chain);
+                }
             }
-            visited.push(next.clone());
-            if let Some(mut chain) = self.covers(&next, base, visited) {
-                chain.insert(0, row);
-                return Some(chain);
+            if self.bound_run == Some(row.index) && row.mode == ValidateMode::Range {
+                self.unproved_range_base = Some(row.base);
             }
         }
         None
