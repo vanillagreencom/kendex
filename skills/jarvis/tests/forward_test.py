@@ -1086,7 +1086,7 @@ class Forward(MailWorld):
             ("test_session_grant_and_stop_isolation", "lib/forward.py",
              'not live_session(entry["session"], self.settings["JARVIS_MAIN_HOST"])', 'False'),
             # A send that drops the delivery key lands a lost-receipt retry twice.
-            ("test_retry_recovery", "lib/owner_note.py", ' --file "$note" ${1+"$@"}\n', ' --file "$note"\n'),
+            ("test_retry_recovery", "lib/owner_note.py", ' --file "$note" ${1+"$@"})\n', ' --file "$note")\n'),
             # A key from the reference alone never lands a reused reference's later request.
             ("test_answer_closes_the_entry", "lib/forward.py",
              'canonical_at(request["at"])).encode()', '"").encode()'),

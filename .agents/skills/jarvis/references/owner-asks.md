@@ -1,17 +1,15 @@
 # Owner asks
 
-Read when a console lists owner asks or sends Later through `jarvis-session`. These operations need no running controller session.
+Read when a console lists owner asks or sends Reply, Done or Later through `jarvis-session`. These operations need no running controller session.
 
 ```bash
 .agents/skills/jarvis/scripts/jarvis-session owner-asks list --home HOME --view active|snoozed [--cursor CURSOR]
-.agents/skills/jarvis/scripts/jarvis-session owner-asks later --home HOME --id ID
+.agents/skills/jarvis/scripts/jarvis-session owner-asks reply|done|later --home HOME --id ID
 ```
 
-Later reads one JSON object from stdin with `requestId`, `expectedRevision` and `until`, a future absolute ISO time with an offset.
+Each action reads one JSON object from stdin with `requestId` and `expectedRevision`. Reply requires `text`. Done takes optional evidence in `text`. Later requires `until`, a future absolute ISO time with an offset.
 
 - Pass the page's opaque row identity and revision unchanged.
-
-Every row reports Reply and Done as not allowed, with a reason.
 
 ## Sources and authority
 
@@ -43,13 +41,29 @@ Rows sort by original asked-at time, then identity. A cursor binds the home, rev
 
 Next replaces the visible page; final pages alone have `complete=true` and a null next cursor. Both views share the same metadata when their source and action evidence match.
 
-## Later
+## Reply and Done
+
+An answer goes to the conversation the row was read from, so no credential crosses machines:
+
+- A mailbox ask's answer is an owner answer in its own mailbox, `lane-mail send --re` with a delivery identity, run as for the reads. Writing it takes no credential. Whatever carries it further, that destination's own relay or tracker mirror, runs there with its own settings and credentials.
+- A tracker item was read with the main's own Linear credential, so the reply is a comment under the request's thread in the same workspace, posted with that credential. Its comment identity is a UUID the main mints.
+
+Reply sends the text and leaves the ask open. Done sends a claim line, then any evidence text, for the delegate to verify, and the row reports `checking`. It calls no closure route and removes no tracker label. The row stays `checking` until a complete read omits it. Later on a checking row hides it until `until`, then it reports `checking` again. Done on a snoozed row ends the snooze.
+
+The main records the request before it sends. A send whose outcome is unknown, a lost connection or an unconfirmed tracker write, returns unavailable and keeps the request. An identical retry settles it by its own identity, whatever the revision is by then:
+
+- A mailbox answer is sent again under the same delivery identity. lane-mail names the answer already standing and appends nothing.
+- A tracker reply is read by its comment identity first, and sent again under that identity only where Linear has no such comment.
+
+An answer to a mailbox ask closed before it arrived refuses with state `closed` and adds nothing.
+
+## Receipts and Later
 
 An action receipt contains `v`, `requestId`, `kind` (`accepted` or `refused`), `state` and a plain `cause`. A stale revision refuses with the current request state. Reusing an identity with another payload refuses. An identical retry returns the saved receipt before testing its old revision.
 
 Later changes only main-owned visibility until the main clock reaches `until`. The row then returns with its original request time and link.
 
-A complete read alone owns membership. An ask stays open while a complete read returns it: mailbox `pending`, or the configured tracker view for a tracker-only request. A later complete read that omits it removes its snooze: after the delegate's mailbox close, compaction after that close, a root or host the main no longer reads, or a label or assignee change. Failed or incomplete reads change no action state and report unavailable.
+A complete read alone owns membership. An ask stays open while a complete read returns it: mailbox `pending`, or the configured tracker view for a tracker-only request. A later complete read that omits it removes its checking or snooze state: after the delegate's mailbox close, compaction after that close, a root or host the main no longer reads, or a label or assignee change. Failed or incomplete reads change no action state and report unavailable.
 
 Failures return `{v:1,kind:"unavailable",cause:string}` and a nonzero exit. A transport timeout or missing receipt proves neither acceptance nor refusal.
 

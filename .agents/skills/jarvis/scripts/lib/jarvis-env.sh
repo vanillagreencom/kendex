@@ -40,7 +40,6 @@ jarvis_bound() {
   [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; return 1; }
   [[ -x "$runtime" ]] || { echo 'jarvis: dependency=agent-runtime-missing' >&2; return 1; }
   source "$MAILBOX_LIB/common-root.sh"
-  cd -- "$root" || return 1
   box="$(mailbox_common_root "$root")" || box="$root"
   IFS=$'\t' read -r harness server pane session at < <(jq -er '
     select(all(.harness, .session_id, .at; type == "string" and length > 0)

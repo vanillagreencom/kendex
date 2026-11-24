@@ -1086,7 +1086,7 @@ def main():
             command.add_argument("--account-walled", action="store_true")
     command = verbs.add_parser("owner-asks")
     operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
-    for action in ("list", "later"):
+    for action in ("list", "reply", "done", "later"):
         operation = operations.add_parser(action)
         operation.add_argument("--home", required=True)
         if action == "list":
