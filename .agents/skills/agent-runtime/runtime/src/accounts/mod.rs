@@ -791,7 +791,7 @@ fn prefer(
         || (provider.status == "no_usage_data" && provider.headroom_pct.is_none());
     let unscoped = scoped
         && (provider.measured() || provider.status == "no_usage_data")
-        && model_buckets(&provider, model).is_empty();
+        && model_buckets(&provider, Some(model)).is_empty();
     if !unread && !unscoped {
         return provider;
     }
@@ -1135,19 +1135,21 @@ fn model_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
 
 /// The plan windows of a measured row a lane on `model` spends, each of
 /// which can stop it: the shared windows of [`WINDOWS`] and the model
-/// windows [`model_buckets`] names; with no model, or under the floor
-/// ([`lane_binding`]), the reader's model window too, the fullest any model
-/// spends, as the reader's own binding reads it. The binding is the
-/// fullest of them, so a launch judges the age of each beside it.
+/// windows [`model_buckets`] names. A launch with no model spends every
+/// scoped window, using the aggregate only when the reading carries no
+/// scoped figures. A named model under the floor ([`lane_binding`]) spends
+/// the reader's model window too. The launch judges the age of each window
+/// beside the binding that determines its projected room.
 fn plan_windows(row: &AccountRow, model: Option<&str>, floor: bool) -> Vec<Binding> {
     if !row.measured() {
         return Vec::new();
     }
     let model = model.filter(|m| !m.is_empty());
+    let include_aggregate = model.map_or(row.model_buckets.is_empty(), |_| floor);
     let resets = |key: &str| row.raw.get("resets").and_then(|r| string(r, key));
     let mut windows: Vec<Binding> = WINDOWS
         .iter()
-        .filter(|w| w.bucket != MODEL || model.is_none() || floor)
+        .filter(|w| w.bucket != MODEL || include_aggregate)
         .filter_map(|w| {
             Some(Binding {
                 bucket: w.bucket.to_owned(),
@@ -1160,27 +1162,32 @@ fn plan_windows(row: &AccountRow, model: Option<&str>, floor: bool) -> Vec<Bindi
             })
         })
         .collect();
-    if let Some(model) = model {
-        windows.extend(model_buckets(row, model));
-    }
+    windows.extend(model_buckets(row, model));
     windows
 }
 
-/// `model_bindings($model)`: the model-scoped windows whose label names
-/// the model (a trailing `[1m]` dropped, the normalized spellings contained
-/// either way; a window with no label counts for every model).
-fn model_buckets(row: &AccountRow, model: &str) -> Vec<Binding> {
-    let m = norm(
-        model
-            .strip_suffix("[1m]")
-            .or_else(|| model.strip_suffix("[1M]"))
-            .unwrap_or(model),
-    );
+/// `model_bindings($model)`: every scoped window when the model is absent;
+/// otherwise the windows whose label names it (a trailing `[1m]` dropped,
+/// the normalized spellings contained either way; a window with no label
+/// counts for every model).
+fn model_buckets(row: &AccountRow, model: Option<&str>) -> Vec<Binding> {
+    let model = model.map(|name| {
+        norm(
+            name.strip_suffix("[1m]")
+                .or_else(|| name.strip_suffix("[1M]"))
+                .unwrap_or(name),
+        )
+    });
     row.model_buckets
         .iter()
-        .filter(|bucket| match bucket.label.as_deref().map(norm) {
-            None => true,
-            Some(l) => !l.is_empty() && !m.is_empty() && (l.contains(&m) || m.contains(&l)),
+        .filter(|bucket| {
+            model.as_ref().is_none_or(|model| {
+                bucket.label.as_deref().map(norm).is_none_or(|label| {
+                    !label.is_empty()
+                        && !model.is_empty()
+                        && (label.contains(model) || model.contains(&label))
+                })
+            })
         })
         .map(|bucket| Binding {
             bucket: MODEL.to_owned(),
