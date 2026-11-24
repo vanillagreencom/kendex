@@ -1538,7 +1538,6 @@ impl ScopeCheck<'_> {
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
         let unreadable = notes_by_package(&snapshot);
-        let pulled = self.pulled_record(&snapshot.packages);
         let mut compared = BTreeSet::new();
         for package in &snapshot.packages {
             // Holds and ignores do not suppress independent unreadable evidence.
@@ -1578,7 +1577,7 @@ impl ScopeCheck<'_> {
                     }
                 }
             } else {
-                self.package_line(package, &pulled, sections);
+                self.package_line(package, sections);
             }
         }
         for (key, notes) in unreadable {
@@ -1747,59 +1746,12 @@ impl ScopeCheck<'_> {
         }
     }
 
-    /// The record a pull from the default branch would bring, which a
-    /// project checkout behind it with nothing of its own has
-    /// ([`crate::lock::branch::pulled_record`]); `None` where no such pull
-    /// applies. Read once per scope, and only where some package reads
-    /// behind. A checkout git cannot answer for is an error, which the
-    /// stale lines carry as their detail.
-    fn pulled_record(
-        &self,
-        packages: &[crate::drift::snapshot::PackageSnapshot],
-    ) -> std::result::Result<Option<crate::lock::Lock>, String> {
-        let behind = packages
-            .iter()
-            .any(|package| package.update_available && !package.held && !package.ignored);
-        if self.global || !behind {
-            return Ok(None);
-        }
-        match crate::lock::branch::pulled_record(self.scope) {
-            Ok(None) => Ok(None),
-            Ok(Some(crate::lock::LockFile::Current(lock))) => Ok(Some(lock)),
-            Ok(Some(crate::lock::LockFile::Absent)) => Ok(Some(crate::lock::Lock::default())),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    /// The fix for a package with a newer version on its source. The pull
-    /// is the fix only where it brings this package another record, which
-    /// the next check then reads again; a pull that leaves the record as it
-    /// is leaves the newer version where it was, and the refresh with it.
-    /// The verdict's own record is the lock's current one, since a package
-    /// whose record moved reads again before it reaches here. A checkout
-    /// git cannot answer for is offered neither, since the refresh is the
-    /// wrong fix exactly where the pull is the right one.
-    fn stale_remedy(
-        &self,
-        package: &crate::drift::snapshot::PackageSnapshot,
-        pulled: &std::result::Result<Option<crate::lock::Lock>, String>,
-    ) -> std::result::Result<Remedy, String> {
-        match pulled {
-            Ok(Some(pulled)) if package.record_moved(pulled) => Ok(Remedy::Pull),
-            Ok(_) => Ok(Remedy::Refresh {
-                global: self.global,
-            }),
-            Err(error) => Err(error.clone()),
-        }
-    }
-
     /// One package's dominant classification. An edited package's update is
     /// blocked by the edit, so the edit is the line; the others follow the
     /// same "what must be decided first" order.
     fn package_line(
         &self,
         package: &crate::drift::snapshot::PackageSnapshot,
-        pulled: &std::result::Result<Option<crate::lock::Lock>, String>,
         sections: &mut Sections,
     ) {
         let prefix = self.prefix;
@@ -1835,14 +1787,12 @@ impl ScopeCheck<'_> {
                 }),
             ));
         } else if package.update_available {
-            let stale = self.stale_remedy(package, pulled);
-            sections.stale.push(Line {
-                detail: stale.as_ref().err().map(|error| verbatim(error)),
-                ..drift(
-                    format!("{prefix}{kind} '{name}' has a newer version on its source"),
-                    stale.as_ref().ok().cloned(),
-                )
-            });
+            sections.stale.push(drift(
+                format!("{prefix}{kind} '{name}' has a newer version on its source"),
+                Some(Remedy::Refresh {
+                    global: self.global,
+                }),
+            ));
         }
     }
 
