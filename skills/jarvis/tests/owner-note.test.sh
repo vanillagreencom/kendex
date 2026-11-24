@@ -3,6 +3,7 @@
 # Inputs: skills/jarvis/scripts/owner-note, skills/jarvis/scripts/lib/owner_note.py,
 # skills/jarvis/scripts/lib/watch.py, skills/jarvis/scripts/lib/jarvis-env.sh,
 # skills/jarvis/tests/owner_note_test.py, skills/jarvis/tests/mail_world.py,
+# skills/jarvis/tests/fixtures/runtime_cache.py,
 # skills/mailbox/scripts/, skills/orch/scripts/, skills/orch/runtime/,
 # skills/agent-runtime/scripts/, skills/agent-runtime/runtime/.
 set -euo pipefail

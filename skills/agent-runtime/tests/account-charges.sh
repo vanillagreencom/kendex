@@ -49,7 +49,12 @@ jq -cn --argjson expires "$((($(date +%s) + 3600) * 1000))" \
   '{claudeAiOauth: {accessToken: "token-aclaude", refreshToken: "refresh", expiresAt: $expires, subscriptionType: "max"}}' \
   > "$ACCOUNT/.credentials.json"
 jq -n '{seven_day: {utilization: 40, resets_at: "2099-08-01T06:00:00Z"}}' > "$USAGE/token-aclaude.usage.json"
-ENV=(env HOME="$HOME_DIR" PATH="$BIN:$PATH" AGENT_RUNTIME_ACCOUNT_DIRS="$ACCOUNT" USAGE_FIXTURE_DIR="$USAGE"
+# The wrappers resolve their cache under HOME, which the entries replace: the
+# caller's cache, resolved by the wrappers' own rule, stays the one read.
+# shellcheck source=../scripts/lib/key.sh
+source "$REPO_ROOT/skills/agent-runtime/scripts/lib/key.sh"
+ENV=(env HOME="$HOME_DIR" AGENT_RUNTIME_CACHE="$(agent_runtime_cache)" PATH="$BIN:$PATH"
+  AGENT_RUNTIME_ACCOUNT_DIRS="$ACCOUNT" USAGE_FIXTURE_DIR="$USAGE"
   AGENT_RUNTIME_ACCOUNT_STATE_DIR="$TMP_ROOT/state" AGENT_RUNTIME_USAGE_TTL=0 AGENT_RUNTIME_USAGE_MAX_AGE=0)
 
 # The fleet record F: one running lane on the account, its launch identity

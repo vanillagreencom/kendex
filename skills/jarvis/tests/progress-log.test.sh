@@ -3,6 +3,7 @@
 # Inputs: skills/jarvis/scripts/progress-log, skills/jarvis/scripts/lib/progress.py,
 # skills/jarvis/scripts/lib/sections.py, skills/jarvis/scripts/lib/watch.py,
 # skills/jarvis/tests/progress_log_test.py, skills/jarvis/tests/mail_world.py,
+# skills/jarvis/tests/fixtures/runtime_cache.py, skills/agent-runtime/scripts/lib/key.sh,
 # skills/linear/scripts/lib/common.sh, skills/linear/scripts/lib/formatters.sh,
 # skills/linear/scripts/commands/comments.sh, skills/linear/scripts/commands/issues.sh,
 # skills/linear/scripts/commands/auth-check.sh, skills/linear/scripts/lib/issue-validation.sh.
