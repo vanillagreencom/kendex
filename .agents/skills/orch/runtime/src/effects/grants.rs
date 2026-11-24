@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::confine::{self, Answer, Cause, Grants, Host};
+use agent_runtime::confine::{self, Answer, Cause, Grants, Host, SharedDirectory};
 use agent_runtime::effects::prepare::LaunchHome;
 use agent_runtime::harness::{Harness, HomeWrites};
 use agent_runtime::host;
@@ -283,11 +283,76 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
     }
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the launch checks the git directories it will bind; nothing is written"
+)]
+fn linked_git_grant(
+    common: &Path,
+    git_dir: &Path,
+    root: &Path,
+    read_only: bool,
+    kept: &mut Vec<PathBuf>,
+) -> Result<SharedDirectory> {
+    let refused_dir = |path: &Path| {
+        refused(
+            "grant-git-directory",
+            &[("path", &path.display().to_string())],
+        )
+    };
+    let mut grant = SharedDirectory {
+        root: common.to_path_buf(),
+        writable: Vec::new(),
+    };
+    if read_only {
+        return Ok(grant);
+    }
+    // Verify the admin directory belongs to this checkout before giving
+    // it write access. Git records the .git path back in worktrees/<id>/gitdir
+    // (gitrepository-layout(5)).
+    let worktrees = common.join("worktrees");
+    let admin = resolved(git_dir).ok_or_else(|| refused_dir(git_dir))?;
+    if admin.parent() != Some(&worktrees) {
+        return Err(refused_dir(git_dir));
+    }
+    let pointer = admin.join("gitdir");
+    if !std::fs::symlink_metadata(&pointer).is_ok_and(|meta| meta.is_file()) {
+        return Err(refused_dir(&pointer));
+    }
+    let target = std::fs::read_to_string(&pointer).map_err(|_| refused_dir(&pointer))?;
+    if resolved(&admin.join(target.trim_end_matches(['\n', '\r']))).as_deref()
+        != Some(root.join(".git").as_path())
+    {
+        return Err(refused_dir(&pointer));
+    }
+    grant.writable.push(admin);
+    // A link must not reopen any path outside its named data directory.
+    for (name, prepare, writable) in [
+        ("objects", false, true),
+        ("refs", false, true),
+        ("logs", false, true),
+        ("reftable", false, true),
+        ("kendex", true, false),
+        ("kendex/lane-data", true, true),
+    ] {
+        let dir = common.join(name);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && prepare => kept.push(dir.clone()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Ok(_) | Err(_) => return Err(refused_dir(&dir)),
+        }
+        if writable {
+            grant.writable.push(dir);
+        }
+    }
+    Ok(grant)
+}
+
 /// The grants of a local launch of `item` on `harness` from `mail_root`
-/// under `homes`: writable its checkout (the root, and the common git
-/// folder of a linked worktree with its hooks, its configuration, the main
-/// checkout's per-worktree configuration and the launch records every
-/// lane's hook resolves read-only), the item's own
+/// under `homes`: writable its checkout and its linked worktree's git
+/// directory, with only the shared Git and kendex data folders writable
+/// in the common git directory, the item's own
 /// folder of the state directory, whose other entries stay read-only, and
 /// the room pick's usage records; in the seats its own launch runs under and
 /// every configured account of a harness its second opinion can run on,
@@ -362,8 +427,30 @@ pub(super) fn of(
     let mut read_only = Vec::new();
     let mut kept = Vec::new();
     let mut missing = Vec::new();
-    if let Some(common) = resolved(&checkout.common) {
-        if !lane.read_only && !common.starts_with(&root) {
+    let mut shared_directory = None;
+    let common = if answer == Answer::Confined {
+        Some(std::fs::canonicalize(&checkout.common).map_err(|error| {
+            refused(
+                "grant-git-directory",
+                &[
+                    ("path", &checkout.common.display().to_string()),
+                    ("cause", &error.to_string()),
+                ],
+            )
+        })?)
+    } else {
+        resolved(&checkout.common)
+    };
+    if let Some(common) = common {
+        if answer == Answer::Confined && common != root.join(".git") {
+            shared_directory = Some(linked_git_grant(
+                &common,
+                &checkout.git_dir,
+                &root,
+                lane.read_only,
+                &mut kept,
+            )?);
+        } else if !lane.read_only && !common.starts_with(&root) {
             writable.push(common.clone());
         }
         for name in ["hooks", "config"] {
@@ -561,6 +648,7 @@ pub(super) fn of(
     };
     let grants = Grants {
         writable,
+        shared_directory,
         seats: seat_paths,
         read_only,
         runtime_dir: std::env::var_os(RUNTIME_DIR_VAR)

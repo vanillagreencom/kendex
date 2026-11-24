@@ -157,8 +157,8 @@ claim() {
 # A directory where the guard's mutex file goes: every guard mutation then
 # fails to take the mutex, the guard reaching no verdict on any lease.
 plant_unopenable_mutex() { # MAIN
-  rm -f -- "$1/.git/kendex-worktree-session-guard.lock"
-  mkdir -- "$1/.git/kendex-worktree-session-guard.lock"
+  rm -f -- "$1/.git/kendex/lane-data/kendex-worktree-session-guard.lock"
+  mkdir -p -- "$1/.git/kendex/lane-data/kendex-worktree-session-guard.lock"
 }
 
 step() {
@@ -276,7 +276,7 @@ err_text() {
     unknown-option) printf 'worktree-cleanup-option-unknown: --bogus' ;;
     ttl-nan) printf 'worktree-cleanup-ttl-invalid: abc' ;;
     unguarded) printf 'worktree-session-guard-unavailable: <guard>' ;;
-    unjudged) printf 'worktree-lease-release-unjudged: path=<topic> exit=1;worktree-guard-lock-open: <main>/.git/kendex-worktree-session-guard.lock' ;;
+    unjudged) printf 'worktree-lease-release-unjudged: path=<topic> exit=1;worktree-guard-lock-open: <main>/.git/kendex/lane-data/kendex-worktree-session-guard.lock' ;;
     reuse-foreign:*) printf 'worktree-lease-foreign: <topic>;worktree-guard-owner-conflict: path=<topic> owner=%s;worktree-guard-lease-not-stale: <topic>' "${1#reuse-foreign:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -381,7 +381,8 @@ MUTEX_ROOT="$TMP_ROOT/mutex"
 make_repo "$MUTEX_ROOT"
 MAIN="$MUTEX_ROOT/main"; ROOT="$MUTEX_ROOT"; add_merged_tree issue-m
 MUTEX_WT="$MUTEX_ROOT/trees/issue-m"
-exec 8>"$MUTEX_ROOT/main/.git/kendex-worktree-session-guard.lock"
+mkdir -p -- "$MUTEX_ROOT/main/.git/kendex/lane-data"
+exec 8>"$MUTEX_ROOT/main/.git/kendex/lane-data/kendex-worktree-session-guard.lock"
 flock -x 8
 set +e
 timeout 3 "$GUARD_SCRIPT" claim "$MUTEX_WT" --owner OWNER-B >/dev/null 2>&1
@@ -419,7 +420,7 @@ chmod +x "$BOUND_BIN/flock"
 BOUND_WT="$MUTEX_ROOT/trees/bounded"
 git -C "$MUTEX_ROOT/main" worktree add -q -b bounded "$BOUND_WT" main
 bounded_wait_row() { # GUARD
-  local lock="$MUTEX_ROOT/main/.git/kendex-worktree-session-guard.lock" bound_rc=0 bound_err
+  local lock="$MUTEX_ROOT/main/.git/kendex/lane-data/kendex-worktree-session-guard.lock" bound_rc=0 bound_err
   exec 8>"$lock"
   flock -x 8
   bound_err=$(PATH="$BOUND_BIN:$PATH" timeout 5 "$1" claim "$BOUND_WT" --owner OWNER-B 2>&1 >/dev/null) || bound_rc=$?
@@ -906,15 +907,15 @@ established_rows() { # HARNESS
   LIVE_PATH="$PATH"
   in_harness "$hdir" bob claim "$LIVE_WT" --session
   common="$(git -C "$LIVE_MAIN" rev-parse --path-format=absolute --git-common-dir)"
-  : >"$common/kendex-worktree-session-guard.lock.d"
+  : >"$common/kendex/lane-data/kendex-worktree-session-guard.lock.d"
   LIVE_PATH="$NOFLOCK_BIN"
   in_harness "$hdir" bob claim "$LIVE_WT" --session
   # The busy record is the zero-wait branch's own; a claim that waited out the
   # bound would end on the same exit with the timeout record instead.
-  assert_eq "rc=$LIVE_RC first=$(message_records <"$hdir/err" | sed -n 1p) owner=$(live_owner) mutex=$([[ -e $common/kendex-worktree-session-guard.lock.d ]] && echo held || echo gone)" \
-    "rc=6 first=worktree-guard-mutex-busy: $common/kendex-worktree-session-guard.lock.d owner=bob mutex=held" \
+  assert_eq "rc=$LIVE_RC first=$(message_records <"$hdir/err" | sed -n 1p) owner=$(live_owner) mutex=$([[ -e $common/kendex/lane-data/kendex-worktree-session-guard.lock.d ]] && echo held || echo gone)" \
+    "rc=6 first=worktree-guard-mutex-busy: $common/kendex/lane-data/kendex-worktree-session-guard.lock.d owner=bob mutex=held" \
     "$harness: an established claim without flock makes one attempt at a held mutex"
-  rm -f -- "${common:?}/kendex-worktree-session-guard.lock.d"
+  rm -f -- "${common:?}/kendex/lane-data/kendex-worktree-session-guard.lock.d"
   session_harness_stop "$hdir"
 }
 
@@ -1053,7 +1054,7 @@ verb_rows main "$WORKTREE_PACKAGE_DIR/scripts"
 # label|lease edit|tree edit|guard mutex|command|rc|leading stderr records|lease after|tree|kept beside
 REUSE_ROWS='create --reuse refuses a foreign lease whose session lives and keeps the lock|-|-|-|create topic --reuse|75|worktree-lease-foreign: <topic>;worktree-guard-owner-conflict: path=<topic> owner=other;worktree-guard-lease-session-held: path=<topic> state=live|other|present|-
 create --reuse releases a foreign lease whose session is dead and reuses the tree|restart|-|-|create topic --reuse|0|worktree-lease-ended-released: <topic>|3|present|-
-create --reuse names a guard that cannot take its mutex, not another session, and keeps the lock|restart|-|unopenable|create topic --reuse|75|worktree-lease-release-unjudged: path=<topic> exit=1;worktree-guard-lock-open: <main>/.git/kendex-worktree-session-guard.lock|other|present|-
+create --reuse names a guard that cannot take its mutex, not another session, and keeps the lock|restart|-|unopenable|create topic --reuse|75|worktree-lease-release-unjudged: path=<topic> exit=1;worktree-guard-lock-open: <main>/.git/kendex/lane-data/kendex-worktree-session-guard.lock|other|present|-
 create over a removed tree releases its dead session'"'"'s lease and prunes the registration|restart|removed|-|create topic|0|worktree-lease-ended-released: <topic>;worktree-registration-pruned: <topic>|3|present|-
 create over a removed tree names the guard'"'"'s reason for keeping a live session'"'"'s lease|-|removed|-|create topic|75|worktree-guard-lease-session-held: path=<topic> state=live;worktree-worktree-owned: <topic>|other|absent|topic
 create over a removed tree keeps a registration holding a rebase map, its map and its lease|restart|removed-mapped|-|create topic|75|worktree-registration-rebase-map: <main>/.git/worktrees/topic/kendex-rebase-map;worktree-worktree-owned: <topic>|other|absent|map,topic
@@ -1085,7 +1086,7 @@ reuse_rows() { # RUN SCRIPTS-DIR
     read -r -a argv <<<"$command"
     rc=0
     (cd "$root/main" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER GH_STATE="$root/gh-state" "$script" "${argv[@]}" >/dev/null 2>"$root/err") || rc=$?
-    [[ "$mutex" != unopenable ]] || rmdir -- "$root/main/.git/kendex-worktree-session-guard.lock"
+    [[ "$mutex" != unopenable ]] || rmdir -- "$root/main/.git/kendex/lane-data/kendex-worktree-session-guard.lock"
     status_rc=0
     owner="$("$GUARD_SCRIPT" status "$tree" --repo "$root/main" 2>/dev/null | jq -r '.owner // empty')" || status_rc=$?
     want_count="$(tr ';' '\n' <<<"$want_records" | wc -l)"

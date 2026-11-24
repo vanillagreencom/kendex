@@ -2490,9 +2490,12 @@ acquire_issue_claim_lock() {
   fi
   normalized_issue="$(issue_branch_name "$issue")"
   claim_key="$(printf '%s' "$normalized_issue" | git hash-object --stdin)"
-  lock_path="$PROJECT_COMMON_GIT_DIR/kendex-worktree-claim-$claim_key.lock"
+  lock_path="$PROJECT_COMMON_GIT_DIR/kendex/lane-data/kendex-worktree-claim-$claim_key.lock"
   # Fixed descriptor: Bash 3.2 cannot allocate a descriptor dynamically.
-  exec 9>"$lock_path"
+  if ! mkdir -p -- "${lock_path%/*}" 2>/dev/null || ! { exec 9>"$lock_path"; } 2>/dev/null; then
+    worktree_message claim-lock-open "$lock_path" "Error: could not open the worktree claim lock." >&2
+    return 1
+  fi
   ISSUE_CLAIM_LOCK_HELD=true
   flock -x 9
 }

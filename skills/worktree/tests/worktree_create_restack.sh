@@ -1018,6 +1018,9 @@ echo "=== a rewrite whose record cannot be written never starts ==="
 # must not rewrite anything: there would be no way to refuse the publish
 # afterwards. A directory at the file's own path is what makes the write fail.
 build map-unwritable clean
+claim_key="$(printf '%s' "$ISSUE" | git -C "$MAIN" hash-object --stdin)"
+claim_lock="$MAIN/.git/kendex/lane-data/kendex-worktree-claim-$claim_key.lock"
+rm -f -- "$claim_lock"
 map_path="$(git -C "$WT" rev-parse --git-path kendex-rebase-map)"
 [[ "$map_path" == /* ]] || map_path="$WT/$map_path"
 mkdir -p "$map_path"
@@ -1026,6 +1029,8 @@ unwritable_rc=0
 (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack \
   >"$ROOT/unwritable.out" 2>"$ROOT/unwritable.err") || unwritable_rc=$?
 assert_eq "$unwritable_rc" "1" "a restack whose record cannot be written fails"
+assert_eq "$([[ -f "$claim_lock" ]] && echo yes || echo no)" yes \
+  "restack takes its claim lock in the writable lane data folder"
 assert_eq "$(grep '^worktree-rebase-pending-unrecorded:' "$ROOT/unwritable.err" | sed "s|$WT|<wt>|")" \
   "worktree-rebase-pending-unrecorded: <wt>" "the refusal names the worktree it could not record in"
 assert_eq "$(git -C "$WT" rev-parse HEAD)" "$unwritable_head" "the branch was never rewritten"

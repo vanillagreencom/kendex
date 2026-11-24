@@ -73,6 +73,13 @@ const NO_DISPLAY: &str = ".agent-runtime-no-display";
 /// How long the probe's trial run may take before it reads as refused.
 const TRIAL: Duration = Duration::from_secs(30);
 
+/// A read-only directory with explicit writable directories beneath it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedDirectory {
+    pub root: PathBuf,
+    pub writable: Vec<PathBuf>,
+}
+
 /// What a worker's launch may reach. Every path is absolute; the rest of
 /// the tree stays readable and unwritable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +87,8 @@ pub struct Grants {
     /// Folders the lane writes: its worktree, its mailbox, its own state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writable: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_directory: Option<SharedDirectory>,
     /// Account seats the lane runs on: its own and any its review may run
     /// on. Named so a launch record names them, since a confined lane still
     /// holds those accounts' credentials; bound as the rest of the tree is,
@@ -250,6 +259,12 @@ pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Conf
     let paths = grants
         .writable
         .iter()
+        .chain(
+            grants
+                .shared_directory
+                .iter()
+                .flat_map(|dir| std::iter::once(&dir.root).chain(&dir.writable)),
+        )
         .chain(&grants.seats)
         .chain(&grants.read_only)
         .chain(&grants.runtime_dir)
@@ -286,6 +301,8 @@ pub fn confinement(host: Host, harness: Harness, grants: &Grants) -> Result<Conf
 /// bwrap's words for `grants`. bwrap applies them in order, so the
 /// runtime folder's tmpfs comes before the binds that reach into it, and
 /// the read-only carve-outs after the writable binds they sit inside.
+/// The shared directory remount masks broad writable grants before
+/// reopening its explicit writable children.
 pub fn linux_words(grants: &Grants) -> Vec<Word> {
     let mut words: Vec<Word> = BASE.iter().map(|w| plain(w)).collect();
     if let Some(dir) = &grants.runtime_dir {
@@ -294,6 +311,12 @@ pub fn linux_words(grants: &Grants) -> Vec<Word> {
     }
     for path in &grants.writable {
         pair(&mut words, "--bind", path);
+    }
+    if let Some(dir) = &grants.shared_directory {
+        pair(&mut words, "--ro-bind", &dir.root);
+        for path in &dir.writable {
+            pair(&mut words, "--bind", path);
+        }
     }
     for path in &grants.read_only {
         pair(&mut words, "--ro-bind", path);
@@ -408,6 +431,7 @@ mod tests {
     fn grants(writable: &str) -> Grants {
         Grants {
             writable: vec![PathBuf::from(writable)],
+            shared_directory: None,
             seats: Vec::new(),
             read_only: Vec::new(),
             runtime_dir: None,

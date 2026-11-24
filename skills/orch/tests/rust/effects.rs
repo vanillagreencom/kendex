@@ -12555,6 +12555,62 @@ fn a_lane_is_refused_the_main_checkout_s_per_worktree_git_configuration() {
     assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
 }
 
+/// The linked lane can write its own Git and kendex data while the
+/// shared Git directory keeps a sibling worktree's config read-only.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_linked_lane_can_write_its_git_data_but_cannot_open_a_siblings_config_for_writing() {
+    let mut world = Confined::new();
+    let repo = world.runner.state_dir().to_path_buf();
+    git(&repo, &["config", "gc.auto", "0"]);
+    git(&repo, &["config", "maintenance.auto", "false"]);
+    let wt = world.linked_worktree("ken-writer");
+    let sibling = world.linked_worktree("ken-sibling");
+    let common = repo.join(".git");
+    let sibling_admin = PathBuf::from(git(&sibling, &["rev-parse", "--absolute-git-dir"]));
+    let sibling_config = sibling_admin.join("config.worktree");
+    std::fs::write(&sibling_config, "[core]\n").unwrap();
+    // A broad grant around the repository must still leave its Git
+    // metadata protected.
+    world
+        .runner
+        .env
+        .push(("ORCH_LANE_WRITABLE".to_owned(), repo.display().to_string()));
+    world.probe_env(
+        "PROBE_RUN",
+        &format!(
+            "if [ -r '{sibling}' ]; then\n\
+               (: >> '{sibling}') 2>/dev/null && echo sibling-config=writable || echo sibling-config=refused\n\
+             else echo sibling-config=unreadable; fi\n\
+             for dir in objects refs logs worktrees/ken-writer kendex/lane-data; do\n\
+               [ -w '{common}/'\"$dir\" ] && echo \"git-data=$dir writable\" || echo \"git-data=$dir refused\"\n\
+             done",
+            sibling = sibling_config.display(),
+            common = common.display(),
+        ),
+    );
+    world.launch(&launch_request("KEN-WRITER", &wt));
+    let probe = world.probe_in(&wt, "KEN-WRITER", 1);
+    assert!(
+        probe.lines().any(|line| line == "sibling-config=refused"),
+        "{probe}"
+    );
+    for dir in [
+        "objects",
+        "refs",
+        "logs",
+        "worktrees/ken-writer",
+        "kendex/lane-data",
+    ] {
+        assert!(
+            probe
+                .lines()
+                .any(|line| line == format!("git-data={dir} writable")),
+            "{probe}"
+        );
+    }
+}
+
 /// A Pi lane starts past Pi's "Trust project folder?", which Pi asks before
 /// its composer unless its line carries `--approve` or its root's
 /// `trust.json` trusts the folder, with nobody at the pane to answer.

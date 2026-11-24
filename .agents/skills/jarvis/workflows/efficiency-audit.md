@@ -14,7 +14,7 @@ Run this workflow when the user requests the weekly efficiency audit or its trac
   - Resolve retained and archived lane history from the consumer's own instructions too.
   - With orch installed, current records are the overseer state's `lanes[]` entries and `launched_at`; cleanup can move completed records into archives.
   - Skip an unnamed optional source and list it as skipped.
-- Read the commit-guards run log of each repository the consumer names with commit-guards installed: `commit-guards-runs.tsv` in the directory `git rev-parse --git-common-dir` prints there.
+- Read the commit-guards run log of each repository the consumer names with commit-guards installed. The path is `kendex/lane-data/commit-guards-runs.tsv` under the directory that `git rev-parse --git-common-dir` reports.
   - Its six tab-separated fields are defined in commit-guards CHECKS.md § The run log.
   - A named repository with no log has no row to read; list it as unread with that cause.
 - Use the user's sample size per source, or 5 when unset.

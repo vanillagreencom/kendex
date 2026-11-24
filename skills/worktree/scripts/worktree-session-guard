@@ -488,7 +488,11 @@ readonly GUARD_MUTEX_WAIT_SECONDS=60
 # the caller picks the exit.
 acquire_guard_mutex() { # COMMON [WAIT_SECONDS]
 	local common="$1" wait="${2:-$GUARD_MUTEX_WAIT_SECONDS}" lock_path tries=0
-	lock_path="$common/kendex-worktree-session-guard.lock"
+	lock_path="$common/kendex/lane-data/kendex-worktree-session-guard.lock"
+	[[ -d "${lock_path%/*}" ]] || mkdir -p -- "${lock_path%/*}" 2>/dev/null || {
+		worktree_message guard-lock-open "$lock_path" "Cannot create the session lock directory." >&2
+		return 1
+	}
 	if command -v flock >/dev/null 2>&1; then
 		{ exec 9>"$lock_path"; } 2>/dev/null || { worktree_message guard-lock-open "$lock_path" "Cannot open the session lock file." >&2; return 1; }
 		if [[ "$wait" -eq 0 ]]; then
@@ -501,8 +505,6 @@ acquire_guard_mutex() { # COMMON [WAIT_SECONDS]
 	# Keep cleanup inert until this process owns the file. A signal between
 	# acquisition and the assignment can leave a file to remove by hand; arming
 	# cleanup with the path first would let a loser remove the winner's mutex.
-	# Retain the directory mutex's path so older and newer guards exclude
-	# each other while an installed copy is being updated.
 	trap release_guard_mutex EXIT
 	while ! (set -o noclobber; : >"$lock_path.d") 2>/dev/null; do
 		if [[ "$wait" -eq 0 ]]; then

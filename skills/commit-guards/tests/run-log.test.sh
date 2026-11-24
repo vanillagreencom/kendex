@@ -96,7 +96,7 @@ run() { # DIR ENVS ARGS [GG] — the batch's exit status
   (cd "$1" && env -i PATH="$CLOCK_BIN:$PATH" LOG_CLOCK_STATE="$TMP/clock-state" HOME="$HOME" TMPDIR="$TMPDIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$GIT_CONFIG_GLOBAL" "$2" "${4:-$GG}" $3 >"$TMP/last.out" 2>&1) || rc=$?
   printf '%s' "$rc"
 }
-log_of() { printf '%s/.git/commit-guards-runs.tsv' "$1"; } # REPO
+log_of() { printf '%s/.git/kendex/lane-data/commit-guards-runs.tsv' "$1"; } # REPO
 # Each row as guard,scope,outcome,target; ';' between rows.
 rows() { LC_ALL=C awk -F '\t' '{ printf "%s%s,%s,%s,%s", (NR > 1 ? ";" : ""), $2, $3, $4, $6 }' "$1"; } # LOG
 # Rows that do not carry the elapsed time the deterministic clock supplies.
@@ -144,9 +144,9 @@ assert_eq "its row lands in the common git directory" \
 
 echo "=== a log that cannot be written is named and changes no verdict ==="
 fixture unwritable
-mkdir "$(log_of "$R")"
+mkdir -p -- "$(log_of "$R")"
 assert_eq "the verdict stands" 1 "$(run "$R" "$TWO" "all --staged")"
-assert_eq "the unwritten log is named" "commit-guards: run-log-unwritten=.git/commit-guards-runs.tsv" \
+assert_eq "the unwritten log is named" "commit-guards: run-log-unwritten=.git/kendex/lane-data/commit-guards-runs.tsv" \
   "$(LC_ALL=C awk '/^commit-guards: run-log-unwritten=/' "$TMP/last.out")"
 
 echo "=== must-fail controls ==="
@@ -164,11 +164,11 @@ run "$R" "$TWO" "all --staged" "$UNTIMED_GG" >/dev/null
 assert_eq "must-fail: a duration taken before the guard runs is not a measurement" \
   "1:conflict-markers:0.000;2:changelog-entries:0.000" "$(unmeasured "$(log_of "$R")" | paste -sd ';' -)"
 # A copy that writes under the work tree root.
-gg_mutant INTREE_GG commit-guards 'gg_git_path RUN_LOG . rev-parse --git-common-dir' 'gg_git_path RUN_LOG . rev-parse --show-toplevel'
+gg_mutant INTREE_GG commit-guards 'gg_git_path RUN_COMMON . rev-parse --git-common-dir' 'gg_git_path RUN_COMMON . rev-parse --show-toplevel'
 fixture intree
 run "$R" "$TWO" "all --staged" "$INTREE_GG" >/dev/null
 assert_eq "must-fail: a log under the work tree root shows in status" \
-  "A  planted.rs;?? commit-guards-runs.tsv" "$(git -C "$R" status --porcelain --untracked-files=all --ignored | paste -sd ';' -)"
+  "A  planted.rs;?? kendex/lane-data/commit-guards-runs.tsv" "$(git -C "$R" status --porcelain --untracked-files=all --ignored | paste -sd ';' -)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
