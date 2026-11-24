@@ -14,6 +14,7 @@
 use agent_runtime::record::{self, Document, Locking};
 use std::fs;
 use std::io::ErrorKind;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -354,6 +355,67 @@ fn map_file(worktree: &Path) -> Result<PathBuf> {
     } else {
         worktree.join(path)
     })
+}
+
+/// The head of a completed guarded restack waiting for its branch push.
+/// The worktree skill finalizes its exact `authorizedHead` after writing the
+/// map and clears it after push. The map stops qualifying when this owner
+/// consumes it, before the push starts.
+pub(crate) fn open_restack(doc: &Document, item: &str, worktree: &Path) -> Result<Option<String>> {
+    bind(doc, item, worktree)?;
+    let map = map_file(worktree)?;
+    let text = match fs::read_to_string(&map) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(refuse(
+                "rebase-map-unreadable",
+                &[("cause", &e.to_string())],
+            ));
+        }
+    };
+    if proof::hops(&text).is_err() || live_round(doc, item, worktree)?.is_some() {
+        return Ok(None);
+    }
+    if let Some(at) = doc.get("post_pr_stop").and_then(|stop| stop["at"].as_u64())
+        && fs::metadata(&map)
+            .is_ok_and(|meta| u64::try_from(meta.mtime()).is_ok_and(|mtime| at >= mtime))
+    {
+        return Ok(None);
+    }
+    let Ok(config) = git(
+        worktree,
+        "restack-authorization",
+        &["config", "--worktree", "--get-regexp", "^kendex-restack\\."],
+    ) else {
+        return Ok(None);
+    };
+    let field = |key| {
+        config.lines().find_map(|line| {
+            let (name, value) = line.split_once(' ')?;
+            (name == key).then_some(value)
+        })
+    };
+    let Some(authorized) = field("kendex-restack.authorizedhead") else {
+        return Ok(None);
+    };
+    if field("kendex-restack.pending").is_some()
+        || field("kendex-restack.branch") != doc.get("branch").and_then(Value::as_str)
+        || head(worktree)? != authorized
+    {
+        return Ok(None);
+    }
+    if let Some(run) = crate::validate::files::runs(worktree)?
+        .into_iter()
+        .rev()
+        .find(|run| run.get("head") == authorized)
+    {
+        run.record()?;
+        if !matches!(run.verdict()?, "pass" | "pending") {
+            return Ok(None);
+        }
+    }
+    Ok(Some(authorized.to_owned()))
 }
 
 /// Apply `hops` in order to the recorded commits, the item's `rebase_map`

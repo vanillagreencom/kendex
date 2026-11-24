@@ -28,8 +28,9 @@
 //! Resume: the lanes duty sets a row of kind [`RESUME_KIND`], its identity
 //! the lane's name, its value the turn end it asks a resume for: a wall
 //! (`usage-limit|<identity>|<reset>`), for a lane [`resumable`] names whose
-//! wall's reset passed, or an API error (`api-error|<key>`), for a lane
-//! [`reaches`] names. The wake types the resume sentence before the inbox
+//! wall's reset passed, an API error (`api-error|<key>`), for a lane
+//! [`reaches`] names, or a completed guarded restack (`restack|<head>`)
+//! waiting for its push in a local Codex lane. The wake types the resume sentence with the inbox
 //! line once per row value: the mark keeps the value typed. A wall's resume
 //! waits for the lane's account, read through the close's own account read,
 //! to read room, and is typed past its usage banner (`deliver
@@ -182,6 +183,7 @@ impl Resume {
                 true,
             ),
             "api-error" => ("api-error", "an API error", false),
+            "restack" => ("restack", "a completed guarded restack", false),
             _ => return None,
         };
         Some(Resume {
@@ -207,11 +209,21 @@ impl Resume {
     /// The line typed for `target`: the resume sentence, then the inbox
     /// line, so the resumed turn reads the mail that waited too.
     fn line(&self, target: &str) -> String {
+        if let Some(head) = self.restack_head() {
+            return format!(
+                "{} Continue the guarded restack workflow for {target} from its completed restack at {head}. Read or complete its validation and use the guarded record-push step when the workflow permits. Do not run the restack again.",
+                line_for(target)
+            );
+        }
         format!(
             "Resume the orch workflow for {target} from where this session stopped: your last turn ended on {}. {}",
             self.ended,
             line_for(target)
         )
+    }
+
+    fn restack_head(&self) -> Option<&str> {
+        self.row.strip_prefix("restack|")
     }
 }
 
@@ -764,6 +776,19 @@ impl Wake {
                     )?;
                 }
                 continue;
+            }
+            if let Some(head) = resume.restack_head() {
+                match super::lanes::open_restack(lane) {
+                    Ok(open) if open.as_deref() == Some(head) => {}
+                    Ok(_) => continue,
+                    Err(cause) => {
+                        super::lanes::fail(
+                            &mut produced,
+                            format!("restack-unread item={} {cause}", lane.item),
+                        );
+                        continue;
+                    }
+                }
             }
             let caps = host_line(&mut lines, &scripts, lane);
             if !resume.reaches(lane, caps) {

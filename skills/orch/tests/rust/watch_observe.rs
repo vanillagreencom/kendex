@@ -7424,6 +7424,120 @@ fn a_codex_lane_below_a_prior_turn_is_idle_on_its_first_pass_locally_and_on_its_
     );
 }
 
+#[test]
+fn a_bound_codex_landing_asks_for_one_continuation_until_its_push() {
+    if !isolated_row("a_bound_codex_landing_asks_for_one_continuation_until_its_push") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    git_checkout(&root);
+    for args in [
+        &["config", "gc.auto", "0"][..],
+        &["config", "maintenance.auto", "false"],
+        &["checkout", "-q", "-b", "ken-1"],
+        &["commit", "-q", "--allow-empty", "-m", "restacked"],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    let (head, map) = plant_restack(&root, "KEN-1", "ken-1");
+    let server = Server::start(&root, "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = redrawing(
+        &server,
+        &root,
+        "gh-1",
+        "codex",
+        "› previous turn\n› Type a prompt\n",
+    );
+    let lane = lane_record(
+        "KEN-1",
+        "gh-1",
+        "codex",
+        &server,
+        &pane,
+        Some(&identity),
+        &root,
+    );
+    fleet.set_lanes(vec![lane]);
+    fleet.set_overseer(json!({"server_socket": server.socket}));
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let run = root.join("tmp/dev-validate-restack");
+    std::fs::create_dir(&run).unwrap();
+    std::fs::write(
+        run.join("start"),
+        format!(
+            "worktree={}\nstart=1\nvalidate-mode=range\nhead={head}\n",
+            root.display()
+        ),
+    )
+    .unwrap();
+    for (exit, timing, unreadable) in [
+        (
+            "guard-exit=1\n",
+            "seconds=1\nstarted-at=2026-11-22T00:00:00Z\nended-at=2026-11-22T00:00:01Z\n",
+            false,
+        ),
+        ("guard-exit=0\n", "unreadable\n", true),
+    ] {
+        std::fs::write(run.join("exit"), exit).unwrap();
+        std::fs::write(run.join("timing"), timing).unwrap();
+        assert_eq!(driver.pass(&state).failed.is_some(), unreadable);
+        assert_eq!(driver.baseline.get("resume", "gh-1"), None, "{exit}");
+        driver.baseline = Baseline::default();
+    }
+    std::fs::remove_dir_all(run).unwrap();
+    assert!(event_lines(&driver.pass(&state)).is_empty());
+    let request = format!("restack|{head}");
+    assert_eq!(
+        driver.baseline.get("resume", "gh-1"),
+        Some(request.as_str())
+    );
+    let asked = |out: &Produced| {
+        out.changes.iter().any(|change| {
+        matches!(change, Change::Set { kind, value, .. } if kind == "resume" && value == &request)
+    })
+    };
+    assert!(!asked(&driver.pass(&state)));
+    redraw(
+        &server,
+        &pane,
+        &root,
+        "restack-working.txt",
+        "› continue landing\n• Working (esc to interrupt)\n",
+        "Working",
+    );
+    assert!(!asked(&driver.pass(&state)));
+    redraw(
+        &server,
+        &pane,
+        &root,
+        "restack-idle.txt",
+        "› checked validation\n› Type a prompt\n",
+        "Type a prompt",
+    );
+    assert!(!asked(&driver.pass(&state)));
+    std::fs::remove_file(map).unwrap();
+    let clock = FakeClock::new();
+    let tick = orch_runtime::watch::Tick {
+        duty: orch_runtime::schedule::Duty::Wake,
+        now: clock.now(),
+        wall: driver.now,
+        baseline: &driver.baseline,
+        clock: &clock,
+    };
+    let wake = orch_runtime::watch::wake::body(&fleet.path(), &driver.settings)(&tick).unwrap();
+    assert!(event_lines(&wake).is_empty());
+    assert!(!orch_runtime::watch::wake::record_path(&fleet.path()).exists());
+}
+
 /// A hosted Copilot lane launched with allow-all keeps its session store on
 /// its host: its asking line carries no policy note read from this
 /// machine's store.

@@ -87,18 +87,23 @@ use agent_runtime::intent::{Obligation, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
-const LANE_ROWS: [&str; 10] = [
+const LANE_ROWS: [&str; 11] = [
     "lane-exited",
     "lane-asking",
     "lane-idle",
     "model-capacity",
     "usage-limit",
     wake::RESUME_KIND,
+    RESTACK_ASKED,
     "lane-unreadable",
     "start-stalled",
     hosted::CLOSE_PENDING_ROW,
     hosted::LEFT_ROW,
 ];
+
+/// The head this lane's watch already requested a restack continuation for.
+/// Keep it across working passes and unrelated wake requests.
+const RESTACK_ASKED: &str = "restack-asked";
 
 /// Lines kept above the banner in a usage-limit block.
 const BANNER_LEAD: usize = 3;
@@ -1529,6 +1534,24 @@ fn observe_one(
             if prior == key || codex_after_turn {
                 out.changes
                     .push(set("lane-idle", lane, format!("{key}|reported")));
+                let restack = match open_restack(obs.lane) {
+                    Ok(restack) => restack,
+                    Err(cause) => {
+                        fail(
+                            out,
+                            format!("restack-unread item={} {cause}", obs.lane.item),
+                        );
+                        None
+                    }
+                };
+                if let Some(head) = &restack
+                    && get(RESTACK_ASKED).as_ref() != Some(head)
+                {
+                    out.changes.push(set(RESTACK_ASKED, lane, head.clone()));
+                    out.changes
+                        .push(set(wake::RESUME_KIND, lane, format!("restack|{head}")));
+                    return reading;
+                }
                 // A turn its provider's API ended, on a lane the wake reaches,
                 // is the wake's to resume once, with no line; the next such
                 // end is told and its row asks nothing more. A finished
@@ -1536,20 +1559,27 @@ fn observe_one(
                 let api_error = cause.as_deref() == Some("api-error");
                 let asked = get(wake::RESUME_KIND)
                     .is_some_and(|row| matches!(row.split('|').next(), Some("api-error" | "told")));
-                if api_error && !asked && wake::reaches(obs.lane, hosts.of(obs.lane).ok()) {
+                if api_error
+                    && !asked
+                    && restack.is_none()
+                    && wake::reaches(obs.lane, hosts.of(obs.lane).ok())
+                {
                     out.changes
                         .push(set(wake::RESUME_KIND, lane, format!("api-error|{key}")));
                     return reading;
                 }
-                if !api_error {
+                if restack.is_none() && !api_error {
                     out.changes.push(clear(wake::RESUME_KIND, lane));
-                } else if asked {
+                } else if api_error && asked {
                     out.changes
                         .push(set(wake::RESUME_KIND, lane, format!("told|{key}")));
                 }
                 out.events.push(Event::IdleAfterReturn {
                     lane: lane.clone(),
-                    note,
+                    note: restack
+                        .as_ref()
+                        .map(|head| format!("landing-step=restack-before-push head={head}"))
+                        .or(note),
                 });
                 out.events.extend(payload(bounded_tail(&slice, cap)));
                 hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
@@ -3032,6 +3062,35 @@ fn lane_counters(
         Reading::Gone | Reading::Unreadable { .. } => Counters::unread(),
     };
     (counters, doc)
+}
+
+/// The pre-push step of a running Codex lane that the watch can read on
+/// this disk. The wake checks it again before attempting delivery.
+pub(super) fn open_restack(lane: &Lane) -> Result<Option<String>, String> {
+    if lane.status != LaneStatus::Running
+        || lane.harness.as_deref() != Some("codex")
+        || hosted::host_of(lane) != "local"
+    {
+        return Ok(None);
+    }
+    let Some(worktree) = lane.mail_root.as_deref().map(Path::new) else {
+        return Ok(None);
+    };
+    let state_dir = lane_state_dir(worktree)?;
+    match handoff_standing(&state_dir, lane) {
+        HandoffReading::None => {}
+        HandoffReading::Stands { .. } => return Ok(None),
+        HandoffReading::Unreadable { path } => {
+            return Err(format!("handoff-unread path={}", path.display()));
+        }
+    }
+    let path = state::item_path(&state_dir, &lane.item);
+    match item_doc(&path) {
+        Reading::Live(doc) => crate::ops::push::open_restack(&doc, &lane.item, worktree)
+            .map_err(|cause| cause.to_string()),
+        Reading::Gone => Ok(None),
+        Reading::Unreadable { cause } => Err(format!("path={} cause={cause}", path.display())),
+    }
 }
 
 /// The state directory a local checkout's own files name, as the checkout's
