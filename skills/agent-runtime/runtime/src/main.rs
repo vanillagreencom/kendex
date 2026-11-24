@@ -688,12 +688,14 @@ enum AccountsOp {
         binding_floor: bool,
         /// Take the named Pi root on a model naming a provider nothing
         /// bills where `pi auth check` reads its credential ready in the
-        /// root, its record's `scope` `unmeasured`; refused `unmeasured`
-        /// with `refusal.cause=provider-key` and Pi's `status` and `reason`
-        /// where it does not. A model naming no provider stays refused
-        /// unread.
-        #[arg(long, requires = "account")]
-        admit_unbilled: bool,
+        /// root, run in the environment ENV_FILE holds (a JSON object of
+        /// names to values: the one the launch's window starts from) and
+        /// nothing else, its record's `scope` `unmeasured`; refused
+        /// `unmeasured` with `refusal.cause=provider-key` and Pi's `status`
+        /// and `reason` where it does not. A model naming no provider stays
+        /// refused unread.
+        #[arg(long, requires = "account", value_name = "ENV_FILE")]
+        admit_unbilled: Option<PathBuf>,
         /// The fleet record whose controller member is a seat and whose
         /// lanes are charged; orch's own fleet where unset.
         #[arg(long)]
@@ -954,7 +956,7 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                 &loaded.project,
                 record.as_deref(),
                 &request,
-                admit_unbilled,
+                admit_unbilled.as_deref(),
                 now,
             )?;
             if text {
@@ -2628,7 +2630,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
                     &project,
                     Some(&record),
                     request,
-                    false,
+                    None,
                     now,
                 ) {
                     Ok(answer) => answer,

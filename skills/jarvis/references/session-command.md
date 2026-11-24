@@ -73,7 +73,8 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - The lane selector chooses the account. Add `--account DIR` to ask that selector about a named account.
   - A Pi model naming a provider no reader measures, such as an `openai/` model paid by its API key, takes `--account` naming the Pi root that holds the key.
     - The key counts only where the root holds it: a key exported in the caller's environment never reaches the task window.
-    - The launch starts where `pi auth check` reads the key ready, and the task record's `reading` is `unmeasured`; on a measured account it is `measured`.
+    - The launch starts where `pi auth check`, run in the environment the task window starts from, reads the key ready, and the task record's `reading` is `unmeasured`; on a measured account it is `measured`.
+    - A `!command` key reaches what that environment keeps, such as the agent socket and the display.
     - Without the key it refuses `account-unmeasured`, and the printed record's `refusal` carries `cause` `provider-key` with Pi's `status` and `reason`.
 - Add `--short` for a task of a few minutes when every account of the harness is past the launch limit.
   - The selector then accepts an account with room left up to its wall (`agent-runtime accounts pick --max-pct 100`).

@@ -66,17 +66,23 @@ class TaskContract(unittest.TestCase):
         self.bin.joinpath("kendex").chmod(0o755)
         # Pi's credential check answers as pi 1.6.0's `pi auth check --model
         # M --json` did on recorded runs: ready at exit 0 where the root's
-        # auth.json holds the model's provider or the environment holds its
-        # PROVIDER_API_KEY, else not_ready at exit 1; with no model, exit 2
-        # and no JSON. A root holding `unanswered` gives no answer.
-        native = ("#!" + sys.executable + "\nimport json,os,signal,sys\nfrom pathlib import Path\n"
+        # auth.json holds a key for the model's provider or the environment
+        # holds its PROVIDER_API_KEY, else not_ready at exit 1; with no
+        # model, exit 2 and no JSON. A `!command` key is held where its
+        # command, run in the check's environment, exits 0 with output. A
+        # root holding `unanswered` gives no answer.
+        native = ("#!" + sys.executable + "\nimport json,os,signal,subprocess,sys\nfrom pathlib import Path\n"
                   + "if sys.argv[1:3]==['auth','check']:\n"
                   + " root=Path(os.environ['PI_CODING_AGENT_DIR'])\n"
                   + " if (root/'unanswered').exists(): sys.exit(3)\n"
                   + " provider=sys.argv[sys.argv.index('--model')+1].split('/')[0]\n"
                   + " if not provider: sys.exit(2)\n"
-                  + " held=((root/'auth.json').exists() and provider in json.loads((root/'auth.json').read_text())\n"
-                  + "       or provider.upper().replace('-','_')+'_API_KEY' in os.environ)\n"
+                  + " auth=json.loads((root/'auth.json').read_text()) if (root/'auth.json').exists() else {}\n"
+                  + " key=auth.get(provider,{}).get('key','')\n"
+                  + " if key.startswith('!'):\n"
+                  + "  ran=subprocess.run(key[1:],shell=True,capture_output=True,text=True)\n"
+                  + "  key=ran.stdout.strip() if ran.returncode==0 else ''\n"
+                  + " held=bool(key) or provider.upper().replace('-','_')+'_API_KEY' in os.environ\n"
                   + " print(json.dumps({'status':'ready','provider':provider,'authType':'api_key'} if held else"
                   + " {'status':'not_ready','provider':provider,'reason':'credentials_not_configured'}))\n"
                   + " sys.exit(0 if held else 1)\n"
@@ -441,10 +447,11 @@ sys.exit(task.main())
 
     def test_a_pi_task_on_a_provider_nothing_measures_starts_on_its_key(self):
         # A named Pi root on a provider no reader measures: its stored key
-        # starts the task, read unmeasured, on that root; no key in the root,
-        # whatever the caller's environment holds, or a check that gave no
-        # answer, refuses before any window opens; a model naming no
-        # provider is refused unread, with no key read.
+        # starts the task, read unmeasured, on that root, and so does a key
+        # command that reads what the task window's environment holds; no
+        # key in the root, whatever the caller's environment holds, or a
+        # check that gave no answer, refuses before any window opens; a
+        # model naming no provider is refused unread, with no key read.
         model = "openai/gpt-6.2-astra"
         stored = {"openai": {"type": "api_key", "key": "placeholder"}}
         unkeyed = {"cause": "provider-key", "status": "not_ready", "reason": "credentials_not_configured",
@@ -453,6 +460,11 @@ sys.exit(task.main())
                 ("key absent", model, {}, {}, "account-unmeasured", unkeyed),
                 ("key in the caller's environment", model, {}, {"OPENAI_API_KEY": "placeholder"},
                  "account-unmeasured", unkeyed),
+                # The window's environment keeps the agent socket, so a key
+                # command that reaches an agent through it resolves there.
+                ("key command through the window's agent socket", model,
+                 {"openai": {"type": "api_key", "key": '!test -n "$SSH_AUTH_SOCK" && echo placeholder'}},
+                 {"SSH_AUTH_SOCK": str(self.root / "agent.sock")}, None, None),
                 ("check unanswered", model, None, {}, "account-unjudged", None),
                 ("class word", "sonnet", stored, {}, "account-unmeasured", None),
                 ("native default", "1", stored, {}, "account-unmeasured", None))
@@ -769,7 +781,7 @@ sys.exit(task.main())
              "test_a_short_task_is_judged_up_to_the_wall_and_on_its_projected_wall"),
             ("short-projected", "task.py", (('(["--projected"] if args.account else [])', '[]'),),
              "test_a_short_task_is_judged_up_to_the_wall_and_on_its_projected_wall"),
-            ("admit-unbilled", "task.py", (('pick += ["--account", args.account, "--admit-unbilled"]',
+            ("admit-unbilled", "task.py", (('pick += ["--account", args.account, "--admit-unbilled", window]',
                 'pick += ["--account", args.account]'),),
              "test_a_pi_task_on_a_provider_nothing_measures_starts_on_its_key"),
             ("live-front", "task.py", (('            self.tmux("select-window", "-t", live["window"], socket=terminal["server"], check=False)',

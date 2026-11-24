@@ -167,23 +167,24 @@ fn judge(settings: &Env, ground: &Beside, req: &PickRequest, now: u64) -> PickAn
 
 /// The pick here: the judge over this machine's listing, its seats with
 /// `record`'s controller's as the caller's own, and the lanes' charges of
-/// the project at `project`. Where `admit_unbilled` asks it, a named Pi
-/// root on a model naming a provider nothing bills is judged on Pi's read
-/// of its key there ([`PickRequest::provider_key`]); a check that gave no
+/// the project at `project`. Where `admit_unbilled` names the environment
+/// the launch's window starts from, a named Pi root on a model naming a
+/// provider nothing bills is judged on Pi's read of its key there, in that
+/// environment ([`PickRequest::provider_key`]); a check that gave no
 /// answer judges nothing.
 pub fn pick(
     settings: &Env,
     project: &Path,
     record: Option<&Path>,
     req: &PickRequest,
-    admit_unbilled: bool,
+    admit_unbilled: Option<&Path>,
     now: u64,
 ) -> Result<PickAnswer> {
     let model = req.model.as_deref().unwrap_or("");
     let keyed;
-    let req = match req.lane.as_deref() {
-        Some(dir) if admit_unbilled && req.harness.names_unbilled_provider(model) => {
-            match provider_key(dir, model) {
+    let req = match (req.lane.as_deref(), admit_unbilled) {
+        (Some(dir), Some(window)) if req.harness.names_unbilled_provider(model) => {
+            match provider_key(dir, model, window) {
                 Ok(key) => {
                     keyed = PickRequest {
                         provider_key: Some(key),
@@ -194,7 +195,7 @@ pub fn pick(
                 Err(cause) => return Ok(PickAnswer::Unjudged { cause }),
             }
         }
-        Some(_) | None => req,
+        (Some(_) | None, _) => req,
     };
     if let Some(answer) = super::unbilled(req) {
         return Ok(answer);
@@ -203,44 +204,16 @@ pub fn pick(
     Ok(judge(settings, &ground, req, now))
 }
 
-/// The caller's variables Pi's credential check runs with, beside the
-/// root: those that find the user's programs, files and locale and reach
-/// the network, which a `!command` key or an OAuth refresh needs, and no
-/// credential. Pi also counts a provider's environment variables
-/// (pi 1.6.0, the package's `models.md` § Authenticate), and the window a
-/// launch opens takes its server's environment, never the caller's, so a
-/// key read from the caller's variables is no key the launch holds.
-const KEY_CHECK_ENV: [&str; 19] = [
-    "PATH",
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "SHELL",
-    "LANG",
-    "DBUS_SESSION_BUS_ADDRESS",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_EXTRA_CA_CERTS",
-    "CURL_CA_BUNDLE",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "ALL_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "all_proxy",
-    "no_proxy",
-];
-/// The prefixes of the locale's and the user's directories' variables the
-/// check keeps beside [`KEY_CHECK_ENV`].
-const KEY_CHECK_PREFIXES: [&str; 2] = ["LC_", "XDG_"];
-
 /// `pi auth check --model MODEL --json` under the root `dir`, run in that
-/// root so no project's own `.pi` configuration is read, with the caller's
-/// [`KEY_CHECK_ENV`] alone: Pi's documented readiness check (pi 1.6.0, the
-/// package's `cli.md` § Credential commands) over the root's `auth.json`
-/// and `models.json` and the ambient credentials Pi finds under the
-/// user's home, the sources the launched Pi reads too. Like every Pi
+/// root so no project's own `.pi` configuration is read, with the
+/// environment the caller wrote to `window` (a JSON object of names to
+/// values) alone, nothing of this process's inherited: Pi's documented
+/// readiness check (pi 1.6.0, the package's `cli.md` § Credential
+/// commands) over the root's `auth.json` and `models.json` and the
+/// ambient credentials Pi finds, read in the environment the caller names
+/// as its launch window's. Pi also counts a provider's environment
+/// variables (the package's `models.md` § Authenticate), so a key the
+/// caller's own shell exports is no key that window holds. Like every Pi
 /// start on the root, the launch's own included, it refreshes an expired
 /// OAuth credential and writes it back to the root's `auth.json`, and a
 /// `!command` key runs its command. Exit 0 answers `ready`, 1 `not_ready`
@@ -250,17 +223,19 @@ const KEY_CHECK_PREFIXES: [&str; 2] = ["LC_", "XDG_"];
     clippy::disallowed_methods,
     reason = "the one run of Pi's own credential check, `pi auth check` under the named root through the one runner under the accounts tag; it writes nothing of the pick's"
 )]
-fn provider_key(dir: &str, model: &str) -> std::result::Result<ProviderKey, String> {
-    let inherited: Vec<(String, std::ffi::OsString)> = std::env::vars_os()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value)))
-        .filter(|(name, _)| {
-            KEY_CHECK_ENV.contains(&name.as_str())
-                || KEY_CHECK_PREFIXES.iter().any(|p| name.starts_with(p))
-        })
-        .collect();
-    let env: Vec<(&str, &OsStr)> = inherited
+fn provider_key(dir: &str, model: &str, window: &Path) -> std::result::Result<ProviderKey, String> {
+    let named: BTreeMap<String, String> = std::fs::read(window)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+        .map_err(|cause| {
+            format!(
+                "provider-key-env-unread file={} cause={cause}",
+                window.display()
+            )
+        })?;
+    let env: Vec<(&str, &OsStr)> = named
         .iter()
-        .map(|(name, value)| (name.as_str(), value.as_os_str()))
+        .map(|(name, value)| (name.as_str(), OsStr::new(value)))
         .chain([(Harness::Pi.home_var(), OsStr::new(dir))])
         .collect();
     let out = host::run_tagged_alone(

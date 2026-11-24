@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 
-from session import BASH, SESSION_NAME, Refusal, Session, setup_problem
+from session import BASH, SESSION_NAME, Refusal, Session, environment, setup_problem
 
 
 # A pane agent-runtime reads under this cause stands on no server the task's
@@ -122,7 +122,7 @@ class Task(Session):
                                            "--outcome", "succeeded"]) + ".")
                     chosen = json.loads(self.backend("task-model", args.harness, args.model, args.effort,
                                                      self.home).stdout)
-                    account, reading = self.account(chosen, args, parent.fleet())
+                    account, reading = self.account(chosen, args, parent.fleet(), scratch)
                     problem = setup_problem(chosen["harness"], account)
                     if problem:
                         raise Refusal("harness-setup-pending", "fix=" + problem)
@@ -213,7 +213,7 @@ class Task(Session):
                               + " cause=" + type(write_error).__name__, file=sys.stderr)
                 raise
 
-    def account(self, chosen, args, fleet):
+    def account(self, chosen, args, fleet, scratch):
         """The account the task spends and how it was read: agent-runtime's
         one judge asked once."""
         pick = ["accounts", "pick", "--harness", chosen["harness"], "--record", fleet]
@@ -222,8 +222,12 @@ class Task(Session):
         if args.account:
             # A named Pi root on a provider nothing measures, paid by its own
             # key, is a task's to spend: the judge takes it where Pi reads
-            # the key ready, and the task records its reading unmeasured.
-            pick += ["--account", args.account, "--admit-unbilled"]
+            # the key ready in the environment the task's window starts
+            # from, the one its server opens under, and the task records its
+            # reading unmeasured.
+            window = scratch / "window-env.json"
+            window.write_text(json.dumps(environment(chosen["harness"], policy=True)))
+            pick += ["--account", args.account, "--admit-unbilled", window]
         # A short task admits an account's room up to its wall, and on a named
         # account is judged on its projected wall, as the chooser judges every
         # account; a full task on a named account is judged on its reading.
