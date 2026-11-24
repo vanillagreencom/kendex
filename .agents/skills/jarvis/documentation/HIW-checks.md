@@ -13,7 +13,7 @@ flowchart LR
 
 Most work can be checked before it finishes. Some results need an installation, later use or a person's own screen or hands. The tracker records the required observation, where its evidence lives, when it becomes due and its deadline.
 
-The merged item stays in Verifying while its admitted later checks remain open. When Jarvis sent a fix to another owner, the continuing session's own linked check item retains the separate observation where the problem was seen.
+The merged item stays in Verifying while its admitted later checks remain open. If Jarvis sends a fix to another owner, it keeps a linked check item in the continuing session's own task project. That check needs evidence from where the problem was seen.
 
 ## The evidence
 
