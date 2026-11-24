@@ -48,12 +48,12 @@
 ## Tools and records
 
 - Apply [decisions.md:Authority](decisions.md#authority) before a send or a change that needs approval.
-- Judge a send by the sending tool's exit status.
+- Record a send as successful only when the sending tool exits successfully.
 - Never pipe a send through a filter. A filter failure can make a successful send look failed and cause a duplicate on retry.
   1. Redirect its output to a scratch file.
   2. Record the send's exit status.
   3. Then read the file.
-- Record success only after the tool succeeds.
+- For other tool operations, record success only after the tool succeeds.
 - Treat an unconfirmed result as unconfirmed before retrying.
 - A mailbox append that a relay forwards proves only the append. Claim a delivery only after one of these:
   - the slack relay journal holds an `out` line for the envelope id in a state its [journal lines](../../slack/schemas/journal.md#journal-lines) define as a landed post or upload;
@@ -71,6 +71,5 @@
   - Use a second caller where one exists.
   - Require the repeated operation to show that the mistake stopped, even when a valid memory note exists.
 - Keep the Done-when box for a fix you sent to another owner on a linked check item in the session's own task project, under [long-session.md:Homes](long-session.md#homes).
-  - Keep the box and check item open until you record the check where the problem was seen.
+  - Keep the box and check item open until you record the check where the problem was seen, even when the other owner's item is Done.
   - Until then, tell the user it was sent, with its id, never that it is fixed.
-  - The other owner's Done mark is not that check and does not close the check item.

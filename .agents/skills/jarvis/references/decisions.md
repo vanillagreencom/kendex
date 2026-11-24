@@ -26,7 +26,7 @@ The user keeps a responsibility map in their own instructions. Use this shape; t
 
 A standing grant supplies approval for one action: a map entry that names the action, the date the user granted it and the user's words. It approves that action until the user removes the entry or its condition for review holds. Where the map has no entry for an action, the approval rules above apply.
 
-A grant covers only the action it names. Spending money, an external commitment and a send in the user's name keep their rules unless an entry names that exact action. A general delegation or standing grant does not waive explicit consent for a financial action or disclosure: the entry must record the user's explicit yes for that exact action or disclosure. A remembered remark is not a grant, because [memory does not create authority](memory.md#notes).
+For a financial action or disclosure, the entry must record the user's explicit yes for that exact action or disclosure. Apply [Memory: Notes](memory.md#notes) to remembered remarks.
 
 ## Approach
 

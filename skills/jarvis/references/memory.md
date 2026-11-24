@@ -1,8 +1,6 @@
 # Memory
 
-- Read a named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`.
-- Use the exact heading text from its owning file.
-- Keep the returned child sections rather than loading them again.
+Read a named section through [Read a note](home-contract.md#read-a-note) or the session's [Action routes](../workflows/session.md#action-routes). Keep the returned child sections.
 
 ## Home
 
@@ -19,8 +17,6 @@
 ## Notes
 
 For a request to remember a fact or establish a workstream, start at [Personal additions](home-contract.md#personal-additions), the addition route that selects the record's existing owner.
-
-Read this section for the note's fields and index update.
 
 - Put each note under its own `###` heading naming one subject.
   - Its Source, Date and Supersedes fields belong together in the initial metadata block, before body paragraphs or child headings.
