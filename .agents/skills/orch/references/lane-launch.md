@@ -18,7 +18,7 @@ Every selected item takes a tier before it launches:
 1. `[ESTIMATE]` is this session's estimate of the production lines the item adds, from the body read once under § Lane directive step 2.
    - Save that body as `[ITEM_BODY_FILE]`: its Location lines name the paths, and its Expected delta floors the estimate.
    - `orch-runtime tier --help` owns the rule.
-2. A body that names no Location exits 1 with `orch-runtime: tier cause=no-location route=per-subsystem-split` and no tier. The item does not launch; it goes back to filing for a per-subsystem split.
+2. For a body with no Location, `tier` exits 1 with `orch-runtime: tier cause=no-location route=per-subsystem-split` and no tier. For a Linear item eligible for triage, have the verifier find the Location and [triage step 8](oversee-events.md#triage) write it before retrying the launch. Send every other item back to filing for a per-subsystem split.
 3. Copy the complete output line into the launch brief once, alone on its line. The line's `brief=` word sets the brief § Lane directive builds:
    - `micro`: `/orch micro [ISSUE_ID]`, which runs [micro.md](../workflows/micro.md): no dev subagent, no review cycle, no QA cycle.
    - `small`: `/orch small [ISSUE_ID]`, which runs [small.md](../workflows/small.md): the standard session under thin review bounds.
@@ -94,7 +94,7 @@ A launch on the tmux surface takes these steps in order, locally or on a remote 
      - Record go, change or drop, with the short cause-and-effect answer, in the launch `ruling` ([oversee-events.md § Judgement rules](oversee-events.md#judgement-rules)).
    - Judge whether the design choice is consequential or the approach uncertain, and record it in the same ruling.
      - When either holds, the brief tells the lane to run one one-shot `reviewer-arch` review at launch, before implementing, through [design-review.md § Patch-chain actions](design-review.md#patch-chain-actions), step **Second opinion**.
-   - Judge the span. An item goes back to filing under the project-management skill's `references/filing.md` § One landing per subsystem, when its Location names more than one subsystem, as the `small` class of [change-scope § Classes](../../change-scope/SKILL.md#classes) defines one, or when its body names no Location.
+   - Judge the span. An item goes back to filing under the project-management skill's `references/filing.md` § One landing per subsystem when its Location names more than one subsystem, as the `small` class of [change-scope § Classes](../../change-scope/SKILL.md#classes) defines one. For a missing Location, follow § Item Tier step 2.
      - A body that says why the item cannot land in parts keeps it; record that reason in the same ruling.
    - Select the model class and effort through [Model class](skill-rules.md#model-class), and keep a model the brief names.
      - Read `orch-env ORCH_LANE_PREFERENCE ""` as the program's default.

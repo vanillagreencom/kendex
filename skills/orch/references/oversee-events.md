@@ -884,11 +884,15 @@ A refused `write`:
 6. Capture only its single final return ([skill-rules.md § Single Return Message](skill-rules.md#single-return-message)).
    - Once it is captured, or on any failure after the launch, retire the verifier through the surface's own shut-down call before any further launch.
 7. Validate the return against that contract. On a launch, capture, parse or validation failure, stop without writing `triaged`.
-8. For each valid kept item, read its project and labels with `linear.sh issues get [ID]`. Set only what is missing, in one `linear.sh issues update [ID]`:
+8. For each valid kept item, read its current description, project and labels with `linear.sh issues get [ID]`. Set only what is missing in one `linear.sh issues update [ID]`:
    - `--project` only where the team inventory is nonempty and the item has none.
    - `--labels` only where `LINEAR_AGENT_LABELS` is nonempty and the item has no agent label. Merge the chosen agent label with every current label under the linear skill's `--labels` rule.
+   - `--description-file tmp/triage-description-[ID].md` only where the current description has no Location line. Require the verifier's paths.
+     - Start after any existing owner action line with nonempty quoted `> **Story:**` and `> **Why this matters:**` blocks in that order. Use the issue and the verifier's evidence to supply missing or incomplete blocks. Separate the blocks with an unquoted blank line and leave another unquoted blank line before the first Markdown heading, as the Linear Reach guard requires.
+     - Preserve the original report. Add a Markdown heading before the retained report if it starts without one. Put the `**Location**:` line with the verifier's paths below a heading.
+   - When writing the description, check `syncedWith` using the read under [§ Outside contributions](#outside-contributions). Add `--synced-description` to the same update for a GitHub-synced item.
 
-   Leave an existing project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. Where the read or update fails, write no `triaged` record for that item.
+   Leave an existing Location, project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. If a required read, Location check or update fails, write no `triaged` record for that item.
 
 9. Route each item in this triage pass before recording its final verdict.
    - Read the verifier's answer to question 3 as prose. If it names a source the item does not fix, decide go, change or drop under the project-management skill's `references/filing.md` § Judge the approach before changing the item's tracker state or recording its verdict. Record the decision in the item's triage reason in your own words.

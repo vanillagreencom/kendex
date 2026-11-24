@@ -477,7 +477,7 @@ A non-delegated primary session routes creation through TPM, except `plan-issues
 A verifier the overseer delegates writes its full evidence as one Linear comment on the issue it verified, and writes no report or evidence file for the overseer. It returns exactly one line per requested issue, with no other text, no duplicate and no unrequested issue:
 
 ```text
-[ISSUE] | verdict: [kept|canceled] | Done-when: [ONE_LINE_RESULT] | delta: [EXPECTED_DELTA_LINE_OR_NONE] | project: [PROJECT_NAME_OR_NONE] | agent: [agent:LABEL|none]
+[ISSUE] | verdict: [kept|canceled] | Done-when: [ONE_LINE_RESULT] | delta: [EXPECTED_DELTA_LINE_OR_NONE] | project: [PROJECT_NAME_OR_NONE] | agent: [agent:LABEL|none] | location: [BACKTICKED_PATHS_OR_NONE]
 ```
 
 - Every field is required.
@@ -486,6 +486,7 @@ A verifier the overseer delegates writes its full evidence as one Linear comment
 - If the Filing record's `Reached by:` line names an owner or Jarvis decision that authorizes the work, return `canceled` only for a duplicate and `kept` otherwise.
 - When the issue team's project inventory is nonempty, name a project from it on every kept row and every row for an item backed by such a decision. With an empty inventory, return `project: none` and skip project validation.
 - When `LINEAR_AGENT_LABELS` is nonempty, return an `agent:` label from that list. With an empty list, return `agent: none` and skip agent validation.
+- For a kept item whose body has no Location line, return one or more repository-relative paths verified against the source, each in backticks. Return `location: none` for a canceled item or a kept item with a Location line.
 - The return carries no issue body or evidence text.
 - The sender and the receiver both apply this contract.
 
