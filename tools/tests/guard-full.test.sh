@@ -1364,9 +1364,9 @@ LANE_ROWS=(
   "||$CODE|$ALL"
   "standard|false|$CODE ui/app.ts|$ALL"
   "standard|false|$CODE|suites parse lint apple windows test"
-  "standard|false|$SKILL_TOOL|suites parse test"
-  "standard|true|docs/guide.md|test"
-  "render|false|$CODE|"
+  "standard|false|$SKILL_TOOL|suites parse"
+  "standard|true|docs/guide.md|"
+  "render|false|$CODE|suites parse lint apple windows test"
   "||crates/core/src/lib.rs ui/app.ts|parse lint apple windows test ui|subset"
 )
 lane_guard

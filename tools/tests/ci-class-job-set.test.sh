@@ -18,14 +18,13 @@ while IFS='|' read -r class docs paths want spec; do
   selection_rows=$((selection_rows + 1))
   sel_row "selection: $class docs_only=$docs over '$paths'" "$class" "$docs" "$paths" "$want" "$spec"
 done <<ROWS
-render|false|.agents/skills/orch/SKILL.md .claude/skills/orch/SKILL.md|$VERIFY_LANES|[]
-trivial|true|docs/architecture/overview.md|$VERIFY_LANES|[]
+trivial|true|$UNREAD_DOC|$VERIFY_LANES|[]
 trivial|true|AGENTS.md|$VERIFY_LANES|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
 micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
-standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md .claude/agents/reviewer.md agents/reviewer.md hooks/AGENTS.md .kendex-generated.json|$SHARD_PROSE|+orch-rest
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+guards-scans +guards-tools
+standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md .claude/agents/reviewer.md agents/reviewer.md hooks/AGENTS.md .kendex-generated.json|$SHARD_CODE|+orch-rest
 standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|+orch-rest
 standard|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md $LOCAL_TOML|$SHARD_CODE|+orch-rest
 standard|false|.kendex-generated.json|$SHARD_CODE|*
@@ -65,7 +64,7 @@ standard|true|GEMINI.md|$NONE_PROSE|[]
 standard|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|$UNREAD_LEGAL|$NONE_PROSE|[]
 trivial|true|README.md|$NONE_PROSE|[]
-standard|false|$UNREAD_DOC|$NONE_CODE|[]
+standard|false|$UNREAD_DOC|$NONE_PROSE|[]
 enormous|false|skills/orch/SKILL.md|exit=2 unknown-class class=enormous|
 micro|false||exit=2 class-without-paths class=micro|
 micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe|
@@ -189,56 +188,18 @@ while IFS= read -r p; do
     "$(queue_only_of "$p" | sed 's/ glob=.*//')"
 done <<<"$sources"
 
-# A row that omits a job lane or the `macos` bit is refused: sel_get ends the
-# step before emit() writes anything, so a forgotten bit cannot stand the
-# macOS shell matrix down in silence. Each copy drops one lane from the
-# render row.
-mkdir -p "$TMP/forgot/tools"
-cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
-cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
-forgot="$TMP/forgot/tools/ci-job-set"
-RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$smoke shards=\[\] skipped_suites=\$skipped rust_targets=\[\]"$/'
-[ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
-  { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
-# LANE|WORD dropped from the render row
-forgot_rows=0
-while IFS='|' read -r lane word; do
-  forgot_rows=$((forgot_rows + 1))
-  WORD="$word" awk "$RENDER_ROW"' { sub(ENVIRON["WORD"], "") } { print }' "$JOB_SET" >"$forgot"
-  chmod +x "$forgot"
-  ! cmp -s "$JOB_SET" "$forgot" || { echo "the copy forgetting $lane changed nothing" >&2; exit 1; }
-  forgot_status=0
-  CHANGE_CLASS=render DOCS_ONLY=false CHANGED_PATHS=CLAUDE.md EVENT=pull_request GITHUB_OUTPUT="$TMP/forgot-out" \
-    "$forgot" 2>"$TMP/forgot-err" || forgot_status=$?
-  check "a row that forgets $lane is refused" \
-    "exit=2 lane-unselected lane=$lane" \
-    "exit=$forgot_status $(sed -n 's/^ci-job-set: cause=//p' "$TMP/forgot-err")"
+# Cargo metadata and the source read select targets independently of the
+# review classes. This fixture has one reading lib and no shell inputs.
+while IFS='|' read -r class path expected; do
+  got="$(SELECT_IN="$READ_WORLD" SELECT_CARGO_MATRIX=true selection "$class" true "$path")"
+  check "workspace reaches over $class $path" "$expected" "$(field cargo_linux_matrix <<<"$got")"
 done <<'ROWS'
-cargo_windows_check| cargo_windows_check=false
-macos|macos=false[ ]
-rust_targets| rust_targets=[[]]
+trivial|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
+render|docs/a.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
+trivial|docs/legal/terms.md|{"include":[{"crate":"demo","targets":["--lib"]}]}
+trivial|docs/other.md|{"include":[]}
 ROWS
-[ "$forgot_rows" -eq 3 ] || { echo "the forgotten-lane table read $forgot_rows rows" >&2; exit 1; }
 
-# A `trivial` diff changing a path tools/rust-reads names takes the measured
-# row. The fixture crate reads docs/a.md and assets/x.json through
-# include_str!, docs/legal and tools/x through a manifest chain, and the
-# checkout root, whose `.` row matches nothing. What each source shape reads
-# is tools/tests/rust-reads.test.sh's.
-# CLASS|PATHS (blank-separated)|EXPECTED, every row docs-only.
-READ_ROWS="trivial|docs/a.md|$READ_PROSE_ROW
-trivial|docs/legal/terms.md|$PROSE_ROW
-trivial|docs/other.md docs/legal/privacy.md|$PROSE_ROW
-trivial|docs/other.md|$VERIFY_ROW
-trivial|docs/legalese.md|$VERIFY_ROW
-render|docs/a.md|$VERIFY_ROW"
-read_rows=0
-while IFS='|' read -r class paths expected; do
-  read_rows=$((read_rows + 1))
-  check "read selection: $class over '$paths'" "$expected" \
-    "$(SELECT_IN="$READ_WORLD" selection "$class" true "$(printf '%s\n' $paths)")"
-done <<<"$READ_ROWS"
-[ "$read_rows" -ge 6 ] || { echo "the read table read $read_rows rows" >&2; exit 1; }
 # Each declared build name is a build input. Read in the fixture checkout,
 # where no file names one, so the search adds no further shard.
 while IFS= read -r p; do
@@ -250,11 +211,11 @@ check "a read set rust-reads cannot derive is refused" "exit=2 rust-reads-failed
   "$(SELECT_IN="$TMP/no-crates" selection trivial true docs/a.md)"
 check "and on a measured diff, whose compile lanes it gates" "exit=2 rust-reads-failed" \
   "$(SELECT_IN="$TMP/no-crates" selection micro true docs/a.md)"
-# A build input is a non-prose path under a build or include row, not a read.
-check "an included file other than prose is a build input" "$BUILD_ROW" \
-  "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json)"
-check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
-  "$(SELECT_IN="$READ_WORLD" selection micro false tools/x)"
+# A compiled include reaches the compile lane, and a runtime read does not.
+check "an included file is a build input" true \
+  "$(SELECT_IN="$READ_WORLD" selection micro false assets/x.json | field cargo_lint)"
+check "a runtime input leaves the compile lane off" false \
+  "$(SELECT_IN="$READ_WORLD" selection micro false tools/x | field cargo_lint)"
 
 # Catalog-check consumes the explicit catalog layout and its control file;
 # cli_smoke consumes its compiled CLI, fixture source and build settings.

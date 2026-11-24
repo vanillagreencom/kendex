@@ -14,6 +14,33 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$TEST_DIR/lib/ci-job-set-world.sh"
 # shellcheck source=lib/ci-job-set-case.sh
 . "$TEST_DIR/lib/ci-job-set-case.sh"
+
+# Compiled workspace targets and skill runtime targets have separate owners.
+# Include the tracked render in each probe, as a merge-group diff does.
+cargo_rows() {
+  local selected reads
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false $'skills/orch/SKILL.md\n.agents/skills/orch/SKILL.md')"
+  reads="$(field cargo_linux_matrix <<<"$selected" | jq -c '
+    [.include[] | select(.crate == "kendex-core" or .crate == "kendex-app") | .crate, .targets]
+  ')"
+  check "skill Markdown keeps the core readers and omits the app" \
+    '["kendex-core",["--lib","--test","integration"]]' "$reads"
+  check "orch SKILL.md names in prompts reach no runtime target" '[]' "$(field rust_targets <<<"$selected")"
+  selected="$(SELECT_EVENT=merge_group selection trivial true $'skills/orch/references/watch-delivery.md\n.agents/skills/orch/references/watch-delivery.md')"
+  check "orch watch delivery reference reaches its reading runtime target" \
+    '["orch/watch_core"]' "$(field rust_targets <<<"$selected")"
+}
+cargo_rows
+if [ "${1-}" = --cargo-reads ]; then
+  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+# A copy of ci-job-set with no guard beside it, whose reach cannot be read:
+# every shard runs whole.
+cp "$JOB_SET" "$TMP/rule/tools/ci-job-set"
+WHOLE="$TMP/rule/tools/ci-job-set"
+
 # THE WORLD: the selection fixture's crates and skills, plus a package whose
 # guide some suites' notes cover, one suite's code reads, and the rest leave
 # out.
@@ -50,13 +77,18 @@ for suite in slashed folder reader; do
   check "row: the guide runs the $suite suite" false \
     "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$skipped")"
 done
-# A render row has no reach, so it skips every suite, those the guide's
-# measured row runs among them.
+whole="$(row "$W" "$GUIDE" "$WHOLE")"
+check "row: the copy that cannot read the reach skips nothing" "[]" "${whole#*|}"
+check "row: and runs every shard" "$ROSTER" "$(sed 's/.* shards=\([^ ]*\).*/\1/' <<<"${whole%|*}")"
+# Review class cannot change which checks read the guide.
 render_skipped="$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
-for suite in declared plain slashed folder reader; do
-  check "row: render skips the $suite suite" true \
-    "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$render_skipped")"
-done
+check "the render and measured classes keep the same readers" "$skipped" "$render_skipped"
+
+python_skipped="$(selection micro false skills/jarvis/tests/watch_test.py | field skipped_suites)"
+check "watch_test.py reaches its importing shell wrapper" true \
+  "$(jq 'index("skills/jarvis/tests/presence.test.sh") == null' <<<"$python_skipped")"
+check "watch_test.py leaves out the unrelated session wrapper" true \
+  "$(jq 'index("skills/jarvis/tests/session.test.sh") != null' <<<"$python_skipped")"
 
 # THE LIST: the candidates a step runs, by whole path, in argument order:
 # each one the skips do not name.

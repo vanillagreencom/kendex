@@ -17,9 +17,8 @@ catalog_bits() { # SELECTION — only the two independently selected jobs
   printf '%s\n' "$1" | tr ' ' '\n' | grep -E '^(catalog|smoke)='
 }
 
-# CLASS|PATHS|CATALOG[|SMOKE], SMOKE CATALOG where absent: skill Markdown
-# with no compiled include runs no smoke, whose catalog is its own sample,
-# and a settings file beside it keeps the measured row's.
+# CLASS|PATHS|CATALOG[|SMOKE], SMOKE CATALOG where absent. Catalog
+# paths alone do not affect the smoke test's own fixture.
 catalog_rows() { # SCRIPT — every row must agree on both events
   local class path selected smoke event
   while IFS='|' read -r class path selected smoke; do
@@ -39,19 +38,19 @@ micro|crates/cli/tests/integration.rs|false
 trivial|skills/orch/SKILL.md|true|false
 render|skills/orch/SKILL.md|true|false
 micro|agents/runtime.md|true|false
-standard|skills/orch/SKILL.md kendex-local.toml|true
-micro|hooks/guard.sh|true
-micro|commands/run.md|true
-micro|mcp/docs.toml|true
-micro|output-styles/plain.md|true
-micro|pi-extensions/pi-hooks/README.md|true
-micro|plugins/tool/skills/tool/SKILL.md|true
-micro|.claude-plugin/marketplace.json|true
-micro|kendex.toml|true
-micro|.gitignore|true
-micro|.gitattributes|true
-micro|.gitmodules|true
-micro|tools/catalog-release-check|true
+standard|skills/orch/SKILL.md kendex-local.toml|true|false
+micro|hooks/guard.sh|true|false
+micro|commands/run.md|true|false
+micro|mcp/docs.toml|true|false
+micro|output-styles/plain.md|true|false
+micro|pi-extensions/pi-hooks/README.md|true|false
+micro|plugins/tool/skills/tool/SKILL.md|true|false
+micro|.claude-plugin/marketplace.json|true|false
+micro|kendex.toml|true|false
+micro|.gitignore|true|false
+micro|.gitattributes|true|false
+micro|.gitmodules|true|false
+micro|tools/catalog-release-check|true|false
 micro|crates/core/src/render/agent.rs|true
 micro|crates/cli/tests/cli_smoke.rs|true
 micro|crates/test_util.rs|true

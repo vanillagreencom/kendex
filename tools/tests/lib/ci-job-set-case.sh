@@ -43,6 +43,11 @@ field() { # NAME — reads the selection on stdin
 }
 # One selection row: its lanes whole and its shards against the spec, or the
 # refusal key where LANES is one.
+# This table holds shell reach and UI/compile gates. Cargo test selection
+# has its own cases below and in ci-skill-prose.test.sh.
+shell_lanes() {
+  sed -E 's/ (catalog|smoke|cargo_linux|cargo_macos|cargo_windows)=[^ ]*//g'
+}
 sel_row() { # DESC CLASS DOCS PATHS LANES SPEC
   local got
   got="$(selection "$2" "$3" "$(printf '%s\n' $4)")"
@@ -50,8 +55,8 @@ sel_row() { # DESC CLASS DOCS PATHS LANES SPEC
     exit=*) check "$1" "$5" "$got" ;;
     # Catalog selection has its own input table below. These rows hold the
     # existing compiler, platform and shard contracts independently.
-    *) check "$1" "$(sed 's/ catalog=[^ ]* smoke=[^ ]*//' <<<"$5")|" \
-      "$(sed 's/ catalog=[^ ]* smoke=[^ ]*//' <<<"${got% shards=*}")|$(shards_miss "$6" "$(field shards <<<"$got")")" ;;
+    *) check "$1" "$(shell_lanes <<<"$5")|" \
+      "$(shell_lanes <<<"${got% shards=*}")|$(shards_miss "$6" "$(field shards <<<"$got")")" ;;
   esac
 }
 

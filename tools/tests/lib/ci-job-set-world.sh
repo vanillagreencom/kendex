@@ -57,7 +57,11 @@ selection() { # CLASS DOCS_ONLY PATHS — the lane lines, blank-separated, or th
       "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/selection-err" | head -1)"
     return 0
   fi
-  tr '\n' ' ' <"$out" | sed 's/ $//'
+  if [ "${SELECT_CARGO_MATRIX:-}" = true ]; then
+    cat "$out"
+  else
+    sed '/^cargo_linux_matrix=/d' "$out"
+  fi | tr '\n' ' ' | sed 's/ $//'
 }
 
 # The classifier this checkout ships, run over a fixture repository whose one

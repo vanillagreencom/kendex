@@ -55,11 +55,14 @@ mkdir -p "$TMP/parity/tools"
 cp -R "$ROOT/tools/lib" "$TMP/parity/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/parity/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/parity/tools/rust-reads"
-sed 's/^      macos_shard "\$shards" || macos=false$/&; [ "$event" = merge_group ] || macos=false/' \
-  "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
+awk '
+  /any_outside "\$PROSE" && macos_shard "\$shards" && macos=true/ {
+    print; print "  [ \"$event\" = merge_group ] || macos=false"; n++; next
+  }
+  { print }
+  END { if (n != 1) exit 1 }
+' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
 chmod +x "$TMP/parity/tools/ci-job-set"
-[ "$(grep -c 'macos=false; \[ "\$event" = merge_group \] || macos=false$' "$TMP/parity/tools/ci-job-set")" -eq 1 ] ||
-  { echo "the event gate was not planted in the ci-job-set copy" >&2; exit 1; }
 parity_rows=0
 while IFS='|' read -r arg event expected; do
   parity_rows=$((parity_rows + 1))
@@ -102,13 +105,18 @@ SELECT_WITH="$TMP/progress/tools/ci-job-set" SELECT_ARG=--event-parity selection
   bad "control: a copy that drops the reach's progress breaks the progress row"
 
 # An Ubuntu lane that differs by event is refused too.
-sed 's/^  row="\$class"$/  row="$class"; linux_integration=true; [ "$event" != merge_group ] || linux_integration=false/; s/cargo_linux=true/cargo_linux=$linux_integration/g' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
-! cmp -s "$JOB_SET" "$TMP/parity/tools/ci-job-set" || exit 1
+awk '
+  /^  printf .* cargo_linux=\$linux / {
+    print "  [ \"$event\" = merge_group ] || linux=false"; n++
+  }
+  { print }
+  END { if (n != 1) exit 1 }
+' "$JOB_SET" >"$TMP/parity/tools/ci-job-set"
 for event in pull_request merge_group; do
   other=merge_group
   [ "$event" != merge_group ] || other=pull_request
   check "Ubuntu event parity on $event" "exit=2 event-parity event=$other" \
-    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false skills/orch/scripts/resolve-base-branch)"
+    "$(SELECT_WITH="$TMP/parity/tools/ci-job-set" SELECT_ARG=--event-parity SELECT_EVENT="$event" selection micro false crates/core/src/lib.rs)"
 done
 
 # THE PUBLISHED SELECTION: where CI_SELECTION names a file, a class
@@ -469,6 +477,7 @@ check "control: a selector taking any event's run owes no agent-runtime build" '
 # publishes its keys before main moves. The path selects shards on both
 # runners and no orch-state leg of its own. Each call is the changes job's.
 GROUP_PATH=skills/youtube-publish/scripts/youtube-publish
+UNREAD_DOC="docs/no-reader"".md"
 GROUP_SELECTION="$TMP/group-selection.json"
 group_select() { # STATES [SELECTOR [CLASS PATH]] — the selection, micro over GROUP_PATH unless named, in a world from all-proved
   publish_world "$1"
@@ -504,9 +513,8 @@ agent-runtime=none orch-runtime=queue|$with_leg|["agent-runtime"]
 agent-runtime=queue|$group_shards|[]
 ROWS
 [ "$group_rows" -eq 2 ] || { echo "the merge-group publication table read $group_rows rows" >&2; exit 1; }
-# A render or trivial row has no reach and skips every suite, so the leg it
-# gains where a build is owed runs none of the suites run-all.sh places in
-# that shard on Linux, and a row selecting the whole roster keeps them all.
+# A path outside suite reach adds the publishing leg without any suites.
+# A workflow input selects the whole roster, which includes that same leg.
 # The group's selection records the same skips, so the push at its head
 # counts no skipped suite proved. CLASS|PATH|STATES|SHARDS|QUEUE|OWED|LEG
 ORCH_CANDIDATES="$(cd "$ROOT" && git ls-files -- ':(glob)skills/orch/tests/*.sh' | awk '!/\/run-all\.sh$/')"
@@ -538,8 +546,8 @@ while IFS='|' read -r class path states shards queue owed leg; do
     "shards=$(field shards <<<"$lines") queue_macos_shards=$(field queue_macos_shards <<<"$lines") runtime_publish=$(field runtime_publish <<<"$lines") leg=$(leg_runs "$skips") selection_skips=$(jq -c .skipped_suites "$GROUP_SELECTION" 2>/dev/null)"
 done <<ROWS
 render|README.md|agent-runtime=none orch-runtime=queue|["orch-state"]|[]|["agent-runtime"]|
-trivial|docs/architecture/merge-rail.md|agent-runtime=none|["orch-state"]|[]|["agent-runtime"]|
-standard|.github/AGENTS.md|agent-runtime=none|$ROSTER|$QUEUE_ALL|["agent-runtime"]|$LEG_ALL
+trivial|$UNREAD_DOC|agent-runtime=none|["orch-state"]|[]|["agent-runtime"]|
+standard|.github/workflows/skill-tests.yml|agent-runtime=none|$ROSTER|$QUEUE_ALL|["agent-runtime"]|$LEG_ALL
 render|README.md|agent-runtime=queue|[]|[]|[]|
 ROWS
 [ "$verify_rows" -eq 4 ] || { echo "the render and trivial publication table read $verify_rows rows" >&2; exit 1; }
