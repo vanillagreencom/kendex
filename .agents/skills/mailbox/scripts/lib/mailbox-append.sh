@@ -396,10 +396,13 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
 
 # A replaced ask's question comment struck through, under one line naming the
 # comment of the ask that replaced it, so the owner answers that one only.
+# Only a comment the acting identity wrote is edited: after an account
+# change, the earlier account's comment is another author's text, which a
+# credential allowed to edit it must still leave alone.
 # Every outcome but an edit made is one `replace-unmarked` line on stderr,
 # printed here only; the close does not wait on it.
-owner_tracker_mark_replaced() { # TRACKER WORK REPLACED_JSON NEW_ISSUE NEW_COMMENT
-  local tracker="$1" work="$2" replaced="$3" new_issue="$4" new_comment="$5" id="" issue="" comment="" rows new_rows url="" cause=""
+owner_tracker_mark_replaced() { # TRACKER WORK REPLACED_JSON NEW_ISSUE NEW_COMMENT ACTOR
+  local tracker="$1" work="$2" replaced="$3" new_issue="$4" new_comment="$5" actor="$6" id="" issue="" comment="" rows new_rows url="" cause=""
   { id="$(jq -r '.id' <<<"$replaced")" && issue="$(jq -r '.issue' <<<"$replaced")" &&
     comment="$(jq -r '.tracker_comment' <<<"$replaced")"; } || cause=prepare
   if [[ -n "$cause" ]]; then
@@ -409,6 +412,10 @@ owner_tracker_mark_replaced() { # TRACKER WORK REPLACED_JSON NEW_ISSUE NEW_COMME
     cause=comments-read
   elif ! jq -e --arg id "$comment" 'any(.[]; .id == $id)' <<<"$rows" >/dev/null; then
     cause=comment-missing
+  elif [[ -z "$actor" ]]; then
+    cause=actor-unread
+  elif ! jq -e --arg id "$comment" --arg actor "$actor" 'any(.[]; .id == $id and .user_id == $actor)' <<<"$rows" >/dev/null; then
+    cause=comment-foreign
   fi
   # The newer comment's link, from the same read where it shares the item.
   if [[ -z "$cause" && -n "$new_comment" ]]; then

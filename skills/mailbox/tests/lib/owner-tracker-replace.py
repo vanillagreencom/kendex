@@ -20,12 +20,19 @@ TRACKER = r'''#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 state = Path(os.environ["TRACKER_STATE"])
 args = sys.argv[1:]
 items = json.loads((state / "items.json").read_text())
 comments = json.loads((state / "comments.json").read_text())
+# The account the credential acts as: it writes every comment created here.
+actor = (state / "actor").read_text() if (state / "actor").exists() else "agent"
+# Linear's comment writes with no LINEAR_TEAM: its configured-team gate
+# refuses `comments update` before any call, and auth-check says
+# writes_enabled false (a recorded run of linear.sh comments update).
+team = not (state / "no-team").exists()
 users = [{"id": "owner", "name": "Owner Person", "email": "owner@example.test", "display_name": "owner.person"}]
 
 
@@ -44,6 +51,12 @@ def save():
 
 if args[:2] == ["users", "list"]:
     print(json.dumps(users))
+elif args[:1] == ["auth-check"]:
+    # auth-check prints its report when the API fails too, with no actor.
+    if (state / "fail-auth").exists():
+        print(json.dumps({"ok": False, "error": "API request failed", "actor": None, "writes_enabled": team}))
+        sys.exit(1)
+    print(json.dumps({"ok": True, "actor": {"kind": "application", "id": actor, "name": "Agent"}, "writes_enabled": team}))
 elif args[:2] == ["teams", "keys"]:
     print(json.dumps({"urlKey": "workspace", "keys": ["KEN"]}))
 elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrackerComment("):
@@ -74,12 +87,15 @@ elif args[:2] == ["comments", "create"]:
         sys.exit(1)
     number = len(comments) + 1
     comments.append({"id": "c%d" % number, "issue": args[2], "body": Path(option("--body-file")).read_text(),
-                     "user_id": "agent", "user_email": "agent@example.test", "parent_id": option("--parent"),
+                     "user_id": actor, "user_email": actor + "@example.test", "parent_id": option("--parent"),
                      "url": "https://linear.app/workspace/issue/%s#comment-c%d" % (args[2], number),
                      "created_at": "2026-01-01T00:%02d:%02dZ" % divmod(number, 60)})
     save()
     print(json.dumps({"success": True, "data": {"success": True, "comment": {"id": "c%d" % number}}}))
 elif args[:2] == ["comments", "update"]:
+    if not team:
+        print(json.dumps({"error": "No Linear team configured for this project - refusing to write."}), file=sys.stderr)
+        sys.exit(1)
     row = next(row for row in comments if row["id"] == args[2])
     row["body"] = Path(option("--body-file")).read_text()
     save()
@@ -88,6 +104,13 @@ elif args[:2] == ["comments", "list"]:
     print(json.dumps([safe(row) for row in comments if row["issue"] == args[2]]))
 elif args[:2] == ["comments", "bulk-list"]:
     wanted = [arg for arg in args[2:] if not arg.startswith("--")]
+    # linear_issue_refs: a ref that is not an identifier, a UUID among them,
+    # refuses the whole read before any lookup; an identifier is read and
+    # keyed in upper case.
+    if not all(re.fullmatch(r"[A-Za-z0-9]+-[0-9]+", key) for key in wanted):
+        print(json.dumps({"error": "Not an issue identifier (TEAM-123)"}), file=sys.stderr)
+        sys.exit(1)
+    wanted = [key.upper() for key in wanted]
     # comments --help: a ref Linear answers it has no issue for refuses the
     # whole read, naming it in `missing` after the lookup's own error line.
     missing = [key for key in wanted if key not in items]
@@ -175,6 +198,18 @@ class Case:
         flag = self.state / "fail-create"
         flag.touch() if on else flag.unlink()
 
+    def act_as(self, actor):
+        """The credential acts as ACTOR from now on; None leaves the account
+        as it is and makes auth-check fail, so no actor reads."""
+        flag = self.state / "fail-auth"
+        flag.touch() if actor is None else flag.unlink(missing_ok=True)
+        if actor is not None:
+            (self.state / "actor").write_text(actor)
+
+    def without_team(self):
+        """The home's Linear package has no LINEAR_TEAM from now on."""
+        (self.state / "no-team").touch()
+
 
 
 
@@ -215,6 +250,17 @@ class Overseer:
     def pending(self):
         result = self.run("pending", "--item", "overseer", "--to", "owner")
         return {row["id"]: row for row in map(json.loads, result.stdout.splitlines())}
+
+    def retain_issue(self, ask, ref):
+        """ASK and its tracker record name their item by REF, as an ask the
+        earlier ask path accepted with any --issue form keeps it."""
+        path = self.root / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        rows = self.rows("to-overseer.jsonl")
+        changed = [row for row in rows if ask in (row.get("id"), row.get("re"))]
+        assert len(changed) == 2, changed
+        for row in changed:
+            row["issue"] = ref
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
     def lines(self):
         return len(self.rows("to-overseer.jsonl")), len(self.rows("to-lane.jsonl"))
@@ -722,6 +768,61 @@ def report_retry(case, facts):
     facts["report_unsent_retried"] &= overseer.owner_answers().reported(late, "KEN-7")
 
 
+def retained_refs(case, facts):
+    """Asks an earlier ask path kept naming their items by a UUID and by an
+    identifier in lower case, beside an ask naming its item by identifier."""
+    overseer = case.checkout("asker")
+    uuid = "4029001b-0b88-4e0d-b5a8-3af25993f856"
+    by_uuid, _ = overseer.item_ask("KEN-8")
+    lower, _ = overseer.item_ask("KEN-9")
+    first, _ = overseer.item_ask("KEN-7")
+    overseer.retain_issue(by_uuid, uuid)
+    overseer.retain_issue(lower, "ken-9")
+    answer = case.owner_reply("KEN-7", None, "approve")
+    reply = case.owner_reply("KEN-9", tracker_comment(overseer, lower), "B")
+    read = overseer.owner_answers()
+    facts["retained_ref_skipped"] &= (read.plain(answer, first, "approve") and read.plain(reply, lower, "B")
+        and read.result.stderr.splitlines().count(
+            "owner-answers: item-skipped issue=%s cause=issue-invalid" % uuid) == 1)
+
+
+def account_change(case, facts):
+    """A re-ask while no acting identity reads, then one after the credential
+    changed account."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    before = case.body(first_comment)
+    case.act_as(None)
+    second, unread = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    second_comment = tracker_comment(overseer, second)
+    second_before = case.body(second_comment)
+    case.act_as("agent-2")
+    third, foreign = overseer.item_ask("KEN-7", text="Approve a third of it?\n")
+    facts["foreign_comment_kept"] &= (
+        "lane-mail: replace-unmarked id=%s issue=KEN-7 cause=actor-unread" % first in unread.splitlines()
+        and "lane-mail: replace-unmarked id=%s issue=KEN-7 cause=comment-foreign" % second in foreign.splitlines()
+        and case.body(first_comment) == before and case.body(second_comment) == second_before
+        and set(overseer.pending()) == {third})
+
+
+def no_team(case, facts):
+    """A re-ask in a home whose Linear package has no LINEAR_TEAM."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    before, lines, count = case.body(first_comment), overseer.lines(), len(case.comments())
+    case.without_team()
+    refused = overseer.try_ask("--issue", "KEN-7", "--do", "Approve change", text="Approve half of it?\n")
+    facts["no_team_refused"] &= (refused.returncode == 2
+        and refused.stderr.split()[1:3] == ["replace-unconfigured", "cause=team-unset"]
+        and overseer.lines() == lines and len(case.comments()) == count
+        and case.body(first_comment) == before and set(overseer.pending()) == {first})
+    # An ask that replaces no question comment still posts.
+    other, _ = overseer.item_ask("KEN-8")
+    facts["no_team_refused"] &= set(overseer.pending()) == {first, other}
+
+
 ROWS = ("same_item_replaces", "chat_replaces", "other_item_replaces", "other_item_kept", "uncommented_replaced",
         "unposted_replaces_nothing", "posted_after_unposted", "refused_appends_nothing", "reask_after_close",
         "unmarked_still_closes", "refused_close_kept", "read_before_replace", "replaced_window", "replaced_reply",
@@ -729,7 +830,8 @@ ROWS = ("same_item_replaces", "chat_replaces", "other_item_replaces", "other_ite
         "closed_question_reported", "closed_window_reported", "closed_reply_after_later_question",
         "closed_chain_reported", "off_item_window", "off_item_reply", "own_item_plain", "third_bounds_window",
         "closed_later_question", "closed_between", "both_open", "refused_close_later", "before_first_question",
-        "reply_under_comment", "report_unsent_retried", "compacted_kept", "compacted_reask", "missing_item")
+        "reply_under_comment", "report_unsent_retried", "compacted_kept", "compacted_reask", "missing_item",
+        "retained_ref_skipped", "foreign_comment_kept", "no_team_refused")
 
 
 def run(source, scratch, bash):
@@ -742,7 +844,8 @@ def run(source, scratch, bash):
                  (lambda case, facts: refused_close(case, facts, False), ("KEN-7",)),
                  (item_chain, ("KEN-7",)), (chains, ("KEN-7", "KEN-8", "KEN-9")),
                  (off_item, ("KEN-7",)), (report_retry, ("KEN-7",)), (compacted, ("KEN-7",)),
-                 (missing_item, ("KEN-7", "KEN-8")))
+                 (missing_item, ("KEN-7", "KEN-8")), (retained_refs, ("KEN-7", "KEN-8", "KEN-9")),
+                 (account_change, ("KEN-7",)), (no_team, ("KEN-7", "KEN-8")))
 
     def judged(scenario, issues):
         facts = dict.fromkeys(ROWS, True)

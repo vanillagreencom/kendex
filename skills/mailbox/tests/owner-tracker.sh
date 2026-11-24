@@ -103,6 +103,9 @@ report_unsent_retried|a report the mailbox refuses prints report-unsent, keeps t
 compacted_kept|compaction keeps an item's closed questions and their records while an open ask replaces one there
 compacted_reask|once an item's records leave, a later question there judges only the comments after it
 missing_item|an item Linear holds no issue for counts as holding no comments, named once on stderr, and the pass reads
+retained_ref_skipped|a retained ask naming its item by UUID is skipped by name while the other items' answers land, a lower-case one among them, and the pass reads
+foreign_comment_kept|a replaced question another account wrote, or one no acting identity reads for, is left unedited by its cause and the ask still closes
+no_team_refused|a re-ask replacing a question comment in a home with no LINEAR_TEAM is refused whole, and an ask replacing none still posts
 ROWS
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
