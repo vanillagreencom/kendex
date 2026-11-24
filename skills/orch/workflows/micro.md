@@ -188,7 +188,7 @@ Create the record unless it stands, by [start-worktree.md § 1](start-worktree.m
 
 **Run Workflow**: `⤵ workflows/submit-pr.md § 2 steps 1-4 → § 3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 
-For a quick change, take the directive escape on § 2 step 1's `worktree-push-base-conflict` before calling the restack, or when § 3 would start PR-comment triage.
+For a quick change, pass that context to [submit-pr.md § 2](submit-pr.md#2-push-and-submit) for its quick-change triage rule. Take the directive escape on § 2 step 1's `worktree-push-base-conflict` before calling the restack.
 
 Under `ORCH_DELIVERY=push-base`, that range's entry takes [base-publication.md](base-publication.md).
 

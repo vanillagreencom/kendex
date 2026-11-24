@@ -214,6 +214,8 @@ If dev-fix applied nothing, go to § 2.
 
 ## 2. Push And Submit
 
+**Quick-change triage.** Carry the calling micro run's quick-change context through submit and its nested routes. Keep the live review and required-check reads. If a step would start PR-comment triage for a quick change, take [micro.md § Escape](micro.md#escape) before entering triage.
+
 Read the delivery setting in `[WORKTREE_PATH]` before any pull-request read or push:
 
 ```bash
@@ -244,7 +246,7 @@ Record whether `autoMergeRequest` is set.
 
 1. **Push.** With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, the first pass after the internal review of the pull request [start-worktree.md](start-worktree.md) § 2.1 opened runs § 3's triage first.
 
-   - Run `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context. `[PR_NUMBER]` is the `number` the `pr view` read above printed.
+   - Apply this section's quick-change triage rule before running `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 2 step 1 push` with managed context. `[PR_NUMBER]` is the `number` the `pr view` read above printed.
    - Its fix round commits on top of the internal review's, and its `record-push` request (that workflow's § 6.1) carries both.
    - It resolves its own fix SHAs through `.rebase_map` before its replies cite them.
    - The triage returns to the push request below, never to the start of this step.
@@ -388,7 +390,7 @@ Bot prose is never a gate signal: never parse emoji reactions, sticky comments o
 ```
 
 - On `.unresolved_count == 0`, go to § 3.2.
-- Otherwise run `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3 tail` with managed context. That workflow records its own results (its § 8) and counts its own pass (its § 6.3). Write neither here.
+- Otherwise apply [§ 2's quick-change triage rule](#2-push-and-submit) before running `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 3 tail` with managed context. That workflow records its own results (its § 8) and counts its own pass (its § 6.3). Write neither here.
 
 Do not wait for a bot's re-review round.
 
