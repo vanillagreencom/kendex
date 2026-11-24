@@ -412,9 +412,10 @@ fn apply_host(
 
 /// Whether a store of `request` that refuses `record-changed` is read again
 /// and re-applied: the launcher-side progress and outcome writes, which write
-/// only while their owner still holds the intent, and the job's claim, whose
+/// only while their owner still holds the intent, the job's claim, whose
 /// first store can meet the launcher's sidecar write that lands the instant
-/// the job starts.
+/// the job starts, and the transitions that judge the record they commit
+/// against.
 fn reread_on_record_changed(request: &Request) -> bool {
     match request {
         Request::RecordProgress(r) => r.while_owner.is_some(),
@@ -424,6 +425,11 @@ fn reread_on_record_changed(request: &Request) -> bool {
         // A claim and a mark judge the record they commit against, so a
         // snapshot another writer moved is judged again.
         Request::RecoverLaneModel(_) | Request::StopModelPredecessor(_) => true,
+        // The reconcile judges each open run against the record it commits
+        // to, and races the run's own job by design: a `validate stop`
+        // reconciles while the job it signalled writes its close, the first
+        // closer winning. A close that landed in the gap is judged again.
+        Request::ReconcileRound(_) => true,
         Request::LaunchLane(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
@@ -437,7 +443,6 @@ fn reread_on_record_changed(request: &Request) -> bool {
         | Request::VerifyReview(_)
         | Request::ApproveHead(_)
         | Request::CloseLane(_)
-        | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
         | Request::CloseOwnedResources(_)
@@ -1605,12 +1610,12 @@ mod tests {
         assert_eq!(t.expected.pending, Value::Null);
     }
 
-    /// A model recovery's claim and a predecessor stop's keep judge the
-    /// record they commit against: where another writer moves it between
-    /// the read and the store, the moved record is judged again and answers
-    /// with that writer's state, never `record-changed`.
+    /// A model recovery's claim, a predecessor stop's keep and a round's
+    /// reconcile judge the record they commit against: where another writer
+    /// moves it between the read and the store, the moved record is judged
+    /// again and answers with that writer's state, never `record-changed`.
     #[test]
-    fn a_recovery_claim_and_a_stop_keep_judge_a_moved_snapshot_again() {
+    fn a_transition_that_judges_its_record_judges_a_moved_snapshot_again() {
         let dir = tempfile::tempdir().unwrap();
         let bound = serde_json::json!({
             "launch": {"pid": 41, "start": "ticks:41"},
@@ -1696,5 +1701,37 @@ mod tests {
         let doc = object(&item_path);
         assert_eq!(doc["handoff"]["session_id"], "later");
         assert!(doc["handoff"].get("stop_failure").is_none(), "{doc:?}");
+
+        // A reconcile whose run's own job closed the stage in the gap, as a
+        // job a `validate stop` signalled closes it beside the stop's
+        // reconcile.
+        moved.set(false);
+        let dir = tempfile::tempdir().unwrap();
+        let item_path = item_file(dir.path());
+        let round_id = item(&item_path).dev_round_id.unwrap();
+        let run_dir = dir.path().join("dev-validate-gone");
+        let mut doc = object(&item_path);
+        let stages = doc["stages"].as_array_mut().unwrap();
+        stages.push(serde_json::json!({
+            "kind": "validate", "round_id": round_id, "start": NOW_SECS - 10, "run_dir": run_dir,
+        }));
+        fs::write(&item_path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        let reconcile = Request::ReconcileRound(ReconcileRound {
+            round_id: round_id.clone(),
+        });
+        let applied = apply_interleaved(&item_path, &reconcile, &env(), LOCK, None, &|| {
+            writer(&item_path, |doc| {
+                doc["stages"][1]["end"] = (NOW_SECS - 1).into();
+                doc["stages"][1]["outcome"] = "pass".into();
+            });
+        })
+        .unwrap();
+        let Report::ReconcileRound(reconciled) = applied.report else {
+            panic!("{:?}", applied.report)
+        };
+        assert!(reconciled.runs.is_empty(), "{reconciled:?}");
+        let stage = &item(&item_path).stages[1];
+        assert_eq!(stage.outcome, Some(state::StageOutcome::Pass));
+        assert_eq!(stage.end, Some(NOW_SECS - 1));
     }
 }

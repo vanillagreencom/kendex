@@ -1557,6 +1557,28 @@ fn until(mut predicate: impl FnMut() -> bool) {
     }
 }
 
+/// Whether the executor has recorded its command's identity, pid and start,
+/// the record a stop signals and a reconcile reads the command by. A row
+/// that stops the run or ends its executor waits on this: the command's own
+/// marker and the record's first, pid-only write can both land before it.
+fn command_identity_recorded(run_dir: &Path) -> bool {
+    fs::read(run_dir.join("command"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_some_and(|record| record["start"].is_string())
+}
+
+/// The run under `worktree` whose executor has recorded its command's
+/// identity.
+fn recorded_run(worktree: &Path) -> Option<PathBuf> {
+    fs::read_dir(worktree.join("tmp"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|dir| command_identity_recorded(dir))
+}
+
 fn executor_dir(w: &World, command: &str, quiet: u64) -> PathBuf {
     let dir = w.worktree.join("tmp/dev-validate-executor");
     fs::create_dir(&dir).unwrap();
@@ -3309,6 +3331,7 @@ fn a_foreground_stop_records_intent_before_signalling_and_closes_the_stage_stopp
         .as_str()
         .unwrap()
         .to_owned();
+    until(|| command_identity_recorded(Path::new(&dir)));
     let out = w.entry(&["--stop", "--worktree", w.worktree.to_str().unwrap()], &[]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(text(&out), "state=stopped units=0 groups=1");
@@ -4380,15 +4403,10 @@ fn a_command_group_still_holds_the_host_after_its_executor_dies() {
     let w = World::new();
     let fifo = w.root.join("hold");
     assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
-    let ready = w.root.join("ready");
-    let command = format!(
-        "exec 9<> '{}'; echo ready > '{}'; read -r -t 20 -u 9 answer",
-        fifo.display(),
-        ready.display()
-    );
+    let command = format!("exec 9<> '{}'; read -r -t 20 -u 9 answer", fifo.display());
     let started = ok(&w.start(&[], &[("DEV_VALIDATE_CMD", &command)]));
     let dir = started["run_dir"].as_str().unwrap();
-    until(|| ready.exists());
+    until(|| command_identity_recorded(Path::new(dir)));
     let job = &w.stage(dir)["job"];
     let identity = agent_runtime::process::Identity {
         pid: job["pid"].as_u64().unwrap() as u32,
@@ -4793,6 +4811,7 @@ fn a_foreground_run_whose_executor_dies_is_held_while_its_command_runs_and_close
         .unwrap()
         .to_owned();
     assert_eq!(w.stage(&dir)["job"]["runner"], "attached");
+    until(|| command_identity_recorded(Path::new(&dir)));
     // The executor dies before its own close; its command runs on in the
     // group it leads.
     child.0.kill().unwrap();
@@ -4983,11 +5002,7 @@ fn a_stop_recorded_before_the_executors_sentinel_closes_the_stage_stopped() {
     let started = ok(&w.start(&[], &[("DEV_VALIDATE_CMD", "sleep 60")]));
     let dir = started["run_dir"].as_str().unwrap().to_owned();
     let pid_file = Path::new(&dir).join("pid");
-    until(|| {
-        fs::read_to_string(Path::new(&dir).join("command"))
-            .unwrap_or_default()
-            .contains("\"start\":\"")
-    });
+    until(|| command_identity_recorded(Path::new(&dir)));
     // The job dies before its own close, the command still running.
     let job = w.stage(&dir)["job"]["pid"].as_u64().unwrap().to_string();
     assert!(
@@ -5036,12 +5051,7 @@ fn a_stop_of_an_ad_hoc_run_with_no_state_directory_ends_its_command() {
     let absent = w.root.join("no-state").display().to_string();
     let fifo = w.root.join("hold");
     assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
-    let ready = w.root.join("ready");
-    let command = format!(
-        "exec 9<> '{}'; echo ready > '{}'; read -r -t 20 -u 9 answer",
-        fifo.display(),
-        ready.display()
-    );
+    let command = format!("exec 9<> '{}'; read -r -t 20 -u 9 answer", fifo.display());
     let mut child = support::isolated();
     child.args([
         "--state-dir",
@@ -5064,7 +5074,7 @@ fn a_stop_of_an_ad_hoc_run_with_no_state_directory_ends_its_command() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     let mut child = Owned(child.spawn().unwrap());
-    until(|| ready.exists());
+    until(|| recorded_run(&w.worktree).is_some());
     let mut stop = support::isolated();
     stop.args([
         "--state-dir",
@@ -5115,7 +5125,7 @@ fn a_unit_run_is_stopped_by_its_recorded_unit_name_and_a_refused_stop_fails() {
         );
     }
     for dir in &dirs {
-        until(|| Path::new(dir).join("command").exists());
+        until(|| command_identity_recorded(Path::new(dir)));
     }
     let unit = |dir: &str| -> String {
         fs::read_to_string(Path::new(dir).join("runner"))
@@ -5169,19 +5179,10 @@ fn a_unit_run_is_stopped_by_its_recorded_unit_name_and_a_refused_stop_fails() {
     let mut env = extra.to_vec();
     env.push(("DEV_VALIDATE_CMD", command.as_str()));
     let wt = three.worktree.display().to_string();
-    let runs = three.worktree.join("tmp");
     std::thread::scope(|scope| {
         let start = scope.spawn(|| three.entry(&["--worktree", &wt, "--poll", "1"], &env));
-        let held = || {
-            fs::read_dir(&runs)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|e| e.path())
-                .find(|p| p.join("command").exists())
-        };
-        until(|| held().is_some());
-        let dir = held().unwrap().display().to_string();
+        until(|| recorded_run(&three.worktree).is_some());
+        let dir = recorded_run(&three.worktree).unwrap().display().to_string();
         let pid_file = Path::new(&manager_dir).join(format!("{}.pid", unit(&dir)));
         let _group = Group(pid_file.clone());
         until(|| fs::read_to_string(&pid_file).is_ok_and(|p| p.ends_with('\n')));
