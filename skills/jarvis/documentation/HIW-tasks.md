@@ -20,8 +20,6 @@ A request can arrive through the [message routes](HIW-messages.md). Jarvis reads
 
 In a continuing session, work has a tracker item with the result still owed and the check that will establish it. Jarvis connects incoming events to that work and updates the item after acting. It can work directly or ask [another agent](HIW-delegation.md) to provide a result.
 
-The tracker keeps unfinished work. The conversation carries requests and replies. Recovery notes keep only what another session needs to continue. These records have different jobs.
-
 ## The result
 
 Jarvis compares the completed work with its required result. A worker's return or a repository merge supplies evidence for that comparison. Neither alone proves that a problem is fixed where you encountered it.

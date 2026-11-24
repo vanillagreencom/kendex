@@ -22,11 +22,11 @@ A session starts with the memory index. It reads a note when the task meets that
 
 When a completed change makes a current note false, the note is updated or replaced. Its replacement names the superseded note, so the old statement stops reading as current. Dated observations and original sources can remain as history.
 
-Memory records knowledge. It does not grant permission or override your instructions. Reusable ways to perform work belong in skills. Recovery context belongs in the [session handoff](HIW-sessions.md).
+Memory does not grant permission or override your instructions. Reusable ways to perform work belong in skills. Recovery context belongs in the [session handoff](HIW-sessions.md).
 
 ## Private originals
 
-Official originals stay unchanged in your private record store. Memory keeps only useful metadata, such as the record type, checked date and storage location. Passwords and protected account details stay in their own protected stores, as [Tools](HIW-tools.md) explains.
+Memory keeps only useful metadata about official records, such as the record type, checked date and storage location. [Tools](HIW-tools.md#credentials-and-originals) explains where originals and credentials stay.
 
 ## Your choices
 

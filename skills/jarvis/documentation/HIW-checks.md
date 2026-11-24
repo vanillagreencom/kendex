@@ -13,7 +13,7 @@ flowchart LR
 
 Most work can be checked before it finishes. Some results need an installation, later use or a person's own screen or hands. The tracker records the required observation, where its evidence lives, when it becomes due and its deadline.
 
-The merged item stays in Verifying while its admitted later checks remain open. When Jarvis sent a fix to another owner, the continuing session's own linked check item retains the separate observation where the problem was seen. [Delegation](HIW-delegation.md) explains that ownership.
+The merged item stays in Verifying while its admitted later checks remain open. When Jarvis sent a fix to another owner, the continuing session's own linked check item retains the separate observation where the problem was seen.
 
 ## The evidence
 
@@ -31,7 +31,7 @@ The shared completion rules are still being aligned. The intended model gives ev
 | Waived | An authorized person removes the requirement and records why. It is not a passing observation. |
 | Replaced | A named item carries the replacement requirement. |
 
-The current scheduled verification route still records an authorized dropped check as a tick with the person's reason. It also has its own missing-evidence waiting procedure. That difference remains unresolved package work; a tick in that route does not itself establish a successful observation.
+The current scheduled verification route has its own missing-evidence waiting procedure. It records an authorized waiver and its reason separately from a passing check.
 
 ## Your choices
 

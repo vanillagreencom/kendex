@@ -22,13 +22,13 @@ The declared specialist agents require the kendex Jarvis installation. An app th
 
 Jarvis reaches a repository through that repository's own communication channel. Its overseer applies the repository's workflow for workers, reviews, checks and delivery. Jarvis receives the overseer's report and decides what to tell you.
 
-The [message page](HIW-messages.md) explains requests, questions and answers. Reaching a repository grants no additional authority to act there.
+Reaching a repository grants no additional authority to act there.
 
 ## Acceptance and recovery
 
 The parent that requested a result records its acceptance or the work still needed. Jarvis reads existing results before repeating a job after an interruption. A failed worker remains a failed attempt, with any available output retained for inspection.
 
-When Jarvis sent a fix to another owner, a linked check in the continuing session's own task project retains the result Jarvis still owes. That check needs evidence from where the problem was seen. The [checks page](HIW-checks.md) explains that distinction.
+The [checks page](HIW-checks.md#the-extra-observation) explains where Jarvis keeps a check for a fix it sent to another owner.
 
 ## Your choices
 
