@@ -178,6 +178,20 @@ GIT_INDEX_FILE="$TMP_ROOT/corrupt-index" check 'Claude Bash preserves Git cause'
 BASH_EVENT=$(jq -c '.session_id = "shell-other"' <<<"$BASH_EVENT")
 check 'Codex Bash stays silent' codex "$BASH_EVENT" ''
 
+# Missing git stops only the Claude Bash branch, so an edit later in that
+# session still gets the note.
+NO_GIT_BIN="$TMP_ROOT/no-git-bin"
+mkdir -p "$NO_GIT_BIN"
+for tool in jq cat cp mkdir find; do ln -s -- "$(command -v "$tool")" "$NO_GIT_BIN/$tool"; done
+no_git_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/no-git-state-${HOOK##*/}" PATH="$NO_GIT_BIN"
+  export XDG_STATE_HOME PATH
+  check 'Claude Bash without git' claude "$(edit Bash "$REPO" '' no-git)" 'ui-copy-note: missing-tool=git'
+  check 'Claude edit after Bash without git, same session' claude \
+    "$(edit Edit "$REPO" shell/Panel.qml no-git)" 'ui-copy-note: path=shell/Panel.qml'
+}
+no_git_rows
+
 RELOCATED="$TMP_ROOT/relocated/kendex"
 install_skills "$RELOCATED/skills"
 CODEX_HOME="$RELOCATED" EXPECTED_GUIDE="$RELOCATED/skills/code-quality/references/ui.md" \
@@ -319,10 +333,13 @@ GLOBS
 # The second call must expose a copy that skipped creating a session mark.
 skill_load_control once "$HOOK" "DETAIL=\"Read § UI copy in \$REFERENCE and apply it to this edit.\"" \
   'STATE_DIR=/dev/null/unwritable' HOOK session_rows 'same session: keyed context'
-skill_load_control move "$HOOK" '    command -v awk >/dev/null 2>&1 || session_notice missing-tool awk' \
+skill_load_control move "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }' \
   '    TARGETS=${TARGETS//Move to:/Ignored:}' HOOK move_rows 'Codex matching destination: keyed context'
-skill_load_control add "$HOOK" '    command -v awk >/dev/null 2>&1 || session_notice missing-tool awk' \
+skill_load_control add "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }' \
   '    TARGETS=${TARGETS//Add File:/Ignored:}' HOOK add_rows 'Codex ordinary addition: keyed context'
+skill_load_control no-git "$HOOK" '    [ "$HARNESS" = claude ] || exit 0' \
+  '    command -v git >/dev/null 2>&1 || session_notice missing-tool git' HOOK no_git_rows \
+  'Claude edit after Bash without git, same session: keyed context'
 # A Pi copy that reads its shared tree beside its own root, as one that
 # classified its path would, takes the planted project reader.
 skill_load_control pi-scope "$HOOK" '      NATIVE_ROOT=$HOOK_ROOT' '      SHARED_ROOT=${HOOK_ROOT%/*}' \

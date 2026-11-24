@@ -46,9 +46,9 @@ mark_session() {
   fi
 }
 
-# An install that cannot deliver the note stays so for the session, as an old
-# pi-hooks carrier that sets no KENDEX_HOOK_SCOPE does: say it once, not on
-# every tool call.
+# An install layout the hook cannot read, such as a Pi copy whose carrier sets
+# no or no known KENDEX_HOOK_SCOPE, fails every call of the session alike: say
+# it once, not on every tool call.
 session_notice() { # KEY VALUE [DETAIL]
   local mark detail=${3:-}
   mark=$(mark_session) || exit 0
@@ -203,7 +203,7 @@ case "$TOOL" in
     ;;
   apply_patch)
     [ -n "$TARGETS" ] || { notice reader patch 'The apply_patch payload has no command.'; exit 0; }
-    command -v awk >/dev/null 2>&1 || session_notice missing-tool awk
+    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }
     TARGETS=$(awk '
       function flush() { if (update != "") print update; update = "" }
       /^\*\*\* Move to: / && update != "" { update = substr($0, 14); flush(); next }
@@ -217,7 +217,7 @@ case "$TOOL" in
     ;;
   Bash)
     [ "$HARNESS" = claude ] || exit 0
-    command -v git >/dev/null 2>&1 || session_notice missing-tool git
+    command -v git >/dev/null 2>&1 || { notice missing-tool git; exit 0; }
     GIT_ROOT=$(LC_ALL=C git -C "$BASE" rev-parse --show-toplevel 2>&1) || {
       case "$GIT_ROOT" in *'not a git repository'*) exit 0 ;; esac
       notice reader git-root "$GIT_ROOT"
