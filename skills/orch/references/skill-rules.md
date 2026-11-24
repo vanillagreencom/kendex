@@ -477,10 +477,11 @@ A non-delegated primary session routes creation through TPM, except `plan-issues
 A verifier the overseer delegates writes its full evidence as one Linear comment on the issue it verified, and writes no report or evidence file for the overseer. It returns exactly one line per requested issue, with no other text, no duplicate and no unrequested issue:
 
 ```text
-[ISSUE] | verdict: [kept|canceled] | owner: [REPO_PATH_OR_NONE] | Done-when: [ONE_LINE_RESULT] | delta: [EXPECTED_DELTA_LINE_OR_NONE] | project: [PROJECT_NAME_OR_NONE] | agent: [agent:LABEL|none]
+[ISSUE] | verdict: [kept|canceled] | Done-when: [ONE_LINE_RESULT] | delta: [EXPECTED_DELTA_LINE_OR_NONE] | project: [PROJECT_NAME_OR_NONE] | agent: [agent:LABEL|none]
 ```
 
 - Every field is required.
+- Answer question 3 under the project-management skill's `references/filing.md` § Judge the approach in one line on the item in the evidence comment. Include that answer as free text in the return's `Done-when:` field.
 - For an item judged by the filing bar, `kept` means it clears the bar and `canceled` means it falls below the bar.
 - If the Filing record's `Reached by:` line names an owner or Jarvis decision that authorizes the work, return `canceled` only for a duplicate and `kept` otherwise.
 - When the issue team's project inventory is nonempty, name a project from it on every kept row and every row for an item backed by such a decision. With an empty inventory, return `project: none` and skip project validation.

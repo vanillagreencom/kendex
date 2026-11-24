@@ -16,16 +16,16 @@ At every filing and every launch read, judge the approach against the item's own
    - Name the existing owner or the simpler alternative.
    - Say why it meets or fails the same need. A name alone is no answer.
    - Do not force a new requirement into a removal.
-3. Is this a workaround of a limit, a rule or a tool? If it is, does the limit or rule still have a reason?
+3. Is this a patch around a design flaw: a workaround of a limit, a rule or a tool, or a fix of one symptom that a mechanism, list or design keeps producing? If it is, name that source and the item that fixes it there, and say whether the limit or rule still has a reason.
    - Correct or remove a stale rule at its owning place.
-   - Fix the cause.
+   - Fix the cause: change this item into the fix at the source, or drop it for the open item that already fixes it there.
    - Escalate only a boundary the owner reserves.
    - Apply [orch SKILL.md § Skill Rules](../../orch/SKILL.md#skill-rules) and the code-quality skill's SKILL.md § Correctness and § Over-Engineering.
 
 Then:
 
 1. Decide go, change or drop.
-2. Write the short cause-and-effect answer in the item's existing outcome, evidence or ruling text.
+2. Write the short cause-and-effect answer in the item's existing outcome, evidence or ruling text. Add question 3's answer as one line on the item: `Patch check: none, [why this is the fix at the source]` or `Patch check: [source]; fixed by [ITEM or unfiled]`.
 
 - If the need is valid and the text is weak, repair the same item from its source request, and keep its date.
 - Drop an item only when its need is absent, duplicated, satisfied or superseded.
