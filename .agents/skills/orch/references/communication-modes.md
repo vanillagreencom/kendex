@@ -216,7 +216,7 @@ Every hold in the handoff, the report's Next row or a lane's state names its ite
 The installed snapshot has this shape. The writer generates the Start here line.
 
 ```markdown
-Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .overseer.generation]
+Start here: [YYYY-MM-DDThh:mm:ssZ] generation=[FLEET RECORD'S .controller.generation]
 
 ## State
 Session: [HOST, SESSION STATUS, HOLDS WITH THEIR ASK OR BLOCKER IDS, AND STATE CHECK TIME]
