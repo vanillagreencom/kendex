@@ -959,7 +959,8 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
             // https://code.claude.com/docs/en/authentication#generate-a-long-lived-token
             let unjudged_cause = (text
                 && named == Harness::Claude
-                && std::env::var_os(launch::CLAUDE_TOKEN_VAR).is_some_and(|token| !token.is_empty()))
+                && std::env::var_os(launch::CLAUDE_TOKEN_VAR)
+                    .is_some_and(|token| !token.is_empty()))
             .then_some("claude-oauth-token-room-unmeasured");
             let answer = if let Some(cause) = unjudged_cause {
                 accounts::PickAnswer::Unjudged {
