@@ -262,12 +262,15 @@ Follow-up after a squash merge
   Once you have confirmed the squash merge and the worktree is gone, remove
   can succeed while leaving a local branch behind. If that branch is the
   only claim, run these commands from the main checkout on the default
-  branch. Use the exact local branch from create's Branch line and an unused
-  archive name.
+  branch. Use the exact local branch from create's Branch line. Choose an
+  unused archive name outside the issue branch's ref hierarchy and the
+  candidate branch names listed in create --help. For issue 'topic' with
+  branch 'topic', use these commands.
 
-    git branch -m <branch> <archive>
-    worktree create <ID>
+    git branch -m topic topic-archive
+    worktree create topic
 
+  An archive named 'topic/archive' would prevent Git from recreating 'topic'.
   The archive keeps the original tip. Create starts at the fetched
   origin/<default> and still checks for other claims, including remote
   branches and open pull requests.

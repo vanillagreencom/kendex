@@ -551,7 +551,7 @@ echo "=== follow-up after a squash merge ==="
 for verb in create remove; do
   help_output="$("$WORKTREE_SCRIPT" "$verb" --help)"
   assert_eq "$(sed -n '/^    git branch /p; /^    worktree create /p' <<<"$help_output")" \
-    $'    git branch -m <branch> <archive>\n    worktree create <ID>' "$verb help gives the squash follow-up commands"
+    $'    git branch -m topic topic-archive\n    worktree create topic' "$verb help gives the squash follow-up commands"
 done
 
 build squash-follow-up wt push
@@ -568,10 +568,10 @@ assert_eq "$(run 'remove topic' | sed 's/ out=.*//') $(git -C "$MAIN" rev-parse 
   "rc=0 $PRE" 'remove leaves the local tip when the worktree is already gone'
 assert_eq "$(run 'create topic')" "rc=75 out= err=$(err_text dup:topic:local) main=main@end/clean cfg=true trees= branches=topic dirty=-" \
   'the squash-merged local branch still claims the issue before the rename'
-git -C "$MAIN" branch -m topic archive/topic
-assert_eq "$(run 'create topic')" 'rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@other branches=archive/topic,topic dirty=-' \
+git -C "$MAIN" branch -m topic topic-archive
+assert_eq "$(run 'create topic')" 'rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@other branches=topic,topic-archive dirty=-' \
   'the help route creates a fresh worktree for the same issue'
-assert_eq "$(git -C "$WT" rev-parse HEAD) $(git -C "$MAIN" rev-parse refs/heads/archive/topic)" \
+assert_eq "$(git -C "$WT" rev-parse HEAD) $(git -C "$MAIN" rev-parse refs/heads/topic-archive)" \
   "$squash_tip $PRE" 'the fresh worktree starts at the remote squash commit and the archive retains the old tip'
 
 # A checkout-free create is a new tree, not a destructive conversion of
