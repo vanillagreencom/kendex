@@ -1042,13 +1042,20 @@ The merge route stays the lane's (§ Lanes merge their own pull requests).
 
 `EVENT verifying-invalid [ITEM]`: the item's checklist cannot be judged. Either a branch-provable box is still open on a Verifying item, or the parser refuses its post-merge metadata. Every pass, the watch's stderr carries the parser's rule and the box under `verifying-invalid issue=[ITEM]`. The event prints once while the item stays invalid. Correct the checklist in the tracker; the next pass judges it again.
 
+### `verifying-unjudged`
+
+`EVENT verifying-unjudged [OWNER/REPO]#[N]`: an open issue an outside author wrote, whose own merged pull request left it open with a post-merge box. The watch neither judges nor writes it, since the author can rewrite the body that would steer its reads and writes. The event prints once while the issue stays open.
+
+- Read its post-merge boxes by hand under § Verification's GitHub form.
+- Once every post-merge box passes, close it: `gh issue close [N] --repo [OWNER/REPO] --reason completed`.
+
 ### Verification
 
 Each `verifying [ITEM] box=[N] ...` line names an open post-merge box on a merged item, or an unproved box beside a container's "Every child Done or cancelled" box; a container's line has `trigger="outcome"`. `verifying-deadline` prints a box only when its due or overdue key changes; the heartbeat and `orch-runtime reconcile-items` (`result.lines`) print every box.
 
 The watch itself completes a box that reads `met`, with its Evidence line. It comments once on a box that reads `failed` or `inconclusive`.
 
-A GitHub item's line names it `[OWNER/REPO]#[N]`: an open issue the fleet wrote, whose own merged pull request left it open with a post-merge box. The watch judges it by the same rule and writes on the issue itself. No `linear.sh` tracker read or write runs on it ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)):
+A GitHub item's line names it `[OWNER/REPO]#[N]`: an open issue the fleet wrote, whose own merged pull request left it open with a post-merge box. One an outside author wrote takes [`verifying-unjudged`](#verifying-unjudged) instead. The watch judges a GitHub item by the same rule and writes on the issue itself. No `linear.sh` tracker read or write runs on it ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)):
 
 - The watch ticks a `met` box in the issue body with its Evidence line, and comments on the issue for a `failed` or `inconclusive` one.
 - It closes the issue as completed on the pass that reads its last open post-merge box gone, a box a person ticked by hand included. It raises no `boxes=0` event for the item, and its `boxes=0` line takes no completion step.

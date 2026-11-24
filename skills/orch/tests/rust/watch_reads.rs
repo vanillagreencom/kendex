@@ -2418,7 +2418,8 @@ fn the_duty_owns_its_row_kinds() {
             "outside-contribution",
             "security-alert",
             "bot-fix",
-            "github-auth"
+            "github-auth",
+            "verifying-unjudged"
         ]
     );
     let _ = set("triage", "KEN-1", "Todo|-");
@@ -4424,8 +4425,9 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
 /// met, ticked, and the issue closes as completed with it. A person's
 /// reopen of the closed issue stands, and a box the person adds and ticks
 /// by hand closes it again, a refused close asked again. An issue an
-/// outside author wrote is no item; a Linear item's row stands while the
-/// tracker is unread; no write reaches the tracker CLI.
+/// outside author wrote is no item: its merge left it open, and it is said
+/// once for the overseer. A Linear item's row stands while the tracker is
+/// unread; no write reaches the tracker CLI.
 #[test]
 fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last() {
     const NOW: u64 = 1_790_899_201; // 2026-10-02T00:00:01Z
@@ -4465,11 +4467,12 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
             .collect();
         json!({"body": {"total_count": items.len(), "incomplete_results": false, "items": items}})
     };
+    // Both issues' landings are read, and the outside one's alone while the
+    // other is closed: it is said, not judged.
     world.gh(
-        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20T00%3A00%3A00Z%20%28%28head%3Aissue-7%20OR%20%22issue-7%22%29%29%20in%3Atitle%2Cbody&per_page=100&page=1",
-        found(&[12]),
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20T00%3A00%3A00Z%20%28%28head%3Aissue-8%20OR%20%22issue-8%22%29%29%20in%3Atitle%2Cbody&per_page=100&page=1",
+        found(&[13]),
     );
-    // The search an ungated pass would make, so its outside item lands.
     world.gh(
         "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20T00%3A00%3A00Z%20%28%28head%3Aissue-7%20OR%20%22issue-7%22%29%20OR%20%28head%3Aissue-8%20OR%20%22issue-8%22%29%29%20in%3Atitle%2Cbody&per_page=100&page=1",
         found(&[12, 13]),
@@ -4540,11 +4543,18 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
             .unwrap()
             .to_owned()
     };
-    let mut read_github = |baseline: &mut Baseline, at: u64| {
-        pass_as(Duty::GitHub, &mut github, baseline, &clock, at).unwrap();
+    let mut read_github = |baseline: &mut Baseline, at: u64| -> usize {
+        let said = rendered(&pass_as(Duty::GitHub, &mut github, baseline, &clock, at).unwrap());
+        said.iter()
+            .filter(|l| *l == "EVENT verifying-unjudged owner/repo#8")
+            .count()
     };
 
-    read_github(&mut baseline, NOW);
+    assert_eq!(
+        read_github(&mut baseline, NOW),
+        1,
+        "the outside author's merged issue is said once"
+    );
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4631,7 +4641,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         &format!("repos/owner/repo/compare/{MERGE}...v1.0"),
         json!({"body": {"status": "behind"}}),
     );
-    read_github(&mut baseline, LATER);
+    assert_eq!(read_github(&mut baseline, LATER), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4670,7 +4680,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
 
     // Closed, its row goes; reopened with every box ticked, it stays open.
     plant_issue(&mut world, None);
-    read_github(&mut baseline, LATER + 120);
+    assert_eq!(read_github(&mut baseline, LATER + 120), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4681,7 +4691,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     .unwrap();
     assert_eq!(baseline.get(verifying::DEADLINE_ROW, "owner/repo#7"), None);
     plant_issue(&mut world, Some(&closed));
-    read_github(&mut baseline, LATER + 180);
+    assert_eq!(read_github(&mut baseline, LATER + 180), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4696,7 +4706,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     // close GitHub refuses asked again.
     let added = format!("{closed}{ADDED}");
     plant_issue(&mut world, Some(&added));
-    read_github(&mut baseline, LATER + 240);
+    assert_eq!(read_github(&mut baseline, LATER + 240), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
@@ -4713,7 +4723,7 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
         "PATCH repos/owner/repo/issues/7",
         json!({"exit": 1, "stderr": "gh: HTTP 502"}),
     );
-    read_github(&mut baseline, LATER + 300);
+    assert_eq!(read_github(&mut baseline, LATER + 300), 0);
     pass_as(
         Duty::Verification,
         &mut verification,
