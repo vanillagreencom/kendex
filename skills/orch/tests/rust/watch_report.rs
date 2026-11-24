@@ -5481,15 +5481,18 @@ fn report_completed_reads_the_lanes_own_repository() {
     planted[&lane_search] = json!({"body":{"total_count":1,"incomplete_results":false,
         "items":[{"number":51,"pull_request":{}}]}});
     world.plant("gh.json", &planted);
-    for (linear_repo, github_repo, matches_issue) in [
-        ("Lane/Repo", Some("owner/repo"), false),
-        ("owner/repo", Some("Lane/Repo"), true),
-        ("Lane/Repo", None, true),
+    for (linear_repo, github_repo, recorded_repo, matches_issue) in [
+        ("Lane/Repo", Some("owner/repo"), Some("Lane/Repo"), false),
+        ("owner/repo", Some("Lane/Repo"), None, true),
+        ("Lane/Repo", None, None, false),
+        ("Lane/Repo", None, Some("Lane/Repo"), true),
+        ("Lane/Repo", None, Some("owner/repo"), false),
     ] {
+        let cycle = recorded_repo.map(|repo| json!({"repo":repo,"pr":51}));
         world.write_fleet(&json!({"issue_id":"oversee","lanes":[
             {"item":"KEN-25","tracker":"linear","status":"done","repo":linear_repo,
                 "launched_at":"2026-10-01T06:00:00Z"},
-            {"item":"issue-42","tracker":"github","status":"done","repo":github_repo,
+            {"item":"issue-42","tracker":"github","status":"done","repo":github_repo,"cycle":cycle,
                 "launched_at":"2026-10-01T06:00:00Z"}
         ]}));
         let body = report::render(&ctx, now).unwrap();
@@ -5503,7 +5506,7 @@ fn report_completed_reads_the_lanes_own_repository() {
         assert_eq!(
             completed.contains(&format!("- issue-42: {pull}")),
             matches_issue,
-            "{github_repo:?}: {completed}"
+            "lane repo {github_repo:?}, PR repo {recorded_repo:?}: {completed}"
         );
     }
 
