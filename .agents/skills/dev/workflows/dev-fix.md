@@ -44,7 +44,7 @@ With no line, no binary blob is known to be within reach of the ceiling.
 
 Decide each item:
 
-- **Apply** when the item relates to the parent issue and adds no new risk. Unrelated changes are Skipped with the reason; the orchestrator files.
+- **Apply** only the change the item names and the changes its class sweep below requires. Report any other edit, including an extra sentence, guard, field or comment, under `### Discovered Work` in the fix summary and leave it out of the commit.
 - **Skip** when the pattern conflicts with the existing architecture, would break other functionality, or violates your defined rules and conventions.
   - Before applying anything, search the decisions governing the affected area, `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"`, and `.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]` for those linked to the issue.
   - Read the full file for any match.
@@ -78,7 +78,7 @@ Note anything a fix revealed about deeper problems, and cite the decision ID or 
 
 ### 2.1 Reflect
 
-Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository edit from reflection before validation.
+Follow [dev SKILL.md § Reflect](../SKILL.md#reflect) within the Apply rule above. Complete the in-scope edits before validation.
 
 ---
 
