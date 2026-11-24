@@ -898,7 +898,8 @@ enum WatchOp {
         #[command(flatten)]
         target: Target,
     },
-    /// Ask the claimed runner to stop and wait for its claim's release.
+    /// Ask the claimed runner to stop and wait for its claim's release; a
+    /// claim whose runner is gone is removed.
     Stop {
         #[command(flatten)]
         target: Target,

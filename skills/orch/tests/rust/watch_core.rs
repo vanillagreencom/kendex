@@ -304,6 +304,45 @@ fn a_start_less_record_is_unreadable_while_its_pid_runs_and_taken_over_once_it_i
     );
 }
 
+/// A stop on a claim whose runner is gone removes the record and its stop
+/// request and says so, so a start-up reads no watch to bring back.
+#[test]
+fn a_stop_on_a_gone_claim_removes_it_and_status_then_reads_no_claim() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths_in(dir.path());
+    plant_claim(&paths, GONE_PID as u32, "ticks:1");
+    std::fs::write(&paths.stop, format!("pid={GONE_PID}\nstart=ticks:1\n")).unwrap();
+    let out = watch_cmd(dir.path(), &["watch", "stop", "--fleet"]);
+    assert_eq!(
+        reply(&out)["result"],
+        json!({"claim": "removed", "pid": GONE_PID, "start": "ticks:1"}),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!paths.pid.exists(), "the claim is removed");
+    assert!(!paths.stop.exists(), "the stop request is removed");
+    let out = watch_cmd(dir.path(), &["watch", "status", "--fleet"]);
+    let status = reply(&out)["result"].clone();
+    assert!(status["claim"].is_null(), "no claim: {status}");
+}
+
+/// The removal re-reads the record: a claim a new live runner linked
+/// between the stop's read and its removal is kept, with its stop request.
+#[test]
+fn a_gone_claim_replaced_before_its_removal_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths_in(dir.path());
+    plant_claim(&paths, GONE_PID as u32, "ticks:1");
+    let dead = watch::claim::read(&paths).unwrap().expect("the dead claim");
+    let holder = Owned::sleep();
+    plant_claim(&paths, holder.pid(), &holder.start());
+    std::fs::write(&paths.stop, "pid=1\nstart=x\n").unwrap();
+    let before = std::fs::read_to_string(&paths.pid).unwrap();
+    assert!(!watch::claim::remove_dead(&paths, &dead).unwrap());
+    assert_eq!(std::fs::read_to_string(&paths.pid).unwrap(), before);
+    assert!(paths.stop.exists(), "the new runner's stop request is kept");
+}
+
 /// Two runners started together on one fleet state: exactly one claims, the
 /// other refuses `watch-running` naming the winner, and the record names
 /// the winner until it is stopped.

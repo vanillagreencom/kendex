@@ -110,6 +110,8 @@ done
 
 Run this from the overseer's checkout. It asks the claimed runner to stop and waits for the claim's release.
 
+Where the claimed runner is already dead, the stop removes its claim and any stop request, and replies `"claim": "removed"`. No later start reads that claim as a watch to bring back. A claim that a new runner wrote after the stop read the dead one stays.
+
 - Report a refusal with its keyed line.
 - Then start no further follow or pass.
 

@@ -46,7 +46,7 @@
 //! unreadable owner; a transfer's or stop's effect keeps its own detached
 //! job. It stops on `watch stop` or a terminal signal; a stop releases the
 //! claim, a signal leaves it for the next runner to read gone and take
-//! over.
+//! over, and a stop after the signal removes it.
 
 pub mod baseline;
 pub mod claim;
