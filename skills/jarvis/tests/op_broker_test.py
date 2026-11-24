@@ -58,9 +58,6 @@ CALLER = "jarvis-fixture.service"
 HOST_CALLER = "jarvis-session" if sys.platform == "linux" else None
 PROTECTION = "unit" if sys.platform == "linux" else "listed-any-caller"
 LOG_FIELDS = ["time", "protection", "caller", "verb", "reference", "outcome", "cause"]
-# The FIFO broker a consumer's unit still runs after a refresh brings opq's socket transport: op-broker and
-# lib/op_fifo.py as 7ae1357d3 last changed them on main. Delete it with op_fifo.fifo_exchange.
-FIFO_BROKER = Path(__file__).resolve().parent / "fixtures" / "fifo_broker" / "op-broker"
 
 
 def request_fields(line):
@@ -142,8 +139,8 @@ class Broker(World):
         self.allowed.chmod(0o600)
 
     def start(self, body=None, args=None, terminal=True, leader=False, grants=FIXTURE_GRANTS, protection=PROTECTION,
-              home=True, directory=None, launch=(str(SCRIPTS / "op-broker"),), controller=None):
-        """Start a broker and wait for its readiness line; protection None is the FIFO broker's line, which names none.
+              home=True, directory=None, controller=None):
+        """Start a broker and wait for its readiness line.
         On Linux the home's controller is controller, otherwise this test process."""
         self.executable("op", body or OP)
         self.directory = directory or self.root / "broker"
@@ -165,7 +162,7 @@ class Broker(World):
             self.addCleanup(os.close, controller)
         else:
             stdin = subprocess.DEVNULL
-        process = subprocess.Popen([*launch, *args],
+        process = subprocess.Popen([str(SCRIPTS / "op-broker"), *args],
             env=self.env, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=leader)
         if terminal:
             os.close(stdin)
@@ -182,8 +179,7 @@ class Broker(World):
 
         self.addCleanup(stop)
         self.assertTrue(select.select([process.stdout], [], [], 10)[0], "broker did not report readiness")
-        self.assertEqual(process.stdout.readline(), b"op-broker: state=ready"
-                         + (b"" if protection is None else b" protection=" + protection.encode()) + b"\n")
+        self.assertEqual(process.stdout.readline(), b"op-broker: state=ready protection=" + protection.encode() + b"\n")
         return process
 
     def journal(self, process):
@@ -533,9 +529,7 @@ elif sys.argv[1]=='read':
                 directory.mkdir()
                 directory.chmod(mode)
                 for name, kind in entries.items():
-                    if kind == stat.S_IFIFO:
-                        os.mkfifo(directory / name, 0o600)
-                    elif kind == stat.S_IFSOCK:
+                    if kind == stat.S_IFSOCK:
                         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as leftover:
                             leftover.bind(str(directory / name))
                         (directory / name).chmod(0o600)
@@ -569,20 +563,14 @@ elif sys.argv[1]=='read':
         # Every state the broker's directory can be in when a broker starts over it. A
         # refusal leaves every entry as it was and makes no op call.
         rows = (
-            ("absent", lambda: None, None, None),
-            ("leftover", existing({"lock": stat.S_IFREG, "requests.sock": stat.S_IFSOCK}), None, None),
-            ("foreign-entry", existing({"lock": stat.S_IFREG, "notes": stat.S_IFREG}), b"op-broker: directory=foreign", None),
-            ("foreign-requests", existing({"requests.sock": stat.S_IFREG}), b"op-broker: directory=foreign", None),
-            # A FIFO broker's crash leaves its request FIFO, and a killed client its reply FIFO: a restart removes them.
-            ("fifo-broker", existing({"lock": stat.S_IFREG, "requests": stat.S_IFIFO, "0" * 32 + ".reply": stat.S_IFIFO}),
-             None, None),
-            ("fifo-reply", existing({"f" * 32 + ".reply": stat.S_IFIFO}), None, None),
-            ("foreign-fifo-name", existing({"requests": stat.S_IFREG}), b"op-broker: directory=foreign", None),
-            ("foreign-reply-name", existing({"F" * 32 + ".reply": stat.S_IFIFO}), b"op-broker: directory=foreign", None),
-            ("public", existing({}, mode=0o755), b"op-broker: directory=private-owner-required", None),
-            ("busy", running, b"op-broker: directory=busy", None),
+            ("absent", lambda: None, None),
+            ("leftover", existing({"lock": stat.S_IFREG, "requests.sock": stat.S_IFSOCK}), None),
+            ("foreign-entry", existing({"lock": stat.S_IFREG, "notes": stat.S_IFREG}), b"op-broker: directory=foreign"),
+            ("foreign-requests", existing({"requests.sock": stat.S_IFREG}), b"op-broker: directory=foreign"),
+            ("public", existing({}, mode=0o755), b"op-broker: directory=private-owner-required"),
+            ("busy", running, b"op-broker: directory=busy"),
         )
-        for state, prepare, key, after in rows:
+        for state, prepare, key in rows:
             with self.subTest(state=state):
                 held = prepare()
                 try:
@@ -592,7 +580,7 @@ elif sys.argv[1]=='read':
                         process.terminate()
                         _, stderr = process.communicate(timeout=10)
                         self.assertEqual(process.returncode, 0, stderr)
-                        self.assertEqual(snapshot(), after)
+                        self.assertIsNone(snapshot())
                     else:
                         status, stderr = refusal()
                         self.assertEqual(status, 2, stderr)
@@ -646,7 +634,7 @@ elif sys.argv[1]=='read':
     def test_session_routes(self):
         module = load("lib/op_fifo.py")
         self.executable("op", OP)
-        # Service configuration comes from these environment settings. Refusals must precede any op call or ready FIFO.
+        # Service configuration comes from these environment settings. Refusals must precede any op call or readiness.
         rows = (("app-keepalive", {"JARVIS_OP_APP_INTEGRATION": "1", "JARVIS_OP_KEEPALIVE_SECS": "1"},
                  "keepalive=unsupported cause=per-terminal-authorization"),
                 ("both", {"JARVIS_OP_APP_INTEGRATION": "1", "OP_SESSION": "fixture-session",
@@ -1279,21 +1267,6 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
         self.assertEqual(fields, logged(fields["caller"], "read", password, "not-allowed", cause))
         stop(process)
 
-    def test_fifo_broker(self):
-        # A refresh replaces opq but restarts no broker unit, so opq still reaches the FIFO broker the unit started.
-        self.start(args=["--directory", str(self.root / "broker"), "--account", "fixture-account"], grants=None,
-                   protection=None, launch=(sys.executable, "-B", str(FIFO_BROKER)))
-        output = self.root / "value"
-        result = self.opq("read", "op://fixture/item/password", output=output)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(output.read_bytes(), b"fixture-value")
-        output.unlink()
-        if sys.platform == "linux":
-            self.assertEqual(self.record(self.opq("op", "--", "vault", "list", output=output), output),
-                             (0, b"vault list\n"))
-        # Each client removes its reply FIFO, so a broker that restarts over the directory finds only the FIFO broker's.
-        self.assertEqual(sorted(path.name for path in self.directory.iterdir()), ["lock", "requests"])
-
     def test_socket_path_bound(self):
         module = load("lib/op_fifo.py")
         # The socket path, directory and separator included, of a directory named n bytes long under the root.
@@ -1318,7 +1291,6 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                 os.close(client)
                 shutil.rmtree(directory)
 
-        output = self.root / "out"
         with patch.object(module, "sys", Platform("darwin")):
             # macOS names it by path: the longest directory whose socket path fits sun_path serves.
             self.assertEqual(served(longest), b"line")
@@ -1330,15 +1302,6 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
             self.assertEqual((refused.exception.code, stderr.getvalue().splitlines()[0]),
                              (2, "op-broker: directory=path-too-long"))
             self.assertFalse(too_long.exists())
-            # A FIFO broker a refresh left running there has no socket path to bound, and opq still reaches it.
-            self.start(args=["--directory", str(too_long), "--account", "fixture-account"], grants=None,
-                       protection=None, directory=too_long, launch=(sys.executable, "-B", str(FIFO_BROKER)))
-            for signum in (signal.SIGTERM, signal.SIGINT):
-                self.addCleanup(signal.signal, signum, signal.getsignal(signum))
-            with patch.object(sys, "argv", ["opq", "--directory", str(too_long), "--output", str(output), "read",
-                                            "op://fixture/item/password"]):
-                module.main("client")
-            self.assertEqual(output.read_bytes(), b"fixture-value")
 
 
 def deadline_worker():
