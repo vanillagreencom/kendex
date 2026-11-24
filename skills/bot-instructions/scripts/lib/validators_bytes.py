@@ -26,7 +26,7 @@ def doctrine_routing(ctx, out):
     one-character edit to it is a silent policy change. Which blocks exist is
     the doctrine source's alone, and each needs a row: a row the table reader
     skips, such as one missing its closing pipe, leaves its block with none,
-    and that block is a finding here rather than a block routed by default."""
+    and that block, which reaches no destination, is a finding here."""
     v = "doctrine-routing"
     rows = ctx.doctrine.positions
     for bid in sorted(set(ctx.doctrine.blocks) - set(rows)):

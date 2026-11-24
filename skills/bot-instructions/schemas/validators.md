@@ -141,7 +141,7 @@ Its sites, and which answer each takes:
 
 **Rejects, the table's own shape.** Nothing else judges the table:
 
-- A doctrine block with no row. A row the reader skips, such as one missing its closing pipe, leaves its block with none, so the malformed row is this finding rather than a block routed by default.
+- A doctrine block with no row. A row the reader skips, such as one missing its closing pipe, leaves its block with none, so the malformed row is this finding.
 - A position repeated inside a column.
 - A gap in a column's positions, which must run `1..n`.
 - A row leaving out the `code-review.md`, `pr_agent extra` or `macroscope doctrine.md` column. Those columns carry every block.

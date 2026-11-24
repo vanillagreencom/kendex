@@ -123,11 +123,6 @@ ROUTING_COLUMNS = (
 # leaves one out.
 ALL_BLOCK_COLUMNS = ("code-review.md", "pr_agent extra", "macroscope doctrine.md")
 
-# Where `spec.parse_routing` places a block the routing table has no row for.
-# `doctrine-routing` reports every such block, so a build carrying one is
-# refused before anything is written.
-DEFAULT_ROUTE_COLUMNS = ("code-review.md", "macroscope doctrine.md")
-
 # The columns whose bot has no file-based review exclusion and whose
 # `render-out-of-scope` cell carries a number, so the exclusion paths ride the
 # block as prose there.

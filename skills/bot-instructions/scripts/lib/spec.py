@@ -18,7 +18,6 @@ import re
 import tomllib
 
 from .constants import (
-    DEFAULT_ROUTE_COLUMNS,
     MARKER_PATH_CLASS,
     RENDER_OUT_OF_SCOPE,
     REPLY_CONTRACT,
@@ -182,8 +181,7 @@ def parse_routing(renders_text, where, blocks):
 
     The doctrine source's `###` headings are the one statement of the block
     ids, and a row naming no block is refused here. A block with no row, which
-    is also what a row this reader skips leaves, is placed in
-    `constants.DEFAULT_ROUTE_COLUMNS` after the routed ones, and
+    is also what a row this reader skips leaves, reaches no destination, and
     `doctrine-routing` reports it.
     """
     rows = [
@@ -215,15 +213,12 @@ def parse_routing(renders_text, where, blocks):
                 "doctrine source, so it routes nothing"
             )
         table[block] = positions
-    unrouted = [block for block in blocks if block not in table]
     routing = {}
     for column in ROUTING_COLUMNS:
         pairs = sorted(
             ((pos[column], block) for block, pos in table.items() if column in pos),
         )
         routing[column] = [block for _, block in pairs]
-        if column in DEFAULT_ROUTE_COLUMNS:
-            routing[column] += unrouted
     return routing, table
 
 

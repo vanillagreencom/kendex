@@ -88,8 +88,8 @@ EOF
 
 # A block with no row is a finding, and so is a row the reader cannot read,
 # such as one missing its closing pipe, which a renderer shows like any other
-# row: either would otherwise take the default route without a word. A row
-# naming no heading is refused where the table is read. A doctrine source
+# row: either would otherwise leave its block reaching no bot without a word.
+# A row naming no heading is refused where the table is read. A doctrine source
 # without a block the render addresses by id is refused, so renaming one is
 # never a render that drops the exclusion paths or the tracker. Positions in a
 # column run 1..n once each. A row leaving out one of the three all-block
