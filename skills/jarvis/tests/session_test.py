@@ -885,11 +885,27 @@ class SessionContract(unittest.TestCase):
         ids = self.tmux_read(socket, "display-message", "-p", "#{window_id} #{pane_id}")
         self.assertEqual(ids.returncode, 0, ids.stderr)
         window, pane = ids.stdout.split()
-        with patch.dict(os.environ, {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}):
-            module = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
-        session = module["Session"](self.home, env=self.env | {"LC_ALL": "C"})
-        status = {"live": True, "recorded": {"server_socket": socket, "pane": pane}}
-        self.assertEqual(session.terminal(status),
+        # Python picks the subprocess decoder from its own locale at startup.
+        probe = """
+import codecs
+import json
+import locale
+import runpy
+import sys
+
+assert codecs.lookup(locale.getpreferredencoding(False)).name == "ascii"
+script, home, socket, pane = sys.argv[1:]
+session = runpy.run_path(script)["Session"](home)
+status = {"live": True, "recorded": {"server_socket": socket, "pane": pane}}
+print(json.dumps(session.terminal(status)))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", probe, str(SKILLS / "jarvis/scripts/lib/session.py"), str(self.home), socket, pane],
+            env=self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"], "LC_ALL": "C", "PYTHONUTF8": "0"},
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
                          {"server": socket, "session": name, "window": window, "pane": pane})
 
     def test_start_status_stop_and_resume_on_the_controller_record(self):
