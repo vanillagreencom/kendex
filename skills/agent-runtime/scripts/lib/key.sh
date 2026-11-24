@@ -59,7 +59,11 @@ agent_runtime_run_setup() { # SETUP_PATH
   set -m
   (
     trap '' HUP
-    "$1" </dev/null 2>&1 | (cat 2>/dev/null || cat >/dev/null)
+    "$1" </dev/null 2>&1 | (
+      # TOSTOP can stop this background writer at the caller's terminal.
+      trap '' TTOU
+      cat 2>/dev/null || cat >/dev/null
+    )
   ) >&2 &
   set +m
   wait "$!"

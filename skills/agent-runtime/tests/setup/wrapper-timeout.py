@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import select
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -41,7 +42,7 @@ os.environ.update(
 )
 with subprocess.Popen(
     [wrapper, "version"], stderr=subprocess.PIPE, stdout=subprocess.DEVNULL,
-    stdin=subprocess.DEVNULL, pass_fds=(started, released),
+    stdin=subprocess.DEVNULL, pass_fds=(started, released), start_new_session=True,
 ) as caller:
     os.close(started)
     os.close(released)
@@ -55,7 +56,13 @@ with subprocess.Popen(
         else:
             sys.exit("wrapper exited before the caller's deadline")
     finally:
-        caller.kill()
+        # Like Slack's timeout cleanup, signal the group while the leader's
+        # unreaped PID still owns its identity.
+        if caller.returncode is None:
+            try:
+                os.killpg(caller.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         caller.wait(timeout=10)
         caller.stderr.close()
         os.close(release)
@@ -66,5 +73,7 @@ with subprocess.Popen(
         os.close(ready)
 
 expected = cache / "bin" / f"{wrapper.name}-{key}"
+if caller.returncode != -signal.SIGKILL:
+    sys.exit("wrapper did not receive the timeout signal")
 if not expected.is_file() or not os.access(expected, os.X_OK):
     sys.exit(f"build did not place {expected}")
