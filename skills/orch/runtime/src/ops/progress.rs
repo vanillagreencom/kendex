@@ -116,10 +116,11 @@ pub(crate) fn record_route(doc: &mut Document, r: &RecordRoute) -> Result<Value>
     if route.is_empty() {
         return Err(refused("route-empty", &[]));
     }
+    let previous_tier = doc.get("tier").cloned();
     for (field, value) in &route {
         record::set(doc, field, value.clone());
     }
-    Ok(json!({"route": route}))
+    Ok(json!({"route": route, "previous_tier": previous_tier}))
 }
 
 /// What a dev round returned that the next round reads, each named field

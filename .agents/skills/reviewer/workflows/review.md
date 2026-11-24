@@ -40,7 +40,7 @@ Send exactly one agent-to-agent message, then go idle:
 
 <output_format>
 Verdict: [pass|action_required]
-File: [WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json
+File: [ARTIFACT_PATH]
 ```json
 {complete JSON object}
 ```

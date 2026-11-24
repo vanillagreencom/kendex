@@ -288,6 +288,12 @@ pub struct RoundGroup {
 pub struct Stage {
     pub kind: StageKind,
     #[serde(default)]
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub review_range: Option<crate::ops::ScopeRange>,
+    #[serde(default)]
+    pub delegated_at: Option<u64>,
+    #[serde(default)]
     pub round_id: Option<String>,
     pub start: u64,
     #[serde(default)]

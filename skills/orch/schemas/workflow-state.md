@@ -166,6 +166,7 @@ The members' rules, in the table's order:
 A `stages[]` entry is `{kind, round_id, start, end}` in epoch seconds, with `outcome` once closed. `kind` is `dev`, `review`, `implement`, `fix` or `validate`.
 
 - `begin-round {kind, body_revision?, group?, exception?}` opens a `dev` or `review` entry in the same write as the token.
+- A round records the item's `tier` at its start when set. A first-cycle review's `record-round {step: delegated, round: review, review_range: {base, head}}` records its concrete range and `delegated_at` on that stage.
 - `begin-round` closes every earlier open entry of the kind at the new start, with `superseded: true`.
 - `body_revision` is the item body's `updatedAt` as the caller read it. The reply's `body_moved` is `true` where it is later than the kind's previous recorded revision.
 - `group` is `{n, of}`.

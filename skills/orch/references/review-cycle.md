@@ -250,3 +250,13 @@ A proved continuation checks the preserved assigned path, under the original tok
 2. A never-launched domain's clock starts at its actual first delegation. § Original-batch continuation step 1 copies it into `remaining` and `traps` on any later handoff. Use it for the ping, post-ping, per-agent and measurement deadlines, never the older batch time.
 3. An attempted domain keeps its original clocks, spent ping and re-delegation history and wake owner.
 4. A resumed session restarts none of them.
+
+## Tier escape
+
+When review-pr.md § 2.1 has selected the wider tier's first panel, pass its canonical domains as a comma-separated argument:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime review-artifact --text kept --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --base [BASE_SHA] --agents [AGENT_CSV]
+```
+
+The command reads only exact assignments already accepted in `json_paths`. It rechecks them against the earlier full-branch round's range and evidence boundary. A changed head or base, a scoped fix review, or an unreadable artifact supplies no kept pass. A refused command stops this pass with its diagnostic.

@@ -4569,6 +4569,121 @@ mod dev_artifacts {
         assert_eq!(stale["proof"], "missing", "{stale}");
     }
 
+    #[test]
+    fn a_wider_tier_launches_only_reviewers_without_a_kept_pass() {
+        for (before, after) in [("micro", "small"), ("small", "standard")] {
+            let w = World::new();
+            let base = w.head();
+            w.commit("app.txt");
+            let head = w.head();
+            let wt = w.wt.to_str().unwrap();
+            result(&w.op(json!({"op": "record-route", "tier": before})));
+            let round = w.begin_with(&json!({"op": "begin-round", "kind": "review"}));
+            let delegated = result(&w.op(
+                json!({"op": "record-round", "step": "delegated", "round": "review",
+                "review_range": {"base": base, "head": head}}),
+            ));
+            let artifact = result(&w.run(&[
+                "review-artifact",
+                "path",
+                "--worktree",
+                wt,
+                "--agent",
+                "reviewer-test",
+                "--round-id",
+                &round,
+            ]));
+            let path = artifact["path"].as_str().unwrap();
+            fs::write(
+                path,
+                json!({"agent":"reviewer-test", "head":head, "dirty_paths":[],
+                "verdict":"pass", "blockers":[], "suggestions":[]})
+                .to_string(),
+            )
+            .unwrap();
+            let checked = result(&w.run(&[
+                "review-artifact",
+                "check",
+                "--worktree",
+                wt,
+                "--file",
+                path,
+                "--delegated-at",
+                &delegated["value"].to_string(),
+            ]));
+            assert_eq!(checked["ok"], true, "{checked}");
+            result(&w.op(json!({"op":"record-agents","step":"returned","artifact":path})));
+            result(&w.op(
+                json!({"op":"accept-result","round_id":round,"outcome":"pass",
+                "end":{"from_artifact":path}}),
+            ));
+            result(&w.op(json!({"op": "record-route", "tier": after})));
+            let plan = |base: &str, agents: &str| {
+                result(&w.run(&[
+                    "review-artifact",
+                    "kept",
+                    "--worktree",
+                    wt,
+                    "--issue",
+                    "issue-8",
+                    "--base",
+                    base,
+                    "--agents",
+                    agents,
+                ]))
+            };
+            let expanded = plan(&base, "reviewer-test,reviewer-quality");
+            assert_eq!(
+                expanded["launch"],
+                json!(["reviewer-quality"]),
+                "{expanded}"
+            );
+            assert_eq!(expanded["kept"]["reviewer-test"]["path"], path);
+            assert_eq!(plan(&base, "reviewer-test")["launch"], json!([]));
+            assert_eq!(
+                plan(&head, "reviewer-test")["launch"],
+                json!(["reviewer-test"])
+            );
+            assert_eq!(w.doc()["json_paths"], json!([path]));
+        }
+    }
+
+    #[test]
+    fn standard_start_keeps_the_small_dev_round_at_the_clean_head() {
+        let w = World::new();
+        result(&w.op(json!({"op": "record-route", "tier": "small"})));
+        let round = w.begin_round(None);
+        w.commit("app.txt");
+        let run = w.finished_run("small-pass", "full");
+        let written = result(&w.write(
+            &round,
+            "implement",
+            "pass",
+            &["--validate-run-dir", run.to_str().unwrap()],
+        ));
+        result(&w.call(&["dev-return", "check"], &round, &[]));
+        result(&w.op(json!({"op":"accept-result","round_id":round,"outcome":"pass"})));
+        let route = result(&w.op(json!({"op":"record-route","tier":"standard"})));
+        assert_eq!(route["previous_tier"], "small");
+        let resume = || {
+            result(&w.run(&[
+                "dev-return",
+                "resume",
+                "--worktree",
+                w.wt.to_str().unwrap(),
+                "--issue",
+                "issue-8",
+            ]))
+        };
+        let before = w.doc();
+        let resumed = resume();
+        assert_eq!(resumed["action"], "continue", "{resumed}");
+        assert_eq!(resumed["receipt"]["path"], written["path"]);
+        assert_eq!(w.doc(), before);
+        w.commit("new.txt");
+        assert_eq!(resume()["action"], "delegate");
+    }
+
     /// A round begun with an exception for known failures ends on a red
     /// run that fails only those checks: the receipt keeps its FAILING line
     /// and cites the exception, the check answers `accept-excused` with it,

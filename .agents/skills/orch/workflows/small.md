@@ -14,11 +14,7 @@ The admission that launched the run reads the tier once, and the tier floors the
 
 ## 1. Open The Session
 
-Run [start-worktree.md](start-worktree.md) § 1, on a handoff resume too. It records the tier as `standard`. Then record `small`, which bounds § 3 and § 4:
-
-```bash
-.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"small"}'
-```
+Run [start-worktree.md](start-worktree.md) § 1 with `[TIER]` set to `small`, on a handoff resume too.
 
 Where that § 1's step 3 stamped a handoff record, continue from the first entry of the record's `remaining` list instead of § 2-5.
 

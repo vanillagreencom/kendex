@@ -9,6 +9,7 @@
 //! the verdict step (unparsable, no verdict) let an older sibling answer:
 //! every other rejection is the artifact's own report on this run.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
@@ -34,6 +35,8 @@ pub enum ReviewArtifact {
     Path(MintPath),
     /// Check one artifact (`--file`) or an agent's newest (`--agent`).
     Check(CheckArtifact),
+    /// Read the accepted passes and added reviewers after a tier escape.
+    Kept(KeptReviews),
 }
 
 #[derive(Debug, Args)]
@@ -42,6 +45,21 @@ pub struct MintPath {
     pub worktree: PathBuf,
     #[arg(long)]
     pub agent: String,
+    /// The owning round, for exact assignment matching on a tier escape.
+    #[arg(long)]
+    pub round_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct KeptReviews {
+    #[arg(long)]
+    pub worktree: PathBuf,
+    #[arg(long)]
+    pub issue: String,
+    #[arg(long)]
+    pub base: String,
+    #[arg(long, value_delimiter = ',')]
+    pub agents: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -129,7 +147,13 @@ pub fn path(r: &MintPath, clock: &dyn Clock) -> Result<Answer> {
             c => Some(c),
         })
         .collect();
-    let path = tmp.join(format!("review-{}-{stamp}.json", r.agent));
+    let token = if let Some(round) = &r.round_id {
+        super::artifact::token(round)?;
+        format!("{round}-")
+    } else {
+        String::new()
+    };
+    let path = tmp.join(format!("review-{}-{token}{stamp}.json", r.agent));
     Ok(Answer {
         value: json!({ "path": path }),
         text: path.display().to_string(),
@@ -982,6 +1006,94 @@ fn file_once(file: &Path, r: &CheckArtifact) -> Result<Outcome> {
         read: Some(read(file, &meta, r.delegated_at, &r.worktree)?),
         missing: None,
     })
+}
+
+pub fn kept(r: &KeptReviews, state_dir: &Path) -> Result<Answer> {
+    let mut kept = BTreeMap::new();
+    kept_passes(r, state_dir, &mut kept)?;
+    let launch: Vec<_> = r
+        .agents
+        .iter()
+        .filter(|agent| !kept.contains_key(*agent))
+        .collect();
+    let value = json!({"kept": kept, "launch": launch});
+    Ok(Answer {
+        text: value.to_string(),
+        value,
+        status: 0,
+    })
+}
+
+fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) -> Result<()> {
+    let item_path = state::item_path(dir, &r.issue);
+    let Some(snapshot) = state::load(&item_path)? else {
+        return Ok(());
+    };
+    let previous = match snapshot.doc.get("tier").and_then(Value::as_str) {
+        Some("standard") => "small",
+        Some("small") => "micro",
+        _ => return Ok(()),
+    };
+    let item = snapshot.view::<state::ItemState>(&item_path)?;
+    let head = store::git_head(&r.worktree)?;
+    let Some((stage, range)) = item.stages.iter().rev().find_map(|stage| {
+        let range = stage.review_range.as_ref()?;
+        (stage.kind == state::StageKind::Review
+            && stage.tier.as_deref() == Some(previous)
+            && stage.outcome.is_some()
+            && stage.superseded != Some(true)
+            && range.base == r.base
+            && range.head == head)
+            .then_some((stage, range))
+    }) else {
+        return Ok(());
+    };
+    let (Some(round), Some(boundary), Some(end)) =
+        (stage.round_id.as_deref(), stage.delegated_at, stage.end)
+    else {
+        return Ok(());
+    };
+    let Some(paths) = snapshot.doc.get("json_paths").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let declines = declined(dir, &r.issue)?;
+    let tmp = r.worktree.join("tmp");
+    // Accepted paths are shared by every batch. The minted filename binds
+    // this path to its canonical assignment and to the exact reviewed range.
+    for domain in r.agents.iter().map(String::as_str).chain(["external"]) {
+        let prefix = format!("review-{domain}-{round}-");
+        for file in paths.iter().rev().filter_map(Value::as_str).map(Path::new) {
+            if file.parent() != Some(tmp.as_path())
+                || !file
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".json"))
+            {
+                continue;
+            }
+            let Ok(meta) = fs::metadata(file) else {
+                continue;
+            };
+            if !meta.is_file() || mtime(file, &meta)? > end {
+                continue;
+            }
+            let read = read(file, &meta, Some(boundary), &r.worktree)?;
+            if let Read::Accepted { artifact, .. } = &read
+                && artifact["head"] == range.head
+                && artifact["verdict"] == "pass"
+                && (domain == "external" || artifact["agent"] == domain)
+            {
+                let outcome = Outcome {
+                    path: Some(file.to_owned()),
+                    read: Some(read),
+                    missing: None,
+                };
+                kept.insert(domain.to_owned(), answer(outcome, Some(&declines)).value);
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The agent's artifacts under `tmp/`, newest first; an unreadable
