@@ -143,14 +143,16 @@ pub enum Event {
     LaneClosed {
         item: String,
     },
-    /// A lane whose harness ended while its item is open, said on each
-    /// heartbeat (`watch::ended`), with the provider's stop of its sandbox
-    /// where one ended its current session.
+    /// A lane whose harness ended while no read says its item ended, said on
+    /// each heartbeat (`watch::ended`), with the provider's stop of its
+    /// sandbox where one ended its current session; ` tracker=unread` where
+    /// no tracker read answered for the item.
     LaneEnded {
         item: String,
         lane: LaneStatus,
         waits: Wait,
         stop: Option<Stop>,
+        tracker_read: bool,
     },
     LaneCloseRefused {
         item: String,
@@ -583,13 +585,15 @@ impl Event {
                 lane,
                 waits,
                 stop,
+                tracker_read,
             } => {
                 let stop = stop
                     .as_ref()
                     .map(|s| format!(" stop={} why={}", s.at, s.why))
                     .unwrap_or_default();
+                let tracker = if *tracker_read { "" } else { " tracker=unread" };
                 format!(
-                    "EVENT lane-ended {item} lane={} waits={}{stop}",
+                    "EVENT lane-ended {item} lane={} waits={}{stop}{tracker}",
                     lane.word(),
                     waits.word()
                 )

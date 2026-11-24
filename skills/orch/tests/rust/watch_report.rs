@@ -1329,7 +1329,16 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             None,
             None,
         ),
-        ("KEN-20", "stopped", json!({}), ItemRead::Unread, None, None),
+        // No read answered for the item: named, and never as waiting for
+        // nothing.
+        (
+            "KEN-20",
+            "stopped",
+            json!({}),
+            ItemRead::Unread,
+            None,
+            Some("lane=stopped waits=unread tracker=unread"),
+        ),
         // The list's stop stands only while the sandbox is stopped: it ends
         // the current session whenever it came.
         (
@@ -1374,6 +1383,28 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             ItemRead::Open { blocked: false },
             stop("2026-10-02T00:00:00Z"),
             Some("lane=running waits=nothing stop=2026-10-02T00:00:00Z why=harness-ended"),
+        ),
+        // A running GitHub-tracked item no read answers for, whose recorded
+        // wait still names its pull request.
+        (
+            "issue-7",
+            "running",
+            json!({"tracker": "github", "repo": "owner/repo", "pending_pr": {"pr": 7, "repo": "owner/repo", "head": "abc"}}),
+            ItemRead::Unread,
+            stop("2026-10-02T00:00:00Z"),
+            Some(
+                "lane=running waits=merge stop=2026-10-02T00:00:00Z why=harness-ended tracker=unread",
+            ),
+        ),
+        (
+            "issue-8",
+            "running",
+            json!({"tracker": "github", "repo": "owner/repo"}),
+            ItemRead::Unread,
+            stop("2026-10-02T00:00:00Z"),
+            Some(
+                "lane=running waits=unread stop=2026-10-02T00:00:00Z why=harness-ended tracker=unread",
+            ),
         ),
     ];
     let mut lanes = vec![

@@ -184,7 +184,7 @@ A provider that judges a Pi lane's session rows on the host runs `agent-runtime 
   - Each pass reads each host's `capabilities` once and makes one `read-many` per host for the hosted lanes' mailbox files under `<lane root>/tmp/lane-mail/<item>/`.
   - Its lane duty asks `cat`, `touch`, `status` on a `status=verb` host and `capture` on a `pane=verb` host.
   - Before a hosted relaunch it asks `stop`.
-  - Each heartbeat asks `capabilities` and then `list --json` once of each `park=verb` host of an item's latest `running` or `stopped` record.
+  - Each heartbeat asks `capabilities` of each provider host of an item's latest `running` or `stopped` record whose item no tracker read answered ended, and `list --json` of each such host that declares `park=verb`.
 - The wake:
   - It asks `status` of a lane on a `pane=local`, `status=verb` host, and sends a `pane=verb` lane its line through `send --file`.
   - On a `files=verb` host for Claude Code, Codex or Copilot, it also reads `<root>/tmp/lane-mail/<item>/session-rows.jsonl` through `cat` and `touch`.

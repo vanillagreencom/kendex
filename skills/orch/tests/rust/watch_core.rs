@@ -997,6 +997,7 @@ fn every_event_renders_to_its_recorded_bytes() {
                     at: s("2026-11-22T20:00:00Z"),
                     why: s("harness-ended"),
                 }),
+                tracker_read: true,
             },
             "EVENT lane-ended KEN-4831 lane=running waits=nothing stop=2026-11-22T20:00:00Z why=harness-ended",
         ),
@@ -1006,8 +1007,22 @@ fn every_event_renders_to_its_recorded_bytes() {
                 lane: LaneStatus::Parked,
                 waits: Wait::Merge,
                 stop: None,
+                tracker_read: true,
             },
             "EVENT lane-ended KEN-4831 lane=parked waits=merge",
+        ),
+        (
+            Event::LaneEnded {
+                item: s("issue-7"),
+                lane: LaneStatus::Running,
+                waits: Wait::Unread,
+                stop: Some(Stop {
+                    at: s("2026-11-22T20:00:00Z"),
+                    why: s("harness-ended"),
+                }),
+                tracker_read: false,
+            },
+            "EVENT lane-ended issue-7 lane=running waits=unread stop=2026-11-22T20:00:00Z why=harness-ended tracker=unread",
         ),
         (
             Event::LaneCloseRefused {

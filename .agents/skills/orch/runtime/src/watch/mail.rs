@@ -36,8 +36,9 @@
 //! `watch-step-failed step=mail count=N` in the log with each refused
 //! target and its cause on stderr. No box is ever read as empty.
 //!
-//! A provider's `sandbox-stopped` notice in the overseer's box is kept as
-//! its item's stop row (`watch::ended`) when it is announced, and a full
+//! A provider's `sandbox-stopped` notice from a sender on the owner's
+//! channel in the overseer's box is kept as its item's stop row
+//! (`watch::ended::notice`) when it is announced, and a full
 //! turn clears the row once no record of the item stands short of `done`.
 //!
 //! Between full turns the body asks to run each second and reads the
@@ -632,7 +633,7 @@ impl MailDuty {
                     if full {
                         self.resolve_due_asks(&mut turn);
                     }
-                    self.overseer_turn(tick.baseline, &mut turn);
+                    self.overseer_turn(tick.baseline, tick.wall, &mut turn);
                     // Taken before the read, so a note landing during it
                     // moves the size again and the next poll reads it; a
                     // refused read waits for the next full turn.
@@ -972,7 +973,7 @@ impl MailDuty {
     /// read (announced, never acknowledged), and the wake's slot
     /// follows the lead's own cursor. One read serves both: it starts at
     /// the lower of the two cursors.
-    fn overseer_turn(&self, baseline: &Baseline, turn: &mut Turn) {
+    fn overseer_turn(&self, baseline: &Baseline, wall: u64, turn: &mut Turn) {
         let root = &self.config.common_root;
         let read = match cursor_count(&self.config.overseer_cursor()) {
             Ok(n) => n,
@@ -1012,7 +1013,7 @@ impl MailDuty {
                 Ok(None) => {}
                 Err(e) => return turn.refuse(OVERSEER_TARGET, e),
             }
-            if let Some((item, stop)) = envelope.text.as_deref().and_then(ended::notice) {
+            if let Some((item, stop)) = ended::notice(envelope, wall) {
                 stops.push(ended::stop_change(&item, &stop));
             }
         }

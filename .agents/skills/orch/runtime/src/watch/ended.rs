@@ -8,7 +8,8 @@
 //! exited (its `lane-exited` row reads `|reported`), or where the fleet's
 //! provider stopped its sandbox after the lane's current session began. That
 //! stop comes as the provider's `sandbox-stopped` notice in the overseer's
-//! mailbox, which the mail duty keeps as a [`STOP_ROW`] row per item, and as
+//! mailbox from a sender on the owner's channel ([`notice`]), which the mail
+//! duty keeps as a [`STOP_ROW`] row per item, and as
 //! the `stop` member of the item's row in the provider's `list --json`,
 //! which the heartbeat asks of each `park=verb` host of a `running` or
 //! `stopped` record ([`listed`]). The list's member stands only while the
@@ -17,14 +18,16 @@
 //!
 //! The item is open where the tracker duty's last read holds it among the
 //! team's open items, or, for a `stopped` or `parked` record, where its
-//! terminal read answered open. A lane whose item no tracker read answered
-//! for is not judged: the heartbeat's `owed unread` line names a tracker
-//! that read nothing.
+//! terminal read answered open; an item either read answered ended is not
+//! named. An item no read answered for, such as a `running` record's
+//! GitHub-tracked item, or every item before the tracker duty's first team
+//! read, is named with `tracker=unread`, never taken as ended.
 //!
 //! What the lane waits for is its record's recorded wait (the park, the park
 //! it owes, or the pull request a relaunch carried from its park), then the
 //! tracker's blocker: a pull request is a merge, an ask an owner answer, a
-//! hold or a blocking item a blocker. A wait record that does not parse is
+//! hold, a blocking item or the `blocked` label a blocker. A wait record that
+//! does not parse, or no recorded wait on an item no read answered for, is
 //! `unread`, never `nothing`.
 
 use std::collections::BTreeMap;
@@ -37,6 +40,7 @@ use super::events::Event;
 use super::hosted::{self, Hosts, ParkKind, epoch_of, host_of};
 use super::lanes::lane_name;
 use super::tracker::TerminalState;
+use crate::mailbox::Envelope;
 use crate::ops::ParkWait;
 use crate::state::{FleetState, Lane, LaneStatus, PARK_OWED};
 
@@ -56,7 +60,8 @@ pub enum Wait {
     Owner,
     Blocker,
     Nothing,
-    /// The record's wait did not parse.
+    /// The record's wait did not parse, or no wait is recorded on an item
+    /// whose blockers no read answered for.
     Unread,
 }
 
@@ -100,18 +105,36 @@ impl Stop {
 /// naming no `why` or `at`, such as the `stop-sandbox` verb's own
 /// `sandbox-stopped item=ID`, is no notice.
 ///
-/// The notice is read whatever class the mailbox gave its message: it only
-/// names a lane to the overseer, and a relaunch it leads to refuses a lane
-/// whose harness still runs.
-pub fn notice(text: &str) -> Option<(String, Stop)> {
-    let mut words = text.lines().next()?.split_whitespace();
+/// A notice ends a lane's session, and the overseer's relaunch then stops an
+/// idle harness, so it is read only from a sender on the owner's channel:
+/// an `owner-note`, which `lane-mail send --item overseer --directive`
+/// writes, or a `peer` envelope that no other repository's overseer
+/// (`overseer:` prefix) wrote. A `data` envelope carries text from outside
+/// input, such as an email's summary, and is never read. A stop later than
+/// `wall`, the turn's own clock, is refused, so no stored stop can postdate
+/// a later session's start.
+pub fn notice(envelope: &Envelope, wall: u64) -> Option<(String, Stop)> {
+    let trusted = match envelope.mail_class.as_deref() {
+        Some("owner-note") => true,
+        Some("peer") => !envelope
+            .from
+            .as_deref()
+            .is_some_and(|from| from.starts_with("overseer:")),
+        Some(_) | None => false,
+    };
+    if !trusted {
+        return None;
+    }
+    let mut words = envelope.text.as_deref()?.lines().next()?.split_whitespace();
     if words.next() != Some("sandbox-stopped") {
         return None;
     }
     let fields: BTreeMap<&str, &str> = words.filter_map(|w| w.split_once('=')).collect();
     let field = |key: &str| fields.get(key).filter(|v| !v.is_empty()).copied();
     let (item, why, at) = (field("item")?, field("why")?, field("at")?);
-    epoch_of(at)?;
+    if epoch_of(at)? > wall {
+        return None;
+    }
     Some((
         item.to_owned(),
         Stop {
@@ -183,15 +206,28 @@ pub struct Listed {
 }
 
 /// One `list --json` per `park=verb` host of the latest `running` or
-/// `stopped` provider record of each item: a host of any other kind stops
-/// no sandbox with its disk kept. A row names its item by its `label`,
-/// `OWNER/REPO/ITEM` in any case, as the protocol's `list` row does. A host
-/// answering exit `2` lists no stop.
-pub fn listed(scripts: &Path, fleet: &FleetState) -> Listed {
+/// `stopped` provider record of each item whose item no read answered
+/// ended: a host of any other kind stops no sandbox with its disk kept. A
+/// row names its item by its `label`, `OWNER/REPO/ITEM` in any case, as the
+/// protocol's `list` row does. A host answering exit `2` lists no stop.
+///
+/// A `stopped` record's host is read here although [`Hosts`] serves the
+/// lane duty's in-flight lanes: the heartbeat asks it once per heartbeat,
+/// not once per pass, and a host that is gone is the heartbeat's named
+/// failure until the record closes, which is the stopped lane the line
+/// exists to name.
+pub fn listed(scripts: &Path, fleet: &FleetState, items: &Items) -> Listed {
+    let ended = |item: &str| {
+        items.open.is_none_or(|open| !open.contains_key(item))
+            && matches!(
+                items.terminal.get(item),
+                Some(TerminalState::Completed | TerminalState::Canceled)
+            )
+    };
     let lanes: Vec<&Lane> = latest(fleet)
         .into_values()
         .filter(|l| matches!(l.status, LaneStatus::Running | LaneStatus::Stopped))
-        .filter(|l| l.provider_hosted())
+        .filter(|l| l.provider_hosted() && !ended(&l.item))
         .collect();
     let hosts = Hosts::read(scripts, lanes.iter().copied());
     let mut out = Listed::default();
@@ -243,8 +279,9 @@ fn latest(fleet: &FleetState) -> BTreeMap<&str, &Lane> {
 
 /// What the tracker duty's last read says of the lanes' items.
 pub struct Items<'a> {
-    /// The team's open items, each with whether a blocker holds it.
-    pub open: &'a BTreeMap<String, bool>,
+    /// The team's open items, each with whether a blocker holds it; `None`
+    /// before the tracker duty's first team read.
+    pub open: Option<&'a BTreeMap<String, bool>>,
     /// The terminal reads of the `stopped` and `parked` records' items.
     pub terminal: &'a BTreeMap<String, TerminalState>,
 }
@@ -283,11 +320,12 @@ fn ended(lane: &Lane, items: &Items, listed: Option<&Stop>, baseline: &Baseline)
     if !harness_ended {
         return None;
     }
-    let blocked = match items.open.get(&lane.item) {
-        Some(blocked) => *blocked,
+    let blocked = match items.open.and_then(|open| open.get(&lane.item)) {
+        Some(blocked) => Some(*blocked),
         None => match items.terminal.get(&lane.item) {
-            Some(TerminalState::Open) => false,
-            Some(TerminalState::Completed | TerminalState::Canceled) | None => return None,
+            Some(TerminalState::Open) => Some(false),
+            Some(TerminalState::Completed | TerminalState::Canceled) => return None,
+            None => None,
         },
     };
     Some(Event::LaneEnded {
@@ -295,6 +333,7 @@ fn ended(lane: &Lane, items: &Items, listed: Option<&Stop>, baseline: &Baseline)
         lane: lane.status,
         waits: wait_of(lane, blocked),
         stop,
+        tracker_read: blocked.is_some(),
     })
 }
 
@@ -312,8 +351,8 @@ fn this_session(lane: &Lane, stop: &Stop) -> bool {
 }
 
 /// The recorded wait first, the pull request before the ask before the
-/// hold, then the tracker's blocker.
-fn wait_of(lane: &Lane, blocked: bool) -> Wait {
+/// hold, then the tracker's blocker, `None` where no read answered.
+fn wait_of(lane: &Lane, blocked: Option<bool>) -> Wait {
     let record = match lane.status {
         LaneStatus::Parked => lane.extra.get("parked"),
         LaneStatus::Preparing | LaneStatus::Running | LaneStatus::Stopped | LaneStatus::Done => {
@@ -342,9 +381,9 @@ fn wait_of(lane: &Lane, blocked: bool) -> Wait {
             return Wait::Blocker;
         }
     }
-    if blocked {
-        Wait::Blocker
-    } else {
-        Wait::Nothing
+    match blocked {
+        Some(true) => Wait::Blocker,
+        Some(false) => Wait::Nothing,
+        None => Wait::Unread,
     }
 }

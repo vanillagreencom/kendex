@@ -25,15 +25,22 @@ The watch's wake duty types one line into a positively idle running lane and con
 
 ## Ended lanes
 
-A [`lane-ended`](oversee-events.md#lane-ended) line names a lane whose harness ended while its item is open. Handle it in the heartbeat pass that prints it, by its `waits=`:
+A [`lane-ended`](oversee-events.md#lane-ended) line names a lane whose harness ended while no tracker read says its item ended. Handle it in the heartbeat pass that prints it.
+
+A line with `tracker=unread` comes first: read the item in its tracker. Where it ended, close the lane through § Lane close. Otherwise take its `waits=`:
 
 - `nothing`: nothing holds the lane.
   1. Relaunch it in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
   2. Where the relaunch refuses, close it in this pass through § Lane close, and tell the owner the relaunch's refusal.
-- `merge`: the lane waits on a pull request. Its `merged` or `parked-merged` line resumes it.
+- `merge` on `lane=parked`: the lane waits on a pull request, and its `parked-merged` line resumes it.
+- `merge` on `lane=stopped` with a park owed: its `park-owed` line drives the park ([oversee-events.md § `park-owed`](oversee-events.md#park-owed)).
+- `merge` on any other `running` or `stopped` record: the lane carried a pull request when its harness ended.
+  1. Where the pull request has not merged, relaunch the lane in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch) to finish [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge).
+  2. Where it merged, take the route [oversee-events.md § `idle-after-return`](oversee-events.md#idle-after-return) gives a lane whose session ended after its pull request merged.
 - `owner`: the lane waits on the owner's answer to its ask. Relaunch it once the answer arrives ([oversee-lanes.md § What ends a park](oversee-lanes.md#what-ends-a-park)).
-- `blocker`: a hold park or a blocking item holds it. Relaunch it once the blocker ends. Only a hand relaunch ends a hold park.
-- `unread`: the record's wait did not parse. Correct the record against [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state), and judge the lane again at the next line.
+- `blocker`: a hold park, a blocking item or the `blocked` label holds it. Relaunch it once the blocker ends. Only a hand relaunch ends a hold park.
+- `unread` with `tracker=unread` and no recorded wait: judge the item's blockers in its tracker, then act as `blocker` or `nothing` says.
+- Any other `unread`: the record's wait did not parse. Correct the record against [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state), and judge the lane again at the next line.
 
 ## Mail the wake cannot deliver
 

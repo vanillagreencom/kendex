@@ -286,6 +286,7 @@ Each cause, its meaning and its action:
 - A running item: the lane finishes [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) itself.
   - Where its worktree or sandbox is gone, the runtime close completes the item's branch boxes from the pull request body's `## Done-when evidence` section ([lane-reach.md § Lane close](lane-reach.md#lane-close)).
   - When a merged lane's work has left its host, the watch closes it at its `lane-exited` or `idle-after-return` line, with the merge as the close's `delivery`.
+  - A running or stopped lane whose harness ended before it finished, which a `lane-ended` line names, takes [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes).
   - Close any other local lane once it has finished `merge-pr.md` § 5. Add `"delivery":{"pr":{"pr":[PR_NUMBER],"repo":"[OWNER/REPO]"}}` to the request § Direct-push cycle records shows.
   - Run it from the overseer's base checkout, or from a checkout of the lane's repository where its `mail_root` is another repository's worktree.
 - A parked or stopped item: once the tracker reads it ended, the watch reads the lane's merges and closes it on the terminal ground.
@@ -423,13 +424,31 @@ Each answer:
 
 ### `lane-ended`
 
-`EVENT lane-ended [ITEM] lane=[STATUS] waits=[WAIT] [stop=[UTC] why=[WHY]]`: the item's latest lane record has no running harness while the tracker holds the item open. The watch prints it ahead of every `heartbeat` line while that holds.
+`EVENT lane-ended [ITEM] lane=[STATUS] waits=[WAIT] [stop=[UTC] why=[WHY]] [tracker=unread]`: the item's latest lane record names a lane whose harness ended, and no tracker read says the item ended. The watch prints it ahead of every `heartbeat` line while that holds.
+
+The harness has ended on a record in these cases:
+
+- A `stopped` or `parked` record, by its status.
+- A `running` record that the watch reported `lane-exited`.
+- A `running` record whose sandbox the provider's `list --json` row shows stopped.
+- A `running` record whose sandbox the provider's `sandbox-stopped` notice reports stopped during the lane's current session.
+
+A `running` record whose window is gone takes § `window-gone` instead.
+
+The fields:
 
 - `lane=` is the record's status: `running`, `stopped` or `parked`.
 - `waits=` is `merge`, `owner`, `blocker`, `nothing` or `unread`.
-- `stop=` and `why=` appear where the provider stopped the lane's sandbox: its `list --json` row names the stop, or its `sandbox-stopped` notice came during the lane's current session. `stop=unreadable why=unreadable` is a stop the provider could not read back.
-- The notice's own `owner-note`, `peer-note` or `data-note` line needs nothing beyond this line.
-- A host whose list did not read is the heartbeat's `watch-step-failed` cause `lane-list-unread host=[HOST]`.
+- `stop=` and `why=` appear where the provider's list or its notice names the stop. `stop=unreadable why=unreadable` is a stop the provider could not read back.
+- `tracker=unread` appears where no tracker read answered for the item: a `running` record's GitHub-tracked item, an item outside the team, or any item before the tracker duty's first read of the team's open items.
+
+The notice counts only from an `owner-note`, or a `peer-note` that is not another repository's overseer. That note's own line needs nothing beyond this line. A `data-note` never stops a lane.
+
+The heartbeat's `watch-step-failed` causes for these lines:
+
+- `ended-lanes-unread cause=[CAUSE]`: the fleet state did not read, and no `lane-ended` line printed.
+- `lane-list-unread host=[HOST] cause=[CAUSE]`: that host's list did not read, and its lanes keep only the notice's stop.
+- `host-capabilities-unread host=[HOST] cause=[CAUSE]`: that host's capability line did not read, and its list was not asked.
 
 Handle the line under [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes) in the same heartbeat pass.
 
