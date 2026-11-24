@@ -228,6 +228,7 @@ impl Operation<'_> {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
+            session_rows_at_launch: None,
             brief: brief.map(|b| b.display().to_string()),
             session_id,
             baseline,

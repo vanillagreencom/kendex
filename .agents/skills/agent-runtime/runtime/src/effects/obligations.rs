@@ -1513,6 +1513,7 @@ mod tests {
                 server_process_start: None,
                 socket: String::new(),
                 since_ms: 0,
+                session_rows_at_launch: None,
                 brief: None,
                 session_id: None,
                 baseline: Vec::new(),

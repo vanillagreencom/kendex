@@ -22,6 +22,7 @@ use agent_runtime::launch::{
     shell_quote,
 };
 use agent_runtime::reading::Reading;
+use agent_runtime::rows;
 use agent_runtime::trust;
 use serde_json::{Value, json};
 
@@ -878,12 +879,25 @@ fn open_and_confirm(
         } => (*home, *home_implicit),
         Sessions::Hosted { .. } => (None, false),
     };
-    let opening = match operation.opening(server, floor, None, home, home_implicit) {
+    let mut opening = match operation.opening(server, floor, None, home, home_implicit) {
         Ok(opening) => opening,
         Err(e) => {
             return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
         }
     };
+    // The relaunch has retired the predecessor. Read its last possible
+    // row now, before the new window can start a hook, and keep the
+    // boundary through reconciliation of this opening.
+    if harness == Harness::Claude
+        && let Sessions::Store { cwd, .. } = &sessions
+    {
+        let file = marker::mailbox_path(cwd, &r.item).join(rows::LANE_FILE);
+        opening.session_rows_at_launch = match rows::last_position(&file) {
+            Reading::Live(position) => Some(position),
+            Reading::Gone => Some(0),
+            Reading::Unreadable { .. } => None,
+        };
+    }
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
     })?;
@@ -1587,6 +1601,7 @@ fn detached_launch(
                     mail_root: Some(created.path.clone()),
                     home_implicit: false,
                     viewer: true,
+                    ..Default::default()
                 }
                 .members(),
                 ..Wire::default()
@@ -2210,6 +2225,7 @@ fn launch_outcome(
                         mail_root,
                         home_implicit: opened.home_implicit,
                         viewer: false,
+                        session_rows_at_launch: opened.session_rows_at_launch,
                     }
                     .members(),
                     ..Wire::default()
@@ -2518,6 +2534,7 @@ mod tests {
             status: LaneStatus::Stopped,
             over_cap: None,
             launch: None,
+            session_rows_at_launch: None,
             viewer: false,
             reservation: None,
             read_only: false,

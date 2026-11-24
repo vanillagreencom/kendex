@@ -662,6 +662,9 @@ pub struct Lane {
     pub over_cap: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<LaunchIdentity>,
+    /// The local Claude launch's last pre-existing session row position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_rows_at_launch: Option<usize>,
     /// The pane `launch` names runs no harness: a window on this machine a
     /// person watches a hosted harness through. Read through
     /// [`Lane::viewer`].

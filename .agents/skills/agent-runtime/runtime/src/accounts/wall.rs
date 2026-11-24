@@ -85,7 +85,9 @@ pub fn harness_own_limit(banner: &str, channel: WallChannel) -> Option<LimitRepo
         let rest = &body[body.find("You")? + 3..];
         if rest.contains("ve hit your weekly limit") {
             Some(LimitReport::Weekly)
-        } else if rest.contains("ve hit your session limit") {
+        } else if rest.contains("ve hit your session limit")
+            || rest.contains("ve hit your 5-hour limit")
+        {
             Some(LimitReport::Session)
         } else {
             None
