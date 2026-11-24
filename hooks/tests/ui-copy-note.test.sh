@@ -195,6 +195,10 @@ install_skills "$RELOCATED/skills"
 CODEX_HOME="$RELOCATED" EXPECTED_GUIDE="$RELOCATED/skills/code-quality/references/ui.md" \
   check 'relocated Codex native copy ending in kendex' codex-global \
     "$(edit Edit "$REPO" shell/Panel.qml global-codex)" 'ui-copy-note: path=shell/Panel.qml'
+CODEX_HOME="$RELOCATED" EXPECTED_GUIDE="$RELOCATED/skills/code-quality/references/ui.md" \
+  check 'Codex global registration with two matching targets in one patch' codex-global \
+    "$(patch_payload codex-two $'*** Add File: shell/First.qml\n*** Update File: ui/Second.tsx')" \
+    'ui-copy-note: path=shell/First.qml'
 # Git Bash and Cygwin pass a native Windows CODEX_HOME on with its
 # backslashes; the hook runs as on that host, its OSTYPE included.
 codex_backslash_rows() {
@@ -265,25 +269,15 @@ KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$PI_PROJECT" \
   check 'project Pi through a symlinked harness folder' pi-project \
     "$(pi_edit "$PI_PROJECT/Panel.qml" pi-project)" 'ui-copy-note: path=Panel.qml'
 
-# A relative CODEX_HOME renders the global registration as the relative
-# `bash "<path>"` engine::targets::direct_command writes, opened from the
-# hook's working directory.
-RELATIVE_BASE="$TMP_ROOT/relative"
-install_skills "$RELATIVE_BASE/rel-codex/skills"
-codex_relative_rows() {
-  local XDG_STATE_HOME="$TMP_ROOT/relative-state-${HOOK##*/}"
-  export XDG_STATE_HOME
-  CODEX_HOME=rel-codex FIXTURE_INSTALL="$RELATIVE_BASE" FIXTURE_COMMAND='bash "rel-codex/hooks/ui-copy-note.sh"' \
-    EXPECTED_GUIDE="$RELATIVE_BASE/rel-codex/skills/code-quality/references/ui.md" \
-    check 'relative Codex global registration' codex-relative \
-      "$(edit Edit "$REPO" shell/Panel.qml codex-relative)" 'ui-copy-note: path=shell/Panel.qml'
-  CODEX_HOME=rel-codex FIXTURE_INSTALL="$RELATIVE_BASE" FIXTURE_COMMAND='bash "rel-codex/hooks/ui-copy-note.sh"' \
-    EXPECTED_GUIDE="$RELATIVE_BASE/rel-codex/skills/code-quality/references/ui.md" \
-    check 'relative Codex registration with two matching targets in one patch' codex-relative \
-      "$(patch_payload codex-two $'*** Add File: shell/First.qml\n*** Update File: ui/Second.tsx')" \
-      'ui-copy-note: path=shell/First.qml'
-}
-codex_relative_rows
+# A relative registration from engine::targets::direct_command cannot
+# establish an install identity, even when its path matches a project layout.
+for relative_home in rel-codex ./rel-codex/.codex ./rel-codex/.claude; do
+  install_skills "$REPO/$relative_home/skills"
+  printf -v command 'bash %q' "$relative_home/hooks/ui-copy-note.sh"
+  CODEX_HOME="$relative_home" FIXTURE_INSTALL="$REPO" FIXTURE_COMMAND="$command" \
+    check "relative Codex home $relative_home cannot establish install identity" codex-relative \
+      "$(edit Edit "$REPO" shell/Panel.qml "codex-relative-${relative_home##*/}")" 'ui-copy-note: reader=install-layout'
+done
 
 ALIASED="$TMP_ROOT/aliased"
 install_skills "$ALIASED/.agents/skills"

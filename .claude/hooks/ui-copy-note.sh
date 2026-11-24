@@ -110,11 +110,6 @@ HOME_DIR=$(physical_dir "$HOME_PATH" 2>/dev/null) || HOME_DIR=''
 SHARED_ROOT=$HOME_DIR
 PROJECT_INSTALL=''
 CODEX_ROOT=${CODEX_HOME-$HOME_PATH/.codex}
-# A relative CODEX_HOME renders a relative global registration, which the
-# harness opened from this hook's working directory: the skill paths the note
-# hands the session are spelled from there.
-[[ -z "$CODEX_ROOT" || "$CODEX_ROOT" == /* || "$CODEX_ROOT" =~ $absolute_root ]] ||
-  CODEX_ROOT="$PWD/$CODEX_ROOT"
 CLAUDE_ROOT="$HOME_PATH/.claude"
 
 # The Pi carrier names the registration it ran (the Hooks section of kendex's
@@ -137,20 +132,32 @@ case "${KENDEX_HOOK_SCOPE-}" in
     # Global identity takes precedence when aliases land both registrations
     # on the same script. Project ownership comes from the renderer's argv
     # spelling.
-    if [ -n "$CODEX_ROOT" ] && [ "$HOOK_PATH" -ef "$CODEX_ROOT/hooks/ui-copy-note.sh" ]; then
+    # A global Codex install must resolve independently of the edited checkout.
+    if [[ "$CODEX_ROOT" == /* || "$CODEX_ROOT" =~ $absolute_root ]] &&
+        [ "$HOOK_PATH" -ef "$CODEX_ROOT/hooks/ui-copy-note.sh" ]; then
       NATIVE_ROOT=$CODEX_ROOT
       HARNESS=codex
     elif [ "$HOOK_PATH" -ef "$CLAUDE_ROOT/hooks/ui-copy-note.sh" ]; then
       NATIVE_ROOT=$CLAUDE_ROOT
       HARNESS=claude
     else
-      case "$HOOK_PATH" in
-        */.claude/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.claude/hooks/ui-copy-note.sh}; HARNESS=claude ;;
-        */.codex/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.codex/hooks/ui-copy-note.sh}; HARNESS=codex ;;
-        *)
-          session_notice reader install-layout "No Claude Code or Codex registration runs $HOOK_PATH, and no KENDEX_HOOK_SCOPE names the Pi registration that ran it. A Pi install needs the pi-hooks carrier that sets it."
-          ;;
-      esac
+      # Project registrations pass an absolute script path (engine::targets).
+      HARNESS=''
+      if [[ "$HOOK_PATH" == /* || "$HOOK_PATH" =~ $absolute_root ]]; then
+        case "$HOOK_PATH" in
+          */.claude/hooks/ui-copy-note.sh)
+            PROJECT_INSTALL=${HOOK_PATH%/.claude/hooks/ui-copy-note.sh}
+            HARNESS=claude
+            ;;
+          */.codex/hooks/ui-copy-note.sh)
+            PROJECT_INSTALL=${HOOK_PATH%/.codex/hooks/ui-copy-note.sh}
+            HARNESS=codex
+            ;;
+        esac
+      fi
+      if [ -z "$HARNESS" ]; then
+        session_notice reader install-layout "No Claude Code or Codex registration runs $HOOK_PATH, and no KENDEX_HOOK_SCOPE names the Pi registration that ran it. A Pi install needs the pi-hooks carrier that sets it."
+      fi
       PROJECT_INSTALL=$(physical_dir "${PROJECT_INSTALL:-/}" 2>&1) ||
         session_notice reader install-layout "$PROJECT_INSTALL"
       NATIVE_ROOT="${PROJECT_INSTALL%/}/.$HARNESS"
