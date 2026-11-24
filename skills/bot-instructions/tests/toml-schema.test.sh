@@ -2,8 +2,9 @@
 # `toml-schema`: one red control per clause of the closed schema, the glob
 # dialect's path shapes, `[bot-instructions.repo] code_review_path`'s path
 # shapes, and the cross-flag set. The content refusals are
-# `toml-refusals.test.sh`; the globs, the verbs and that key are the inputs
-# outside their table, and `repo-toml.md` § The content refusals records them.
+# `toml-refusals.test.sh`; an input outside their table, such as a glob, a
+# verb, `code_review_path` or a surface name, holds the class its own section
+# of `repo-toml.md` states, per § The content refusals.
 #
 # Every control starts from a TOML with every `[bot-instructions.bots]` flag
 # false, which is a legitimate state that renders nothing, and pins the
