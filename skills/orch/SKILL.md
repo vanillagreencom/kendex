@@ -62,7 +62,7 @@ Get the issue → dev implements → publication, review and fixes in the order 
   - The overseer gives no model or account instructions.
   - Lanes keep their launch models and launch no lanes.
 - **Item work stays in lanes.** A fleet is hosted when `orch-runtime host resolve` prints anything but `local`. Its overseers share the control VM for coordination.
-  - Every tracker item's round goes to its branch's lane. No worktree, item branch, dev, review or fix agent, validation, build, install or test runs on the control host. The one exception is an owner-directed small change, `directive-[ID]` ([micro.md](workflows/micro.md) § Items).
+  - Every tracker item's round goes to its branch's lane. No worktree, item branch, dev, review or fix agent, validation, build, install or test runs on the control host. The one exception is an owner-directed small change, `directive-[ID]` ([directed-change.md](references/directed-change.md) § Who makes it).
   - A control-host subagent (sweep, triage verifier, measurement or research) reads without bulk writes.
   - It streams archives, or extracts each into its own scratch subdirectory and removes the extraction before the next.
   - Before an extraction it reads the uncompressed size and the volume's free space. Where less than 3 GB would remain, it stops and reports to the overseer without extracting.
@@ -212,7 +212,7 @@ Delegation, planner launch, lifecycle, round closure, coordination and lane outp
 #### Tracker Resolution
 
 - An `ISSUE_ID` starting with `issue-` is GitHub: `TRACKER=github`, the issue number `${ISSUE_ID#issue-}`, and the repository from the caller's context, else `gh repo view --json nameWithOwner`.
-- An `ISSUE_ID` keyed `directive-[ID]` has no tracker: `TRACKER=none`, no `ISSUE_REF` and no `Closes` line. Skip every **Linear only** and **GitHub only** step. The work input is the owner note's text ([micro.md](workflows/micro.md) § Items).
+- An `ISSUE_ID` keyed `directive-[ID]` has no tracker: `TRACKER=none`, no `ISSUE_REF` and no `Closes` line. Skip every **Linear only** and **GitHub only** step. The work input is the owner note's text ([directed-change.md](references/directed-change.md) § Who makes it).
 - Any other id is Linear.
 - A caller-supplied `tracker` wins.
 
