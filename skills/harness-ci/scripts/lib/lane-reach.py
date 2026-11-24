@@ -317,6 +317,7 @@ class Evidence:
                     self.files[path] in {"100644", "100755"}, "vitest-opaque-config")
         pending = {path for path in members if MODULE.search(path)}
         scanned = set()
+        package_imports = set()
         config_dirs = {Path(directory), *Path(directory).parents}
         while pending:
             path = pending.pop()
@@ -353,7 +354,11 @@ class Evidence:
                         "vitest-opaque-import")
                 imported = self.checkout_path(parent.as_posix(), target)
                 require(imported in self.files and MODULE.search(imported), "vitest-module-unresolved")
+                if imported.startswith(RENDER):
+                    package_imports.add(imported)
                 pending.add(imported)
+        if any(path.startswith(RENDER) for path in self.changed):
+            require(all(self.owner(path) for path in package_imports), "vitest-import-owner-unresolved")
         # TypeScript and package resolution can read an ancestor outside
         # the Vitest root, including an ancestor of an imported module.
         require(not any(
@@ -375,6 +380,8 @@ class Evidence:
             )
         }
         paths -= reads
+        # Package ownership also needs imports outside Vitest's changed graph.
+        reads.update(package_imports)
         if not paths:
             return reads, self.changed
 

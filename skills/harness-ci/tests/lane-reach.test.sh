@@ -156,6 +156,22 @@ git -C "$repo" checkout -qb fixture-static "$opted_base"
 write_workflow no-cargo >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'static shell, Vitest and installed-package lanes'
 static_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-package "$static_base"
+write_workflow web-only >"$repo/.github/workflows/ci.yml"
+git -C "$repo" rm -q -- .github/ci-lanes.conf
+printf '%s\n' 'export const value = 42' >"$repo/.codex/skills/math/imported.mjs"
+printf '%s\n' 'export const sibling = 42' >"$repo/.codex/skills/math/sibling.mjs"
+cat >"$repo/.kendex-generated.json" <<'JSON'
+[".agents/skills/math/scripts/check.sh",".codex/skills/math/SKILL.md",".codex/skills/math/imported.mjs",".codex/skills/math/sibling.mjs"]
+JSON
+cat >"$repo/web/check.test.mjs" <<'JS'
+import { expect, test } from 'vitest'
+import { value } from '../.codex/skills/math/imported.mjs'
+test('installed package', () => expect(value).toBe(42))
+JS
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'Vitest reads a module from an installed package'
+vitest_package_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-deleted-workdir "$static_base"
 write_workflow deleted-workdir >"$repo/.github/workflows/ci.yml"
 mkdir -p "$repo/check-cwd"
@@ -371,6 +387,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
   case "$label" in
     source|removed-source|shared-gate|shell-workdir|vitest-import|vitest-unread|vitest-external|installed|installed-push|shared-root-config)
       base="$static_base" ;;
+    vitest-package-sibling) base="$vitest_package_base" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
@@ -484,6 +501,7 @@ cargo-external-child|cargo/spare/src/child.rs|false|true|false|false
 cargo-linked-child|cargo/spare/src/input.txt|false|true|false|false
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 vitest-import|web/café.mjs|false||true|false
+vitest-package-sibling|.codex/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
 vitest-unread|web/spare-é.mjs|false||false|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
