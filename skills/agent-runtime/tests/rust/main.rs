@@ -3203,6 +3203,15 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
         overseer["extra_args"],
         json!(["--dangerously-skip-permissions"])
     );
+    // The same pane adopted again naming nothing: the posture is read off
+    // the launch again, never the recorded pair kept, so the bypass the
+    // harness does not run under is dropped, on every host.
+    let (code, answer) = adopt(&pane.pane);
+    assert_eq!(code, Some(0), "{answer}");
+    assert_eq!(answer["result"]["healed"], true, "{answer}");
+    let overseer = fleet()["controller"].clone();
+    assert_eq!(overseer["permission"], "native");
+    assert_eq!(overseer["extra_args"], json!([]));
     // The same pane again, its harness now started under the full bypass:
     // healed, the generation kept, the posture the one it runs under where
     // the host keeps its words (`/proc`); elsewhere its native defaults.
