@@ -1190,7 +1190,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             json!({"parked": park(json!({"until_pr": 6, "until_repo": "owner/other"}))}),
             ItemRead::Open { blocked: false },
             None,
-            Some("lane=parked waits=merge"),
+            Some("lane=parked waits=blocker"),
         ),
         (
             "KEN-03",
@@ -1236,9 +1236,10 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             "KEN-08",
             "stopped",
             json!({}),
+            // A terminal read answers open and reads no blocker.
             ItemRead::Terminal(Open),
             None,
-            Some("lane=stopped waits=nothing"),
+            Some("lane=stopped waits=unknown"),
         ),
         (
             "KEN-09",
@@ -1394,6 +1395,16 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             ItemRead::Open { blocked: false },
             stop("2026-10-02T00:00:00Z"),
             Some("lane=running waits=nothing stop=2026-10-02T00:00:00Z why=harness-ended"),
+        ),
+        // A relaunch from a dependency park carries its wait with no pull
+        // request of its own.
+        (
+            "KEN-27",
+            "running",
+            json!({"pending_pr": {"pr": null, "repo": "owner/repo", "head": "abc", "until_pr": 12}}),
+            ItemRead::Open { blocked: false },
+            reported.clone(),
+            Some("lane=running waits=blocker"),
         ),
         // A running GitHub-tracked item no read answers for, whose recorded
         // wait still names its pull request.

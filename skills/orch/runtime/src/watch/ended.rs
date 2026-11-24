@@ -29,10 +29,12 @@
 //!
 //! What the lane waits for is its record's recorded wait (the park, the park
 //! it owes, or the pull request a relaunch carried from its park), then the
-//! tracker's blocker: a pull request is a merge, an ask an owner answer, a
-//! hold, a blocking item or the `blocked` label a blocker. A wait record that
-//! does not parse is `unread`; no recorded wait on an unread item is
-//! `unknown`; neither is ever `nothing`.
+//! tracker's blocker: a pull request of the lane's own is a merge, an ask an
+//! owner answer, a hold, a dependency's pull request, a blocking item or the
+//! `blocked` label a blocker. A wait record that does not parse is
+//! `unread`; no recorded wait on an item whose blockers no read answered
+//! (an unread item, or one a terminal read alone holds open) is `unknown`;
+//! neither is ever `nothing`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -289,7 +291,12 @@ pub struct Items<'a> {
 /// What the tracker's reads say of one item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemRead {
-    Open { blocked: bool },
+    /// Among the team's open items, with whether a blocker holds it.
+    Open {
+        blocked: bool,
+    },
+    /// Open by a terminal read alone, which reads no blocker.
+    OpenUnjudged,
     Ended,
     Unread,
 }
@@ -302,7 +309,7 @@ impl Items<'_> {
             return ItemRead::Open { blocked: *blocked };
         }
         match self.terminal.get(item) {
-            Some(TerminalState::Open) => ItemRead::Open { blocked: false },
+            Some(TerminalState::Open) => ItemRead::OpenUnjudged,
             Some(TerminalState::Completed | TerminalState::Canceled) => ItemRead::Ended,
             None => ItemRead::Unread,
         }
@@ -347,6 +354,7 @@ fn ended(lane: &Lane, items: &Items, listed: Option<&Stop>, baseline: &Baseline)
     let (blocker, tracker_read) = match items.read(&lane.item) {
         ItemRead::Open { blocked: true } => (Wait::Blocker, true),
         ItemRead::Open { blocked: false } => (Wait::Nothing, true),
+        ItemRead::OpenUnjudged => (Wait::Unknown, true),
         ItemRead::Ended => return None,
         ItemRead::Unread => (Wait::Unknown, false),
     };
@@ -392,8 +400,12 @@ fn recorded_wait(lane: &Lane) -> Option<Wait> {
             Err(_) => return Some(Wait::Unread),
         },
     };
-    if wait.pr.is_some() || wait.until_pr.is_some() {
+    // A dependency wait, `until_pr` with no pull request of the lane's own,
+    // waits on another item's merge: a blocker, relaunched once it ends.
+    if wait.pr.is_some() {
         Some(Wait::Merge)
+    } else if wait.until_pr.is_some() {
+        Some(Wait::Blocker)
     } else if wait.ask.as_deref().is_some_and(|a| !a.is_empty()) {
         Some(Wait::Owner)
     } else if wait.hold {
