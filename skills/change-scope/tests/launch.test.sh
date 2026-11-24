@@ -326,7 +326,7 @@ git -C "$SETTINGS_REPO" add -A
 git -C "$SETTINGS_REPO" commit -qm base
 SETTINGS_BASE="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
 assert_settings_ranges() {
-  local row file before after want base count
+  local row file before after want base count ci_class ci_note
   while IFS='|' read -r row file before after want; do
     [ -z "${SETTINGS_ROW:-}" ] || [ "$row" = "$SETTINGS_ROW" ] || continue
     case "$row" in
@@ -352,11 +352,18 @@ assert_settings_ranges() {
     fi
     assert_eq "settings range: $row" "$want rc=0" \
       "$(run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
+    if [ "$row" = standalone-consumer ]; then
+      ci_class="$("$ARM" --event merge_group --base "$base" --head HEAD --repo "$SETTINGS_REPO" 2>"$SANDBOX/standalone-ci.err")"
+      ci_note="$(sed -n 's/^manifest-admission: admitted=false //p' "$SANDBOX/standalone-ci.err")"
+      assert_eq "standalone consumer CI refuses an absent checker" \
+        "change_class=standard cause=bot-instructions-unread side=base detail=checker-absent" "$ci_class $ci_note"
+    fi
   done <<'SETTINGS'
 ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
 uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_LANE_OUTPUT = "normal"|micro cause=settings-only
 local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
 manifest|kendex.toml|is_source_catalog = true\n[marketplace]\ntags = ["official"]|is_source_catalog = true\n[marketplace]\ntags = ["curated"]|micro cause=settings-only
+standalone-consumer|kendex.toml|[install]\nmethod = "copy"|[install]\nmethod = "symlink"|micro cause=settings-only
 local-manifest|kendex-local.toml|"name" = "old"\n[skill-instructions]\norch = '''\nExisting instructions.\n'''|"name" = "new"\n[skill-instructions]\norch = '''\nExisting instructions.\n'''|micro cause=settings-only
 ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
 size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORDINARY = "new"|standard cause=configuration-source

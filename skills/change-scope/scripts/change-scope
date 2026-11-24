@@ -1278,16 +1278,18 @@ manifest_note() {
 # a branch cannot choose the code that judges its manifest.
 MANIFEST_CHECKER=""
 manifest_checker() {
-  local tree="$work/manifest-checker" log="$work/manifest-checker-log"
+  local tree="$work/manifest-checker" log="$work/manifest-checker-log" checker status=0 evidence=unreadable
   if [ -z "$base_rev" ] || ! private_checkout "$tree" "$base_rev" "$log"; then
     cat -- "$log" >&2 2>/dev/null || true
     manifest_note "cause=bot-instructions-unread side=base detail=checkout-failed" unreadable
     return 1
   fi
   MANIFEST_CHECKER="$tree/.agents/skills/bot-instructions"
-  if [ ! -f "$MANIFEST_CHECKER/scripts/bot-instructions" ] ||
-    [ ! -x "$MANIFEST_CHECKER/scripts/bot-instructions" ]; then
-    manifest_note "cause=bot-instructions-unread side=base detail=checker-absent" unreadable
+  checker="$MANIFEST_CHECKER/scripts/bot-instructions"
+  if [ ! -f "$checker" ] || [ ! -x "$checker" ]; then
+    rev_file "$base_rev" "${checker#"$tree/"}" "$work/checker-entry" || status=$?
+    [ "$status" -ne 2 ] || evidence=""
+    manifest_note "cause=bot-instructions-unread side=base detail=checker-absent" "$evidence"
     return 1
   fi
 }
