@@ -431,6 +431,59 @@ pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<Strin
     }
 }
 
+/// The clean reading a hosted lane writes before it asks to park
+/// (`references/oversee-lanes.md` § The lane's steps before a park):
+/// its head and branch, its `git status --porcelain` and when it read them.
+#[derive(Deserialize)]
+pub(crate) struct ParkStatus {
+    pub head: String,
+    pub branch: String,
+    pub porcelain: String,
+    pub at: String,
+}
+
+/// Why a lane's clean reading does not stand at a head.
+pub(crate) enum StatusUnbound {
+    /// The host holds no reading.
+    Absent,
+    /// The read failed, with its cause.
+    Unread(String),
+    /// The file holds no reading, or one with no time.
+    Invalid,
+    /// The reading names another head or branch: the head it names.
+    Moved(String),
+    /// The reading names changes the lane had not committed.
+    Dirty,
+}
+
+/// The lane's clean reading at `root` on `host`, read through the
+/// provider's `cat` and bound to `head` on `branch` with an empty status.
+pub(crate) fn clean_status(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    root: &str,
+    head: &str,
+    branch: &str,
+) -> Result<ParkStatus, StatusUnbound> {
+    let text = match fetch(scripts, host, item, &format!("{root}/tmp/park-status.json")) {
+        Answer::Live(text) => text,
+        Answer::Gone => return Err(StatusUnbound::Absent),
+        Answer::Unreadable { cause } => return Err(StatusUnbound::Unread(cause)),
+    };
+    let status: ParkStatus = serde_json::from_str(&text).map_err(|_| StatusUnbound::Invalid)?;
+    if status.at.is_empty() {
+        return Err(StatusUnbound::Invalid);
+    }
+    if status.head != head || status.branch != branch {
+        return Err(StatusUnbound::Moved(status.head));
+    }
+    if !status.porcelain.is_empty() {
+        return Err(StatusUnbound::Dirty);
+    }
+    Ok(status)
+}
+
 /// A hosted lane's worktree as its sandbox's disk reads it: the checked-out
 /// head, its branch, and the commit the sandbox's `origin` remote-tracking
 /// ref names for that branch, `None` where the sandbox holds no such ref.

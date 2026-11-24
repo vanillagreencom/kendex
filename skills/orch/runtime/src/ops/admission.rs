@@ -2012,76 +2012,60 @@ fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<BranchCha
 }
 
 /// The production read that the holder's worktree holds no edit it has not
-/// committed: the clean reading the lane writes before it asks to park
-/// (`tmp/park-status.json`, the same reading the close's park judge takes)
-/// names the head read and its branch with an empty status, at or after the
-/// lane's latest start, and the lane's mailbox still holds its open ask. The
-/// lane changes no file while it waits, and the ask's answer ends that wait;
-/// a lane waiting on anything else gives no reading that its wait stands.
+/// committed. The lane's clean reading, the one it writes before it asks to
+/// park ([`crate::watch::hosted::clean_status`]), must name the head read
+/// and its branch with an empty status. The lane's mailbox must still hold
+/// its open ask, and the reading must be no older than that ask or the
+/// lane's latest start. The lane asks before its park steps and changes no
+/// file while it waits, so a reading from before the open ask, or before a
+/// relaunch, is no reading of the worktree now: the lane may have resumed on
+/// an earlier answer. A lane waiting on anything else gives no reading that
+/// its wait stands.
 fn read_held_clean(
     clis: &Clis,
     lane: &Lane,
     change: &BranchChange,
 ) -> std::result::Result<(), BranchUnread> {
+    use crate::watch::hosted::StatusUnbound;
     let unread = |cause: String| BranchUnread {
         branch: Some(change.branch.clone()),
         cause,
     };
-    let root = lane.mail_root.as_deref().unwrap_or("");
-    let text = match crate::watch::hosted::fetch(
+    let status = crate::watch::hosted::clean_status(
         &clis.scripts,
         crate::watch::hosted::host_of(lane),
         &lane.item,
-        &format!("{root}/tmp/park-status.json"),
-    ) {
-        crate::watch::hosted::Answer::Live(text) => text,
-        crate::watch::hosted::Answer::Gone => {
-            return Err(unread("worktree-unread status=absent".to_owned()));
-        }
-        crate::watch::hosted::Answer::Unreadable { cause } => {
-            return Err(unread(format!("worktree-unread status=unread {cause}")));
-        }
+        lane.mail_root.as_deref().unwrap_or(""),
+        &change.head,
+        &change.branch,
+    )
+    .map_err(|unbound| {
+        unread(match unbound {
+            StatusUnbound::Absent => "worktree-unread status=absent".to_owned(),
+            StatusUnbound::Unread(cause) => format!("worktree-unread status=unread {cause}"),
+            StatusUnbound::Invalid => "worktree-unread status=invalid".to_owned(),
+            StatusUnbound::Moved(head) => format!("worktree-unread status=moved head={head}"),
+            StatusUnbound::Dirty => "worktree-unread status=dirty".to_owned(),
+        })
+    })?;
+    let ask = match crate::effects::pending_ask(&clis.lane_mail, lane) {
+        Ok(Some(ask)) => ask,
+        Ok(None) => return Err(unread("wait-unproved ask=none".to_owned())),
+        Err(read) => return Err(unread(format!("wait-unproved {read}"))),
     };
-    let status: ParkStatus = serde_json::from_str(&text)
-        .map_err(|_| unread("worktree-unread status=invalid".to_owned()))?;
-    if status.head != change.head || status.branch != change.branch {
-        return Err(unread(format!(
-            "worktree-unread status=moved head={}",
-            status.head
-        )));
-    }
-    if !status.porcelain.is_empty() {
-        return Err(unread("worktree-unread status=dirty".to_owned()));
-    }
     let started = lane.running_at.as_deref().or(lane.launched_at.as_deref());
-    match (
-        agent_runtime::clock::epoch_secs(&status.at),
-        started.and_then(agent_runtime::clock::epoch_secs),
-    ) {
-        (Some(at), Some(started)) if at >= started => {}
-        _ => {
-            return Err(unread(format!(
-                "worktree-unread status=stale at={} started={}",
-                status.at,
-                started.unwrap_or("unrecorded")
-            )));
-        }
+    let asked = ask.at.as_deref();
+    let epoch = |stamp: Option<&str>| stamp.and_then(agent_runtime::clock::epoch_secs);
+    match (epoch(Some(&status.at)), epoch(asked), epoch(started)) {
+        (Some(at), Some(asked), Some(started)) if at >= asked && at >= started => Ok(()),
+        _ => Err(unread(format!(
+            "worktree-unread status=stale at={} ask={} ask-at={} started={}",
+            status.at,
+            ask.id(),
+            asked.unwrap_or("unrecorded"),
+            started.unwrap_or("unrecorded")
+        ))),
     }
-    match crate::effects::pending_ask(&clis.lane_mail, lane) {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err(unread("wait-unproved ask=none".to_owned())),
-        Err(read) => Err(unread(format!("wait-unproved {read}"))),
-    }
-}
-
-/// `tmp/park-status.json` as the lane writes it before a park
-/// (`references/oversee-lanes.md` § The lane's steps before a park).
-#[derive(Deserialize)]
-struct ParkStatus {
-    head: String,
-    branch: String,
-    porcelain: String,
-    at: String,
 }
 
 #[allow(

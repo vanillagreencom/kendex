@@ -29,8 +29,8 @@ use crate::state::{self, CloseKind, FleetState, Lane, LaneStatus};
 use crate::verify::Answer;
 use crate::verify::wire::{Nullable, ParkPull, ParkPullAnswer};
 use crate::watch::hosted::{
-    self, Answer as HostAnswer, Asked, Capabilities, HostStopped, PaneKind, Status, StopKind,
-    WorktreeHead,
+    self, Answer as HostAnswer, Asked, Capabilities, HostStopped, PaneKind, Status, StatusUnbound,
+    StopKind, WorktreeHead,
 };
 use crate::watch::lanes::{self, LaneState, reset};
 use crate::watch::tracker::{self, TerminalState};
@@ -1057,7 +1057,7 @@ impl Close<'_> {
             Ok(None) => Ok(Ok(())),
             Ok(Some(ask)) => Err(refused(
                 "ask-unanswered",
-                &[("item", self.item()), ("ask", &ask)],
+                &[("item", self.item()), ("ask", ask.id())],
             )),
             Err(unread) => Ok(Err(unread)),
         }
@@ -1090,6 +1090,7 @@ impl Close<'_> {
     /// cannot be read refuses.
     fn open_ask(&self) -> Result<Option<String>> {
         lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane)
+            .map(|ask| ask.map(|e| e.id().to_owned()))
             .map_err(|unread| self.unread(unread))
     }
 
@@ -1549,29 +1550,15 @@ impl Close<'_> {
     /// through the provider's `cat`.
     fn clean_status(&self, head: &str, branch: &str, source: &str) -> Result<()> {
         let root = self.lane.mail_root.as_deref().unwrap_or("");
-        let clean = match hosted::fetch(
-            self.scripts,
-            self.host,
-            self.item(),
-            &format!("{root}/tmp/park-status.json"),
-        ) {
-            HostAnswer::Live(text) => text,
-            HostAnswer::Gone | HostAnswer::Unreadable { .. } => {
-                return Err(self.park_refused("clean-status-unread", &[]));
+        match hosted::clean_status(self.scripts, self.host, self.item(), root, head, branch) {
+            Ok(_) => Ok(()),
+            Err(StatusUnbound::Absent | StatusUnbound::Unread(_)) => {
+                Err(self.park_refused("clean-status-unread", &[]))
             }
-        };
-        let clean: Value = serde_json::from_str(&clean).unwrap_or(Value::Null);
-        let bound = clean.get("head").and_then(Value::as_str) == Some(head)
-            && clean.get("branch").and_then(Value::as_str) == Some(branch)
-            && clean.get("porcelain").and_then(Value::as_str) == Some("")
-            && clean
-                .get("at")
-                .and_then(Value::as_str)
-                .is_some_and(|at| !at.is_empty());
-        if !bound {
-            return Err(self.park_refused("clean-status-invalid", &[("branch-source", source)]));
+            Err(StatusUnbound::Invalid | StatusUnbound::Moved(_) | StatusUnbound::Dirty) => {
+                Err(self.park_refused("clean-status-invalid", &[("branch-source", source)]))
+            }
         }
-        Ok(())
     }
 
     /// The judged head of the park this record owes for `wait`, the one
