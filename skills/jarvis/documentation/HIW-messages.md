@@ -12,7 +12,7 @@ flowchart LR
 
 ## The channel
 
-A direct conversation carries your request and Jarvis's reply. Slack needs its configured app and relay. Voice needs the consumer's voice connection. The Jarvis package does not turn every possible entry point on merely by being installed.
+A direct conversation carries your request and Jarvis's reply. Slack needs its configured app and relay. Voice needs the consumer's voice connection.
 
 The configured event source collects messages from the Jarvis home and declared machines and brings settled bursts to the session. Each source retains its delivery progress for restart. An unavailable source is reported as unavailable; silence alone establishes no agent's state.
 
@@ -20,7 +20,7 @@ The configured event source collects messages from the Jarvis home and declared 
 
 A question keeps its options and answer together. Jarvis presents an agent's question to you and records your answer against that question. Receiving an answer, resolving a question and achieving the requested result are separate events.
 
-A receipt or a delivery reaction cannot prove that Jarvis read or applied the answer. Completion still needs the evidence described in [Tasks](HIW-tasks.md). The current task procedure reads the item's latest decisions and relevant exchanges, then records the authorized decision and next action. Delivery alone does not establish that those steps happened.
+A receipt or a delivery reaction cannot prove that Jarvis read or applied the answer. Completion still needs the evidence described in [Tasks](HIW-tasks.md). The current task procedure reads the item's latest decisions and relevant exchanges, then records the authorized decision and next action.
 
 ## A second machine
 

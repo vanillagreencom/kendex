@@ -1,6 +1,6 @@
 # How does work continue after a restart or handover?
 
-Jarvis keeps unfinished work in the tracker and a compact handoff for session recovery. A new session reads those records and checks their current sources before it resumes work. A normal handover ends the previous assistant before the next takes control.
+Jarvis keeps unfinished work in the tracker and a compact handoff for session recovery. A new session checks those records against current sources before resuming work.
 
 ```mermaid
 flowchart LR
@@ -11,7 +11,7 @@ flowchart LR
 
 ## The interruption
 
-A restart, lost session or need for fresh conversation space can interrupt work. A handover changes the assistant in control; it does not complete the work. The tracker and the original result records retain what remains owed.
+A restart, lost session or need for fresh conversation space can interrupt work. A handover changes the assistant in control; it does not complete the work.
 
 ## The handoff
 
@@ -21,9 +21,11 @@ Before a normal handover, Jarvis collects the attached agents it launched. An em
 
 ## The next session
 
-The current package saves the handoff, ends the previous assistant and starts its successor. The successor reads the recovery context, checks open tracker work and messages, and loads further guidance for the action it selects.
+Jarvis saves the handoff and starts the successor. The previous assistant stays in control until the successor confirms its identity and receives the start instructions. The successor reads the recovery context, checks open tracker work and messages, and loads further guidance for the action it selects.
 
-Old or incomplete notes widen the source checks. Unread evidence remains an unresolved next action. If a transfer fails after the previous assistant ends, the session reports a failed handover and provides a retry route; an old session is not silently restored as the controller.
+Old or incomplete notes widen the source checks. Unread evidence remains an unresolved next action.
+
+If a successor fails its readiness check before the previous assistant ends, the previous assistant stays in control and Jarvis can try another eligible account. If the transfer stalls or fails after the previous assistant ends, that assistant remains stopped. The saved handoff retains the recovery context, and the transfer status guides the next step.
 
 ## Current coverage
 

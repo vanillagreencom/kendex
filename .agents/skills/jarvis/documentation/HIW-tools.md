@@ -17,7 +17,7 @@ Before using your mouse or keyboard, Jarvis describes the action and waits for a
 
 ## The browser and account
 
-Automation uses an assistant-owned browser profile. Jarvis checks the site, account and destination before entering values, reads them back without exposing protected fields, and checks the result after submission. A form filled in is not yet a successful submission.
+Automation uses an assistant-owned browser profile. Jarvis checks the site, account and destination before entering values. It reads the entered values back without exposing protected fields. After submission, Jarvis checks the result at the service.
 
 A sign-in that needs your phone remains your step. A persistent bot check is handed to you rather than bypassed. A task's tabs close when the work ends.
 
