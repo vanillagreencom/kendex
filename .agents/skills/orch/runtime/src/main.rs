@@ -1753,7 +1753,8 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // between their own writes; a push or a prune answers with its
             // reply and the exit its outcome names.
             if let Request::RecordPush(r) = &request {
-                let pushed = ops::push::run(&path, r, &settings, &flags, &env, locking)?;
+                let pushed =
+                    ops::push::run(&path, r, &settings, &flags, &env, locking, confined())?;
                 return replied(serde_json::to_value(&pushed)?, pushed.exit);
             }
             if let Request::PruneRound(r) = &request {
