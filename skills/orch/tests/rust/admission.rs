@@ -1443,9 +1443,9 @@ fn a_launch_beside_a_running_lane_before_its_review_joins_it_and_its_lane_is_tol
 
 /// A holder the join cannot judge or reach keeps the candidate out by
 /// name, nothing written: a local holder whose item state is no object
-/// refuses `holder-unreadable read=stage`; a hosted holder in flight,
-/// whose stage and mailbox are on its host, refuses `join-unreachable
-/// route=hosted`.
+/// refuses `holder-unreadable read=stage`; a hosted holder in flight whose
+/// host answers no read of its branch refuses `join-unreachable
+/// route=hosted`, naming the cause.
 #[test]
 fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_joined() {
     let fleet = Fleet::new();
@@ -1474,10 +1474,114 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
     assert_eq!(key, "join-unreachable");
     assert_eq!(
         fields,
-        pairs(&[("item", "KEN-S"), ("holder", "KEN-R"), ("route", "hosted")])
+        pairs(&[
+            ("item", "KEN-S"),
+            ("holder", "KEN-R"),
+            ("route", "hosted"),
+            ("branch", "unknown"),
+            ("cause", "head-unread"),
+        ])
     );
     assert_eq!(fleet.fleet(), before, "nothing written");
     assert!(inbox(&root, "KEN-H").is_empty());
+}
+
+/// A hosted holder in flight holds what its branch changes. Its head is read
+/// on its host and judged once its sandbox's `origin` ref names it; GitHub
+/// compares that branch with the default branch. A branch that changes the
+/// candidate's path refuses `join-unreachable` as an unjudged holder did; an
+/// unpushed head, or a comparison as long as GitHub's file cap, refuses it
+/// naming the branch and the cause; a branch that changes only other paths
+/// yields, and the launch is recorded.
+#[test]
+fn a_hosted_holder_refuses_a_shared_path_only_while_its_branch_changes_it() {
+    let mut fleet = Fleet::new();
+    fleet.init_fleet();
+    let world = fleet.dir.path().join("host");
+    let provider = world.join("provider");
+    std::fs::create_dir_all(&world).unwrap();
+    write_executable(
+        &provider,
+        format!(
+            "#!/bin/sh\nLANE_HOST_WORLD='{}' exec '{}' \"$@\"\n",
+            world.display(),
+            fixtures().join("lane-host/provider").display(),
+        ),
+    );
+    let disk = |path: &str, text: &str| {
+        let at = world.join("disk").join(path.trim_start_matches('/'));
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    };
+    disk("/w/ken-r/.git", "gitdir: /w/main/.git/worktrees/ken-r\n");
+    disk(
+        "/w/main/.git/worktrees/ken-r/HEAD",
+        "ref: refs/heads/ken-r\n",
+    );
+    disk("/w/main/.git/refs/heads/ken-r", "h1\n");
+    let mut hosted = holder("KEN-R", "running", None, Some(&["src/r.sh"]));
+    hosted["host"] = json!(provider.display().to_string());
+    hosted["kind"] = json!("ssh");
+    hosted["repo"] = json!("o/r");
+    hosted["mail_root"] = json!("/w/ken-r");
+    fleet.write_lanes(vec![hosted]);
+    fleet.item("KEN-S", "`src/r.sh`", 0, &[]);
+    let mut request = launch("KEN-S", &fleet.checkout("s", None));
+    request["repo"] = json!("o/r");
+    let changing = |files: &[&str]| {
+        let mut map = gh_map(&[]);
+        map["repos/o/r"] = json!({"body": {"default_branch": "main"}});
+        map["repos/o/r/compare/main...ken-r"] = json!({"body": {
+            "files": files.iter().map(|f| json!({"filename": f})).collect::<Vec<_>>(),
+        }});
+        map
+    };
+    let before = fleet.fleet();
+
+    disk("/w/main/.git/refs/remotes/origin/ken-r", "h0\n");
+    fleet.gh_api(&changing(&["src/r.sh"]));
+    let (key, fields) = refusal(&fleet.op(&request));
+    assert_eq!(key, "join-unreachable");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-S"),
+            ("holder", "KEN-R"),
+            ("route", "hosted"),
+            ("branch", "ken-r"),
+            ("cause", "head-unpushed head=h1 remote=h0"),
+        ])
+    );
+    assert_eq!(fleet.fleet(), before, "nothing written");
+
+    disk("/w/main/.git/refs/remotes/origin/ken-r", "h1\n");
+    let (key, fields) = refusal(&fleet.op(&request));
+    assert_eq!(key, "join-unreachable");
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-S"), ("holder", "KEN-R"), ("route", "hosted")])
+    );
+    assert_eq!(fleet.fleet(), before, "nothing written");
+
+    // GitHub lists at most 300 changed files for a comparison, so a list
+    // that long may leave the shared path out.
+    let many: Vec<String> = (0..300).map(|n| format!("docs/{n}.md")).collect();
+    fleet.gh_api(&changing(
+        &many.iter().map(String::as_str).collect::<Vec<_>>(),
+    ));
+    let (key, fields) = refusal(&fleet.op(&request));
+    assert_eq!(key, "join-unreachable");
+    assert_eq!(
+        fields[3..],
+        pairs(&[("branch", "ken-r"), ("cause", "files-capped files=300")])[..]
+    );
+    assert_eq!(fleet.fleet(), before, "nothing written");
+
+    fleet.gh_api(&changing(&["docs/other.md"]));
+    let out = fleet.op(&request);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(fleet.lane("KEN-S")["touched"], json!(["src/r.sh"]));
+    assert_eq!(fleet.lane("KEN-R"), before["lanes"][0]);
 }
 
 /// A lane whose confinement binds its checkout read-only touches no path.

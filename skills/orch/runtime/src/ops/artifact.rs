@@ -1222,6 +1222,7 @@ fn no_change<'a>(settings: &Settings, r: &'a WriteReturn, commit: &str) -> Resul
         gh: PathBuf::from("gh"),
         scope_paths: settings.scope_paths_cli.clone(),
         resolver: crate::repo::resolver(&settings.roots.project),
+        scripts: crate::watch::overseer::scripts_dir(&settings.roots.project),
     };
     let item = if github {
         // The issue's repository, which the item key does not carry, is the

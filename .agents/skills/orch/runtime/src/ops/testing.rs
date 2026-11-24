@@ -78,6 +78,7 @@ pub(super) fn no_clis() -> Clis {
         gh: PathBuf::from("/nonexistent/gh"),
         scope_paths: PathBuf::from("/nonexistent/harness-only"),
         resolver: PathBuf::from("/nonexistent/gh-repo.sh"),
+        scripts: PathBuf::from("/nonexistent/scripts"),
     }
 }
 
@@ -95,10 +96,22 @@ pub(super) fn no_reads() -> AdmissionReads<'static> {
         }),
         range_paths: Box::new(|_: &Clis, _: &Path, _: &ScopeRange| Ok(Vec::new())),
         pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
+        branch: unplanted_branch(),
         checkout: Box::new(|_: &Clis, _: &Path| Ok(None)),
         team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
         tier: as_requested(),
     }
+}
+
+/// A branch reader that reads no branch, so an unreachable holder refuses
+/// as it would with no reads.
+pub(super) fn unplanted_branch() -> super::admission::BranchReader<'static> {
+    Box::new(|_: &Clis, _: &crate::state::Lane| {
+        Err(super::admission::BranchUnread {
+            branch: None,
+            cause: "unplanted".to_owned(),
+        })
+    })
 }
 
 /// A tier reader that earns no cycle past the requested one.

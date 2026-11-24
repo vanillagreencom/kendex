@@ -30,6 +30,7 @@ use crate::verify::Answer;
 use crate::verify::wire::{Nullable, ParkPull, ParkPullAnswer};
 use crate::watch::hosted::{
     self, Answer as HostAnswer, Asked, Capabilities, HostStopped, PaneKind, Status, StopKind,
+    WorktreeHead,
 };
 use crate::watch::lanes::{self, LaneState, reset};
 use crate::watch::tracker::{self, TerminalState};
@@ -460,13 +461,6 @@ struct Landing {
     disposed: Option<state::LandingDisposal>,
     notes: Vec<String>,
     comment: Option<String>,
-}
-
-/// A hosted lane's worktree as its sandbox's disk reads it.
-struct LaneHead {
-    head: String,
-    branch: String,
-    remote: Option<String>,
 }
 
 /// Why the close completes a merged item's boxes on `ground`, and whether
@@ -1517,16 +1511,19 @@ impl Close<'_> {
     /// the agent that can push it stopped; the pull request's head, taken
     /// where the worktree is unread, is the remote's.
     fn worktree_head(&self, queue: Option<&ParkPull>) -> Result<(String, String, &'static str)> {
-        match (self.lane_head(), queue) {
-            (
-                Ok(LaneHead {
+        let root = self.lane.mail_root.as_deref().unwrap_or("");
+        match (
+            hosted::worktree_head(self.scripts, self.host, self.item(), root),
+            queue,
+        ) {
+            (Ok(read), _) => {
+                let pushed = read.pushed();
+                let WorktreeHead {
                     head,
                     branch,
                     remote,
-                }),
-                _,
-            ) => {
-                if remote.as_deref() != Some(head.as_str()) {
+                } = read;
+                if !pushed {
                     return Err(self.park_refused(
                         "unpushed",
                         &[
@@ -1640,47 +1637,6 @@ impl Close<'_> {
             },
             Nullable::Absent | Nullable::Null => Err(failed("repo-absent")),
         }
-    }
-
-    /// The lane's checked-out head and branch, and the commit its sandbox's
-    /// `origin` remote-tracking ref names for that branch (`None` where the
-    /// sandbox holds no such ref), read through the provider's `cat`: the
-    /// worktree's `.git` file, its HEAD, then each ref, loose or packed. A
-    /// read that fails, a detached head or a head ref absent is `Err`. Git
-    /// moves the remote-tracking ref only on a push or fetch that reached
-    /// the remote, so its equality with the head proves the head pushed.
-    fn lane_head(&self) -> std::result::Result<LaneHead, ()> {
-        let root = self.lane.mail_root.as_deref().unwrap_or("");
-        let cat = |path: &str| match hosted::fetch(self.scripts, self.host, self.item(), path) {
-            HostAnswer::Live(text) => Ok(Some(text)),
-            HostAnswer::Gone => Ok(None),
-            HostAnswer::Unreadable { .. } => Err(()),
-        };
-        let gitfile = cat(&format!("{root}/.git"))?.ok_or(())?;
-        let line = gitfile.lines().next().ok_or(())?;
-        let (git_dir, common) = crate::marker::git_dirs_of(line).ok_or(())?;
-        let head = cat(&format!("{}/HEAD", git_dir.display()))?.ok_or(())?;
-        let reference = head.trim().strip_prefix("ref: ").ok_or(())?;
-        let branch = reference.strip_prefix("refs/heads/").ok_or(())?.to_owned();
-        let commit_of = |name: &str| -> std::result::Result<Option<String>, ()> {
-            let sha = match cat(&format!("{}/{name}", common.display()))? {
-                Some(text) => Some(text.trim().to_owned()),
-                None => cat(&format!("{}/packed-refs", common.display()))?.and_then(|packed| {
-                    packed.lines().find_map(|l| {
-                        let (sha, ref_name) = l.split_once(' ')?;
-                        (ref_name == name).then(|| sha.to_owned())
-                    })
-                }),
-            };
-            Ok(sha.filter(|s| !s.is_empty()))
-        };
-        let head = commit_of(reference)?.ok_or(())?;
-        let remote = commit_of(&format!("refs/remotes/origin/{branch}"))?;
-        Ok(LaneHead {
-            head,
-            branch,
-            remote,
-        })
     }
 
     /// The branch the item's own workflow state recorded, for a queue park
