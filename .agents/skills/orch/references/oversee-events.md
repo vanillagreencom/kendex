@@ -887,7 +887,9 @@ A refused `write`:
 8. For each valid kept item, read its current description, project and labels with `linear.sh issues get [ID]`. Set only what is missing in one `linear.sh issues update [ID]`:
    - `--project` only where the team inventory is nonempty and the item has none.
    - `--labels` only where `LINEAR_AGENT_LABELS` is nonempty and the item has no agent label. Merge the chosen agent label with every current label under the linear skill's `--labels` rule.
-   - `--description-file tmp/triage-description-[ID].md` only where the current description has no Location line. Require the verifier's paths and add them as a `**Location**:` line. Preserve the existing body. If the opening is missing or incomplete, use the issue and the verifier's evidence to supply the nonempty quoted `> **Story:**` and `> **Why this matters:**` blocks, in that order, as the Linear Reach guard requires.
+   - `--description-file tmp/triage-description-[ID].md` only where the current description has no Location line. Require the verifier's paths.
+     - Start after any existing owner action line with nonempty quoted `> **Story:**` and `> **Why this matters:**` blocks in that order. Use the issue and the verifier's evidence to supply missing or incomplete blocks. Separate the blocks with an unquoted blank line and leave another unquoted blank line before the first Markdown heading, as the Linear Reach guard requires.
+     - Preserve the original report. Add a Markdown heading before the retained report if it starts without one. Put the `**Location**:` line with the verifier's paths below a heading.
    - When writing the description, check `syncedWith` using the read under [§ Outside contributions](#outside-contributions). Add `--synced-description` to the same update for a GitHub-synced item.
 
    Leave an existing Location, project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. If a required read, Location check or update fails, write no `triaged` record for that item.
