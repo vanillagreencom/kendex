@@ -21,7 +21,8 @@
 //! A stop is a request file beside the claim naming the identity to stop;
 //! the runner reads it between duties and ends, releasing the claim. A
 //! terminal signal ends the process at its default disposition and leaves
-//! the claim, which the next runner reads gone and takes over.
+//! the claim, which the next runner reads gone and takes over, unless a
+//! stop finds it gone first and removes it.
 //!
 //! A live claim is followed by its controller's waiter, `follow.sh` on the
 //! watch's log in a `tmp/waiter.*` directory of the claim's working
@@ -439,16 +440,19 @@ pub fn clear_stop(paths: &Paths) -> Result<()> {
 pub enum Stopped {
     /// The claimed runner released its claim within the bound.
     Released { pid: u32, start: String },
-    /// No live claim stood: nothing was running, and a gone record is left
-    /// for the next runner to take over.
+    /// The claim read gone, and its record and any stop request were
+    /// removed, so no start reads it as a watch to bring back.
+    Removed { pid: u32, start: Option<String> },
+    /// No claim stood to stop or remove: no record, or a gone record that a
+    /// new runner replaced before its removal.
     None,
 }
 
 /// Stop the runner that holds the claim, where one does: write the request
 /// and wait, on `clock`, until the claim no longer names that identity or
-/// the bound passes (`watch_stop`). A claim whose identity reads gone or
-/// which stands on no record is nothing to stop; one that reads unreadable
-/// is refused, never signalled.
+/// the bound passes (`watch_stop`). A claim whose identity reads gone is
+/// removed with any stop request; no record is nothing to stop; one that
+/// reads unreadable is refused, never signalled.
 #[allow(
     clippy::disallowed_methods,
     reason = "the stop's wait on the one injected clock for the claim's release"
@@ -459,6 +463,12 @@ pub fn stop(paths: &Paths, clock: &dyn Clock) -> Result<Stopped> {
     };
     let identity = match read_live(&claim) {
         Reading::Live(identity) => identity,
+        Reading::Gone if remove_dead(paths, &claim)? => {
+            return Ok(Stopped::Removed {
+                pid: claim.pid,
+                start: claim.start,
+            });
+        }
         Reading::Gone => return Ok(Stopped::None),
         Reading::Unreadable { cause } => {
             return Err(WatchError::ClaimUnreadable {
@@ -487,6 +497,19 @@ pub fn stop(paths: &Paths, clock: &dyn Clock) -> Result<Stopped> {
         }
         clock.sleep(STOP_POLL);
     }
+}
+
+/// Remove the record `dead` was read from, and any stop request, where the
+/// record still names the same pid and start, as [`release`] checks, so a
+/// claim a new runner linked since the read is kept. Answers whether it
+/// removed the record.
+pub fn remove_dead(paths: &Paths, dead: &Claim) -> Result<bool> {
+    let same = read(paths)?.is_some_and(|c| c.pid == dead.pid && c.start == dead.start);
+    if same {
+        remove_gone(paths)?;
+        clear_stop(paths)?;
+    }
+    Ok(same)
 }
 
 /// The waiter a live claim's controller runs on the watch's log.
