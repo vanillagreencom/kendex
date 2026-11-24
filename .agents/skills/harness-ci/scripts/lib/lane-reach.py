@@ -276,6 +276,7 @@ class Evidence:
                 sources.add(source)
                 sources.update(path for path in self.files if path.endswith(".rs") and
                                under(path, Path(source).parent.as_posix()))
+            target_sources = sources.copy()
             while sources:
                 source = sources.pop()
                 if source in reads:
@@ -288,6 +289,7 @@ class Evidence:
                     edge = self.resolve(Path(source).parent.as_posix(), target)
                     if macro in {"", "include"}:
                         require(under(edge, scope), "cargo-external-module")
+                        require(edge in target_sources, "cargo-opaque-source")
                     self.blob(edge)
                     if edge.endswith(".rs"):
                         sources.add(edge)
@@ -541,6 +543,9 @@ def job_reads(evidence, job):
         directory = step.get("working-directory", default.get("working-directory", "."))
         if directory != ".":
             directory = evidence.resolve(".", directory)
+            # A checkout materializes directories through their tracked entries.
+            require(evidence.git("ls-tree", "-rz", evidence.head, "--", directory + "/"),
+                    "working-directory-unproved")
         for line in step["run"].splitlines():
             args = words(line)
             if not args:

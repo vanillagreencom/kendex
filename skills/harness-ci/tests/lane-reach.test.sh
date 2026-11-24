@@ -36,7 +36,7 @@ jobs:
 YAML
   while IFS='|' read -r id cwd run; do
     case "$shape" in
-      no-cargo|queue-prerequisite) [ "$id" != cargo ] || continue ;;
+      no-cargo|queue-prerequisite|deleted-workdir) [ "$id" != cargo ] || continue ;;
       web-only) [ "$id" = web ] || continue ;;
     esac
     lane="$id"
@@ -45,6 +45,9 @@ YAML
       shell_share) lane=shell ;;
       installed) needs='[changes, shell]' ;;
     esac
+    if [ "$shape:$id" = deleted-workdir:shell ]; then
+      cwd=check-cwd run=true
+    fi
     cat <<YAML
   $id:
     needs: $needs
@@ -153,6 +156,13 @@ git -C "$repo" checkout -qb fixture-static "$opted_base"
 write_workflow no-cargo >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'static shell, Vitest and installed-package lanes'
 static_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-deleted-workdir "$static_base"
+write_workflow deleted-workdir >"$repo/.github/workflows/ci.yml"
+mkdir -p "$repo/check-cwd"
+printf 'only\n' >"$repo/check-cwd/only.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a check working directory with one tracked file'
+deleted_workdir_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-symlink "$static_base"
 mkdir -p "$repo/other/subdir"
 ln -s other/subdir "$repo/link"
@@ -178,6 +188,28 @@ printf 'pub fn value() -> u8 { 42 }\n' >"$repo/cargo/spare/src/child.rs"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'Cargo compiles a child of an out-of-package module'
 cargo_child_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-cargo-linked-child "$opted_base"
+mkdir -p "$repo/cargo/primary/linked"
+cat >"$repo/cargo/primary/src/lib.rs" <<'RS'
+#[cfg(test)]
+#[path = "../linked/mod.rs"]
+mod linked;
+
+#[test]
+fn checks_linked_child() {
+    assert_eq!(linked::child::value().trim(), "42");
+}
+RS
+printf 'pub mod child;\n' >"$repo/cargo/primary/linked/mod.rs"
+cat >"$repo/cargo/primary/linked/child.rs" <<'RS'
+pub fn value() -> &'static str {
+    include_str!("../../spare/src/input.txt")
+}
+RS
+printf '42\n' >"$repo/cargo/spare/src/input.txt"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'a linked child reads an input outside its target source tree'
+cargo_linked_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-queue-prerequisite "$static_base"
 write_workflow queue-prerequisite >"$repo/.github/workflows/ci.yml"
 printf '%s\n' 'shell:queue shared.mjs # reason: the queue also checks the shared module' \
@@ -341,7 +373,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
       base="$static_base" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
+    deleted-workdir) base="$deleted_workdir_base" ;;
     cargo-external-child) base="$cargo_child_base" ;;
+    cargo-linked-child) base="$cargo_linked_base" ;;
     queue-prerequisite) base="$queue_prereq_base" ;;
     runtime-only) base="$runtime_base" ;;
     computed-import) base="$computed_base" ;;
@@ -358,13 +392,14 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
   git -C "$trusted" checkout -q --detach "$base"
   git -C "$repo" checkout -q -B row "$base"
   case "$label" in
-    removed-source) git -C "$repo" rm -q -- "$path" ;;
+    removed-source|deleted-workdir) git -C "$repo" rm -q -- "$path" ;;
     checkout-attributes|nested-attributes) printf '*.sh eol=crlf\n' >"$repo/$path" ;;
     vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     vitest-external|shared-runtime) printf 'export const shared = 43\n' >"$repo/$path" ;;
     runtime-only|computed-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     shell-symlink) printf 'physical\n' >"$repo/$path" ;;
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
+    cargo-linked-child) printf '43\n' >"$repo/$path" ;;
     shared-root-config) printf '{"private":true}\n' >"$repo/$path" ;;
     vitest-inherited|push-unresolved)
       printf '{"compilerOptions":{"experimentalDecorators":false}}\n' >"$repo/$path" ;;
@@ -385,7 +420,13 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
   shell-symlink)
     assert_eq "$label follows the link before its parent component" physical \
       "$(cd "$repo" && bash ./tools/check.sh)" ;;
-  cargo-external-child)
+  deleted-workdir)
+    base_status=0 head_status=0
+    (cd "$trusted/check-cwd") 2>/dev/null || base_status=$?
+    (cd "$repo/check-cwd") 2>/dev/null || head_status=$?
+    assert_eq "$label can enter the base directory" 0 "$base_status"
+    assert_eq "$label cannot enter the changed directory" 1 "$head_status" ;;
+  cargo-external-child|cargo-linked-child)
     base_status=0 head_status=0
     (cd "$trusted/cargo" && CARGO_TARGET_DIR="$SANDBOX/base-cargo-target" cargo test --offline --locked -p primary) \
       >"$SANDBOX/base-cargo-log" 2>&1 || base_status=$?
@@ -436,9 +477,11 @@ removed-source|tools/input.sh|true||false|false
 shared-gate|tools/peer.sh|true||false|false
 shell-workdir|tools/other/context.sh|true||false|false
 shell-symlink|other/input.txt|true||false|false
+deleted-workdir|check-cwd/only.txt|true||false|false
 shell-unresolved|shared.mjs|true|true|true|true
 cargo-path-dependency|cargo/leaf/src/lib.rs|false|true|false|false
 cargo-external-child|cargo/spare/src/child.rs|false|true|false|false
+cargo-linked-child|cargo/spare/src/input.txt|false|true|false|false
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 vitest-import|web/café.mjs|false||true|false
 vitest-unread|web/spare-é.mjs|false||false|false
