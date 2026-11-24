@@ -98,7 +98,7 @@ A container, a blocked child or a bundle escapes here (§ Escape condition 1).
 git -C [MAIN_REPO_ROOT] checkout -b [BRANCH]
 ```
 
-For a quick change, resolve `[BASE_BRANCH]` from `[MAIN_REPO_ROOT]` with `resolve-base-branch`. Fetch `origin/[BASE_BRANCH]` and create the scratch checkout from it on the item key in lower case. Bind its root as `[WT_PATH]` and run from there. Keep `[MAIN_REPO_ROOT]` for the reads that name it.
+For a quick change, resolve `[BASE_BRANCH]` from `[MAIN_REPO_ROOT]` with `resolve-base-branch`. Fetch `origin/[BASE_BRANCH]` and create the scratch checkout from it on the item key in lower case. Use a linked worktree if arming the hooks in a fresh clone would also build, install project dependencies or run tests. Bind the scratch checkout's root as `[WT_PATH]` and run from there. Run all directive state operations from `[WT_PATH]`, including those in called workflows. Keep `[MAIN_REPO_ROOT]` for the base policy and repository reads that name it.
 
 In a lane worktree the branch already exists. Gate on base freshness through [start-worktree.md](start-worktree.md) § 1 step 7 instead, and stop if it fails.
 
@@ -124,6 +124,7 @@ Create the record unless it stands, by [start-worktree.md § 1](start-worktree.m
 
    - If `result.answer` is `skip`, the repository runs no commit chain, and this step checks nothing more.
    - If it is `run`, the chain is this tier's check: the diff-scoped guard, in place of `DEV_VALIDATE_CMD`. Confirm that the chain is armed. Where the `commit-guards` package is installed, this command answers. Elsewhere the project's own setup instructions name the command.
+   - When the stage answers `run` in a fresh scratch clone, arm its hooks with the repository's declared hook setup from `[WT_PATH]` before the check below. A failed setup takes the same escape as a failed check.
 
    ```bash
    .agents/skills/commit-guards/scripts/install-git-hooks --check --repo [WT_PATH]
@@ -187,10 +188,12 @@ Create the record unless it stands, by [start-worktree.md § 1](start-worktree.m
 
 **Run Workflow**: `⤵ workflows/submit-pr.md § 2 steps 1-4 → § 3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 
+For a quick change, take the directive escape on § 2 step 1's `worktree-push-base-conflict` before calling the restack, or when § 3 would start PR-comment triage.
+
 Under `ORCH_DELIVERY=push-base`, that range's entry takes [base-publication.md](base-publication.md).
 
 - If base-publication.md refuses a wider tier, take § Escape condition 3.
-- If base-publication.md would run range validation for a quick change, take the directive escape.
+- For a quick change, take the directive escape before § 4 would run range validation or enter a restack on a publication refusal.
 - If the direct delivery succeeds, restore the main checkout as below. Report `[PUSHED_SHA]` and `[BASE]` in place of the pull request and merge rows. Skip § 4 and go to § 5.
 
 On the pull-request route, the body is the three lines below, in place of the template of [publication.md § PR body](../references/publication.md#pr-body), with no heading and no other section.
@@ -243,7 +246,7 @@ Check the pushed range's paths and production lines against the tier:
 The accepted answer is the line that opens `tier=micro`. Any other `tier=` answer, or a refusal at exit 1 or 2, escapes (§ Escape condition 6).
 
 1. Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base per [Gate-mode routing](../references/gates.md#gate-mode-routing).
-2. Read the gate mode through [the review call](../references/gates.md#the-review-call), run once from `[MAIN_REPO_ROOT]` with `[MARK_READY]` `false`. The call is not a pure read: under `approval` it also settles the pushed head's Copilot request ([Copilot requests](../references/gates.md#copilot-requests)).
+2. Read the gate mode through [the review call](../references/gates.md#the-review-call), run once from `[MAIN_REPO_ROOT]` with `[MARK_READY]` `false`. For a quick change, run it from `[WT_PATH]`. The call is not a pure read: under `approval` it also settles the pushed head's Copilot request ([Copilot requests](../references/gates.md#copilot-requests)).
 3. Continue only on `approval`. `off`, a refusal or an `unreadable` reply escapes (§ Escape condition 6).
 
 Before any merge attempt, ask the merge gate for its readiness object. Its JSON stdout is `[CHECK]`:
@@ -258,6 +261,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 A Copilot finding that only a review body carries takes the body-finding route of [copilot-head-route.md § Body findings](../references/copilot-head-route.md#body-findings), with managed context, as [submit-pr.md § 6.1](submit-pr.md#61-merge-gates) sends it. In a lane, that route sends the overseer the notice that copilot-head-route.md § Copilot head route selects for the head. A reply alone sends none.
 
 - `[CHECK]` names such a finding as a `suppressed-entry` in its `review_replies:` issue.
+- For a quick change, take the directive escape on `suppressed-entry` before starting the body-finding triage pass.
 - Complete the route's triage pass and [review-pr-comments.md](review-pr-comments.md) §§ 7.2-8. A fix that pass makes follows the path rules of the late-findings triage below.
 - Then re-enter this section from its top on the current head.
 
@@ -265,7 +269,8 @@ A Copilot finding that only a review body carries takes the body-finding route o
 
 - Bind `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. merge-pr's § 5 step 1 refuses a prepared head that is not this one.
 - In a lane, merge-pr skips its § 5 steps 3 and 4, and the lane leaves its worktree standing.
-- For a quick change, skip merge-pr.md § 5 steps 3 and 4 and leave project-required post-merge work to its normal owner. Run step 6's record close-out and keep its records before disposing of the scratch checkout in § 5.
+- For a quick change, keep `[WORKTREE_PATH]` bound to `[WT_PATH]` in merge-pr.md § 4 instead of looking up a managed worktree. In § 5 step 1, take the directive escape before entering [merge-contracts.md § Recovery cycle](../references/merge-contracts.md#recovery-cycle) or [§ Restack cycle](../references/merge-contracts.md#restack-cycle). Keep merge-pr.md § 3.3's live thread read. If it routes to PR-comment triage, take the directive escape before that triage starts. Handle a `dequeued` verdict by the path rules below.
+- For a quick change, skip merge-pr.md § 5 steps 3, 4 and 6. Leave project-required post-merge work to its normal owner and close the directive out in § 5 below.
 
 This entry skips merge-pr's § 3. `ci-classify-refusal --help` states the refusal's output and retry contract.
 
@@ -289,7 +294,13 @@ A `dequeued` verdict routes to [merge-contracts.md § Late-findings triage](../r
 
 ## 5. Return
 
-For a quick change, remove only its scratch checkout and local directive branch after delivery and close-out succeed. For a handback, the directive escape disposes of them.
+After a quick change's confirmed merge or direct delivery, close out from `[WT_PATH]`. Read the directive's record path with `orch-runtime state path --item [ISSUE_ID]`. Keep a readable copy under `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-[ISSUE_ID].json` before running the item record close-out:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime state remove --item [ISSUE_ID] --archive [WT_PATH]/tmp
+```
+
+If `result.kept` names an archive inside `[WT_PATH]`, keep a copy under `[MAIN_REPO_ROOT]/tmp/cycle-state/` too. Keep the scratch checkout and report a missing record, close-out refusal or failed copy. Once close-out succeeds and the copies stand, remove only the scratch checkout and local directive branch. For a handback, the directive escape disposes of them.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output). The § 1 control-host refusal is the one return outside this table. It returns its own two lines.
 

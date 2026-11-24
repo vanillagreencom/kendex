@@ -19,7 +19,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 Before changing this skill's scripts, runtime or tests, read DEVELOPMENT.md.
 
-A change only to lane or overseer settings in kendex.settings.toml, kendex-local.toml or kendex.toml takes fleet's hosted quick-change route, the Member overseer quick change section of fleet's docs/runbook.md, only after Jarvis or the owner says "quick change". Without those words it takes the normal item route. Executable behavior, test commands and permissions keep their required checks.
+A change only to lane or overseer settings in kendex.settings.toml, kendex-local.toml or kendex.toml takes [directed-change.md § Who makes it](references/directed-change.md#who-makes-it)'s quick-change route only after Jarvis or the owner says "quick change". Without those words it takes the normal item route. Executable behavior, test commands and permissions keep their required checks.
 
 ### Refresh ownership and committed outputs
 

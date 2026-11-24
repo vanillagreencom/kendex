@@ -27,10 +27,20 @@ For an ordinary directive, the overseer makes the change in its own checkout, on
 
 Read when the overseer's run of a directed change ends at a micro.md § Escape condition, or at a stop [lane-launch.md § Item Tier](lane-launch.md#item-tier) sends here.
 
-The run carries neither its branch nor its pull request over. The overseer files the change as a tracker item through [oversee-events.md § File one item alone](oversee-events.md#file-one-item-alone). The input file's `description` holds the directive's text and, after it, the change as made in a fenced `diff` block, so its lines stay lines. The diff is:
+If a quick change has a pull request, run [merge-pr-restack.md § Unarm at a stop](../workflows/merge-pr-restack.md#unarm-at-a-stop) before handing it back. Bind `[STATE_KEY]` to the directive key and `[STOP_DIR]` to `[WT_PATH]/tmp`. A refusal that leaves the pull request armed also keeps the checkout.
+
+The run carries neither its branch nor its pull request over. The overseer files the change as a tracker item through [oversee-events.md § File one item alone](oversee-events.md#file-one-item-alone). The input file's `description` holds the directive's text and the captured changes in fenced `diff` blocks.
+
+For a quick change, capture the whole scratch edit before filing or cleaning up, even before the first commit:
+
+1. Read `git -C [WT_PATH] status --porcelain`. For any new path Git lists as untracked, run `git -C [WT_PATH] add -N -- [NEW_PATH]...` so the unstaged diff includes it.
+2. Bind `[DIFF_BASE]` from `git -C [WT_PATH] merge-base origin/[BASE_BRANCH] HEAD`. Include `git -C [WT_PATH] diff --binary --cached [DIFF_BASE]` for committed and staged changes, then `git -C [WT_PATH] diff --binary` for unstaged and new changes.
+3. If a command fails or the patches omit any scratch edit, keep the checkout and report what could not be captured.
+
+For an ordinary directive, the diff is:
 
 - at condition 4, the edit the refused commit leaves staged: `git -C [WT_PATH] diff --cached`;
-- once a commit stands at any other stop: `git -C [WT_PATH] diff origin/[BASE_BRANCH]...[BRANCH]` for a quick change, and `git -C [WT_PATH] diff [BASE_BRANCH]...[BRANCH]` for an ordinary directive;
+- once a commit stands at any other stop: `git -C [WT_PATH] diff [BASE_BRANCH]...[BRANCH]`;
 - before the edit, including condition 2: nothing.
 
 Then:
