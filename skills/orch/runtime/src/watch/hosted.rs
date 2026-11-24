@@ -325,8 +325,9 @@ pub fn host_of(lane: &Lane) -> &str {
 /// the lanes the pass judges, the in-flight ones alone: a `parked`, `done`
 /// or `stopped` record keeps its host, and a provider that is gone would
 /// otherwise be asked every pass and its failure said ahead of a live
-/// lane's. The heartbeat's ended-lane read (`ended::listed`) also hands an
-/// open item's `stopped` record, once per heartbeat.
+/// lane's. The heartbeat's ended-lane read (`ended::listed`) also hands the
+/// `stopped` record of an item no tracker read answered ended, once per
+/// heartbeat.
 pub struct Hosts {
     lines: BTreeMap<String, Result<Capabilities, String>>,
 }

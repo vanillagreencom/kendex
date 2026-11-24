@@ -16,19 +16,23 @@
 //! sandbox is stopped, so it ends the current session whenever it came; a
 //! notice ends it only where it came at or after the session began.
 //!
-//! The item is open where the tracker duty's last read holds it among the
-//! team's open items, or, for a `stopped` or `parked` record, where its
-//! terminal read answered open; an item either read answered ended is not
-//! named. An item no read answered for, such as a `running` record's
-//! GitHub-tracked item, or every item before the tracker duty's first team
-//! read, is named with `tracker=unread`, never taken as ended.
+//! What the tracker says of an item is one [`ItemRead`] ([`Items::read`]):
+//! open where the tracker duty's last team read holds it among the team's
+//! open items, or where the terminal read of a `stopped` or `parked`
+//! record answered open; ended where that terminal read answered ended; and
+//! unread otherwise. The heartbeat holds the terminal reads only once a team
+//! read ran, so unread covers a `running` record whose item is GitHub-tracked
+//! or not among the team's open items, every item before the first team
+//! read, and every item on a fleet with no `linear_team`. An ended item is
+//! not named; an unread one is named with `tracker=unread`, never taken as
+//! ended.
 //!
 //! What the lane waits for is its record's recorded wait (the park, the park
 //! it owes, or the pull request a relaunch carried from its park), then the
 //! tracker's blocker: a pull request is a merge, an ask an owner answer, a
 //! hold, a blocking item or the `blocked` label a blocker. A wait record that
-//! does not parse, or no recorded wait on an item no read answered for, is
-//! `unread`, never `nothing`.
+//! does not parse is `unread`; no recorded wait on an unread item is
+//! `unknown`; neither is ever `nothing`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -60,9 +64,11 @@ pub enum Wait {
     Owner,
     Blocker,
     Nothing,
-    /// The record's wait did not parse, or no wait is recorded on an item
-    /// whose blockers no read answered for.
+    /// The record's wait did not parse.
     Unread,
+    /// No wait is recorded, and no tracker read answered for the item's
+    /// blockers.
+    Unknown,
 }
 
 impl Wait {
@@ -73,6 +79,7 @@ impl Wait {
             Wait::Blocker => "blocker",
             Wait::Nothing => "nothing",
             Wait::Unread => "unread",
+            Wait::Unknown => "unknown",
         }
     }
 }
@@ -217,17 +224,10 @@ pub struct Listed {
 /// failure until the record closes, which is the stopped lane the line
 /// exists to name.
 pub fn listed(scripts: &Path, fleet: &FleetState, items: &Items) -> Listed {
-    let ended = |item: &str| {
-        items.open.is_none_or(|open| !open.contains_key(item))
-            && matches!(
-                items.terminal.get(item),
-                Some(TerminalState::Completed | TerminalState::Canceled)
-            )
-    };
     let lanes: Vec<&Lane> = latest(fleet)
         .into_values()
         .filter(|l| matches!(l.status, LaneStatus::Running | LaneStatus::Stopped))
-        .filter(|l| l.provider_hosted() && !ended(&l.item))
+        .filter(|l| l.provider_hosted() && items.read(&l.item) != ItemRead::Ended)
         .collect();
     let hosts = Hosts::read(scripts, lanes.iter().copied());
     let mut out = Listed::default();
@@ -286,6 +286,29 @@ pub struct Items<'a> {
     pub terminal: &'a BTreeMap<String, TerminalState>,
 }
 
+/// What the tracker's reads say of one item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemRead {
+    Open { blocked: bool },
+    Ended,
+    Unread,
+}
+
+impl Items<'_> {
+    /// The one answer for `item`: the team's open list first, then the
+    /// terminal read.
+    pub fn read(&self, item: &str) -> ItemRead {
+        if let Some(blocked) = self.open.and_then(|open| open.get(item)) {
+            return ItemRead::Open { blocked: *blocked };
+        }
+        match self.terminal.get(item) {
+            Some(TerminalState::Open) => ItemRead::Open { blocked: false },
+            Some(TerminalState::Completed | TerminalState::Canceled) => ItemRead::Ended,
+            None => ItemRead::Unread,
+        }
+    }
+}
+
 /// The `lane-ended` lines, one per item whose latest record's harness has
 /// ended while the item is open, in item order.
 pub fn events(
@@ -320,20 +343,19 @@ fn ended(lane: &Lane, items: &Items, listed: Option<&Stop>, baseline: &Baseline)
     if !harness_ended {
         return None;
     }
-    let blocked = match items.open.and_then(|open| open.get(&lane.item)) {
-        Some(blocked) => Some(*blocked),
-        None => match items.terminal.get(&lane.item) {
-            Some(TerminalState::Open) => Some(false),
-            Some(TerminalState::Completed | TerminalState::Canceled) => return None,
-            None => None,
-        },
+    // The tracker's blocker, where the record names no wait of its own.
+    let (blocker, tracker_read) = match items.read(&lane.item) {
+        ItemRead::Open { blocked: true } => (Wait::Blocker, true),
+        ItemRead::Open { blocked: false } => (Wait::Nothing, true),
+        ItemRead::Ended => return None,
+        ItemRead::Unread => (Wait::Unknown, false),
     };
     Some(Event::LaneEnded {
         item: lane.item.clone(),
         lane: lane.status,
-        waits: wait_of(lane, blocked),
+        waits: recorded_wait(lane).unwrap_or(blocker),
         stop,
-        tracker_read: blocked.is_some(),
+        tracker_read,
     })
 }
 
@@ -350,9 +372,9 @@ fn this_session(lane: &Lane, stop: &Stop) -> bool {
     since.and_then(epoch_of).is_none_or(|since| at >= since)
 }
 
-/// The recorded wait first, the pull request before the ask before the
-/// hold, then the tracker's blocker, `None` where no read answered.
-fn wait_of(lane: &Lane, blocked: Option<bool>) -> Wait {
+/// The wait the record names, the pull request before the ask before the
+/// hold; `None` where it names none.
+fn recorded_wait(lane: &Lane) -> Option<Wait> {
     let record = match lane.status {
         LaneStatus::Parked => lane.extra.get("parked"),
         LaneStatus::Preparing | LaneStatus::Running | LaneStatus::Stopped | LaneStatus::Done => {
@@ -363,27 +385,20 @@ fn wait_of(lane: &Lane, blocked: Option<bool>) -> Wait {
     };
     let wait = match record.filter(|v| !v.is_null()) {
         // A park is its record: a parked lane naming none has no wait read.
-        None if lane.status == LaneStatus::Parked => return Wait::Unread,
-        None => None,
+        None if lane.status == LaneStatus::Parked => return Some(Wait::Unread),
+        None => return None,
         Some(value) => match serde_json::from_value::<ParkWait>(Value::clone(value)) {
-            Ok(wait) => Some(wait),
-            Err(_) => return Wait::Unread,
+            Ok(wait) => wait,
+            Err(_) => return Some(Wait::Unread),
         },
     };
-    if let Some(wait) = wait {
-        if wait.pr.is_some() || wait.until_pr.is_some() {
-            return Wait::Merge;
-        }
-        if wait.ask.as_deref().is_some_and(|a| !a.is_empty()) {
-            return Wait::Owner;
-        }
-        if wait.hold {
-            return Wait::Blocker;
-        }
-    }
-    match blocked {
-        Some(true) => Wait::Blocker,
-        Some(false) => Wait::Nothing,
-        None => Wait::Unread,
+    if wait.pr.is_some() || wait.until_pr.is_some() {
+        Some(Wait::Merge)
+    } else if wait.ask.as_deref().is_some_and(|a| !a.is_empty()) {
+        Some(Wait::Owner)
+    } else if wait.hold {
+        Some(Wait::Blocker)
+    } else {
+        None
     }
 }

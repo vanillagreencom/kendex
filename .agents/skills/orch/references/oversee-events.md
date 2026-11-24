@@ -438,9 +438,9 @@ A `running` record whose window is gone takes § `window-gone` instead.
 The fields:
 
 - `lane=` is the record's status: `running`, `stopped` or `parked`.
-- `waits=` is `merge`, `owner`, `blocker`, `nothing` or `unread`.
+- `waits=` is `merge`, `owner`, `blocker`, `nothing`, `unread` (the record's wait did not parse) or `unknown` (no recorded wait, and no tracker read answered for the item's blockers).
 - `stop=` and `why=` appear where the provider's list or its notice names the stop. `stop=unreadable why=unreadable` is a stop the provider could not read back.
-- `tracker=unread` appears where no tracker read answered for the item: a `running` record's GitHub-tracked item, an item outside the team, or any item before the tracker duty's first read of the team's open items.
+- `tracker=unread` appears where the heartbeat holds no tracker answer for the item: a `running` record whose item is GitHub-tracked or not among the team's open items, every item before the tracker duty's first read of the team's open items, and every item on a fleet with no `linear_team`.
 
 The notice counts only from an `owner-note`, or a `peer-note` that is not another repository's overseer. That note's own line needs nothing beyond this line. A `data-note` never stops a lane.
 

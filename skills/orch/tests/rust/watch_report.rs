@@ -1147,12 +1147,13 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         ),
     ]);
     let mut hosts = std::collections::BTreeMap::new();
-    for name in ["provider-x", "provider-y", "provider-z"] {
+    for name in ["provider-w", "provider-x", "provider-y", "provider-z"] {
         hosts.insert(name, named_host(world.path(), name));
     }
     std::fs::write(
         world.path().join("lane-host.json"),
         json!({
+            "provider-w capabilities": {"exit": 1, "stderr": "lane-host-fixture: host gone\n"},
             "provider-x capabilities": line("verb"),
             "provider-y capabilities": line("none"),
             "provider-z capabilities": line("verb"),
@@ -1337,7 +1338,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             json!({}),
             ItemRead::Unread,
             None,
-            Some("lane=stopped waits=unread tracker=unread"),
+            Some("lane=stopped waits=unknown tracker=unread"),
         ),
         // The list's stop stands only while the sandbox is stopped: it ends
         // the current session whenever it came.
@@ -1375,6 +1376,16 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             None,
             None,
         ),
+        // An item a read answered ended asks nothing of its host, here one
+        // that is gone.
+        (
+            "KEN-26",
+            "stopped",
+            json!({"host": "provider-w"}),
+            ItemRead::Terminal(Completed),
+            None,
+            None,
+        ),
         // A list that failed leaves the notice's stop.
         (
             "KEN-25",
@@ -1403,7 +1414,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             ItemRead::Unread,
             stop("2026-10-02T00:00:00Z"),
             Some(
-                "lane=running waits=unread stop=2026-10-02T00:00:00Z why=harness-ended tracker=unread",
+                "lane=running waits=unknown stop=2026-10-02T00:00:00Z why=harness-ended tracker=unread",
             ),
         ),
     ];
@@ -1468,7 +1479,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         since: None,
         repos: Vec::new(),
         gh: world.path().join("gh"),
-        shared,
+        shared: shared.clone(),
         verifying: Lines::default(),
         locking: Locking::FLOCK,
         nonce: 7,
@@ -1511,6 +1522,44 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         !lines[heartbeat..]
             .iter()
             .any(|l| l.starts_with("EVENT lane-ended ")),
+        "{lines:?}"
+    );
+    // Before any team read, and on a fleet with no `linear_team`, the
+    // terminal reads alone answer: a stopped record read open is named, and
+    // a running record no read answers for is named unread.
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "lanes": [
+        {"item": "KEN-30", "status": "stopped", "window": "@KEN-30", "session_since": SINCE},
+        {"item": "KEN-31", "status": "running", "window": "@KEN-31", "session_since": SINCE},
+    ]}));
+    {
+        let mut latest = shared.lock().unwrap();
+        latest.tracker = None;
+        latest.terminal = [("KEN-30".to_owned(), Open)].into_iter().collect();
+    }
+    baseline.apply(watch::Change::Set {
+        kind: STOP_ROW.to_owned(),
+        identity: "KEN-31".to_owned(),
+        value: "2026-10-02T00:00:00Z|harness-ended".to_owned(),
+    });
+    let produced = pass(
+        Duty::Heartbeat,
+        &mut body,
+        &mut baseline,
+        &clock,
+        clock.wall_secs(),
+    )
+    .unwrap();
+    let lines = rendered(&produced);
+    let heartbeat = lines
+        .iter()
+        .position(|l| l.starts_with("EVENT heartbeat "))
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    assert_eq!(
+        lines[..heartbeat],
+        [
+            "EVENT lane-ended KEN-30 lane=stopped waits=nothing",
+            "EVENT lane-ended KEN-31 lane=running waits=unknown stop=2026-10-02T00:00:00Z why=harness-ended tracker=unread",
+        ],
         "{lines:?}"
     );
 }
