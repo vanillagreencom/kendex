@@ -193,22 +193,51 @@ SH
   fi
 done <<<"$CLAUDE_ROWS"
 
-# A hosted lane inherits only an OAuth token. The listed homes give the real
-# picker no stored login, so its keyed refusal must describe the session login.
-build claude-token ps:none current:codex models:claude+codex+my-model count:1 \
-  bin:claude orch:installed tier:class cmd:codex=codex cmd:my-model=extra model:my-model=deepseek extra:parse
-H="$ROW/home"
-USAGE="$ROW/usage"
-mkdir -p "$H/.firstclaude" "$H/.secondclaude" "$USAGE" "$PROJ/.agents/skills"
-printf '[env]\nAGENT_RUNTIME_ACCOUNT_DIRS = "%s:%s"\n' "$H/.firstclaude" "$H/.secondclaude" > "$PROJ/kendex.settings.toml"
-ln -s "$SKILL_DIR/../agent-runtime" "$PROJ/.agents/skills/agent-runtime"
-ln -s "$USAGE_CURL" "$ROW/bin/curl"
-W_ENV+=("CLAUDE_CODE_OAUTH_TOKEN=fixture-ambient-claude-login" "USAGE_FIXTURE_DIR=$USAGE"
-  "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
-got="$(run review)"
-assert_eq "${got%% *}:$(count claude):$(count extra)" rc=0:0:1 'an unjudged token login skips Claude and the next reviewer runs'
-assert_eq "$(sed -n 's/^agent-runtime: account-//p' "$ROW/stderr")" \
-  'unjudged harness=claude exit=1 cause=claude-oauth-token-room-unmeasured' 'the room refusal identifies the inherited Claude token as unmeasured'
+# Fleet's login-shell exports give the inherited token an account identity
+# even without a config directory or on-disk credentials for that login.
+# label|measured account|host verdict|headroom|host max|local max|excluded alias|claude:extra calls|picker stderr
+TOKEN_UNJUDGED='unjudged harness=claude exit=1 cause=claude-oauth-token-room-unmeasured'
+TOKEN_ROWS="
+the inherited token's room reading launches Claude|firstclaude|room|10.5|95|90||1:0|
+an excluded token's matching room reading leaves Claude unavailable|firstclaude|room|10.5|95|90|firstclaude|0:1|excluded harness=claude exit=3
+the host's room reaches the stricter local ceiling|firstclaude|room|10|95|90||0:1|walled harness=claude exit=3
+a host wall refuses above its ceiling even with a looser local ceiling|firstclaude|walled|4|95|100||0:1|walled harness=claude exit=3
+an unmeasured host reading refuses Claude|firstclaude|unmeasured|null|95|95||0:1|unmeasured harness=claude exit=5
+a different account's reading leaves the inherited token unjudged|secondclaude|room|50|95|95||0:1|$TOKEN_UNJUDGED
+the token alone leaves its room unjudged|-|-|-|-|95||0:1|$TOKEN_UNJUDGED
+"
+token_row=0
+while IFS='|' read -r label account verdict headroom host_max local_max excluded calls diagnostic; do
+  [[ -n "$label" ]] || continue
+  token_row=$((token_row + 1))
+  build "claude-token-$token_row" ps:none current:codex models:claude+codex+my-model count:1 \
+    bin:claude orch:installed tier:class cmd:codex=codex cmd:my-model=extra model:my-model=deepseek claude:parse extra:parse
+  H="$ROW/home"
+  mkdir -p "$H/.firstclaude" "$H/.secondclaude" "$PROJ/.agents/skills"
+  printf '[env]\nAGENT_RUNTIME_ACCOUNT_DIRS = "%s:%s"\n' "$H/.firstclaude" "$H/.secondclaude" > "$PROJ/kendex.settings.toml"
+  ln -s "$SKILL_DIR/../agent-runtime" "$PROJ/.agents/skills/agent-runtime"
+  mv "$ROW/bin/lane-claude" "$ROW/bin/claude-response"
+  cat > "$ROW/bin/lane-claude" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${CLAUDE_CODE_OAUTH_TOKEN:-}" == fixture-ambient-claude-login ]]
+exec "${0%/*}/claude-response"
+SH
+  chmod +x "$ROW/bin/lane-claude"
+  W_ENV+=("CLAUDE_CODE_OAUTH_TOKEN=fixture-ambient-claude-login" "CLAUDE_TOKEN_FIRSTCLAUDE=fixture-ambient-claude-login"
+    "CLAUDE_TOKEN_SECONDCLAUDE=fixture-other-claude-login" "AGENT_RUNTIME_ACCOUNT_MAX_PCT=$local_max"
+    "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  [[ -z "$excluded" ]] || W_ENV+=("AGENT_RUNTIME_ACCOUNT_EXCLUDE=$excluded")
+  if [[ "$account" != - ]]; then
+    reading="$(jq -cn --arg account "$account" --arg verdict "$verdict" --argjson headroom "$headroom" --argjson max "$host_max" \
+      '{account:$account, verdict:$verdict, headroom_pct:$headroom, max_pct:$max,
+        binding_bucket:(if $headroom == null then null else "weekly" end), binding_resets_at:null, read_at:"2026-11-24T15:37:00Z"}')"
+    W_ENV+=("AGENT_RUNTIME_CLAUDE_TOKEN_ROOM=$reading")
+  fi
+  got="$(run review)"
+  assert_eq "${got%% *}:$(count claude):$(count extra)" "rc=0:$calls" "$label: review invokes the expected CLI"
+  assert_eq "$(sed -n 's/^agent-runtime: account-//p' "$ROW/stderr")" "$diagnostic" "$label: picker verdict"
+done <<<"$TOKEN_ROWS"
 
 # The stock Copilot entries' default room check with the real chooser, from a
 # Claude session on a consumer roster naming them: the pool AGENT_RUNTIME_COPILOT_POOL states

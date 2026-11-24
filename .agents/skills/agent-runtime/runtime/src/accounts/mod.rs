@@ -70,7 +70,7 @@ pub mod usage;
 pub mod walk;
 pub mod wall;
 
-pub use listing::{Listing, Provider};
+pub use listing::{Listing, Provider, excluded};
 pub use renewal::step as renewal_step;
 
 /// The start-counter tag every read of this judge is counted under.
@@ -1004,7 +1004,7 @@ impl PickRequest {
     }
 
     /// The bound in percent used a request names, where it names one.
-    fn bound(&self) -> Option<u32> {
+    pub fn bound(&self) -> Option<u32> {
         self.max_pct.or(self.min_headroom_pct.map(|t| 100 - t))
     }
 
@@ -1387,7 +1387,7 @@ fn projection(
 }
 
 /// `wall_verdict($max)` over one percentage: room, walled, or unmeasured.
-fn wall_verdict(wall: Option<f64>, max: f64) -> &'static str {
+pub fn wall_verdict(wall: Option<f64>, max: f64) -> &'static str {
     match wall {
         None => "unmeasured",
         Some(w) if w < max => "room",

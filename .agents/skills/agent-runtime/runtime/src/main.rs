@@ -9,6 +9,7 @@
 // Every reading, close and stop outcome is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
+use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -703,7 +704,7 @@ enum AccountsOp {
         /// Print the launch prefix, `VAR=<config dir>`, and exit by the
         /// answer's exit in place of the reply: the room check a consumer's
         /// `SECOND_OPINION_<NAME>_ROOM_CMD` runs. An inherited Claude OAuth
-        /// token leaves room unjudged and exits 1.
+        /// token uses the matching host room reading and needs no prefix.
         #[arg(long)]
         env: bool,
     },
@@ -894,6 +895,52 @@ fn counted_worker_file(file: &Path) -> Result<()> {
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ClaudeTokenVerdict {
+    Room,
+    Walled,
+    Unmeasured,
+}
+
+#[derive(Deserialize)]
+struct ClaudeTokenReading {
+    account: String,
+    verdict: ClaudeTokenVerdict,
+    headroom_pct: Option<f64>,
+    max_pct: u32,
+}
+
+fn claude_token_reading(token: &OsStr) -> Option<ClaudeTokenReading> {
+    let reading = std::env::var("AGENT_RUNTIME_CLAUDE_TOKEN_ROOM").ok()?;
+    let reading: ClaudeTokenReading = serde_json::from_str(&reading).ok()?;
+    // Fleet exports CLAUDE_TOKEN_<ACCOUNT> for each sandbox login. Its
+    // attached account's token may have no local config directory.
+    if !settings::account_name_valid(&reading.account)
+        || std::env::var_os(format!(
+            "CLAUDE_TOKEN_{}",
+            reading.account.to_ascii_uppercase()
+        ))
+        .as_deref()
+            != Some(token)
+        || reading.max_pct > 100
+    {
+        return None;
+    }
+    Some(reading)
+}
+
+fn account_env_refusal(harness: Harness, answer: &str, exit: i32, cause: Option<&str>) -> ! {
+    let cause = cause
+        .map(|cause| format!(" cause={cause}"))
+        .unwrap_or_default();
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "agent-runtime: account-{answer} harness={harness} exit={exit}{cause}"
+    );
+    std::process::exit(exit);
+}
+
 fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
     let loaded = AccountSettings::load()?;
     loaded.tell_skipped();
@@ -957,25 +1004,51 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
             // home's usage cannot establish the review's room. Setup tokens
             // can only make model requests:
             // https://code.claude.com/docs/en/authentication#generate-a-long-lived-token
-            let unjudged_cause = (text
+            if text
                 && named == Harness::Claude
-                && std::env::var_os(launch::CLAUDE_TOKEN_VAR)
-                    .is_some_and(|token| !token.is_empty()))
-            .then_some("claude-oauth-token-room-unmeasured");
-            let answer = if let Some(cause) = unjudged_cause {
-                accounts::PickAnswer::Unjudged {
-                    cause: cause.to_owned(),
+                && let Some(token) =
+                    std::env::var_os(launch::CLAUDE_TOKEN_VAR).filter(|token| !token.is_empty())
+            {
+                let Some(reading) = claude_token_reading(&token) else {
+                    account_env_refusal(
+                        named,
+                        "unjudged",
+                        1,
+                        Some("claude-oauth-token-room-unmeasured"),
+                    );
+                };
+                let settings = loaded.accounts.get()?;
+                if accounts::excluded(&settings, &reading.account, "") {
+                    account_env_refusal(named, "excluded", 3, None);
                 }
-            } else {
-                accounts::here::pick(
-                    &env,
-                    &loaded.project,
-                    record.as_deref(),
-                    &request,
-                    admit_unbilled.as_deref(),
-                    now,
-                )?
-            };
+                let verdict = match reading.verdict {
+                    ClaudeTokenVerdict::Room => {
+                        let max_pct = request.bound().unwrap_or(settings.max_pct);
+                        accounts::wall_verdict(
+                            reading
+                                .headroom_pct
+                                .filter(|pct| (0.0..=100.0).contains(pct))
+                                .map(|pct| 100.0 - pct),
+                            f64::from(max_pct.min(reading.max_pct)),
+                        )
+                    }
+                    ClaudeTokenVerdict::Walled => "walled",
+                    ClaudeTokenVerdict::Unmeasured => "unmeasured",
+                };
+                match verdict {
+                    "room" => std::process::exit(0),
+                    "walled" => account_env_refusal(named, verdict, 3, None),
+                    _ => account_env_refusal(named, verdict, 5, None),
+                }
+            }
+            let answer = accounts::here::pick(
+                &env,
+                &loaded.project,
+                record.as_deref(),
+                &request,
+                admit_unbilled.as_deref(),
+                now,
+            )?;
             if text {
                 // The text form a room check reads: the variable the harness
                 // launches its account under and the directory, on stdout at
@@ -990,15 +1063,11 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                     );
                 } else {
                     let reply = answer.reply();
-                    let cause_field = unjudged_cause
-                        .map(|cause| format!(" cause={cause}"))
-                        .unwrap_or_default();
-                    let _ = writeln!(
-                        std::io::stderr().lock(),
-                        "agent-runtime: account-{} harness={} exit={}{cause_field}",
+                    account_env_refusal(
+                        named,
                         reply["answer"].as_str().unwrap_or("unjudged"),
-                        request.harness,
-                        answer.exit()
+                        answer.exit(),
+                        None,
                     );
                 }
                 std::process::exit(answer.exit());
