@@ -52,14 +52,14 @@ def mailbox_projection(home):
 # in TRACKER_DATABASE: {"issues": {IDENTIFIER: [comment rows]}, "assigned":
 # [the owner's labelled view]}. A .mode file beside it fails, truncates or
 # omits the assigned view. Each request appends its operation to a .log file
-# beside it and each comment filter to .comment-ids. Past
+# beside it and each filtered comment request to .comment-ids. Past
 # TRACKER_REQUEST_LIMIT requests, the tracker refuses. A
 # create appends its input and Authorization header to a .writes file and,
 # while a .create file lists outcomes, takes the first: "lost" stores the
 # comment and answers HTTP 500, "failed" answers 500 alone. As Linear keeps a
 # comment id unique, a create naming a stored id is refused.
 TRACKER_API = r'''
-import json, os, sys
+import json, os, re, sys
 from pathlib import Path
 config = sys.stdin.read()
 payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if line.startswith('data = '))))
@@ -145,11 +145,17 @@ elif 'ListComments' in query:
     data = {'issue': issue(variables['issueId'], comments=comments(variables['issueId']))}
 elif operation == 'BulkGetComments':
     ids = variables['filter']['id']['in']
+    cursor = variables.get('after') if re.search(r'\bafter\s*:\s*\$after\b', query) else None
     with path.with_suffix('.comment-ids').open('a') as log:
-        log.write(json.dumps(ids) + '\n')
+        log.write(json.dumps({'after': cursor, 'ids': ids}) + '\n')
     selected = set(ids)
-    data = {'comments': connection([comment(row) for rows in database['issues'].values()
-                                    for row in rows if row['id'] in selected])}
+    matches = [row for rows in database['issues'].values() for row in rows if row['id'] in selected]
+    offset = int(cursor or 0)
+    end = offset + variables['first']
+    page = connection([comment(row) for row in matches[offset:end]])
+    if end < len(matches):
+        page['pageInfo'] = {'hasNextPage': True, 'endCursor': str(end)}
+    data = {'comments': page}
 elif 'IssueRefs' in query:
     # Linear's page of 50, the size the reader asks for.
     refs = variables['filter']['id']['in']
@@ -587,13 +593,6 @@ class OwnerAsksContract(unittest.TestCase):
                  "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='trailing\\n')"),
                 ("jarvis/scripts/lib/owner_asks.py", 'or link is not None and not http(link["url"]))', 'or False)',
                  "OwnerAsksContract.test_mailbox_ask_links_are_its_tracker_mirror_or_null", "(link='not-http')"),
-                # A tracker read per mirrored comment, each spending the call's
-                # one deadline in turn.
-                ("jarvis/scripts/lib/owner_asks.py",
-                 'return self.caller("linear", "linear.sh", ["comments", "bulk-get", *comment_ids])',
-                 'return {key: value for comment_id in comment_ids for key, value in '
-                 'self.caller("linear", "linear.sh", ["comments", "bulk-get", comment_id]).items()}',
-                 "PublicOwnerAsks.test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget", "(view='active')"),
                 # One chain waits for a worker until another chain ends.
                 ("jarvis/scripts/lib/owner_asks.py", "max_workers=1 + len(targets)", "max_workers=2",
                  "OwnerAsksContract.test_tracker_and_destinations_are_read_side_by_side", None),
@@ -1191,19 +1190,23 @@ sys.exit(result.returncode)
     def test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget(self):
         # The main home's tracker as read on 2026-11-22: posted owner asks on
         # 171 issues in the 30 days before and 22 open owner-gated items, here
-        # through four overseer mailboxes. A whole `linear.sh issues get` took
+        # through four overseer mailboxes. Extend the posted workload to one
+        # more than Linear's largest page (250, lib/pages.sh). A whole `linear.sh issues get` took
         # 0.42 s on that home, so this tracker answers the requests 14 s holds
         # at that cost and refuses the next one. The list runs with a deadline
         # no CPU load reaches: the request count, not this runner's clock,
         # decides the claim.
-        posted, assigned, mailboxes = 171, 22, 4
+        comment_page_size, assigned, mailboxes = 250, 22, 4
+        posted = comment_page_size + 1
         limit = int(owner_asks.CALL_SECONDS / 0.42)
         (self.home / "kendex.settings.toml").write_text(
             '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
         requests = {"OWN-%d" % n: [request_comment("waiting-%d" % n, "https://linear.app/example/profiles/owner Waiting %d" % n)]
                     for n in range(assigned)}
         issues = ["ASK-%d" % n for n in range(posted)]
-        mirrors = {issue: [request_comment("mirror-" + issue, "Posted ask on " + issue)] for issue in issues}
+        continuation_issue = issues[0]
+        mirrors = {issue: [request_comment("mirror-" + issue, "Posted ask on " + issue)]
+                   for issue in [*issues[1:], continuation_issue]}
         for issue in issues[:mailboxes]:
             mirrors[issue][:0] = [request_comment(f"unrelated-{issue}-{n}") for n in range(75)]
         log = self.tracker_api([], dict(requests, **mirrors), assigned=list(requests)).with_suffix(".log")
@@ -1219,8 +1222,9 @@ sys.exit(result.returncode)
             stem = template.rsplit("-", 1)[0]
             rows = []
             for issue in issues[number::mailboxes]:
-                # Older than the tracker rows, so the first page holds asks.
-                ask = dict(envelope, id="%s-%d" % (stem, len(rows) // 2 + 1), at="2026-10-31T00:00:00Z",
+                # The continuation mirror belongs to the earliest visible ask.
+                at = "2026-10-30T00:00:00Z" if issue == continuation_issue else "2026-10-31T00:00:00Z"
+                ask = dict(envelope, id="%s-%d" % (stem, len(rows) // 2 + 1), at=at,
                            issue=issue, text="Asked on " + issue)
                 rows += [ask, {"id": ask["id"] + "-tracker", "kind": "tracker-posted", "at": ask["at"], "from": ask["from"],
                                "re": ask["id"], "issue": issue, "tracker_label": "owner-waiting",
@@ -1241,16 +1245,19 @@ sys.exit(result.returncode)
                 except owner_asks.Unavailable as error:
                     self.fail("unavailable after %d tracker requests: %s" % (len(log.read_text().splitlines()), error))
                 operations = log.read_text().splitlines()
-                # Each collect asks for all mirror ids once, with no reads of their issues.
                 self.assertLessEqual(len(operations), limit)
-                self.assertEqual([sorted(json.loads(line)) for line in comment_reads.read_text().splitlines()],
-                                 [expected_ids, expected_ids])
+                reads = [json.loads(line) for line in comment_reads.read_text().splitlines()]
+                self.assertEqual([read['after'] for read in reads], [None, str(comment_page_size)] * 2)
+                for read in reads:
+                    self.assertEqual(sorted(read['ids']), expected_ids)
                 self.assertEqual([operation for operation in operations if operation.startswith("IssueRefs")],
                                  ["IssueRefs OWN"] * (2 * -(-assigned // 50)))
                 self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
                 self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
                 self.assertEqual(bool(page["rows"]), view == "active")
                 # Each ask links the mirror comment on its own issue.
+                if view == "active":
+                    self.assertEqual(page["rows"][0]["what"], "Asked on " + continuation_issue)
                 self.assertEqual({row["what"]: row["link"]["url"] for row in page["rows"]},
                                  {row["what"]: request_comment("mirror-" + row["what"].split()[-1])["url"]
                                   for row in page["rows"]})
