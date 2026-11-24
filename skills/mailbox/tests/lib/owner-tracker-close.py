@@ -1,4 +1,8 @@
-"""Observe owner ask and close writes against a refusing, stateful tracker."""
+"""Observe owner ask and close writes against a refusing, stateful tracker.
+
+A comment create the tracker accepts runs the real linear package against a
+fake Linear endpoint, so the stored comment is the body that package sends.
+"""
 
 import json
 import os
@@ -9,14 +13,20 @@ import sys
 import tempfile
 
 
+REPO = Path(__file__).resolve().parents[4]
+# What the linear package prints for a delete Linear answers success:false.
+DELETE_REFUSED = {"success": False, "identifier": None, "url": None, "data": {"success": False}}
+
 TRACKER = r'''#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 root = Path(os.environ["TRACKER_CASE"])
 args = sys.argv[1:]
+DELETE_REFUSED = json.loads(os.environ["TRACKER_DELETE_REFUSED"])
 state = root / "item.json"
 item = json.loads(state.read_text())
 with (root / "calls.jsonl").open("a") as out:
@@ -53,9 +63,40 @@ elif args[:2] == ["comments", "create"]:
             sys.exit(0)
         print("tracker: refused=comment", file=sys.stderr)
         sys.exit(1)
-    comments.append(Path(args[args.index("--body-file") + 1]).read_text())
+    sent = subprocess.run([os.environ["TRACKER_BASH"], os.environ["TRACKER_LINEAR"], *args],
+                          capture_output=True, text=True,
+                          env={"PATH": os.environ["TRACKER_CURL_DIR"] + os.pathsep + os.environ["PATH"],
+                               "HOME": str(root), "TRACKER_CASE": str(root),
+                               "LINEAR_API_KEY_OVERRIDE": "stub", "KENDEX_USER_EMAIL": "",
+                               "LINEAR_REQUIRE_REACH": ""})
+    sys.stdout.write(sent.stdout)
+    sys.stderr.write(sent.stderr)
+    sys.exit(sent.returncode)
+elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrackerComment("):
+    if row == "mention-unread":
+        print("tracker: refused=mention-read", file=sys.stderr)
+        sys.exit(1)
+    # Only the saved comment exists: any other id reads as Linear's null.
+    if json.loads(args[args.index("--variables") + 1]) != {"id": "question-id"}:
+        print(json.dumps({"comment": None}))
+        sys.exit(0)
+    # Linear's bodyData for the saved comment: the owner's mention is a
+    # suggestion_userMentions node carrying the owner's user id.
+    node = {"type": "suggestion_userMentions", "attrs": {"id": "owner", "label": "owner.person"}}
+    if row in ("mention-missing", "delete-refused"):
+        node = {"type": "text", "text": comments[-1].splitlines()[0]}
+    elif row == "mention-other":
+        node = {"type": "suggestion_userMentions", "attrs": {"id": "someone-else", "label": "someone.else"}}
+    doc = {"type": "doc", "content": [{"type": "paragraph", "content": [node]}]}
+    print(json.dumps({"comment": {"bodyData": json.dumps(doc)}}))
+elif args[:3] == ["comments", "delete", "question-id"]:
+    # The linear package exits 0 on a refused delete and prints the answer.
+    if row == "delete-refused":
+        print(json.dumps(DELETE_REFUSED))
+        sys.exit(0)
+    comments.pop()
     comments_path.write_text(json.dumps(comments))
-    print(json.dumps({"success": True, "data": {"success": True, "comment": {"id": "question-id"}}}))
+    print(json.dumps({"success": True, "identifier": None, "url": None, "data": {"success": True}}))
 elif args[:2] == ["issues", "update"]:
     if row == "label-failed" and "--labels" in args and not (root / "closing").exists():
         print("tracker: refused=write", file=sys.stderr)
@@ -80,17 +121,50 @@ else:
     sys.exit(1)
 '''
 
+# Linear's GraphQL endpoint as the real package reaches it through curl: a
+# comment create stores the body it was sent.
+CURL = r'''#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+data = next(line[len("data = "):] for line in sys.stdin.read().splitlines() if line.startswith("data = "))
+payload = json.loads(json.loads(data))
+if not payload["query"].lstrip().startswith("mutation CreateComment"):
+    print(json.dumps({"errors": [{"message": "unexpected fixture query"}]}) + "___HTTP_CODE___200", end="")
+    sys.exit(0)
+comments_path = Path(os.environ["TRACKER_CASE"]) / "comments.json"
+body = payload["variables"]["input"]["body"]
+comments_path.write_text(json.dumps(json.loads(comments_path.read_text()) + [body]))
+comment = {"id": "question-id", "body": body, "createdAt": "2026-11-22T00:00:00Z",
+           "updatedAt": "2026-11-22T00:00:00Z", "user": {"name": "App", "email": "app@example.test"},
+           "issue": {"identifier": "KEN-7", "updatedAt": "2026-11-22T00:00:00Z"}}
+print(json.dumps({"data": {"commentCreate": {"success": True, "comment": comment}}}) + "___HTTP_CODE___200", end="")
+'''
+
 
 def run(source, scratch, bash):
     facts = {"unposted": True, "notice": True, "posted": True, "close_untracked": True,
              "retained_error": True, "comments": True, "rollback_owned": True,
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
-             "rollback_labels": True, "comment_form": True}
+             "rollback_labels": True, "comment_form": True, "mention": True,
+             "comment_delete": True}
+    # One copy of the real linear scripts, with no orch beside it, so its
+    # attribution line reads unknown rather than this checkout's session.
+    linear = Path(tempfile.mkdtemp(dir=scratch)) / "linear"
+    shutil.copytree(REPO / "skills/linear/scripts", linear / "scripts")
+    curl_dir = linear / "bin"
+    curl_dir.mkdir()
+    (curl_dir / "curl").write_text(CURL)
+    (curl_dir / "curl").chmod(0o755)
     for row, posted in (("label-failed", False), ("comment-failed", False),
                         ("comment-edited", False), ("rollback-read", False),
                         ("rollback-failed", False), ("posted", True), ("edited", True),
                         ("comment-refused", False), ("comment-preexisting", False),
-                        ("comment-label-edit", False)):
+                        ("comment-label-edit", False), ("mention-missing", False),
+                        ("mention-other", False), ("mention-unread", False),
+                        ("delete-refused", False)):
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
             scripts = root / ".agents/skills/mailbox/scripts"
@@ -120,7 +194,9 @@ def run(source, scratch, bash):
             message = root / "question"
             message.write_text("Approve the change?\n")
             env = {"PATH": os.environ["PATH"], "HOME": str(root), "TMPDIR": str(root),
-                   "TRACKER_CASE": str(root), "TRACKER_ROW": row,
+                   "TRACKER_CASE": str(root), "TRACKER_ROW": row, "TRACKER_BASH": bash,
+                   "TRACKER_LINEAR": str(linear / "scripts/linear.sh"), "TRACKER_CURL_DIR": str(curl_dir),
+                   "TRACKER_DELETE_REFUSED": json.dumps(DELETE_REFUSED),
                    "ORCH_OWNER_EMAIL": "owner@example.test", "ORCH_OWNER_ASK_LABEL": "owner-gated"}
             mail = [bash, str(scripts / "lane-mail")]
 
@@ -145,9 +221,14 @@ def run(source, scratch, bash):
                     and any(line.startswith("Reply to this comment") for line in lines)
                     and lines[-1] == "Requested by the " + root.name + " overseer"
                     and ask_id not in after_comments[-1] and "ask=" not in after_comments[-1])
+            elif row == "delete-refused":
+                # A refused delete leaves the question comment the ask could
+                # not take down.
+                facts["comments"] &= after_comments[:1] == previous_comments and len(after_comments) == 2
             else:
                 facts["comments"] &= after_comments == previous_comments
-            if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit"):
+            if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit",
+                       "mention-missing", "mention-other", "mention-unread", "delete-refused"):
                 facts["rollback_owned"] &= original != written and after_ask["description"] == original
                 expected_labels = ["added-later", "skills"] if row == "comment-label-edit" else labels
                 facts["rollback_labels"] &= after_ask["labels"] == expected_labels
@@ -157,6 +238,33 @@ def run(source, scratch, bash):
                         and "cause=comment" in ask.stderr and response_file.is_file()
                         and json.loads(response_file.read_text()) == {"success": False,
                             "data": {"success": False, "comment": None}})
+                if row.startswith("mention-"):
+                    # A saved comment that does not show the owner's mention
+                    # is refused by its key, recorded failed and taken down.
+                    cause = "mention-read" if row == "mention-unread" else "mention"
+                    keyed = "lane-mail: tracker-unwritten issue=KEN-7 cause=" + cause
+                    diagnostics = ask.stderr.splitlines()
+                    if row != "mention-unread":
+                        refused = keyed in diagnostics
+                    else:
+                        retained = [Path(line.split("error-file=", 1)[1]) for line in diagnostics
+                                    if line.startswith(keyed + " error-file=")]
+                        refused = (len(retained) == 1
+                                   and retained[0].read_bytes() == b"tracker: refused=mention-read\n")
+                    box = (root / "tmp/lane-mail/overseer/to-overseer.jsonl").read_text().splitlines()
+                    facts["mention"] &= (refused and pending["tracker_posted"] is False
+                        and pending.get("tracker_cause") == cause
+                        and not any(json.loads(line).get("kind") == "tracker-posted" for line in box))
+                if row == "delete-refused":
+                    # The refused delete reports by its key and keeps the
+                    # answer the tracker gave.
+                    keyed = "lane-mail: tracker-unwritten issue=KEN-7 cause=comment-delete error-file="
+                    retained = [Path(line[len(keyed):]) for line in ask.stderr.splitlines()
+                                if line.startswith(keyed)]
+                    facts["comment_delete"] &= (len(retained) == 1
+                        and json.loads(retained[0].read_text()) == DELETE_REFUSED
+                        and "lane-mail: tracker-unwritten issue=KEN-7 cause=mention" in ask.stderr.splitlines()
+                        and pending["tracker_posted"] is False)
             elif row == "comment-edited":
                 facts["rollback_unowned"] &= (after_ask["description"] == later
                     and after_ask["labels"] == ["owner-gated", "skills"]

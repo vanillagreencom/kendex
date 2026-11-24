@@ -42,6 +42,10 @@ case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\n' ;;
   users:list) printf '[{"id":"person","name":"Owner Person","email":"owner@example.test","display_name":"owner"}]\n' ;;
   graphql:--query)
+    if [[ "$3" == "query OwnerTrackerComment("* ]]; then
+      printf '%s\n' '{"comment":{"bodyData":"{\"type\":\"doc\",\"content\":[{\"type\":\"suggestion_userMentions\",\"attrs\":{\"id\":\"person\"}}]}"}}'
+      exit 0
+    fi
     [[ "$3" == "query OwnerTracker("* ]] || exit 1
     if [[ "$TRACKER_ROW" == prepare ]]; then description=5; else description='"Item body"'; fi
     printf '{"issue":{"description":%s,"assignee":null,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"skills"}]}}}\n' "$description" ;;

@@ -155,6 +155,12 @@ while IFS='|' read -r label body rest; do
   assert_eq "$label" "rc=$RC $(sent_body)" "rc=0 $CODEX_LINE"$'\n\n'"$(printf '%b' "$rest")"$'\n|'
 done <<<"$BODIES"
 
+# An owner ask opts out, so its first line is the owner's mention.
+: >"$COMMENTS"
+run comments create KEN-1 --no-attribution --body "$(printf 'https://linear.app/x/profiles/owner\n\nApprove?')"
+assert_eq "an opted-out body is sent as supplied, opening with its first line" "rc=$RC $(sent_body)" \
+  "rc=0 https://linear.app/x/profiles/owner"$'\n\n'"Approve?"$'\n|'
+
 : >"$COMMENTS"
 run comments create KEN-1 --parent 5f1e2d3c-4b5a-4968-8776-655443322110 --body "A reply"
 assert_eq "a reply keeps its parent under the line" \

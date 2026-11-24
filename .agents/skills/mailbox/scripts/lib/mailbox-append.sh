@@ -268,9 +268,26 @@ owner_tracker_labels() { # ITEM JSON ADD|REMOVE
     | unique | join(",")' <<<"$1"
 }
 
+# Whether the saved comment mentions the owner: 0 yes, 1 no, 2 unread. Linear
+# keeps a comment's rendered body as ProseMirror JSON in bodyData, a mention of
+# a person as a `suggestion_userMentions` node whose attrs.id is that user's id
+# (read from a live owner-ask comment, HT-2435 f288ba35).
+owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
+  local answer mentioned
+  answer="$("$1" graphql --query 'query OwnerTrackerComment($id: String!) { comment(id: $id) { bodyData } }' \
+    --variables "$(jq -cn --arg id "$2" '{id: $id}')")" || return 2
+  mentioned="$(jq -r --arg owner "$3" '.comment.bodyData | fromjson
+    | any(.. | objects; .type == "suggestion_userMentions" and .attrs.id == $owner)' <<<"$answer")" || return 2
+  case "$mentioned" in
+    true) return 0 ;;
+    false) return 1 ;;
+  esac
+  return 2
+}
+
 owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   local tracker="$1" envelope="$2" work="$3" asker="$4" issue labels current owner description latest owns_description original_description
-  local added_label rollback_labels comment_error comment_id workspace
+  local added_label rollback_labels comment_error comment_id workspace mentioned
   local rollback_label_args=()
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_COMMENT=""
@@ -312,17 +329,40 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   "$tracker" issues update "$issue" --labels "$labels" --description "$description" >"$work/tracker.out" 2>"$work/tracker.err" || {
     OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0;
   }
-  comment_error="$work/tracker-comment.err"
-  if "$tracker" comments create "$issue" --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
-    if comment_id="$(jq -er 'select(.success == true) | .data.comment.id // ""' "$work/tracker.out" 2>"$work/tracker-comment.err")"; then
-      OWNER_TRACKER_POSTED=1
-      OWNER_TRACKER_COMMENT="$comment_id"
-      return 0
-    fi
-    comment_error="$work/tracker.out"
-  fi
   OWNER_TRACKER_CAUSE=comment
-  owner_tracker_unwritten "$issue" comment "$comment_error"
+  comment_error="$work/tracker-comment.err"
+  comment_id=""
+  # No attribution line, so the comment opens with the owner's mention.
+  if "$tracker" comments create "$issue" --no-attribution --body-file "$work/tracker-comment" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
+    if comment_id="$(jq -er 'select(.success == true) | .data.comment.id // ""' "$work/tracker.out" 2>"$work/tracker-comment.err")"; then
+      # The ask is posted only once the saved comment shows the mention that
+      # tells the owner it is there.
+      mentioned=0
+      owner_tracker_mentioned "$tracker" "$comment_id" "$(jq -r '.id' <<<"$owner")" \
+        2>"$work/tracker-mention.err" || mentioned=$?
+      case "$mentioned" in
+        0) OWNER_TRACKER_POSTED=1; OWNER_TRACKER_COMMENT="$comment_id"; return 0 ;;
+        1) OWNER_TRACKER_CAUSE=mention; comment_error="" ;;
+        *) OWNER_TRACKER_CAUSE=mention-read; comment_error="$work/tracker-mention.err" ;;
+      esac
+    else
+      comment_id=""
+      comment_error="$work/tracker.out"
+    fi
+  fi
+  owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
+  # An unposted ask leaves no question comment: the chat carries it, and no
+  # reader follows a reply to a comment the ask does not record.
+  # `comments delete` exits 0 on a refused delete too, so its answer is judged
+  # as the create's is.
+  if [[ -n "$comment_id" ]]; then
+    if "$tracker" comments delete "$comment_id" >"$work/tracker-delete.out" 2>"$work/tracker-delete.err"; then
+      jq -e '.success == true' "$work/tracker-delete.out" >/dev/null 2>&1 ||
+        owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.out"
+    else
+      owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.err"
+    fi
+  fi
   latest="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker-rollback.err")" || {
     owner_tracker_unwritten "$issue" rollback-read "$work/tracker-rollback.err"; return 0;
   }

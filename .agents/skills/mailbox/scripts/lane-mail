@@ -232,6 +232,10 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               --issue requires --do: plain words saying what the
               person does and what evidence closes it. It adds the configured
               Linear assignment, label, opening action line and comment.
+              The comment opens with the owner's mention, and the ask is
+              posted only once the saved comment's mention of the owner
+              reads back; otherwise tracker-unwritten cause=mention, or
+              cause=mention-read, deletes the comment and restores the item.
               With ORCH_OWNER_ASK_LABEL or the owner account
               (ORCH_OWNER_EMAIL, else KENDEX_USER_EMAIL) unset, or the
               settings unreadable, it is refused `item-ask-unconfigured`
