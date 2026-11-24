@@ -592,14 +592,20 @@ class OwnerAsksContract(unittest.TestCase):
                 # The main runs its own full deadline inside the satellite's.
                 ("jarvis/scripts/lib/owner_asks.py", 'JARVIS_OWNER_ASK_BUDGET="$budget" ', "",
                  "PublicOwnerAsks.test_satellite_returns_the_main_answer_given_inside_its_budget", None),
-                # An answer without its delivery identity: a retry after a
+                # A fresh delivery identity on every send: a retry after a
                 # lost acknowledgement appends the answer twice.
-                ("jarvis/scripts/lib/owner_asks.py", '[route["root"], "--re", route["ask"], "--delivery-id", delivery]',
-                 '[route["root"], "--re", route["ask"]]',
+                ("jarvis/scripts/lib/owner_asks.py", 'delivery = "owner-ask-" + key', 'delivery = "owner-ask-" + str(uuid.uuid4())',
                  "PublicOwnerAsks.test_mailbox_answers_land_once_in_the_asks_own_mailbox", "(destination='ssh:fixture')"),
                 # A reply Linear mints its own id for.
-                ("jarvis/scripts/lib/owner_asks.py", '"--id", key, "--body-file"', '"--body-file"',
+                ("jarvis/scripts/lib/owner_asks.py", '"--id", key, "--no-attribution"', '"--no-attribution"',
                  "PublicOwnerAsks.test_tracker_answers_post_once_with_the_main_credential", "(action='reply', create='stored')"),
+                # The owner's text posted under an agent's attribution line.
+                ("jarvis/scripts/lib/owner_asks.py", '"--id", key, "--no-attribution", "--body-file"', '"--id", key, "--body-file"',
+                 "PublicOwnerAsks.test_tracker_answers_post_once_with_the_main_credential", "(action='reply', create='stored')"),
+                # A host shell left running after the bootstrap, which reads
+                # the owner's text that follows the command as script.
+                ("jarvis/scripts/lib/watch.py", 'command = ("exec python3 -I -c "', 'command = ("python3 -I -c "',
+                 "PublicOwnerAsks.test_failed_answer_runs_none_of_its_text", None),
                 # A retry that resends without reading whether the first landed.
                 ("jarvis/scripts/lib/owner_asks.py", "        if retry:\n            read = ", "        if False:\n            read = ",
                  "PublicOwnerAsks.test_tracker_answers_post_once_with_the_main_credential", "(action='reply', create='lost')"),
@@ -1022,8 +1028,10 @@ print(json.dumps(owner._presence('ssh:fixture')))
         return self.run_cli(action, None, payload, "--id", row["id"])
 
     # ssh fixture COMMAND, run here. While SSH_DROP names a file, the next
-    # delivery runs whole and then loses its answer, as a dropped connection
-    # does; SSH_STREAM keeps every byte the main sent.
+    # answer send runs whole and then loses its answer, as a dropped
+    # connection does. While SSH_BREAK names a file, an answer send runs with
+    # a TMPDIR that does not exist, so its mktemp fails before it reads the
+    # text. SSH_STREAM keeps every byte the main sent.
     DROPPING_SSH = r'''
 import os, subprocess, sys
 from pathlib import Path
@@ -1032,9 +1040,13 @@ if len(sys.argv) != 3 or sys.argv[1] != "fixture":
 data = sys.stdin.buffer.read()
 with open(os.environ["SSH_STREAM"], "ab") as stream:
     stream.write(data)
-result = subprocess.run([os.environ["SSH_BASH"], "-c", sys.argv[2]], input=data, capture_output=True)
+answer = b"send --item overseer --root" in data
+env = dict(os.environ)
+if answer and Path(os.environ.get("SSH_BREAK", "/nonexistent")).exists():
+    env["TMPDIR"] = os.environ["SSH_BREAK"] + "/missing"
+result = subprocess.run([os.environ["SSH_BASH"], "-c", sys.argv[2]], input=data, capture_output=True, env=env)
 drop = Path(os.environ["SSH_DROP"])
-if drop.exists() and b"--delivery-id" in data:
+if drop.exists() and answer:
     drop.unlink()
     sys.exit(255)
 sys.stdout.buffer.write(result.stdout)
@@ -1089,6 +1101,31 @@ sys.exit(result.returncode)
         self.assertFalse(writes.exists())
         self.assertNotIn(b"main-linear-key", stream.read_bytes())
 
+    def test_failed_answer_runs_none_of_its_text(self):
+        # A host whose answer send fails before it reads the owner's text,
+        # text that holds shell commands. None of it runs on the host.
+        remote = make_project(self.root / "remote")
+        remote_registry = self.root / "remote-registry"
+        self.register(remote_registry, remote)
+        broken, marker = self.root / "broken", self.root / "text-ran"
+        broken.mkdir()
+        self.env.update(REMOTE_REGISTRY=str(remote_registry), SSH_STREAM=str(self.root / "ssh-stream"),
+                        SSH_DROP=str(self.root / "ssh-drop"), SSH_BREAK=str(broken), SSH_BASH=BASH)
+        self.executable("ssh", "#!" + sys.executable + "\n" + 'import os, sys\n'
+                        'if sys.argv[2:] == ["kendex project list --json"]:\n'
+                        '    sys.stdout.write(open(os.environ["REMOTE_REGISTRY"]).read())\n    sys.exit()\n' + self.DROPPING_SSH)
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
+        self.tracker_api([])
+        self.mail(remote, "ask", "Remote question", "--to", "owner", "--options", "a,b", "--reserved")
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        row, = page["rows"]
+        text = "Ran `touch %s` already\ntouch %s\n$(touch %s)" % (marker, marker, marker)
+        result, answer = self.act_cli("reply", row, "broken-host", text=text)
+        self.assertEqual((result.returncode, answer.get("kind")), (1, "unavailable"), result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual([row for row in self.box(remote, "to-lane") if row["kind"] == "answer"], [])
+
     def test_answer_to_a_closed_ask_adds_nothing(self):
         # A delegate's close that lands between the list and the answer.
         ask = self.mail(self.home, "ask", "Question", "--to", "owner", "--options", "a,b", "--reserved")
@@ -1134,8 +1171,9 @@ sys.exit(result.returncode)
                 replies = [comment for comment in json.loads(database.read_text())["issues"]["KEN-1"]
                            if comment["parent_id"] == original["id"]]
                 self.assertEqual(len(replies), 1)
-                self.assertTrue(replies[0]["body"].rstrip("\n").endswith("Answer " + outcome), replies[0]["body"])
-                self.assertEqual(owner_asks.DONE_CLAIM in replies[0]["body"], action == "done")
+                # The owner's own text, opened by no agent attribution line.
+                text = "Answer " + outcome
+                self.assertEqual(replies[0]["body"].rstrip("\n"), owner_asks.DONE_CLAIM + "\n\n" + text if action == "done" else text)
                 sent = [json.loads(line) for line in writes.read_text().splitlines()]
                 self.assertEqual({(write["input"]["id"], write["input"]["issueId"], write["input"]["parentId"]) for write in sent},
                                  {(replies[0]["id"], "KEN-1-uuid", original["id"])})

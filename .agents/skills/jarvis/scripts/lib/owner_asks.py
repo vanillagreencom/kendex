@@ -408,8 +408,10 @@ class Sources:
         with tempfile.NamedTemporaryFile(mode="w", dir=self.session.path.parent, suffix=".md") as file:
             file.write(body)
             file.flush()
+            # The text is the owner's own, as the mailbox answer's from=owner
+            # says on the other route: no agent attribution line opens it.
             result = self.call(local, None, "linear", "linear.sh", ["comments", "create", route["issueUuid"], "--parent", route["thread"],
-                                                                    "--id", key, "--body-file", file.name])
+                                                                    "--id", key, "--no-attribution", "--body-file", file.name])
         created = json.loads(result.stdout)
         if created["success"] is not True or created["data"]["comment"]["id"] != key:
             raise Unavailable("The tracker did not confirm the reply.")
