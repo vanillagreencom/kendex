@@ -56,7 +56,7 @@ A directed change's run comes back as the item [directed-change.md](directed-cha
 
 | The holder's lane | The launch |
 |---|---|
-| Running or preparing, before its review | Joins it ([lane-directive.md § A joined launch](lane-directive.md#a-joined-launch)) |
+| Running or preparing, before its review | Applies the eligibility rules in [lane-directive.md § A joined launch](lane-directive.md#a-joined-launch) |
 | Running or preparing, in its review | Refuses `launch-overlap` naming the `file` and the `holder` |
 | Stopped, parked or gone | Proceeds and records nothing |
 | Unreadable | Refuses `holder-unreadable` |
