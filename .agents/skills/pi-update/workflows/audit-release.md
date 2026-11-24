@@ -51,7 +51,7 @@ Package suites run on older pinned Pi versions and fake hosts, so a green suite 
   node --input-type=module -e 'import { findPackageJSON } from "node:module"; import { readFileSync } from "node:fs"; import { pathToFileURL } from "node:url"; for (const at of process.argv.slice(1)) console.log(at, JSON.parse(readFileSync(findPackageJSON("@earendil-works/pi-coding-agent", pathToFileURL(at)), "utf8")).version)' <copy>/<entry file> <copy>/<suite directory>/
   ```
 
-- Put each check in `<copy>`'s own test directory, and load the real extension from `<copy>` into a real `createAgentSession` with a controlled provider: a faux provider as in `pi-extensions/pi-hooks/tests/pi-session.ts`, or a stubbed endpoint for a provider an extension registers, as in `pi-extensions/pi-codex-minimal-tools/tests/transcript-context.test.ts`.
+- Put each check in `<copy>`'s own test directory, and load the real extension from `<copy>` into a real `createAgentSession` with a controlled provider: a faux provider as in `pi-extensions/pi-hooks/tests/pi-session.ts`, or a stubbed endpoint for a provider an extension registers, as in `pi-extensions/pi-codex-minimal-tools/tests/codex-request-parity.test.ts`.
 - Pair each check with a regression control that fails on the old behaviour: the check run on a copy of the pre-fix code set up the same way, or a fixture that plants the old behaviour. A check whose control passes proves nothing.
 - Run each touched package's suite in `<copy>` with the command its `test` script runs, less any `npm install` the script runs first: that install puts the package's own pin back (`pi-hooks` has one).
 

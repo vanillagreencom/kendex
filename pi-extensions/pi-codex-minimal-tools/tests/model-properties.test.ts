@@ -19,7 +19,7 @@ for (const row of [
 }
 
 test("reasoning property assertion rejects an ignored mapping", (t) => {
-	rejectsMutation(t, "src/provider-shim.ts", "effort,\n\t\tsummary:", 'effort: "high",\n\t\tsummary:', "tests/model-properties.test.ts", "^reasoning uses model properties:");
+	rejectsMutation(t, "src/provider-shim.ts", "effort,\n\t\t\t\tsummary:", 'effort: "high",\n\t\t\t\tsummary:', "tests/model-properties.test.ts", "^reasoning uses model properties:");
 });
 
 for (const row of [
@@ -34,7 +34,8 @@ for (const row of [
 		globalThis.fetch = async () => sseResponse(`data: ${JSON.stringify(event)}\n\n`);
 		const result = await runCodexProvider({ serviceTier: row.tier }, { id: row.id, cost: { input: 3, output: 5, cacheRead: 1, cacheWrite: 1 } });
 		assert.equal(result.stopReason, "stop");
-		assert.deepEqual(result.usage.cost, { input: row.input, output: row.output, cacheRead: 0, cacheWrite: 0, total: row.input + row.output });
+		const { input, output, cacheRead, cacheWrite, total } = result.usage.cost;
+		assert.deepEqual({ input, output, cacheRead, cacheWrite, total }, { input: row.input, output: row.output, cacheRead: 0, cacheWrite: 0, total: row.input + row.output });
 	});
 }
 

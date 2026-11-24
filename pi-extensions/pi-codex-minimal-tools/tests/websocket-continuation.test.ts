@@ -5,18 +5,23 @@ import { codexWebSocket, providerWorld, runCodexProvider } from "./helpers/provi
 const user = (text: string) => ({ role: "user", content: text });
 
 // The second request continues the first on the same session socket only when
-// its input starts with the first request's input plus the first response.
+// its input starts with the first request's input plus the first response, and
+// the socket is younger than 45 minutes: the server closes it at 60, even mid-response.
 for (const row of [
-	{ name: "an extended transcript sends only the new input", firstUser: "hello", secondUser: "hello", continued: true },
-	{ name: "a changed earlier message sends the full input", firstUser: "hello", secondUser: "hello, edited", continued: false },
+	{ name: "an extended transcript sends only the new input", firstUser: "hello", secondUser: "hello", elapsedMinutes: 0, continued: true },
+	{ name: "a changed earlier message sends the full input", firstUser: "hello", secondUser: "hello, edited", elapsedMinutes: 0, continued: false },
+	{ name: "a 44-minute-old socket is reused", firstUser: "hello", secondUser: "hello", elapsedMinutes: 44, continued: true },
+	{ name: "a 45-minute-old socket is replaced", firstUser: "hello", secondUser: "hello", elapsedMinutes: 45, continued: false },
 ]) {
 	test(`websocket continuation: ${row.name}`, async (t) => {
 		providerWorld(t);
-		t.mock.timers.enable({ apis: ["setTimeout"] });
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 		const socket = codexWebSocket(t);
-		const options = { transport: "websocket-cached", sessionId: `continuation-${row.continued}` };
+		const options = { transport: "websocket-cached", sessionId: `continuation-${row.name}` };
 		const first = await runCodexProvider(options, {}, { messages: [user(row.firstUser)] });
 		assert.equal(first.stopReason, "stop", first.errorMessage);
+		// setTime moves the clock without firing the idle-expiry timer.
+		t.mock.timers.setTime(Date.now() + row.elapsedMinutes * 60_000);
 		const second = await runCodexProvider(options, {}, { messages: [user(row.secondUser), first, user("next")] });
 		assert.equal(second.stopReason, "stop", second.errorMessage);
 

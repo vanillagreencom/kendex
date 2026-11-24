@@ -30,3 +30,19 @@ for (const row of [
 		}
 	});
 }
+
+// Each backoff listens for the request's abort; a finished backoff must stop listening,
+// or repeated retries pile listeners up on a signal the session keeps for the turn.
+test("SSE retries leave no abort listener on the request signal", async (t) => {
+	providerWorld(t);
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	globalThis.fetch = async () => errorResponse(503, { error: { code: "server_error", message: "upstream-unavailable" } });
+	const signal = new AbortController().signal;
+	const added = t.mock.method(signal, "addEventListener");
+	const removed = t.mock.method(signal, "removeEventListener");
+	const result = await finishRetries(t, runCodexProvider({ signal }));
+	assert.equal(result.stopReason, "error");
+	const abortCalls = (calls: typeof added.mock.calls) => calls.filter((call) => call.arguments[0] === "abort").length;
+	assert.ok(abortCalls(added.mock.calls) > 0, "the provider listened for abort");
+	assert.equal(abortCalls(added.mock.calls), abortCalls(removed.mock.calls));
+});

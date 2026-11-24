@@ -30,8 +30,12 @@ import {
 	createGrammarToolInputProperties,
 	convertResponsesMessages,
 	convertResponsesTools,
+	declaredTools,
+	getResponsesToolSupport,
+	isTranscript,
 	processResponsesStream,
-	promptAndTools,
+	resolveRequestTranscript,
+	resolveTranscriptTools,
 	splitDeferredTools,
 } from "./providers/openai-responses-shared.js";
 
@@ -51,6 +55,13 @@ const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reac
 const CODEX_RESPONSE_STATUSES = new Set(["completed", "incomplete", "failed", "cancelled", "queued", "in_progress"]);
 const OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06";
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000;
+// The server closes a socket after 60 minutes, even mid-response. New requests open a
+// fresh socket after 45 minutes, leaving 15 minutes for a long response.
+const SESSION_WEBSOCKET_MAX_AGE_MS = 45 * 60 * 1000;
+// The Responses API rejects max_output_tokens below 16 (earendil-works/pi#6265).
+const MIN_OUTPUT_TOKENS = 16;
+// Fixed reasoning.effort while configuration_update items carry the thinking level.
+const CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium";
 const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
@@ -69,8 +80,18 @@ export async function getEnvApiKeyCompat(
 	return typeof compat.getEnvApiKey === "function" ? compat.getEnvApiKey(provider) : undefined;
 }
 
+/** The User-Agent Pi below 1.4.0 sends. Delete once no supported Pi host is below 1.4.0. */
 export function buildCodexUserAgent(): string {
 	return `pi (${platform()} ${release()}; ${arch()})`;
+}
+
+/**
+ * Codex expects an originator on every request; the User-Agent and any attribution
+ * headers come from Pi's client identity. Model and caller headers override both.
+ */
+function codexIdentityHeaders(model: { provider: string; baseUrl: string }, identity: unknown): Record<string, string> {
+	const getIdentityHeaders = (piAi as { getIdentityHeaders?: (target: { provider: string; baseUrl: string }, identity?: unknown) => Record<string, string> }).getIdentityHeaders;
+	return { originator: "pi", ...(getIdentityHeaders ? getIdentityHeaders(model, identity) : { "User-Agent": buildCodexUserAgent() }) };
 }
 
 /** Compresses on the libuv thread pool; null sends the body uncompressed. */
@@ -137,6 +158,7 @@ interface WebSocketConstructorLike {
 interface SessionWebSocketCacheEntry {
 	socket: WebSocketLike;
 	busy: boolean;
+	createdAt: number;
 	idleTimer?: ReturnType<typeof setTimeout>;
 	continuation?: CachedWebSocketContinuationState;
 }
@@ -160,9 +182,9 @@ interface ResponsesBody {
 	model: string;
 	store: boolean;
 	stream: boolean;
-	instructions?: string;
 	previous_response_id?: string;
 	input: unknown[];
+	max_output_tokens?: number;
 	text: { verbosity: string };
 	include: string[];
 	prompt_cache_key?: string;
@@ -420,12 +442,14 @@ export function clampOpenAIPromptCacheKey(key: string | undefined): string | und
 }
 
 function buildBaseCodexHeaders(
+	defaultHeaders: Record<string, string>,
 	modelHeaders: Record<string, string | null | undefined> | undefined,
 	additionalHeaders: Record<string, string | null | undefined> | undefined,
 	accountId: string,
 	token: string,
 ): Headers {
-	const headers = new Headers();
+	// Defaults first, so model and caller headers override them.
+	const headers = new Headers(defaultHeaders);
 	for (const source of [modelHeaders, additionalHeaders]) {
 		for (const [key, value] of Object.entries(source ?? {})) {
 			if (value == null) headers.delete(key);
@@ -435,25 +459,24 @@ function buildBaseCodexHeaders(
 
 	headers.set("Authorization", `Bearer ${token}`);
 	headers.set("chatgpt-account-id", accountId);
-	headers.set("originator", "pi");
-	headers.set("User-Agent", buildCodexUserAgent());
 	return headers;
 }
 
 function buildSSEHeaders(
+	defaultHeaders: Record<string, string>,
 	modelHeaders: Record<string, string | null | undefined> | undefined,
 	additionalHeaders: Record<string, string | null | undefined> | undefined,
 	accountId: string,
 	token: string,
 	sessionId: string | undefined,
 ): Headers {
-	const headers = buildBaseCodexHeaders(modelHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, modelHeaders, additionalHeaders, accountId, token);
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
 
 	if (sessionId) {
-		headers.set("session_id", sessionId);
+		headers.set("session-id", sessionId);
 		headers.set("x-client-request-id", sessionId);
 	}
 
@@ -461,20 +484,21 @@ function buildSSEHeaders(
 }
 
 function buildWebSocketHeaders(
+	defaultHeaders: Record<string, string>,
 	modelHeaders: Record<string, string | null | undefined> | undefined,
 	additionalHeaders: Record<string, string | null | undefined> | undefined,
 	accountId: string,
 	token: string,
 	requestId: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(modelHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, modelHeaders, additionalHeaders, accountId, token);
 	headers.delete("accept");
 	headers.delete("content-type");
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
 	headers.set("x-client-request-id", requestId);
-	headers.set("session_id", requestId);
+	headers.set("session-id", requestId);
 	return headers;
 }
 
@@ -507,18 +531,81 @@ function resolveCodexServiceTier(responseServiceTier: ServiceTier, requestServic
 	return responseServiceTier ?? requestServiceTier;
 }
 
+interface CodexCompat {
+	supportsStrictMode?: boolean;
+	supportsOpenAIGrammarTools?: boolean;
+	supportsToolSearch?: boolean;
+	supportsAdditionalTools?: boolean;
+	supportsMidConvoSystemMessages?: boolean;
+	supportsMidConvoEffort?: boolean;
+	supportsMaxOutputTokens?: boolean;
+}
+
+function codexCompat<TApi extends Api>(model: Model<TApi>): CodexCompat {
+	return (model.compat ?? {}) as CodexCompat;
+}
+
+/** Provider-native effort for a requested level; null when the model takes no reasoning field for it. */
+function resolveReasoningEffort<TApi extends Api>(model: Model<TApi>, effort: string): string | null {
+	const map = model.thinkingLevelMap as Record<string, string | null | undefined> | undefined;
+	if (effort === "none") return map?.off === undefined ? "none" : map.off;
+	return map?.[effort] ?? effort;
+}
+
+/**
+ * The effort Pi's openai-codex `streamSimple` requests, and, on a model that takes
+ * mid-conversation effort, the configuration_update effort that carries it instead.
+ */
+function codexReasoning<TApi extends Api>(model: Model<TApi>, options: SimpleStreamOptions | undefined): { reasoningEffort?: string; configurationUpdateEffort?: string } {
+	const clamped = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : "off";
+	// Off is sent as effort none, so with configuration_update items switching to it keeps the cache.
+	const reasoningEffort = clamped !== "off" ? clamped : model.reasoning ? "none" : undefined;
+	if (!codexCompat(model).supportsMidConvoEffort || reasoningEffort === undefined) return { reasoningEffort };
+	return { reasoningEffort, configurationUpdateEffort: resolveReasoningEffort(model, reasoningEffort) ?? undefined };
+}
+
+type ClampMaxTokens = (model: unknown, context: unknown, maxTokens: number) => number;
+let clampMaxTokensToContext: Promise<ClampMaxTokens | undefined> | undefined;
+
+/**
+ * The output cap Pi's `streamSimple` sends: the caller's or the model's, fitted into the
+ * context window by the host's own clamp. A host without the subpath sends it unclamped.
+ */
+async function maxTokensForRequest<TApi extends Api>(model: Model<TApi>, context: Context, options: SimpleStreamOptions | undefined): Promise<number | undefined> {
+	const requested = options?.maxTokens ?? model.maxTokens;
+	if (!requested) return undefined;
+	clampMaxTokensToContext ??= dynamicImport("@earendil-works/pi-ai/api/simple-options").then(
+		(module) => (typeof module.clampMaxTokensToContext === "function" ? (module.clampMaxTokensToContext as ClampMaxTokens) : undefined),
+		() => undefined,
+	);
+	const clamp = await clampMaxTokensToContext;
+	return clamp ? clamp(model, context, requested) : requested;
+}
+
 export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): ResponsesBody {
-	const supportsStrictMode = (model.compat as { supportsStrictMode?: boolean } | undefined)?.supportsStrictMode ?? true;
-	const supportsOpenAIGrammarTools = (model.compat as { supportsOpenAIGrammarTools?: boolean } | undefined)?.supportsOpenAIGrammarTools ?? false;
-	const supportsToolSearch = (model.compat as { supportsToolSearch?: boolean } | undefined)?.supportsToolSearch ?? false;
-	const { systemPrompt, tools } = promptAndTools(context);
-	const grammarToolInputProperties = createGrammarToolInputProperties(tools, supportsOpenAIGrammarTools);
-	const toolPlacement = splitDeferredTools({ messages: context.messages, tools }, supportsToolSearch);
-	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
-		includeSystemPrompt: false,
+	const compat = codexCompat(model);
+	const supportsStrictMode = compat.supportsStrictMode ?? true;
+	const supportsOpenAIGrammarTools = compat.supportsOpenAIGrammarTools ?? false;
+	const supportsToolSearch = compat.supportsToolSearch ?? false;
+	const supportsAdditionalTools = compat.supportsAdditionalTools ?? false;
+	const supportsMidConvoSystemMessages = compat.supportsMidConvoSystemMessages ?? false;
+	const transcript = resolveRequestTranscript(context, supportsMidConvoSystemMessages);
+	const grammarToolInputProperties = createGrammarToolInputProperties(declaredTools(transcript), supportsOpenAIGrammarTools);
+	const { reasoningEffort, configurationUpdateEffort } = codexReasoning(model, options);
+	const fieldToolPlacement = isTranscript(transcript) ? undefined : splitDeferredTools(transcript, supportsToolSearch);
+	const requestTools = fieldToolPlacement?.immediate
+		?? resolveTranscriptTools(transcript.messages, getResponsesToolSupport({ supportsMidConvoSystemMessages, supportsAdditionalTools, supportsToolSearch })).requestTools;
+	// The system prompt leads the input as a developer item, never top-level `instructions`:
+	// from GPT-6.2 on the backend appends `instructions` after the input, so every turn
+	// changed the prompt ahead of the system prompt and it was never served from cache.
+	const messages = convertResponsesMessages(model, transcript, CODEX_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
-		deferredTools: toolPlacement.deferred,
+		supportsMidConvoSystemMessages,
+		supportsAdditionalTools,
+		supportsToolSearch,
+		deferredTools: fieldToolPlacement?.deferred,
 		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
+		configurationUpdateEffort,
 	});
 	const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 
@@ -526,7 +613,6 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: systemPrompt,
 		input: messages,
 		text: { verbosity: ((options as { textVerbosity?: string } | undefined)?.textVerbosity ?? "low") as string },
 		include: ["reasoning.encrypted_content"],
@@ -535,10 +621,9 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 		parallel_tool_calls: true,
 	};
 
-	// The Codex ChatGPT-backed endpoint rejects output-token cap fields with
-	// `Unsupported parameter: max_output_tokens`. Pi's branch summarizer passes
-	// `maxTokens`, so forwarding it breaks `/tree` summaries and extensions that
-	// use `ctx.navigateTree(..., { summarize: true })`.
+	if (options?.maxTokens && (compat.supportsMaxOutputTokens ?? true)) {
+		body.max_output_tokens = Math.max(options.maxTokens, MIN_OUTPUT_TOKENS);
+	}
 
 	if ((options as { temperature?: number } | undefined)?.temperature !== undefined) {
 		body.temperature = (options as { temperature?: number }).temperature;
@@ -549,26 +634,19 @@ export function buildRequestBody<TApi extends Api>(model: Model<TApi>, context: 
 		body.service_tier = serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		body.tools = convertResponsesTools(toolPlacement.immediate, { strict: null, supportsStrictMode, supportsOpenAIGrammarTools });
+	if (requestTools.length > 0) {
+		body.tools = convertResponsesTools(requestTools, { strict: null, supportsStrictMode, supportsOpenAIGrammarTools });
 	}
 
-	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
-	if (clampedReasoning === undefined || clampedReasoning === "off") {
-		// Pi 0.86.0 and later (earendil-works/pi#9191) send the model's Off effort
-		// rather than omitting the field, so the backend does not apply its default
-		// effort: pi-ai 0.87.1 `dist/api/openai-codex-responses.js` buildRequestBody.
-		// A `null` Off entry means the model takes no reasoning field at Off.
-		const offEffort = model.thinkingLevelMap?.off;
-		if (model.reasoning && offEffort !== null) body.reasoning = { effort: offEffort ?? "none" };
-		return body;
+	if (reasoningEffort !== undefined) {
+		const effort = configurationUpdateEffort === undefined ? resolveReasoningEffort(model, reasoningEffort) : CONFIGURATION_UPDATE_REQUEST_EFFORT;
+		if (effort !== null) {
+			body.reasoning = {
+				effort,
+				summary: ((options as { reasoningSummary?: string } | undefined)?.reasoningSummary ?? "auto") as string,
+			};
+		}
 	}
-	const effort = model.thinkingLevelMap?.[clampedReasoning] ?? clampedReasoning;
-	if (effort === null) return body;
-	body.reasoning = {
-		effort,
-		summary: ((options as { reasoningSummary?: string } | undefined)?.reasoningSummary ?? "auto") as string,
-	};
 
 	return body;
 }
@@ -595,15 +673,16 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
 			return;
 		}
 
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener(
-			"abort",
-			() => {
-				clearTimeout(timeout);
-				reject(new Error("Request was aborted"));
-			},
-			{ once: true },
-		);
+		const onAbort = () => {
+			clearTimeout(timeout);
+			reject(new Error("Request was aborted"));
+		};
+		// A finished backoff removes its listener, so repeated retries do not pile them up on the signal.
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 
@@ -951,7 +1030,10 @@ async function acquireWebSocket(
 			cached.idleTimer = undefined;
 		}
 
-		if (!cached.busy && isWebSocketReusable(cached.socket)) {
+		if (!cached.busy && Date.now() - cached.createdAt >= SESSION_WEBSOCKET_MAX_AGE_MS) {
+			websocketSessionCache.delete(sessionId);
+			closeWebSocket(cached.socket, 1000, "connection_age_limit");
+		} else if (!cached.busy && isWebSocketReusable(cached.socket)) {
 			cached.busy = true;
 			return {
 				socket: cached.socket,
@@ -978,14 +1060,14 @@ async function acquireWebSocket(
 			};
 		}
 
-		if (!isWebSocketReusable(cached.socket)) {
+		if (websocketSessionCache.get(sessionId) === cached && !isWebSocketReusable(cached.socket)) {
 			websocketSessionCache.delete(sessionId);
 			closeWebSocket(cached.socket);
 		}
 	}
 
 	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs);
-	const entry: SessionWebSocketCacheEntry = { socket, busy: true };
+	const entry: SessionWebSocketCacheEntry = { socket, busy: true, createdAt: Date.now() };
 	websocketSessionCache.set(sessionId, entry);
 	return {
 		socket: entry.socket,
@@ -1490,7 +1572,6 @@ async function processWebSocketStream<TApi extends Api>(
 				keepConnection = false;
 			} else if (useCachedContext && entry && output.responseId) {
 				const responseItems = convertResponsesMessages(model, { messages: [output] }, CODEX_TOOL_CALL_PROVIDERS, {
-					includeSystemPrompt: false,
 					grammarToolInputProperties,
 				}).filter((item) => {
 					const type = typeof item === "object" && item !== null ? (item as { type?: unknown }).type : undefined;
@@ -1651,7 +1732,7 @@ class ImageGenerationMessage implements Component {
 		this.previews = previews;
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		const preview = this.savedImage && !this.builtWithPreview ? this.previews.get(this.savedImage.absolutePath) : undefined;
 		if (this.savedImage && !this.builtWithPreview && !preview) void this.previews.load(this.savedImage.absolutePath, `image/${this.savedImage.outputFormat}`);
 		if (!this.built || preview) {
@@ -1688,13 +1769,15 @@ function buildImageGenerationContainer(savedImage: SavedGeneratedImage | undefin
 	return container;
 }
 
-function createInitialAssistantMessage<TApi extends Api>(model: Model<TApi>): AssistantMessage {
+function createInitialAssistantMessage<TApi extends Api>(model: Model<TApi>, providerThinkingLevel: string | undefined): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [],
 		api: "openai-codex-responses",
 		provider: model.provider,
 		model: model.id,
+		// The level a later request's configuration_update item replays before this reply.
+		...(providerThinkingLevel === undefined ? {} : { providerThinkingLevel }),
 		usage: {
 			input: 0,
 			output: 0,
@@ -1709,11 +1792,6 @@ function createInitialAssistantMessage<TApi extends Api>(model: Model<TApi>): As
 }
 
 function createErrorMessage(message: AssistantMessage, error: unknown, aborted: boolean): AssistantMessage {
-	for (const block of message.content) {
-		if (typeof block === "object" && block !== null && "partialJson" in block) {
-			delete (block as { partialJson?: string }).partialJson;
-		}
-	}
 	message.stopReason = aborted ? "aborted" : "error";
 	message.errorMessage = buildProviderErrorMessage(error);
 	return message;
@@ -1770,14 +1848,14 @@ function createCodexStream<TApi extends Api>(
 	const requestCwd = deps.getCurrentCwd();
 
 	(async () => {
-		const output = createInitialAssistantMessage(model);
+		const output = createInitialAssistantMessage(model, codexReasoning(model, options).configurationUpdateEffort);
 		const requestPrompt = getLatestUserText(context);
 		let grammarToolInputProperties: ReadonlyMap<string, string> = new Map();
 
 		try {
 			grammarToolInputProperties = createGrammarToolInputProperties(
-				promptAndTools(context).tools,
-				(model.compat as { supportsOpenAIGrammarTools?: boolean } | undefined)?.supportsOpenAIGrammarTools ?? false,
+				declaredTools(resolveRequestTranscript(context, codexCompat(model).supportsMidConvoSystemMessages)),
+				codexCompat(model).supportsOpenAIGrammarTools ?? false,
 			);
 			const apiKey = options?.apiKey || await getEnvApiKeyCompat(model.provider) || "";
 			if (!apiKey) {
@@ -1787,15 +1865,16 @@ function createCodexStream<TApi extends Api>(
 			const accountId = extractAccountId(apiKey);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, context, options);
+			let body = buildRequestBody(model, context, { ...options, maxTokens: await maxTokensForRequest(model, context, options) } as SimpleStreamOptions);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as ResponsesBody;
 			}
 
 			const websocketRequestId = codexSessionId || createCodexRequestId();
-			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
-			const websocketHeaders = buildWebSocketHeaders(model.headers, options?.headers, accountId, apiKey, websocketRequestId);
+			const identityHeaders = codexIdentityHeaders(model, (options as { identity?: unknown } | undefined)?.identity);
+			const sseHeaders = buildSSEHeaders(identityHeaders, model.headers, options?.headers, accountId, apiKey, codexSessionId);
+			const websocketHeaders = buildWebSocketHeaders(identityHeaders, model.headers, options?.headers, accountId, apiKey, websocketRequestId);
 			// A cached WebSocket continuation sends only the new input, so the full body
 			// is serialized only when a failure diagnostic or the SSE request needs it.
 			let bodyJson: string | undefined;

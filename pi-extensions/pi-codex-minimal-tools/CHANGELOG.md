@@ -2,6 +2,16 @@
 
 ## Consumer-impacting changes
 
+### 2.1.6
+
+- Pi 1.6.0 parity: the Codex provider shim sends the request Pi's own `openai-codex` provider sends. The system prompt is the first `developer` input item instead of top-level `instructions`, so GPT-6.2 models serve it from the prompt cache. On a model that takes `additional_tools`, every tool is declared in input items and a removed tool is announced as text. On a model that takes mid-conversation effort, a thinking-level change, Off included, travels as a `configuration_update` item and keeps the prompt cache. Thinking Off sends effort `none` with a reasoning summary.
+- The shim sends the model's output limit as `max_output_tokens`, at least 16, unless the model sets `compat.supportsMaxOutputTokens: false`. The session header is `session-id`. On Pi 1.4.0 and later the `User-Agent` is Pi's `pi/<version> (<platform>; <runtime>; <arch>)`; an older Pi keeps the shim's earlier `pi (<platform> <release>; <arch>)`. Model and caller headers override `originator` and `User-Agent`.
+- A strict tool schema is sent in OpenAI's strict form, every property required and optional ones nullable. A `strict: "prefer"` tool whose schema has a node without a type is sent non-strict; a `strict: "require"` one fails before the request.
+- A cached Codex WebSocket is replaced after 45 minutes instead of reused, so a long response is less likely to reach the server's 60-minute limit. A connection-limit error in mid-response reaches Pi's retry.
+- On Pi 1.5.0 and later, streamed tool-call arguments show as they arrive and are read once. Final arguments with an invalid escape such as `\usepackage` keep every field, and malformed final arguments carry `argumentsError`, so the model sees what it sent. An older Pi parses the arguments once at completion, as before. Stream state stays off the tool-call blocks.
+- Whitespace-only tool output is sent as the empty-output placeholder. Thinking from another model is dropped on a model switch instead of sent as text. SSE retries remove their abort listeners after each backoff.
+- With native image generation on, `image_generation` is rewritten to OpenAI's native tool inside `additional_tools` input items too.
+
 ### 2.1.5
 
 - OpenAI tool activation and background image commands discover models from Pi's registry. New or renamed models need no probe-list update. Reasoning requests use the model's declared thinking levels. Priority cost estimates use the same multiplier for every model.
