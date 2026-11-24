@@ -1018,6 +1018,30 @@ echo "=== a rewrite whose record cannot be written never starts ==="
 # must not rewrite anything: there would be no way to refuse the publish
 # afterwards. A directory at the file's own path is what makes the write fail.
 build map-unwritable clean
+claim_key="$(printf '%s' "$ISSUE" | git -C "$MAIN" hash-object --stdin)"
+legacy_claim="$MAIN/.git/kendex-worktree-claim-$claim_key.lock"
+claim_lock="$MAIN/.git/kendex/lane-data/${legacy_claim##*/}"
+rm -f -- "$claim_lock"
+mkdir -p "$ROOT/legacy-bin"
+cat >"$ROOT/legacy-bin/flock" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == -x && \$# == 2 ]]; then
+  printf '%s\n' attempted >>"$ROOT/legacy-flock.called"
+  exec $(command -v flock) -x -n "\$2"
+fi
+exec $(command -v flock) "\$@"
+EOF
+chmod +x "$ROOT/legacy-bin/flock"
+# Hold the mutex exactly where an older checkout takes it. The shim makes
+# lock contention return immediately so the refusal proves which lock blocked.
+exec 7>>"$legacy_claim"
+flock -x 7
+legacy_rc=0
+(cd "$MAIN" && PATH="$ROOT/legacy-bin:$PATH" "$WORKTREE_SCRIPT" create "$ISSUE" --restack \
+  >"$ROOT/legacy.out" 2>"$ROOT/legacy.err") || legacy_rc=$?
+exec 7>&-
+assert_eq "rc=$legacy_rc attempt=$(cat "$ROOT/legacy-flock.called" 2>/dev/null || true) current=$([[ -e "$claim_lock" ]] && echo opened || echo untouched)" \
+  "rc=1 attempt=attempted current=untouched" "restack meets the legacy holder before opening the new claim lock"
 map_path="$(git -C "$WT" rev-parse --git-path kendex-rebase-map)"
 [[ "$map_path" == /* ]] || map_path="$WT/$map_path"
 mkdir -p "$map_path"
@@ -1026,6 +1050,8 @@ unwritable_rc=0
 (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack \
   >"$ROOT/unwritable.out" 2>"$ROOT/unwritable.err") || unwritable_rc=$?
 assert_eq "$unwritable_rc" "1" "a restack whose record cannot be written fails"
+assert_eq "$([[ -f "$claim_lock" ]] && echo yes || echo no)" yes \
+  "restack takes its claim lock in the writable lane data folder"
 assert_eq "$(grep '^worktree-rebase-pending-unrecorded:' "$ROOT/unwritable.err" | sed "s|$WT|<wt>|")" \
   "worktree-rebase-pending-unrecorded: <wt>" "the refusal names the worktree it could not record in"
 assert_eq "$(git -C "$WT" rev-parse HEAD)" "$unwritable_head" "the branch was never rewritten"

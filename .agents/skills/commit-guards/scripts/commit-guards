@@ -424,14 +424,19 @@ done
 # Under the common git directory, so a linked worktree's runs land beside the
 # main checkout's and no row reaches a working tree. A log that cannot be
 # written is named and changes no verdict.
-RUN_LOG=""
-gg_git_path RUN_LOG . rev-parse --git-common-dir || RUN_LOG=""
-if [ -z "$RUN_LOG" ]; then
+RUN_COMMON=""
+gg_git_path RUN_COMMON . rev-parse --git-common-dir || RUN_COMMON=""
+if [ -z "$RUN_COMMON" ]; then
   gg_message run-log-unwritten git-common-dir "The git directory could not be resolved, so no run row was written; the verdict below stands."
-elif ! printf '%s' "$RUN_ROWS" | LC_ALL=C awk 'BEGIN { FS = OFS = "\t" }
-  { $5 = ($1 == "" || $5 == "") ? "unmeasured" : sprintf("%.3f", $5 - $1); sub(/\..*/, "", $1); print }' \
-  2>/dev/null >>"$RUN_LOG/commit-guards-runs.tsv"; then
-  gg_message run-log-unwritten "$(gg_shown "$RUN_LOG/commit-guards-runs.tsv")" "The run log could not be appended; the verdict below stands."
+else
+  RUN_LOG="$RUN_COMMON/kendex/lane-data/commit-guards-runs.tsv"
+  if ! {
+    mkdir -p -- "${RUN_LOG%/*}" &&
+      printf '%s' "$RUN_ROWS" | LC_ALL=C awk 'BEGIN { FS = OFS = "\t" }
+        { $5 = ($1 == "" || $5 == "") ? "unmeasured" : sprintf("%.3f", $5 - $1); sub(/\..*/, "", $1); print }' >>"$RUN_LOG"
+  } 2>/dev/null; then
+    gg_message run-log-unwritten "$(gg_shown "$RUN_LOG")" "The run log could not be appended; the verdict below stands."
+  fi
 fi
 
 if [ "$had_errors" -eq 1 ]; then

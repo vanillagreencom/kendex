@@ -2483,24 +2483,41 @@ add_claim_worktree() {
 }
 
 acquire_issue_claim_lock() {
-  local issue="$1" normalized_issue="" claim_key="" lock_path=""
+  local issue="$1" normalized_issue="" claim_key="" legacy_lock="" lock_path=""
   if ! command -v flock >/dev/null 2>&1; then
     worktree_message flock-required "claim" "Error: flock is required to serialize worktree claims." >&2
     return 1
   fi
   normalized_issue="$(issue_branch_name "$issue")"
-  claim_key="$(printf '%s' "$normalized_issue" | git hash-object --stdin)"
-  lock_path="$PROJECT_COMMON_GIT_DIR/kendex-worktree-claim-$claim_key.lock"
-  # Fixed descriptor: Bash 3.2 cannot allocate a descriptor dynamically.
-  exec 9>"$lock_path"
+  claim_key="$(printf '%s' "$normalized_issue" | git -C "$PROJECT_ROOT" hash-object --stdin)" || return 1
+  legacy_lock="$PROJECT_COMMON_GIT_DIR/kendex-worktree-claim-$claim_key.lock"
+  lock_path="$PROJECT_COMMON_GIT_DIR/kendex/lane-data/${legacy_lock##*/}"
+  # Hold the common-root lock first so an older checkout shares this claim.
+  if ! { exec 8>>"$legacy_lock"; } 2>/dev/null; then
+    worktree_message claim-lock-open "$legacy_lock" "Error: could not open the worktree claim lock." >&2
+    return 1
+  fi
+  if ! flock -x 8; then
+    exec 8>&-
+    return 1
+  fi
+  if ! mkdir -p -- "${lock_path%/*}" 8>&- 2>/dev/null || ! { exec 9>>"$lock_path"; } 2>/dev/null; then
+    exec 8>&-
+    worktree_message claim-lock-open "$lock_path" "Error: could not open the worktree claim lock." >&2
+    return 1
+  fi
+  if ! flock -x 9 8>&-; then
+    exec 9>&- 8>&-
+    return 1
+  fi
   ISSUE_CLAIM_LOCK_HELD=true
-  flock -x 9
 }
 
 release_issue_claim_lock() {
   if [[ "${ISSUE_CLAIM_LOCK_HELD:-false}" == true ]]; then
     flock -u 9 2>/dev/null || true
-    exec 9>&-
+    flock -u 8 2>/dev/null || true
+    exec 9>&- 8>&-
     ISSUE_CLAIM_LOCK_HELD=false
   fi
 }
@@ -3515,7 +3532,7 @@ case "${1:-}" in
         refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fi
       if [[ "$REUSE_CHECKOUT_MODE" != claim ]]; then fetch_origin || exit 1; fi
-      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null) || exit $?
       if [[ -n "$CURRENT_BRANCH" ]]; then
         resolve_default_branch || exit 1
         if ! read_committed_unexport; then

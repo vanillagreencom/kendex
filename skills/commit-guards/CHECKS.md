@@ -298,7 +298,7 @@ The parent:
 
 ## The run log
 
-Each batch run appends one row per check it runs to `commit-guards-runs.tsv` in the repository's common git directory (`git rev-parse --git-common-dir`), so a linked worktree's runs land beside the main checkout's and no row reaches a working tree. No setting turns it on and nothing leaves the machine. A row is six tab-separated fields:
+Each batch run appends one row per check it runs to `kendex/lane-data/commit-guards-runs.tsv` under the directory that `git rev-parse --git-common-dir` reports. Linked worktrees and the main checkout share the log outside their working trees. No setting turns it on and nothing leaves the machine. A row is six tab-separated fields:
 
 1. The start: whole epoch seconds when the check started.
 2. The check's name.

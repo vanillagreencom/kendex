@@ -12555,6 +12555,55 @@ fn a_lane_is_refused_the_main_checkout_s_per_worktree_git_configuration() {
     assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
 }
 
+#[test]
+#[cfg(target_os = "linux")]
+fn a_connected_lane_relaunches_with_fleet_state_outside_git() {
+    let world = Confined::new();
+    let connected = world.runner.state_dir();
+    git(connected, &["config", "gc.auto", "0"]);
+    git(connected, &["config", "maintenance.auto", "false"]);
+    git(
+        connected,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/o/connected.git",
+        ],
+    );
+    let wt = world.linked_worktree("ken-connected");
+    let executor = world.dir.path().join("executor");
+    git_checkout(&executor);
+    git(
+        &executor,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/o/executor.git",
+        ],
+    );
+    let runner = Runner {
+        tools: world.runner.tools.clone(),
+        env: world.runner.env.clone(),
+        ..Runner::new(&world.server, "stub-confirm")
+    };
+    let settings = [("ORCH_CONNECTED_REPOS", "o/connected")];
+    let init = runner.run_in(&executor, &["state", "init", "--fleet"], &settings);
+    assert!(init.status.success(), "{}", stderr(&init));
+    let mut fleet = runner.fleet();
+    let mut stopped = lane("KEN-CONNECTED", "stopped", &runner, Value::Null);
+    stopped["mail_root"] = json!(wt);
+    fleet["lanes"] = json!([stopped]);
+    runner.write_fleet(&fleet);
+
+    let request = launch_request("KEN-CONNECTED", &wt);
+    let report = effect_report(&runner.op_fleet_in(&executor, &request, &settings));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["intent"]["selection"]["relaunch"], true);
+    assert!(report["lane"]["checkout_common"].is_null());
+}
+
 /// A Pi lane starts past Pi's "Trust project folder?", which Pi asks before
 /// its composer unless its line carries `--approve` or its root's
 /// `trust.json` trusts the folder, with nobody at the pane to answer.

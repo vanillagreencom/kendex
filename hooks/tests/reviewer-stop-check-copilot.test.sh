@@ -157,7 +157,7 @@ ROWS
   run_copilot "$dirty" reviewer-test sub-6 "$(reply_for "$dirty")"
   assert_eq "$(jq -r '.reason' "$OUT_FILE" 2>/dev/null)" "$(cat "$ERR_FILE")" \
     "the block's reason is the refusal text, keyed line first"
-  [ -e "$dirty/.git/kendex/reviewer-stop/sub-6" ] && marker=yes || marker=no
+  [ -e "$dirty/.git/kendex/lane-data/reviewer-stop/sub-6" ] && marker=yes || marker=no
   assert_eq "marker=$marker" "marker=yes" "the block records the subagent's agentId under the reviewed repository"
 }
 

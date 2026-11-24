@@ -184,7 +184,7 @@ run_hook "$T" reviewer-test a1
 assert_eq "$rc" 2 "blocks on an untracked file"
 assert_contains "$err" "?? probe.sh" "names the untracked file"
 assert_eq "$(first_line)" "reviewer-stop-check: worktree=$REPO" "the value is the reviewed worktree"
-[ -e "$REPO/.git/kendex/reviewer-stop/a1" ] && marker=yes || marker=no
+[ -e "$REPO/.git/kendex/lane-data/reviewer-stop/a1" ] && marker=yes || marker=no
 assert_eq "$marker" yes "the block records the agent under the reviewed repository's git common dir"
 run_hook "$T" reviewer-test a1
 assert_eq "$rc" 0 "a second stop of the same subagent passes"
@@ -192,7 +192,7 @@ run_hook "$T" reviewer-test a2
 assert_eq "$rc" 2 "another subagent over the same dirty tree blocks"
 run_hook "$T" reviewer-test a3 true
 assert_eq "$rc" 0 "stop_hook_active true passes outright"
-[ -e "$REPO/.git/kendex/reviewer-stop/a3" ] && marker=yes || marker=no
+[ -e "$REPO/.git/kendex/lane-data/reviewer-stop/a3" ] && marker=yes || marker=no
 assert_eq "$marker" no "a stop_hook_active pass records nothing"
 rm -f "$REPO/probe.sh"
 run_hook "$T" reviewer-test a4
@@ -250,7 +250,7 @@ assert_eq "$rc" 0 "dirt in the main worktree does not block a review of the link
 printf 'probe\n' >"$LINKED/probe.txt"
 run_hook "$T" reviewer-test d2
 assert_eq "$rc" 2 "dirt in the linked worktree blocks"
-[ -e "$REPO/.git/kendex/reviewer-stop/d2" ] && marker=yes || marker=no
+[ -e "$REPO/.git/kendex/lane-data/reviewer-stop/d2" ] && marker=yes || marker=no
 assert_eq "$marker" yes "the marker lives under the common dir the worktrees share"
 
 echo "reviewer-stop-check: a transcript naming no artifact blocks once"
@@ -267,7 +267,7 @@ set +e
 rc=$?
 set -e
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: artifact=missing" "no artifact path blocks"
-[ -e "$RUN_REPO/.git/kendex/reviewer-stop/e1" ] && marker=yes || marker=no
+[ -e "$RUN_REPO/.git/kendex/lane-data/reviewer-stop/e1" ] && marker=yes || marker=no
 assert_eq "$marker" yes "the block is recorded under the repository the hook runs in"
 set +e
 ( cd "$RUN_REPO" && env HOME="$TMP_ROOT" "$BASH_BIN" "$HOOK" \
@@ -291,7 +291,7 @@ chmod -w "$REPO/.git"
 run_hook "$T" reviewer-test m1
 chmod +w "$REPO/.git"
 assert_eq "rc=$rc first=$(first_line) cause=$(cause_below)" \
-  "rc=2 first=reviewer-stop-check: marker=$REPO/.git/kendex/reviewer-stop/m1 cause=present" \
+  "rc=2 first=reviewer-stop-check: marker=$REPO/.git/kendex/lane-data/reviewer-stop/m1 cause=present" \
   "a marker it cannot record refuses, the value is the path, and mkdir's words are under it"
 
 echo "reviewer-stop-check: a payload or transcript it cannot read refuses"
@@ -326,7 +326,7 @@ assert_eq "$rc" 2 "a first block records the marker directory"
 run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"..\",\"transcript_path\":\"$T_DOTS\"}"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: agent-id=invalid" \
   "an agent_id of .. refuses rather than reading the marker directory's parent as a recorded block"
-assert_eq "$(ls -A "$REPO_DOTS/.git/kendex/reviewer-stop")" "k1" "and records no marker of its own"
+assert_eq "$(ls -A "$REPO_DOTS/.git/kendex/lane-data/reviewer-stop")" "k1" "and records no marker of its own"
 run_payload "{\"agent_type\":\"reviewer-test\",\"transcript_path\":\"$T\"}"
 assert_eq "$rc" 2 "no agent_id refuses"
 T2="$TMP_ROOT/transcript.gone.jsonl"

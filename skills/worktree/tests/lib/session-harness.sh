@@ -176,7 +176,8 @@ session_clockstep_ps() { # DIR PID
 # Holds the guard's repository mutex as a running guard holds it, through
 # flock where it is on PATH; session_mutex_free lets it go.
 session_mutex_hold() { # COMMON_DIR
-  exec 7>"$1/kendex-worktree-session-guard.lock"
+  mkdir -p -- "$1/kendex/lane-data" || return 1
+  exec 7>"$1/kendex/lane-data/kendex-worktree-session-guard.lock" || return 1
   flock -x 7
 }
 session_mutex_free() {

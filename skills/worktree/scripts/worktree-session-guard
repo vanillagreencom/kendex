@@ -114,8 +114,9 @@ Options (a flag a command does not take is a usage failure):
   --repo DIR         release, status, list, sweep. Repository checkout.
 
 Mutations (claim, refresh, release, sweep) serialize on a lock in the
-repository's common dir, through flock(1) where it is on PATH and an
-exclusive-file mutex otherwise; either refuses after waiting 60 seconds for it.
+repository's common dir and then a lock in kendex/lane-data. Use flock(1)
+where it is on PATH and an exclusive-file mutex otherwise. The total wait
+is up to 60 seconds.
 An established --session claim makes one attempt and does not wait.
 
 Exit codes: 0 success, 1 usage/Git failure or a lock wait that ran out,
@@ -457,10 +458,15 @@ resolve_registration() {
 }
 
 GUARD_MUTEX_FILE=''
+GUARD_LEGACY_MUTEX_FILE=''
 release_guard_mutex() {
-	[[ -n "$GUARD_MUTEX_FILE" ]] || return 0
-	rm -f -- "$GUARD_MUTEX_FILE" 2>/dev/null || true
+	local file
+	for file in "$GUARD_MUTEX_FILE" "$GUARD_LEGACY_MUTEX_FILE"; do
+		[[ -n "$file" ]] || continue
+		rm -f -- "$file" 2>/dev/null || true
+	done
 	GUARD_MUTEX_FILE=''
+	GUARD_LEGACY_MUTEX_FILE=''
 }
 
 # Serializes the whole read-decide-write of every mutating command. Without it
@@ -487,33 +493,58 @@ readonly GUARD_MUTEX_WAIT_SECONDS=60
 # which must not stall its harness. Status 1 with the keyed reason on stderr;
 # the caller picks the exit.
 acquire_guard_mutex() { # COMMON [WAIT_SECONDS]
-	local common="$1" wait="${2:-$GUARD_MUTEX_WAIT_SECONDS}" lock_path tries=0
-	lock_path="$common/kendex-worktree-session-guard.lock"
+	local common="$1" wait="${2:-$GUARD_MUTEX_WAIT_SECONDS}" started="$SECONDS"
+	local legacy_lock="$common/kendex-worktree-session-guard.lock"
+	local lock_path="$common/kendex/lane-data/${legacy_lock##*/}"
+	local path remaining tries=0 use_flock=false
 	if command -v flock >/dev/null 2>&1; then
-		{ exec 9>"$lock_path"; } 2>/dev/null || { worktree_message guard-lock-open "$lock_path" "Cannot open the session lock file." >&2; return 1; }
-		if [[ "$wait" -eq 0 ]]; then
-			flock -x -n 9 || { worktree_message guard-lock-busy "$lock_path" "Another guard process holds the session lock." >&2; return 1; }
-		else
-			flock -x -w "$wait" 9 || { worktree_message guard-lock-timeout "$lock_path" "Cannot acquire the session lock within ${wait}s; another guard process holds it." >&2; return 1; }
-		fi
-		return 0
+		use_flock=true
+	else
+		trap release_guard_mutex EXIT
 	fi
-	# Keep cleanup inert until this process owns the file. A signal between
-	# acquisition and the assignment can leave a file to remove by hand; arming
-	# cleanup with the path first would let a loser remove the winner's mutex.
-	# Retain the directory mutex's path so older and newer guards exclude
-	# each other while an installed copy is being updated.
-	trap release_guard_mutex EXIT
-	while ! (set -o noclobber; : >"$lock_path.d") 2>/dev/null; do
-		if [[ "$wait" -eq 0 ]]; then
-			worktree_message guard-mutex-busy "$lock_path.d" "Another guard process holds the session mutex, or it cannot be created." >&2
+	# Older checkouts hold only the common-root lock.
+	for path in "$legacy_lock" "$lock_path"; do
+		if [[ "$path" == "$lock_path" && ! -d "${path%/*}" ]] &&
+			! mkdir -p -- "${path%/*}" 8>&- 2>/dev/null; then
+			worktree_message guard-lock-open "$path" "Cannot create the session lock directory." >&2
 			return 1
 		fi
-		tries=$((tries + 1))
-		[[ "$tries" -lt $((wait * 10)) ]] || { worktree_message guard-mutex-timeout "$lock_path.d" "Cannot acquire the session mutex. If no guard process is running, remove this path." >&2; return 1; }
-		sleep 0.1
+		if [[ "$use_flock" == true ]]; then
+			if ! { exec 9>>"$path"; } 2>/dev/null; then
+				worktree_message guard-lock-open "$path" "Cannot open the session lock file." >&2
+				return 1
+			fi
+			if [[ "$wait" -eq 0 ]]; then
+				flock -x -n 9 8>&- || { worktree_message guard-lock-busy "$path" "Another guard process holds the session lock." >&2; return 1; }
+			else
+				remaining=$((wait - (SECONDS - started)))
+				if [[ "$remaining" -le 0 ]] || ! flock -x -w "$remaining" 9 8>&-; then
+					worktree_message guard-lock-timeout "$path" "Cannot acquire the session lock within ${wait}s; another guard process holds it." >&2
+					return 1
+				fi
+			fi
+			# Preserve the first lock in this shell alone while a child
+			# waits for the second lock.
+			if [[ "$path" == "$legacy_lock" ]]; then exec 8>&9 9>&-; fi
+		else
+			# Record each file only after acquiring it, so a failed second
+			# acquisition cannot remove the other holder's mutex.
+			while ! (set -o noclobber; : >"$path.d") 2>/dev/null; do
+				if [[ "$wait" -eq 0 ]]; then
+					worktree_message guard-mutex-busy "$path.d" "Another guard process holds the session mutex, or it cannot be created." >&2
+					return 1
+				fi
+				tries=$((tries + 1))
+				[[ "$tries" -lt $((wait * 10)) ]] || { worktree_message guard-mutex-timeout "$path.d" "Cannot acquire the session mutex. If no guard process is running, remove this path." >&2; return 1; }
+				sleep 0.1
+			done
+			if [[ "$path" == "$legacy_lock" ]]; then
+				GUARD_LEGACY_MUTEX_FILE="$path.d"
+			else
+				GUARD_MUTEX_FILE="$path.d"
+			fi
+		fi
 	done
-	GUARD_MUTEX_FILE="$lock_path.d"
 }
 
 # Status 1 with the keyed reason on stderr; the caller picks the exit, since
