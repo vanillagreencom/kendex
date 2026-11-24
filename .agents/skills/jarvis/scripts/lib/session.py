@@ -29,7 +29,8 @@ BASH = os.environ["JARVIS_BASH"]
 CALL_SECONDS = 55
 START_BRIEF = (
     "Read .agents/skills/jarvis/SKILL.md. Read and follow the Start section using "
-    "`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md Start`."
+    "`.agents/skills/jarvis/scripts/jarvis-section .agents/skills/jarvis/workflows/session.md 'Start'`. "
+    "Read each other named section with `jarvis-section` when its step comes, using its owning file and exact heading."
 )
 STATE_REASONS = {
     "running": {"resumed", "new-no-record", "new-history-gone", "new-selection-changed", "new-requested", "existing"},
