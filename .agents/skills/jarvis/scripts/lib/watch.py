@@ -70,10 +70,39 @@ def host_args(destination, command):
     return ["ssh", destination.host, command]
 
 
-def destination_roots(destination):
+# One `kendex project list --json` entry; linked is whether the folder is a
+# linked worktree, which a person reaches through its main checkout.
+Listed = namedtuple("Listed", "folder state linked")
+
+
+def destination_projects(destination, timeout=60):
+    """Every entry the destination's registry lists, in its order.
+
+    The rows `kendex project list` prints for a person cannot name a folder
+    exactly: their escaping spells a newline as a backslash and an n, and a
+    folder may end in a note's text. kendex 1.23.0, the package's kendex
+    floor, first prints the document; an older kendex refuses --json."""
     if destination.host:
-        return listed_roots(checked(host_args(destination, "kendex project list"), operation="project-list"))
-    return listed_roots(checked(["kendex", "project", "list"], operation="project-list"))
+        argv = host_args(destination, "kendex project list --json")
+    else:
+        argv = ["kendex", "project", "list", "--json"]
+    text = checked(argv, operation="project-list", timeout=timeout)
+    try:
+        entries = []
+        for entry in json.loads(text):
+            folder, state, worktree = entry["folder"], entry["state"], entry["worktree"]
+            if not isinstance(folder, str) or not isinstance(state, str) or not isinstance(worktree, (dict, type(None))):
+                raise TypeError("entry-field")
+            entries.append(Listed(folder, state, worktree is not None))
+    except (ValueError, TypeError, KeyError) as error:
+        raise Failure("project-list", "malformed", type(error).__name__, error) from error
+    return entries
+
+
+def destination_roots(destination):
+    """The registered folders a pass or a note may take: readable and not a linked worktree."""
+    return [entry.folder for entry in destination_projects(destination)
+            if entry.state == "ok" and not entry.linked]
 
 
 # lane-mail with every file it sources or runs for the overseer mailbox,
@@ -361,11 +390,6 @@ except Refusal as error:
     return "ok"
 
 
-def listed_roots(text):
-    """The folders `kendex project list` prints, skipping rows that carry a note."""
-    return [line.strip() for line in text.split("\n") if line.strip() and "(" not in line]
-
-
 def project_roots():
     try:
         roots = destination_roots(Destination("local", None, None))
@@ -497,8 +521,8 @@ def mailbox_readers(bash, roots):
     mailbox. The mailbox's own checkout reads it, else the first listed
     root; a failed root reads for itself, to report the failure. A listed
     home is always its mailbox's own checkout: home_root takes its git top
-    level, and `kendex project list` notes a linked worktree, which
-    listed_roots skips.
+    level, and `kendex project list --json` marks a linked worktree,
+    which destination_roots skips.
     """
     resolved = []
     for root in roots:
@@ -549,8 +573,8 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
     events = []
     now = epoch()
     roots = [home] if satellite else project_roots()
-    # A home the project list omits (unregistered, removed, or a noted
-    # worktree row) still receives owner mail. Its to-lane alone is read for
+    # A home the project list omits (unregistered, removed, unreadable or a
+    # linked worktree) still receives owner mail. Its to-lane alone is read for
     # those rows: no mail event, no to-overseer mark-read, no receipts.
     alone = side == "local" and home not in roots
     readers = mailbox_readers(bash, roots)

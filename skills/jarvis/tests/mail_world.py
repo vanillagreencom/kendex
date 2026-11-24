@@ -12,6 +12,20 @@ REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "skills/jarvis/scripts"
 BASH = os.environ["JARVIS_TEST_BASH"]
 LANE_MAIL = REPO / "skills/mailbox/scripts/lane-mail"
+# kendex answering only the registry form a program reads, so a reader of the
+# human rows fails on exit 97.
+KENDEX = '#!/bin/sh\n[ "$*" = "project list --json" ] || exit 97\ncat "$REGISTRY"\n'
+
+
+def entry(folder, state="ok", worktree=False, main=None):
+    """One `kendex project list --json` entry, in the fields `kendex project list --help` documents."""
+    linked = {"main": str(main) if main else None} if worktree or main else None
+    return {"folder": str(folder), "state": state, "worktree": linked}
+
+
+def listing(*entries):
+    """The `kendex project list --json` document of ENTRIES, each a folder path or an entry()."""
+    return json.dumps([item if isinstance(item, dict) else entry(item) for item in entries])
 
 
 def make_project(path, overseer=True):
@@ -40,7 +54,7 @@ def control_account(executable, tools, account, roots):
     to ACCOUNT/sudo.log and, as sudo's secure_path does, drops the caller's PATH, so only the
     account's login profile puts TOOLS (kendex among them) back on it."""
     (account / "tmp").mkdir(parents=True)
-    (account / "registry").write_text("".join(str(root) + "\n" for root in roots))
+    (account / "registry").write_text(listing(*roots))
     (account / ".bash_profile").write_text('PATH=%s:"$PATH"\n' % tools)
     executable("sudo", '#!/bin/sh\n'
                '[ "$1 $2 $3 $5" = "-n -H -u --" ] || { echo "sudo: unexpected $*" >&2; exit 97; }\n'
@@ -53,7 +67,7 @@ def control_account(executable, tools, account, roots):
 
 
 class MailWorld(unittest.TestCase):
-    """One scratch root, a PATH of shims, and a `kendex project list` registry."""
+    """One scratch root, a PATH of shims, and a `kendex project list --json` registry."""
 
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
@@ -62,13 +76,13 @@ class MailWorld(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.registry = self.root / "registry"
-        self.registry.write_text("")
+        self.registry.write_text(listing())
         self.env = {key: value for key, value in os.environ.items()
                     if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "XDG_STATE_HOME")
                     and not key.startswith(("JARVIS_", "ORCH_", "KENDEX_", "SLACK_"))}
         self.env.update(PATH=str(self.bin) + os.pathsep + os.environ["PATH"], HOME=str(self.root),
                         REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE)
-        self.executable("kendex", '#!/bin/sh\ncat "$REGISTRY"\n')
+        self.executable("kendex", KENDEX)
 
     def executable(self, name, text):
         path = self.bin / name

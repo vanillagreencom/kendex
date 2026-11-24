@@ -21,7 +21,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 from fixtures.runtime_cache import AGENT_RUNTIME_CACHE
-from mail_world import control_account, make_project
+from mail_world import KENDEX, control_account, entry, listing, make_project
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "skills/jarvis/scripts"
@@ -56,13 +56,13 @@ class Producer(unittest.TestCase):
         self.home = self.project("home")
         self.peer = self.project("peer")
         self.registry = self.root / "registry"
-        self.registry.write_text(str(self.home) + "\n" + str(self.peer) + "\n")
+        self.registry.write_text(listing(self.home, self.peer))
         self.env = {key: value for key, value in os.environ.items()
                     if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "XDG_STATE_HOME")
                     and not key.startswith(("JARVIS_", "ORCH_", "KENDEX_", "SLACK_"))}
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HOME=str(self.root),
                         REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE)
-        self.executable("kendex", '#!/bin/sh\ncat "$REGISTRY"\n')
+        self.executable("kendex", KENDEX)
         self.module = load(self.scripts / "lib/watch.py")
         self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_MAIN_HOST="", JARVIS_LOG_DIR=str(self.root / "log"),
                              JARVIS_WAKE_SETTLE_SECS="15", JARVIS_VOICE_REMIND_SECS="0")
@@ -182,7 +182,7 @@ class Producer(unittest.TestCase):
     def test_initial_pass_destination_and_root_identity(self):
         equal = self.project("another/peer")
         roots = (self.peer, equal)
-        self.registry.write_text("\n".join(map(str, roots)) + "\n")
+        self.registry.write_text(listing(*roots))
         self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_REMOTE_HOSTS="beta gamma",
                              JARVIS_WAKE_SETTLE_SECS="0")
         self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
@@ -216,7 +216,7 @@ class Producer(unittest.TestCase):
                 self.mail(root, "notice", "after " + str(root), "--to", "owner")
             new_root = self.project("new/peer")
             self.mail(new_root, "notice", "new root retained history", "--to", "owner")
-            self.registry.write_text("\n".join(map(str, (*roots, new_root))) + "\n")
+            self.registry.write_text(listing(*roots, new_root))
             self.settings["JARVIS_REMOTE_HOSTS"] = "gamma beta alpha"
             watch = self.watch()
             self.assertEqual(watch.state["generation"], generation)
@@ -247,7 +247,7 @@ class Producer(unittest.TestCase):
             clones[name].joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
             self.mail(clones[name], "notice", "reply in the " + name + " clone", "--to", "owner")
         remote_registry = self.root / "remote-registry"
-        remote_registry.write_text(str(clones["ssh-user"]) + "\n")
+        remote_registry.write_text(listing(clones["ssh-user"]))
         control_account(self.executable, self.bin, self.root / "overseer-account", [clones["account"]])
         self.executable("ssh", '#!/bin/sh\nshift\ncd "$REMOTE_HOME" || exit 1\n'
                         'HOME="$REMOTE_HOME" REGISTRY="$REMOTE_REGISTRY" exec sh -c "$*"\n')
@@ -449,16 +449,22 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         self.mail(self.home, "send", "already delivered at home", "--directive")
         noted = self.project("noted")
         self.mail(noted, "notice", "must stay hidden", "--to", "owner")
+        # A folder named with a note's text is the folder itself.
+        named = self.project("named (worktree of ignored)")
+        self.mail(named, "notice", "named folder notice", "--to", "owner")
         missing = self.root / "missing"
-        with self.registry.open("a") as out:
-            out.write(str(noted) + " (worktree of ignored)\n" + str(missing) + "\n")
+        self.registry.write_text(listing(self.home, self.peer, entry(noted, worktree=True), named, missing,
+                                         entry(self.root / "gone", state="folder-not-found")))
         output, cursor = self.read_pass()
         self.assertIn("EVENT mail repo=home file=to-overseer destination=local root="+str(self.home)+"\n", output)
         self.assertIn("peer answer\n", output)
         self.assertIn("ask to=owner ref= options=yes,no recommend=yes deadline=", output)
         self.assertNotIn("already delivered at home", output)
         self.assertNotIn("must stay hidden", output)
+        self.assertIn("named folder notice\n", output)
         self.assertIn("EVENT root-unreachable repo=missing", output)
+        # An entry kendex could not read is skipped, as its noted row was.
+        self.assertNotIn("repo=gone", output)
         marker = self.home / "tmp/lane-mail/overseer/to-overseer.seen"
         self.assertEqual(marker.read_text().strip(), str(cursor[str(self.home)]["to-overseer"]["count"]))
         # Consume the canonical marker through the unchanged relay owner.
@@ -659,7 +665,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             step(watch, 0, reminder, False, 0, [])
             # A home the project list omits still waits on its owner rows; its
             # to-overseer mail stays out of the pass.
-            self.registry.write_text(str(self.peer) + "\n")
+            self.registry.write_text(listing(self.peer))
             fourth = self.owner_note("fourth ask")
             self.mail(self.home, "notice", "home mail while unlisted", "--to", "owner")
             before = watch.log.read_text()
@@ -836,7 +842,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
     def test_root_paths_are_distinct_cursor_keys(self):
         # Real registry + mailbox table: equal names and equal cross-host paths.
         other = self.project("another/home")
-        self.registry.write_text(str(other) + "\n" + str(self.home) + "\n")
+        self.registry.write_text(listing(other, self.home))
         for root, label in ((other, "peer"), (self.home, "owner")):
             for index in range(17):
                 self.mail(root, "notice", label+"-%s " % index + "é" * 3900, "--to", "owner")
@@ -886,7 +892,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         env_script.write_text(text.replace(case, case + '    [[ "$2" != "${UNRESOLVED:-}" ]] || exit 1\n'))
 
         def watch_pass(home, roots, cursor, unresolved="", broken=""):
-            self.registry.write_text("".join(str(root) + "\n" for root in roots))
+            self.registry.write_text(listing(*roots))
             delivered = []
             with patch.dict(os.environ, dict(self.env, UNRESOLVED=str(unresolved), BROKEN=str(broken)), clear=True):
                 output = self.module.mail_pass(BASH, home, "local", cursor, delivered)
@@ -1051,7 +1057,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
             # The existing presence producers supply the finite target table.
             equal = self.project("another/home")
-            self.registry.write_text("\n".join(map(str, (self.home, equal, self.peer))) + "\n")
+            self.registry.write_text(listing(self.home, equal, self.peer))
             for root in (self.home, equal, self.peer):
                 root.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "missing/hold"\n')
             local = {root: (root, status, cause) for root, status, cause in self.module.presence_roots(lambda: True)}
@@ -1597,7 +1603,7 @@ with open(sys.argv[1], "ab") as out:
         os.mkfifo(ready)
         os.mkfifo(release)
         self.env.update(ACQUIRE_READY=str(ready), ACQUIRE_RELEASE=str(release))
-        self.executable("kendex", '#!/bin/sh\nprintf ready > "$ACQUIRE_READY"\nread -r ack < "$ACQUIRE_RELEASE"\ncat "$REGISTRY"\n')
+        self.executable("kendex", '#!/bin/sh\nprintf ready > "$ACQUIRE_READY"\nread -r ack < "$ACQUIRE_RELEASE"\n' + KENDEX.split("\n", 1)[1])
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
             watch.next_presence["local"] = 1000000
@@ -1955,7 +1961,7 @@ with open(sys.argv[1], "ab") as out:
                             settings += '\nSLACK_JARVIS_SESSION_MAX_AGE = "bad"'
                         root.joinpath("kendex.settings.toml").write_text('[env]\n'+settings+'\n')
                     self.executable("kendex", '#!/bin/sh\n'+('exit 2\n' if side == "local" and stage == "operation-recovery"
-                                                            else 'cat "$REGISTRY"\n'))
+                                                            else KENDEX.split("\n", 1)[1]))
                     self.executable("ssh", '#!/bin/sh\n'+('exit 2\n' if side == "host" and stage == "operation-recovery"
                                                          else 'exec '+shlex.quote(BASH)+' -s\n'))
                     calls = 0
@@ -2370,7 +2376,7 @@ with open(sys.argv[1], "ab") as out:
         self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_REMOTE_HOSTS="beta alpha beta",
                              JARVIS_WAKE_SETTLE_SECS="0")
         self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
-        self.registry.write_text(str(self.peer)+"\n")
+        self.registry.write_text(listing(self.peer))
         self.mail(self.peer, "notice", "same-path notice", "--to", "owner")
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
@@ -2463,7 +2469,7 @@ with open(sys.argv[1], "ab") as out:
         import threading
         self.settings.update(JARVIS_CONTROL_HOST="slow", JARVIS_REMOTE_HOSTS="healthy", JARVIS_WAKE_SETTLE_SECS="0")
         self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
-        self.registry.write_text(str(self.peer)+"\n")
+        self.registry.write_text(listing(self.peer))
         self.mail(self.peer, "notice", "healthy before timeout", "--to", "owner")
         ready, release = threading.Event(), threading.Event()
         original = self.module.run

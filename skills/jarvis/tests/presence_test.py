@@ -44,7 +44,8 @@ class Presence(unittest.TestCase):
             return path
         executable("date", 'case "$*" in *+%s*) cat "$CLOCK";; *+%Y-%m-%dT%H:%M:%SZ*) '+
                    sys_python()+' -c \'import datetime,os; print(datetime.datetime.fromtimestamp(int(open(os.environ["CLOCK"]).read()),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))\';; *) exec '+real_date+' "$@";; esac\n')
-        executable("kendex", 'printf "%s\\n" "$PRESENCE_ROOT"\n')
+        executable("kendex", '[ "$*" = "project list --json" ] || exit 97\n'
+                   'jq -n --arg folder "$PRESENCE_ROOT" \'[{folder: $folder, state: "ok", worktree: null}]\'\n')
         # The session's harness: a planted process the fleet record names as
         # its harness identity, which agent-runtime's status read takes the
         # session's liveness from. A word written here sets what that read

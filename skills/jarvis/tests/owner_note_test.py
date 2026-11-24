@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import unittest
 
-from mail_world import BASH, REPO, SCRIPTS, MailWorld, control_account, make_project
+from mail_world import BASH, KENDEX, REPO, SCRIPTS, MailWorld, control_account, entry, listing, make_project
 
 NOTE = "Check the release notes.\nThen report.\n"
 # The overseer's directive 1792369993-3375997-24882 fixes these exact bytes.
@@ -78,9 +78,8 @@ class OwnerNote(MailWorld):
                 sides[side].append(root)
         (base / "remote-home").mkdir()
         (base / "remote-tmp").mkdir()
-        (base / "remote-registry").write_text("".join(str(path) + "\n" for path in sides["remote"]))
-        self.registry.write_text("".join(str(path) + "\n" for path in sides["local"]) +
-                                 str(self.root / "elsewhere") + " (folder not found)\n")
+        (base / "remote-registry").write_text(listing(*sides["remote"]))
+        self.registry.write_text(listing(*sides["local"], entry(self.root / "elsewhere", state="folder-not-found")))
         return base, sides
 
     def send(self, base, host, resolve=False):
@@ -341,7 +340,7 @@ class OwnerNote(MailWorld):
     def test_satellite_instructs_no_overseer(self):
         base, sides = self.world("satellite", [("app", True)], [("app", True)])
         listed = self.root / "kendex.log"
-        self.executable("kendex", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$KENDEX_LOG"\ncat "$REGISTRY"\n')
+        self.executable("kendex", '#!/bin/sh\nprintf "%s\\n" "$*" >> "$KENDEX_LOG"\n' + KENDEX.split("\n", 1)[1])
         self.env.update(KENDEX_LOG=str(listed), JARVIS_MAIN_HOST="main.example:/srv/home")
         result = self.send(base, True)
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -483,7 +482,7 @@ class OwnerNote(MailWorld):
                 base, sides = self.world(name.replace(" ", "-"), [(control, True)], [(local, True)])
                 target = make_project(base / "satellite" / satellite)
                 satellite_registry = base / "satellite-registry"
-                satellite_registry.write_text(str(target)+"\n")
+                satellite_registry.write_text(listing(target))
                 self.executable("ssh", '#!/bin/sh\n'
                     '[ "$1" != "$FAIL_ALIAS" ] || { echo "transport refused" >&2; exit 255; }\n'
                     'case "$1" in control) REGISTRY=$REMOTE_REGISTRY;; satellite) REGISTRY=$SATELLITE_REGISTRY;; *) exit 94;; esac\n'

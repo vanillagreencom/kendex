@@ -76,10 +76,10 @@ A single consumer block over the batch's 60 KiB cap reports `event-too-large`; s
 
 The loop prints one batch pointer without its body; the [session workflow](../workflows/session.md#control-host-events) reads the body.
 
-`vm-watch.sh` discovers registered projects on each machine through `kendex project list`.
+`vm-watch.sh` discovers registered projects on each machine through `kendex project list --json`.
 
 - For hosted repository discovery and the account used on the control host, see [Control host setup](agent-reach.md#control-host-setup).
-- It skips noted rows.
+- It skips an entry whose `state` is not `ok` or whose `worktree` is set.
 - An unreachable root reports its failure once, and the other roots continue.
 - A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`.
 
