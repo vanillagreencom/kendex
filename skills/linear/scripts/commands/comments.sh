@@ -53,6 +53,9 @@ Create Options:
   --body <text>         Comment body (required unless --body-file or --attach is set)
   --body-file <path>    Read comment body from file (preferred for markdown)
   --parent <id>         Parent comment ID for replies
+  --no-attribution      Post the body as supplied, with no attribution line,
+                        so its first line is the caller's: an owner ask
+                        opens with the owner's mention
   --attach <path>       Upload a file to Linear and reference it in the body
                         (repeatable). Images embed as ![name](assetUrl); other
                         files append a [name](assetUrl) markdown link. Composes
@@ -64,6 +67,7 @@ Create Options:
   for the lane session bound at the caller: the agent from its launch, the
   model and effort from the session's own record. A value it does not read
   is unknown. A body that already opens with such a line has it replaced.
+  --no-attribution leaves both out.
 
 Update Options:
   --body <text>         New comment body (required unless --body-file is set)
@@ -285,6 +289,7 @@ create_comment() {
     local body=""
     local body_file=""
     local parent_id=""
+    local attributed=1
     local attach_paths=()
 
     while [[ $# -gt 0 ]]; do
@@ -292,6 +297,7 @@ create_comment() {
             --body) body="$2"; shift 2 ;;
             --body-file) body_file="$2"; shift 2 ;;
             --parent) parent_id="$2"; shift 2 ;;
+            --no-attribution) attributed=0; shift ;;
             --attach)
                 if [ -z "${2-}" ]; then
                     echo '{"error": "--attach requires a path argument"}' >&2
@@ -333,8 +339,8 @@ create_comment() {
         return 1
     fi
 
-    local attribution
-    attribution=$(comment_attribution)
+    local attribution=""
+    [[ "$attributed" -eq 0 ]] || attribution=$(comment_attribution)
 
     # Upload --attach files and reference them from the comment body: images
     # embed as markdown, other files get a markdown link (comments have no
@@ -359,8 +365,12 @@ create_comment() {
     # Escape body for JSON (handle newlines and quotes), under the one
     # attribution line, which replaces any copy the caller wrote.
     local escaped_body
-    escaped_body=$(echo "$body" | jq -Rs --arg line "$attribution" \
-        "$COMMENT_ATTRIBUTION_JQ"'$line + "\n\n" + unattributed')
+    if [[ "$attributed" -eq 1 ]]; then
+        escaped_body=$(echo "$body" | jq -Rs --arg line "$attribution" \
+            "$COMMENT_ATTRIBUTION_JQ"'$line + "\n\n" + unattributed')
+    else
+        escaped_body=$(echo "$body" | jq -Rs '.')
+    fi
 
     local input_parts=("\"issueId\": \"$comment_issue_id\"" "\"body\": $escaped_body")
 

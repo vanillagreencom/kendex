@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Surface: owner ask tracker writer and outcome projection.
-# Inputs: skills/mailbox/scripts/**, skills/slack/scripts/**, skills/orch/references/secret-value.ere,
+# Inputs: skills/mailbox/scripts/**, skills/linear/scripts/**, skills/slack/scripts/**, skills/orch/references/secret-value.ere,
 # skills/mailbox/tests/lib/owner-tracker.py,
 # skills/mailbox/tests/lib/owner-tracker-close.py,
 # skills/orch/tests/lib/assertions.sh, skills/orch/tests/lib/growth-state.sh.
@@ -53,6 +53,7 @@ assert_eq "$(jq '.rollback_notice' <<<"$CLOSE_FACTS")" true 'failed rollback rep
 assert_eq "$(jq '.comment_refused' <<<"$CLOSE_FACTS")" true 'refused comment acknowledgements stay unposted and retain the response'
 assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes only the added owner label from fresh labels'
 assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
+assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
 # were, while an ask without --issue still lands in chat.
@@ -97,7 +98,7 @@ owner account|ORCH_OWNER_ASK_LABEL=owner-gated|ORCH_OWNER_EMAIL
 both||ORCH_OWNER_ASK_LABEL,ORCH_OWNER_EMAIL
 ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed cause comment-id mention close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
+  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -129,6 +130,13 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         '"https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri), "",' ''
       assertion='the question comment mentions the owner and carries no ask id'
+    elif [[ "$rule" == attribution ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" ' --no-attribution --body-file' ' --body-file'
+      assertion='the question comment mentions the owner and carries no ask id'
+    elif [[ "$rule" == mention-check ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        'owner_tracker_mentioned "$tracker" "$comment_id"' 'true "$tracker" "$comment_id"'
+      assertion='a saved comment without the owner mention refuses by its key and records no post'
     elif [[ "$rule" == close-untracked ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
         'lm_resolved "$MSGID" "$BY" "$CLOSE_ID"' \
