@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Surface: jarvis-session forward, forward-drain, forward-wait and status --main,
-# a satellite's confirmed forwards to the main home.
+# a satellite's forwards to the main home.
 # Inputs: skills/jarvis/scripts/jarvis-session, skills/jarvis/scripts/lib/forward.py,
 # skills/jarvis/scripts/lib/session.py, skills/jarvis/scripts/lib/owner_note.py,
 # skills/jarvis/scripts/lib/watch.py, skills/jarvis/scripts/lib/jarvis-env.sh,

@@ -52,7 +52,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
 - `.agents/skills/jarvis/scripts/jarvis-session report-due --home HOME` reads orch's derived schedule under [Control-host events: Delivery](control-host-events.md#delivery).
   - Succession retains the controller's original session start.
   - When adopting the [progress checkpoint](../workflows/session.md#progress-checkpoint) in an already running session, repeat its Start command once to establish the start floor.
-- On a satellite, `jarvis-session forward --home HOME --record PATH` forwards a confirmed owner request to the main, under [Agent reach: Forward](agent-reach.md#forward).
+- On a satellite, `jarvis-session forward --home HOME --record PATH` forwards an owner request to the main, under [Agent reach: Forward](agent-reach.md#forward).
 - Use `jarvis-session forward-drain --home HOME` under [Agent reach: Status](agent-reach.md#status).
 - Wait for one forward's answer with `jarvis-session forward-wait --home HOME --key KEY` under [Agent reach: Forward](agent-reach.md#forward).
 - Read `jarvis-session status --home HOME --main` for forwarding status.

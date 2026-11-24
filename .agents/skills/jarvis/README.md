@@ -14,7 +14,7 @@ Jarvis turns your coding assistant into a personal assistant that carries out th
 - Fills in forms and works in your accounts from its own browser profile.
 - Reads reports from the agents in your other kendex projects and sends them the instructions you approve.
 - Guided setup for Slack, Linear, GitHub and fleet machines.
-- Takes long work from Jarvis Voice on another computer after you confirm.
+- Takes long work from Jarvis Voice on another computer.
 - Runs skills you write yourself.
 
 ## Install
@@ -100,14 +100,16 @@ To use Jarvis Voice on a second computer, make that computer a Jarvis satellite 
 4. Run `.agents/skills/jarvis/scripts/jarvis-session main-host --home . --set DEST:/path/to/main/home`, where `DEST` is the SSH destination of Jarvis main and the path is the Jarvis home on it. The command saves `JARVIS_MAIN_HOST` in this computer's `.env.local`. Never put it in `kendex.settings.toml`: Jarvis main would pull it and become a satellite too.
 5. Move the secrets this computer needs under [Secret transfer](references/accounts-and-secrets.md#secret-transfer). A clone carries none of them.
 
-The satellite handles voice, windows, apps, files, the screen and sign-ins on that computer. It asks before it forwards other work to Jarvis main, and the request and answer appear in your Slack channel.
+The satellite handles voice, windows, apps, files, the screen and sign-ins on that computer. It forwards other work to Jarvis main, and the request and answer appear in your Slack channel. Set `JARVIS_FORWARD_CONFIRM` to `on` to have it ask you first; the [settings example](kendex.settings.toml.example) says when that helps.
 
 - Leave `JARVIS_MAIN_HOST` empty on Jarvis main only.
 - Do not commit or push the Jarvis home from a satellite.
 
 ## Update
 
-Run `kendex refresh` in your Jarvis home. It updates the package and leaves your `AGENTS.md`, own skills, memory and handoffs as they are, so a later change to the starting `AGENTS.md` text does not reach an existing home. In a home where VGS installed Jarvis without kendex, VGS updates the package when it opens the home.
+Run `kendex refresh` in your Jarvis home. With a satellite, update Jarvis main first, then each satellite. An older Jarvis main acts on nothing in a forward that a newer satellite sends without asking, while the satellite reports it delivered. Until Jarvis main is updated, set `JARVIS_FORWARD_CONFIRM` to `on` on each satellite.
+
+`kendex refresh` updates the package and leaves your `AGENTS.md`, own skills, memory and handoffs as they are, so a later change to the starting `AGENTS.md` text does not reach an existing home. In a home where VGS installed Jarvis without kendex, VGS updates the package when it opens the home.
 
 ## Uninstall
 

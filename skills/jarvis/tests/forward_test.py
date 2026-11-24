@@ -365,6 +365,45 @@ class Forward(MailWorld):
         self.assertEqual(self.directives(), [])
         self.assertFalse(self.outbox_path().exists())
 
+    def test_confirmation_setting(self):
+        """JARVIS_FORWARD_CONFIRM: off, the default, sends a record with no confirmation; on refuses one."""
+        def unconfirmed(record):
+            del record["confirmation"]
+            return record
+        # Each row: name, setting (None leaves it unset), record, refusal first and second lines or None to deliver.
+        rows = (("unset sends none", None, unconfirmed(self.record()), None),
+                ("off sends none", "off", unconfirmed(self.record()), None),
+                ("on refuses none", "on", unconfirmed(self.record()), ("record-invalid field=record", "")),
+                ("on sends words", "on", self.record(), None),
+                ("on sends physical", "on", self.record(confirmation={"method": "physical"}), None),
+                ("off judges words", "off", self.record(confirmation={"words": "no"}), ("confirmation-unclear", "")),
+                ("session needs its grant", "off", unconfirmed(self.session_record()), ("record-invalid field=record", "")),
+                ("unlisted value", "yes", unconfirmed(self.record()), ("setting-invalid", "JARVIS_FORWARD_CONFIRM")))
+        for name, setting, record, refusal in rows:
+            with self.subTest(row=name):
+                env = dict(self.env) if setting is None else dict(self.env, JARVIS_FORWARD_CONFIRM=setting)
+                before = len(self.directives())
+                result = self.forward(record, env=env)
+                written = self.directives()[before:]
+                if refusal is not None:
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stderr.split("\n")[:2],
+                                     ["jarvis-session: forward=refused cause=" + refusal[0], refusal[1]])
+                    self.assertEqual(written, [])
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                confirmation = record.get("confirmation")
+                cited = (("null", "null", "none", "null") if confirmation is None else
+                         (confirmation["ref"], confirmation["at"], confirmation.get("method", "words"),
+                          "null" if "method" in confirmation else '"Yes."'))
+                line = ("forwarded-request: satellite=%s request-ref=%s request-at=%s confirmation-ref=%s "
+                        "confirmed-at=%s key=%s confirmation-method=%s confirmation-text=%s" % (
+                            os.uname().nodename, record["request"]["ref"], record["request"]["at"],
+                            cited[0], cited[1], self.key(record), cited[2], cited[3]))
+                self.assertEqual([(row.get("delivery_id"), row["text"]) for row in written],
+                                 [(self.key(record), "forwarded-confirmation: caller=unproved\nrequest-text: "
+                                   '"%s"' % record["request"]["text"] + "\n\n" + line)])
+
     def test_same_request_keeps_one_key(self):
         self.mode.write_text("down")
         record = self.record()
