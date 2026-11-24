@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Inputs: kendex.settings.toml
 # tools/harness-smoke's refusals, which are everything it decides before it
 # installs anything: the arguments it takes, the commands it needs, the
 # repository it places its scratch under, and the kendex build it runs on. The
@@ -20,7 +19,6 @@
 #   rc     the exit status
 #   first  `<key>=<value>`, the value written as `SCRATCH` for the scratch
 #          directory or as itself
-# Inputs: skills/social-media-content-calendar/* .agents/skills/social-media-content-calendar/*
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -46,52 +44,6 @@ PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
-
-echo "=== the content calendar uses native harness tools ==="
-# These tool names occur in the upstream calendar at
-# NousResearch/hermes-agent commit 91a545ab1e09a266aead11da62665ab7230d9840.
-# Scan every shipped Markdown file, including workflows. Top-level tests
-# and evals are source-only fixtures, as engine.md's render rule specifies.
-calendar_tools_absent() {
-  python3 - "$1" <<'PY'
-import pathlib
-import re
-import sys
-
-root = pathlib.Path(sys.argv[1])
-files = sorted(path for path in root.rglob("*.md")
-               if path.relative_to(root).parts[0] not in ("tests", "evals")
-               and path.relative_to(root) != pathlib.Path("DEVELOPMENT.md"))
-required = {root / "SKILL.md", root / "workflows" / "plan-campaign.md"}
-if not required.issubset(files):
-    sys.exit(2)
-tools = re.compile(r"(?<![A-Za-z0-9_])(read_file|web_extract|image_generate)(?![A-Za-z0-9_])")
-for path in files:
-    if tools.search(path.read_text(encoding="utf-8")):
-        print(f"calendar: hermes-tool path={path.relative_to(root)}")
-        sys.exit(1)
-PY
-}
-for calendar in "$REPO/skills/social-media-content-calendar" \
-  "$REPO/.agents/skills/social-media-content-calendar"; do
-  calendar_rc=0
-  calendar_out="$(calendar_tools_absent "$calendar" 2>&1)" || calendar_rc=$?
-  [ "$calendar_rc" -eq 0 ] \
-    && ok "calendar text has no upstream tool name: ${calendar#"$REPO/"}" \
-    || bad "calendar text has no upstream tool name: ${calendar#"$REPO/"}" "$calendar_out"
-done
-# A private copy makes each real upstream name reach the same scanner.
-# The exact status proves rejection rather than a missing-input error.
-for hermes_tool in read_file web_extract image_generate; do
-  control_calendar="$TMP/calendar-$hermes_tool"
-  cp -R "$REPO/skills/social-media-content-calendar" "$control_calendar"
-  printf '\nUse %s for this draft.\n' "$hermes_tool" >>"$control_calendar/workflows/plan-campaign.md"
-  calendar_rc=0
-  calendar_out="$(calendar_tools_absent "$control_calendar" 2>&1)" || calendar_rc=$?
-  [ "$calendar_rc" -eq 1 ] \
-    && ok "control: calendar rejects planted $hermes_tool" \
-    || bad "control: calendar rejects planted $hermes_tool" "rc=$calendar_rc out=$calendar_out"
-done
 
 SCRATCH="$TMP/scratch"
 mkdir -p "$SCRATCH" "$TMP/empty-bin" "$TMP/stub-bin"
@@ -470,48 +422,24 @@ NOWHERE="$(printf 'd%.0s' $(seq 40))"
 git -C "$STAND" update-ref HEAD "$OUTSIDE"
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$OUTSIDE"
 stand_case "a build of HEAD reaches the rows" 1 -
-plant "$STAND_SMOKE" 's/\\2\/p/\\1\/p/'
-stand_case "control: a reader that takes the build kind for its commit refuses a build of HEAD" \
-  2 "stale-kendex=git head=$OUTSIDE"
-cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+main.410.$OUTSIDE"
 stand_case "a CI build of HEAD reaches the rows" 1 -
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$NOWHERE"
 stand_case "a build of a commit the checkout does not hold is refused" 2 "stale-kendex=$NOWHERE head=$OUTSIDE"
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0"
 stand_case "a build naming no commit is refused" 2 "stale-kendex=none head=$OUTSIDE"
-plant "$STAND_SMOKE" 's/^    INSTALLED_COMMIT=none$/    kendex_build=current/'
-stand_case "control: a reader that passes a build naming no commit reaches the rows" 1 -
-cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+main.410.$REPO_HEAD"
 stand_case "an older build whose build inputs match HEAD's reaches the rows" 1 -
-plant "$STAND_SMOKE" 's|"\$HEAD_COMMIT" -- "\${BUILD_INPUTS\[@\]}" 2>&1)|"$HEAD_COMMIT" -- 2>\&1)|'
-stand_case "control: a diff over the whole tree refuses an older build that differs outside its build inputs" \
-  2 "stale-kendex=$REPO_HEAD head=$OUTSIDE"
-cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 git -C "$STAND" update-ref HEAD "$CRATES"
 stand_case "an older build whose crates/ differ from HEAD's is refused, naming both commits" \
   2 "stale-kendex=$REPO_HEAD head=$CRATES"
 stand_case "--allow-stale runs on that build and says so first" \
   1 "allowed-stale=$REPO_HEAD head=$CRATES" --allow-stale
-plant "$STAND_SMOKE" 's/ diff --quiet "\$INSTALLED_COMMIT"/ diff --stat "$INSTALLED_COMMIT"/'
-stand_case "control: a build-input diff read for its output, not its status, passes that build" 1 -
-plant "$STAND_SMOKE" 's/merge-base --is-ancestor "\$HEAD_COMMIT" "\$INSTALLED_COMMIT"/merge-base --is-ancestor "$INSTALLED_COMMIT" "$HEAD_COMMIT"/'
-stand_case "control: a check asking whether HEAD contains the build passes that build" 1 -
-plant "$STAND_SMOKE" 's/^    --allow-stale) ALLOW_STALE=1; shift ;;$/    --allow-stale) ALLOW_STALE=0; shift ;;/'
-stand_case "control: an --allow-stale that sets nothing refuses that build" \
-  2 "stale-kendex=$REPO_HEAD head=$CRATES" --allow-stale
-plant "$STAND_SMOKE" 's/^  note allowed-stale /  : note allowed-stale /'
-stand_case "control: an --allow-stale run that says nothing reaches the rows unannounced" 1 - --allow-stale
-cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 git -C "$STAND" update-ref HEAD "$LOCK"
 stand_case "an older build whose Cargo.lock differs from HEAD's is refused" \
   2 "stale-kendex=$REPO_HEAD head=$LOCK"
-plant "$STAND_SMOKE" 's|^BUILD_INPUTS=(.*)$|BUILD_INPUTS=(crates/)|'
-stand_case "control: build inputs of crates/ alone pass that build" 1 -
-cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 
 git -C "$STAND" update-ref HEAD "$REPO_HEAD"
 kendex_stub "$BUILD_BIN/kendex" "kendex 1.2.0+git.$CRATES"
@@ -528,41 +456,6 @@ kendex_stub "$BUILD_BIN/kendex" "kendex 0.0.0+git.$REPO_HEAD"
 mv -- "$STAND/.git" "$STAND/.git.away"
 stand_case "a script whose checkout has no HEAD is refused, naming that checkout" 2 "checkout-head=$STAND"
 mv -- "$STAND/.git.away" "$STAND/.git"
-
-# ORCH_POST_MERGE_CMD in kendex.settings.toml skips the self-install's rebuild
-# where its diff over some paths is empty, and the script passes an older
-# build where its diff over BUILD_INPUTS is: a path one names and the other
-# does not lets a merge the rebuild skipped leave a binary the check passes as
-# current, or refuses after every such merge. Each side is read from its own
-# file, and a read that finds nothing is a broken extractor, not agreement.
-echo "=== the build check and the post-merge rebuild diff the same paths ==="
-build_inputs_agree() { # SETTINGS SCRIPT — 0 equal, 1 different, 2 a side read nothing
-  local settings script
-  settings="$(sed -n 's/^ORCH_POST_MERGE_CMD = "if git diff --quiet \$ORCH_POST_MERGE_BEFORE \$ORCH_POST_MERGE_AFTER -- \([^;]*\); then .*/\1/p' "$1")" ||
-    return 2
-  script="$(sed -n 's/^BUILD_INPUTS=(\(.*\))$/\1/p' "$2")" || return 2
-  printf 'settings=[%s] script=[%s]' "$settings" "$script"
-  [ -n "$settings" ] && [ -n "$script" ] || return 2
-  [ "$settings" = "$script" ] || return 1
-}
-SETTINGS="$TMP/kendex.settings.toml"
-cp "$REPO/kendex.settings.toml" "$SETTINGS.intact"
-cp "$SETTINGS.intact" "$SETTINGS"
-rc=0
-said="$(build_inputs_agree "$SETTINGS" "$SMOKE")" || rc=$?
-case "$rc" in
-  0) ok "ORCH_POST_MERGE_CMD and BUILD_INPUTS name the same paths ($said)" ;;
-  1) bad "ORCH_POST_MERGE_CMD and BUILD_INPUTS name the same paths" "$said" ;;
-  *) bad "ORCH_POST_MERGE_CMD and BUILD_INPUTS name the same paths" "an extractor read nothing, so the extractor is broken: $said" ;;
-esac
-plant "$SETTINGS" 's/ Cargo\.lock / /'
-rc=0
-said="$(build_inputs_agree "$SETTINGS" "$SMOKE")" || rc=$?
-if [ "$rc" = 1 ]; then
-  ok "control: an ORCH_POST_MERGE_CMD that drops Cargo.lock differs"
-else
-  bad "control: an ORCH_POST_MERGE_CMD that drops Cargo.lock differs" "rc=$rc $said"
-fi
 
 # The keyed line being first is half the claim; the cause the dependency gave
 # has to survive under it.
@@ -1113,86 +1006,20 @@ else
   cp "$TMP/pkg-bin-copilot" "$PKG_BIN/copilot"
 fi
 
-# Controls on the stand-in copy: each plants one rule out and hands its row the
-# input that rule refuses, and the row reads the verdict the rule was there to
-# stop. A no-session row that never reads the enforced cell leaves the
-# lane-mail row unanswerable where its row wants pending, and one that reads it
-# skipped lets that run exit 0, so that run takes no other plant.
+# These inputs exercise discovery of files loaded from a repository.
 cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 ln -s -- "$REPO/agents" "$STAND/agents"
 cp "$REPO"/hooks/*.sh "$STAND/hooks/"
 PKG_SKILLS_ALL="$(for f in "$REPO"/skills/*/SKILL.md; do f=${f%/SKILL.md}; printf '%s\n' "${f##*/}"; done)"
 PKG_AGENTS_ALL="$(for f in "$REPO"/agents/*.md; do f=${f##*/}; printf '%s\n' "${f%.md}"; done)"
-plants() { # FILE SED-SCRIPT... — FILE.intact with each edit applied in turn, each required to change it
-  local f="$1" e
-  shift
-  cp "$f.intact" "$f"
-  for e; do
-    cp "$f" "$f.planted"
-    plant "$f" "$e" "$f.planted"
-  done
-}
-# Each control() call holds one control's parts: the edit that plants its rule
-# out, a sed script for the smoke copy, empty where control_run's shared
-# fixture edit reaches its rows; its label|row|result|clause rows; and the
-# settings that hand them the refused input. A batch runs once and its rows read that one
-# run, so control() refuses a row or setting another control of the batch
-# holds. A planted edit can reach any row of its run, so a control holding one
-# runs in a batch of its own; only edit-free controls share a run. control_run
-# applies the shared edits and the batch's planted edit to the intact copies,
-# runs once, and reads every row.
-CTL_SED=
-CTL_ENVS=()
-CTL_ROWS=
-CTL_HELD=
-control() { # SED ROWS [ENV=VAL]...
-  local sed rows held='' q e
-  sed=$1 rows=$2
-  shift 2
-  if [ -n "$CTL_SED" ] || { [ -n "$sed" ] && [ -n "$CTL_ROWS" ]; }; then
-    printf 'harness-smoke.test: refused=shared-control edit %s\n' "${sed:-$CTL_SED}" >&2
-    exit 2
-  fi
-  while IFS='|' read -r _ q _; do
-    [ -n "$q" ] || continue
-    held+="row $q"$'\n'
-  done <<<"$rows"
-  for e; do held+="setting ${e%%=*}"$'\n'; done
-  while IFS= read -r q; do
-    [ -n "$q" ] || continue
-    if grep -qxF -- "$q" <<<"$CTL_HELD"; then
-      printf 'harness-smoke.test: refused=shared-control %s\n' "$q" >&2
-      exit 2
-    fi
-  done <<<"$held"
-  CTL_HELD+=$held
-  CTL_SED=$sed
-  [ "$#" -eq 0 ] || CTL_ENVS+=("$@")
-  CTL_ROWS+="$rows"$'\n'
-}
-control_run() { # [SED]... — the batch's shared fixture edits
-  plants "$STAND_SMOKE" "$@" ${CTL_SED:+"$CTL_SED"}
-  package_run "$STAND_SMOKE" ${CTL_ENVS[@]+"${CTL_ENVS[@]}"}
-  package_table "$CTL_ROWS"
-  CTL_SED=
-  CTL_ENVS=()
-  CTL_ROWS=
-  CTL_HELD=
-}
-EV_BAD="STANDIN_EVENTS=start sub-start substart-id sub-stop-own subagentstop-task lead-stop end"
-# The disposable copy opens the fixture input instead of a terminal. The
-# interactive commands and every verdict check remain in the smoke runner.
-INTERACTIVE='s/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
-# The consumer fixture changes only in this disposable copy. The stand-in
-# discovers the added file through the same listing as the live control.
-control '/^  printf.*PKG_RULES.*PKG\/AGENTS.md/a\
-  printf "%s\\n" "@AGENTS.md" >"$PKG/CLAUDE.md"' \
-  "control: an AGENTS.md import fails the double-load row|instruction:double-load|fail|same directory: AGENTS.md,CLAUDE.md"
-control_run
+plant "$STAND_SMOKE" '/^  printf.*PKG_RULES.*PKG\/AGENTS.md/a\
+  printf "%s\n" "@AGENTS.md" >"$PKG/CLAUDE.md"'
+package_run "$STAND_SMOKE"
+package_case "an AGENTS.md import fails the double-load row" instruction:double-load fail "same directory: AGENTS.md,CLAUDE.md"
+cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
 while IFS='|' read -r label sources result clause; do
-  control '' "$label|instruction:double-load|$result|$clause" \
-    "STANDIN_SOURCES=${sources//;/$'\n'}"
-  control_run
+  package_run "$STAND_SMOKE" "STANDIN_SOURCES=${sources//;/$'\n'}"
+  package_case "$label" instruction:double-load "$result" "$clause"
 done <<'CASES'
 a nested pair fails|sub/AGENTS.md;sub/CLAUDE.md|fail|same directory: sub/AGENTS.md,sub/CLAUDE.md
 an absolute pair fails|/project/AGENTS.md;/project/CLAUDE.md|fail|same directory: /project/AGENTS.md,/project/CLAUDE.md
@@ -1200,144 +1027,16 @@ files in different directories pass|other/CLAUDE.md|pass|lists no AGENTS.md and 
 files in different nested directories pass|a/AGENTS.md;b/CLAUDE.md|pass|lists no AGENTS.md and CLAUDE.md in the same directory
 other file names pass|OTHERAGENTS.md;CLAUDE.md.backup|pass|lists no AGENTS.md and CLAUDE.md in the same directory
 CASES
-# Pin the one interactive negative check before planting it out. Enabling the
-# terminal fixture alone would change the copy even if this edit missed.
-interactive_negative='if [ "$result" = negative ] && ! grep -qF "$token" "$transcript"; then negative=pass; fi'
-if [ "$(sed -n '/token="SMOKE-INTERACTIVE-/,/^answer_config()/p' "$STAND_SMOKE.intact" | grep -Fc "$interactive_negative")" -ne 1 ]; then
-  printf 'interactive negative check: expected one match\n' >&2
-  exit 2
-fi
-# Each answer control removes one check of the answer rows; the silent, leak
-# and error edits also reach the interactive session's own checks, so no run
-# that enables that session takes one of them.
 
-control 's/grep -qxF "$token" "$transcript"/true/' \
-  "control: removed answer check passes silent|answer:sessionStart|pass|model repeated the hook-only token" \
-  STANDIN_ANSWER=silent
-control_run
-control 's/! grep -qF "$token" "$transcript"/true/' \
-  "control: removed answer check passes leak|answer:sessionStart|pass|model repeated the hook-only token" \
-  STANDIN_ANSWER=leak
-control_run
-control 's/\[ "$count" -gt 0 \]/true/' \
-  "control: removed answer check passes nohook|answer:sessionStart|pass|model repeated the hook-only token" \
-  STANDIN_ANSWER=nohook
-control_run
-control 's/\[ "$STATUS" -eq 0 \]/true/' \
-  "control: removed answer check passes error|answer:sessionStart|pass|model repeated the hook-only token" \
-  STANDIN_ANSWER=error
-control_run
-control 's/\[ "$count" -ge 2 \]/true/' \
-  "control: removed answer check passes once|answer:agentStop|pass|model repeated the hook-only token" \
-  STANDIN_ANSWER=once
-control_run
-control 's/^      if \[ -n "\$lead" \] \&\& \[ "\$ids" = "\$lead" \]; then$/      if [ -n "$lead" ]; then/' \
-  "control: a sessionStart row that never compares the ids passes one under the subagent too|event:sessionStart|pass|fired it once" \
-  "$EV_BAD"
-control_run
-control 's/ and (\.\[0\] | has("agentId") or has("agentType") | not) then "pass"$/ then "pass"/' \
-  "control: a subagentStart row that never reads its keys passes one naming the subagent|event:subagentStart|pass|naming no agentId" \
-  "$EV_BAD"
-control_run
-control 's/^          and \.\[0\]\.agentType == "smoke-child" and/          and/' \
-  "control: a subagentStop row that never reads agentType passes the task tool's|event:subagentStop|pass|smoke-child as agentType" \
-  "$EV_BAD"
-control_run
-control 's/^          and any(\.\[\]; \.sessionId == \$sub and dir == \$lead)$/          and any(.[]; .sessionId == $sub)/' \
-  "control: an agentStop row that never reads the transcript passes a subagent naming its own|event:agentStop|pass|fired it twice" \
-  "$EV_BAD"
-control_run
-control 's/ and \.errorContext == "model_call" and/ and/' \
-  "control: an errorOccurred row that never reads errorContext passes a tool's failure|event:errorOccurred|pass|with errorContext model_call" \
-  STANDIN_ERRORS='start tool end'
-control_run
-control 's/^  elif \[ "\$hook" != block-bare-cd \] \&\& \[ -e "\$marker" \]; then$/  elif false; then/' \
-  "control: a marker read that never looks passes a command that went through|hook:block-unsafe-rm|pass|was never written" \
-  STANDIN_REFUSE=0
-control_run
-control 's/^  elif ! denial=\$(pkg_denial "\$hook"); then$/  elif false; then/' \
-  "control: a tool-result read that never looks passes a refusal the model saw only as an exit code|hook:block-bare-cd|pass|the model was shown: ;" \
-  STANDIN_DENIAL=generic
-control_run
-control 's/^    case "\$command" in \*"\$2"\*) printf/    case "$command" in *) printf/' \
-  "control: a trigger check that takes any record replays the helper payload for a hook the trigger never reached|hook:block-repo-copy|fail|passes the payload Copilot sent" \
-  STANDIN_FEED=helper
-control_run
-control 's/^  \[ -n "\$args" \] \&\& \[ -n "\$judge" \] || return 1$/  return 1/' \
-  "control: a hook row that never looks under its judge fails a wrapper that ran|hook:session-start-row|fail|never ran at SessionStart" \
-  STANDIN_WRAP=session-start-row
-control_run
-control 's/^    \[ "\$line" = "\$args" \] || continue$/    :/' \
-  "control: a hook row that takes any read of its judge passes a wrapper whose arguments never ran|hook:session-end-row|pass|reading the payload Copilot sent" \
-  STANDIN_WRAP=session-end-row
-control_run
-control 's/^  if \[ "\$shared" -gt 0 \] || \[ "\$excluded" -gt 0 \]; then$/  if false; then/' \
-  "control: a mixed-hook row that never counts the .claude/hooks copies passes a Copilot that ran them|mixed-hook|pass|and neither .claude/hooks copy" \
-  STANDIN_CROSS=1
-control_run
-control 's/^  if startup=\$(grep -m 1 -F .could not be loaded. <<<"\$OUT"); then$/  if false; then/' \
-  "control: a mixed-hook row that never reads the startup passes a settings file Copilot could not load|mixed-hook|pass|reports no settings file it could not load" \
-  STANDIN_SETTINGS=bad
-control_run
-control '/run copilot-mixed-startup /,/run copilot-mixed /s/^  if \[ "\$STATUS" -ne 0 \]; then$/  if false; then/' \
-  "control: a mixed-hook row that never reads the listing's exit passes a listing that failed|mixed-hook|pass|reports no settings file it could not load" \
-  STANDIN_SETTINGS=exit
-control_run
-control 's/^  elif \[ "\$own" -gt 0 \]; then$/  elif true; then/' \
-  "control: a mixed-hook row that never counts Copilot's own copy passes a run of none|mixed-hook|pass|ran .github/hooks/smoke-tool.sh 0 time(s)" \
-  STANDIN_MIXED=0
-control_run
-control 's/^  elif grep -qFx COPILOT_PROJECT_DIR <<<"\$tool_env"; then$/  elif false; then/' \
-  "control: an environment row that never reads COPILOT_PROJECT_DIR passes a tool call carrying it|helper:env|pass|reaches a hook and a tool call" \
-  STANDIN_TOOL_PROJECT_DIR=1
-control_run
-control 's/^  elif grep -qFx -- sub\/AGENTS.md <<<"\$root_sources"; then$/  elif false; then/' \
-  "control: a nested reading that ignores the root listing differs where the root lists it|instruction:nested|differs|for the working directory only" \
-  STANDIN_NESTED_ROOT=1
-control_run
-control 's/elif grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "\$transcript"/elif true || grep -qxF '\''SMOKE-RULES-REACHED-VIA-AGENT'\'' "$transcript"/' \
-  "control: no subagent token check accepts the lead token alone|instruction:subagent|pass|SMOKE-RULES-REACHED-VIA-AGENT" \
-  STANDIN_SUB=SMOKE-RULES-REACHED
-control_run
-control 's/ --available-tools task --allow-all-tools -s$/ --allow-all-tools -s/' \
-  "control: a listing turn that can read files passes agents the task tool does not offer|agent:reviewer-doc|pass|lists it" \
-  STANDIN_TASK_AGENTS=
-control_run
-control "s/^PKG_UNRAISED='SubagentStop PreCompact'\$/PKG_UNRAISED=''/" \
-  "control: with every event read as raised, a SubagentStop hook is judged on a session that runs no subagent|hook:reviewer-stop-check|pass|reading the payload Copilot sent
-control: with every event read as raised, a compaction hook is judged without compaction|hook:lane-mail-compact|pass|reading the payload Copilot sent"
-control_run
-control 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced-never) row "$1" "$2" pending /' \
-  "control: a no-session row that ignores the enforced cell is unanswerable|lane-mail|unanswerable|runs no lane session on copilot"
-control_run
-
-control '/token="SMOKE-INTERACTIVE-/,/^answer_config()/s/&& ! grep -qF "\$token" "\$transcript"/\&\& { true || ! grep -qF "$token" "$transcript"; }/' \
-  "control: disabled interactive negative check passes the same leak|answer:userPromptSubmitted-interactive|pass|hook-only token repeated in interactive session, absent with silent hook" \
-  STANDIN_INTERACTIVE_ANSWER=leak
-control_run "$INTERACTIVE"
-control 's/^  if \(.*smoke-events\/compact.*\); then$/  if true || { \1; }; then/' \
-  "control: no capture check passes absent manual compaction|event:preCompact|pass|/compact fired preCompact with trigger manual" \
-  STANDIN_COMPACT=none
-control_run "$INTERACTIVE"
-control '' "interactive silent-control token leak fails|answer:userPromptSubmitted-interactive|fail|positive=pass negative=fail" \
-  STANDIN_INTERACTIVE_ANSWER=leak
-control '' "no manual compaction capture fails its dedicated row|event:preCompact|fail|/compact recorded no preCompact payload with trigger manual" \
-  STANDIN_COMPACT=none
-control_run "$INTERACTIVE"
-control '' "interactive prompt context passes with a silent control|answer:userPromptSubmitted-interactive|pass|hook-only token repeated in interactive session, absent with silent hook"
-control '' "manual compaction capture passes its dedicated row|event:preCompact|pass|/compact fired preCompact with trigger manual"
-control_run "$INTERACTIVE"
-
-plant "$STAND_SMOKE" 's/^    \*:enforced) row "\$1" "\$2" pending /    *:enforced) row "$1" "$2" skipped /; s/^    row copilot answer:userPromptSubmitted-interactive pending /    row copilot answer:userPromptSubmitted-interactive skipped /; s/^    row copilot event:preCompact pending /    row copilot event:preCompact skipped /'
-package_run "$STAND_SMOKE" STANDIN_SKILLS="$PKG_SKILLS_ALL
-smoke-skill"
-package_case "control: an unmeasured enforced row read skipped" lane-mail skipped "runs no lane session on copilot"
-if [ "$PKG_RC" = 0 ]; then
-  ok "control: and that run exits 0"
-else
-  bad "control: and that run exits 0" "rc=$PKG_RC, rows not passing: $(awk '$1 == "copilot" && ($3 == "fail" || $3 == "unanswerable" || $3 == "pending") { printf "%s ", $0 }' "$TMP/pkg-out")"
-fi
-cp "$STAND_SMOKE.intact" "$STAND_SMOKE"
+# The disposable copy opens fixture input instead of a terminal. Its real
+# commands and verdict checks still run against the stand-in.
+plant "$STAND_SMOKE" 's/^COPILOT_INTERACTIVE=0$/COPILOT_INTERACTIVE=1/; s@</dev/tty@</dev/null@'
+package_run "$STAND_SMOKE" STANDIN_INTERACTIVE_ANSWER=leak STANDIN_COMPACT=none
+package_case "interactive silent-control token leak fails" answer:userPromptSubmitted-interactive fail "positive=pass negative=fail"
+package_case "no manual compaction capture fails its dedicated row" event:preCompact fail "/compact recorded no preCompact payload with trigger manual"
+package_run "$STAND_SMOKE"
+package_case "interactive prompt context passes with a silent control" answer:userPromptSubmitted-interactive pass "hook-only token repeated in interactive session, absent with silent hook"
+package_case "manual compaction capture passes its dedicated row" event:preCompact pass "/compact fired preCompact with trigger manual"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

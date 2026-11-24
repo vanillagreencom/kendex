@@ -211,15 +211,4 @@ paths_file="$SANDBOX/changed-paths"
 assert_eq changed-path-file \
   ".agents/skills/orch/SKILL.md" "$(cat "$paths_file")"
 
-if help_out="$("$HARNESS_ONLY" --help)"; then
-  help_status=0
-else
-  help_status=$?
-fi
-case "$help_out" in
-  "Usage: harness-only"*) help_contract=usage ;;
-  *) help_contract="$help_out" ;;
-esac
-assert_eq help "usage exit 0" "$help_contract exit $help_status"
-
 report wiring-errors

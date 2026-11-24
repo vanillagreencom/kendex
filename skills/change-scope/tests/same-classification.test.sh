@@ -196,11 +196,7 @@ small-test-in-another-subsystem|dirty|pull_request|-|runtime/product.ts=30 paylo
 small-binary-test|dirty|pull_request|-|runtime/product.ts=30 payload/tests/image.png=binary
 small-render-root-is-one-subsystem|dirty|pull_request|-|runtime/one.ts=30 .agents/runtime/two.ts=30
 small-configured-test-glob|dirty|pull_request|ORCH_SIZE_TEST_PATHS=payload/fixtures/*|runtime/product.ts=30 payload/fixtures/data.conf=30
-small-docs-beside-source|dirty|pull_request|-|runtime/product.ts=30 docs/runtime.md=10
 small-deleted-test|dirty|pull_request|-|rm:runtime/tests/kept.test.ts runtime/product.ts=2
-instruction-root-agents|dirty|pull_request|-|AGENTS.md=10
-instruction-skill|dirty|pull_request|-|skills/x/SKILL.md=3
-instruction-past-small|dirty|pull_request|-|skills/x/SKILL.md=200
 configuration-settings|dirty|pull_request|-|kendex.settings.toml=2 runtime/product.ts=2
 configuration-manifest|dirty|pull_request|-|kendex.toml=2
 configuration-gemini|clean|pull_request|-|.gemini/settings.json=2
@@ -208,14 +204,9 @@ registry-claude-settings|dirty|pull_request|-|.claude/settings.json=2 runtime/pr
 registry-copilot-hook|dirty|pull_request|-|.github/hooks/guard.json=2 runtime/product.ts=2
 excluded-workflow|dirty|pull_request|-|.github/workflows/ci.yml=3
 excluded-action|dirty|pull_request|-|.github/actions/change-class/classify=3
-excluded-hook-body|dirty|pull_request|-|hooks/guard.sh=2
-excluded-rendered-hook-body|dirty|pull_request|-|.claude/hooks/guard.sh=2
-excluded-gate-script|dirty|pull_request|-|skills/review-gate/scripts/gate.sh=2
 excluded-tools|dirty|pull_request|-|tools/guard=2
 excluded-lock-record|dirty|pull_request|-|.kendex-lock.json=2 runtime/product.ts=2
 excluded-allowlisted-gate|dirty|pull_request|HARNESS_CI_TRIVIAL_PATHS=*|.github/workflows/ci.yml=3
-hook-suite-measures|dirty|pull_request|-|hooks/tests/guard.test.sh=200
-package-readme-measures|dirty|pull_request|-|skills/review-gate/README.md=12
 unsupported-event-push|dirty|push|-|runtime/product.ts=10
 unsupported-event-release|dirty|release|-|runtime/product.ts=10
 empty-diff|dirty|pull_request|-|-

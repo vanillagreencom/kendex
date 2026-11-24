@@ -565,8 +565,7 @@ if [[ "$RUN" -eq 0 ]]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: no native contracts selected\n' "$BATTERY"
     exit 0
   fi
-  # A narrowed shard step's list can skip each suite of its shard, and a main
-  # push's main-only rejectors can reject the one suite a step kept.
+  # A narrowed shard step can reject every suite its list selected.
   if [ "$REJECTED" -gt 0 ]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every selected suite rejected\n' "$BATTERY"
     exit 0

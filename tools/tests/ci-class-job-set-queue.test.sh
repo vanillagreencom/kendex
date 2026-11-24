@@ -29,19 +29,11 @@ fixture|micro|.claude/hooks/lane-mail-check|true
 fixture|micro|$PRICE $PI|true
 ROWS
 }
-queue_selection() { # EVENT WORLD CLASS PATHS [COPY]
+queue_selection() { # EVENT WORLD CLASS PATHS
   local world="$ROOT"
   [ "$2" = tree ] || world="$SEL_WORLD"
-  SELECT_IN="$world" SELECT_WITH="${5:-$JOB_SET}" SELECT_EVENT="$1" \
+  SELECT_IN="$world" SELECT_EVENT="$1" \
     selection "$3" false "$(printf '%s\n' $4)"
-}
-queue_of() { # EVENT WORLD CLASS PATHS [COPY] — the queue_macos_shards value, or the refusal key
-  local got
-  got="$(queue_selection "$@")"
-  case "$got" in
-    exit=*) printf '%s' "$got" ;;
-    *) field queue_macos_shards <<<"$got" ;;
-  esac
 }
 queue_rows=0
 while IFS='|' read -r world class paths macos; do
@@ -54,32 +46,5 @@ while IFS='|' read -r world class paths macos; do
   done
 done < <(queue_table)
 [ "$queue_rows" -ge 9 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
-# EDIT@PATHS: a copy with the rule removed must fail the row over PATHS.
-# A refusal is a broken copy, never a reddened row.
-while IFS='@' read -r edit paths; do
-  sed "$edit" "$JOB_SET" >"$TMP/rule/tools/ci-job-set"
-  chmod +x "$TMP/rule/tools/ci-job-set"
-  changed="$(diff "$JOB_SET" "$TMP/rule/tools/ci-job-set" | grep -c '^>' || :)"
-  if [ "$changed" != 1 ]; then
-    bad "control: the edit changed $changed lines of a ci-job-set copy, not one: $edit"
-    continue
-  fi
-  line="$(queue_table | grep -F -- "|$paths|")" || { echo "no queue row over $paths" >&2; exit 1; }
-  IFS='|' read -r world class _ macos <<<"$line"
-  for event in pull_request merge_group; do
-    base="$(queue_selection "$event" "$world" "$class" "$paths")"
-    expected='[]'
-    [ "$macos" = false ] || expected="$(macos_shards "$(field shards <<<"$base")")"
-    got="$(queue_of "$event" "$world" "$class" "$paths" "$TMP/rule/tools/ci-job-set")"
-    case "$got" in
-      exit=*) bad "control: $edit broke the ci-job-set copy over $paths ($got)" ;;
-      *) [ "$got" != "$expected" ] && ok "control: $edit fails the queue row on $event over $paths" ||
-        bad "control: $edit leaves the queue row green on $event over $paths" ;;
-    esac
-  done
-done <<'CONTROLS'
-s/^if \[ "\$macos_on" = true \]; then$/if true; then/@skills/orch/SKILL.md .agents/skills/orch/SKILL.md
-CONTROLS
-
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

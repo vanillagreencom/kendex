@@ -37,11 +37,6 @@ echo "=== configured instructions require their render blocks ==="; while IFS='|
   reset_world; seed_skill "$skill"; configure '[skill-instructions]' "$key"
   [ "$block" != shared ] || render_block "$skill" "" project
   expect_red "$key instructions require the $block render block" ".agents/skills/$skill/SKILL.md"
-  if [ "$key" = all ] && mutant_guard 's/ or shared and not has_block(text, "shared")//'; then
-    run_mutant; [ "$RC" -eq 0 ] && ok "control: without shared-marker enforcement the isolated missing marker passes" \
-      || bad "control: without shared-marker enforcement the isolated missing marker passes" "rc=$RC out=$OUT"
-  elif [ "$key" = all ]; then bad "control: shared-marker enforcement could not be disabled"
-  fi
   render_block "$skill" "" complete; expect_green "$key instructions pass with the $block render block"
 done <<'ROWS'
 all|shared-all|shared

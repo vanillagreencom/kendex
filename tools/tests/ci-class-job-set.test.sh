@@ -53,7 +53,7 @@ micro|false|pi-extensions/pi-claude-bridge/src/x.ts|$SHARD_CODE|+node +pi-claude
 micro|false|hooks/block-bare-cd.sh|$SHARD_CODE|+node
 micro|false|skills/deep-research/SKILL.md|$SHARD_PROSE|+node
 micro|false|pi-extensions/pi-hooks/extensions/hooks.ts|$SHARD_CODE|+node
-micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans +guards-tools-tail
+micro|false|$SKILLS_AGENTS|$SHARD_PROSE|+guards-scans
 micro|false|.github/instructions/code-review.md|$SHARD_PROSE|$ROSTER
 micro|false|.github/AGENTS.md skills/orch/scripts/resolve-base-branch|$SHARD_CODE|$ROSTER
 micro|true|$UNREAD_DOC CHANGELOG.md|$NONE_PROSE|[]

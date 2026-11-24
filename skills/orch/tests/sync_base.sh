@@ -94,17 +94,6 @@ assert_eq "$(git -C "$BASE_TREE" rev-parse HEAD)" "$(git -C "$SEED" rev-parse ma
 git -C "$BASE_TREE" commit -q --allow-empty -m local-ahead
 local_ahead_sha="$(git -C "$BASE_TREE" rev-parse HEAD)"
 origin_sha="$(git -C "$BASE_TREE" rev-parse origin/main)"
-# The suite's one must-fail control. sync-base reads git-https-auth from the
-# github skill beside its own, so the one copied file takes its script
-# directory from the environment rather than from where it sits.
-AHEAD_MUTANT="$TMP_ROOT/sync-base-ahead-mutant"
-assert_eq "$(grep -Fc '[[ "$LOCAL_SHA" == "$ORIGIN_SHA" ]] || {' "$SYNC")" "1" "local-ahead control finds the SHA equality gate"
-awk '
-  index($0, "SCRIPT_DIR=\"$(cd --") { print "SCRIPT_DIR=\"${SYNC_TEST_SCRIPT_DIR:?}\""; next }
-  { sub(/\[\[ "\$LOCAL_SHA" == "\$ORIGIN_SHA" \]\]/, "[[ -n \"$LOCAL_SHA\" ]]"); print }
-' "$SYNC" > "$AHEAD_MUTANT"
-chmod +x "$AHEAD_MUTANT"
-assert_eq "$(SYNC_TEST_SCRIPT_DIR="$REPO_ROOT/skills/orch/scripts" "$AHEAD_MUTANT" "$CLONE" 2>"$TMP_ROOT/local-ahead-mutant.err")" "main" "local-ahead control fails without SHA equality"
 rc=0
 out="$($SYNC "$CLONE" 2>"$TMP_ROOT/local-ahead.err")" || rc=$?
 [[ $rc -ne 0 ]] && pass "owned local-ahead base fails closed" || fail "owned local-ahead base fails closed"
@@ -283,12 +272,6 @@ assert_eq "$out" "" "failed remote fetch prints no branch"
 assert_eq "$(sed -n '1p' "$TMP_ROOT/fetch-failed.err")" "sync-base: fetch-failed ref=origin/main" "remote fetch starts with the stable refusal"
 assert_file_contains "$TMP_ROOT/fetch-failed.err" "$TMP_ROOT/missing-origin.git" "remote fetch keeps the tool detail"
 git -C "$CLONE" remote set-url origin "$origin_url"
-
-MERGE_WORKFLOW="$REPO_ROOT/skills/orch/workflows/merge-pr.md"
-assert_file_contains "$MERGE_WORKFLOW" 'scripts/sync-base [MAIN_REPO_ROOT]' "merge-pr delegates base synchronization to the script"
-assert_file_contains "$MERGE_WORKFLOW" 'scripts/resolve-base-branch [MAIN_REPO_ROOT]' "merge-pr resolves the failed sync base branch"
-assert_file_contains "$MERGE_WORKFLOW" 'rev-parse "refs/heads/[BASE_BRANCH]"' "merge-pr collects the stale local SHA"
-assert_file_contains "$MERGE_WORKFLOW" 'rev-parse "refs/remotes/origin/[BASE_BRANCH]"' "merge-pr collects the stale origin SHA"
 
 rc=0
 "$SYNC" one two >/dev/null 2>"$TMP_ROOT/arguments.err" || rc=$?

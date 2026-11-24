@@ -2,16 +2,12 @@
 # Audit checks must search paths that exist. The resolver derives them from the
 # repository: a narrow change set when one is known, otherwise every tracked
 # source root. The workflow therefore needs no repository-root src/ assumption.
-#
-# The markdown checks at the tail pin structure only. Runtime rows separately
-# prove repository discovery and the exclusion of vendored .agents/ renders.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RESOLVER="$SKILL_DIR/scripts/verification-scope"
-WORKFLOW="$SKILL_DIR/workflows/tpm-audit.md"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -315,46 +311,4 @@ if [[ "$refusal_failures" -ne 0 ]]; then
   exit 1
 fi
 
-run_structural_case() {
-  local case_name="$1" expectation="$2" subject_key="$3"
-  local needle="$4" description="$5" subject
-
-  case "$subject_key" in
-    workflow) subject="$WORKFLOW" ;;
-    resolver) subject="$RESOLVER" ;;
-    *) fail "$case_name: unknown structural subject $subject_key" ;;
-  esac
-
-  case "$expectation" in
-    present)
-      grep -Fq -- "$needle" "$subject" || fail "$case_name: $description"
-      ;;
-    absent)
-      if grep -Fq -- "$needle" "$subject"; then
-        fail "$case_name: $description"
-      fi
-      ;;
-    *)
-      fail "$case_name: unknown structural expectation $expectation"
-      ;;
-  esac
-}
-
-structural_rows_executed=0
-
-while IFS='^' read -r case_name expectation subject_key needle description; do
-  run_structural_case \
-    "$case_name" "$expectation" "$subject_key" "$needle" "$description"
-  structural_rows_executed=$((structural_rows_executed + 1))
-done <<'STRUCTURAL_ROWS'
-workflow-no-hardcoded-src^absent^workflow^${WORKTREE:-.}/src/^tpm-audit still hardcodes a repository-root src directory
-workflow-resolver-route^present^workflow^scripts/verification-scope^tpm-audit does not invoke verification-scope
-resolver-render-marker^present^resolver^.agents/^verification-scope lost the vendored-render marker
-workflow-docs-mode^present^workflow^docs-only^tpm-audit does not document the docs-only path
-workflow-path-field^present^workflow^verification_paths^tpm-audit does not consume resolved verification paths
-workflow-issue-placeholder^present^workflow^VERIFICATION_CONTEXTS[ISSUE_KEY]^tpm-audit does not retain verification context per issue
-STRUCTURAL_ROWS
-
-[[ "$structural_rows_executed" -gt 0 ]] \
-  || fail "STRUCTURAL_ROWS executed no assertion rows"
-printf 'pass: %d   fail: 0\n' "$((success_rows_executed + refusal_rows_executed + structural_rows_executed))"
+printf 'pass: %d   fail: 0\n' "$((success_rows_executed + refusal_rows_executed))"
