@@ -7811,6 +7811,7 @@ fn a_hosted_lane_with_an_unreadable_native_observation_is_not_exited() {
     let fleet = Fleet::new(&server);
     let pane = server.open_window("gh-4", dir.path(), "exec sleep 600");
     let mut lane = hosted_lane(dir.path(), "KEN-4", "gh-4", "/remote/KEN-4");
+    lane["launched_at"] = json!(clock::iso_utc(1_799_999_940));
     lane["launch"] = json!({"pane": pane, "server": server.pid, "server_start": server.start});
     let mut doc = fleet.runner.fleet();
     doc["lanes"] = json!([lane]);
@@ -7830,23 +7831,41 @@ fn a_hosted_lane_with_an_unreadable_native_observation_is_not_exited() {
             world.scripts.join("close.log").display()
         ),
     );
-    let plant = |status| {
+    let plant = |capabilities, status| {
         world.plant_host(&[
-            ("capabilities", ok(VERB_LINE)),
+            ("capabilities", capabilities),
             ("status --item KEN-4 --harness claude", status),
             (
                 "capture --item KEN-4",
                 json!({"exit": 1, "stderr": "lane-host: ssh-failed\n"}),
             ),
+            ("cat --item KEN-4 /remote/KEN-4/.git", answer(2, "")),
+            (
+                "cat --item KEN-4 /remote/KEN-4/tmp/items/KEN-4/workflow-state-KEN-4.json",
+                answer(2, ""),
+            ),
+            ("touch --item KEN-4", ok("")),
         ]);
     };
+    let plant_status = |status| plant(ok(VERB_LINE), status);
+    let status_failure = json!({"exit": 1, "stderr": "lane-host: status read failed\n"});
+    let status_cause = "EVENT lane-unreadable gh-4 cause=harness-probe-failed item=KEN-4 status exit=1 lane-host: status read failed";
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
-    plant(ok("exited\n"));
+    plant_status(ok("exited\n"));
     let before = driver.pass(&state);
-    plant(ok("running\n"));
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-4".into(),
+        value: "o/r#7@1799999970".into(),
+    });
+    plant_status(ok("running\n"));
     let unread = driver.pass(&state);
-    plant(ok("exited\n"));
+    driver.baseline.apply(Change::Clear {
+        kind: "merged".into(),
+        identity: "KEN-4".into(),
+    });
+    plant_status(ok("exited\n"));
     let after = driver.pass(&state);
     let observed = [
         event_lines(&before),
@@ -7875,30 +7894,66 @@ fn a_hosted_lane_with_an_unreadable_native_observation_is_not_exited() {
     let reported = driver.pass(&state);
     assert_eq!(event_lines(&reported), ["EVENT lane-exited gh-4"]);
     assert_eq!(world.log("close.log").len(), 1);
-    plant(json!({"exit": 1, "stderr": "lane-host: status read failed\n"}));
-    assert_eq!(
-        event_lines(&driver.pass(&state)),
-        [
-            "EVENT lane-unreadable gh-4 cause=harness-probe-failed item=KEN-4 status exit=1 lane-host: status read failed"
-        ]
-    );
+    plant_status(status_failure.clone());
+    assert_eq!(event_lines(&driver.pass(&state)), [status_cause]);
     assert_eq!(world.log("close.log").len(), 1);
-    plant(ok("exited\n"));
+    plant_status(ok("exited\n"));
     assert!(event_lines(&driver.pass(&state)).is_empty());
     assert_eq!(world.log("close.log").len(), 2);
 
     // A successful running status invalidates the old exit even when the
     // capture fails. The first fresh exit cannot retry the old close.
-    plant(ok("running\n"));
+    plant_status(ok("running\n"));
     assert_eq!(event_lines(&driver.pass(&state)), observed[1]);
     assert_eq!(world.log("close.log").len(), 2);
-    plant(ok("exited\n"));
+    plant_status(ok("exited\n"));
     assert!(event_lines(&driver.pass(&state)).is_empty());
     assert_eq!(world.log("close.log").len(), 2);
+
+    let capability_cause = format!(
+        "host-capabilities-unread host={} cause=capabilities exit=1 lane-host: capabilities read failed",
+        provider(dir.path()),
+    );
+    for (capabilities, status, cause) in [
+        (
+            ok(VERB_LINE),
+            status_failure.clone(),
+            status_cause.to_owned(),
+        ),
+        (
+            json!({"exit": 1, "stderr": "lane-host: capabilities read failed\n"}),
+            ok("exited\n"),
+            format!("EVENT lane-unreadable gh-4 cause={capability_cause}"),
+        ),
+    ] {
+        plant(capabilities, status);
+        let unread = driver.pass(&state);
+        plant_status(ok("exited\n"));
+        let fresh_exit = driver.pass(&state);
+        assert!(
+            event_lines(&fresh_exit).is_empty() && world.log("close.log").len() == 2,
+            "after {cause}: events={:?} close-attempts={}",
+            lines(&fresh_exit),
+            world.log("close.log").len()
+        );
+        assert_eq!(event_lines(&unread), [cause]);
+    }
     assert_eq!(
         event_lines(&driver.pass(&state)),
         ["EVENT lane-exited gh-4"]
     );
+    assert_eq!(world.log("close.log").len(), 3);
+
+    // A relaunch keeps the window's lane name and publishes a new pane.
+    let retired = support::tmux(&server.socket, &["kill-pane", "-t", &pane]);
+    assert!(retired.status.success(), "{}", stderr(&retired));
+    let replacement = server.open_window("gh-4", dir.path(), "exec sleep 600");
+    doc["lanes"][0]["launch"]["pane"] = json!(replacement);
+    fleet.runner.write_fleet(&doc);
+    plant_status(status_failure);
+    assert_eq!(event_lines(&driver.pass(&fleet.read())), [status_cause]);
+    assert_eq!(driver.baseline.get("lane-exited", "gh-4"), None);
+    assert_eq!(driver.baseline.get("close-pending", "gh-4"), None);
     assert_eq!(world.log("close.log").len(), 3);
 }
 

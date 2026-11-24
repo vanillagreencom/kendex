@@ -612,6 +612,14 @@ pub(super) struct HostRead {
 }
 
 impl HostRead {
+    fn failed(cause: String) -> Self {
+        Self {
+            status: Some(Err(cause)),
+            screen: None,
+            rows: None,
+        }
+    }
+
     pub(super) fn of(scripts: &Path, lane: &Lane, caps: Capabilities) -> HostRead {
         let status = match (caps.status, lane.harness.as_deref()) {
             (Status::Verb, Some(harness)) => Some(hosted::status(
@@ -855,15 +863,10 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
     let lane = in_flight(&fleet, item)?;
     let scripts = super::overseer::scripts_dir(&settings.roots.project);
     let hosts = Hosts::read(&scripts, [lane]);
-    let unjudged = |cause: String| HostRead {
-        status: Some(Err(cause)),
-        screen: None,
-        rows: None,
-    };
     let (host, files) = match hosts.of(lane) {
-        Err(cause) => (unjudged(cause), None),
+        Err(cause) => (HostRead::failed(cause), None),
         Ok(caps) if caps.status == Status::None => {
-            (unjudged("status-none".to_owned()), Some(caps.files))
+            (HostRead::failed("status-none".to_owned()), Some(caps.files))
         }
         Ok(caps) => (HostRead::of(&scripts, lane, caps), Some(caps.files)),
     };
@@ -923,11 +926,7 @@ pub(crate) fn judge(
     let scripts = super::overseer::scripts_dir(&settings.roots.project);
     let hosts = Hosts::read(&scripts, [lane]);
     let host = match hosts.of(lane) {
-        Err(cause) => HostRead {
-            status: Some(Err(cause)),
-            screen: None,
-            rows: None,
-        },
+        Err(cause) => HostRead::failed(cause),
         Ok(caps) => HostRead::of(&scripts, lane, caps),
     };
     let readers = Readers::kernel();
@@ -1064,12 +1063,6 @@ pub fn observe(pass: &Pass) -> Produced {
     }
     hosted::prune_close_markers(pass, &mut out);
     hosted::complete_parks(pass, &mut out);
-    // A `status=none` kind's window holds no harness the pane passes judge.
-    let lanes: Vec<(&Lane, Capabilities)> = in_flight
-        .iter()
-        .filter_map(|l| hosts.of(l).ok().map(|caps| (*l, caps)))
-        .filter(|(_, caps)| caps.status != Status::None)
-        .collect();
     let sockets = agent_runtime::effects::fleet_sockets(
         pass.fleet
             .overseer
@@ -1077,10 +1070,15 @@ pub fn observe(pass: &Pass) -> Produced {
             .and_then(agent_runtime::effects::overseer_socket),
         pass.server.map(Path::to_path_buf),
     );
-    let observed: Vec<Observed> = lanes
+    let observed: Vec<Observed> = in_flight
         .iter()
-        .map(|(lane, caps)| {
-            let host = HostRead::of(pass.scripts, lane, *caps);
+        .filter_map(|lane| {
+            let host = match hosts.of(lane) {
+                // This kind has no harness for this duty to judge.
+                Ok(caps) if caps.status == Status::None => return None,
+                Ok(caps) => HostRead::of(pass.scripts, lane, caps),
+                Err(cause) => HostRead::failed(cause),
+            };
             let failed_status = matches!(host.status, Some(Err(_)));
             let mut obs = read_lane(lane, pass.readers, &sockets, host, None);
             // The lane status verb carries this cause as unjudged. The
@@ -1088,7 +1086,7 @@ pub fn observe(pass: &Pass) -> Produced {
             if failed_status && let LaneState::Unjudged { cause } = obs.state {
                 obs.state = LaneState::Unreadable { cause };
             }
-            obs
+            Some(obs)
         })
         .collect();
     let mut walls = Vec::new();
@@ -1309,6 +1307,7 @@ fn observe_one(
     let lane = &obs.name;
     let get = |kind: &str| pass.baseline.get(kind, lane).map(str::to_owned);
     let pane_key = obs.pane_key.clone().unwrap_or_default();
+    let reported_here = |row: &str| row.strip_suffix("|reported") == Some(pane_key.as_str());
     let slice = obs
         .screen
         .as_deref()
@@ -1379,10 +1378,10 @@ fn observe_one(
         }
         LaneState::Unreadable { cause } => {
             // A failed hosted read breaks the sequence of exit readings.
-            // Keep a reported exit unless the provider read it running.
+            // Keep a report for this pane unless the provider read it running.
             if obs.hosted_unreadable()
                 && get("lane-exited")
-                    .is_some_and(|prior| obs.provider_running || !prior.ends_with("|reported"))
+                    .is_some_and(|prior| obs.provider_running || !reported_here(&prior))
             {
                 out.changes.push(clear("lane-exited", lane));
                 if get(hosted::CLOSE_PENDING_ROW)
@@ -1417,7 +1416,7 @@ fn observe_one(
     // and an absent row must not read as that first pass.
     if let LaneState::Exited = state {
         let prior = get("lane-exited");
-        if prior.as_deref() == Some(format!("{pane_key}|reported").as_str()) {
+        if prior.as_deref().is_some_and(reported_here) {
             return reading;
         }
         if prior.as_deref() == Some(pane_key.as_str()) {
