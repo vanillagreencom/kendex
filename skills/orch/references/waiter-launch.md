@@ -12,13 +12,21 @@ Read when launching a waiter for a review wait, a `verify-pr` call (`orch-runtim
    - In the main checkout, the retention duty removes it once nothing uses it, as [workflow-state.md § Scratch](../schemas/workflow-state.md#scratch) states: its job has ended, nothing cites it, and its last write is past the retention.
 2. Run the launch below as one foreground shell-tool command.
    - Replace `[WAITER_COMMAND_AND_ARGS]` with the workflow's complete command, its `env -u` prefixes included, and keep its polling interval, budget and output flags.
-   - In a lane, `--owner` names the lane's item. A session that is no lane, and a subagent, leave `--owner` out.
+   - Run the form below for the launching session. Only the lane session's form carries `--owner`, which names the lane's item.
    - No launch caps the waiter's time: a `verify-pr` or review call ends when the operation answers, `queue-watch` at its `--max-wait`, and `copilot-wait` at the bound [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse) states.
 3. Read the exit.
    - 0: the waiter started, and the JSON reply carries its runner line and record.
    - 75: it may have started; keep `[RUN_DIR]`, wait on its completion by § Completion, and launch no second waiter for it.
    - 1: `job-launch-failed` with its `cause`; nothing started, so report the cause and launch nothing on it.
 4. Record `[RUN_DIR]/wait.exit` and `[RUN_DIR]/wait.log` in the lane's status. Launch once: a shell-tool return or timeout authorizes no other waiter.
+
+A subagent, and a session that is no lane, launch with this form:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait -- [WAITER_COMMAND_AND_ARGS] < /dev/null
+```
+
+The lane session launches with this form:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime launch-job --name wait-[RUN_ID] --run [RUN_DIR]/wait --owner [ISSUE_ID] -- [WAITER_COMMAND_AND_ARGS] < /dev/null
