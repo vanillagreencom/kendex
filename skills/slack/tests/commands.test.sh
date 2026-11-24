@@ -301,7 +301,7 @@ home_refused() {
   home_open U001
   home_open U002
   ts="$(sk_inject "$ALPHA_CH" U002 "After Home off $RANDOM.")"
-  text="$(landed "$ALPHA" "$ALPHA_CH:$ts" 50 | cut -c1-14)"
+  text="$(landed "$ALPHA" "$ALPHA_CH:$ts" | cut -c1-14)"
   RESULT="$(grep -c '^slack: home-not-enabled=slack$' "$SK_TMP/relay.err")|$(($(views) - before))|$text"
 }
 home_refused

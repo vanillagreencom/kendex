@@ -150,7 +150,8 @@ sk_new_root() {
 }
 sk_box() { printf '%s/tmp/lane-mail/overseer' "$1"; }     # ROOT
 # landed ROOT DELIVERY_ID [TRIES] — the text of the envelope keyed DELIVERY_ID,
-# awaited TRIES tenths of a second, 200 unless given. Empty when none landed.
+# awaited up to TRIES polls (200 by default), with 0.1 seconds between polls.
+# Report timeout or relay exit on stderr, keeping stdout empty.
 landed() {
   local tries=0 file text
   file="$(sk_box "$1")/to-lane.jsonl"
@@ -159,9 +160,14 @@ landed() {
       text="$(jq -r --arg d "$2" 'select(.delivery_id == $d) | .text' "$file")"
       if [ -n "$text" ]; then printf '%s' "$text"; return 0; fi
     fi
+    if [ -n "$SK_BG_PIDS" ] && ! kill -0 "$SK_BG_PIDS" 2>/dev/null; then
+      printf 'landed: relay exited before delivery %s\n' "$2" >&2
+      return 0
+    fi
     tries=$((tries + 1))
     sleep 0.1
   done
+  printf 'landed: timeout after %s polls waiting for delivery %s\n' "$tries" "$2" >&2
   return 0
 }
 # sk_stall_delivery ROOT: a real lane-mail send with no flock and a one-shot
