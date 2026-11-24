@@ -35,8 +35,8 @@ if [ "${1-}" = --cargo-reads ]; then
   exit
 fi
 
-# Real workspace contracts use helper paths, constants, and the workflow
-# setup pin. They must keep the reader without selecting compiler checks.
+# Real workspace inputs include unresolved reads and a workflow setup pin.
+# They must keep the reader without selecting compiler checks.
 while IFS='|' read -r path package flag name; do
   selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$path")"
   matrix="$(field cargo_linux_matrix <<<"$selected")"

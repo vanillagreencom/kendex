@@ -93,7 +93,6 @@ const A: &str = include_str!("../../../docs/a.md");
 const X: &str = include_str!("../../../assets/x.json");
 fn tool() { read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/x")); }
 fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal").join(name) }
-fn root() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..") }
 RS
 READ_PROSE_ROW="$(measured none false false false '[]' '[]' true)"
 SEL_WORLD="$TMP/sel-world"

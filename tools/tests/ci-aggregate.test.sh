@@ -375,7 +375,7 @@ one_skill="$(SELECT_CARGO_MATRIX=true selection micro false 'skills/orch/SKILL.m
 .agents/skills/orch/SKILL.md')"
 # A standard diff of product code, the full battery a merge group of that
 # class runs.
-standard_code="$(selection standard false 'crates/core/src/lib.rs')"
+standard_code="$(SELECT_CARGO_MATRIX=true selection standard false 'crates/core/src/lib.rs')"
 # EVENT|SELECTION|EXPECTED JOBS. A pull request runs no gated job whatever
 # its diff; a merge group runs the class job set: a `render` group the one
 # verify job and a standard group every lane its class selects. A group
@@ -694,7 +694,8 @@ cargo-tests-windows|workflow_dispatch|yes
 ROWS
 
 # Use the real changed-path output, expanded by the workflow itself, for
-# the Linux Cargo argv. A lost matrix output retains the whole crate.
+# the Linux Cargo argv. Full selection and a missing output both run the
+# whole fallback crate.
 linux_commands() { # WORKFLOW RESULT SELECTION CRATE
   local wf="$1" ctx matrix cell expr body step crate targets field value
   ctx="$(context_json merge_group "$2" "$3" "$TMP/published-map")" || return 1
@@ -724,10 +725,19 @@ check "Linux compile and test receive the selected CLI targets" \
   "cargo|test|-p|kendex-cli|--locked|--no-run$linux_args
 cargo|test|-p|kendex-cli|--locked|--no-fail-fast$linux_args" \
   "$(linux_commands "$WORKFLOW" success "$one_skill" kendex-cli)"
-check "Linux compile and test retain the whole fallback crate" \
-  "cargo|test|-p|kendex-cli|--locked|--no-run
+case " $standard_code " in
+  *" cargo_linux_matrix=null "*) ;;
+  *) echo 'workspace build selection did not emit a null Cargo matrix' >&2; exit 1 ;;
+esac
+while IFS='|' read -r result selected; do
+  check "Linux compile and test retain the whole crate on $result" \
+    "cargo|test|-p|kendex-cli|--locked|--no-run
 cargo|test|-p|kendex-cli|--locked|--no-fail-fast" \
-  "$(linux_commands "$WORKFLOW" failure '' kendex-cli)"
+    "$(linux_commands "$WORKFLOW" "$result" "$selected" kendex-cli)"
+done <<ROWS
+success|$standard_code
+failure|
+ROWS
 
 # The orch-state Linux leg stages the runtime builds the changes job owes
 # on a merge group, so a key is published before main moves, and on a push

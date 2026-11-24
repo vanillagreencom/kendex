@@ -28,9 +28,8 @@
 #   target   with --ci-targets, a test target's repository inputs. Cargo
 #            metadata supplies the target roots and packages. The source
 #            walk follows out-of-line modules and literal path attributes.
-#            It resolves checkout_root() and local path helpers, literal
-#            constants and repository directory prefixes. An unresolved
-#            root read emits "." for the affected executable only.
+#            It resolves checkout_root() and literal path joins. An
+#            unresolved checkout root emits "." for its executable.
 #   target-root    the metadata roster, in target row format, for job setup.
 #   package-include  a compile-time include and its owning package.
 #   checkout-include  an include in the checkout CLI build scope.
@@ -199,87 +198,7 @@ if rows=$(find crates -type f -name '*.rs' |
     }
     return ""
   }
-  # String constants can supply a path operand. Ambiguous imported names
-  # stay dynamic. A declaration in the reading file takes precedence.
-  function constants(file, text,   rest, declaration, name, val) {
-    rest = text
-    while (match(rest, /(^|\n)[ \t]*(pub(\([^)]*\))?[ \t]+)?const[ \t]+[A-Za-z_][A-Za-z_0-9]*[ \t]*:[ \t]*&str[ \t]*=[ \t]*"[^"\\]*"[ \t]*;/)) {
-      declaration = substr(rest, RSTART, RLENGTH)
-      rest = substr(rest, RSTART + RLENGTH)
-      name = declaration
-      sub(/^.*const[ \t]+/, "", name)
-      sub(/[ \t]*:.*/, "", name)
-      sub(/[ \t]*;$/, "", declaration)
-      val = unquote(declaration)
-      file_constant[file, name] = val
-      if (name in values && values[name] != val) ambiguous[name] = 1
-      values[name] = val
-    }
-  }
-  function constant(file, name) {
-    if ((file, name) in file_constant) return file_constant[file, name]
-    if (!(name in ambiguous) &&
-        source[file] ~ ("(^|\n)[ \t]*use[ \t]+[^;]*[^A-Za-z_0-9]" name "([^A-Za-z_0-9]|;)"))
-      return values[name]
-    return ""
-  }
-  # A simple local checkout getter can be inlined into the existing path
-  # scan. Its definition alone reaches no file.
-  function inline_getters(text,   lines, count, i, name, result, body) {
-    body = "(Path::new|PathBuf::from)\\(env!\\(\"CARGO_MANIFEST_DIR\"\\)\\)\\.join\\(\"\\.\\./\\.\\.\"\\)"
-    count = split(text, lines, "\n")
-    for (i = 1; i <= count; i++) {
-      if (lines[i] !~ /^fn [a-z_][a-z_0-9]*\(\) -> PathBuf \{/) continue
-      name = lines[i]
-      sub(/^fn /, "", name)
-      sub(/\(.*/, "", name)
-      if (lines[i] ~ ("\\{[ \t]+" body "[ \t]+\\}$")) lines[i] = ""
-      else if (lines[i] ~ /\{$/ && lines[i + 1] ~ ("^[ \t]*" body "[ \t]*$") &&
-               lines[i + 2] == "}") lines[i] = lines[i + 1] = lines[i + 2] = ""
-      else continue
-      getters[name] = 1
-    }
-    for (i = 1; i <= count; i++) {
-      for (name in getters)
-        gsub("(^|[^A-Za-z_0-9:.])" name "\\(\\)", " checkout_root()", lines[i])
-      result = result lines[i] "\n"
-    }
-    for (name in getters) delete getters[name]
-    return result
-  }
-  # A local helper can pass its path operand through a checkout join into
-  # read_to_string. Discover both function names from those bodies. Calls
-  # through formats retain a literal directory prefix and the fallback.
-  function helper_reads(file, text,   rest, operand, path, word, header, parts, decl, joiner, reader, parameter, call) {
-    word = "[a-z_][a-z_0-9]*"
-    header = "fn " word "\\(" word ": &str\\) -> "
-    if (!match(text, header "PathBuf \\{[ \t\n]*Path::new\\(env!\\(\"CARGO_MANIFEST_DIR\"\\)\\)[ \t\n]*\\.join\\(\"\\.\\./\\.\\.\"\\)[ \t\n]*\\.join\\(" word "\\)")) return
-    decl = substr(text, RSTART, RLENGTH)
-    split(decl, parts, /[ (:]+/)
-    joiner = parts[2]
-    if (decl !~ ("\\.join\\(" parts[3] "\\)$")) return
-    if (!match(text, header "String \\{[ \t\n]*fs::read_to_string\\(" joiner "\\(" word "\\)\\)")) return
-    decl = substr(text, RSTART, RLENGTH)
-    split(decl, parts, /[ (:]+/)
-    reader = parts[2]
-    parameter = parts[3]
-    if (decl !~ (joiner "\\(" parameter "\\)\\)$")) return
-    call = reader "\\([ \t\n]*"
-    rest = text
-    while (match(rest, "(^|[^A-Za-z_0-9:.])" call)) {
-      rest = substr(rest, RSTART + RLENGTH)
-      if (!match(rest, /^("[^"\\]*"|[A-Z_][A-Z_0-9]*|&format!\("[^"\\]*")/)) continue
-      operand = substr(rest, RSTART, RLENGTH)
-      if (operand ~ /^&format!/) {
-        path = unquote(operand)
-        sub(/\{.*/, "", path)
-        sub(/[^/]*$/, "", path)
-      } else if (operand ~ /^"/) path = unquote(operand)
-      else path = constant(file, operand)
-      if (path != "") emit("manifest", resolve(".", path))
-    }
-  }
-  function scan(file, text,   dir, rest, lit, chain, owner, path, word) {
+  function scan(file, text,   dir, rest, lit, chain, owner, path) {
     dir = file
     sub(/\/[^\/]*$/, "", dir)
     owner = manifest_dir(file)
@@ -299,10 +218,6 @@ if rows=$(find crates -type f -name '*.rs' |
       }
     }
     if (owner == "") return
-    if (target != "") {
-      helper_reads(file, text)
-      text = inline_getters(text)
-    }
     rest = text
     while (match(rest, /env![ \t\n]*\([ \t\n]*"CARGO_MANIFEST_DIR"[ \t\n]*\)|checkout_root\(\)/)) {
       lit = substr(rest, RSTART, RLENGTH)
@@ -318,13 +233,6 @@ if rows=$(find crates -type f -name '*.rs' |
           chain = chain "/" unquote(lit)
         } else if (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
           chain = chain unquote(substr(rest, RSTART, RLENGTH))
-        } else if (target != "" && match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*[A-Z_][A-Z_0-9]*[ \t\n]*\)/)) {
-          word = substr(rest, RSTART, RLENGTH)
-          sub(/^.*\([ \t\n]*/, "", word)
-          sub(/[ \t\n]*\)$/, "", word)
-          lit = constant(file, word)
-          if (lit == "") break
-          chain = chain "/" lit
         } else {
           break
         }
@@ -384,7 +292,6 @@ if rows=$(find crates -type f -name '*.rs' |
     close(file)
     if (status < 0) { printf "unreadable\t%s\n", file; failed = 1; exit }
     source[file] = text
-    if (ENVIRON["RUST_READS_TARGETS"] != "") constants(file, text)
     scan(file, text)
   }
   END {

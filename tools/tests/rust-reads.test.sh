@@ -164,18 +164,8 @@ PATH="$SCOPE_TMP/bin:$PATH" scope_rows "$READS"
   ok "failed Cargo metadata refuses the scoped read" || bad "failed Cargo metadata refuses the scoped read"
 
 target_rows="$("$READS" --cli-smoke --ci-targets "$ROOT" | tr '\t' ':')" || exit 1
-while IFS= read -r row; do
-  if grep -qxF -- "$row" <<<"$target_rows"; then
-    ok "scoped source reads $row"
-  else
-    bad "scoped source reads $row"
-  fi
-done <<'ROWS'
-target:kendex.settings.toml:kendex-core:test:integration
-target:packaging/homebrew/kendex-cli.rb:kendex-cli:test:integration
-target:packaging/arch:kendex-cli:test:integration
-package-include:docs/authoring/README.md:kendex-app
-ROWS
+grep -qxF 'package-include:docs/authoring/README.md:kendex-app' <<<"$target_rows" &&
+  ok "the embedded guide names its owning app package" || bad "the embedded guide names its owning app package"
 
 # Cargo can enumerate an explicitly declared target after its source goes
 # away. The reader must refuse with the missing source and its target.
