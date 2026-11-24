@@ -67,13 +67,36 @@ test("user Markdown reuses one layout and invalidates for width, content, themes
 	}
 });
 
-test("user layouts bypass oversized content and drop old component layouts at the count bound", () => {
+test("user layouts bypass oversized content and keep every message's layout past 256 messages", () => {
 	const theme = { fg: (_token: string, text: string) => text };
 	const component = { text: "first", markdownTheme: getMarkdownTheme() };
 	const first = __test.renderRawUserMessageLines(component, 80, theme);
-	for (let index = 0; index < 256; index++) __test.renderRawUserMessageLines({ text: "next", markdownTheme: component.markdownTheme }, 80, theme);
-	expect(__test.renderRawUserMessageLines(component, 80, theme)).not.toBe(first);
+	for (let index = 0; index < 600; index++) __test.renderRawUserMessageLines({ text: "next", markdownTheme: component.markdownTheme }, 80, theme);
+	expect(__test.renderRawUserMessageLines(component, 80, theme)).toBe(first);
 	component.text = "a".repeat(64 * 1024 + 1);
 	const oversized = __test.renderRawUserMessageLines(component, 80, theme);
 	expect(__test.renderRawUserMessageLines(component, 80, theme)).not.toBe(oversized);
+});
+
+test("the framed user card is reused until its lines or width change", () => {
+	const theme = { fg: (_token: string, text: string) => text };
+	const ui = { theme };
+	class Message {
+		text = "hello";
+		markdownTheme = getMarkdownTheme();
+		render(_width = 60) { return ["upstream"]; }
+	}
+	const handlers = new Map<string, (...args: unknown[]) => void>();
+	installUserMessageRenderer({ on: (event: string, handler: (...args: unknown[]) => void) => handlers.set(event, handler) } as never, Message);
+	const component = new Message();
+	try {
+		handlers.get("session_start")!({}, { cwd: world().cwd, hasUI: true, ui });
+		const first = component.render(60);
+		expect(component.render(60)).toBe(first);
+		expect(component.render(50)).not.toBe(first);
+		component.text = "changed";
+		expect(component.render(50).join("\n")).toContain("changed");
+	} finally {
+		handlers.get("session_shutdown")!();
+	}
 });
