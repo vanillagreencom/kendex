@@ -81,14 +81,15 @@ INPUT=$(cat 2>&1) || refuse payload unreadable "$INPUT"
 # an object or as one JSON-encoded string. The null tests are spelled out
 # because jq's `//` reads `false` as absent, and `false` is not a command
 # either.
-COMMAND=$(jq -er 'def copilot: .toolArgs
+COMMAND=$(printf '%s' "$INPUT" \
+  | jq -er 'def copilot: .toolArgs
              | if . == null then null elif type == "string" then fromjson else . end
              | if . == null then null elif type == "object" then .command else error end;
            if .tool_input.command != null then .tool_input.command
            elif .command != null then .command
            elif copilot != null then copilot
            else "" end
-           | if type == "string" then . else error end' 2>/dev/null <<<"$INPUT") ||
+           | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
 # These hooks ship as standalone scripts; command-safety's receiver decision

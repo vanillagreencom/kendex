@@ -59,16 +59,42 @@ scripts=${reader%/mailbox/scripts/lane-mail}/orch/scripts
 [ -x "$scripts/orch-runtime" ] ||
   { printf 'lane-mail-check: runtime=unlocatable path=%s\n' "$scripts/orch-runtime" >&2; exit 0; }
 
-# The launcher binds the current sources to the binary once. Stdout passes
-# through. A missing binary (69) takes the detached setup path below, so
-# hold the launcher's stderr and use setup's answer for that case.
-rc=0
-exec 3>&1
-err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?
-exec 3>&-
-if [ "$rc" -ne 69 ]; then
-  [ -z "$err" ] || printf '%s\n' "$err" >&2
-  exit "$rc"
+# A project hook can select an older home install. Only the selected
+# launcher can say that a cold hook call will return without building.
+launcher_detaches() {
+  local header
+  [ -f "$scripts/orch-runtime" ] || return 1
+  {
+    IFS= read -r header && IFS= read -r header &&
+      [ "$header" = '# orch-runtime: hook-entry-no-build' ]
+  } 2>/dev/null < "$scripts/orch-runtime"
+}
+
+# Older launchers build in the foreground. Probe their exact cache entry
+# as they do. If the probe cannot answer, the launcher owns the diagnostic.
+legacy_unbuilt() (
+  here=$(cd -- "$scripts" 2>/dev/null && pwd -P) || exit 1
+  key_lib=$here/../../agent-runtime/scripts/lib/key.sh
+  [ -r "$key_lib" ] || exit 1
+  refuse() { exit 1; }
+  # shellcheck source=/dev/null
+  . "$key_lib"
+  runtime=$(cd -- "$here/../runtime" 2>/dev/null && pwd -P) || exit 1
+  key=$(agent_runtime_key "$runtime" 2>/dev/null) || exit 1
+  [ ! -x "$(agent_runtime_cache)/bin/orch-runtime-$key" ]
+)
+
+# The current launcher binds its sources once. Hold stderr so that a missing
+# binary (69) can take the detached setup path with setup's own answer.
+if launcher_detaches || ! legacy_unbuilt; then
+  rc=0
+  exec 3>&1
+  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?
+  exec 3>&-
+  if [ "$rc" -ne 69 ]; then
+    [ -z "$err" ] || printf '%s\n' "$err" >&2
+    exit "$rc"
+  fi
 fi
 
 # The runtime is not built for these sources: start its build, holding this

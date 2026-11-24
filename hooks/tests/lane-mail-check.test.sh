@@ -300,6 +300,36 @@ row_boxless() {
   builds_done "$CACHE"
 }
 
+row_legacy() {
+  lane legacy
+  local hook_dir="$LANE/.codex/hooks" arm
+  local install="$TMP_ROOT/legacy-home/.agents/skills"
+  local launcher="$install/orch/scripts/orch-runtime"
+  local building="runtime-building:agent-runtime;runtime-building:orch-runtime"
+  mkdir -p "$hook_dir" "$install/orch/scripts"
+  cp -- "$HOOK" "$hook_dir/lane-mail-check.sh"
+  cp -- "$HOOKS/lane-mail-halt.sh" "$HOOKS/lane-mail-deliver.sh" "$hook_dir/"
+  ln -s -- "$REPO_ROOT/skills/orch/runtime" "$install/orch/runtime"
+  ln -s -- "$REPO_ROOT/skills/orch/scripts/setup" "$install/orch/scripts/setup"
+  ln -s -- "$REPO_ROOT/skills/mailbox" "$install/mailbox"
+  ln -s -- "$REPO_ROOT/skills/agent-runtime" "$install/agent-runtime"
+  # This home install predates the hook entry that skips foreground builds.
+  awk '
+    /^# orch-runtime: hook-entry-no-build$/ { marker++; next }
+    { condition += sub(/ && \[ "\$\{1:-\}:\$\{2:-\}" != turn-end:--hook-dir \]/, ""); print }
+    END { if (marker != 1 || condition != 1) exit 1 }
+  ' "$REPO_ROOT/skills/orch/scripts/orch-runtime" > "$launcher"
+  chmod +x "$launcher"
+  for arm in halt deliver; do
+    unbuilt "legacy-$arm"
+    ROW_HOME="$TMP_ROOT/legacy-home"
+    run "$hook_dir/lane-mail-$arm.sh" "$LANE" "$CACHE"
+    assert_eq "RC=$RC said=$(said) stdout=$(cat "$OUT_FILE")" "RC=0 said=$building stdout=" \
+      "$arm detaches when a project Codex hook selects a cold older home install"
+    builds_done "$CACHE"
+  done
+}
+
 row_key() {
   lane key plain
   local hook_dir="$TMP_ROOT/observed/.claude/hooks"
@@ -327,7 +357,7 @@ row_key() {
   done
 }
 
-ROWS="mail arm copilot global unlocatable launcherless building failed boxless key"
+ROWS="mail arm copilot global unlocatable launcherless building failed boxless key legacy"
 for name in ${ENTRY_ROW:-$ROWS}; do "row_$name"; done
 
 # The must-fail controls, each a copy of the entry with one whole line
@@ -345,18 +375,19 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     ! grep -q '^  FAIL  ' "$TMP_ROOT/$1.log" || red=yes
     assert_eq "status=$status red=$red" "status=1 red=yes" "control $1: the $2 row turns red"
   }
-  control exit-passed mail '  exit "$rc"' '  exit 0'
+  control exit-passed mail '    exit "$rc"' '    exit 0'
   control arm-dropped arm \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" 2>&1 1>&3 3>&-) || rc=$?'
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" 2>&1 1>&3 3>&-) || rc=$?'
   control dir-resolved copilot \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$hook" "$@" 2>&1 1>&3 3>&-) || rc=$?'
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$hook" "$@" 2>&1 1>&3 3>&-) || rc=$?'
   # A normal launcher call would build in the foreground and print its
   # setup-building line in place of the silent pass.
   control built-on-call boxless \
-    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
-    'err=$("$scripts/orch-runtime" --no-private-env turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?'
+    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    '  err=$("$scripts/orch-runtime" --no-private-env turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?'
+  control legacy-skipped legacy 'if launcher_detaches || ! legacy_unbuilt; then' 'if true; then'
   control reader-unexported global 'export LANE_MAIL_CLI=$reader' 'LANE_MAIL_READER=$reader'
   control unlocatable-held unlocatable \
     "  printf 'lane-mail-check: reader=unlocatable hook=%s\\n' \"\$dir\" >&2" \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: lane-mail drain-many, the batched read. Inputs: skills/mailbox/scripts/**.
+# Surface: lane-mail drain-many, the batched read. Inputs: skills/mailbox/scripts/**, skills/orch/scripts/orch-runtime.
 # The batch's contract is the single verb's: each lane's section is what
 # `drain --receipts` prints for it, under an `item=` line, in request order,
 # with mailbox alone installed. A lane that cannot be read stops the call
@@ -23,7 +23,8 @@ git -C "$REPO" config maintenance.auto false
 MAIL="$REPO/.agents/skills/mailbox/scripts/lane-mail"
 lm() { # ARGS... -> RC, OUT, ERR (the first stderr line)
   RC=0
-  OUT="$(cd -- "$REPO" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" "$MAIL" "$@" 2>"$TMP_ROOT/err")" || RC=$?
+  OUT="$(cd -- "$REPO" && env -i PATH="$PATH" HOME="$TMP_ROOT/home" \
+    ${LANE_HOST_READ_DIR:+"LANE_HOST_READ_DIR=$LANE_HOST_READ_DIR"} "$MAIL" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(sed -n '1p' "$TMP_ROOT/err")"
 }
 printf 'Cut the scanner?\n' > "$TMP_ROOT/ask"
@@ -105,6 +106,46 @@ lm drain-many --file "$TMP_ROOT/request" --host
 assert_eq "rc=$RC err=$ERR" 'rc=2 err=lane-mail: option-unknown=--host' 'a hosted batch refuses'
 lm drain-many --file "$TMP_ROOT/missing"
 assert_eq "rc=$RC err=$ERR" "rc=2 err=lane-mail: file-unreadable=$TMP_ROOT/missing resolved=$TMP_ROOT/missing" 'a request that is not there refuses'
+
+hosted_numbering() {
+  local snapshot="$TMP_ROOT/hosted" mailbox="$REPO/tmp/lane-mail"
+  local item member path status file=0 previous
+  ln -s -- "$ROOT/skills/orch" "$REPO/.agents/skills/orch"
+  mkdir -p "$snapshot" "$mailbox/KEN-3"
+  : > "$mailbox/KEN-3/to-overseer.jsonl"
+  printf '%s\n' '{"dropped":0,"first":"Older.ID_2-","lines":[]}' > "$mailbox/KEN-2/to-lane.jsonl.numbering"
+  printf '%s\n' '{"dropped":0,"first":"invalid id","lines":[]}' > "$mailbox/KEN-1/to-overseer.jsonl.numbering"
+  printf '%s\n' '{"dropped":0,"first":"","lines":[]}' > "$mailbox/KEN-3/to-overseer.jsonl.numbering"
+  # Cached reads receive one provider status and snapshot file per path.
+  for item in KEN-1 KEN-2 KEN-3; do
+    for member in to-overseer.jsonl to-overseer.jsonl.numbering to-lane.jsonl to-lane.jsonl.numbering to-lane.cursor to-lane.cursor.lock; do
+      path="$mailbox/$item/$member"
+      file=$((file + 1))
+      status=2
+      if [ -f "$path" ]; then
+        cp -- "$path" "$snapshot/$file"
+        status=0
+      fi
+      printf '%s\t%s\t%s\t%s\n' "$item" "$path" "$status" "$file"
+    done
+  done > "$snapshot/index"
+  local LANE_HOST_READ_DIR="$snapshot"
+  printf 'KEN-2 0 %s\n' "$REPO" > "$TMP_ROOT/neighbor"
+  lm drain-many --file "$TMP_ROOT/neighbor" --host
+  assert_eq "$RC" 0 'legacy ID characters remain readable' "$ERR"
+  assert_contains "$OUT" 'receipts cursor=1 count=1 first=Older.ID_2-' 'the valid lane retains its own receipt'
+  previous="$OUT"
+  printf 'KEN-2 0 %s\nKEN-1 0 %s\nKEN-3 0 %s\n' "$REPO" "$REPO" "$REPO" > "$TMP_ROOT/bad-numbering"
+  lm drain-many --file "$TMP_ROOT/bad-numbering" --host
+  assert_eq "rc=$RC err=$ERR" "rc=2 err=lane-mail: file-unreadable=$mailbox/KEN-1/to-overseer.jsonl" \
+    'malformed numbering is refused by the cached reader'
+  assert_eq "$OUT" "$previous" 'the invalid lane emits no section and leaves its valid neighbor intact'
+  printf 'KEN-3 0 %s\n' "$REPO" > "$TMP_ROOT/empty-numbering"
+  lm drain-many --file "$TMP_ROOT/empty-numbering" --host
+  assert_eq "rc=$RC out=$OUT" "rc=0 out=item=KEN-3"$'\n''count=0 first='$'\n''receipts cursor=0 count=0 first=' \
+    'the next lane remains readable with an empty persisted first ID' "$ERR"
+}
+hosted_numbering
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

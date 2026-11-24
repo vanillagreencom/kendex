@@ -3257,7 +3257,7 @@ joined_command_text="${command_text//"$continuation"/}"
 # grep's words on a pattern it cannot read are captured: stderr becomes the
 # substitution's stdout and grep's own stdout is discarded, so the status still
 # decides and the cause reaches the refusal below its keyed line.
-GREP_ERR=$(LC_ALL=C grep -E -- "$pattern" 2>&1 >/dev/null <<<"$command_text"$'\n'"$joined_command_text") || status=$?
+GREP_ERR=$(printf '%s\n' "$command_text" "$joined_command_text" | LC_ALL=C grep -E -- "$pattern" 2>&1 >/dev/null) || status=$?
 case "$status" in
   0)
     # The default's reason and remedy are known here; a project pattern's are

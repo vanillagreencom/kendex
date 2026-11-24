@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# orch-runtime: hook-entry-no-build
 # Run the orch-runtime binary that matches the shipped sources beside this
 # script. Every argument goes to the binary; its --help is the contract.
 # The mail hook's turn-end --hook-dir entry uses detached setup on exit 69.
