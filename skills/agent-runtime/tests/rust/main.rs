@@ -3060,7 +3060,8 @@ fn a_launch_naming_a_claude_home_signs_in_as_that_home_alone() {
 }
 
 /// An adoption records the harness identity read in the pane's foreground,
-/// never the caller's word for it; a record of another, live controller
+/// never the caller's word for it, and the posture that harness was launched
+/// under, never the launch setting's; a record of another, live controller
 /// refuses `overseer-live`; a pane holding no harness refuses
 /// `pane-not-harness`; the same pane adopted again is healed in place.
 #[test]
@@ -3157,10 +3158,37 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
         identity_reading(harness_pid)["start"]
     );
     assert_eq!(overseer["session_id"], "by-hand-1");
-    // The same pane again: healed, the generation kept.
+    // Started with no permission word: its native defaults, whatever the
+    // launch setting's posture, a full bypass when unset as here.
+    assert_eq!(overseer["permission"], "native");
+    assert_eq!(overseer["extra_args"], json!([]));
+    // The same pane again, its harness now started under the full bypass:
+    // healed, the generation kept, the posture the one it runs under.
+    std::fs::remove_file(&own_pid).unwrap();
+    pane.tmux(&[
+        "respawn-pane",
+        "-k",
+        "-t",
+        &pane.pane,
+        &format!("'{}' --dangerously-skip-permissions; :", stub.display()),
+    ]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::fs::read_to_string(&own_pid).map_or(true, |pid| !pid.ends_with('\n')) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the harness never restarted"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let (_, answer) = adopt(&pane.pane);
     assert_eq!(answer["result"]["healed"], true, "{answer}");
-    assert_eq!(fleet()["controller"]["generation"], 1);
+    let overseer = fleet()["controller"].clone();
+    assert_eq!(overseer["generation"], 1);
+    assert_eq!(overseer["permission"], "bypass");
+    assert_eq!(
+        overseer["extra_args"],
+        json!(["--dangerously-skip-permissions"])
+    );
     // A pane whose foreground is no harness.
     let idle = pane
         .tmux(&[

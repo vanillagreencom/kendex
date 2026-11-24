@@ -715,11 +715,14 @@ class Session:
 
     def _adopt(self, args, record):
         # The session a person runs by hand takes the predecessor's place:
-        # the record binds its pane, then the one hand-over opens the managed
-        # successor on the home's private server.
+        # the record binds its pane and the posture it was launched under,
+        # then the one hand-over opens the managed successor on the home's
+        # private server, unattended where the home names its harness, as a
+        # fresh start is.
         if not os.environ.get("TMUX"):
             print("jarvis-session: adopt=refused cause=no-tmux pane=" + args.adopt_pane, file=sys.stderr)
             raise Refusal("selection-conflict")
+        posture = {"permission": "bypass", "extra_args": []} if self.unattended(args.harness) else {}
         caller_socket = os.environ["TMUX"].split(",")[0]
         self.initialized_fleet()
         argv = ["controller", "adopt", "--record", self.fleet(), "--pane", args.adopt_pane, "--socket", caller_socket,
@@ -734,7 +737,7 @@ class Session:
         record.update(origin=args.origin, app_off=False, report_started_at=int(time.time()),
                       private_brief=self.private_brief(args), reason="new-requested", intent="succeed", failure=None)
         self.write(record)
-        return self._hand_over(record, "context", self.server(args.harness))
+        return self._hand_over(record, "context", self.server(args.harness), posture)
 
     def initialize(self):
         # The first manual Start in a home this machine never recorded writes
@@ -770,11 +773,12 @@ class Session:
             self.write(record)
             return self._hand_over(record, "headroom" if account_walled else "context", status["recorded"]["server_socket"])
 
-    def _hand_over(self, record, mark, socket):
+    def _hand_over(self, record, mark, socket, posture=None):
         # Save the handoff, write its generation header, then choose and
         # transfer until an attempt is proved, no account is left, or the
         # outcome is not a failure on a named account. The caller holds the
-        # lock. Every successor takes the record's stored private brief.
+        # lock. Every successor takes the record's stored private brief, and
+        # `posture` over the one the walk carried from its predecessor.
         handoff = Path(self.home) / "state/handoff.md"
         contents = handoff.read_bytes()
         if not contents.strip():
@@ -824,7 +828,7 @@ class Session:
                 # retries only where it stamped the account it tried, never on
                 # an older mark, which the walk may have let expire.
                 stamped = {entry.get("account"): entry.get("at") for entry in recorded.get("unproved") or []}
-                successor = dict(choice["successor"], window=SESSION_NAME, seat=SEAT)
+                successor = dict(choice["successor"], window=SESSION_NAME, seat=SEAT, **(posture or {}))
                 request.write_text(json.dumps({"expected": choice["expected"], "successor": successor,
                                                "brief_file": str(brief), "session": SESSION_NAME,
                                                "cause": "walled" if mark == "headroom" else "live",

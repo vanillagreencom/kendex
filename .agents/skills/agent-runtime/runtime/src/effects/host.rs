@@ -1461,7 +1461,9 @@ pub enum Delivery {
 /// reads live, or its pane stands on the proven server holding anything
 /// but shells with no identity recorded; one it cannot read refuses
 /// `overseer-unreadable`; one nothing
-/// resolves refuses `predecessor-unproven`. The one
+/// resolves refuses `predecessor-unproven`. A request naming no permission
+/// records the posture that harness was launched under
+/// ([`launched_posture`]). The one
 /// read-then-record operation of the fleet: no intent, so no
 /// handle, and nothing it reads is an obligation.
 pub fn adopt_controller(
@@ -1470,7 +1472,16 @@ pub fn adopt_controller(
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
-    adopt_on(path, r, None, settings, locking)
+    adopt_on(path, r, None, Unnamed::Launched, settings, locking)
+}
+
+/// The posture an adoption records where its request names no permission.
+#[derive(Clone, Copy)]
+enum Unnamed {
+    /// The one the harness in the pane was launched under.
+    Launched,
+    /// The one the record keeps: a heal of the pane it already names.
+    Kept,
 }
 
 /// [`adopt_controller`] on `confirmed`, the server a caller already read at
@@ -1481,6 +1492,7 @@ fn adopt_on(
     path: &Path,
     r: &AdoptController,
     confirmed: Option<tmux::Server>,
+    unnamed: Unnamed,
     settings: &EngineSettings,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
@@ -1554,6 +1566,19 @@ fn adopt_on(
             },
         }
     }
+    let launched;
+    let r = match (r.permission, unnamed) {
+        (None, Unnamed::Launched) => {
+            let (permission, words) = launched_posture(harness, identity.pid);
+            launched = AdoptController {
+                permission: Some(permission),
+                extra_args: Some(r.extra_args.clone().unwrap_or(words)),
+                ..r.clone()
+            };
+            &launched
+        }
+        (Some(_), _) | (None, Unnamed::Kept) => r,
+    };
     let read = Recorded {
         value: AdoptionRead {
             identity,
@@ -1651,7 +1676,15 @@ pub fn heal_controller(
         permission: None,
         extra_args: None,
     };
-    adopt_on(path, &request, Some(server), settings, locking).map(Some)
+    adopt_on(
+        path,
+        &request,
+        Some(server),
+        Unnamed::Kept,
+        settings,
+        locking,
+    )
+    .map(Some)
 }
 
 /// The fields of `pane` on `server`: gone refuses `pane-gone`, a failed
@@ -1890,6 +1923,21 @@ fn spelled(harness: Harness, argv: &[String]) -> Spelled {
     }
 }
 
+/// The posture the harness process `pid` was launched under and its own
+/// permission words, as its argument words spell them. Where they cannot be
+/// read, as on a host with no `/proc`, the harness's native defaults with no
+/// words: nobody chose the launch setting's posture, a full bypass by
+/// default, for a session they started by hand.
+fn launched_posture(harness: Harness, pid: u32) -> (Permission, Vec<String>) {
+    match proc_words(pid, "cmdline") {
+        Ok(argv) => {
+            let spelled = spelled(harness, &argv);
+            (spelled.permission, spelled.words)
+        }
+        Err(_) => (Permission::Native, Vec::new()),
+    }
+}
+
 /// Register the controller a person opened by hand in the caller's own
 /// pane, `$TMUX_PANE` on the server `$TMUX` names: its launch identity from
 /// the last `SessionStart` row its harness wrote to the rows file the hook
@@ -1897,12 +1945,12 @@ fn spelled(harness: Harness, argv: &[String]) -> Spelled {
 /// `identity-fallback` (the harness its foreground process is, the
 /// directory it runs in); then what the running harness process itself was
 /// started with, so the next hand-over launches the session that runs: the
-/// account its environment names, ahead of the row's, and the model, effort
-/// and permission posture its argument words spell, the row's model first
+/// account its environment names, ahead of the row's, and the model and
+/// effort its argument words spell, the row's model first
 /// (`launch-unread` where that process cannot be read, the row and the
 /// caller's own environment standing in); `account` ahead of every reading.
-/// Then the one adoption, which writes the rows file as the record's
-/// `session_rows`. Answers the reply with the harness it registered.
+/// Then the one adoption, which reads the permission posture and writes the
+/// rows file as the record's `session_rows`. Answers the reply with the harness it registered.
 pub fn register_controller(
     path: &Path,
     account: Option<&str>,
@@ -1953,7 +2001,7 @@ pub fn register_controller(
     };
     // The process's own environment and words where the host keeps them;
     // where it does not, the row and the caller's own environment, which the
-    // harness's shell tool handed down, stand in, and no posture is recorded.
+    // harness's shell tool handed down, stand in.
     // The model is read first: the account a session spends is the variable
     // its model routes it through, which for a Pi session on a Claude seat
     // is not the variable its own home is under.
@@ -1998,10 +2046,7 @@ pub fn register_controller(
         Harness::Claude | Harness::Copilot | Harness::Pi => home_var
             .or_else(|| session::default_home(harness).map(|home| home.display().to_string())),
     };
-    let (effort, permission, extra_args) = match spelled {
-        Some(s) => (s.effort, Some(s.permission), Some(s.words)),
-        None => (None, None, None),
-    };
+    let effort = spelled.and_then(|s| s.effort);
     let request = AdoptController {
         pane: pane.clone(),
         socket: Some(socket),
@@ -2013,8 +2058,8 @@ pub fn register_controller(
         effort,
         cwd: Some(cwd),
         session_rows: Some(rows),
-        permission,
-        extra_args,
+        permission: None,
+        extra_args: None,
     };
     let adopted = adopt_controller(path, &request, settings, locking)?;
     Ok((
