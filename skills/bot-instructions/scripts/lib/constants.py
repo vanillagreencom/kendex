@@ -116,15 +116,18 @@ ROUTING_COLUMNS = (
     "macroscope doctrine.md",
 )
 
-# The columns that carry every block, one per bot family that renders
-# doctrine: the pointed file is where Codex, Copilot and CodeRabbit are all
-# sent, `pr_agent extra` is the one string `/review` reads, and Macroscope
-# reads no second instruction surface. A manifest that renders any doctrine
-# enables Codex, Qodo or Macroscope, so a block left out of one of these
-# reaches that bot nowhere. A block the routing table has no row for reaches
-# these and nothing else, and `doctrine-routing` reds a row that leaves one
-# out.
+# The columns every routing row must fill, one per surface that no other
+# column backs: the pointed file is where Codex, Copilot and CodeRabbit are
+# all sent, `pr_agent extra` is the one string `/review` reads, and Macroscope
+# reads no second instruction surface. `doctrine-routing` reds a row that
+# leaves one out.
 ALL_BLOCK_COLUMNS = ("code-review.md", "pr_agent extra", "macroscope doctrine.md")
+
+# Where a block the routing table has no row for goes: the columns above, and
+# `pr_agent issues`, so `/agentic_review`, which reads only the two
+# `[review_agent]` keys and is the shipped default verb, reads it too. Not a
+# shape rule: a routed block picks `issues` or `compliance` by its row.
+DEFAULT_ROUTE_COLUMNS = ALL_BLOCK_COLUMNS + ("pr_agent issues",)
 
 # The columns whose bot has no file-based review exclusion and whose
 # `render-out-of-scope` cell carries a number, so the exclusion paths ride the

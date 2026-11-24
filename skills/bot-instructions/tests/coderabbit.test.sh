@@ -204,8 +204,8 @@ else
 fi
 git -C "$repo" checkout -- .bot-instructions/coderabbit-schema.json .coderabbit.yaml
 
-# The one arrival route neither the input table nor the glob dialect
-# covers: a default in the VENDORED SCHEMA. No `kendex.toml` produces it, so
+# The arrival route `repo-toml.md` § The content refusals does not cover,
+# since it holds repo input only: a default in the VENDORED SCHEMA. No `kendex.toml` produces it, so
 # `coderabbit-schema` runs the class over the document it validates — the
 # emitter does not, because a refusal there would reach the operator naming
 # no validator. Nothing is

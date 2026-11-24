@@ -18,7 +18,7 @@ import re
 import tomllib
 
 from .constants import (
-    ALL_BLOCK_COLUMNS,
+    DEFAULT_ROUTE_COLUMNS,
     MARKER_PATH_CLASS,
     RENDER_OUT_OF_SCOPE,
     REPLY_CONTRACT,
@@ -182,7 +182,7 @@ def parse_routing(renders_text, where, blocks):
 
     The doctrine source's `###` headings are the one statement of the block
     ids, so the table needs no row per block: a block it has no row for
-    reaches the columns that carry every block, after the routed ones, in
+    reaches `constants.DEFAULT_ROUTE_COLUMNS`, after the routed ones, in
     doctrine order, and no other. A row naming no block is refused, since its
     block would otherwise take that default without a word.
     """
@@ -222,7 +222,7 @@ def parse_routing(renders_text, where, blocks):
             ((pos[column], block) for block, pos in table.items() if column in pos),
         )
         routing[column] = [block for _, block in pairs]
-        if column in ALL_BLOCK_COLUMNS:
+        if column in DEFAULT_ROUTE_COLUMNS:
             routing[column] += unrouted
     return routing, table
 

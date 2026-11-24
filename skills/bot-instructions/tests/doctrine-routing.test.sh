@@ -122,11 +122,14 @@ spec_table "$rows"
 # A block added to the doctrine source alone, its one source, reaches
 # validation and the render with no second edit: the repo's
 # `[bot-instructions.doctrine.append]` keyed on the new id is accepted, and the
-# block lands in the three columns that carry every block, after the routed
-# ones, and in no destination a row would have to name. Two manifests: every
-# bot on, and Qodo alone, where `.pr_agent.toml` is the only file carrying
-# doctrine, so a default route missing `pr_agent extra` renders the block
-# nowhere and passes.
+# block lands in the default route's columns, after the routed ones, and in no
+# destination a row would have to name. Two manifests: every bot on, and Qodo
+# alone at the shipped default `qodo_commands`, where `.pr_agent.toml` is the
+# only file carrying doctrine and `/agentic_review`, which reads only the
+# `[review_agent]` keys, is the one verb, so a default route missing either
+# Qodo section renders the block where no verb the manifest runs reads it,
+# and passes. Which section a verb reads is Qodo's documented split
+# (`references/limits.md` § Qodo).
 spec="$(new_spec added-block)"
 spec_edit "$spec/SKILL.md" '\n## Adding a repo\n' '\n### unrouted\n\nA block no row routes.\n\n## Adding a repo\n' || exit 1
 for world in all qodo-only; do
@@ -139,6 +142,9 @@ for bot in ("codex", "copilot", "coderabbit", "macroscope"):
     old = f"\n{bot} = true\n"
     assert s.count(old) == 1, f"canonical.toml: no {bot} line"
     s = s.replace(old, f"\n{bot} = false\n")
+old = '\nqodo_commands = ["/agentic_review", "/review"]\n'
+assert s.count(old) == 1, "canonical.toml: no qodo_commands line"
+s = s.replace(old, "\n")
 sys.stdout.write(s)
 PY
     else
@@ -149,6 +155,8 @@ PY
   bi_must_adopt --repo "$added" --spec "$spec" || exit 1
   expect_green "$world: a block added to the doctrine source alone renders" \
     render --repo "$added" --spec "$spec"
+  expect_green "$world: and the render checks clean" \
+    check --repo "$added" --spec "$spec"
   if python3 - "$added" "$world" <<'PROBE'; then
 import os, sys, tomllib
 repo, world = sys.argv[1], sys.argv[2]
@@ -157,13 +165,22 @@ SUMMARY = "fixture is a small repository"
 def read(rel):
     return open(os.path.join(repo, rel)).read()
 qodo = tomllib.loads(read(".pr_agent.toml"))
-extra = qodo["pr_reviewer"]["extra_instructions"]
-at = extra.find(TEXT)
-if at == -1 or not extra[at + len(TEXT):].startswith("\n\n" + SUMMARY):
-    sys.exit(f".pr_agent.toml extra_instructions does not end with the block, then the summary: {extra[-240:]!r}")
-for key in ("issues_user_guidelines", "compliance_user_guidelines"):
-    if "A block no row routes." in qodo["review_agent"][key]:
-        sys.exit(f".pr_agent.toml [review_agent] {key} carries a block no row routes to it")
+verbs = qodo["github_app"]["pr_commands"]
+if world == "qodo-only" and verbs != ["/agentic_review"]:
+    sys.exit(f"the qodo-only world is not at the shipped default qodo_commands: {verbs!r}")
+READS = {"/review": [("pr_reviewer", "extra_instructions")],
+         "/agentic_review": [("review_agent", "issues_user_guidelines"),
+                             ("review_agent", "compliance_user_guidelines")]}
+for verb in verbs:
+    if not any(TEXT in qodo[t][k] for t, k in READS[verb]):
+        sys.exit(f"{verb} runs and no section it reads carries the block")
+for table, key in (("pr_reviewer", "extra_instructions"), ("review_agent", "issues_user_guidelines")):
+    value = qodo[table][key]
+    at = value.find(TEXT)
+    if at == -1 or not value[at + len(TEXT):].startswith("\n\n" + SUMMARY):
+        sys.exit(f".pr_agent.toml [{table}] {key} does not end with the block, then the summary: {value[-240:]!r}")
+if "A block no row routes." in qodo["review_agent"]["compliance_user_guidelines"]:
+    sys.exit(".pr_agent.toml [review_agent] compliance_user_guidelines carries a block no row routes to it")
 absent = ["REVIEW.md"]
 if world == "all":
     pointed = read(".github/instructions/code-review.md")
@@ -176,9 +193,9 @@ for rel in absent:
     if "A block no row routes." in read(rel):
         sys.exit(f"{rel} carries a block no row routes to it")
 PROBE
-    ok "$world: and it reaches each all-block column the manifest renders, after the routed blocks, and nothing else"
+    ok "$world: and it reaches each default-route column the manifest renders and every Qodo verb it runs, after the routed blocks, and nothing else"
   else
-    bad "$world: and it reaches each all-block column the manifest renders, after the routed blocks, and nothing else"
+    bad "$world: and it reaches each default-route column the manifest renders and every Qodo verb it runs, after the routed blocks, and nothing else"
   fi
 done
 

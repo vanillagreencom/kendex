@@ -79,7 +79,7 @@ Its sites, and which answer each takes:
   - One function emits the marker and one answers ownership against its opener, which both read from one constant, so the writer and the reader cannot spell it differently and a marker an earlier copy wrote still reads as owned.
   - One function splits the prologue, and both the ownership test and the marker's insertion read it.
   - The path class is one constant, which `spec.py` refuses outside of.
-- **The routing table's own shape**: positions contiguous per column, no duplicates, and every row in the two all-block columns. `doctrine-routing` judges the table's rows.
+- **The routing table's own shape**: positions contiguous per column, no duplicates, and every row in the three all-block columns. `doctrine-routing` judges the table's rows.
 - **Validator test protection**: judge the evidence against the named rejection and its cost under § Controls; no control count defines admission.
 
 **A block id rename is a breaking change, refused where it would reach nothing.**
@@ -183,7 +183,7 @@ A byte validator: both inputs belong to the render, from the one copy `--spec` n
 
 **Rejects, the control-class clause.** A string in the rendered document carrying a character a YAML reader breaks a line on: C0 less tab and newline, DEL, U+0085, U+2028, U+2029.
 
-- This covers the one arrival route that neither `repo-toml.md` § The content refusals nor its § The glob dialect covers: a value from a vendored-schema default or from this package's own overrides.
+- This covers the arrival route that `repo-toml.md` § The content refusals, which holds every repo input to its table or to a class that admits no control character, does not: a value from a vendored-schema default or from this package's own overrides.
 - The refusal is this validator's finding rather than a raise out of the emitter.
 
 ## `exclusion-consistency`
