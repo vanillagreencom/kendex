@@ -1300,6 +1300,39 @@ mod push {
     }
 
     #[test]
+    fn confined_publication_leaves_validation_to_the_overseer_before_starting_a_run() {
+        let range = "DEV_VALIDATE_RANGE_CMD = \"touch ../../main/tmp/nested-slots/queue/slot\"\nDEV_VALIDATE_CMD = \"true\"\n";
+        let repo = Repo::new("KEN-1", &format!("{BASE}{range}"));
+        repo.link_agents();
+        repo.record(json!({}));
+        let queue = repo.main.join("tmp/nested-slots/queue");
+        fs::create_dir_all(&queue).unwrap();
+        let mut permissions = fs::metadata(&queue).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&queue, permissions).unwrap();
+        let receipt = prepared(&repo);
+        let out = repo.op_env(
+            &repo.item,
+            &json!({"op": "record-push", "mode": "publish", "worktree": repo.wt,
+                "base": receipt["before"], "head": receipt["commit"]}),
+            &[(agent_runtime::confine::CONFINED_VAR, "1")],
+        );
+        assert!(
+            orch_runtime::validate::files::runs(&repo.wt)
+                .unwrap()
+                .is_empty(),
+            "confined publication started validation: {}",
+            stderr(&out)
+        );
+        assert_eq!(exit(&out), Some(1));
+        assert_eq!(
+            refusal(&out),
+            "orch-runtime: delivery-validate cause=confined route=overseer-run-validation"
+        );
+        assert_eq!(repo.remote("main"), receipt["before"]);
+    }
+
+    #[test]
     fn publication_validates_the_exact_prepared_head_then_transports_it() {
         let range = "DEV_VALIDATE_RANGE_CMD = \"test ! -e tmp/fail && git rev-parse HEAD > tmp/validated\"\nDEV_VALIDATE_CMD = \"true\"\n";
         let repo = Repo::new("KEN-1", &format!("{BASE}{range}"));

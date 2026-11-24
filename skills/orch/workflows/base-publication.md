@@ -84,6 +84,8 @@ Route the reply:
 
 - On exit 0, read the reply's `delivery` receipt. Its `commit` is `[PUSHED_SHA]` and its `at` is `[PUSHED_AT]`.
 - A refusal exits 1 with its key. A failed push exits with its status.
+- A `delivery-validate cause=confined route=overseer-run-validation` refusal starts no validation. Hand the prepared receipt to the overseer to run publication outside confinement, where validation can write the base checkout's slot queue.
+- A `delivery-validate` refusal with `cause=wait-expired` leaves validation running. Read the named run with `orch-runtime validate entry --wait --run-dir [RUN_DIR]` for its verdict.
 - A `worktree-push-base-conflict`, `worktree-push-base-rejected` or `worktree-push-rebase-failed` refusal in the reply's `push` output returns to [merge-pr-restack.md](merge-pr-restack.md). After its guarded restack and rules reload, that route returns to base publication from its entry.
 - A red validation publishes nothing. A failed push sends no completion notice.
 

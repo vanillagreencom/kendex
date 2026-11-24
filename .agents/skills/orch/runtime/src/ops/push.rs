@@ -865,8 +865,8 @@ fn micro_tier(settings: &Settings, worktree: &Path, base: &str, head: &str) -> R
 
 /// The publication's validation of the exact prepared head: the runtime's
 /// own detached validation entry over the range from the prepared base.
-/// Each wait is bounded; the run has no aggregate deadline. A run that
-/// does not pass publishes nothing.
+/// The publisher waits for one follow budget. A run that has yet to pass
+/// publishes nothing.
 #[allow(
     clippy::disallowed_methods,
     reason = "the publication's validation through this executable's own validation entry, the one runner, before any transport"
@@ -923,21 +923,27 @@ fn validate_range(worktree: &Path, base: &str, commit: &str) -> Result<Value> {
                     &[("commit", commit), ("cause", "run-directory-unreadable")],
                 )
             })?;
-        loop {
-            let (line, status) =
-                crate::validate::files::wait(&dir, 540, &agent_runtime::clock::SystemClock)
-                    .map_err(|e| {
-                        refuse(
-                            "delivery-validate",
-                            &[("commit", commit), ("cause", &e.to_string())],
-                        )
-                    })?;
-            if status != 3 {
-                stdout.push_str(&format!("\n{line}"));
-                exit = Some(status);
-                break;
-            }
+        let (line, status) =
+            crate::validate::files::wait(&dir, 540, &agent_runtime::clock::SystemClock).map_err(
+                |e| {
+                    refuse(
+                        "delivery-validate",
+                        &[("commit", commit), ("cause", &e.to_string())],
+                    )
+                },
+            )?;
+        if status == 3 {
+            return Err(refuse(
+                "delivery-validate",
+                &[
+                    ("commit", commit),
+                    ("cause", "wait-expired"),
+                    ("run-dir", &dir.display().to_string()),
+                ],
+            ));
         }
+        stdout.push_str(&format!("\n{line}"));
+        exit = Some(status);
     }
     let answer = json!({
         "exit": exit,
