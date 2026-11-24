@@ -49,8 +49,7 @@ class TaskContract(unittest.TestCase):
         self.script = self.skills / "jarvis/scripts/task"
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        # Managed-session recovery reads the platform manager; this task
-        # fixture publishes no launch policy and never reads the host's.
+        # Stub the platform manager so each row controls its published policy.
         for tool in ("systemctl", "launchctl"):
             self.bin.joinpath(tool).write_text("#!" + os.environ["JARVIS_TEST_BASH"] + "\nexit 0\n")
             self.bin.joinpath(tool).chmod(0o755)
@@ -502,6 +501,44 @@ sys.exit(task.main())
                     self.assertEqual(printed.get("refusal"), cause, answer.stderr)
                     self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
                                      [self.terminal["window"]])
+
+    def test_automatic_pick_excludes_accounts_named_by_the_user_manager(self):
+        excluded = self.accounts["codex"]
+        manager = self.bin / "systemctl"
+        assignment = "AGENT_RUNTIME_ACCOUNT_EXCLUDE=" + excluded.name
+        manager.write_text("#!" + os.environ["JARVIS_TEST_BASH"] + "\nprintf '%s\\n' " + shlex.quote(assignment) + "\n")
+        launch = ("--name", "automatic", "--harness", "codex", "--model", "gpt-5",
+                  "--task-file", self.task_file, "--result-file", self.home / "result.md")
+        with self.subTest(alternative=False):
+            refused = self.call("launch", *launch, success=False)
+            self.assertIn("refused=account-none ", refused.stderr)
+            self.assertIsNone(self.saved_tasks()[0].get("account"))
+        with self.subTest(alternative=True):
+            backup = self.plant("codex", 20, self.root / "backup-codex")
+            self.accounts["backup"] = backup
+            self.configure(listed=("codex", "backup"))
+            record = self.call("launch", *launch)
+            self.assertEqual(record["account"], str(backup))
+            self.assertIn(record, self.saved_tasks())
+
+    def test_automatic_pi_pick_uses_the_unmeasured_providers_key(self):
+        root = Path(self.env["HOME"]) / ".pi/agent"
+        root.mkdir(parents=True)
+        launch = ("--name", "automatic-pi", "--harness", "pi", "--model", "openai/gpt-6.2-astra",
+                  "--task-file", self.task_file, "--result-file", self.home / "result.md")
+        with self.subTest(key_present=False):
+            refused = self.call("launch", *launch, success=False)
+            lines = refused.stderr.splitlines()
+            refused = [i for i, line in enumerate(lines) if line.startswith("jarvis-task: refused=account-unmeasured ")]
+            self.assertEqual(len(refused), 1, "\n".join(lines))
+            self.assertEqual(json.loads(lines[refused[0] + 1])["refusal"]["cause"], "provider-key")
+        with self.subTest(key_present=True):
+            (root / "auth.json").write_text(json.dumps({"openai": {"type": "api_key", "key": "placeholder"}}))
+            record = self.call("launch", *launch)
+            self.assertEqual((record["account"], record["reading"], record["state"]),
+                             (str(root), "unmeasured", "running"))
+            self.assertEqual(self.acknowledgement(record)["env"]["PI_CODING_AGENT_DIR"], str(root))
+            self.assertIn(record, self.saved_tasks())
 
     def test_failed_pick_releases_task_scratch(self):
         self.plant("codex", 99)

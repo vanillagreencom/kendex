@@ -687,7 +687,7 @@ enum AccountsOp {
         /// model's window.
         #[arg(long)]
         binding_floor: bool,
-        /// Take the named Pi root on a model naming a provider nothing
+        /// Take the named or default Pi root on a model naming a provider nothing
         /// bills where `pi auth check` reads its credential ready in the
         /// root, run in the environment ENV_FILE holds (a JSON object of
         /// names to values: the one the launch's window starts from) and
@@ -695,7 +695,7 @@ enum AccountsOp {
         /// `unmeasured` with `refusal.cause=provider-key` and Pi's `status`
         /// and `reason` where it does not. A model naming no provider stays
         /// refused unread.
-        #[arg(long, requires = "account", value_name = "ENV_FILE")]
+        #[arg(long, value_name = "ENV_FILE")]
         admit_unbilled: Option<PathBuf>,
         /// The fleet record whose controller member is a seat and whose
         /// lanes are charged; orch's own fleet where unset.
@@ -805,6 +805,7 @@ struct AccountSettings {
     state: settings::Judged<PathBuf>,
     home: Option<String>,
     copilot_home: Option<String>,
+    pi_root: Option<String>,
     preference: String,
     tokens: settings::Judged<Vec<(String, PathBuf)>>,
     /// The notice of each private env file line the load passed over, for
@@ -825,7 +826,7 @@ impl AccountSettings {
             read: &[
                 settings::ACCOUNT_KEYS,
                 settings::ENGINE_KEYS,
-                &[COPILOT_HOME_KEY],
+                &[COPILOT_HOME_KEY, PI_ROOT_KEY],
             ],
             load: &[],
         };
@@ -838,6 +839,12 @@ impl AccountSettings {
             state: settings::account_state_dir(&values),
             home: values.get(settings::HOME_KEY).map(str::to_owned),
             copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
+            pi_root: values.get(PI_ROOT_KEY).map(str::to_owned).or_else(|| {
+                session::default_home(Harness::Pi)?
+                    .into_os_string()
+                    .into_string()
+                    .ok()
+            }),
             preference: controller.preference,
             tokens: controller.account_tokens,
             project: roots.project,
@@ -985,12 +992,15 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
             env: text,
         } => {
             let named = Harness::named(&harness)?;
+            let admit_default = admit_unbilled.is_some()
+                && named.names_unbilled_provider(native_model.as_deref().unwrap_or_default());
             let request = accounts::PickRequest {
                 harness: named,
                 model: native_model,
                 exclude: exclude_account,
                 for_overseer: for_controller,
-                lane: account,
+                lane: account
+                    .or_else(|| loaded.pi_root.as_ref().filter(|_| admit_default).cloned()),
                 projected,
                 max_pct,
                 min_headroom_pct,
