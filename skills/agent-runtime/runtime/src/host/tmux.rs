@@ -701,7 +701,8 @@ fn lone_idle_shell(
         Err(e) => return Reading::Unreadable { cause: e.key() },
     };
     let socket = server.socket.display().to_string();
-    let mut args = vec!["-S", &socket, "list-panes"];
+    // tmux replaces format tabs with underscores for a non-UTF-8 client.
+    let mut args = vec!["-S", &socket, "-u", "list-panes"];
     args.extend_from_slice(scope);
     args.extend_from_slice(&[
         "-F",
@@ -843,6 +844,7 @@ pub fn pane_state(server: &Server, id: &str) -> Reading<PaneState> {
         &[
             "-S",
             &socket,
+            "-u",
             "display-message",
             "-p",
             "-t",
@@ -932,6 +934,7 @@ pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, Stri
         &[
             "-S",
             &socket,
+            "-u",
             "list-windows",
             "-t",
             &target,
@@ -1018,6 +1021,7 @@ fn sole_pane(client: &Client, server: &Server, target: &str) -> Option<String> {
         &[
             "-S",
             &socket,
+            "-u",
             "display-message",
             "-p",
             "-t",
@@ -1416,6 +1420,92 @@ impl Drop for Private {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_reads_keep_their_fields_under_both_locales() {
+        const SOCKET: &str = "AGENT_RUNTIME_TEST_PANE_LOCALE_SOCKET";
+        if let Some(socket) = std::env::var_os(SOCKET) {
+            let server = server(Path::new(&socket)).unwrap();
+            let pane = Pane {
+                server: server.clone(),
+                id: "%0".to_owned(),
+                window: "@0".to_owned(),
+                session: "t".to_owned(),
+            };
+            let process = tmux(
+                &Client::Unnamed,
+                &server.socket,
+                "test",
+                &[
+                    "display-message",
+                    "-p",
+                    "#{pane_pid} #{pane_current_command}",
+                ],
+            )
+            .unwrap();
+            let (pid, command) = process.split_once(' ').unwrap();
+            let client = confirm(&server).unwrap();
+            assert_eq!(
+                pane_state(&server, &pane.id),
+                Reading::Live(PaneState::Running(PaneFields {
+                    pane: pane.clone(),
+                    pid: pid.parse().unwrap(),
+                    command: command.to_owned(),
+                }))
+            );
+            assert_eq!(
+                list_windows(&server, &pane.session),
+                Reading::Live(vec![(
+                    pane.window.clone(),
+                    pane.id.clone(),
+                    "café window".to_owned()
+                )])
+            );
+            assert_eq!(sole_idle_shell(&server, "t"), Reading::Live(Some(pane)));
+            assert_eq!(sole_pane(&client, &server, "%0").as_deref(), Some("%0"));
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(&dir.path().canonicalize().unwrap());
+        private.idle_shell();
+        private.ask(&["rename-window", "café window"]);
+        let utf8 = if cfg!(target_os = "macos") {
+            "en_US.UTF-8"
+        } else {
+            "C.UTF-8"
+        };
+        let exe = std::env::current_exe().unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        for locale in [utf8, "C"] {
+            // tmux assumes UTF-8 inside tmux, whatever the locale says.
+            let output = super::super::run_tagged_alone(
+                "pane-locale-test",
+                "test",
+                &exe,
+                "pane-locale",
+                &[
+                    "--exact",
+                    "host::tmux::tests::pane_reads_keep_their_fields_under_both_locales",
+                ],
+                Place {
+                    cwd: None,
+                    env: &[
+                        ("PATH", &path),
+                        (SOCKET, private.0.socket.as_os_str()),
+                        ("LC_ALL", OsStr::new(locale)),
+                    ],
+                },
+                TIMEOUT,
+            )
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{locale}: {}",
+                stdout_text(&output)
+            );
+        }
+    }
 
     /// A refusal is the version mismatch only where the client on `PATH`
     /// stood in for the server's own program and answered as tmux's
