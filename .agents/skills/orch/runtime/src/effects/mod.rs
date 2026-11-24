@@ -63,6 +63,7 @@ pub mod lane_model;
 )]
 mod lane_operation;
 mod launch;
+pub mod relaunch;
 mod stop;
 
 pub use close::{Closed, Word as CloseWord, close_lane};
@@ -742,14 +743,23 @@ pub fn watch_argv(
     flags: &[String],
 ) -> Result<Vec<String>> {
     let reach = fleet_reach(settings)?;
+    Ok(watch_words(path, program, flags)
+        .into_iter()
+        .chain(agent_runtime::controller::run::reach_words(&reach))
+        .collect())
+}
+
+/// `program`'s `watch run` over the fleet state at `path` with `flags`,
+/// before any reach words: the words a controller start's request carries,
+/// which [`companion_reach`] gives its reach.
+pub fn watch_words(path: &Path, program: &[String], flags: &[String]) -> Vec<String> {
     let file = path.display().to_string();
-    Ok(program
+    program
         .iter()
         .cloned()
         .chain(["watch", "run", "--file", &file].map(str::to_owned))
         .chain(flags.iter().cloned())
-        .chain(agent_runtime::controller::run::reach_words(&reach))
-        .collect())
+        .collect()
 }
 
 /// Start the fleet watch, [`watch_argv`], detached under the files a

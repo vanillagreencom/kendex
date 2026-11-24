@@ -128,7 +128,7 @@ These causes need more:
 - `harness-binary-missing`: install the harness, or name it in `AGENT_RUNTIME_HARNESS_BINARIES` as `harness=/absolute/path`.
 - `permission-mismatch`: drop the bypass word, or name a narrower one.
 - `home-relative`, `no-context-reader`: [copilot-runtime.md § Account setup](copilot-runtime.md#account-setup). Repair what `file` names.
-- `tmux-session-unresolved`, `tmux-session-missing`: § Tmux session.
+- `tmux-session-unresolved`, `tmux-session-missing`, `tmux-server-absent`, `tmux-server-unstarted`, `tmux-socket-dir-unsafe`, `tmux-socket-dir-unmade`: § Tmux session.
 - `session-owned-elsewhere`, `session-store-unreadable`: the same request meets the same refusal. Repair the store, or report the session to the operator.
 - `read-only-unconfined`: a Codex seat linked outside its grants (`linked-seat`) cannot hold a read-only lane. Repair the seat, or launch on another account.
 
@@ -209,11 +209,38 @@ A request's `over_cap` admits one deliberate launch past its cap; the record kee
 
 ## Tmux session
 
-Every lane window opens in one session on the fleet's tmux server: the one `AGENT_RUNTIME_TMUX_SESSION` names, else the fleet state's `tmux.session`, which the first confirmed launch records. kendex creates no session. A launch that resolves no session, or names one the server does not hold, refuses: set `AGENT_RUNTIME_TMUX_SESSION`, or create that session.
+Every lane window opens in one session on the fleet's tmux server: the one `AGENT_RUNTIME_TMUX_SESSION` names, else the fleet state's `tmux.session`, which the first confirmed launch records.
+
+- If no tmux server answers on the controller record's `server_socket`, as after a restart, the launch starts one there and makes that session in it. It first makes the socket's directory, mode `0700`, where it is gone.
+- On any other socket, such as a caller's own `$TMUX`, a launch where no server listens refuses `tmux-server-absent`.
+- The server runs as its own job, a user unit or a `setsid` group, recorded in `tmux-server.runner` beside the fleet state, with its stderr in `tmux-server.err`. Stopping the caller does not end it, and an OOM kill in one pane does not end the unit. It ends with its last session.
+- A socket directory that is not this user's, or that group or others may write in, refuses `tmux-socket-dir-unsafe`. One it cannot make refuses `tmux-socket-dir-unmade`.
+- A launch that resolves no session refuses `tmux-session-unresolved`.
+- A server that stands without the session refuses `tmux-session-missing`: set `AGENT_RUNTIME_TMUX_SESSION`, or create that session.
+- A stderr file the start cannot empty, a start the launcher refused, a server that exits, or one that never answers within `AGENT_RUNTIME_TMUX_VERIFY_SECS` refuses `tmux-server-unstarted`.
+  - `launch` is the launcher's answer (`refused`, `started` or `unanswered`), `exited` where the server ended before it answered, or `unrun` where the stderr file could not be written.
+  - `runner` is the launcher's line, or its cause where it refused or did not answer.
+  - `cause` is the server's last stderr line, else the last tmux error, else `unanswered`.
+  - A lane's observation has `cause: tmux-server-unstarted`, with the refusal's own cause in `detail`.
+  - A controller start's observation has `note: tmux-server-unstarted`, with `launch`, `runner` and `cause` under `fields`. `controller-resume-failed` prints that `cause`.
 
 ## Recovery relaunch
 
-A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
+For a local lane, run the relaunch from the checkout with the item alone:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime lane relaunch --fleet [ITEM_KEY]
+```
+
+- It runs steps 2 and 3 below from the record: the close, then the launch on the record's own account and the start brief.
+- Before the close, it judges the record's account with the launch's own judge, with the lane's own charge left out, and admits the launch as the launch would be admitted.
+- It reaches the controller record's `server_socket`, not the caller's `$TMUX`, and starts a gone server as § Tmux session states.
+- Exit 0 prints `resumed item=[ITEM_KEY] route=resume|fresh account=[DIR|-]`.
+- A failed close prints `close-failed` on stderr at exit 3, and an open one `close-unconfirmed` at exit 75. Nothing is launched after either.
+- A failed launch prints `launch-failed` at exit 3, and an open one `launch-unconfirmed` at exit 75. Both name the close's intent as `close=[ID]`. A launch refused after the close is `launch-failed` with `refusal=[KEY] ...`.
+- Every refusal at exit 1 closes nothing. The keys are `server-socket-unrecorded`, `lane-missing`, `lane-hosted`, `harness-unrecorded`, `relaunch-unprepared cause=[CAUSE]`, the account refusals [§ Before anything is written](#before-anything-is-written) lists, and the launch's admission refusals.
+
+Compose the steps below by hand only to change the harness, the account or the brief, or for a hosted lane. A relaunch sends the item's `launch-lane` request again over its standing record, from the checkout the launch ran from.
 
 1. End the lane. The record must not be in flight, and no recorded harness or detached turn may still run. End it through its own close-out, [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver), or the runtime close in step 2.
 2. Where the lane still stands, run the runtime close. It retires the attempt and keeps the item's work, the worktree and its validation runs among it, and a hosted lane's sandbox stands after it (§ Resume or fresh). Write the request with the harness file tool:

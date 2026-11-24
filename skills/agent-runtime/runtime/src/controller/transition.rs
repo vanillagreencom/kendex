@@ -83,7 +83,8 @@ pub struct RequestTransfer {
     /// The tmux session the successor opens in: this one, over
     /// `AGENT_RUNTIME_TMUX_SESSION`, over the opener's own session
     /// (`Settings.opener_session`), over the session the predecessor's pane
-    /// stands in. It must stand: kendex creates no session.
+    /// stands in. A server that stands must hold it; where no server
+    /// listens on the fleet's socket, the start makes one holding it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     /// Why the succession is asked for; `live` when left out.
@@ -223,8 +224,9 @@ pub struct StartController {
     /// The tmux session the controller opens in: this one, over
     /// `AGENT_RUNTIME_TMUX_SESSION`, over the opener's own session
     /// (`Settings.opener_session`), over the session a recorded
-    /// predecessor's pane stands in. It must stand: kendex creates no
-    /// session.
+    /// predecessor's pane stands in. A server that stands must hold it;
+    /// where no server listens on the fleet's socket, the start makes one
+    /// holding it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     /// The fleet watch's launch words: `orch-runtime watch run --file

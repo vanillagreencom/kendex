@@ -433,6 +433,7 @@ fn entry(
                     Some(&run_dir.join("job.err")),
                     agent_runtime::effects::job::Bounds {
                         memory: memory.bytes(),
+                        outlives_oom: false,
                     },
                     &SystemClock,
                 );

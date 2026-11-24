@@ -1919,6 +1919,7 @@ pub fn start(
                     &round,
                     agent_runtime::effects::job::Bounds {
                         memory: memory.bytes(),
+                        outlives_oom: false,
                     },
                 ),
             },

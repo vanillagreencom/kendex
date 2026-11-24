@@ -201,7 +201,7 @@ fn recover(
 }
 
 /// The fleet record's lane for `item`, `None` where none stands.
-fn lane_of(path: &Path, item: &str) -> Result<Option<Lane>> {
+pub(super) fn lane_of(path: &Path, item: &str) -> Result<Option<Lane>> {
     Ok(super::fleet(path)?
         .lanes
         .into_iter()

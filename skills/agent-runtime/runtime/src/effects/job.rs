@@ -399,17 +399,18 @@ impl Launcher<'_> {
             "IgnoreSIGPIPE=no".to_owned(),
         ];
         // The memory cap holds the job's whole tree, swap included, since a
-        // swapped page is memory the cap would not count; the manager's own
-        // policy stops the unit at its first OOM kill and so ends the job
-        // before it records the kill as its verdict.
+        // swapped page is memory the cap would not count.
         if let Some(bytes) = bounds.memory {
-            for property in [
-                format!("MemoryMax={bytes}"),
-                "MemorySwapMax=0".to_owned(),
-                "OOMPolicy=continue".to_owned(),
-            ] {
+            for property in [format!("MemoryMax={bytes}"), "MemorySwapMax=0".to_owned()] {
                 words.extend(["-p".to_owned(), property]);
             }
+        }
+        // The manager's own policy (`DefaultOOMPolicy=stop`) stops the unit
+        // at its first OOM kill: a bounded job would end before it records
+        // the kill as its verdict, and a job whose tree holds others' work
+        // would end all of it with one member's kill.
+        if bounds.memory.is_some() || bounds.outlives_oom {
+            words.extend(["-p".to_owned(), "OOMPolicy=continue".to_owned()]);
         }
         if let Some((soft, hard)) = nofile_limits() {
             words.push("-p".to_owned());
@@ -766,10 +767,12 @@ impl Launcher<'_> {
 }
 
 /// What a launch bounds its job by: the memory of its whole process tree in
-/// bytes.
+/// bytes, and whether the job outlives an OOM kill of one of its members,
+/// as a tmux server outlives the kill of one pane's process.
 #[derive(Clone, Copy, Default)]
 pub struct Bounds {
     pub memory: Option<u64>,
+    pub outlives_oom: bool,
 }
 
 pub fn launch_recorded(

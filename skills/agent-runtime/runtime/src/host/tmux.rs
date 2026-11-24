@@ -33,6 +33,9 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 /// build than the server it asked.
 pub const VERSION_MISMATCH: &str = "tmux-version-mismatch";
 
+/// The refusal key of a call whose socket no server listens on.
+const SERVER_ABSENT: &str = "tmux-server-absent";
+
 /// The tmux program a call runs: the server's own; `tmux` on `PATH` for a
 /// call that names no server yet; or `tmux` on `PATH` in place of a named
 /// server's program that could not be read, with why.
@@ -154,11 +157,24 @@ fn run(
 /// [`VERSION_MISMATCH`]: tmux's `client.c` prints `protocol version
 /// mismatch` when the protocol numbers differ and `server exited
 /// unexpectedly` when the server drops the connection, which is a tmux 3.4
-/// client's answer from a live tmux 3.8 server, both protocol 8.
+/// client's answer from a live tmux 3.8 server, both protocol 8. Any
+/// client's answer for a socket no server listens on is [`SERVER_ABSENT`]:
+/// `client.c` prints `no server running on PATH` where the connect was
+/// refused, and `error connecting to PATH (No such file or directory)`
+/// where no socket stands, or no directory for it (tmux 3.8, measured).
+/// Any other answer, such as a denied permission or a path too long, is no
+/// proof that the server is gone.
 fn refused(client: &Client, operation: &'static str, cause: &str) -> Error {
+    let absent = cause.starts_with("no server running on ")
+        || (cause.starts_with("error connecting to ")
+            && cause.ends_with(" (No such file or directory)"));
     match client {
         Client::Own(_) | Client::Unnamed => Error::refused(
-            "tmux-refused",
+            if absent {
+                SERVER_ABSENT
+            } else {
+                "tmux-refused"
+            },
             &[("operation", operation), ("cause", cause)],
         ),
         Client::Fallback { unread } => {
@@ -167,6 +183,8 @@ fn refused(client: &Client, operation: &'static str, cause: &str) -> Error {
             Error::refused(
                 if foreign {
                     VERSION_MISMATCH
+                } else if absent {
+                    SERVER_ABSENT
                 } else {
                     "tmux-refused"
                 },
@@ -248,7 +266,7 @@ pub struct Pane {
 }
 
 /// One tmux command and its own answer: its output where it succeeded, a
-/// refusal (`tmux-refused`) where tmux answered with a failure, so nothing
+/// refusal ([`refused`]) where tmux answered with a failure, so nothing
 /// it was asked to do was done. A tmux that never started is
 /// `Error::NotStarted`; one that started and gave no answer within the bound
 /// is `Error::External`, and a command that changes the server may then
@@ -271,15 +289,22 @@ fn tmux(client: &Client, socket: &Path, operation: &'static str, args: &[&str]) 
     Ok(stdout_text(&output))
 }
 
-/// The socket tmux derives for this user when nothing names one. The uid
-/// is `$UID` where it is a number, else `id -u`'s own answer; an `id` that
-/// fails, gives no answer or prints no number refuses `uid-unread`, never a
-/// socket under a made-up uid.
+/// The socket tmux derives for this user when nothing names one, under
+/// this user's uid ([`own_uid`]).
 pub fn default_socket() -> Result<PathBuf> {
     let tmpdir = std::env::var("TMUX_TMPDIR").unwrap_or_else(|_| "/tmp".to_owned());
+    Ok(PathBuf::from(tmpdir)
+        .join(format!("tmux-{}", own_uid()?))
+        .join("default"))
+}
+
+/// This user's uid, as tmux names it: `$UID` where it is a number, else
+/// `id -u`'s own answer; an `id` that fails, gives no answer or prints no
+/// number refuses `uid-unread`, never a made-up uid.
+fn own_uid() -> Result<String> {
     let numeric = |uid: &str| !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit());
-    let uid = match std::env::var("UID") {
-        Ok(uid) if numeric(&uid) => uid,
+    match std::env::var("UID") {
+        Ok(uid) if numeric(&uid) => Ok(uid),
         Ok(_) | Err(_) => {
             let output = run_with("id", "uid", &["-u"], &[], None, TIMEOUT)?;
             let uid = stdout_text(&output).trim().to_owned();
@@ -289,12 +314,9 @@ pub fn default_socket() -> Result<PathBuf> {
                     &[("answer", &uid), ("cause", &stderr_text(&output))],
                 ));
             }
-            uid
+            Ok(uid)
         }
-    };
-    Ok(PathBuf::from(tmpdir)
-        .join(format!("tmux-{uid}"))
-        .join("default"))
+    }
 }
 
 /// The socket the caller's own `$TMUX` names, else the default.
@@ -310,6 +332,91 @@ pub fn ambient_socket() -> Result<PathBuf> {
 /// Read the server at a socket: its pid and start.
 pub fn server(socket: &Path) -> Result<Server> {
     identity(&Client::Unnamed, socket)
+}
+
+/// Whether `error`, a tmux call's answer, says no server listens on its
+/// socket ([`refused`]). The bounded client read it, so a server that
+/// stands but does not answer is never taken for gone.
+pub(crate) fn server_absent(error: &Error) -> bool {
+    error.key() == SERVER_ABSENT
+}
+
+/// Make the directory `socket` binds in where it is gone, mode `0700`, as
+/// tmux's `make_label` makes its own `tmux-UID` directory: a server started
+/// with `-S` binds the path as given and exits where its directory is gone,
+/// as a restart that empties `/tmp` leaves it. The directory, made here or
+/// standing, must be this user's and closed to writes by group and others,
+/// since one another user made, or may write in, in a shared `/tmp` could
+/// replace the socket every fleet pane is reached through: any other
+/// refuses `tmux-socket-dir-unsafe`. A read or search bit replaces nothing,
+/// and a directory a user makes under the usual `022` umask carries them.
+pub(crate) fn socket_dir(socket: &Path) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let Some(dir) = socket.parent().filter(|d| !d.as_os_str().is_empty()) else {
+        return Ok(());
+    };
+    let shown = dir.display().to_string();
+    let failed = |operation: &str, e: std::io::Error| {
+        Error::refused(
+            "tmux-socket-dir-unmade",
+            &[
+                ("dir", &shown),
+                ("operation", operation),
+                ("cause", &e.to_string()),
+            ],
+        )
+    };
+    if let Err(e) = std::fs::symlink_metadata(dir) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(failed("stat", e));
+        }
+        std::fs::create_dir_all(dir).map_err(|e| failed("create", e))?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| failed("chmod", e))?;
+    }
+    let meta = std::fs::symlink_metadata(dir).map_err(|e| failed("stat", e))?;
+    let uid = own_uid()?;
+    let mode = meta.permissions().mode() & 0o7777;
+    if !meta.is_dir() || meta.uid().to_string() != uid || mode & 0o022 != 0 {
+        return Err(Error::refused(
+            "tmux-socket-dir-unsafe",
+            &[
+                ("dir", &shown),
+                ("owner", &meta.uid().to_string()),
+                ("uid", &uid),
+                ("mode", &format!("{mode:o}")),
+                ("directory", if meta.is_dir() { "yes" } else { "no" }),
+            ],
+        ));
+    }
+    Ok(())
+}
+
+/// Make `session` on `server`, one this process started with `tmux -D`,
+/// and set `exit-empty` on: `-D` turns it off, and a server tmux starts for
+/// a client ends with its last session.
+pub fn new_session(server: &Server, session: &str, cwd: &Path) -> Result<()> {
+    let client = confirm(server)?;
+    let cwd = cwd.display().to_string();
+    tmux(
+        &client,
+        &server.socket,
+        "new-session",
+        &[
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-c",
+            &cwd,
+            ";",
+            "set-option",
+            "-s",
+            "exit-empty",
+            "on",
+        ],
+    )?;
+    Ok(())
 }
 
 /// [`server`], asked through the program of the server a record names by
@@ -1313,7 +1420,9 @@ mod tests {
     /// A refusal is the version mismatch only where the client on `PATH`
     /// stood in for the server's own program and answered as tmux's
     /// `client.c` answers a server of another build; the server's own
-    /// program, or a call that named no server, refuses as tmux did.
+    /// program, or a call that named no server, refuses as tmux did. Only
+    /// tmux's two answers for a socket nothing listens on read as the server
+    /// gone, whichever client gave them. The lines are tmux 3.8's, measured.
     #[test]
     fn a_refusal_is_a_version_mismatch_only_from_the_path_client_standing_in() {
         let fallback = Client::Fallback {
@@ -1330,6 +1439,21 @@ mod tests {
             (
                 &fallback,
                 "no server running on /tmp/tmux-1000/default",
+                SERVER_ABSENT,
+            ),
+            (
+                &Client::Unnamed,
+                "error connecting to /tmp/tmux-1000/gone/tmux.sock (No such file or directory)",
+                SERVER_ABSENT,
+            ),
+            (
+                &Client::Unnamed,
+                "error connecting to /tmp/tmux-1000/denied.sock (Permission denied)",
+                "tmux-refused",
+            ),
+            (
+                &Client::Unnamed,
+                "error connecting to /tmp/tmux-1000/xxxx (Filename too long)",
                 "tmux-refused",
             ),
             (&own, "server exited unexpectedly", "tmux-refused"),
@@ -1345,6 +1469,44 @@ mod tests {
                 key,
                 "{client:?} {stderr:?}"
             );
+        }
+    }
+
+    /// A gone socket directory is made this user's at `0700`; a standing
+    /// one of this user's serves where only its owner may write in it, and
+    /// one group or others may write in refuses, left as it stood. A
+    /// standing directory another user owns refuses whatever its mode.
+    #[test]
+    fn a_socket_directory_is_made_private_or_refused_writable() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let gone = dir.path().join("gone");
+        socket_dir(&gone.join("tmux.sock")).unwrap();
+        assert_eq!(mode(&gone), 0o700);
+        let rows = [(0o755, true), (0o775, false), (0o757, false)];
+        for (bits, serves) in rows {
+            let standing = dir.path().join(format!("{bits:o}"));
+            std::fs::create_dir(&standing).unwrap();
+            std::fs::set_permissions(&standing, std::fs::Permissions::from_mode(bits)).unwrap();
+            let answer = socket_dir(&standing.join("tmux.sock"));
+            assert_eq!(answer.is_ok(), serves, "{bits:o}: {answer:?}");
+            if let Err(refused) = answer {
+                assert_eq!(refused.key(), "tmux-socket-dir-unsafe", "{refused}");
+            }
+            assert_eq!(mode(&standing), bits, "{bits:o}: left as it stood");
+        }
+        // `/` stands at `0755`, root's: only its owner decides the answer,
+        // read here by the test itself, and nothing is made.
+        let uid = |path: &Path| std::fs::metadata(path).unwrap().uid();
+        let answer = socket_dir(Path::new("/tmux.sock"));
+        assert_eq!(
+            answer.is_ok(),
+            uid(Path::new("/")) == uid(dir.path()),
+            "{answer:?}"
+        );
+        if let Err(refused) = answer {
+            assert_eq!(refused.key(), "tmux-socket-dir-unsafe", "{refused}");
         }
     }
 

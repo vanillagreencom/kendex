@@ -187,7 +187,7 @@ Launch settings and Codex compaction: [skill-rules.md](skill-rules.md) § Coordi
 | `ORCH_LANE_WRITABLE` | Further folders a confined local lane may write, `:`-separated, each absolute or `~/`. | unset |
 | `SECOND_OPINION_MODELS` | The second-opinion roster a lane's review walks. | `claude codex pi-copilot pi-copilot-gpt` |
 | `ORCH_MODEL_RECOVERY_LIMIT` | Model recoveries that may relaunch a lane since its last reset. | `3` |
-| `AGENT_RUNTIME_TMUX_VERIFY_SECS` | Seconds a launch waits for the harness to come up at its composer, and the bound of each pane wait. | `15` |
+| `AGENT_RUNTIME_TMUX_VERIFY_SECS` | Seconds a launch waits for the harness to come up at its composer, the bound of each pane wait, and how long a started fleet server has to answer before `tmux-server-unstarted`. | `15` |
 | `AGENT_RUNTIME_JOB_CLAIM_SECS` | Seconds a transfer's or a stop's caller waits for its detached job to claim the intent. | `15` |
 | `AGENT_RUNTIME_TMUX_SESSION` | The tmux session every harness window opens in, where the caller names none. | unset: the opener's own |
 | `AGENT_RUNTIME_LAUNCH_PERMISSION` | `bypass` runs every launch unattended. `native` keeps the harness's own prompts. | `bypass` |
