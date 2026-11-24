@@ -5,4 +5,6 @@
 # and run by bash directly so the kernel records the harness's process name
 # for it.
 printf '\xe2\x9d\xaf\xc2\xa0\n'
-while IFS= read -r _line; do :; done
+while IFS= read -r _line; do
+    printf '  unrecorded row %02d\n' {1..14}
+done

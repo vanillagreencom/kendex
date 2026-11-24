@@ -424,6 +424,19 @@ pub const AUTH_FAILURE_ERRORS: [&str; 4] = [
     "billing_error",
 ];
 
+/// The last twelve nonblank rows of a captured pane, in their drawn order.
+pub fn screen_tail(screen: &str) -> Vec<String> {
+    let mut tail: Vec<_> = screen
+        .lines()
+        .rev()
+        .filter(|line| !line.trim().is_empty())
+        .take(12)
+        .map(str::to_owned)
+        .collect();
+    tail.reverse();
+    tail
+}
+
 /// The lines strictly below the last user turn, or the whole screen when it
 /// holds none. The boundary is the last marker line unless that line is the
 /// live input the session sits at, in which case it is the marker before.

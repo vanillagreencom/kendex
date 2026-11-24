@@ -311,7 +311,8 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
 /// The repeat reconciles against the live owner and touches nothing; the
 /// runner that records no turn for its brief is never published and the
 /// predecessor is never retired for it: the runner is stopped and the
-/// predecessor stays in control.
+/// predecessor stays in control. The outcome keeps the screen the stub
+/// drew after it received the brief, within the launch inspection's tail.
 #[test]
 fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_runner() {
     let dir = tempfile::tempdir().unwrap();
@@ -358,6 +359,17 @@ fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_run
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "brief-unconfirmed");
     assert_eq!(intent["observation"]["runner"], "stopped");
+    assert_eq!(intent["observation"]["verify_secs"], 3, "{intent}");
+    let tail: Vec<_> = intent["observation"]["screen_tail"]
+        .as_array()
+        .expect("the screen was captured before the runner stopped")
+        .iter()
+        .map(|line| line.as_str().unwrap().trim_end_matches(' '))
+        .collect();
+    let expected: Vec<_> = (3..=14)
+        .map(|row| format!("  unrecorded row {row:02}"))
+        .collect();
+    assert_eq!(tail, expected, "{intent}");
     assert_eq!(intent["phase"]["phase"], "delivered");
     assert!(live(predecessor.pid()), "never retired without the turn");
     let overseer = runner.fleet()["controller"].clone();
@@ -2296,6 +2308,16 @@ fn a_copilot_start_whose_submit_copilot_refuses_submits_the_held_brief_again() {
             assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
             assert_eq!(observation["note"], "brief-unconfirmed", "{report}");
             assert_eq!(observation["cause"], "submit-refused", "{report}");
+            assert_eq!(observation["verify_secs"], 8, "{report}");
+            assert!(
+                observation["screen_tail"].as_array().is_some_and(|lines| {
+                    lines.iter().any(|line| {
+                        line.as_str()
+                            .is_some_and(|line| line.trim_end_matches(' ') == "❯ START HERE")
+                    })
+                }),
+                "the refused draft is on the captured screen: {report}"
+            );
             // The last press may not have reached the stub's log yet.
             let presses = observation["presses"].as_u64().unwrap();
             assert!(reads.len() > 1, "the refused brief was submitted again");
