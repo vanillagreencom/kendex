@@ -42,12 +42,23 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
 
 owner-answers reads posted owner asks once, repairs their action descriptions,
 and delivers later owner comments through the existing delivery-id check. An
-owner reply under the question of a closed ask that an open ask replaced is
-delivered to that open ask, its text opening with one line naming the replaced
-ask and the open one, and never to the ask whose question it sits under. So is
-an owner comment on that question's item under no question, posted after the
-replaced question and before the next question on the item, open or replaced.
-An item ask whose question did not post replaced nothing. With
+item's questions are the question comments of every ask of this mailbox posted
+there, open or closed, and each question an open ask's `replaces` names; the
+pass reads the owner's comments on each such item. A comment belongs to one
+question: a reply under a question to that question, a top-level comment to
+the latest question posted before it, and a reply under any other comment to
+the question that comment belongs to. It goes to that question's ask while the
+ask is open, as it stands. Where that ask is closed and an open ask that
+reached the owner (one with no item, or an item ask whose question posted)
+names it in `replaces`, it goes to that open ask, its text opening with one
+line naming the closed ask and the open one. Any other comment, one with no
+question before it included, goes to no ask: the overseer gets one data notice
+from source owner-answers, its first line naming the item and the comment id.
+An answer and a report carry the delivery id linear:<comment id>, so each
+comment is delivered or reported once, by the first pass that reads it. A
+report that does not land prints `owner-answers: report-unsent issue=<item>
+comment=<id> cause=<key>` on stderr, leaves the read state as it is, and is
+sent again by the next pass. With
 no optional Linear skill it exits 0 with `owner-answers: tracker=absent`.
 OVERSEE_WATCH_TRACKER selects an explicit tracker CLI. The pass prints JSON
 line and delivered receipts for tracker marks, then `owner-answers: read=STATE`
@@ -1243,19 +1254,26 @@ owner_answers() {
   OWNER_TRACKER_QUOTA=0
   owner_tracker_settings "$SCRIPT_DIR" || return 0
   OWNER_TRACKER_READ=unread
-  local items asks issue ask comment id rc repair description labels label cause current variables ids=()
-  if ! "$LANE_MAIL" pending --item "$ITEM" --root "$ROOT" --to owner >"$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err"; then
+  local items asks issue ask comment id rc refusal repair description labels label cause current variables ids=()
+  # Every owner ask the mailbox holds, closed ones too, is read before the
+  # open ones: an ask that lands between the reads is open, and one that
+  # closes between them is closed.
+  if ! "$LANE_MAIL" events --item "$ITEM" --root "$ROOT" --box to-overseer >"$WORK_DIR/tracker-history" 2>"$WORK_DIR/tracker.err" ||
+     ! "$LANE_MAIL" pending --item "$ITEM" --root "$ROOT" --to owner >"$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=asks' >&2; return 0
   fi
-  # An open ask's `replaces` names the question comments it replaced: a reply
-  # under one is delivered to that open ask, prefixed with both asks' ids,
-  # and never as an answer to the question it sits under.
-  if ! asks="$(jq -s "$OWNER_REPLACING_JQ"' any(.[]; .tracker_posted == true
-      or (owner_replacing and any((.replaces // [])[]; .tracker_comment != null)))' \
-      "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
+  # The items holding a question of this mailbox: each posted ask's item,
+  # open or closed, and each item whose question an open ask replaced.
+  if ! tail -n +2 -- "$WORK_DIR/tracker-history" | jq -cs --slurpfile open "$WORK_DIR/tracker-asks" '
+      map(select(.kind == "ask" and .to == "owner")) + $open | group_by(.id) | map(last)' \
+      >"$WORK_DIR/tracker-all" 2>"$WORK_DIR/tracker.err" ||
+     ! asks="$(jq -r --slurpfile open "$WORK_DIR/tracker-asks" "$OWNER_REPLACING_JQ"'
+      [(.[] | select(.tracker_posted == true) | .issue),
+       ($open[] | select(owner_replacing) | (.replaces // [])[] | select(.tracker_comment != null) | .issue)]
+      | map(strings) | unique[]' "$WORK_DIR/tracker-all" 2>"$WORK_DIR/tracker.err")"; then
     echo 'KEN-3624-unread cause=asks-format' >&2; return 0
   fi
-  [[ "$asks" == true ]] || { OWNER_TRACKER_READ=read; return 0; }
+  [[ -n "$asks" ]] || { OWNER_TRACKER_READ=read; return 0; }
   if ! labels="$(jq -rs --arg label "$OWNER_TRACKER_LABEL" '
     map(select(.tracker_posted == true) | .tracker_label // $label) | unique[]' \
     "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
@@ -1320,14 +1338,7 @@ owner_answers() {
     jq -cn --arg ask "$ask" --arg issue "$issue" --arg cause "$cause" \
       '{kind: "line", ask: $ask, issue: $issue, cause: (if $cause == "" then null else $cause end)}' || return 1
   done <"$WORK_DIR/tracker-repairs"
-  if ! items="$(jq -r --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_REPLACING_JQ"'
-      [.[].id, ($asks[] | select(owner_replacing) | (.replaces // [])[] | select(.tracker_comment != null) | .issue)]
-      | unique[]' \
-      <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
-    echo 'KEN-3624-unread cause=issues-format' >&2; return 0
-  fi
-  while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$items"
-  [[ ${#ids[@]} -gt 0 ]] || { OWNER_TRACKER_READ=read; return 0; }
+  while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$asks"
   if ! "$TRACKER" comments bulk-list "${ids[@]}" --format=safe >"$WORK_DIR/tracker-comments" 2>"$WORK_DIR/tracker.err"; then
     tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
     echo 'KEN-3624-unread cause=comments' >&2; return 0
@@ -1338,60 +1349,81 @@ owner_answers() {
       "$WORK_DIR/tracker-comments" >/dev/null 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=comments-format' >&2; return 0
   fi
+  # The delivery rule owner-answers states in usage(): each owner comment on
+  # such an item belongs to one question of this mailbox there, and goes to
+  # the open ask that question names, or is reported to the overseer.
   if ! jq -cn --slurpfile comments "$WORK_DIR/tracker-comments" --arg email "$OWNER_TRACKER_EMAIL" \
-    --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_REPLACING_JQ"'
-      [$asks[] | select(owner_replacing) | .id as $open | (.replaces // [])[] | select(.tracker_comment != null)
-        # An ask left open when its replacement failed keeps its own replies.
-        | select(.id as $id | any($asks[]; .id == $id) | not)
-        | {open: $open, replaced: .id, issue, thread: .tracker_comment}] as $replaced
-      | def owned: (.user_email | ascii_downcase) == ($email | ascii_downcase);
-      [$asks[] | select(.tracker_posted == true) | . as $ask
-        | ($comments[0][$ask.issue] // []) as $rows
-        # A record without a comment id finds its question by the ask= line.
-        | ([$rows[] | select(if $ask.tracker_comment != null then .id == $ask.tracker_comment
-            else (.body | split("\n") | index("ask=" + $ask.id)) != null end)]
-          | sort_by(.created_at) | first) as $posted
-        | select($posted != null) | {ask: $ask, posted: $posted}] as $open
-      # A comment on the item under no question answers the question before
-      # it: one between a replaced question and the next question on that
-      # item, open or replaced, goes to the ask that replaced it.
-      | [$replaced[] | . as $replaced_ask
-        | (first(($comments[0][.issue] // [])[] | select(.id == $replaced_ask.thread)) // null) as $question
-        | select($question != null) | . + {at: $question.created_at}] as $replaced_at
-      | ($open[] | .ask as $ask | .posted as $posted
-      | ($comments[0][$ask.issue] // [] | sort_by(.created_at))[]
-      | select(owned and .created_at > $posted.created_at and .id != $posted.id)
-      | . as $row | select(any($replaced[]; .thread == ($row.parent_id // "")) | not)
-      | {ask: $ask.id, issue: $ask.issue, comment: .}),
-      ($replaced[] | . as $replaced_ask | ($comments[0][.issue] // []) | sort_by(.created_at)[]
-        | select(owned and .parent_id == $replaced_ask.thread)
-        | {ask: $replaced_ask.open, issue: $replaced_ask.issue, comment: ., replaced: $replaced_ask.replaced}),
-      ($replaced_at[] | . as $replaced_ask
-        | ([($open[] | select(.ask.issue == $replaced_ask.issue) | .posted.created_at),
-            ($replaced_at[] | select(.issue == $replaced_ask.issue) | .at)]
-          | map(select(. > $replaced_ask.at)) | min) as $next
-        | ($comments[0][.issue] // []) | sort_by(.created_at)[]
-        | select(owned and (.parent_id // "") == "" and .created_at > $replaced_ask.at
-            and ($next == null or .created_at < $next))
-        | {ask: $replaced_ask.open, issue: $replaced_ask.issue, comment: ., replaced: $replaced_ask.replaced})' \
+    --slurpfile all "$WORK_DIR/tracker-all" --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_REPLACING_JQ"'
+      def owned: (.user_email | ascii_downcase) == ($email | ascii_downcase);
+      [$asks[].id] as $open
+      | [$asks[] | select(owner_replacing)] as $replacing
+      | [($all[0][] | select(.tracker_posted == true) | {ask: .id, issue, comment: .tracker_comment}),
+         ($replacing[] | (.replaces // [])[] | select(.issue != null and .tracker_comment != null)
+           | {ask: .id, issue, comment: .tracker_comment})]
+      | map(. as $q | ($comments[0][$q.issue] // []) as $rows
+          # A record without a comment id finds its question by the ask= line.
+          | ([$rows[] | select(if $q.comment != null then .id == $q.comment
+              else (.body | split("\n") | index("ask=" + $q.ask)) != null end)]
+            | sort_by(.created_at) | first) as $row
+          | select($row != null) | {ask: $q.ask, issue: $q.issue, id: $row.id, at: $row.created_at})
+      | unique_by(.id) as $questions
+      # A reply under a question belongs to it; a top-level comment belongs
+      # to the latest question before it; a reply under any other
+      # comment belongs where that comment does, and an earlier one only, so
+      # the walk ends.
+      | def question($issue; $rows):
+          . as $row | ($row.parent_id // "") as $parent
+          | if $parent == "" then [$questions[] | select(.issue == $issue and .at < $row.created_at)] | max_by(.at)
+            else (first($questions[] | select(.id == $parent)) // null) as $under
+            | if $under != null then $under
+              else (first($rows[] | select(.id == $parent and .created_at < $row.created_at)) // null)
+              | if . == null then null else question($issue; $rows) end end end;
+      [$questions | map(.issue) | unique[] as $issue
+        | ($comments[0][$issue] // [] | sort_by(.created_at)) as $rows
+        | $rows[] | select(owned) | . as $row | select(any($questions[]; .id == $row.id) | not)
+        | question($issue; $rows) as $q
+        | if $q != null and any($open[]; . == $q.ask) then {ask: $q.ask, issue: $issue, comment: $row}
+          else (if $q == null then null
+              else last($replacing[] | select(any((.replaces // [])[]; .id == $q.ask))) // null end) as $by
+          | if $by == null then {issue: $issue, comment: $row}
+            else {ask: $by.id, issue: $issue, comment: $row, replaced: $q.ask,
+              under: (($row.parent_id // "") == $q.id)} end end]
+      # Every delivery runs before any report.
+      | (.[] | select(.ask != null)), (.[] | select(.ask == null))' \
     >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=comments-format' >&2; return 0
   fi
   while IFS= read -r comment; do
-    ask="$(jq -r '.ask' <<<"$comment")" || return 1
+    ask="$(jq -r '.ask // ""' <<<"$comment")" || return 1
     id="$(jq -r '.comment.id' <<<"$comment")" || return 1
-    jq -r 'if .replaced == null then empty
-      elif (.comment.parent_id // "") == "" then "Comment on the item after the replaced question of ask \(.replaced); the open question is ask \(.ask).", ""
-      else "Reply under the replaced question of ask \(.replaced); the open question is ask \(.ask).", "" end,
+    issue="$(jq -r '.issue' <<<"$comment")" || return 1
+    jq -r 'if .ask == null then "Unmatched owner comment \(.comment.id) on \(.issue): it answers no open owner ask.", ""
+      elif .replaced == null then empty
+      elif .under then "Reply under the replaced question of ask \(.replaced); the open question is ask \(.ask).", ""
+      else "Comment on the item after the replaced question of ask \(.replaced); the open question is ask \(.ask).", "" end,
       .comment.body' <<<"$comment" >"$WORK_DIR/tracker-answer" || return 1
     rc=0
-    "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --re "$ask" --delivery-id "linear:$id" \
-      --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
-    if [[ "$rc" -ne 0 && "$(head -n 1 "$WORK_DIR/tracker.err")" != lane-mail:\ delivery-repeated=* ]]; then
-      echo 'KEN-3624-unread cause=delivery' >&2; return 0
+    # One delivery id per comment across answers and reports: a comment is
+    # delivered or reported once.
+    if [[ -n "$ask" ]]; then
+      "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --re "$ask" --delivery-id "linear:$id" \
+        --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
+    else
+      "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --data owner-answers --delivery-id "linear:$id" \
+        --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
     fi
-    if [[ "$rc" -eq 0 ]]; then
-      jq -cn --arg ask "$ask" --arg issue "$(jq -r '.issue' <<<"$comment")" --arg comment "$id" \
+    refusal="$(head -n 1 "$WORK_DIR/tracker.err")" || refusal=""
+    if [[ "$rc" -ne 0 && "$refusal" != lane-mail:\ delivery-repeated=* ]]; then
+      [[ -z "$ask" ]] || { echo 'KEN-3624-unread cause=delivery' >&2; return 0; }
+      # A report answers no ask, so the read stands and no deadline close
+      # waits on it; the next pass sends it again.
+      refusal="${refusal#lane-mail: }"
+      printf 'owner-answers: report-unsent issue=%s comment=%s cause=%s\n' "$issue" "$id" "${refusal%%[= ]*}" >&2
+    fi
+    # A report prints no receipt: the orch watch reads every stdout line
+    # before the read state as a line or delivered receipt.
+    if [[ "$rc" -eq 0 && -n "$ask" ]]; then
+      jq -cn --arg ask "$ask" --arg issue "$issue" --arg comment "$id" \
         '{kind: "delivered", ask: $ask, issue: $issue, comment: $comment}' || return 1
     fi
   done <"$WORK_DIR/tracker-answers"

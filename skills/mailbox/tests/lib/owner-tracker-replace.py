@@ -5,6 +5,7 @@ mailbox reads and the stub tracker's state. The stub keeps one item store and
 one comment store per case.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -75,7 +76,7 @@ elif args[:2] == ["comments", "create"]:
     comments.append({"id": "c%d" % number, "issue": args[2], "body": Path(option("--body-file")).read_text(),
                      "user_id": "agent", "user_email": "agent@example.test", "parent_id": option("--parent"),
                      "url": "https://linear.app/workspace/issue/%s#comment-c%d" % (args[2], number),
-                     "created_at": "2026-01-01T00:00:%02dZ" % number})
+                     "created_at": "2026-01-01T00:%02d:%02dZ" % divmod(number, 60)})
     save()
     print(json.dumps({"success": True, "data": {"success": True, "comment": {"id": "c%d" % number}}}))
 elif args[:2] == ["comments", "update"]:
@@ -113,6 +114,12 @@ class Case:
         tracker.parent.mkdir(parents=True)
         tracker.write_text(TRACKER)
         tracker.chmod(0o755)
+        # A report of an unmatched owner comment is a data notice, which needs
+        # a registered overseer: agent-runtime's controller status says one is.
+        runtime = root / ".agents/skills/agent-runtime/scripts/agent-runtime"
+        runtime.parent.mkdir(parents=True)
+        runtime.write_text("#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"result\":{\"recorded\":{},\"live\":true}}'\n")
+        runtime.chmod(0o755)
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
             subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
@@ -134,31 +141,59 @@ class Case:
         number = len(comments) + 1
         comments.append({"id": "c%d" % number, "issue": issue, "body": body, "user_id": "owner",
                          "user_email": "owner@example.test", "parent_id": parent, "url": "",
-                         "created_at": "2026-01-01T00:00:%02dZ" % number})
+                         "created_at": "2026-01-01T00:%02d:%02dZ" % divmod(number, 60)})
         (self.state / "comments.json").write_text(json.dumps(comments))
         return "c%d" % number
+
+    def drop_comment(self, comment):
+        """Deleted from its item; the row keeps its place so no later comment reuses its id."""
+        comments = self.comments()
+        next(row for row in comments if row["id"] == comment)["issue"] = "deleted"
+        (self.state / "comments.json").write_text(json.dumps(comments))
+
+    def body(self, comment):
+        return next(row["body"] for row in self.comments() if row["id"] == comment)
+
+    def url(self, comment):
+        return next(row["url"] for row in self.comments() if row["id"] == comment)
+
+    def failing(self, on):
+        """While on, the stub refuses every comment create: an item ask's question does not post."""
+        flag = self.state / "fail-create"
+        flag.touch() if on else flag.unlink()
+
+
 
 
 class Overseer:
     def __init__(self, root, env, mail):
         self.root, self.env, self.mail = root, env, mail
 
-    def run(self, *args):
-        return subprocess.run([*self.mail, *args], cwd=self.root, env=self.env,
+    def run(self, *args, env=None):
+        return subprocess.run([*self.mail, *args], cwd=self.root, env=env or self.env,
                               capture_output=True, text=True, timeout=30)
 
-    def ask(self, *extra, text="Approve the change?\n"):
-        question = self.root / "question"
-        question.write_text(text)
-        result = self.run("ask", "--item", "overseer", "--to", "owner", "--options", "approve,hold",
-                          "--recommend", "approve", "--effect", "none", "--wait", "60",
-                          "--file", str(question), *extra)
+    def ask(self, *extra, text="Approve the change?\n", env=None):
+        """The new ask's id and stderr; a refused ask raises."""
+        result = self.try_ask(*extra, text=text, env=env)
         if result.returncode:
             raise RuntimeError("ask exit=%d: %s" % (result.returncode, result.stderr))
         return result.stdout.strip().split("=", 1)[1], result.stderr
 
-    def item_ask(self, issue, *extra):
-        return self.ask("--issue", issue, "--do", "Approve change", *extra)
+    def try_ask(self, *extra, text="Approve the change?\n", env=None):
+        question = self.root / "question"
+        question.write_text(text)
+        return self.run("ask", "--item", "overseer", "--to", "owner", "--options", "approve,hold",
+                        "--recommend", "approve", "--effect", "none", "--wait", "60",
+                        "--file", str(question), *extra, env=env)
+
+    def item_ask(self, issue, *extra, text="Approve the change?\n"):
+        return self.ask("--issue", issue, "--do", "Approve change", *extra, text=text)
+
+    def resolve(self, ask):
+        result = self.run("resolve", "--item", "overseer", "--id", ask)
+        if result.returncode:
+            raise RuntimeError("resolve exit=%d: %s" % (result.returncode, result.stderr))
 
     def rows(self, box):
         path = self.root / "tmp/lane-mail/overseer" / box
@@ -168,23 +203,70 @@ class Overseer:
         result = self.run("pending", "--item", "overseer", "--to", "owner")
         return {row["id"]: row for row in map(json.loads, result.stdout.splitlines())}
 
+    def lines(self):
+        return len(self.rows("to-overseer.jsonl")), len(self.rows("to-lane.jsonl"))
+
     def owner_answers(self):
-        """The answers owner-answers delivered, by the tracker comment each came from."""
         env = dict(self.env, OVERSEE_WATCH_TRACKER=str(self.root / ".agents/skills/linear/scripts/linear.sh"))
         result = subprocess.run([*self.mail, "owner-answers", "--item", "overseer"], cwd=self.root, env=env,
-                                capture_output=True, text=True, timeout=30)
-        answers = {row["delivery_id"].split(":", 1)[1]: row for row in self.rows("to-lane.jsonl")
-                   if row["kind"] == "answer"}
-        return result, answers
+                                capture_output=True, text=True, timeout=60)
+        return Pass(result, self.rows("to-lane.jsonl"))
+
+
+class Pass:
+    """One owner-answers run, and every tracker comment the mailbox now holds
+    as an answer to an ask or as an unmatched owner comment report, by the
+    comment id its delivery id names."""
+
+    def __init__(self, result, rows):
+        self.result = result
+        keyed = [(row["delivery_id"].split(":", 1)[1], row) for row in rows
+                 if row.get("delivery_id", "").startswith("linear:")]
+        self.answers = {comment: row for comment, row in keyed if row["kind"] == "answer"}
+        self.reports = {comment: row for comment, row in keyed
+                        if row["kind"] == "data" and row.get("source") == "owner-answers"}
+        self.counts = {}
+        for comment, _ in keyed:
+            self.counts[comment] = self.counts.get(comment, 0) + 1
+        self.delivered = {(row["ask"], row["comment"]) for row in map(json.loads, result.stdout.splitlines()[:-1])
+                          if row.get("kind") == "delivered"} if result.returncode == 0 else set()
+
+    def ok(self):
+        return self.result.returncode == 0 and self.result.stdout.splitlines()[-1:] == ["owner-answers: read=read"]
+
+    def plain(self, comment, ask, body):
+        """Delivered once to ASK with no header line."""
+        answer = self.answers.get(comment, {})
+        return (self.ok() and answer.get("re") == ask and answer.get("text") == body
+                and self.counts.get(comment, 0) == 1 and comment not in self.reports)
+
+    def headed(self, comment, form, replaced, open_ask, body):
+        """Delivered once to OPEN_ASK, its first line the replaced-question
+        header of FORM, Reply (under the question) or Comment (on the item),
+        naming both asks."""
+        answer = self.answers.get(comment, {})
+        lines = answer.get("text", "").splitlines()
+        return (self.ok() and answer.get("re") == open_ask and bool(lines) and lines[0].split()[0] == form
+                and set(re.findall(r"\d+-\d+-\d+", lines[0])) == {replaced, open_ask} and lines[-1] == body
+                and self.counts.get(comment, 0) == 1 and comment not in self.reports)
+
+    def reported(self, comment, issue):
+        """Reported to the overseer once, naming the item and the comment, and
+        delivered to no ask."""
+        report = self.reports.get(comment, {})
+        lines = report.get("text", "").splitlines()
+        return (self.ok() and comment not in self.answers and bool(lines)
+                and {issue, comment} <= set(re.findall(r"[\w-]+", lines[0])) and self.counts.get(comment, 0) == 1)
 
 
 def marked(body, original, url):
     """The replaced question no longer opens with the owner mention, opens
-    with a link to the newer question, and ends with its own lines struck."""
+    with a link to the newer question, or with no link where URL is None,
+    and ends with its own lines struck."""
     lines, original = body.splitlines(), original.splitlines()
     struck = [("~~" + line + "~~") if line.strip() else line for line in original]
-    return (lines[0] != original[0] and "(" + url + ")" in lines[0]
-            and lines[-len(struck):] == struck)
+    linked = ("](" not in lines[0]) if url is None else ("(" + url + ")" in lines[0])
+    return lines[0] != original[0] and linked and lines[-len(struck):] == struck
 
 
 def tracker_comment(overseer, ask):
@@ -192,158 +274,385 @@ def tracker_comment(overseer, ask):
                 if row.get("kind") == "tracker-posted" and row.get("re") == ask)
 
 
-def replace(scratch, source, bash, facts):
-    case = Case(scratch, source, bash, ("KEN-7", "KEN-8"))
+def replace(case, facts):
     overseer = case.checkout("asker")
     first, _ = overseer.item_ask("KEN-7")
     other, _ = overseer.item_ask("KEN-8")
     chat, _ = overseer.ask()
-    resolved = overseer.run("resolve", "--item", "overseer", "--id", other)
+    overseer.resolve(other)
     first_comment, other_comment = tracker_comment(overseer, first), tracker_comment(overseer, other)
     before = {row["id"]: row["body"] for row in case.comments()}
-    # A refused --replaces appends nothing to either mailbox file.
-    lines = (len(overseer.rows("to-overseer.jsonl")), len(overseer.rows("to-lane.jsonl")))
-    for target, key in (("1-1-1", "ask-unknown"), (other, "resolved-already")):
-        refused = overseer.run("ask", "--item", "overseer", "--to", "owner", "--options", "approve,hold",
-                               "--recommend", "approve", "--effect", "none", "--file", str(overseer.root / "question"),
-                               "--replaces", target)
-        facts["replaces_refused"] &= (refused.returncode == 2
-            and refused.stderr.startswith("lane-mail: " + key + "=")
-            and lines == (len(overseer.rows("to-overseer.jsonl")), len(overseer.rows("to-lane.jsonl"))))
+    # A refused --replaces, or an item ask refused for unset settings, appends
+    # nothing and leaves the ask it names open.
+    lines = overseer.lines()
+    unset = {key: value for key, value in overseer.env.items() if key != "ORCH_OWNER_ASK_LABEL"}
+    for extra, key, env in ((("--replaces", "1-1-1"), "ask-unknown", None),
+                            (("--replaces", other), "resolved-already", None),
+                            (("--issue", "KEN-7", "--do", "Approve change", "--replaces", first),
+                             "item-ask-unconfigured", unset)):
+        refused = overseer.try_ask(*extra, env=env)
+        facts["refused_appends_nothing"] &= (refused.returncode == 2
+            and refused.stderr.split()[1].split("=")[0] == key and lines == overseer.lines()
+            and first in overseer.pending())
+    between = case.owner_reply("KEN-7", None, "approve")
     second, stderr = overseer.item_ask("KEN-7", "--replaces", chat)
     second_comment = tracker_comment(overseer, second)
-    comments = {row["id"]: row for row in case.comments()}
-    facts["marked"] &= marked(comments[first_comment]["body"], before[first_comment], comments[second_comment]["url"])
-    # An open ask on another item is neither marked nor closed.
-    facts["other_item"] &= comments[other_comment]["body"] == before[other_comment]
     open_asks = overseer.pending()
-    closes = [row for row in overseer.rows("to-lane.jsonl") if row["kind"] == "resolution"]
-    by_ask = {row["re"]: row for row in closes}
+    closes = {row["re"]: row for row in overseer.rows("to-lane.jsonl") if row["kind"] == "resolution"}
     shape = lambda row: {key: value for key, value in row.items() if key not in ("id", "at", "re")}
-    facts["closed"] &= (set(open_asks) == {second} and set(by_ask) == {other, first, chat}
-        and resolved.returncode == 0 and shape(by_ask[first]) == shape(by_ask[other]) == shape(by_ask[chat])
-        and "lane-mail: resolved id=" + first + " " in stderr and "lane-mail: resolved id=" + chat + " " in stderr)
-    facts["replaces_field"] &= sorted(open_asks[second].get("replaces", []), key=lambda r: r["id"]) == sorted(
-        [{"id": chat}, {"id": first, "issue": "KEN-7", "tracker_comment": first_comment}], key=lambda r: r["id"])
-    # The new question is the item's: its label and assignee stand.
     item = case.items()["KEN-7"]
-    facts["closed"] &= item["assignee"] == "Owner Person" and "owner-gated" in item["labels"]
-    # The owner answers under the replaced question, and on the item.
+    facts["same_item_replaces"] &= (marked(case.body(first_comment), before[first_comment], case.url(second_comment))
+        and set(open_asks) == {second} and set(closes) == {other, first, chat}
+        and shape(closes[first]) == shape(closes[other]) == shape(closes[chat])
+        and "lane-mail: resolved id=" + first + " " in stderr and "lane-mail: resolved id=" + chat + " " in stderr
+        and sorted(open_asks[second].get("replaces", []), key=lambda r: r["id"]) == sorted(
+            [{"id": chat}, {"id": first, "issue": "KEN-7", "tracker_comment": first_comment}], key=lambda r: r["id"])
+        and item["assignee"] == "Owner Person" and "owner-gated" in item["labels"])
+    facts["other_item_kept"] &= case.body(other_comment) == before[other_comment]
+    facts["uncommented_replaced"] &= {"id": chat} in open_asks[second].get("replaces", []) and chat in closes
     under = case.owner_reply("KEN-7", first_comment, "A")
-    plain = case.owner_reply("KEN-7", None, "B")
-    env = dict(overseer.env, OVERSEE_WATCH_TRACKER=str(overseer.root / ".agents/skills/linear/scripts/linear.sh"))
-    imported = subprocess.run([*overseer.mail, "owner-answers", "--item", "overseer"], cwd=overseer.root, env=env,
-                              capture_output=True, text=True, timeout=30)
-    answers = {row["delivery_id"]: row for row in overseer.rows("to-lane.jsonl") if row["kind"] == "answer"}
-    delivered = [json.loads(line) for line in imported.stdout.splitlines() if line.startswith("{")]
-    reply = answers.get("linear:" + under, {})
-    facts["replaced_reply"] &= (imported.returncode == 0 and set(answers) == {"linear:" + under, "linear:" + plain}
-        and reply.get("re") == second and first in reply.get("text", "").splitlines()[0]
-        and second in reply.get("text", "").splitlines()[0] and reply["text"].splitlines()[-1] == "A"
-        and answers["linear:" + plain]["re"] == second and answers["linear:" + plain]["text"] == "B"
-        and {(row["ask"], row["comment"]) for row in delivered if row["kind"] == "delivered"}
-        == {(second, under), (second, plain)})
+    later = case.owner_reply("KEN-7", None, "B")
+    own = case.owner_reply("KEN-7", second_comment, "C")
+    read = overseer.owner_answers()
+    facts["replaced_window"] &= read.headed(between, "Comment", first, second, "approve")
+    facts["replaced_reply"] &= (read.headed(under, "Reply", first, second, "A")
+        and {(second, under), (second, later), (second, own)} <= read.delivered)
+    facts["open_question_plain"] &= read.plain(later, second, "B") and read.plain(own, second, "C")
 
 
-def follow_up(scratch, source, bash, facts):
+def unposted(case, facts):
     """An item ask whose question fails to post, beside an earlier posted one,
-    while a posted ask on another item stays open, so owner-answers reads the
-    item's comments throughout."""
-    case = Case(scratch, source, bash, ("KEN-11", "KEN-12"))
+    while a posted ask on another item stays open."""
     overseer = case.checkout("asker")
     overseer.item_ask("KEN-12")
-    # The earlier question stays open and unedited, and a reply under it
-    # answers that ask.
     first, _ = overseer.item_ask("KEN-11")
     first_comment = tracker_comment(overseer, first)
-    before = {row["id"]: row["body"] for row in case.comments()}
-    (case.state / "fail-create").touch()
-    unposted, stderr = overseer.ask("--issue", "KEN-11", "--do", "Approve change", text="Approve it today?\n")
-    (case.state / "fail-create").unlink()
+    before = case.body(first_comment)
+    case.failing(True)
+    retry, stderr = overseer.item_ask("KEN-11", text="Approve it today?\n")
+    # The same on another item through --replaces, and with both asks unposted.
+    other, other_err = overseer.item_ask("KEN-12", "--replaces", first, text="Approve it there?\n")
+    lone, _ = overseer.item_ask("KEN-13", text="Approve the third?\n")
+    again, again_err = overseer.item_ask("KEN-13", text="Approve the third today?\n")
+    case.failing(False)
+    open_asks = overseer.pending()
+    unclosed = "lane-mail: replace-unclosed id=%s cause=tracker-unwritten"
+    facts["unposted_replaces_nothing"] &= (set(open_asks) >= {first, retry, other, lone, again}
+        and case.body(first_comment) == before
+        and unclosed % first in stderr.splitlines() and unclosed % first in other_err.splitlines()
+        and unclosed % lone in again_err.splitlines()
+        and all(open_asks[ask].get("tracker_comment") is None for ask in (retry, other, lone, again)))
     under = case.owner_reply("KEN-11", first_comment, "A")
-    imported, answers = overseer.owner_answers()
-    facts["unposted_keeps"] &= (set(overseer.pending()) >= {first, unposted}
-        and {row["id"]: row["body"] for row in case.comments()}[first_comment] == before[first_comment]
-        and "lane-mail: replace-unclosed id=%s cause=tracker-unwritten" % first in stderr.splitlines()
-        and imported.returncode == 0 and answers.get(under, {}).get("re") == first)
+    read = overseer.owner_answers()
+    facts["unposted_replaces_nothing"] &= read.plain(under, first, "A")
     # Once the earlier ask closes on its own, a reply under its question
-    # answers no ask: the unposted one replaced nothing.
-    overseer.run("resolve", "--item", "overseer", "--id", first)
+    # reaches no ask: the unposted ones replaced nothing.
+    overseer.resolve(first)
     objection = case.owner_reply("KEN-11", first_comment, "No")
-    imported, answers = overseer.owner_answers()
-    facts["unposted_keeps"] &= imported.returncode == 0 and objection not in answers
-    # The next item ask replaces the unposted ask and carries nothing of the
-    # question that ask never replaced: a reply under it is a plain answer.
-    third, _ = overseer.ask("--issue", "KEN-11", "--do", "Approve change", text="Approve half of it?\n")
+    read = overseer.owner_answers()
+    facts["closed_question_reported"] &= read.reported(objection, "KEN-11")
+    # The next posted item ask replaces the unposted one only: a reply under
+    # the closed question is still no one's.
+    third, _ = overseer.item_ask("KEN-11", text="Approve half of it?\n")
     later = case.owner_reply("KEN-11", first_comment, "C")
-    imported, answers = overseer.owner_answers()
-    facts["unposted_keeps"] &= (unposted not in overseer.pending() and imported.returncode == 0
-        and answers.get(later, {}).get("re") == third and answers[later]["text"] == "C")
+    read = overseer.owner_answers()
+    facts["uncommented_replaced"] &= (retry not in overseer.pending()
+        and {"id": retry, "issue": "KEN-11"} in overseer.pending()[third].get("replaces", []))
+    facts["closed_reply_after_later_question"] &= read.reported(later, "KEN-11")
 
 
-def chat_chain(scratch, source, bash, facts):
-    """Asks without an item, each replacing the one before, after an item ask."""
-    case = Case(scratch, source, bash, ("KEN-8",))
+def after_unposted(case, facts):
+    """After an unposted re-ask, the next posted re-ask on the item replaces both."""
     overseer = case.checkout("asker")
-    first, _ = overseer.item_ask("KEN-8")
-    question = tracker_comment(overseer, first)
-    second, _ = overseer.ask("--replaces", first)
-    under = case.owner_reply("KEN-8", question, "A")
-    imported, answers = overseer.owner_answers()
-    reply = answers.get(under, {})
-    head = reply.get("text", "").splitlines()[:1]
-    facts["chat_replaces"] &= (imported.returncode == 0 and set(overseer.pending()) == {second}
-        and reply.get("re") == second and bool(head) and first in head[0] and second in head[0]
-        and reply["text"].splitlines()[-1] == "A")
-    # A third ask replacing the second carries the first question forward.
-    third, _ = overseer.ask("--replaces", second)
-    later = case.owner_reply("KEN-8", question, "B")
-    imported, answers = overseer.owner_answers()
-    facts["chain"] &= ({"id": first, "issue": "KEN-8", "tracker_comment": question}
-        in overseer.pending()[third].get("replaces", [])
-        and imported.returncode == 0 and answers.get(later, {}).get("re") == third)
-
-
-def earlier_answer(scratch, source, bash, facts):
-    """Owner comments on the item, not under any question, posted while an ask
-    stood and before the ask that replaced it, reach the ask left open, each
-    naming the question it followed; one after the open question is its own."""
-    case = Case(scratch, source, bash, ("KEN-7", "KEN-8"))
-    overseer = case.checkout("asker")
-
-    def follows(answers, comment, replaced, open_ask, text):
-        answer = answers.get(comment, {})
-        lines = answer.get("text", "").splitlines()
-        return (answer.get("re") == open_ask and bool(lines)
-                and set(re.findall(r"\d+-\d+-\d+", lines[0])) == {replaced, open_ask} and lines[-1] == text)
-
     first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    before = case.body(first_comment)
+    case.failing(True)
+    retry, _ = overseer.item_ask("KEN-7", text="Approve it today?\n")
+    case.failing(False)
+    third, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    under = case.owner_reply("KEN-7", first_comment, "A")
+    read = overseer.owner_answers()
+    facts["posted_after_unposted"] &= (marked(case.body(first_comment), before,
+                                              case.url(tracker_comment(overseer, third)))
+        and set(overseer.pending()) == {third} and read.headed(under, "Reply", first, third, "A"))
+
+
+def other_item(case, facts):
+    """Asks on two items: one on J left alone by an ask on I, then an ask on J
+    replacing the question on I through --replaces."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    before = case.body(first_comment)
+    early = case.owner_reply("KEN-8", None, "before any question")
+    plain, _ = overseer.item_ask("KEN-8", text="Ship the docs?\n")
+    facts["other_item_kept"] &= case.body(first_comment) == before and first in overseer.pending()
+    on_i = case.owner_reply("KEN-7", None, "approve")
+    there, _ = overseer.item_ask("KEN-8", "--replaces", first, text="Approve it on KEN-8?\n")
+    there_comment = tracker_comment(overseer, there)
+    open_asks = overseer.pending()
+    facts["other_item_replaces"] &= (marked(case.body(first_comment), before, case.url(there_comment))
+        and set(open_asks) == {there}
+        and {"id": first, "issue": "KEN-7", "tracker_comment": first_comment} in open_asks[there]["replaces"])
+    after = case.owner_reply("KEN-7", None, "approve after")
+    under = case.owner_reply("KEN-7", first_comment, "A")
+    own = case.owner_reply("KEN-8", there_comment, "B")
+    own_item = case.owner_reply("KEN-8", None, "C")
+    read = overseer.owner_answers()
+    facts["off_item_window"] &= (read.headed(on_i, "Comment", first, there, "approve")
+        and read.headed(after, "Comment", first, there, "approve after"))
+    facts["off_item_reply"] &= read.headed(under, "Reply", first, there, "A")
+    facts["own_item_plain"] &= (read.plain(own, there, "B") and read.plain(own_item, there, "C")
+        and read.reported(early, "KEN-8"))
+    # Once the replacing ask closes, nothing on either item reaches an ask.
+    overseer.resolve(there)
+    late = [case.owner_reply("KEN-7", None, "late"), case.owner_reply("KEN-7", first_comment, "late A"),
+            case.owner_reply("KEN-8", there_comment, "late B"), case.owner_reply("KEN-8", None, "late C")]
+    read = overseer.owner_answers()
+    facts["closed_replacer_reported"] &= all(read.reported(comment, issue)
+                                             for comment, issue in zip(late, ("KEN-7", "KEN-7", "KEN-8", "KEN-8")))
+
+
+def closed_question(case, facts):
+    """A question closed on its own, then a new question on the same item."""
+    overseer = case.checkout("asker")
+    before_any = case.owner_reply("KEN-7", None, "context")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    top, under = case.owner_reply("KEN-7", None, "approve"), case.owner_reply("KEN-7", first_comment, "A")
+    overseer.resolve(first)
+    read = overseer.owner_answers()
+    facts["before_first_question"] &= read.reported(before_any, "KEN-7")
+    facts["closed_question_reported"] &= read.reported(top, "KEN-7") and read.reported(under, "KEN-7")
+    between = case.owner_reply("KEN-7", None, "after the close")
+    before = case.body(first_comment)
+    second, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    second_comment = tracker_comment(overseer, second)
+    facts["reask_after_close"] &= (case.body(first_comment) == before and second_comment != first_comment
+        and "replaces" not in overseer.pending()[second])
+    after, own = case.owner_reply("KEN-7", None, "half"), case.owner_reply("KEN-7", second_comment, "B")
+    old = case.owner_reply("KEN-7", first_comment, "A again")
+    read = overseer.owner_answers()
+    facts["closed_window_reported"] &= (read.reported(between, "KEN-7") and read.plain(after, second, "half")
+        and read.plain(own, second, "B"))
+    facts["closed_reply_after_later_question"] &= read.reported(old, "KEN-7")
+    # Nothing reported earlier is reported again.
+    facts["before_first_question"] &= all(read.counts.get(comment, 0) == 1 for comment in (before_any, top, under))
+
+
+def unmarked(case, facts):
+    """The replaced question's comment is gone when the new ask replaces it."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    case.drop_comment(first_comment)
+    second, stderr = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    open_asks = overseer.pending()
+    facts["unmarked_still_closes"] &= (
+        "lane-mail: replace-unmarked id=%s issue=KEN-7 cause=comment-missing" % first in stderr.splitlines()
+        and set(open_asks) == {second} and first in [row["id"] for row in open_asks[second]["replaces"]])
+
+
+def refused_close(case, facts, read_between):
+    """A replace step whose close is refused, leaving both asks open and
+    posted on one item; READ_BETWEEN runs a pass before the earlier closes."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    before = case.body(first_comment)
+    early = case.owner_reply("KEN-7", None, "approve")
+    lane = overseer.root / "tmp/lane-mail/overseer/to-lane.jsonl"
+    lane.touch()
+    lane.chmod(0o444)
+    second, stderr = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    lane.chmod(0o644)
+    second_comment = tracker_comment(overseer, second)
+    under = case.owner_reply("KEN-7", first_comment, "A")
+    if read_between:
+        facts["refused_close_kept"] &= (
+            "lane-mail: replace-unclosed id=%s cause=write-failed" % first in stderr.splitlines()
+            and marked(case.body(first_comment), before, case.url(second_comment))
+            and set(overseer.pending()) == {first, second}
+            and first in [row["id"] for row in overseer.pending()[second]["replaces"]])
+        after, own = case.owner_reply("KEN-7", None, "half"), case.owner_reply("KEN-7", second_comment, "B")
+        read = overseer.owner_answers()
+        facts["both_open"] &= (read.plain(after, second, "half") and read.plain(early, first, "approve")
+            and read.plain(under, first, "A") and read.plain(own, second, "B"))
+    else:
+        overseer.resolve(first)
+        read = overseer.owner_answers()
+        facts["refused_close_later"] &= (read.headed(under, "Reply", first, second, "A")
+            and read.headed(early, "Comment", first, second, "approve"))
+
+
+def item_chain(case, facts):
+    """Re-asks on one item: a pass before the replacement, an unposted third
+    ask, the replacer's close and a later question replacing nothing posted."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    early = case.owner_reply("KEN-7", None, "approve")
+    read = overseer.owner_answers()
+    facts["read_before_replace"] &= read.plain(early, first, "approve")
+    second, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    second_comment = tracker_comment(overseer, second)
+    read = overseer.owner_answers()
+    facts["read_before_replace"] &= read.plain(early, first, "approve") and not any(
+        ask == second for ask, _ in read.delivered)
+    case.failing(True)
+    third, _ = overseer.item_ask("KEN-7", text="Approve a third of it?\n")
+    case.failing(False)
+    after = case.owner_reply("KEN-7", None, "half")
+    under, own = case.owner_reply("KEN-7", first_comment, "A"), case.owner_reply("KEN-7", second_comment, "B")
+    read = overseer.owner_answers()
+    facts["unposted_third"] &= (set(overseer.pending()) == {second, third} and read.plain(after, second, "half")
+        and read.headed(under, "Reply", first, second, "A") and read.plain(own, second, "B"))
+    facts["open_question_plain"] &= read.plain(own, second, "B")
+    overseer.resolve(second)
+    late = [case.owner_reply("KEN-7", None, "late"), case.owner_reply("KEN-7", first_comment, "late A"),
+            case.owner_reply("KEN-7", second_comment, "late B")]
+    read = overseer.owner_answers()
+    facts["closed_replacer_reported"] &= all(read.reported(comment, "KEN-7") for comment in late)
+    fourth, _ = overseer.item_ask("KEN-7", text="Approve a quarter of it?\n")
+    replies = [case.owner_reply("KEN-7", first_comment, "A later"), case.owner_reply("KEN-7", second_comment, "B later")]
+    newest = case.owner_reply("KEN-7", None, "quarter")
+    read = overseer.owner_answers()
+    facts["closed_chain_reported"] &= (all(read.reported(comment, "KEN-7") for comment in replies)
+        and read.plain(newest, fourth, "quarter")
+        and [row["id"] for row in overseer.pending()[fourth].get("replaces", [])] == [third])
+
+
+def chains(case, facts):
+    """A chain of item re-asks on one item, a chat ask carrying a chain on,
+    and a chain of chat asks."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
     approve = case.owner_reply("KEN-7", None, "approve")
-    second, _ = overseer.ask("--issue", "KEN-7", "--do", "Approve change", text="Approve, hold or split?\n")
+    second, _ = overseer.item_ask("KEN-7", text="Approve, hold or split?\n")
     hold = case.owner_reply("KEN-7", None, "hold")
-    third, _ = overseer.ask("--issue", "KEN-7", "--do", "Approve change", text="Approve half of it?\n")
+    third, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
     after = case.owner_reply("KEN-7", None, "approve half")
-    imported, answers = overseer.owner_answers()
-    facts["earlier_answer"] &= (imported.returncode == 0 and set(overseer.pending()) == {third}
-        and follows(answers, approve, first, third, "approve") and follows(answers, hold, second, third, "hold")
-        and answers.get(after, {}).get("re") == third and answers[after].get("text") == "approve half")
-    # An ask without an item replacing an item ask takes the comment too.
+    under = case.owner_reply("KEN-7", first_comment, "A")
+    # A chat ask replacing an item re-ask on KEN-8 takes both windows.
     asked, _ = overseer.item_ask("KEN-8")
-    early = case.owner_reply("KEN-8", None, "approve")
-    chat, _ = overseer.ask("--replaces", asked, text="Approve the whole change?\n")
-    imported, answers = overseer.owner_answers()
-    facts["earlier_answer"] &= imported.returncode == 0 and follows(answers, early, asked, chat, "approve")
+    asked_comment = tracker_comment(overseer, asked)
+    early = case.owner_reply("KEN-8", None, "first")
+    reasked, _ = overseer.item_ask("KEN-8", text="Approve, hold or split?\n")
+    middle = case.owner_reply("KEN-8", None, "second")
+    chat, _ = overseer.ask("--replaces", reasked, text="Approve the whole change?\n")
+    reply = case.owner_reply("KEN-8", asked_comment, "A")
+    # Chat asks replacing one another carry the first question to the last.
+    lone, _ = overseer.item_ask("KEN-9")
+    lone_comment = tracker_comment(overseer, lone)
+    hop, _ = overseer.ask("--replaces", lone, text="Approve the first hop?\n")
+    last, _ = overseer.ask("--replaces", hop, text="Approve the last hop?\n")
+    carried = case.owner_reply("KEN-9", lone_comment, "C")
+    read = overseer.owner_answers()
+    facts["item_chain"] &= (read.headed(approve, "Comment", first, third, "approve")
+        and read.headed(hold, "Comment", second, third, "hold") and read.plain(after, third, "approve half")
+        and read.headed(under, "Reply", first, third, "A"))
+    facts["mixed_chain"] &= (read.headed(early, "Comment", asked, chat, "first")
+        and read.headed(middle, "Comment", reasked, chat, "second") and read.headed(reply, "Reply", asked, chat, "A"))
+    facts["uncommented_replaced"] &= ({"id": lone, "issue": "KEN-9", "tracker_comment": lone_comment}
+        in overseer.pending()[last].get("replaces", []) and read.headed(carried, "Reply", lone, last, "C"))
+
+
+def off_item(case, facts):
+    """A chat ask replaces the question on I; later questions on I open and close."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    first_comment = tracker_comment(overseer, first)
+    before = case.body(first_comment)
+    early = case.owner_reply("KEN-7", None, "approve")
+    thread = case.owner_reply("KEN-7", early, "and the docs")
+    chat, _ = overseer.ask("--replaces", first, text="Approve the whole change?\n")
+    facts["chat_replaces"] &= (marked(case.body(first_comment), before, None)
+        and set(overseer.pending()) == {chat}
+        and overseer.pending()[chat]["replaces"] == [{"id": first, "issue": "KEN-7", "tracker_comment": first_comment}])
+    after = case.owner_reply("KEN-7", None, "approve after")
+    under = case.owner_reply("KEN-7", first_comment, "A")
+    read = overseer.owner_answers()
+    facts["off_item_window"] &= (read.headed(early, "Comment", first, chat, "approve")
+        and read.headed(after, "Comment", first, chat, "approve after"))
+    facts["off_item_reply"] &= read.headed(under, "Reply", first, chat, "A")
+    facts["reply_under_comment"] &= read.headed(thread, "Comment", first, chat, "and the docs")
+    # A later question on I replaces nothing and bounds the replaced window.
+    unread = case.owner_reply("KEN-7", None, "approve unread")
+    third, _ = overseer.item_ask("KEN-7", text="Ship the docs too?\n")
+    third_comment = tracker_comment(overseer, third)
+    ship, own = case.owner_reply("KEN-7", None, "ship"), case.owner_reply("KEN-7", third_comment, "B")
+    again = case.owner_reply("KEN-7", first_comment, "A again")
+    read = overseer.owner_answers()
+    facts["third_bounds_window"] &= ("replaces" not in overseer.pending()[third]
+        and read.headed(unread, "Comment", first, chat, "approve unread") and read.plain(ship, third, "ship")
+        and read.plain(own, third, "B") and read.headed(again, "Reply", first, chat, "A again"))
+    # Once that question closes, comments after it reach no ask.
+    pending = case.owner_reply("KEN-7", None, "thanks")
+    overseer.resolve(third)
+    closed = case.owner_reply("KEN-7", None, "also rename the file")
+    late = case.owner_reply("KEN-7", third_comment, "B later")
+    read = overseer.owner_answers()
+    facts["closed_later_question"] &= (read.reported(pending, "KEN-7") and read.reported(closed, "KEN-7")
+        and read.reported(late, "KEN-7"))
+    gap = case.owner_reply("KEN-7", None, "between")
+    fourth, _ = overseer.item_ask("KEN-7", text="Ship the tests too?\n")
+    newest = case.owner_reply("KEN-7", None, "ship tests")
+    read = overseer.owner_answers()
+    facts["closed_between"] &= read.reported(gap, "KEN-7") and read.plain(newest, fourth, "ship tests")
+
+
+def report_retry(case, facts):
+    """A report the mailbox refuses, here for no registered overseer, holds
+    neither the pass's read nor the comment: the next pass sends it."""
+    overseer = case.checkout("asker")
+    runtime = overseer.root / ".agents/skills/agent-runtime/scripts/agent-runtime"
+    script = runtime.read_text()
+    runtime.unlink()
+    first, _ = overseer.item_ask("KEN-7")
+    overseer.resolve(first)
+    late = case.owner_reply("KEN-7", None, "late")
+    read = overseer.owner_answers()
+    unsent = [line.split() for line in read.result.stderr.splitlines()
+              if line.startswith("owner-answers: report-unsent ")]
+    facts["report_unsent_retried"] &= (read.ok() and late not in read.reports
+        and [fields[2:4] for fields in unsent] == [["issue=KEN-7", "comment=" + late]]
+        and unsent[0][4] != "cause=")
+    runtime.write_text(script)
+    runtime.chmod(0o755)
+    facts["report_unsent_retried"] &= overseer.owner_answers().reported(late, "KEN-7")
+
+
+ROWS = ("same_item_replaces", "chat_replaces", "other_item_replaces", "other_item_kept", "uncommented_replaced",
+        "unposted_replaces_nothing", "posted_after_unposted", "refused_appends_nothing", "reask_after_close",
+        "unmarked_still_closes", "refused_close_kept", "read_before_replace", "replaced_window", "replaced_reply",
+        "open_question_plain", "closed_replacer_reported", "item_chain", "unposted_third", "mixed_chain",
+        "closed_question_reported", "closed_window_reported", "closed_reply_after_later_question",
+        "closed_chain_reported", "off_item_window", "off_item_reply", "own_item_plain", "third_bounds_window",
+        "closed_later_question", "closed_between", "both_open", "refused_close_later", "before_first_question",
+        "reply_under_comment", "report_unsent_retried")
 
 
 def run(source, scratch, bash):
-    facts = {"marked": True, "other_item": True, "closed": True, "replaces_field": True,
-             "replaces_refused": True, "replaced_reply": True, "unposted_keeps": True,
-             "chat_replaces": True, "chain": True, "earlier_answer": True}
-    replace(scratch, source, bash, facts)
-    follow_up(scratch, source, bash, facts)
-    chat_chain(scratch, source, bash, facts)
-    earlier_answer(scratch, source, bash, facts)
-    return facts
+    """Each scenario keeps its own tracker, checkout and facts, so they run
+    side by side; a row holds only where every scenario that judges it holds."""
+    scenarios = ((replace, ("KEN-7", "KEN-8")), (unposted, ("KEN-11", "KEN-12", "KEN-13")),
+                 (after_unposted, ("KEN-7",)), (other_item, ("KEN-7", "KEN-8")),
+                 (closed_question, ("KEN-7",)), (unmarked, ("KEN-7",)),
+                 (lambda case, facts: refused_close(case, facts, True), ("KEN-7",)),
+                 (lambda case, facts: refused_close(case, facts, False), ("KEN-7",)),
+                 (item_chain, ("KEN-7",)), (chains, ("KEN-7", "KEN-8", "KEN-9")),
+                 (off_item, ("KEN-7",)), (report_retry, ("KEN-7",)))
+
+    def judged(scenario, issues):
+        facts = dict.fromkeys(ROWS, True)
+        scenario(Case(scratch, source, bash, issues), facts)
+        return facts
+
+    with ThreadPoolExecutor(max_workers=len(scenarios)) as pool:
+        results = [future.result() for future in [pool.submit(judged, *row) for row in scenarios]]
+    return {row: all(facts[row] for facts in results) for row in ROWS}
 
 
 if __name__ == "__main__":

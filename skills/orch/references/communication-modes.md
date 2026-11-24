@@ -89,7 +89,7 @@ Record each chat answer with `send --re` before acting on it. `lane-mail resolve
 - Close the ask once you hold the ruling: `lane-mail resolve --item overseer --id [ASK_ID]`.
 - At the deadline the watch runs `resolve --default` on each ask `pending --due` lists. Where nobody answered, that closes the ask on its recommendation.
 - Record the ruling per § Recording. Then send `lane-mail notice --item overseer --to owner --ref [ASK_ID] --file [PATH]` naming it, so the relay posts the ruling where the question was asked.
-- After the close, send a later chat answer as `lane-mail send --item overseer --directive --file [PATH]`. A tracker comment is delivered only as the answer to an open ask: the ask still open on its issue, or, for a reply under a replaced question, the ask that replaced it ([mailbox § Replacing an owner question](../../mailbox/SKILL.md#replacing-an-owner-question)).
+- After the close, send a later chat answer as `lane-mail send --item overseer --directive --file [PATH]`. A tracker comment reaches the open ask its question names, or reaches you as an unmatched owner comment report: [mailbox § Replacing an owner question](../../mailbox/SKILL.md#replacing-an-owner-question).
 
 For an owner request the relay delivered, `--ref [ENVELOPE_ID]` on the reply binds it to that request's delivery id. Answer it under [§ Owner delivery](#owner-delivery).
 

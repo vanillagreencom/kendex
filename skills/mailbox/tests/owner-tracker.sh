@@ -58,16 +58,49 @@ assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the
 assert_eq "$(jq '.comment_delete' <<<"$CLOSE_FACTS")" true 'a refused comment delete reports its key and retains the answer'
 REPLACE_FACTS="$(python3 "$ROOT/skills/mailbox/tests/lib/owner-tracker-replace.py" \
   "${MAILBOX_UNDER_TEST:-$ROOT/skills/mailbox}" "$TMP_ROOT" "$BASH")"
-assert_eq "$(jq '.marked' <<<"$REPLACE_FACTS")" true 'a new ask on the item strikes the earlier question under a link to the new one'
-assert_eq "$(jq '.closed' <<<"$REPLACE_FACTS")" true 'replaced asks close as resolve closes them and the new question keeps the item'
-assert_eq "$(jq '.other_item' <<<"$REPLACE_FACTS")" true 'an open ask on another item is not replaced'
-assert_eq "$(jq '.replaces_field' <<<"$REPLACE_FACTS")" true 'the new ask names each ask it replaced and its question comment'
-assert_eq "$(jq '.replaces_refused' <<<"$REPLACE_FACTS")" true 'a --replaces naming no open owner ask appends nothing'
-assert_eq "$(jq '.replaced_reply' <<<"$REPLACE_FACTS")" true 'a reply under a replaced question reaches the open ask naming both'
-assert_eq "$(jq '.unposted_keeps' <<<"$REPLACE_FACTS")" true 'an item ask whose question fails to post leaves the earlier ask open and replaces nothing'
-assert_eq "$(jq '.chat_replaces' <<<"$REPLACE_FACTS")" true 'a reply under a question a chat ask replaced reaches that ask'
-assert_eq "$(jq '.chain' <<<"$REPLACE_FACTS")" true 'a chain of replacing asks carries the first question to the last ask'
-assert_eq "$(jq '.earlier_answer' <<<"$REPLACE_FACTS")" true 'an item comment after a replaced question and before the next reaches the open ask naming that question'
+# One row per replace-flow contract. The rule for each owner comment: the
+# question it belongs to among every question this mailbox posted on the
+# item, open or closed, and that question's ask, open, replaced by an open
+# ask, or neither and reported to the overseer once.
+while IFS='|' read -r fact contract; do
+  [[ -n "$fact" ]] || continue
+  assert_eq "$(jq --arg fact "$fact" '.[$fact]' <<<"$REPLACE_FACTS")" true "$contract"
+done <<'ROWS'
+same_item_replaces|an item ask on the item strikes the earlier question under a link to it, closes that ask as resolve does and keeps the item
+chat_replaces|a chat ask replacing a posted item ask strikes its question with no link and closes it
+other_item_replaces|an item ask on another item with --replaces strikes the earlier question under a link to its own and closes that ask
+other_item_kept|an open ask on another item, named by no --replaces, stays open and unedited
+uncommented_replaced|an ask with no question comment is replaced and closed, and a replacing chain carries the earlier entries on
+unposted_replaces_nothing|an item ask whose question fails to post leaves every earlier ask open and unedited and has no comment
+posted_after_unposted|the next posted re-ask after an unposted one replaces both and takes a reply under the first question
+refused_appends_nothing|a refused --replaces or an unconfigured item ask appends nothing and leaves the named ask open
+reask_after_close|an item ask after the item's question closed posts its own comment and replaces nothing
+unmarked_still_closes|a replaced question whose comment is missing prints replace-unmarked and its ask still closes
+refused_close_kept|a refused close prints replace-unclosed with its key and leaves the ask open, struck and replaced
+read_before_replace|a comment delivered while its ask was open is not delivered again after a re-ask replaces that ask
+replaced_window|a comment on the item after a replaced question reaches the replacing ask under the item header
+replaced_reply|a reply under a replaced question reaches the replacing ask under the reply header
+open_question_plain|a comment after the open question, or a reply under it, reaches that ask with no header
+closed_replacer_reported|once the replacing ask closes, comments on either item and replies under either question are reported unmatched
+item_chain|a chain of re-asks on one item delivers each window to the last ask naming its own question
+unposted_third|an unposted third ask leaves the second taking its comments plain and replies under the first under the header
+mixed_chain|a chat ask replacing an item re-ask takes both windows, each naming its own question
+closed_question_reported|a comment after a closed question that nothing replaced is reported unmatched
+closed_window_reported|after a re-ask on a closed question, a comment before the new question is reported and one after it is the new ask's
+closed_reply_after_later_question|a reply under a closed unreplaced question is reported unmatched while a later question is open
+closed_chain_reported|replies under the questions of a closed chain are reported unmatched, not delivered to a later ask
+off_item_window|a comment on the item after a question an ask off the item replaced reaches that ask under the item header
+off_item_reply|a reply under a question an ask off the item replaced reaches that ask under the reply header
+own_item_plain|an ask on another item takes that item's comments plain and a comment before its question is reported
+third_bounds_window|a later question on the item bounds the replaced window and takes its own comments plain
+closed_later_question|after the later question closes, comments after it and replies under it are reported unmatched
+closed_between|a comment between a closed question and an open one is reported, and one after the open question is its ask's
+both_open|with two open asks posted on one item each comment reaches the ask of the question it belongs to
+refused_close_later|once an ask left open by a refused close closes, its question's comments reach the ask that replaced it
+before_first_question|a comment before the item's first question is reported unmatched once
+reply_under_comment|a reply under an owner comment goes where that comment goes
+report_unsent_retried|a report the mailbox refuses prints report-unsent, keeps the read and lands on the next pass
+ROWS
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
 # were, while an ask without --issue still lands in chat.

@@ -4937,6 +4937,8 @@ fn a_due_tracker_ask_closes_once_without_a_triage_team() {
     let (mut settings, events) = posted_owner_ask(&world);
     settings.linear_team = None;
     world.linear("issues list --assignee", json!({"body": []}));
+    // The posted ask's item is read for owner comments whatever its label.
+    world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
     world.linear("comments create", json!({"body": {"success": true}}));
     world.linear("issues update", json!({"body": {}}));
     world.linear(
@@ -5588,8 +5590,11 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
         )),
         "a refused comment stops not the item write; the open ask keeps its label, assignee and line: {log}"
     );
+        // The floor's item is read for owner comments, as every item holding
+        // a question of the mailbox is, and never written.
         assert!(
-            !log.contains("KEN-8"),
+            !log.lines()
+                .any(|line| line.contains("KEN-8") && !line.starts_with("comments bulk-list ")),
             "the floor's ask is never written: {log}"
         );
         assert_eq!(marks(&log), (1, 1));

@@ -79,13 +79,21 @@ case "$1:$2" in
 esac
 ''')
     tracker.chmod(0o755)
+    # A report of an unmatched owner comment is a data notice, which needs a
+    # registered overseer: agent-runtime's controller status says one is.
+    runtime = root / '.agents/skills/agent-runtime/scripts/agent-runtime'
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"result":{"recorded":{},"live":true}}\'\n')
+    runtime.chmod(0o755)
     message = root / 'message'
     message.write_text('Approve this change?\n')
     call('ask', '--item', 'overseer', '--to', 'owner', '--issue', 'KEN-7', '--do', 'Approve change',
          '--options', 'approve,hold', '--recommend', 'approve', '--effect', 'none', '--wait', '5', '--file', str(message),
          cwd=worktree / 'subdir')
     comments = [dict(id='question', body='Question', user_email='bot@example.test', created_at='2026-01-02T00:00:00Z')]
-    # A single input table covers the author/time contract.
+    # A single input table covers the author/time contract: the owner's
+    # comment after the question answers it, and one before any question is
+    # reported to the overseer instead.
     for id, author, at in [('before', 'owner@example.test', '2026-01-01'),
                            ('other', 'other@example.test', '2026-01-03'),
                            ('answer', 'OWNER@example.test', '2026-01-03')]:
@@ -102,7 +110,9 @@ esac
         assert not result.stderr, result
         assert result.stdout.splitlines()[-1] == 'owner-answers: read=read', result
         rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek', cwd=cwd).stdout.splitlines() if line.startswith("{")]
-        assert [row['text'] for row in rows] == ['answer'], rows
+        assert [(row['kind'], row.get('delivery_id')) for row in rows] == [
+            ('answer', 'linear:answer'), ('data', 'linear:before')], rows
+        assert rows[0]['text'] == 'answer' and rows[1]['source'] == 'owner-answers', rows
     call('owner-answers', '--item', 'overseer')
     again = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith("{")]
     assert again == rows, again
@@ -154,7 +164,8 @@ esac
     for _ in range(2):
         call('owner-answers', '--item', 'overseer')
         rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')]
-        assert [row['text'] for row in rows] == ['answer', 'later'], rows
+        assert [(row['kind'], row.get('delivery_id')) for row in rows] == [
+            ('answer', 'linear:answer'), ('data', 'linear:before'), ('answer', 'linear:later-answer')], rows
     message.write_text('Approve the explicit-root change?\n')
     call('ask', '--item', 'overseer', '--root', str(worktree), '--to', 'owner', '--issue', 'KEN-7',
          '--do', 'Approve explicit-root change', '--options', 'approve,hold', '--recommend', 'approve',
@@ -179,9 +190,9 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 source = path.read_text()
-old = '.created_at > $posted.created_at'
+old = '.at < $row.created_at'
 assert source.count(old) == 1
-path.write_text(source.replace(old, '.created_at < $posted.created_at'))
+path.write_text(source.replace(old, '.at > $row.created_at'))
 PY
   rc=0
   MAILBOX_UNDER_TEST="$TMP_ROOT" "$BASH" "$ROOT/skills/mailbox/tests/owner-answers.sh" >"$TMP_ROOT/control.log" 2>&1 || rc=$?
