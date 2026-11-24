@@ -207,9 +207,7 @@ fn screen(
             warning.name,
             warning.message
         )));
-        if let Some(fix) = &warning.remediation {
-            lines.extend(super::engine_common::fix_line(style, fix));
-        }
+        lines.extend(super::engine_common::fix_line(style, warning));
         if let Some(detail) = warning.detail.as_deref().filter(|_| verbose) {
             lines.extend(style.detail(None, &[Span::Verbatim(detail)]));
         }

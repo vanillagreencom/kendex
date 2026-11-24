@@ -30,6 +30,7 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         name: "tidy".into(),
         harness: Some(HarnessId::Claude),
         message: "missing description".into(),
+        remedy: None,
         remediation: Some("add a description".into()),
         detail: None,
     });
@@ -81,6 +82,7 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         name: "doc-drift-check".into(),
         harness: None,
         message: keyed.into(),
+        remedy: None,
         remediation: None,
         detail: None,
     }];
@@ -94,6 +96,7 @@ fn clean_changed_blocked_and_warning_reports_keep_their_content() {
         name: "ship".into(),
         harness: None,
         message: "SKILL.md links to ../x.md, which may no longer reach its file".into(),
+        remedy: None,
         remediation: Some("Use an absolute path or URL.".into()),
         detail: Some("skill-link-kept: SKILL.md: ../x.md".into()),
     }];

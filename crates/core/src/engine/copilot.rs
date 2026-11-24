@@ -26,6 +26,7 @@ fn warning(
         name: ctx.name.to_owned(),
         harness: Some(HarnessId::Copilot),
         message,
+        remedy: None,
         remediation,
         detail: None,
     }
@@ -47,6 +48,7 @@ pub(super) fn hook(
         name: name.to_owned(),
         harness: Some(HarnessId::Copilot),
         message,
+        remedy: None,
         remediation,
         detail: None,
     };
@@ -139,6 +141,7 @@ pub(super) fn switched_off_by(
             record_arg0 = crate::names::shown(name),
             record_key = crate::names::shown(key),
         ),
+        remedy: None,
         remediation: Some(format!("take {name} out of `{key}` in {}", path.display())),
         detail: None,
     });

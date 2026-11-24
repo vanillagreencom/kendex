@@ -227,6 +227,7 @@ pub(crate) fn report(
                     name: skill.clone(),
                     harness: None,
                     message,
+                    remedy: None,
                     remediation: Some(format!(
                         "make {} available on PATH",
                         issue.dependency.command

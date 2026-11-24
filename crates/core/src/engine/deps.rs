@@ -1804,6 +1804,7 @@ fn warn(kind: ItemKind, name: &str, message: String, remediation: String) -> Ite
         name: name.to_owned(),
         harness: None,
         message,
+        remedy: None,
         remediation: Some(remediation),
         detail: None,
     }

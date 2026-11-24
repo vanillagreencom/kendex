@@ -682,6 +682,7 @@ impl Expansion {
                 name: name.clone(),
                 harness: None,
                 message,
+                remedy: None,
                 remediation: Some(
                     "pin the items that bring it in to the same revision, or unpin them".into(),
                 ),

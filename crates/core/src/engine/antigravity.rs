@@ -36,6 +36,7 @@ pub(super) fn hook(name: &str, hook: &HookSpec, state: &mut DesiredState) -> Opt
                 record_name = crate::names::shown(name),
                 record_arg0 = crate::names::shown(hook.matcher.as_deref().unwrap_or_default()),
             ),
+            remedy: None,
             remediation: Some(
                 "write the matcher as plain tool names separated by `|`, or check it against Antigravity's names (`run_command`, `view_file`, `write_to_file`)"
                     .to_owned(),

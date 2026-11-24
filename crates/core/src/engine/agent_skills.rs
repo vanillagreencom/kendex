@@ -102,6 +102,7 @@ pub(super) fn warn_uninstalled(ctx: &ItemCtx, state: &mut DesiredState, skills: 
                 crate::names::shown(ctx.name),
                 crate::names::shown(skill),
             ),
+            remedy: None,
             remediation: Some(format!(
                 "Install skill {}, or remove it from agent {} in [agent-skills].",
                 crate::names::shown(skill),

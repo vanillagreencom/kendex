@@ -40,6 +40,7 @@ fn overridden_named(env: &Env, name: &str, kind: ItemKind, key: &str) -> Option<
             record_name = crate::names::shown(name),
             record_key = crate::names::shown(key),
         ),
+        remedy: None,
         remediation: Some(format!(
             "ask whoever manages {} to make room for it, or install this at a scope that file leaves alone",
             system_settings_file(env).display()
@@ -63,6 +64,7 @@ pub(super) fn agent_notices(ctx: &ItemCtx, state: &mut DesiredState) {
                 "kendex-agents-disabled: harness=gemini agent={record_arg0} setting=experimental.enableAgents\nGemini's subagents are switched off in its settings, so this agent installs but stays inert",
                 record_arg0 = crate::names::shown(ctx.name),
             ),
+            remedy: None,
             remediation: Some(
                 "turn `experimental.enableAgents` on in Gemini's settings, or drop Gemini from this agent's harnesses"
                     .to_owned(),
@@ -110,6 +112,7 @@ pub(super) fn hook(
                 record_name = crate::names::shown(name),
                 record_arg0 = crate::names::shown(hook.matcher.as_deref().unwrap_or_default()),
             ),
+            remedy: None,
             remediation: Some(
                 "write the matcher as plain tool names separated by `|`, or check it against Gemini's names (`run_shell_command`, `read_file`, `write_file`)"
                     .to_owned(),
@@ -136,6 +139,7 @@ fn switched_off_machine_wide(ctx: &ItemCtx) -> Option<ItemWarning> {
             arg0 = ctx.name,
             record_arg0 = crate::names::shown(ctx.name),
         ),
+        remedy: None,
         remediation: Some(format!(
             "switch it back on for the whole machine, in {}",
             mcp_enablement_file(ctx.env).display()
@@ -158,6 +162,7 @@ fn gated_out(ctx: &ItemCtx) -> Option<ItemWarning> {
             arg1 = ctx.name,
             record_arg1 = crate::names::shown(ctx.name),
         ),
+        remedy: None,
         remediation: Some(format!(
             "take it out of `mcp.excluded`, or add it to `mcp.allowed`, in {}",
             path.display()

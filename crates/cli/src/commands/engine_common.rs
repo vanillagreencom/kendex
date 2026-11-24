@@ -125,9 +125,7 @@ pub(super) fn warning_lines(
             true => lines.push(ui::escaped(&warning.message)),
             false => lines.extend(style.report_warning(&format!("{target}: {}", warning.message))),
         }
-        if let Some(fix) = &warning.remediation {
-            lines.extend(fix_line(style, fix));
-        }
+        lines.extend(fix_line(style, warning));
         // The keyed diagnostic line, where a terminal reader finds the
         // code the message leaves out.
         if let Some(detail) = &warning.detail {
@@ -138,7 +136,14 @@ pub(super) fn warning_lines(
 }
 
 /// A warning's remedy under it, in every verb that prints warnings.
-pub(super) fn fix_line(style: &ui::Style, fix: &str) -> Vec<String> {
+pub(super) fn fix_line(
+    style: &ui::Style,
+    warning: &kendex_core::engine::ItemWarning,
+) -> Vec<String> {
+    let rendered = warning.render_remedy();
+    let Some(fix) = rendered.as_deref().or(warning.remediation.as_deref()) else {
+        return Vec::new();
+    };
     style.report_detail(&[Span::Prose("fix: "), Span::Prose(fix)], "  ")
 }
 

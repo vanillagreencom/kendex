@@ -68,6 +68,7 @@ fn listing_evaluates_once_and_records_the_supplied_report() -> super::CliResult 
             name: "tidy".into(),
             harness: None,
             message: "unreadable source".into(),
+            remedy: None,
             remediation: None,
             detail: None,
         }],
@@ -148,6 +149,7 @@ fn inspection_updates_snapshots() {
             name: "tidy".into(),
             harness: None,
             message: "its source is unreadable".into(),
+            remedy: None,
             remediation: None,
             detail: None,
         }],
@@ -248,6 +250,7 @@ fn a_warning_keeps_its_technical_cause_for_verbose() {
             name: "tidy".into(),
             harness: None,
             message: "its version history could not be read".into(),
+            remedy: None,
             remediation: None,
             detail: Some("git log f7db7e89 failed: fatal: bad object f7db7e89".into()),
         }],
@@ -271,14 +274,15 @@ fn a_warning_keeps_its_technical_cause_for_verbose() {
 /// in every run, ahead of the technical cause `--verbose` adds.
 #[test]
 fn a_warning_names_its_fix() {
-    let report = UpdatesReport {
+    let mut report = UpdatesReport {
         rows: vec![],
         warnings: vec![ItemWarning {
             kind: ItemKind::Skill,
             name: "tidy".into(),
             harness: None,
             message: "its installed version has not been fetched".into(),
-            remediation: Some("fetch its source again with kendex source refresh".into()),
+            remedy: Some(kendex_core::drift::report::Remedy::SourceRefresh { global: false }),
+            remediation: None,
             detail: Some("git cat-file f7db7e89 failed: fatal: bad object f7db7e89".into()),
         }],
         unreadable: vec![],
@@ -297,6 +301,15 @@ fn a_warning_names_its_fix() {
             "warning: skill tidy: its installed version has not been fetched",
             "  fix: fetch its source again with kendex source refresh",
             "    git cat-file f7db7e89 failed: fatal: bad object f7db7e89",
+        ]
+    );
+    report.warnings[0].remedy =
+        Some(kendex_core::drift::report::Remedy::SourceRefresh { global: true });
+    assert_eq!(
+        screen(&plain(), &report, false),
+        [
+            "warning: skill tidy: its installed version has not been fetched",
+            "  fix: fetch its source again with kendex source refresh --global",
         ]
     );
 }

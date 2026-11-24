@@ -93,6 +93,7 @@ fn native_file(
             name: ctx.name.to_owned(),
             harness: Some(harness),
             message: finding.message.clone(),
+            remedy: None,
             remediation: Some(finding.remediation.clone()),
             detail: None,
         });
@@ -155,6 +156,7 @@ fn as_skill(
             name: ctx.name.to_owned(),
             harness: Some(harness),
             message: finding.message.clone(),
+            remedy: None,
             remediation: Some(finding.remediation.clone()),
             detail: None,
         });
@@ -197,6 +199,7 @@ fn as_skill(
                 "installed as skill {name} in a directory {} also {reads}, so it is offered there too",
                 also.join(", ")
             ),
+            remedy: None,
             remediation: Some(format!(
                 "drop {} from this command's harnesses if they must not see it",
                 harness.display_name()
@@ -233,6 +236,7 @@ fn emitted_name(ctx: &ItemCtx, state: &mut DesiredState, harness: HarnessId) -> 
                     ctx.name,
                     harness.display_name()
                 ),
+                remedy: None,
                 remediation: Some(format!(
                     "run it as {name} on {}, or rename one of the two",
                     harness.display_name()

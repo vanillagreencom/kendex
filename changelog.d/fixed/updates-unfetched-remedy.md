@@ -1,0 +1,1 @@
+- Warnings about unfetched installed versions carry a typed `source-refresh` remedy in the desktop bindings. The Updates page and `kendex updates` render the existing advice from the drift report's shared templates.

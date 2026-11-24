@@ -69,6 +69,7 @@ pub(super) fn advisory_notice(
         name: name.to_owned(),
         harness: Some(harness),
         message,
+        remedy: None,
         remediation: Some(remediation),
         detail: None,
     })

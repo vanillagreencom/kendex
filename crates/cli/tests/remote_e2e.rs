@@ -1082,8 +1082,8 @@ fn checked(home: &Path, project: &Path) -> (Option<i32>, serde_json::Value) {
 
 /// A clone that follows another's committed record, as a satellite copy
 /// of a home folder does: after the pull, the record names a catalog
-/// commit this machine's copy of the source has not fetched. The check
-/// names the source refresh, and running it settles the package without
+/// commit this machine's copy of the source has not fetched. Updates and
+/// check name the source refresh. Running it settles the package without
 /// writing anything in the project, which that clone must not commit.
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -1130,6 +1130,13 @@ fn a_pulled_record_past_the_local_source_copy_settles_with_a_source_refresh() {
     land(&main, &project);
     let derived = kendex(&home, &project, &["updates", "--scope", "project"]);
     assert!(derived.status.success(), "{}", said(&derived));
+    let listing = said(&derived);
+    assert!(
+        listing
+            .lines()
+            .any(|line| line == "  fix: fetch its source again with kendex source refresh"),
+        "{listing}"
+    );
 
     let (code, report) = checked(&home, &project);
     assert_eq!(code, Some(2), "{report}");
