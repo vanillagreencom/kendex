@@ -645,22 +645,24 @@ const SKILLS_RENDER: &str = ".agents/skills/";
 /// that names the bare render directory beside paths under `skills/`
 /// ("with their `.agents/skills` renders") names the render of each of
 /// those paths in place of the directory, which no file of a branch meets.
-/// With no `skills/` path to render, the directory stays as named: it is
-/// then the only claim on the renders the item writes, such as those a
-/// `kendex-local.toml` instruction or a render-engine change rewrites.
+/// With no `skills/` path to render, the directory stays, spelled
+/// [`SKILLS_RENDER`] so it meets every render under it: it is then the only
+/// claim on the renders the item writes, such as those a `kendex-local.toml`
+/// instruction or a render-engine change rewrites.
 fn named_paths(text: &str) -> Vec<String> {
     let mut paths: Vec<String> = ticks(text).into_iter().filter(|t| is_path(t)).collect();
     let is_render_root = |p: &str| p.trim_end_matches('/') == SKILLS_RENDER.trim_end_matches('/');
     if paths.iter().any(|p| is_render_root(p)) {
-        let renders: Vec<String> = paths
+        let mut renders: Vec<String> = paths
             .iter()
             .filter_map(|p| p.strip_prefix(SKILLS_SOURCE))
             .map(|rest| format!("{SKILLS_RENDER}{rest}"))
             .collect();
-        if !renders.is_empty() {
-            paths.retain(|p| !is_render_root(p));
-            paths.extend(renders);
+        if renders.is_empty() {
+            renders.push(SKILLS_RENDER.to_owned());
         }
+        paths.retain(|p| !is_render_root(p));
+        paths.extend(renders);
     }
     paths
 }
@@ -2243,7 +2245,7 @@ mod tests {
             ("the `.agents/skills/` tree", &[".agents/skills/"]),
             (
                 "`docs/x.md` and its `.agents/skills` render",
-                &["docs/x.md", ".agents/skills"],
+                &["docs/x.md", ".agents/skills/"],
             ),
             (
                 "`kendex-local.toml` (`[skill-instructions]`) and the `.agents/skills/` renders it writes",
