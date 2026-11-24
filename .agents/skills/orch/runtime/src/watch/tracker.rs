@@ -1725,10 +1725,10 @@ fn mark_closed_owner_asks(
         .iter()
         .filter(|e| e.kind() == "ask" && e.to.as_deref() == Some("owner") && !e.id().is_empty())
         .collect();
-    let closes: BTreeMap<&str, &Envelope> = envelopes
+    let closes: BTreeSet<&str> = envelopes
         .iter()
         .filter(|e| e.kind() == "resolution")
-        .filter_map(|e| Some((e.re.as_deref()?, e)))
+        .filter_map(|e| e.re.as_deref())
         .collect();
     // A row of an ask no longer in the mailbox leaves with it.
     let held: BTreeSet<&str> = asks.iter().map(|a| a.id()).collect();
@@ -1741,10 +1741,11 @@ fn mark_closed_owner_asks(
         }
     }
     let posted = |a: &&&Envelope| a.tracker_posted == Some(true) && a.issue.is_some();
-    let closed: Vec<(&Envelope, &Envelope)> = asks
+    let closed: Vec<&Envelope> = asks
         .iter()
         .filter(posted)
-        .filter_map(|a| Some((*a, *closes.get(a.id())?)))
+        .filter(|a| closes.contains(a.id()))
+        .copied()
         .collect();
     let landed = Marks {
         ruling: Some(Mark::Landed),
@@ -1757,7 +1758,7 @@ fn mark_closed_owner_asks(
             identity: FLEET.to_owned(),
             value: "floor".to_owned(),
         });
-        for (ask, _) in closed {
+        for ask in closed {
             owner.keep_marks(tick, ask.id(), &landed);
         }
         return Ok(Answered::Value(()));
@@ -1765,10 +1766,10 @@ fn mark_closed_owner_asks(
     let open: Vec<&Envelope> = asks
         .iter()
         .filter(posted)
-        .filter(|a| !closes.contains_key(a.id()))
+        .filter(|a| !closes.contains(a.id()))
         .copied()
         .collect();
-    for (ask, close) in closed {
+    for ask in closed {
         let mut marks = Marks::of_marks_row(tick.baseline.get(OWNER_MARK_ROW, ask.id()))?;
         if marks == landed {
             continue;
@@ -1776,16 +1777,10 @@ fn mark_closed_owner_asks(
         let issue = ask.issue.as_deref().unwrap_or("");
         marks.line = None;
         if marks.ruling != Some(Mark::Landed) {
-            let ruling = envelopes
+            let answer = envelopes
                 .iter()
-                .rfind(|e| e.kind() == "answer" && e.re.as_deref() == Some(ask.id()))
-                .and_then(|e| e.text.as_deref())
-                .unwrap_or("");
-            let body = format!(
-                "ask={} closed ({}): {ruling}",
-                ask.id(),
-                close.by.as_deref().unwrap_or("")
-            );
+                .rfind(|e| e.kind() == "answer" && e.re.as_deref() == Some(ask.id()));
+            let body = ruling_comment(answer);
             let mut args = vec!["comments", "create", issue, "--body", &body];
             if let Some(question) = &ask.tracker_comment {
                 args.extend(["--parent", question.as_str()]);
@@ -1818,6 +1813,34 @@ fn mark_closed_owner_asks(
         owner.keep_marks(tick, ask.id(), &marks);
     }
     Ok(Answered::Value(()))
+}
+
+/// The reply under a closed ask's question, read from its latest answer.
+/// Ids stay in the mailbox. The opening says how the question closed. Who
+/// decided is a field, since a deadline's recommendation rules with
+/// delegated authority, not the owner's. The ruling comes last because the
+/// owner's answer can span lines.
+fn ruling_comment(answer: Option<&Envelope>) -> String {
+    let Some(answer) = answer else {
+        return "This question closed with no answer.\n".to_owned();
+    };
+    let (opening, decided) = match answer.by.as_deref() {
+        Some("text") => ("This question closed on your answer.", Some("owner")),
+        Some("default") => (
+            "This question closed at its deadline with no answer, so its recommendation stands.",
+            Some("recommendation"),
+        ),
+        // A legacy closing answer names no `by`.
+        _ => ("This question closed on its answer.", None),
+    };
+    let mut body = format!("{opening}\n");
+    if let Some(decided) = decided {
+        body.push_str(&format!("\n**Decided by**: {decided}\n"));
+    }
+    if let Some(ruling) = answer.text.as_deref().filter(|t| !t.is_empty()) {
+        body.push_str(&format!("\n**Ruling**: {ruling}\n"));
+    }
+    body
 }
 
 /// One close step's outcome as its mark: a refusal whose cause was not the

@@ -277,13 +277,6 @@ impl Judged {
         let unit = numeric.unit.as_deref().unwrap_or_default();
         let pass = format!("{} {} {unit}", numeric.comparator, numeric.value);
         let source = format!("from {} at {at}", self.where_);
-        let comment = |what: String| Owed::Comment {
-            text: format!(
-                "## Post-merge check read\n\nBox {} read `{}`: {what}, {source}. The box stays open with its named person.\n\nread-by=watch\n",
-                self.number,
-                self.read.as_ref().map_or("", Reading::kind)
-            ),
-        };
         match self.read.as_ref()? {
             Reading::Met(figure) => Some(Owed::Complete {
                 number: self.number,
@@ -291,12 +284,61 @@ impl Judged {
                 merged_at: merged.map(|m| clock::iso_utc(m.at)),
             }),
             Reading::Failed(figure) => {
-                Some(comment(format!("observed {figure} {unit}, needs {pass}")))
+                let observed = format!("{figure} {unit}");
+                let observed = observed.trim_end();
+                let needs = pass.trim_end();
+                Some(self.verification_comment(
+                    at,
+                    &format!("it read {observed}, and it needs {needs}"),
+                    "fail",
+                    &format!("observed {observed} against {needs}"),
+                    "the reading breaks the pass condition",
+                ))
             }
-            Reading::Inconclusive(word) => Some(comment(format!(
-                "the source ended `{word}` with no figure to judge"
-            ))),
+            Reading::Inconclusive(word) => Some(self.verification_comment(
+                at,
+                &format!("its source ended `{word}` with no figure to judge"),
+                "unread",
+                &format!("the source ended `{word}` with no figure"),
+                "there is no figure to judge",
+            )),
             Reading::Missing | Reading::Unread(_) => None,
+        }
+    }
+
+    /// The one comment a failed or inconclusive reading takes, in the
+    /// overseer's verification comment form (`oversee-events.md`
+    /// § Verification comment): the result for the person first, then the
+    /// reading as record fields, then the `read-by=watch` marker.
+    fn verification_comment(
+        &self,
+        at: &str,
+        outcome: &str,
+        result: &str,
+        evidence: &str,
+        kept: &str,
+    ) -> Owed {
+        let deadline = self
+            .deadline
+            .as_deref()
+            .map(|d| format!(", deadline {d}"))
+            .unwrap_or_default();
+        Owed::Comment {
+            text: format!(
+                "The post-merge check `{check}` did not pass: {outcome}. The box stays open, and the item with it.\n\n\
+                 ## Verification\n\n\
+                 **Reader**: the watch\n\n\
+                 **Observed at**: {at}\n\n\
+                 ### Box {number}\n\n\
+                 - **Result**: {result}\n\
+                 - **Evidence**: {evidence}, from {where_}\n\
+                 - **Decision**: kept open, since {kept}\n\
+                 - **Next**: the overseer takes the box through its verify workflow{deadline}\n\n\
+                 read-by=watch\n",
+                check = self.reading,
+                number = self.number,
+                where_ = self.where_,
+            ),
         }
     }
 }

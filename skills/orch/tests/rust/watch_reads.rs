@@ -135,6 +135,19 @@ impl World {
         lines(&self.dir.path().join("gh.log"))
     }
 
+    /// The comments the fixture was asked to create, in order: each one's
+    /// issue, parent (empty for none) and whole body.
+    fn posted_comments(&self) -> Vec<(String, String, String)> {
+        lines(&self.dir.path().join("linear-comments.jsonl"))
+            .iter()
+            .map(|line| {
+                let c: Value = serde_json::from_str(line).unwrap();
+                let text = |k: &str| c[k].as_str().unwrap().to_owned();
+                (text("issue"), text("parent"), text("body"))
+            })
+            .collect()
+    }
+
     /// The gh fixture's environment log: `GH_TOKEN=<value> <argv>` per
     /// call, the first line of each entry (a GraphQL query argument spans
     /// lines of its own).
@@ -4196,8 +4209,15 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/77"}})
     };
     /// (description, the job's answer, the line's reading, completions,
-    /// comments, job reads)
-    type Row<'a> = (&'a str, Option<Value>, &'a str, usize, usize, usize);
+    /// the comment's Result field where one is owed, job reads)
+    type Row<'a> = (
+        &'a str,
+        Option<Value>,
+        &'a str,
+        usize,
+        Option<&'a str>,
+        usize,
+    );
     let rows: Vec<Row> = vec![
         (
             numeric.as_str(),
@@ -4208,7 +4228,7 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             )),
             " read=met observed=412",
             1,
-            0,
+            None,
             1,
         ),
         (
@@ -4220,7 +4240,7 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             )),
             " read=failed observed=900",
             0,
-            1,
+            Some("fail"),
             1,
         ),
         (
@@ -4228,7 +4248,7 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             Some(job("in_progress", Value::Null, Value::Null)),
             " read=missing",
             0,
-            0,
+            None,
             1,
         ),
         (
@@ -4240,7 +4260,7 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             )),
             " read=inconclusive cause=cancelled",
             0,
-            1,
+            Some("unread"),
             1,
         ),
         (
@@ -4248,7 +4268,7 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             None,
             " read=unread cause=read-failed",
             0,
-            0,
+            None,
             1,
         ),
         (
@@ -4256,11 +4276,11 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             None,
             " read=unread cause=no-reader",
             0,
-            0,
+            None,
             0,
         ),
     ];
-    for (description, answer, reading, completions, comments, reads) in rows {
+    for (description, answer, reading, completions, result, reads) in rows {
         let mut world = World::new();
         world.linear("statuses list", statuses());
         let mut verifying_item = item(
@@ -4345,9 +4365,44 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
                 .iter()
                 .filter(|c| c.starts_with("comments create KEN-1 --body-file "))
                 .count(),
-            comments,
+            usize::from(result.is_some()),
             "{reading}: {calls:?}"
         );
+        // The one comment opens with its result for the person, then
+        // records the reading under its box, the watch's marker kept.
+        let posted = world.posted_comments();
+        let read: Vec<_> = posted
+            .iter()
+            .map(|(issue, parent, body)| {
+                let fields = record_fields(body);
+                (
+                    issue.as_str(),
+                    parent.as_str(),
+                    opens_with_prose(body),
+                    body.lines().filter(|l| l.starts_with("### Box ")).count(),
+                    body.lines().any(|l| l == "### Box 1"),
+                    fields.get("Result").cloned(),
+                    fields.get("Observed at").cloned(),
+                    body.lines().any(|l| l == "read-by=watch"),
+                )
+            })
+            .collect();
+        let want: Vec<_> = result
+            .iter()
+            .map(|result| {
+                (
+                    "KEN-1",
+                    "",
+                    true,
+                    1,
+                    true,
+                    Some((*result).to_owned()),
+                    Some("2026-10-02T00:00:01Z".to_owned()),
+                    true,
+                )
+            })
+            .collect();
+        assert_eq!(read, want, "{reading}: {posted:?}");
         assert_eq!(
             world
                 .gh_calls()
@@ -4426,6 +4481,28 @@ fn a_verifying_item_with_an_open_branch_box_is_named_once() {
         .unwrap();
         assert_eq!(rendered(&produced), want, "{description:?}");
     }
+}
+
+/// A comment's record fields: each `**Label**: value` at a line's start,
+/// a list item's included.
+fn record_fields(body: &str) -> BTreeMap<String, String> {
+    body.lines()
+        .filter_map(|line| {
+            let line = line.strip_prefix("- ").unwrap_or(line);
+            let (label, value) = line.strip_prefix("**")?.split_once("**: ")?;
+            Some((label.to_owned(), value.to_owned()))
+        })
+        .collect()
+}
+
+/// Whether a comment opens with its result for the person: a sentence,
+/// not a record field, a heading or a `key=value` line.
+fn opens_with_prose(body: &str) -> bool {
+    let first = body.lines().next().unwrap_or_default();
+    !first.is_empty()
+        && !first.starts_with("**")
+        && !first.starts_with('#')
+        && !first.split(' ').next().unwrap_or_default().contains('=')
 }
 
 fn posted_owner_ask(world: &World) -> (Settings, PathBuf) {
@@ -4558,9 +4635,7 @@ fn a_ruling_is_not_reposted_after_a_failed_triage_comments_read() {
     let failed = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240);
     let calls = world.linear_calls();
     let ensuing = &calls[before..];
-    let ruling = |call: &&String| {
-        call.starts_with("comments create KEN-7 --body ask=ask-1 closed (default): yes")
-    };
+    let ruling = |call: &&String| call.starts_with("comments create KEN-7 --body ");
     let posted = ensuing.iter().position(|call| ruling(&call)).unwrap();
     let read = ensuing
         .iter()
@@ -4570,6 +4645,32 @@ fn a_ruling_is_not_reposted_after_a_failed_triage_comments_read() {
     world.linear("comments bulk-list", comments(&["KEN-1"], &[]));
     pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
     assert_eq!(world.linear_calls().iter().filter(ruling).count(), 1);
+    let rulings: Vec<_> = world
+        .posted_comments()
+        .into_iter()
+        .filter(|(issue, _, _)| issue == "KEN-7")
+        .map(|(issue, parent, body)| {
+            let fields = record_fields(&body);
+            (
+                issue,
+                parent,
+                opens_with_prose(&body),
+                fields.get("Decided by").cloned(),
+                fields.get("Ruling").cloned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rulings,
+        [(
+            "KEN-7".to_owned(),
+            "question-1".to_owned(),
+            true,
+            Some("recommendation".to_owned()),
+            Some("yes".to_owned())
+        )],
+        "the deadline's ruling, once, under the question"
+    );
     assert!(
         failed
             .unwrap()
@@ -4839,26 +4940,40 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     // The asks the watch's first pass closed are no floor: the next pass
     // posts each one's ruling under its question and drops its label,
     // assignee and action line.
+    // The answered ask's ruling is the owner's although its close came at
+    // the deadline; the unanswered one's is the recommendation.
     let linear_log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
-    for (id, issue, ruling, question) in [
-        (&answered, "KEN-7", "OK", "question-1"),
-        (&due, "KEN-8", "approve", "question-2"),
+    let posted = world.posted_comments();
+    for (issue, decided, ruling, question) in [
+        ("KEN-7", "owner", "OK", "question-1"),
+        ("KEN-8", "recommendation", "approve", "question-2"),
     ] {
+        let rulings: Vec<_> = posted
+            .iter()
+            .filter(|(i, parent, _)| i == issue && parent == question)
+            .map(|(_, _, body)| {
+                let fields = record_fields(body);
+                (
+                    opens_with_prose(body),
+                    fields.get("Decided by").cloned(),
+                    fields.get("Ruling").cloned(),
+                )
+            })
+            .collect();
         assert_eq!(
             (
-                linear_log
-                    .matches(&format!(
-                        "comments create {issue} --body ask={id} closed (default): {ruling} --parent {question}\n"
-                    ))
-                    .count(),
+                rulings,
                 linear_log
                     .matches(&format!(
                         "issues update {issue} --labels skills --clear-assignee --description {body}\n"
                     ))
                     .count()
             ),
-            (1, 1),
-            "{issue}'s ruling comment and cleared label, once: {linear_log}"
+            (
+                vec![(true, Some(decided.to_owned()), Some(ruling.to_owned()))],
+                1
+            ),
+            "{issue}'s ruling comment and cleared label, once: {posted:?} {linear_log}"
         );
     }
     // A refused mailbox read of the asks is unread the same way, never no
@@ -5061,10 +5176,28 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
             "the refused ruling comment is said with its cause"
         );
         let log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
-        assert!(
-            log.contains("comments create KEN-7 --body ask=ask-1 closed (text): Approved.")
-                && log.contains("--parent question-1\n"),
-            "the ruling, a reply under the question: {log}"
+        let rulings: Vec<_> = world
+            .posted_comments()
+            .into_iter()
+            .map(|(issue, parent, body)| {
+                let fields = record_fields(&body);
+                (
+                    issue,
+                    parent,
+                    fields.get("Decided by").cloned(),
+                    fields.get("Ruling").cloned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rulings,
+            [(
+                "KEN-7".to_owned(),
+                "question-1".to_owned(),
+                Some("owner".to_owned()),
+                Some("Approved.".to_owned())
+            )],
+            "the ruling, a reply under the question"
         );
         assert!(
         log.contains(&format!(
