@@ -372,7 +372,7 @@ pub fn plant_restack(worktree: &Path, item: &str, branch: &str) -> (String, Path
     std::fs::write(
         path,
         serde_json::json!({"issue_id": item, "worktree": worktree, "branch": branch,
-            "restack_landing": {"original": old, "at": 1, "round": null, "route": "pr"}})
+            "restack_landing": {"original": old, "at": 1, "round": null}})
         .to_string(),
     )
     .unwrap();

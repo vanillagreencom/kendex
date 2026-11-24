@@ -549,8 +549,7 @@ pub struct ValidateSettings {
 
 /// How a change is delivered: through a pull request, or straight onto the
 /// base, where the publication takes the landing order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     Pr,
     PushBase,

@@ -28,7 +28,7 @@ use crate::error::{Error, Result};
 use crate::policy::{Stage, Stages};
 use crate::settings::{self, Settings};
 use crate::state;
-use crate::validate::files::{self, ReadFile, RunFile};
+use crate::validate::files::{self, RunFile};
 use agent_runtime::journal::Env;
 
 /// The push transport's bound: a pre-push hook may run the whole battery.
@@ -40,7 +40,7 @@ const TAG: &str = "push";
 pub const LIVE_EXIT: i32 = 3;
 /// The exit of a push whose answer was lost.
 pub const UNKNOWN_EXIT: i32 = 75;
-pub(crate) const MAP: &str = "kendex-rebase-map";
+const MAP: &str = "kendex-rebase-map";
 const LANDING: &str = "restack_landing";
 const PENDING: &str = "kendex-restack-validation";
 const FOLD_MESSAGE: &str = "kendex-fold-message";
@@ -368,41 +368,18 @@ fn map_file(worktree: &Path) -> Result<PathBuf> {
 /// The consumed map binds the admission's original head to the rewritten
 /// head. A force-push lease remains the worktree publisher's authority.
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct RestackLanding {
+struct RestackLanding {
     original: String,
     at: u64,
     round: Option<String>,
-    pub route: crate::settings::Delivery,
-}
-
-pub(crate) struct Restacked {
-    pub head: String,
-    pub route: crate::settings::Delivery,
 }
 
 impl RestackLanding {
-    pub(crate) fn read_hosted(doc: &Document, item: &str, worktree: &Path) -> Result<Option<Self>> {
-        Self::read_bound(doc, || {
-            if doc.get("issue_id").and_then(Value::as_str) != Some(item)
-                || doc.get("worktree").and_then(Value::as_str).map(Path::new) != Some(worktree)
-            {
-                return Err(refuse(
-                    "restack-worktree",
-                    &[
-                        ("item", item),
-                        ("worktree", &worktree.display().to_string()),
-                    ],
-                ));
-            }
-            Ok(())
-        })
-    }
-
-    fn read_bound(doc: &Document, bind: impl FnOnce() -> Result<()>) -> Result<Option<Self>> {
+    fn read(doc: &Document, item: &str, worktree: &Path) -> Result<Option<Self>> {
         let Some(value) = doc.get(LANDING) else {
             return Ok(None);
         };
-        bind()?;
+        bind(doc, item, worktree)?;
         let landing: Self = serde_json::from_value(value.clone())
             .map_err(|e| refuse("restack-landing-unreadable", &[("cause", &e.to_string())]))?;
         let stopped = doc.get("post_pr_stop").and_then(|stop| stop["at"].as_u64());
@@ -413,7 +390,7 @@ impl RestackLanding {
         )
     }
 
-    pub(crate) fn matches_map(&self, text: &str, head: &str) -> Result<bool> {
+    fn matches_map(&self, text: &str, head: &str) -> Result<bool> {
         let hops = match proof::hops(text) {
             Ok(hops) => hops,
             Err(e) if e.cause == "rebase-unmapped" => return Ok(false),
@@ -439,29 +416,35 @@ impl RestackLanding {
     }
 
     /// The last validation for this head must have an acceptable native
-    /// result. A restack with no run yet resumes at the validation step.
-    pub(crate) fn ready(&self, runs: Vec<RunFile>, head: &str, read: ReadFile<'_>) -> Result<bool> {
+    /// result. A restack with no run yet still owes validation.
+    fn ready(&self, runs: Vec<RunFile>, head: &str) -> Result<bool> {
         let run = runs
             .into_iter()
             .filter(|run| run.get("head") == head)
             .max_by_key(|run| (run.get("start").parse::<u64>().ok(), run.dir.clone()));
         let Some(run) = run else { return Ok(true) };
-        run.record_from(read)?;
+        run.record()?;
         Ok(matches!(run.verdict()?, "pass" | "pending"))
     }
 }
 
-pub(crate) fn open_restack(
-    doc: &Document,
-    item: &str,
-    worktree: &Path,
-) -> Result<Option<Restacked>> {
-    let Some(landing) = RestackLanding::read_bound(doc, || bind(doc, item, worktree))? else {
+pub(crate) fn open_restack(doc: &Document, item: &str, worktree: &Path) -> Result<Option<String>> {
+    let Some(landing) = RestackLanding::read(doc, item, worktree)? else {
         return Ok(None);
     };
     let map = map_file(worktree)?;
-    let Some(text) = files::read_file(&map)? else {
-        return Ok(None);
+    let text = match fs::read_to_string(&map) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(refuse(
+                "rebase-map-unreadable",
+                &[
+                    ("path", &map.display().to_string()),
+                    ("cause", &error.to_string()),
+                ],
+            ));
+        }
     };
     let current = head(worktree)?;
     if !landing.matches_map(&text, &current)?
@@ -475,14 +458,11 @@ pub(crate) fn open_restack(
                 .map_err(|cause| refuse("restack-branch", &[("cause", &cause)]))?
                 .as_str(),
             )
-        || !landing.ready(files::runs(worktree)?, &current, &files::read_file)?
+        || !landing.ready(files::runs(worktree)?, &current)?
     {
         return Ok(None);
     }
-    Ok(Some(Restacked {
-        head: current,
-        route: landing.route,
-    }))
+    Ok(Some(current))
 }
 
 /// Apply `hops` in order to the recorded commits, the item's `rebase_map`
@@ -1220,9 +1200,6 @@ pub fn run(
                 let Some(before) = record else {
                     return Err(refuse("restack-state", &[("issue", &item)]));
                 };
-                let route = crate::validate::entry::resolve_at(&worktree, flags)?
-                    .validate
-                    .delivery()?;
                 let landing = RestackLanding {
                     original: head(&worktree)?,
                     at: env.now_secs,
@@ -1230,7 +1207,6 @@ pub fn run(
                         .get("dev_round_id")
                         .and_then(Value::as_str)
                         .map(str::to_owned),
-                    route,
                 };
                 let mut after = before.clone();
                 record::set(&mut after, LANDING, serde_json::to_value(landing)?);

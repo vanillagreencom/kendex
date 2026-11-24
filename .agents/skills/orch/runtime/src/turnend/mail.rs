@@ -296,7 +296,10 @@ pub(super) fn idle_check(
         .filter(|e| e.mailbox.as_deref() == Some("to-overseer"))
         .filter(|e| matches!(e.kind(), "ask" | "notice"))
         .count();
-    let halted = crate::mailbox::last_directive_halts(&events);
+    let halted = events
+        .iter()
+        .rfind(|e| e.mailbox.as_deref() == Some("to-lane") && e.kind() == "directive")
+        .is_some_and(|e| e.halt == Some(true));
     let open = if turn.harness == Harness::Codex && !halted {
         let work = open_work(turn, vars, lane, item)
             .map_err(|cause| turn.refuse(Said::WorkflowUnreadable, &cause))?;
@@ -414,8 +417,8 @@ fn open_work(
         let Some(snapshot) = state::load(&path)? else {
             return Ok(None);
         };
-        if let Some(restack) = crate::ops::push::open_restack(&snapshot.doc, item, &lane.root)? {
-            return Ok(Some(OpenWork::Restacked(restack.head)));
+        if let Some(head) = crate::ops::push::open_restack(&snapshot.doc, item, &lane.root)? {
+            return Ok(Some(OpenWork::Restacked(head)));
         }
         let state = snapshot.view::<ItemState>(&path)?;
         Ok(state.stages.into_iter().rev().find_map(|stage| {

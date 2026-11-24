@@ -308,7 +308,6 @@ impl LaneDriver<'_> {
             claim_store: &self.settings.claim_store,
             account_state: &self.settings.account_state,
             scripts: &self.scripts,
-            mail_cli: &self.settings.lane_mail_cli,
             route: &route,
             wall_pauses: &wall_pauses,
             hosted: &reads,
@@ -7425,301 +7424,6 @@ fn a_codex_lane_below_a_prior_turn_is_idle_on_its_first_pass_locally_and_on_its_
     );
 }
 
-#[test]
-fn a_bound_codex_landing_asks_for_one_continuation_until_its_push() {
-    if !isolated_row("a_bound_codex_landing_asks_for_one_continuation_until_its_push") {
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    git_checkout(&root);
-    for args in [
-        &["config", "gc.auto", "0"][..],
-        &["config", "maintenance.auto", "false"],
-        &["checkout", "-q", "-b", "ken-1"],
-        &["commit", "-q", "--allow-empty", "-m", "restacked"],
-    ] {
-        let out = program("git")
-            .arg("-C")
-            .arg(&root)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-    }
-    let (head, map) = plant_restack(&root, "KEN-1", "ken-1");
-    let server = Server::start(&root, "fleet");
-    let fleet = Fleet::new(&server);
-    let (pane, identity) = redrawing(
-        &server,
-        &root,
-        "gh-1",
-        "codex",
-        "› previous turn\n› Type a prompt\n",
-    );
-    let lane = lane_record(
-        "KEN-1",
-        "gh-1",
-        "codex",
-        &server,
-        &pane,
-        Some(&identity),
-        &root,
-    );
-    fleet.set_lanes(vec![lane]);
-    fleet.set_overseer(json!({"server_socket": server.socket}));
-    let state = fleet.read();
-    lane_driver!(server, fleet, readers, driver);
-    let run = root.join("tmp/dev-validate-restack");
-    driver.settings.lane_mail_cli =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mailbox/scripts/lane-mail");
-    std::fs::create_dir(&run).unwrap();
-    std::fs::write(
-        run.join("start"),
-        format!(
-            "worktree={}\nstart=1\nvalidate-mode=range\nhead={head}\n",
-            root.display()
-        ),
-    )
-    .unwrap();
-    for (exit, timing, unreadable) in [
-        (
-            "guard-exit=1\n",
-            "seconds=1\nstarted-at=2026-11-22T00:00:00Z\nended-at=2026-11-22T00:00:01Z\n",
-            false,
-        ),
-        ("guard-exit=0\n", "unreadable\n", true),
-    ] {
-        std::fs::write(run.join("exit"), exit).unwrap();
-        std::fs::write(run.join("timing"), timing).unwrap();
-        assert_eq!(driver.pass(&state).failed.is_some(), unreadable);
-        assert_eq!(driver.baseline.get("resume", "gh-1"), None, "{exit}");
-    }
-    std::fs::remove_file(run.join("exit")).unwrap();
-    assert!(event_lines(&driver.pass(&state)).is_empty());
-    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
-    std::fs::write(run.join("exit"), "guard-exit=0\n").unwrap();
-    std::fs::write(
-        run.join("timing"),
-        "seconds=1\nstarted-at=2026-11-22T00:00:00Z\nended-at=2026-11-22T00:00:01Z\n",
-    )
-    .unwrap();
-    assert!(event_lines(&driver.pass(&state)).is_empty());
-    let request = format!("restack|{head}|pr");
-    assert_eq!(
-        driver.baseline.get("resume", "gh-1"),
-        Some(request.as_str())
-    );
-    let asked = |out: &Produced| {
-        out.changes.iter().any(|change| {
-        matches!(change, Change::Set { kind, value, .. } if kind == "resume" && value == &request)
-    })
-    };
-    assert!(!asked(&driver.pass(&state)));
-    redraw(
-        &server,
-        &pane,
-        &root,
-        "restack-working.txt",
-        "› continue landing\n• Working (esc to interrupt)\n",
-        "Working",
-    );
-    assert!(!asked(&driver.pass(&state)));
-    redraw(
-        &server,
-        &pane,
-        &root,
-        "restack-idle.txt",
-        "› checked validation\n› Type a prompt\n",
-        "Type a prompt",
-    );
-    assert!(!asked(&driver.pass(&state)));
-    let map_text = std::fs::read_to_string(&map).unwrap();
-    std::fs::remove_file(&map).unwrap();
-    let clock = FakeClock::new();
-    let tick = orch_runtime::watch::Tick {
-        duty: orch_runtime::schedule::Duty::Wake,
-        now: clock.now(),
-        wall: driver.now,
-        baseline: &driver.baseline,
-        clock: &clock,
-    };
-    let wake = orch_runtime::watch::wake::body(&fleet.path(), &driver.settings)(&tick).unwrap();
-    assert!(event_lines(&wake).is_empty());
-    assert!(!orch_runtime::watch::wake::record_path(&fleet.path()).exists());
-
-    std::fs::write(&map, map_text).unwrap();
-    wake_stamp(&fleet, "KEN-1", driver.now, Some(&request));
-    redraw(
-        &server,
-        &pane,
-        &root,
-        "restack-api-error.txt",
-        CODEX_LIVE_FAILURE,
-        "not supported",
-    );
-    let failed = driver.pass(&state);
-    let retry = driver.baseline.get("resume", "gh-1").unwrap().to_owned();
-    assert!(
-        retry.starts_with("api-error|"),
-        "{retry}: {:?}",
-        event_lines(&failed)
-    );
-    let at = driver.now;
-    wake_stamp(&fleet, "KEN-1", at, Some(&retry));
-    let repeated = driver.pass(&state);
-    assert_eq!(
-        event_lines(&repeated),
-        ["EVENT idle-after-return gh-1 cause=api-error"]
-    );
-    assert!(
-        driver
-            .baseline
-            .get("resume", "gh-1")
-            .unwrap()
-            .starts_with("told|")
-    );
-    redraw(
-        &server,
-        &pane,
-        &root,
-        "restack-retry-finished.txt",
-        "› finished the retry\n› Type a prompt\n",
-        "Type a prompt",
-    );
-    let _ = driver.pass(&state);
-    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
-    assert!(!asked(&driver.pass(&state)));
-    redraw(
-        &server,
-        &pane,
-        &root,
-        "restack-later-api-error.txt",
-        CODEX_LIVE_FAILURE,
-        "not supported",
-    );
-    let _ = driver.pass(&state);
-    assert!(
-        driver
-            .baseline
-            .get("resume", "gh-1")
-            .unwrap()
-            .starts_with("api-error|")
-    );
-}
-
-#[test]
-fn a_bound_codex_ssh_landing_wakes_on_its_route_and_respects_an_acknowledged_halt() {
-    if !isolated_row(
-        "a_bound_codex_ssh_landing_wakes_on_its_route_and_respects_an_acknowledged_halt",
-    ) {
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    let server = Server::start(&root, "fleet");
-    let fleet = Fleet::new(&server);
-    let (world, host) = HostedWorld::ssh(&root, &server, &fleet, &["KEN-1"]);
-    let _lead = host.lead("KEN-1", "codex");
-    let worktree = host.lane_root("KEN-1");
-    let (head, _) = plant_restack(&worktree, "KEN-1", "ken-1");
-    let path = state::item_path(&worktree.join("tmp"), "KEN-1");
-    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    doc["restack_landing"]["route"] = json!("push-base");
-    std::fs::write(path, doc.to_string()).unwrap();
-
-    let client = root.join("ssh");
-    let received = root.join("received");
-    write_executable(
-        &client,
-        r#"#!/bin/bash
-printf '%s\n' '› previous turn' '› Type a prompt'
-while IFS= read -r line; do printf '%s\n' "$line" >> "$1"; done
-"#,
-    );
-    let pane = server.open_window(
-        "gh-1",
-        &root,
-        &format!("exec {} {}", client.display(), received.display()),
-    );
-    await_named(&server, &pane, "ssh");
-    await_drawn(&server, &pane, "Type a prompt");
-    let mut lane = hosted_lane(&root, "KEN-1", "gh-1", worktree.to_str().unwrap());
-    lane["host"] = json!(host.provider());
-    lane["harness"] = json!("codex");
-    lane["launch"] = json!({"pane": pane, "server": server.pid, "server_start": server.start});
-    fleet.set_lanes(vec![lane]);
-    fleet.set_overseer(json!({"server_socket": server.socket}));
-    let state = fleet.read();
-    lane_driver!(server, fleet, readers, driver);
-    driver.scripts = world.scripts.clone();
-    driver.gh = world.gh();
-    driver.settings.agent_runtime = agent_runtime().to_path_buf();
-    driver.settings.lane_mail_cli = root.join("project/.agents/skills/mailbox/scripts/lane-mail");
-    let mail = worktree.join("tmp/lane-mail/KEN-1");
-    std::fs::create_dir_all(&mail).unwrap();
-    let directive = |halt: bool| {
-        let body = json!({"id":"d-1","kind":"directive","from":"overseer","halt":halt,"text":"owner directive"});
-        std::fs::write(mail.join("to-lane.jsonl"), format!("{body}\n")).unwrap();
-        std::fs::write(mail.join("to-lane.cursor"), "1\n").unwrap();
-    };
-    directive(true);
-    driver.pass(&state);
-    driver.pass(&state);
-    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
-    directive(false);
-    let asked = driver.pass(&state);
-    let row = format!("restack|{head}|push-base");
-    assert_eq!(
-        driver.baseline.get("resume", "gh-1"),
-        Some(row.as_str()),
-        "{:?}",
-        asked.failed
-    );
-    let clock = FakeClock::new();
-    let tick = orch_runtime::watch::Tick {
-        duty: orch_runtime::schedule::Duty::Wake,
-        now: clock.now(),
-        wall: driver.now,
-        baseline: &driver.baseline,
-        clock: &clock,
-    };
-    let fleet_path = fleet.path();
-    let mut wake = orch_runtime::watch::wake::body(&fleet_path, &driver.settings);
-    directive(true);
-    let held = wake(&tick).unwrap();
-    assert!(held.failed.is_none(), "{:?}", held.failed);
-    assert!(!received.exists());
-    directive(false);
-    let sent = wake(&tick).unwrap();
-    assert!(
-        sent.failed.is_none(),
-        "{:?} {:?}",
-        sent.failed,
-        lines(&sent)
-    );
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let read = loop {
-        if let Ok(text) = std::fs::read_to_string(&received)
-            && !text.is_empty()
-        {
-            break text;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "wake events: {:?}",
-            lines(&sent)
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert!(
-        read.contains(&head) && read.contains("base-publication.md"),
-        "{read}"
-    );
-    assert!(event_lines(&wake(&tick).unwrap()).is_empty());
-    assert_eq!(std::fs::read_to_string(&received).unwrap(), read);
-}
-
 /// A hosted Copilot lane launched with allow-all keeps its session store on
 /// its host: its asking line carries no policy note read from this
 /// machine's store.
@@ -8772,13 +8476,13 @@ fn a_current_codex_failure_ends_a_working_row_but_scrollback_does_not() {
     );
 }
 
-fn wake_stamp(fleet: &Fleet, target: &str, at: u64, resume: Option<&str>) {
+fn wake_stamp(fleet: &Fleet, target: &str, at: u64) {
     let path = orch_runtime::watch::wake::record_path(&fleet.path());
     let mut record: Value = std::fs::read(&path)
         .ok()
         .map(|bytes| serde_json::from_slice(&bytes).unwrap())
         .unwrap_or_else(|| json!({"marks": {}}));
-    record["marks"][target] = json!({"pane": "%1", "server": 1, "unread": "resume", "turns_before": 0, "line_digest": 0, "at": at, "resume": resume, "outcome": {"wake": "delivered", "turns_after": 1}});
+    record["marks"][target] = json!({"pane": "%1", "server": 1, "unread": "resume", "turns_before": 0, "line_digest": 0, "at": at, "outcome": {"wake": "delivered", "turns_after": 1}});
     std::fs::write(path, record.to_string()).unwrap();
 }
 
@@ -8838,9 +8542,9 @@ fn identical_codex_failures(hosted: bool) {
             .unwrap()
             .starts_with("api-error|")
     );
-    wake_stamp(&fleet, "KEN-other", 2, None);
+    wake_stamp(&fleet, "KEN-other", 2);
     assert!(event_lines(&driver.pass(&state)).is_empty());
-    wake_stamp(&fleet, "KEN-1", 2, None);
+    wake_stamp(&fleet, "KEN-1", 2);
     let events: Vec<String> = (0..3)
         .flat_map(|_| event_lines(&driver.pass(&state)))
         .collect();
