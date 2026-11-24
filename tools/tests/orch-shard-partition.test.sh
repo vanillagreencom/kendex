@@ -1732,6 +1732,40 @@ runtime_suites "$TMP/runtime-jarvis-owners" "$TMP/runtime-jarvis-suites"
 check "must-fail: Jarvis's controls, succession-controls and owner-note suites on legs that build nothing name each leg" \
   "$(printf '%s\n' 'Linux linear' 'Linux pi-claude-bridge' 'Linux review-gate')" \
   "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-jarvis-suites")"
+# The run block of one step, split under DIR, found by its `if:` text.
+step_block() { # WORKFLOW STEP DIR ; that block's path, or `no-step` / `two-steps` and status 1
+  local cond block="" f
+  cond="\${{$(step_if "$1" "$2")}}"
+  split_run_blocks "$1" "$3"
+  for f in "$3"/*.cond; do
+    [[ "$(cat "$f")" != "$cond" ]] || { [[ -z "$block" ]] || { printf 'two-steps\n'; return 1; }; block="${f%.cond}.sh"; }
+  done
+  [[ -n "$block" ]] || { printf 'no-step\n'; return 1; }
+  printf '%s\n' "$block"
+}
+# The selection step both the lockfile check and the targets step read, run
+# in DIR/work over RUST_TARGETS as the changes job published it, its step
+# outputs left in DIR/selection.out for the step under test to take as its
+# env. The tree holds a third runtime beside both shipped ones, which a
+# fallback that discovers no runtime from the tree leaves out, and a skill
+# with no runtime, which discovery must leave out.
+SELECTION_STEP="the package runtimes the reach selects"
+runtime_selection() { # WORKFLOW RUST_TARGETS DIR ; nothing, or the refusal and status 1
+  local block package
+  block="$(step_block "$1" "$SELECTION_STEP" "$3/selection-blocks")" || { printf 'selection-%s\n' "$block"; return 1; }
+  for package in agent-runtime orch third; do
+    mkdir -p "$3/work/skills/$package/runtime"
+    : > "$3/work/skills/$package/runtime/Cargo.toml"
+  done
+  mkdir -p "$3/work/skills/linear/scripts" "$3/work/tools"
+  ln -s "$ROOT/tools/ci-job-set" "$3/work/tools/ci-job-set"
+  : > "$3/selection.out"
+  (cd "$3/work" && RUST_TARGETS="$2" GITHUB_OUTPUT="$3/selection.out" "$BASH" "$block") >"$3/selection.log" 2>&1 ||
+    { printf 'selection-refused\n'; return 1; }
+}
+selection_output() { # DIR NAME ; that output's value
+  sed -n "s/^$2=//p" "$1/selection.out"
+}
 TARGETS_STEP="the package runtimes' Rust targets"
 targets_runs() { # WORKFLOW SHARD OS RUST_TARGETS ; whether the targets step runs on that leg
   gh_eval value "$(jq -cn --arg shard "$2" --arg os "$3" --arg targets "$4" \
@@ -1748,14 +1782,10 @@ check "the runtimes' targets run on the orch-rest Linux leg where a target is li
 # each listing as libtest does; the bin targets list no test, as both
 # runtimes' do, and only orch holds a doctest.
 targets_step() { # WORKFLOW RUST_TARGETS FAILING ; `green|red: unit,...` with the units run, sorted
-  local run cond block="" f package
+  local run block package
   run="$(mktemp -d "$TMP/targets-step.XXXXXX")" || exit 1
-  cond="\${{$(step_if "$1" "$TARGETS_STEP")}}"
-  split_run_blocks "$1" "$run/blocks"
-  for f in "$run"/blocks/*.cond; do
-    [[ "$(cat "$f")" != "$cond" ]] || { [[ -z "$block" ]] || { printf 'two-steps\n'; return 0; }; block="${f%.cond}.sh"; }
-  done
-  [[ -n "$block" ]] || { printf 'no-step\n'; return 0; }
+  block="$(step_block "$1" "$TARGETS_STEP" "$run/blocks")" || { printf '%s\n' "$block"; return 0; }
+  runtime_selection "$1" "$2" "$run" || return 0
   mkdir -p "$run/bin" "$run/runner" "$run/tmp" "$run/work/skills/orch/tests" "$run/work/skills/github/scripts"
   ln -s "$ROOT/skills/orch/tests/run-all.sh" "$run/work/skills/orch/tests/run-all.sh"
   ln -s "$ROOT/skills/orch/tests/lib" "$run/work/skills/orch/tests/lib"
@@ -1809,7 +1839,7 @@ esac
 exit 0
 STUB
   chmod +x "$run/bin/cargo" "$run/bin/lists-tests" "$run/bin/lists-none"
-  for package in agent-runtime orch; do
+  for package in agent-runtime orch third; do
     mkdir -p "$run/work/skills/$package/tests/privacy"
     printf 'printf "%%s\\n" "%s privacy" >> "$STUB_RAN"\ncase ",$STUB_FAILING," in *",%s privacy,"*) echo "pass: 0  fail: 1"; exit 1 ;; esac\necho "pass: 1  fail: 0"\n' \
       "$package" "$package" > "$run/work/skills/$package/tests/privacy/privacy-cases.sh"
@@ -1817,7 +1847,8 @@ STUB
   : > "$run/ran"
   if (cd "$run/work" && env -u RUN_ALL_NATIVE_CONTRACTS -u RUN_ALL_SUITE_SECS -u RUN_ALL_DEADLINE_EPOCH \
     -u RUN_ALL_REVIEW_SECS -u RUN_ALL_PENDING_SUITES PATH="$run/bin:$PATH" TMPDIR="$run/tmp" \
-    RUNNER_TEMP="$run/runner" RUST_TARGETS="$2" STUB_FAILING="$3" STUB_RAN="$run/ran" STUB_BIN="$run/bin" \
+    RUNNER_TEMP="$run/runner" TARGETS="$(selection_output "$run" targets)" \
+    PACKAGES="$(selection_output "$run" packages)" STUB_FAILING="$3" STUB_RAN="$run/ran" STUB_BIN="$run/bin" \
     "$BASH" "$block") >"$run/log" 2>&1; then
     printf 'green: '
   else
@@ -1826,12 +1857,13 @@ STUB
   LC_ALL=C sort "$run/ran" | paste -sd, -
 }
 LISTED='agent-runtime --test controller,agent-runtime privacy,orch --doc,orch --lib,orch privacy'
+BOTH_WHOLE='agent-runtime --lib,agent-runtime --test one,agent-runtime --test two,agent-runtime privacy,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy'
 while IFS='|' read -r label targets failing expected; do
   check "the targets step: $label" "$expected" "$(targets_step "$WORKFLOW" "$targets" "$failing")"
 done <<TARGETS
 every listed unit passes, the doctests of a listed lib among them|["agent-runtime/controller","orch/lib"]||green: $LISTED
 a whole manifest runs each test executable that lists a test, and its doctests|["orch/*"]||green: orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
-no classifier ran, so both whole manifests run|||green: agent-runtime --lib,agent-runtime --test one,agent-runtime --test two,agent-runtime privacy,orch --doc,orch --lib,orch --test one,orch --test two,orch privacy
+no classifier ran, so every runtime the tree has runs whole|||green: $BOTH_WHOLE,third --lib,third --test one,third --test two,third privacy
 a failed target reds the step|["agent-runtime/controller","orch/lib"]|agent-runtime --test controller|red: $LISTED
 a failed privacy harness reds the step|["agent-runtime/controller","orch/lib"]|orch privacy|red: $LISTED
 a failed fmt or clippy reds the step and stops no unit|["agent-runtime/controller","orch/lib"]|agent-runtime fmt,orch clippy|red: $LISTED
@@ -1842,6 +1874,100 @@ plant "$WORKFLOW" "            exit 1" "            :" "$TMP/targets-unfailed.ym
   "skill-suites-shard/$TARGETS_STEP" line
 check "must-fail: a failed list that ends without exit 1 leaves a failed target's step green" "green: $LISTED" \
   "$(targets_step "$TMP/targets-unfailed.yml" '["agent-runtime/controller","orch/lib"]' 'agent-runtime --test controller')"
+
+# The runtimes' lockfiles against their dependency policy: which legs install
+# cargo-deny, on which events, and that the check runs exactly where it was
+# installed. A merge group's Linux leg holds it under CI, and the night, which
+# runs no Linux shard, holds it on its macOS leg.
+DENY_INSTALL_STEP="cargo-deny, the pinned release"
+DENY_STEP="the package runtimes' lockfiles, held to their dependency policy"
+deny_installs() { # WORKFLOW SHARD OS EVENT RUST_TARGETS ; whether the install step runs on that leg
+  gh_eval value "$(jq -cn --arg shard "$2" --arg os "$3" --arg event "$4" --arg targets "$5" \
+    '{matrix: {shard: $shard}, runner: {os: $os}, github: {event_name: $event}, needs: {changes: {outputs: {rust_targets: $targets}}}}')" \
+    "$(step_if "$1" "$DENY_INSTALL_STEP")"
+}
+while IFS='|' read -r label shard os event targets expected; do
+  check "the lockfile policy installs: $label" "$expected" "$(deny_installs "$WORKFLOW" "$shard" "$os" "$event" "$targets")"
+done <<'DENY_LEGS'
+a merge group's orch-rest Linux leg, a target listed|orch-rest|Linux|merge_group|["orch/lib"]|true
+a merge group whose changes job published no list|orch-rest|Linux|merge_group||true
+a main push owing a target|orch-rest|Linux|push|["agent-runtime/lib"]|true
+a merge group whose reach holds no target|orch-rest|Linux|merge_group|[]|false
+a merge group's macOS orch-rest leg, which the Linux leg covers|orch-rest|macOS|merge_group|["orch/lib"]|false
+the night, on its macOS orch-rest leg|orch-rest|macOS|schedule||true
+a manual dispatch, on its macOS orch-rest leg|orch-rest|macOS|workflow_dispatch||true
+another shard|orch-state|Linux|merge_group|["orch/lib"]|false
+DENY_LEGS
+for outcome in success skipped failure; do
+  check "the lockfile check runs where the install's outcome is $outcome: $([[ $outcome == success ]] && echo yes || echo no)" \
+    "$([[ $outcome == success ]] && echo true || echo false)" \
+    "$(gh_eval value "{\"steps\":{\"cargo-deny\":{\"outcome\":\"$outcome\"}}}" "$(step_if "$WORKFLOW" "$DENY_STEP")")"
+done
+plant "$WORKFLOW" " || github.event_name == 'schedule'" "" "$TMP/deny-no-night.yml" "skill-suites-shard/$DENY_INSTALL_STEP"
+check "must-fail: an install condition without the schedule leaves the night unchecked" false \
+  "$(deny_installs "$TMP/deny-no-night.yml" orch-rest macOS schedule '')"
+# The check step's own body, over the selection step and a stub cargo that
+# answers `cargo deny` for each manifest: which packages it holds to which
+# policy, and whether the step ends red.
+deny_step() { # WORKFLOW RUST_TARGETS FAILING ; `green|red: <package> <policy>,...` for each package checked, sorted
+  local run block package
+  run="$(mktemp -d "$TMP/deny-step.XXXXXX")" || exit 1
+  block="$(step_block "$1" "$DENY_STEP" "$run/blocks")" || { printf '%s\n' "$block"; return 0; }
+  runtime_selection "$1" "$2" "$run" || return 0
+  mkdir -p "$run/bin"
+  cp "$ROOT/skills/agent-runtime/runtime/deny.toml" "$run/work/skills/agent-runtime/runtime/deny.toml"
+  # A package fails where FAILING names it; a policy path naming no file is
+  # recorded as missing, as cargo-deny refuses a config it cannot read.
+  cat > "$run/bin/cargo" <<'STUB'
+#!/usr/bin/env bash
+[[ "$1" == deny ]] || exit 0
+shift
+manifest="" config=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --manifest-path) manifest="$2"; shift ;;
+    --config) config="$2"; shift ;;
+  esac
+  shift
+done
+package="${manifest#skills/}"
+package="${package%%/*}"
+[[ -f "$config" ]] || config="missing:$config"
+printf '%s %s\n' "$package" "$config" >> "$STUB_RAN"
+case ",$STUB_FAILING," in *",$package,"*) echo 'licenses FAILED'; exit 4 ;; esac
+echo 'advisories ok, bans ok, licenses ok, sources ok'
+STUB
+  chmod +x "$run/bin/cargo"
+  : > "$run/ran"
+  if (cd "$run/work" && PATH="$run/bin:$PATH" PACKAGES="$(selection_output "$run" packages)" STUB_FAILING="$3" \
+    STUB_RAN="$run/ran" "$BASH" "$block") >"$run/log" 2>&1; then
+    printf 'green: '
+  else
+    printf 'red: '
+  fi
+  LC_ALL=C sort "$run/ran" | paste -sd, -
+}
+DENY_POLICY=skills/agent-runtime/runtime/deny.toml
+BOTH_HELD="agent-runtime $DENY_POLICY,orch $DENY_POLICY"
+while IFS='|' read -r label targets failing expected; do
+  check "the lockfile check: $label" "$expected" "$(deny_step "$WORKFLOW" "$targets" "$failing")"
+done <<DENY_BODY
+a listed target holds its own package alone|["orch/lib"]||green: orch $DENY_POLICY
+targets of both packages hold each once|["agent-runtime/controller","agent-runtime/lib","orch/*"]||green: $BOTH_HELD
+a failed package reds the step and stops no other|["agent-runtime/lib","orch/lib"]|agent-runtime|red: $BOTH_HELD
+DENY_BODY
+plant "$WORKFLOW" "failed packages=\${failed# }\" >&2; exit 1; }" "failed packages=\${failed# }\" >&2; }" \
+  "$TMP/deny-unfailed.yml" "skill-suites-shard/$DENY_STEP"
+check "must-fail: a failed package that ends without exit 1 leaves the step green" "green: $BOTH_HELD" \
+  "$(deny_step "$TMP/deny-unfailed.yml" '["agent-runtime/lib","orch/lib"]' agent-runtime)"
+# Both steps hold the set the selection step reads, so a fallback written
+# out by hand in place of the tree's discovery leaves the third runtime out
+# of both together where no list was published.
+plant "$WORKFLOW" '"$(tools/ci-job-set --all-rust-targets)"' "'[\"agent-runtime/*\",\"orch/*\"]'" \
+  "$TMP/selection-literal.yml" "skill-suites-shard/$SELECTION_STEP"
+check "must-fail: a hand-written fallback leaves a runtime out of the lockfile check and the targets step alike" \
+  "green: $BOTH_HELD|green: $BOTH_WHOLE" \
+  "$(deny_step "$TMP/selection-literal.yml" '' '')|$(targets_step "$TMP/selection-literal.yml" '' '')"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.

@@ -1,0 +1,32 @@
+# The dependency policy of the package runtimes, agent-runtime and
+# orch-runtime: cargo-deny holds each one's Cargo.lock to it in kendex's CI
+# (.github/workflows/skill-tests.yml, the orch-rest leg). orch-runtime builds
+# on this crate by path, so its lockfile is held to the same policy rather
+# than to a copy. A setting this file leaves out keeps cargo-deny's default:
+# a vulnerability or unmaintained advisory on any crate, and an unsound one
+# on a direct dependency, is an error, and a yanked version a warning.
+
+# Every license either lockfile resolves today, each permissive and
+# compatible with the MIT both crates ship under. A dependency that brings
+# another stops the check until review adds it here.
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+# orch-runtime names this crate by path, with no version; a private crate's
+# path dependency is not the `*` requirement this refuses.
+[bans]
+wildcards = "deny"
+allow-wildcard-paths = true
+
+# crates.io alone: cargo-deny only warns on any other registry or a git
+# source by default.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
