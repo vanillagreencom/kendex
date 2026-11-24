@@ -558,7 +558,7 @@ pub(super) fn open_restack(
                 return Ok(None);
             }
             if state.is_none()
-                && let Some(landing) = RestackLanding::read(&doc, &lane.item, worktree)?
+                && let Some(landing) = RestackLanding::read_hosted(&doc, &lane.item, worktree)?
             {
                 state = Some((landing, doc));
             }

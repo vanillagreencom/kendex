@@ -313,7 +313,9 @@ mod push {
     #[test]
     fn guarded_unpublished_restack_holds_the_bound_codex_stop_until_publication() {
         let repo = Repo::new("KEN-1", "");
-        repo.record(json!({}));
+        let alias = repo.root.join("worktree-alias");
+        std::os::unix::fs::symlink(&repo.wt, &alias).unwrap();
+        repo.record(json!({"worktree": alias}));
         let original = repo.head();
         repo.advance("base-moved");
         let admit = repo.op(
@@ -359,10 +361,14 @@ mod push {
             .output()
             .unwrap();
         assert_eq!(stop.status.code(), Some(2), "{}", stderr(&stop));
-        assert!(stderr(&stop).contains(&format!(
-            "landing-step=restack-before-push head={}",
-            repo.head()
-        )));
+        assert!(
+            stderr(&stop).contains(&format!(
+                "landing-step=restack-before-push head={}",
+                repo.head()
+            )),
+            "{}",
+            stderr(&stop)
+        );
 
         let push = repo.op(json!({"op":"record-push","mode":"branch","worktree":repo.wt,"args":["--set-upstream"]}));
         assert!(push.status.success(), "{}", stderr(&push));

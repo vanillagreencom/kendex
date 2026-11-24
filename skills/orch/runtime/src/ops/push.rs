@@ -381,21 +381,28 @@ pub(crate) struct Restacked {
 }
 
 impl RestackLanding {
-    pub(crate) fn read(doc: &Document, item: &str, worktree: &Path) -> Result<Option<Self>> {
+    pub(crate) fn read_hosted(doc: &Document, item: &str, worktree: &Path) -> Result<Option<Self>> {
+        Self::read_bound(doc, || {
+            if doc.get("issue_id").and_then(Value::as_str) != Some(item)
+                || doc.get("worktree").and_then(Value::as_str).map(Path::new) != Some(worktree)
+            {
+                return Err(refuse(
+                    "restack-worktree",
+                    &[
+                        ("item", item),
+                        ("worktree", &worktree.display().to_string()),
+                    ],
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    fn read_bound(doc: &Document, bind: impl FnOnce() -> Result<()>) -> Result<Option<Self>> {
         let Some(value) = doc.get(LANDING) else {
             return Ok(None);
         };
-        if doc.get("issue_id").and_then(Value::as_str) != Some(item)
-            || doc.get("worktree").and_then(Value::as_str).map(Path::new) != Some(worktree)
-        {
-            return Err(refuse(
-                "restack-worktree",
-                &[
-                    ("item", item),
-                    ("worktree", &worktree.display().to_string()),
-                ],
-            ));
-        }
+        bind()?;
         let landing: Self = serde_json::from_value(value.clone())
             .map_err(|e| refuse("restack-landing-unreadable", &[("cause", &e.to_string())]))?;
         let stopped = doc.get("post_pr_stop").and_then(|stop| stop["at"].as_u64());
@@ -449,7 +456,7 @@ pub(crate) fn open_restack(
     item: &str,
     worktree: &Path,
 ) -> Result<Option<Restacked>> {
-    let Some(landing) = RestackLanding::read(doc, item, worktree)? else {
+    let Some(landing) = RestackLanding::read_bound(doc, || bind(doc, item, worktree))? else {
         return Ok(None);
     };
     let map = map_file(worktree)?;

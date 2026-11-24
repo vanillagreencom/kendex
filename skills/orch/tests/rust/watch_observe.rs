@@ -7534,7 +7534,8 @@ fn a_bound_codex_landing_asks_for_one_continuation_until_its_push() {
         "Type a prompt",
     );
     assert!(!asked(&driver.pass(&state)));
-    std::fs::remove_file(map).unwrap();
+    let map_text = std::fs::read_to_string(&map).unwrap();
+    std::fs::remove_file(&map).unwrap();
     let clock = FakeClock::new();
     let tick = orch_runtime::watch::Tick {
         duty: orch_runtime::schedule::Duty::Wake,
@@ -7546,6 +7547,65 @@ fn a_bound_codex_landing_asks_for_one_continuation_until_its_push() {
     let wake = orch_runtime::watch::wake::body(&fleet.path(), &driver.settings)(&tick).unwrap();
     assert!(event_lines(&wake).is_empty());
     assert!(!orch_runtime::watch::wake::record_path(&fleet.path()).exists());
+
+    std::fs::write(&map, map_text).unwrap();
+    wake_stamp(&fleet, "KEN-1", driver.now, Some(&request));
+    redraw(
+        &server,
+        &pane,
+        &root,
+        "restack-api-error.txt",
+        CODEX_LIVE_FAILURE,
+        "not supported",
+    );
+    let failed = driver.pass(&state);
+    let retry = driver.baseline.get("resume", "gh-1").unwrap().to_owned();
+    assert!(
+        retry.starts_with("api-error|"),
+        "{retry}: {:?}",
+        event_lines(&failed)
+    );
+    let at = driver.now;
+    wake_stamp(&fleet, "KEN-1", at, Some(&retry));
+    let repeated = driver.pass(&state);
+    assert_eq!(
+        event_lines(&repeated),
+        ["EVENT idle-after-return gh-1 cause=api-error"]
+    );
+    assert!(
+        driver
+            .baseline
+            .get("resume", "gh-1")
+            .unwrap()
+            .starts_with("told|")
+    );
+    redraw(
+        &server,
+        &pane,
+        &root,
+        "restack-retry-finished.txt",
+        "› finished the retry\n› Type a prompt\n",
+        "Type a prompt",
+    );
+    let _ = driver.pass(&state);
+    assert_eq!(driver.baseline.get("resume", "gh-1"), None);
+    assert!(!asked(&driver.pass(&state)));
+    redraw(
+        &server,
+        &pane,
+        &root,
+        "restack-later-api-error.txt",
+        CODEX_LIVE_FAILURE,
+        "not supported",
+    );
+    let _ = driver.pass(&state);
+    assert!(
+        driver
+            .baseline
+            .get("resume", "gh-1")
+            .unwrap()
+            .starts_with("api-error|")
+    );
 }
 
 #[test]
@@ -8712,13 +8772,13 @@ fn a_current_codex_failure_ends_a_working_row_but_scrollback_does_not() {
     );
 }
 
-fn wake_stamp(fleet: &Fleet, target: &str, at: u64) {
+fn wake_stamp(fleet: &Fleet, target: &str, at: u64, resume: Option<&str>) {
     let path = orch_runtime::watch::wake::record_path(&fleet.path());
     let mut record: Value = std::fs::read(&path)
         .ok()
         .map(|bytes| serde_json::from_slice(&bytes).unwrap())
         .unwrap_or_else(|| json!({"marks": {}}));
-    record["marks"][target] = json!({"pane": "%1", "server": 1, "unread": "resume", "turns_before": 0, "line_digest": 0, "at": at, "outcome": {"wake": "delivered", "turns_after": 1}});
+    record["marks"][target] = json!({"pane": "%1", "server": 1, "unread": "resume", "turns_before": 0, "line_digest": 0, "at": at, "resume": resume, "outcome": {"wake": "delivered", "turns_after": 1}});
     std::fs::write(path, record.to_string()).unwrap();
 }
 
@@ -8778,9 +8838,9 @@ fn identical_codex_failures(hosted: bool) {
             .unwrap()
             .starts_with("api-error|")
     );
-    wake_stamp(&fleet, "KEN-other", 2);
+    wake_stamp(&fleet, "KEN-other", 2, None);
     assert!(event_lines(&driver.pass(&state)).is_empty());
-    wake_stamp(&fleet, "KEN-1", 2);
+    wake_stamp(&fleet, "KEN-1", 2, None);
     let events: Vec<String> = (0..3)
         .flat_map(|_| event_lines(&driver.pass(&state)))
         .collect();

@@ -1496,13 +1496,13 @@ fn observe_one(
                 }
             };
             let prior = get("lane-idle").unwrap_or_default();
-            let confirmed_wake = wakes.get(&obs.lane.item).and_then(|mark| {
+            let delivered = wakes.get(&obs.lane.item).filter(|mark| {
                 matches!(
                     mark.outcome,
                     Some(crate::ops::wake::WakeOutcome::Delivered { .. })
                 )
-                .then(|| format!("Some({})", mark.at))
             });
+            let confirmed_wake = delivered.map(|mark| format!("Some({})", mark.at));
             // The latest mark can replace a delivery with a limit. Keep
             // the wake stamp already seen for this pane in that case.
             let wake_at = confirmed_wake
@@ -1563,14 +1563,23 @@ fn observe_one(
                 // end is told and its row asks nothing more. A finished
                 // return ends the chain.
                 let api_error = cause.as_deref() == Some("api-error");
-                let asked = get(wake::RESUME_KIND)
+                let resume = get(wake::RESUME_KIND);
+                let asked = resume
+                    .as_deref()
                     .is_some_and(|row| matches!(row.split('|').next(), Some("api-error" | "told")));
-                if api_error && !asked && restack.is_none() && wake::reaches(obs.lane, caps) {
+                // Until delivery, the dedicated resume owns this row. A
+                // delivered restack leaves the generic API retry independent.
+                let restack_waiting = restack.is_some()
+                    && resume.as_deref().is_some_and(|row| {
+                        row.starts_with("restack|")
+                            && delivered.and_then(|mark| mark.resume.as_deref()) != Some(row)
+                    });
+                if api_error && !asked && !restack_waiting && wake::reaches(obs.lane, caps) {
                     out.changes
                         .push(set(wake::RESUME_KIND, lane, format!("api-error|{key}")));
                     return reading;
                 }
-                if restack.is_none() && !api_error {
+                if !restack_waiting && !api_error {
                     out.changes.push(clear(wake::RESUME_KIND, lane));
                 } else if api_error && asked {
                     out.changes
