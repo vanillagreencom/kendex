@@ -471,7 +471,7 @@ class OwnerAsks:
             self.session.write(state)
         if (not isinstance(state, dict) or state.get("v") != 1 or state.get("home") != self.session.home or not printable(state.get("homeId"))
                 or type(state.get("sequence")) is not int or not isinstance(state.get("deltas"), dict)
-                or not isinstance(state.get("requests"), dict)):
+                or not isinstance(state.get("requests"), dict) or not isinstance(state.get("pageSnapshots", {}), dict)):
             raise Unavailable("The main home's owner-action record could not be read.")
         return state
 
@@ -505,27 +505,37 @@ class OwnerAsks:
         return "checking" if delta.get("checking") else "open", None
 
     def page(self, state, view, cursor):
-        rows, _, revision, now = self.current(state)
-        ordered = sorted(rows.values(), key=lambda row: (instant(row["askedAt"]), row["id"]))
-        active = [row for row in ordered if row["state"] != "snoozed"]
-        snoozed = [row for row in ordered if row["state"] == "snoozed"]
-        selected = active if view == "active" else snoozed
+        snapshots = state.setdefault("pageSnapshots", {})
         offset = 0
-        if cursor is not None:
+        if cursor is None:
+            rows, _, revision, now = self.current(state)
+            ordered = sorted(rows.values(), key=lambda row: (instant(row["askedAt"]), row["id"]))
+            active = [row for row in ordered if row["state"] != "snoozed"]
+            snoozed = [row for row in ordered if row["state"] == "snoozed"]
+            # A refresh replaces its cursor even when the evidence revision
+            # used by actions is unchanged.
+            snapshot = {"cursorRevision": uuid.uuid4().hex, "sequence": state["sequence"],
+                        "revision": revision, "observedAt": iso(now), "activeCount": len(active),
+                        "snoozedCount": len(snoozed), "rows": active if view == "active" else snoozed}
+        else:
             try:
                 decoded = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                if (decoded[:3] != [state["homeId"], revision, view] or len(decoded) != 4
-                        or type(decoded[3]) is not int or not 0 < decoded[3] < len(selected)):
+                snapshot = snapshots[view]
+                if (decoded[:3] != [state["homeId"], snapshot["cursorRevision"], view] or len(decoded) != 4
+                        or snapshot["sequence"] != state["sequence"]
+                        or type(decoded[3]) is not int or not 0 < decoded[3] < len(snapshot["rows"])):
                     raise ValueError("cursor")
                 offset = decoded[3]
-            except (ValueError, TypeError, UnicodeError, IndexError):
+            except (ValueError, TypeError, UnicodeError, IndexError, KeyError):
                 raise Unavailable("The page cursor is stale or invalid; refresh from the first page.")
 
+        selected = snapshot["rows"]
+
         def result(end):
-            next_cursor = (base64.urlsafe_b64encode(encoded([state["homeId"], revision, view, end]).encode()).decode()
+            next_cursor = (base64.urlsafe_b64encode(encoded([state["homeId"], snapshot["cursorRevision"], view, end]).encode()).decode()
                            if end < len(selected) else None)
-            return {"v": 1, "homeId": state["homeId"], "revision": revision, "observedAt": iso(now),
-                    "activeCount": len(active), "snoozedCount": len(snoozed), "rows": selected[offset:end],
+            return {"v": 1, "homeId": state["homeId"], "revision": snapshot["revision"], "observedAt": snapshot["observedAt"],
+                    "activeCount": snapshot["activeCount"], "snoozedCount": snapshot["snoozedCount"], "rows": selected[offset:end],
                     "nextCursor": next_cursor, "complete": next_cursor is None}
 
         end = min(offset + PAGE_ROWS, len(selected))
@@ -535,6 +545,14 @@ class OwnerAsks:
             page = result(end)
         if end == offset and offset < len(selected) or len(encoded(page).encode()) + 1 > PAGE_BYTES:
             raise Unavailable("An individual owner ask exceeds the page byte limit.")
+        if cursor is None:
+            retained = {name: previous for name, previous in snapshots.items()
+                        if name != view and previous["revision"] == snapshot["revision"]}
+            if not page["complete"]:
+                retained[view] = snapshot
+            if retained != snapshots:
+                state["pageSnapshots"] = retained
+                self.session.write(state)
         return page
 
     def receipt(self, request, kind, state, cause=""):

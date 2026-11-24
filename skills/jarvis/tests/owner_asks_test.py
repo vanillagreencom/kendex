@@ -175,9 +175,13 @@ class CanonicalFixture:
     OUTCOMES entry, True, False or an exception, answers one delivery."""
     def __init__(self, home, count=1):
         self.data = projection(home, count)
+        self.collections = 0
         self.deliveries, self.outcomes = [], []
 
-    def stable(self):
+    stable = owner_asks.Sources.stable
+
+    def collect(self):
+        self.collections += 1
         return copy.deepcopy(self.data)
 
     def deliver(self, route, body, key, retry):
@@ -265,25 +269,57 @@ class OwnerAsksContract(unittest.TestCase):
     def test_complete_row_and_byte_paging_and_stale_cursors(self):
         self.source.data = projection(str(self.home), 70)
         first = self.page()
+        self.assertEqual(self.source.collections, 2)
+        self.now += 1
         ids = []
-        page = first
-        while True:
+        pages = [first]
+        for _ in range(2):
+            cursor = pages[-1]["nextCursor"]
+            self.assertIsNotNone(cursor)
+            pages.append(self.page(cursor=cursor, owner=self.new_owner()))
+            self.assertNotEqual(pages[-1]["nextCursor"], cursor)
+        self.assertEqual(self.source.collections, 2)
+        for page in pages:
             self.assertLessEqual(len(page["rows"]), 32)
             self.assertLessEqual(len(owner_asks.encoded(page).encode()) + 1, 16 * 1024)
             self.assertEqual(page["activeCount"], 70)
             self.assertEqual(page["revision"], first["revision"])
+            self.assertEqual(page["observedAt"], first["observedAt"])
             ids.extend(row["id"] for row in page["rows"])
-            if page["complete"]:
-                self.assertIsNone(page["nextCursor"])
-                break
-            cursor = page["nextCursor"]
-            page = self.page(cursor=cursor)
-            self.assertNotEqual(page["nextCursor"], cursor)
+        self.assertEqual([page["complete"] for page in pages], [False, False, True])
+        self.assertIsNone(pages[-1]["nextCursor"])
+        self.assertEqual(len(ids), 70)
         self.assertEqual(len(set(ids)), 70)
         self.assertEqual(self.page("snoozed")["revision"], first["revision"])
-        self.source.data["tracker"]["requests"][0]["comment"]["body"] += " changed"
+        self.assertEqual(self.page(cursor=first["nextCursor"]), pages[1])
+        self.assertEqual(self.source.collections, 4)
+
+        refreshed = self.page()
+        self.assertEqual(refreshed["revision"], first["revision"])
+        self.assertEqual(self.source.collections, 6)
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=first["nextCursor"])
+        self.assertEqual(self.source.collections, 6)
+
+        self.source.data["tracker"]["requests"].pop()
+        other_view = self.page("snoozed")
+        self.assertEqual(other_view["activeCount"], 69)
+        self.assertNotEqual(other_view["revision"], refreshed["revision"])
+        self.assertEqual(self.source.collections, 8)
+        with self.assertRaises(owner_asks.Unavailable):
+            self.page(cursor=refreshed["nextCursor"])
+        self.assertEqual(self.source.collections, 8)
+
+        updated = self.page()
+        self.assertEqual(updated["revision"], other_view["revision"])
+        self.assertEqual(self.source.collections, 10)
+        snooze = self.later(updated["rows"][0], "hide-row", until=owner_asks.iso(self.now + 3600))
+        self.assertEqual(snooze["kind"], "accepted")
+        self.assertEqual(self.source.collections, 12)
+        with self.assertRaises(owner_asks.Unavailable):
+            self.page(cursor=updated["nextCursor"])
+        self.assertEqual(self.source.collections, 12)
+
         self.source.data = projection(str(self.home))
         self.source.data["tracker"]["requests"][0]["comment"]["body"] = "x" * (16 * 1024)
         with self.assertRaises(owner_asks.Unavailable):

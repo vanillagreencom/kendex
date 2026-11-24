@@ -33,9 +33,9 @@ Cross-source suppression requires confirmed tracker posting and equality of the 
 
 `scripts/lib/owner_asks.py` declares the page row and encoded byte bounds. A successful page contains `v`, `homeId`, `revision`, `observedAt`, canonical `activeCount` and `snoozedCount`, `rows`, `nextCursor` and `complete`. Each row carries its stable identity, revision, kind, request text, original author and time, HTTP conversation link or a null link, opaque thread reference, current state, snooze time and actions.
 
-The main requires two identical complete canonical evidence collections before computing counts and the common revision. It retains no source snapshot. Its revision binds that observed evidence and its own action deltas; it is not an upstream transaction identifier. A changed or incomplete read, an unread configured source, the command deadline or an oversized individual row returns structured unavailability with no counts. There is no added backlog cardinality cutoff or guarantee that an unrestricted backlog completes before the caller's existing deadline.
+The main requires two identical complete canonical evidence collections on a request without a cursor. It computes the counts and public revision from that evidence and its own action deltas. It saves the rows and metadata needed for the view's remaining pages. Those pages use that observation time and counts without reading the sources again. A changed or incomplete read, an unread configured source, the command deadline or an oversized individual row returns structured unavailability with no counts. There is no added backlog cardinality cutoff or guarantee that an unrestricted backlog completes before the caller's existing deadline.
 
-Rows sort by original asked-at time, then identity. A cursor binds the home, revision, view and next position. A revision change invalidates an earlier cursor.
+Rows sort by original asked-at time, then identity. A cursor binds the home, view, refresh revision and next position. A successful refresh invalidates earlier cursors for its view and cursors in either view with a different public revision. An accepted Done or Later invalidates cursors in both views.
 
 - Refresh from the first pages after a stale-cursor result.
 
