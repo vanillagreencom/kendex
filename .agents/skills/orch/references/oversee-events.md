@@ -890,7 +890,12 @@ A refused `write`:
 
    Leave an existing project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. Where the read or update fails, write no `triaged` record for that item.
 
-9. Route each valid kept item or cancel it. Then record its verdict: write `{"issue":"[ID]","verdict":"[kept|canceled]","reason":"[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool, and run `.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"triage","file":"tmp/triage-verdict-[ID].json"}'`.
+9. Apply each valid verdict before recording it.
+   - For a kept verdict, read the item's live `state_type` with `linear.sh issues get [ID]`. Leave its state alone if the type is readable and already outside `triage`.
+   - If the type is `triage`, read the issue team's live states with `linear.sh statuses list --team "[TEAM]"`. Choose a state of type `unstarted` (Todo), falling back to type `backlog` if the team has no `unstarted` state. Run `linear.sh issues update [ID] --state "[STATE_NAME]" --format compact` with the chosen state name. Require the response to show that state and type.
+   - For a canceled verdict, cancel the item.
+   - Leave the verdict unrecorded if a required read or update fails, a required state is unreadable, or neither destination type is available for a kept item in `triage`.
+   - After the required routing succeeds, record the verdict. Write `{"issue":"[ID]","verdict":"[kept|canceled]","reason":"[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool, and run `.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-overseer-ledger","entry":"triage","file":"tmp/triage-verdict-[ID].json"}'`.
 
 ### `outside-contribution`
 
