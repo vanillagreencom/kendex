@@ -79,6 +79,7 @@
 
 1. Before settling an owner thread, follow [Bind the request](#2-bind-the-request).
 2. On the same tracker item, record the current decision, evidence or explicit unknown, existing attempt reference, unresolved next action and responsible actor.
+   - Exclude the work's next action from the handoff's State.
    - Apply [State retention](../references/long-session.md#state-retention) to the handoff.
    - For an external wait, retain its condition, evidence source and trigger or review date.
    - For an answer or result awaiting acceptance, retain the acceptance action.
