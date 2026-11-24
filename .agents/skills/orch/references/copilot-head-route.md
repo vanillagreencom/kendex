@@ -86,7 +86,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "
 ```
 
 - A `head=` other than `[HEAD_SHA]` restarts this route from its Copilot wait, review call and reviews read.
-- Exit `1` with `suppressed-entry` lines starts a triage pass. Save `[HEAD_SHA]` as `[BODY_REVIEW_HEAD]` in the new pass's context, then loop to [review-pr-comments.md](../workflows/review-pr-comments.md) § 2.
+- On exit `1` with `suppressed-entry` lines, apply [submit-pr.md § 2's quick-change triage rule](../workflows/submit-pr.md#2-push-and-submit) before the triage pass. Save `[HEAD_SHA]` as `[BODY_REVIEW_HEAD]` in the new pass's context, then loop to [review-pr-comments.md](../workflows/review-pr-comments.md) § 2.
   - Each entry is an item: `source_type: "review-body"`, `source_id` the entry's token, and the finding's text from the review at `[BODY_REVIEW_HEAD]` in the reviews read.
   - Carry that head with each entry's source identity through analysis, reporting and publication. A later head read or fix push never replaces it.
   - The pass runs that workflow's §§ 5-6: Recurrence before the cap, the fix set, verification and the cause records included. That workflow's § 6.3 posts the body replies and counts the pass once.
@@ -138,7 +138,7 @@ On a `complete` reply, compare its `head` with `[HEAD_SHA]`.
 | `timeout` | none | **Silent head** |
 | any other | any | **Caller's wait** |
 
-- **Open threads.** Update the baseline, and loop to review-pr-comments.md § 1 for each open thread this triage has not answered, as its § 6.3 does. This route then routes the head again, with one exception:
+- **Open threads.** Apply [submit-pr.md § 2's quick-change triage rule](../workflows/submit-pr.md#2-push-and-submit) before the triage pass. Update the baseline, and loop to review-pr-comments.md § 1 for each open thread this triage has not answered, as its § 6.3 does. This route then routes the head again, with one exception:
   - The call answers `comments` while any thread stands open. Where every open thread is one review-pr-comments.md § 7.1 keeps open for a human, every repeat answers `comments` until the human answers.
   - On such a `comments`, end this route and leave the head to the caller's own review wait.
 - **Re-request approved.** Run the body check. On its exit `0`, send the notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]`.
