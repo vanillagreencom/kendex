@@ -8,7 +8,7 @@ MAILBOX_LIB="$JARVIS_LIB/../../../mailbox/scripts/lib"
 source "$MAILBOX_LIB/kendex-env.sh"
 
 jarvis_load() {
-  kendex_load_project_env "$1" -- JARVIS_CONTROL_HOST JARVIS_CONTROL_USER JARVIS_FORWARD_CONFIRM JARVIS_LOG_DIR JARVIS_MAIN_HOST JARVIS_REMOTE_HOSTS JARVIS_REPO_ALIASES JARVIS_STYLE JARVIS_TECHNICAL JARVIS_UNATTENDED_HARNESSES JARVIS_VOICE_REMIND_SECS JARVIS_WAKE_SETTLE_SECS ORCH_REPORT_EVERY_MINUTES || return 1
+  kendex_load_project_env "$1" -- COMMUNICATION_TECHNICAL JARVIS_CONTROL_HOST JARVIS_CONTROL_USER JARVIS_FORWARD_CONFIRM JARVIS_LOG_DIR JARVIS_MAIN_HOST JARVIS_REMOTE_HOSTS JARVIS_REPO_ALIASES JARVIS_STYLE JARVIS_UNATTENDED_HARNESSES JARVIS_VOICE_REMIND_SECS JARVIS_WAKE_SETTLE_SECS ORCH_REPORT_EVERY_MINUTES || return 1
   export JARVIS_CONTROL_HOST="${JARVIS_CONTROL_HOST:-}"
   export JARVIS_CONTROL_USER="${JARVIS_CONTROL_USER:-}"
   export JARVIS_REMOTE_HOSTS="${JARVIS_REMOTE_HOSTS:-}"
@@ -20,9 +20,9 @@ jarvis_load() {
   export JARVIS_VOICE_REMIND_SECS="${JARVIS_VOICE_REMIND_SECS:-0}"
   # Presentation typos take the default: config also serves mail delivery,
   # which must not stop because a presentation value is unlisted.
-  case "${JARVIS_TECHNICAL:-}" in off | on) ;; *) JARVIS_TECHNICAL=off ;; esac
+  case "${COMMUNICATION_TECHNICAL:-}" in off | on) ;; *) COMMUNICATION_TECHNICAL=off ;; esac
   case "${JARVIS_STYLE:-}" in friendly | concise | fun) ;; *) JARVIS_STYLE=concise ;; esac
-  export JARVIS_TECHNICAL JARVIS_STYLE
+  export COMMUNICATION_TECHNICAL JARVIS_STYLE
 }
 
 # The bound session: the one the native turn end last stamped into the
@@ -87,7 +87,7 @@ jarvis_wall() {
 case "${1:-}" in
   config)
     jarvis_load "$2"
-    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_REPO_ALIASES","JARVIS_MAIN_HOST","JARVIS_FORWARD_CONFIRM","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","JARVIS_VOICE_REMIND_SECS","ORCH_REPORT_EVERY_MINUTES","JARVIS_TECHNICAL","JARVIS_STYLE")}))'
+    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_REPO_ALIASES","JARVIS_MAIN_HOST","JARVIS_FORWARD_CONFIRM","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","JARVIS_VOICE_REMIND_SECS","ORCH_REPORT_EVERY_MINUTES","COMMUNICATION_TECHNICAL","JARVIS_STYLE")}))'
     ;;
   common-root)
     [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }

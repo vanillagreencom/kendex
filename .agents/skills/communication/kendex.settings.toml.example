@@ -1,0 +1,8 @@
+# Owner message wording for orch and Jarvis.
+
+[env]
+
+# Technical detail in messages from orch and Jarvis.
+# Off explains the outcome in plain words. On uses technical terms.
+# values: off | on
+COMMUNICATION_TECHNICAL = "off"

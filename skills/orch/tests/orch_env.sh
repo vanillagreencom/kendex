@@ -100,6 +100,7 @@ cat > "$proj_override/kendex.settings.toml" <<'TOML'
 [env]
 ORCH_USER_MODE = "ceo"
 ORCH_MERGE_AUTONOMY = "ask"
+COMMUNICATION_TECHNICAL = "on"
 TOML
 
 proj_engineer="$TMP_ROOT/proj-engineer"
@@ -117,7 +118,7 @@ got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$ORCH_EN
 assert_eq "$got" "ask" "a silent ladder asks for merge consent"
 got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY auto)"
 assert_eq "$got" "ask" "a silent ladder asks for issue creation"
-got="$(cd "$proj_mode" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE ceo)"
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE engineer)"
 assert_eq "$got" "engineer" "a silent ladder reads back as engineer"
 
 # Test 8b: ceo composes each autonomy key over the caller default.
@@ -148,10 +149,8 @@ assert_eq "$got" "ask" "engineer asks for issue creation"
 got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_ENV" PM_CREATE_AUTONOMY auto)"
 assert_eq "$got" "ask" "an unrecognized mode is treated as engineer"
 
-# Test 13: the same unrecognized value read directly. ../workflows/oversee.md
-# § 3 Launch picks a question template from what this prints, so it reads
-# back as the mode the composition above already took it for.
-got="$(cd "$proj_mode" && ORCH_USER_MODE=CEO "$ORCH_ENV" ORCH_USER_MODE ceo)"
+# Test 13: reading the autonomy mode directly matches the composition.
+got="$(cd "$proj_mode" && ORCH_USER_MODE=CEO "$ORCH_ENV" ORCH_USER_MODE engineer)"
 assert_eq "$got" "engineer" "an unrecognized mode reads back as engineer"
 
 # The inverse: a mode communication-modes.md does define survives the same read.
@@ -159,6 +158,16 @@ assert_eq "$got" "engineer" "an unrecognized mode reads back as engineer"
 # differently from the ladder's own value.
 got="$(cd "$proj_override" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE engineer)"
 assert_eq "$got" "ceo" "a defined mode the ladder sets reads back unchanged"
+
+# Oversee reads Technical separately from the fleet's autonomy mode.
+got="$(cd "$proj_engineer" && env -u COMMUNICATION_TECHNICAL "$ORCH_ENV" COMMUNICATION_TECHNICAL off)"
+assert_eq "$got" "off" "Technical defaults to off under engineer autonomy"
+got="$(cd "$proj_override" && env -u COMMUNICATION_TECHNICAL "$ORCH_ENV" COMMUNICATION_TECHNICAL off)"
+assert_eq "$got" "on" "a project can choose Technical on under ceo autonomy"
+got="$(cd "$proj_override" && COMMUNICATION_TECHNICAL=off "$ORCH_ENV" COMMUNICATION_TECHNICAL off)"
+assert_eq "$got" "off" "the environment can turn Technical off"
+got="$(cd "$proj_override" && COMMUNICATION_TECHNICAL=yes "$ORCH_ENV" COMMUNICATION_TECHNICAL off)"
+assert_eq "$got" "off" "an unlisted Technical value takes the default"
 
 # Overseer startup reads ORCH_OVERSEER_LANES through orch-env. A consumer
 # setting left by the removed train must refuse that unrelated read too.

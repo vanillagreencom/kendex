@@ -37,7 +37,7 @@ Get the issue → dev implements → publication, review and fixes in the order 
   - A round whose only findings are scope or wording asks ends the review: reply, resolve, push nothing, and merge through the gate.
 - **Ask gates.**
   - [communication-modes](references/communication-modes.md) alone decides which questions reach the user.
-  - Word them with [communication](../communication/SKILL.md) under the mode `ORCH_USER_MODE` names.
+  - Use [Presentation](references/communication-modes.md#presentation) for messages to the user.
   - `ORCH_DECISION_MODE` does not change that ask set.
   - Merge asks unless `ORCH_MERGE_AUTONOMY=auto`; under `auto`, merge without asking only when every merge gate is green.
   - In a lane every ask gate is `lane-mail`, never the harness question tool: [skill-rules](references/skill-rules.md) § Coordination.

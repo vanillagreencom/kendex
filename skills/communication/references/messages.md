@@ -7,6 +7,7 @@ Apply these rules before every message to a person. Read this file once per revi
 A message to a person has two independent presentation choices, Technical and Style.
 
 - Use the values the caller supplies, which it selects from its own settings.
+- Orch and Jarvis read Technical from `COMMUNICATION_TECHNICAL` in `kendex.settings.toml` under `[env]`.
 - An unset choice takes its default.
 - Reader mode is the other name for Technical. A caller may supply it as `ceo` or `engineer`.
 

@@ -252,9 +252,8 @@
 # ORCH_OWNER_ASK_LABEL = "owner-gated"
 # KENDEX_USER_EMAIL = "owner@example.com"
 
-# Who the session is talking to: "ceo" or "engineer". What each value
-# means and the questions that reach you:
-# references/communication-modes.md.
+# Defaults for decision, merge and issue-creation autonomy.
+# See references/communication-modes.md for the defaults under each value.
 # values: ceo | engineer
 # ORCH_USER_MODE = "engineer"
 
