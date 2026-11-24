@@ -222,9 +222,13 @@ class Task(Session):
         if args.account:
             # A named Pi root on a provider nothing measures, paid by its own
             # key, is a task's to spend: the judge takes it where Pi reads
-            # the key ready in the environment the task's window starts
-            # from, the one its server opens under, and the task records its
-            # reading unmeasured.
+            # the key ready, and the task records its reading unmeasured.
+            # The check reads the window's names, which hold no provider
+            # key, at this process's current values. The window takes its
+            # server's values, fixed when the server started: they match
+            # these when the task is launched from the managed session
+            # inside that server, and may differ when it is launched from
+            # elsewhere.
             window = scratch / "window-env.json"
             window.write_text(json.dumps(environment(chosen["harness"], policy=True)))
             pick += ["--account", args.account, "--admit-unbilled", window]

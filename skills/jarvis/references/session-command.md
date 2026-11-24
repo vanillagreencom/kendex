@@ -73,8 +73,11 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - The lane selector chooses the account. Add `--account DIR` to ask that selector about a named account.
   - A Pi model naming a provider no reader measures, such as an `openai/` model paid by its API key, takes `--account` naming the Pi root that holds the key.
     - The key counts only where the root holds it: a key exported in the caller's environment never reaches the task window.
-    - The launch starts where `pi auth check`, run in the environment the task window starts from, reads the key ready, and the task record's `reading` is `unmeasured`; on a measured account it is `measured`.
-    - A `!command` key reaches what that environment keeps, such as the agent socket and the display.
+    - The launch starts where `pi auth check` reads the key ready, and the task record's `reading` is `unmeasured`; on a measured account it is `measured`.
+    - The check reads the names `environment()` keeps for a task window, which hold no provider key, at the values the `task launch` process holds.
+    - The task window takes the values its tmux server held when the server started.
+    - Launched from the managed Jarvis session, which runs inside that server, the check's values match the window's.
+    - Launched from elsewhere, the values can differ, so a `!command` key that reads a kept name, such as the agent socket or the display, can resolve differently in the check than in the window. This gap is declined with its reasons in https://github.com/vanillagreencom/kendex/pull/6890#issuecomment-7123905390.
     - Without the key it refuses `account-unmeasured`, and the printed record's `refusal` carries `cause` `provider-key` with Pi's `status` and `reason`.
 - Add `--short` for a task of a few minutes when every account of the harness is past the launch limit.
   - The selector then accepts an account with room left up to its wall (`agent-runtime accounts pick --max-pct 100`).
