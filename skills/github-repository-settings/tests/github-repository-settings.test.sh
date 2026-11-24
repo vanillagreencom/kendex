@@ -115,8 +115,7 @@ def rendered(root, review="off"):
 
 def selection(root):
     before = snapshot(root)
-    # No process value: the package must use its off default.
-    result = invoke(root, "render", setting=None)
+    result = invoke(root, "render")
     assert result.returncode == 0, result
     after = snapshot(root)
     changed = {p for p in before.keys() | after.keys() if before.get(p) != after.get(p)}
@@ -285,12 +284,20 @@ def staged(root):
 
 
 def settings(root):
-    for verb, args, review, status in (("adopt", ("--dry-run",), None, 1),
+    # The setting has no default: check reads an unset value as not adopted,
+    # so every write refuses it.
+    for verb, args, review, status in (("adopt", ("--dry-run",), None, 2),
                                        ("adopt", ("--dry-run",), "", 2),
-                                       ("render", (), "", 2), ("render", (), None, 0)):
+                                       ("adopt", ("--dry-run",), "off", 1),
+                                       ("render", (), None, 2), ("render", (), "", 2),
+                                       ("render", (), "off", 0),
+                                       ("setup-install", (), None, 2),
+                                       ("setup-install", (), "", 2)):
         before = snapshot(root)
         result = invoke(root, verb, *args, setting=review)
         assert result.returncode == status, (verb, review, result)
+        if status == 2:
+            assert "setting=GITHUB_STANDARD_BOT_REVIEW\n" in result.stderr, (verb, review, result)
         if verb == "adopt" or status == 2:
             assert snapshot(root) == before
     # A leftover GITHUB_STANDARD_CHECK_LOCATION is ignored whatever it holds.
@@ -645,9 +652,8 @@ macroscope = false
     assert before.count(b"## Other rules") == 1
     agents.write_bytes(before.replace(b"## Other rules", b"Marked personal edit.\n\n## Other rules"))
     before_failure = review_files()
-    # An invalid choice must refuse before any installer write, independently
+    # An absent choice must refuse before any installer write, independently
     # of core's later recovery rendering.
-    (root / "kendex.settings.toml").write_text('[env]\nGITHUB_STANDARD_BOT_REVIEW = "invalid"\n')
     refused = subprocess.run([bash, str(catalog / "github-repository-settings/scripts/github-repository-settings"),
                               "setup-install", "--repo", str(root)],
                              env=env, capture_output=True, text=True)

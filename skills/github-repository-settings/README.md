@@ -26,7 +26,7 @@ Set up takes the review files over from bot-instructions. Until Set up runs, the
 
 ## Setup
 
-1. `GITHUB_STANDARD_BOT_REVIEW` defaults to `off`, which selects local output. To render the bots the existing `[bot-instructions]` manifest table enables, set it to `on`.
+1. Choose `off` or `on` for `GITHUB_STANDARD_BOT_REVIEW`. It has no default: adoption, rendering and setup refuse while it is unset. `off` selects local output. `on` renders the bots the existing `[bot-instructions]` manifest table enables.
 2. Put the setting in the `[env]` table of `kendex.settings.toml` at the repository root, as [the settings example](kendex.settings.toml.example) shows.
 3. Use Set up on this package's desktop page, or run the `kendex add` or `kendex apply` that installs this package with `--allow-repo-effects`.
 

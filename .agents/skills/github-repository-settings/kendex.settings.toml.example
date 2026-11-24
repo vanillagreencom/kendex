@@ -1,5 +1,5 @@
 [env]
-# Remote review: off by default. Choose off or on.
+# Required for adoption. Remote review: choose off or on.
 GITHUB_STANDARD_BOT_REVIEW = "off"
 
 # Opt in to the read-only GitHub ruleset and CI report.

@@ -60,7 +60,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## Setup
 
-1. Choose `GITHUB_STANDARD_BOT_REVIEW` in the `[env]` table of `kendex.settings.toml` at the repository root: `off`, the default, selects the library's local output, and `on` selects its full output and the bots the manifest enables.
+1. Choose `off` or `on` for `GITHUB_STANDARD_BOT_REVIEW` in the `[env]` table of `kendex.settings.toml` at the repository root. `off` selects the library's local output, and `on` selects its full output and the bots the manifest enables. It has no default: `adopt`, `render` and setup refuse while it is empty or absent.
 2. Use Set up on this package's desktop page, or run the `kendex add` or `kendex apply` that installs this package with `--allow-repo-effects`, with kendex 1.23.0 or later.
 
 - Local output requires the manifest's `codex` flag and an installed bot-instructions package inside the checkout.
