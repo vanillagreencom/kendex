@@ -441,6 +441,28 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         finally:
             case.doCleanups()
 
+    def test_failed_listing_names_its_cause(self):
+        # kendex refuses the whole document for one registration git cannot
+        # classify; only an absent kendex takes the install remedy.
+        refusal = '#!/bin/sh\necho "Error: project-list-unread=/gone/linked" >&2\nexit 1\n'
+        rows = (("refused", refusal, ["project-list", "exit", "1"], False),
+                ("absent", None, ["project-list", "FileNotFoundError", "2"], True))
+        for name, shim, key, remedy in rows:
+            with self.subTest(row=name):
+                env = dict(self.env)
+                if shim is None:
+                    self.bin.joinpath("kendex").unlink()
+                    env["PATH"] = os.pathsep.join(part for part in env["PATH"].split(os.pathsep)
+                                                  if not Path(part, "kendex").exists())
+                else:
+                    self.executable("kendex", shim)
+                result = subprocess.run([BASH, self.scripts / "vm-watch.sh", "--home", self.home, "--cursor", "{}"],
+                                        cwd=self.home, env=env, capture_output=True, text=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                record = json.loads(result.stderr.split("jarvis: failure=", 1)[1].split("\n", 1)[0])
+                self.assertEqual(record["key"], key)
+                self.assertEqual(record["detail"].startswith("kendex-missing fix=install-kendex-on-host-PATH"), remedy)
+
     def test_mail_pass_markers_restore_and_unreachable(self):
         self.mail(self.home, "notice", "owner message", "--to", "owner")
         ask = self.mail(self.peer, "ask", "question", "--to", "owner", "--recommend", "yes", "--effect", "none", "--options", "yes,no")

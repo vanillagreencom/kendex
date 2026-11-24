@@ -80,8 +80,11 @@ The loop prints one batch pointer without its body; the [session workflow](../wo
 
 - For hosted repository discovery and the account used on the control host, see [Control host setup](agent-reach.md#control-host-setup).
 - It skips an entry whose `state` is not `ok` or whose `worktree` is set.
-- An unreachable root reports its failure once, and the other roots continue.
-- A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`.
+- A root that lists but cannot be reached reports its failure once, and the other roots continue.
+- kendex refuses the whole listing when git cannot classify one registration, such as a linked worktree whose main checkout was moved or deleted.
+  - That machine's pass then fails as one listing failure, key `["project-list", "exit", "1"]` with the detail `Error: project-list-unread=[FOLDER]`.
+  - It fails each check until the registration is repaired with `git worktree repair [FOLDER]` from its main checkout, or removed with `kendex project remove [FOLDER]`.
+- A missing host executable reports `kendex-missing` with `fix=install-kendex-on-host-PATH`. No other listing failure does.
 
 ## Restart and destination identity
 

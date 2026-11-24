@@ -21,7 +21,7 @@ dependencies:
       purpose: Run session launch and scratch cleanup commands
     - command: kendex
       purpose: Discover projects and manage assistant packages
-      floor: "1.23.0"
+      floor: "1.21.0"
     - command: jq
       purpose: Read and write session records
     - command: cat

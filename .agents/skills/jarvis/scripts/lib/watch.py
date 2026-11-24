@@ -80,7 +80,7 @@ def destination_projects(destination, timeout=60):
 
     The rows `kendex project list` prints for a person cannot name a folder
     exactly: their escaping spells a newline as a backslash and an n, and a
-    folder may end in a note's text. kendex 1.23.0, the package's kendex
+    folder may end in a note's text. kendex 1.21.0, the package's kendex
     floor, first prints the document; an older kendex refuses --json."""
     if destination.host:
         argv = host_args(destination, "kendex project list --json")
@@ -394,6 +394,10 @@ def project_roots():
     try:
         roots = destination_roots(Destination("local", None, None))
     except Failure as error:
+        # Only an absent executable takes the install remedy: a listing kendex
+        # refuses, such as one registration it cannot classify, names its own cause.
+        if error.record["key"][1] != "FileNotFoundError":
+            raise
         raise Failure(*error.record["key"], "kendex-missing fix=install-kendex-on-host-PATH " + str(error)) from error
     return [Path(root).expanduser().resolve() for root in roots]
 

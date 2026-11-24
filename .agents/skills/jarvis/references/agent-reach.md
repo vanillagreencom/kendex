@@ -126,23 +126,25 @@ The selected root's own mailbox judges whether its overseer exists. Declaring a 
 
 On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list --json`, under that SSH user's registration.
 
+- Each declared host needs kendex 1.21.0 or later, the package's kendex floor. An older kendex refuses `--json`, so every listing, pass and owner-note selection on that host fails.
+- kendex refuses the whole listing when git cannot classify one registration, such as a linked worktree whose main checkout was moved or deleted. owner-note then refuses `project-list-failed` for that destination until the registration is repaired with `git worktree repair [FOLDER]` from its main checkout, or removed with `kendex project remove [FOLDER]`.
 - When the control host's overseers run as another account, set `JARVIS_CONTROL_USER` to it. Listing and sending on `JARVIS_CONTROL_HOST`, and the event source's passes there, then run as that account through `sudo -n`. The SSH user needs passwordless sudo to it.
 - A root qualifies only when its entry's `state` is `ok`, its `worktree` is null and its last path segment matches `REPO` or its declared alias target.
 - Starting or registering an overseer adds no project entry.
 
-When a hosted overseer has no qualifying row, the legacy bare route can deliver to a local checkout whose recorded overseer is live. A recorded overseer that has stopped refuses before delivery, and no other machine is tried.
+When a hosted overseer has no qualifying entry, the legacy bare route can deliver to a local checkout whose recorded overseer is live. A recorded overseer that has stopped refuses before delivery, and no other machine is tried.
 
 - Report the receipt's actual side: `sent side=local` means local delivery.
 - Offer to add the intended host's project entry.
-- With `JARVIS_CONTROL_USER` set, run each `kendex project` command below on `JARVIS_CONTROL_HOST` as that account, the route owner-note takes, for example `ssh [HOST] "sudo -n -H -u [USER] -- bash -l -c 'cd && kendex project list --json'"`. Run as the SSH user, the command changes and shows a registry owner-note does not read.
+- With `JARVIS_CONTROL_USER` set, run each `kendex` command below on `JARVIS_CONTROL_HOST` as that account, the route owner-note takes, for example `ssh [HOST] "sudo -n -H -u [USER] -- bash -l -c 'cd && kendex project list --json'"`. Run as the SSH user, the command changes and shows a registry owner-note does not read.
 
 1. Show the user the repository and `ssh [HOST] kendex project add [MAIN_CHECKOUT]`.
    - Run it only after approval, once per hosted repository.
    - It writes nothing into the checkout and refuses an already listed path.
 2. Never run `kendex project discover --register` on a parent folder.
    - It registers every project it finds, and duplicate `REPO` basenames make owner-note refuse.
-   - With approval, remove the extra row on that machine with `kendex project remove [PATH]`.
-3. Verify the main checkout's entry in `ssh [HOST] kendex project list --json`.
+   - With approval, remove the extra entry on that machine with `kendex project remove [PATH]`.
+3. Verify that `ssh [HOST] kendex --version` prints 1.21.0 or later, then the main checkout's entry in `ssh [HOST] kendex project list --json`.
 4. Then verify that the next owner-note receipt says `sent side=host`.
 
 - Repeat on each declared remote.
