@@ -314,6 +314,7 @@ fn pi_note(name: &str) -> kendex_core::drift::snapshot::UnreadableSnapshot {
         kind: kendex_core::model::ItemKind::PiExtension,
         name: name.to_owned(),
         message: "kendex could not compare the installed Pi package with its source".to_owned(),
+        remediation: None,
         detail: Some("declared package directory is missing".to_owned()),
         repo: String::new(),
         refs_state: None,

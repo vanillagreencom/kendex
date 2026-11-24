@@ -289,6 +289,22 @@ impl Eval<'_> {
         }
     }
 
+    /// The fix for an installed commit the history could not place. A lock
+    /// pulled from another clone can name a commit this machine's copy of
+    /// the source has not fetched yet. A source refresh fetches it and
+    /// writes nothing in the project, which matters in a clone that must not
+    /// commit; `kendex refresh` would rewrite the lock. A commit the copy
+    /// holds failed for another reason, which a fetch does not repair.
+    fn unfetched_fix(&self, package: &crate::package::PackageRef, commit: &str) -> Option<String> {
+        if crate::remote::store::has_commit(&package.mirror, commit) {
+            return None;
+        }
+        Some(match self.scope {
+            Scope::Global => "fetch its source again with kendex source refresh --global".into(),
+            Scope::Project { .. } => "fetch its source again with kendex source refresh".into(),
+        })
+    }
+
     /// The bound package's standing, from its mirror's history. A history
     /// that cannot be read surfaces as a warning while the row survives
     /// with no versions — the package keeps its identity, flags, and
@@ -304,16 +320,19 @@ impl Eval<'_> {
         let kind = planned.kind;
         let name = &planned.name;
         let pinned = hold_owner.is_some();
-        // What failed is a git read of the source's cached copy; a fetch
-        // usually repairs it, so the message names no step to take and the
-        // command and its output go to the detail.
-        let warn = |report: &mut UpdatesReport, message: &str, error: &CoreError| {
+        // What failed is a git read of the source's cached copy. The
+        // command and its output go to the detail; a step is named only
+        // where the step is known to be the fix.
+        let warn = |report: &mut UpdatesReport,
+                    message: &str,
+                    remediation: Option<String>,
+                    error: &CoreError| {
             report.warnings.push(ItemWarning {
                 kind,
                 name: name.clone(),
                 harness: None,
                 message: message.to_owned(),
-                remediation: None,
+                remediation,
                 detail: Some(error.to_string()),
             });
         };
@@ -327,6 +346,7 @@ impl Eval<'_> {
                 warn(
                     report,
                     "kendex could not read the version history of its source; the next source refresh tries again",
+                    None,
                     &error,
                 );
                 None
@@ -350,7 +370,8 @@ impl Eval<'_> {
                 Err(error) => {
                     warn(
                         report,
-                        "kendex could not find the installed version in its source; the next source refresh tries again",
+                        "kendex could not find the installed version in its source",
+                        self.unfetched_fix(package, commit),
                         &error,
                     );
                     None
@@ -465,5 +486,108 @@ fn forkable_among(
             Some(*only)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use crate::env::{Env, FakeOs};
+    use crate::model::Scope;
+    use crate::process::Hardened;
+
+    #[allow(clippy::unwrap_used)]
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = Hardened::git(args, Some(dir)).run().unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn commit_skill(upstream: &Path, body: &str) -> String {
+        let skill = upstream.join("skills/gh");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: gh\ndescription: github flows\n---\n{body}\n"),
+        )
+        .unwrap();
+        git(upstream, &["add", "-A"]);
+        git(
+            upstream,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--quiet",
+                "-m",
+                body,
+            ],
+        );
+        git(upstream, &["rev-parse", "HEAD"])
+    }
+
+    /// A lock pulled from a clone that fetched further than this machine
+    /// did: the warning names the fetch, the one step that settles it and
+    /// writes nothing in the project.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_recorded_commit_the_mirror_lacks_names_the_source_refresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let upstream = home.join("git/owner/catalog");
+        fs::create_dir_all(&upstream).unwrap();
+        git(&upstream, &["init", "--quiet", "-b", "main"]);
+        commit_skill(&upstream, "One.");
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        fs::create_dir_all(home.join("app/.claude")).unwrap();
+        let env = Env::fake(&home, FakeOs::Linux).with_var(
+            "KENDEX_GIT_BASE",
+            &format!("file://{}", home.join("git").display()),
+        );
+        let scope = Scope::Project {
+            root: home.join("app"),
+        };
+        let manifest_path = crate::manifest::manifest_path(&env, &scope);
+        fs::write(
+            &manifest_path,
+            "schema = 8\n\n[sources.cat]\nrepo = \"owner/catalog\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"cat\"\n",
+        )
+        .unwrap();
+        let manifest = crate::manifest::load_for_mutation(&manifest_path)
+            .unwrap()
+            .unwrap();
+        crate::remote::sync_sources(&env, &manifest).unwrap();
+        let audit = crate::engine::audit(&env, &scope).unwrap();
+        crate::apply::execute(&env, &audit.plan).unwrap();
+
+        let pulled = commit_skill(&upstream, "Two.");
+        let lock_path = crate::lock::lock_path(&env, &scope);
+        let mut lock = crate::lock::load(&lock_path).unwrap();
+        for entry in lock.entries.values_mut() {
+            entry.source_commit = Some(pulled.clone());
+        }
+        crate::lock::save(&lock_path, &lock).unwrap();
+
+        let report = super::super::updates(&env, &scope).unwrap();
+        let fixes: Vec<_> = report
+            .warnings
+            .iter()
+            .filter(|warning| warning.name == "gh")
+            .map(|warning| warning.remediation.as_deref())
+            .collect();
+        assert_eq!(fixes.len(), 1, "{:?}", report.warnings);
+        assert!(
+            fixes[0].is_some_and(|fix| fix.contains("kendex source refresh")),
+            "{fixes:?}"
+        );
     }
 }

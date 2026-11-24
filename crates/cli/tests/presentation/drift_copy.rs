@@ -1,7 +1,7 @@
 //! The session report a person reads: what they must act on or know, with
 //! the git command, the hash and what git printed behind `--verbose` and
 //! `--json`. The fixture is the 2026-09-29 one: a comparison that failed
-//! on a cached copy missing a commit, which the next fetch repairs.
+//! on a cached copy missing a commit, which a source refresh repairs.
 
 use super::*;
 use kendex_core::drift::snapshot::{SNAPSHOT_SCHEMA, ScopeSnapshot, UnreadableSnapshot};
@@ -39,7 +39,8 @@ fn failed_comparison(home: &Path, fetched_ago: u64, superseded: bool) -> PathBuf
             unreadable: vec![UnreadableSnapshot {
                 kind: ItemKind::Skill,
                 name: "gh".into(),
-                message: "kendex could not find the installed version in its source; the next source refresh tries again".into(),
+                message: "kendex could not find the installed version in its source".into(),
+                remediation: Some("fetch its source again with kendex source refresh".into()),
                 detail: Some(format!(
                     "git log --first-parent --format=%H {HASH} -- :(literal)skills/gh failed: fatal: bad object {HASH}"
                 )),
@@ -87,6 +88,14 @@ fn a_failed_comparison_says_only_what_the_person_needs() {
             assert_eq!(code, Some(expected_code));
             assert_eq!(technical(&text), Vec::<&str>::new());
             assert!(!text.is_empty());
+            assert!(!text.contains("tries again"), "{text}");
+            // A clone that must not commit is told the step that writes
+            // nothing in it; a superseded comparison names its own.
+            assert_eq!(
+                text.contains("kendex source refresh"),
+                !superseded,
+                "{text}"
+            );
             let verbose = [flags, &["--verbose"]].concat();
             let (code, text) = check(&home, &project, &verbose);
             assert_eq!(code, Some(expected_code));
@@ -120,5 +129,128 @@ fn a_failed_comparison_says_only_what_the_person_needs() {
                     .contains("background refresh disabled")
             );
         }
+    }
+}
+
+/// A project checkout on `main` with one package that reads behind its
+/// source, and origin's `main` placed `origin` relative to it: `behind` is
+/// one commit the checkout lacks, `diverged` adds one of its own, `even`
+/// is the checkout's own commit, and `None` is a clone that never fetched.
+#[allow(clippy::unwrap_used)]
+fn behind_checkout(home: &Path, origin: Option<&str>) -> PathBuf {
+    let project = home.join("dev/app");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 8\n\n[sources.cat]\nrepo = \"owner/repo\"\n",
+    )
+    .unwrap();
+    test_util::git(&project, &["init", "--quiet", "-b", "main"]);
+    test_util::git(&project, &["add", "-A"]);
+    test_util::git(&project, &["commit", "--quiet", "-m", "one"]);
+    let one = test_util::git(&project, &["rev-parse", "HEAD"]);
+    test_util::git(
+        &project,
+        &["commit", "--quiet", "--allow-empty", "-m", "two"],
+    );
+    let two = test_util::git(&project, &["rev-parse", "HEAD"]);
+    test_util::git(&project, &["reset", "--quiet", "--hard", one.trim()]);
+    let upstream = match origin {
+        Some("behind") => Some(two),
+        Some("diverged") => {
+            test_util::git(
+                &project,
+                &["commit", "--quiet", "--allow-empty", "-m", "own"],
+            );
+            Some(two)
+        }
+        Some("even") => Some(one),
+        Some(other) => panic!("no such origin {other}"),
+        None => None,
+    };
+    if let Some(upstream) = upstream {
+        test_util::git(
+            &project,
+            &["update-ref", "refs/remotes/origin/main", upstream.trim()],
+        );
+        test_util::git(
+            &project,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+    }
+    let env = Env::host_rooted(home);
+    let scope = Scope::Project {
+        root: kendex_core::paths::canonical(&project).unwrap(),
+    };
+    let now = kendex_core::clock::unix_now();
+    let key = kendex_core::remote::cache_key(&env, "owner/repo");
+    stamps::record_success(&env, &key, Some("refs".into()), now).unwrap();
+    kendex_core::drift::snapshot::store(
+        &env,
+        &scope,
+        &ScopeSnapshot {
+            schema: SNAPSHOT_SCHEMA,
+            taken_at: now,
+            scope: scope.label(),
+            packages: vec![kendex_core::drift::snapshot::PackageSnapshot {
+                kind: ItemKind::Skill,
+                name: "gh".into(),
+                source: "cat".into(),
+                repo: "owner/repo".into(),
+                refs_state: Some("refs".into()),
+                update_available: true,
+                removed_upstream: false,
+                held: false,
+                ignored: false,
+                edited: false,
+                mixed: false,
+                forked: false,
+            }],
+            unreadable: vec![],
+        },
+    )
+    .unwrap();
+    project
+}
+
+/// A copy that follows `main` and has not pulled is told to pull: the
+/// newer record is already on `main`, and a refresh would write files the
+/// copy must not commit. Any other copy keeps the refresh.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_checkout_behind_its_default_branch_is_told_to_pull() {
+    for (origin, verb, command) in [
+        (Some("behind"), "pull", "git pull --ff-only"),
+        (Some("diverged"), "refresh", "kendex refresh"),
+        (Some("even"), "refresh", "kendex refresh"),
+        (None, "refresh", "kendex refresh"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = behind_checkout(&home, origin);
+        let (code, json) = check(&home, &project, &["--json"]);
+        assert_eq!(code, Some(1), "{origin:?}: {json}");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let line = parsed["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["lines"].as_array().unwrap())
+            .find(|line| line["text"].as_str().unwrap().contains("'gh'"))
+            .unwrap_or_else(|| panic!("{origin:?}: no gh line in {json}"));
+        assert_eq!(line["remedy"]["verb"], verb, "{origin:?}: {line}");
+        let (_, text) = check(&home, &project, &[]);
+        let fix = text
+            .lines()
+            .find(|line| line.contains("'gh'"))
+            .unwrap_or_else(|| panic!("{origin:?}: no gh line in {text}"));
+        assert!(
+            fix.contains(&format!("fix: {command}")),
+            "{origin:?}: {fix}"
+        );
     }
 }

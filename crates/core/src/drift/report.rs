@@ -17,7 +17,7 @@
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
 //! remedy built from a fixed template set: apply, replace-unmanaged,
-//! refresh, remove, add, fork, drift-hook, move-aside, findings, plan —
+//! refresh, pull, remove, add, fork, drift-hook, move-aside, findings, plan —
 //! with validated identifiers or quoted paths in argument positions.
 //! Free text from sources or errors renders in quoted informational
 //! positions, never in a command position. A remedy that changes something
@@ -120,6 +120,10 @@ pub enum Remedy {
     Refresh {
         global: bool,
     },
+    /// Fast-forward a checkout on its default branch to origin's copy,
+    /// which already carries a newer record: in a copy that follows the
+    /// default branch, a refresh would write what the pull brings.
+    Pull,
     /// Compare installed packages with the current source state.
     Updates {
         global: bool,
@@ -230,6 +234,7 @@ impl Remedy {
             | Remedy::Add { global, .. }
             | Remedy::Fork { global, .. } => *global,
             Remedy::MoveAside { .. } => true,
+            Remedy::Pull => false,
         }
     }
 
@@ -322,6 +327,7 @@ impl Remedy {
                 format!("kendex update-pi --scope project{place}")
             }
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
+            Remedy::Pull => "git pull --ff-only".to_owned(),
             Remedy::Updates { .. } => format!("kendex updates{place}"),
             Remedy::DriftHook { global } => format!(
                 "kendex drift-hook --yes --scope {}",

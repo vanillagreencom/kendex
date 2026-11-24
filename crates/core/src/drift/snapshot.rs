@@ -39,6 +39,10 @@ pub struct UnreadableSnapshot {
     pub kind: ItemKind,
     pub name: String,
     pub message: String,
+    /// The warning's own fix, worded by its producer. A snapshot written
+    /// before notes carried one reads as having none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remediation: Option<String>,
     /// The warning's technical cause, for `check --verbose` and `--json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -292,6 +296,7 @@ pub fn record_with(
                 kind: warning.kind,
                 name: warning.name.clone(),
                 message: warning.message.clone(),
+                remediation: warning.remediation.clone(),
                 detail: warning.detail.clone(),
                 refs_state: evaluated_refs(env, &repo, &mut refs_by_repo),
                 repo,

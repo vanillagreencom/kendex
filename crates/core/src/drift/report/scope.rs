@@ -1537,6 +1537,7 @@ impl ScopeCheck<'_> {
                 notes.push(note);
             }
         }
+        let stale = self.stale_remedy(&snapshot.packages);
         let mut compared = BTreeSet::new();
         for package in &snapshot.packages {
             // Holds and ignores do not suppress independent unreadable evidence.
@@ -1564,7 +1565,7 @@ impl ScopeCheck<'_> {
                     }
                 }
             } else {
-                self.package_line(package, sections);
+                self.package_line(package, &stale, sections);
             }
         }
         for (key, notes) in unreadable {
@@ -1692,19 +1693,50 @@ impl ScopeCheck<'_> {
         })
     }
 
+    /// The note's own fix rides in its text: it is the producer's wording,
+    /// never a template, so it takes no command position.
     fn unreadable_line(&self, note: &crate::drift::snapshot::UnreadableSnapshot) -> Line {
+        let mut text = format!(
+            "{}{} '{}': {}",
+            self.prefix,
+            note.kind.name(),
+            shown(&note.name),
+            shown(&note.message)
+        );
+        if let Some(remediation) = note.remediation.as_deref() {
+            text.push_str(&format!("; {}", shown(remediation)));
+        }
         Line {
             class: Class::Unknown,
-            text: format!(
-                "{}{} '{}': {}",
-                self.prefix,
-                note.kind.name(),
-                shown(&note.name),
-                shown(&note.message)
-            )
-            .into(),
+            text: text.into(),
             remedy: None,
             detail: note.detail.as_deref().map(verbatim),
+        }
+    }
+
+    /// The fix for a package with a newer version on its source. A project
+    /// checkout behind its default branch takes the pull, which brings the
+    /// record the default branch already holds. A checkout git cannot
+    /// answer for is offered neither, since the refresh is the wrong fix
+    /// exactly where the pull is the right one; its line carries git's
+    /// answer as its detail. Read only where some package reads behind.
+    fn stale_remedy(
+        &self,
+        packages: &[crate::drift::snapshot::PackageSnapshot],
+    ) -> std::result::Result<Remedy, String> {
+        let refresh = Remedy::Refresh {
+            global: self.global,
+        };
+        let behind = packages
+            .iter()
+            .any(|package| package.update_available && !package.held && !package.ignored);
+        if self.global || !behind {
+            return Ok(refresh);
+        }
+        match crate::lock::branch::behind_default(self.scope) {
+            Ok(true) => Ok(Remedy::Pull),
+            Ok(false) => Ok(refresh),
+            Err(error) => Err(error.to_string()),
         }
     }
 
@@ -1714,6 +1746,7 @@ impl ScopeCheck<'_> {
     fn package_line(
         &self,
         package: &crate::drift::snapshot::PackageSnapshot,
+        stale: &std::result::Result<Remedy, String>,
         sections: &mut Sections,
     ) {
         let prefix = self.prefix;
@@ -1749,12 +1782,13 @@ impl ScopeCheck<'_> {
                 }),
             ));
         } else if package.update_available {
-            sections.stale.push(drift(
-                format!("{prefix}{kind} '{name}' has a newer version on its source"),
-                Some(Remedy::Refresh {
-                    global: self.global,
-                }),
-            ));
+            sections.stale.push(Line {
+                detail: stale.as_ref().err().map(|error| verbatim(error)),
+                ..drift(
+                    format!("{prefix}{kind} '{name}' has a newer version on its source"),
+                    stale.as_ref().ok().cloned(),
+                )
+            });
         }
     }
 
