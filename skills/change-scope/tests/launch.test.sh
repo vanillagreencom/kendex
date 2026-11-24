@@ -321,42 +321,82 @@ done
 for file in kendex.toml kendex-local.toml; do
   printf 'is_source_catalog = false\nname = "old"\n' >"$SETTINGS_REPO/$file"
 done
+printf 'MODE="old"\n' >"$SETTINGS_REPO/script.sh"
 git -C "$SETTINGS_REPO" add -A
 git -C "$SETTINGS_REPO" commit -qm base
 SETTINGS_BASE="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
 assert_settings_ranges() {
-  local row file before after want base
+  local row file before after want base count
   while IFS='|' read -r row file before after want; do
     [ -z "${SETTINGS_ROW:-}" ] || [ "$row" = "$SETTINGS_ROW" ] || continue
-    git -C "$SETTINGS_REPO" checkout -q -B "$row" "$SETTINGS_BASE"
+    case "$row" in
+      at-ceiling | over-ceiling)
+        count="$MICRO_MAX"
+        [ "$row" != over-ceiling ] || count=$((count + 1))
+        before="$(awk -v n="$count" 'BEGIN {print "[env]"; for (i=1;i<=n;i++) printf "KEY_%d = \"old\"\n", i}')"
+        after="$(awk -v n="$count" 'BEGIN {print "[env]"; for (i=1;i<=n;i++) printf "KEY_%d = \"new\"\n", i}')" ;;
+    esac
+    git -C "$SETTINGS_REPO" checkout -q -f -B "$row" "$SETTINGS_BASE"
     printf '%b\n' "$before" >"$SETTINGS_REPO/$file"
     git -C "$SETTINGS_REPO" add -- "$file"
     git -C "$SETTINGS_REPO" commit -qm before --allow-empty
     base="$(git -C "$SETTINGS_REPO" rev-parse HEAD)"
     printf '%b\n' "$after" >"$SETTINGS_REPO/$file"
     if [ "$row" = mixed ]; then
-      printf 'echo changed\n' >"$SETTINGS_REPO/script.sh"
+      printf 'MODE="new"\n' >"$SETTINGS_REPO/script.sh"
     fi
     git -C "$SETTINGS_REPO" add -A
     git -C "$SETTINGS_REPO" commit -qm "$row"
+    if [ "$row" = standard-path ]; then
+      printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\nORDINARY = "new"\n' >"$SETTINGS_REPO/$file"
+    fi
     assert_eq "settings range: $row" "$want rc=0" \
       "$(run_arm --base "$base" --head HEAD --repo "$SETTINGS_REPO")"
   done <<'SETTINGS'
 ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
+uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_LANE_OUTPUT = "normal"|micro cause=settings-only
 local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
-manifest|kendex.toml|is_source_catalog = false\nname = "old"|is_source_catalog = false\nname = "new"|micro cause=settings-only
-local-manifest|kendex-local.toml|"name" = "old"|"name" = "new"|micro cause=settings-only
+manifest|kendex.toml|is_source_catalog = true\n[marketplace]\ntags = ["official"]|is_source_catalog = true\n[marketplace]\ntags = ["curated"]|micro cause=settings-only
+local-manifest|kendex-local.toml|"name" = "old"\n[skill-instructions]\norch = '''\nExisting instructions.\n'''|"name" = "new"\n[skill-instructions]\norch = '''\nExisting instructions.\n'''|micro cause=settings-only
 ci-key|kendex.settings.toml|[env]\nHARNESS_CI_TEST = "old"|[env]\nHARNESS_CI_TEST = "new"|standard cause=configuration-source
-size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORCH_SIZE_TEST_PATHS = ""|standard cause=configuration-source
+size-key|.kendex/settings.toml|[env]\nORCH_SIZE_TEST_PATHS = "tests/*"|[env]\nORDINARY = "new"|standard cause=configuration-source
+at-ceiling|kendex.settings.toml|||micro cause=settings-only
+over-ceiling|kendex.settings.toml|||standard cause=configuration-source
 catalog|kendex.toml|is_source_catalog = false|is_source_catalog = true|standard cause=configuration-source
 quoted-catalog|kendex.toml|"is_source_catalog" = false|"is_source_catalog" = true|standard cause=configuration-source
 mixed|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|standard cause=configuration-source
 claude|.claude/settings.json|{"permissions": {}}|{"permissions": {"allow": []}}|standard cause=configuration-source
 gemini|.gemini/settings.json|{"mcpServers": {}}|{"mcpServers": {"tool": {}}}|standard cause=configuration-source
-standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=repository-standard-path
+standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=configuration-source
 SETTINGS
 }
 assert_settings_ranges
+
+assert_unread_settings_ranges() {
+  local kind partial path head base want
+  git -C "$SETTINGS_REPO" config uploadpack.allowFilter true
+  head="$(git -C "$SETTINGS_REPO" rev-parse ordinary)"
+  base="$(git -C "$SETTINGS_REPO" rev-parse ordinary^)"
+  for kind in declarations endpoint; do
+    partial="$SANDBOX/settings-partial-$kind"
+    git clone -q --no-checkout --filter=blob:none "file://$SETTINGS_REPO" "$partial"
+    git -C "$partial" config gc.auto 0
+    git -C "$partial" config maintenance.auto false
+    for path in .kendex-generated.json kendex.settings.toml .kendex/settings.toml; do
+      git -C "$partial" cat-file blob "$base:$path" >/dev/null
+    done
+    if [ "$kind" = declarations ]; then
+      git -C "$partial" cat-file blob "$head:kendex.settings.toml" >/dev/null
+      want="cause=declarations-unreadable step=manifest"
+    else
+      want="cause=settings-unreadable path=kendex.settings.toml side=head rev=$head"
+    fi
+    git -C "$partial" remote set-url origin "$SANDBOX/unreachable"
+    assert_eq "unreadable settings range: $kind" "change_class=standard class=standard measured=false delta=- $want rc=0" \
+      "$(ARM_RAW=true run_arm --base "$base" --head "$head" --repo "$partial")"
+  done
+}
+assert_unread_settings_ranges
 
 # Ranges of a measured size, each a branch off one base. The MEM-460 range
 # changes 7 files under one directory, 3 new and 4 modified, with 506

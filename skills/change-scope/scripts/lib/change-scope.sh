@@ -103,6 +103,20 @@ change_class_path_load() { # CONF
   CHANGE_CLASS_PATH_CAUSE=""
 }
 
+change_class_config_kind() { # PATH
+  local file
+  case "$1" in
+    kendex.toml | kendex-local.toml) CHANGE_CLASS_CONFIG_KIND=manifest ;;
+    .gemini/settings.json) CHANGE_CLASS_CONFIG_KIND=registry ;;
+    *)
+      for file in $BASE_SETTINGS_FILES; do
+        if [ "$1" = "$file" ]; then CHANGE_CLASS_CONFIG_KIND=settings; return 0; fi
+      done
+      CHANGE_CLASS_CONFIG_KIND=""
+      return 1 ;;
+  esac
+}
+
 change_class_path() { # PATH PHASE
   local globs
   CHANGE_CLASS_PATH=""
@@ -117,12 +131,9 @@ change_class_path() { # PATH PHASE
   if [ "$2" = before-render ] || [ "$2" = launch ]; then
     # These files decide the render and classifier inputs. Gemini's shim
     # owns one key only, not the other settings its harness executes.
-    globs='kendex.toml
-kendex.settings.toml
-kendex-local.toml
-.kendex/settings.toml
-.gemini/settings.json'
-    if change_class_path_match "$1" "$globs"; then
+    PATH_MATCH_HIT=""
+    if change_class_config_kind "$1"; then
+      PATH_MATCH_HIT="path=$1 glob=$1"
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
@@ -268,9 +279,11 @@ TAB="$(printf '\t')"
 # the link.
 rev_file() { # REV PATH OUT
   local listed kind blob
+  REV_FILE_MODE=""
   listed="$(git -C "$repo" ls-tree "$1" -- "$2" 2>/dev/null)" || return 1
   [ -n "$listed" ] || return 2
-  case "${listed%% *}" in
+  REV_FILE_MODE="${listed%% *}"
+  case "$REV_FILE_MODE" in
     100644 | 100755) ;;
     *) return 3 ;;
   esac

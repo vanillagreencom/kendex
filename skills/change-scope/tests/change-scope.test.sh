@@ -2070,7 +2070,7 @@ while IFS='|' read -r control rows line replacement script; do
 done <<'CONTROLS'
 no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) return 1 ;;|-
 no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
-no byte comparison|the same rewrite beside a key the allowlist does not name;a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
+no byte comparison|the same rewrite beside a key the allowlist does not name;a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if true; then
 no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
 no declaration read beside an allowlist|an unreadable declaration beside an allowlist|settings_declarations() {|settings_declarations() { return 0;
 no veto by an unmarked declaration|a marked key a hand-written example declares unmarked|      if (!was_marked) veto[key] = 1|-
