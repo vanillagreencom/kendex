@@ -611,32 +611,77 @@ CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|
 # .github/ and the runners.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
 
-# Project source reads onto compiler, smoke, and Linux test inputs.
-# The opaque checkout-root reads are catalog and render checks.
+# Job-owned inputs that source scanning cannot see: the Windows command
+# supplies its package roots and Linux Bun setup supplies its pin and crate.
+cargo_job_reads() {
+  [ -f "$PROOF_WORKFLOW" ] || return 0
+  awk '
+    /^  [a-z][a-z0-9-]*:/ { job=$1; bun=0 }
+    job == "cargo-check-windows:" { windows_job=1 }
+    job == "cargo-check-windows:" && /^        run: cargo check / {
+      for (i=1; i<NF; i++)
+        if (($i == "-p" || $i == "--package") && $(i+1) ~ /^[a-zA-Z0-9_-]+$/) {
+          print "windows", $(i+1)
+          windows_read=1
+        }
+    }
+    job == "cargo-linux:" && /^      - / {
+      bun = /\/setup-bun@/
+      crate = ""
+    }
+    bun && /^        if: matrix\.crate == / {
+      crate = $NF
+      gsub(/\047/, "", crate)
+    }
+    bun && /^          bun-version-file: / { print "setup", $2, crate }
+    END { if (windows_job && !windows_read) print "windows", "*" }
+  ' "$PROOF_WORKFLOW"
+}
+
+# Project source reads onto compiler, smoke, and Linux test inputs. An
+# unresolved read keeps the scope of its executable across changed paths.
 reads() {
-  local rows
+  local rows job_reads
   rows="$("$TOOLS_DIR/rust-reads" --cli-smoke --ci-targets .)" ||
     die "rust-reads-failed" "tools/rust-reads could not derive the paths the Rust source reads"
-  PROSE="$PROSE" CATALOG="$CATALOG_INPUTS" PATHS="$paths" awk -F '\t' '
+  job_reads="$(cargo_job_reads)" ||
+    die "cargo-job-reads-failed" "the workflow Cargo build and setup inputs could not be read"
+  PROSE="$PROSE" CARGO_JOB_READS="$job_reads" PATHS="$paths" awk -F '\t' '
+    BEGIN {
+      n = split(ENVIRON["CARGO_JOB_READS"], inputs, "\n")
+      for (i = 1; i <= n; i++) {
+        split(inputs[i], input, " ")
+        if (input[1] == "windows") windows_packages[input[2]] = 1
+        if (input[1] == "setup") setup[input[2], input[3]] = 1
+      }
+    }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
+    function select_target(r) {
+      selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
+    }
     END {
       n = split(ENVIRON["PATHS"], changed, "\n")
       for (p = 1; p <= n; p++) {
         path = changed[p]
         for (r = 1; r <= NR; r++) {
           if (path == "") continue
+          if (kind[r] == "target-root") {
+            if ((path, crate[r]) in setup || (path, "") in setup) select_target(r)
+            continue
+          }
           if (read[r] == ".") {
-            if (kind[r] != "target" || (path !~ ENVIRON["CATALOG"] &&
-                path !~ /^\.(agents|claude|codex|copilot|pi)\// && path != ".kendex-generated.json")) continue
+            if (kind[r] != "target") continue
           } else if (path != read[r] && index(path, read[r] "/") != 1) continue
           if (kind[r] == "build" && path !~ ENVIRON["PROSE"]) build = 1
           if (kind[r] == "include") included = 1
+          if (kind[r] == "package-include" && (crate[r] in windows_packages || "*" in windows_packages)) windows = 1
+          if (kind[r] == "checkout-include") checkout = 1
           if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1
-          if (kind[r] == "target") selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
+          if (kind[r] == "target") select_target(r)
           printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
         }
       }
-      printf "build=%d\nincluded=%d\ncompiled=%d\n", build, included, compiled
+      printf "build=%d\nincluded=%d\ncompiled=%d\nwindows=%d\ncheckout=%d\n", build, included, compiled, windows, checkout
       for (test in selected) print "target " test
     }
   ' <<<"$rows"
@@ -928,6 +973,7 @@ macos_shard() { # SHARDS
 select_row() { # CLASS DOCS PATHS EVENT
   local class="$1" docs="$2" event="$4" platform=false uitree=false build=false
   local shards skipped macos=false catalog=false smoke=false linux=false rust matrix="" each known=false
+  local checkout=false windows=false
   paths="$3"
   case "$docs" in
     true | false) ;;
@@ -954,7 +1000,9 @@ select_row() { # CLASS DOCS PATHS EVENT
   any '^ui/' && uitree=true
   case "$read_lines" in *compiled=1*) catalog=true smoke=true ;; esac
   case "$read_lines" in *included=1* | *build=1*) build=true ;; esac
-  shards="$(select_shards "$build")" || exit 2
+  case "$read_lines" in *checkout=1* | *build=1*) checkout=true ;; esac
+  case "$read_lines" in *windows=1* | *build=1*) windows=true ;; esac
+  shards="$(select_shards "$checkout")" || exit 2
   skipped="${shards#* }"
   shards="${shards%% *}"
   any_outside "$PROSE" && macos_shard "$shards" && macos=true
@@ -968,6 +1016,7 @@ select_row() { # CLASS DOCS PATHS EVENT
   if any "$LANE_SOURCES"; then
     uitree=true
     build=true
+    windows=true
     macos=true
     smoke=true
     linux=true
@@ -985,7 +1034,7 @@ select_row() { # CLASS DOCS PATHS EVENT
       any_outside "$PROSE" && platform=true
     fi
   fi
-  printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=$linux cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$build catalog=$catalog smoke=$smoke shards=$shards skipped_suites=$skipped rust_targets=$rust cargo_linux_matrix=${matrix:-null}"
+  printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=$linux cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$windows catalog=$catalog smoke=$smoke shards=$shards skipped_suites=$skipped rust_targets=$rust cargo_linux_matrix=${matrix:-null}"
 }
 
 if [ "${EVENT:-}" = schedule ]; then
@@ -1022,18 +1071,24 @@ if [ "${EVENT:-}" = push ]; then
     fi
   fi
   main_build=true
+  main_checkout=true
   REACH_READ=false
   REACH_TARGETS="$(all_targets)"
   if [ "$range_read" = true ]; then
     reach_read
     read_lines="$(reads)" || exit 2
     main_build=false
+    main_checkout=false
     case "$read_lines" in *included=1* | *build=1*) main_build=true ;; esac
-    any "$LANE_SOURCES" && main_build=true
+    case "$read_lines" in *checkout=1* | *build=1*) main_checkout=true ;; esac
+    if any "$LANE_SOURCES"; then
+      main_build=true
+      main_checkout=true
+    fi
   else
     printf 'ci-job-set: main-range=unread coverage=full\n' >&2
   fi
-  main_linux="$(select_shards "$main_build")" || exit 2
+  main_linux="$(select_shards "$main_checkout")" || exit 2
   main_skipped="${main_linux#* }"
   main_linux="${main_linux%% *}"
   main_targets="$REACH_TARGETS"

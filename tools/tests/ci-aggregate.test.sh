@@ -71,6 +71,9 @@ AGGREGATE="$ROOT/tools/ci-aggregate"
 step_field() { # WORKFLOW JOB ID_OR_NAME FIELD: an env expression, step/checkout input or run body
   awk -v job="$2:" -v id="$3" -v field="$4" '
     /^  [A-Za-z0-9_-]+:/ { in_job = ($1 == job); in_step = 0; in_run = 0 }
+    in_job && id == "" && $0 ~ "^      " field ": " {
+      sub(/^      [A-Z_]+: \$\{\{ /, ""); sub(/ \}\}$/, ""); print
+    }
     /^      - / { in_step = (in_job && ($0 == "      - id: " id || $0 == "      - name: " id)); in_run = 0 }
     !in_step { next }
     field ~ /^[A-Z_]+$/ && $0 ~ "^          " field ": " {
@@ -368,7 +371,7 @@ EVERY_GROUP_LANE="bot-instructions cargo-check-windows cargo-lint cargo-linux ca
 check "the gated set is read out of the workflow" "$EVERY_GATED" \
   "$(gated_jobs "$WORKFLOW" | grep -vE '^skill-suites-(macos|main-only)$' | tr '\n' ' ' | sed 's/ $//')"
 
-one_skill="$(selection micro false 'skills/orch/SKILL.md
+one_skill="$(SELECT_CARGO_MATRIX=true selection micro false 'skills/orch/SKILL.md
 .agents/skills/orch/SKILL.md')"
 # A standard diff of product code, the full battery a merge group of that
 # class runs.
@@ -689,6 +692,42 @@ cargo-tests-windows|push|no
 cargo-tests-windows|schedule|yes
 cargo-tests-windows|workflow_dispatch|yes
 ROWS
+
+# Use the real changed-path output, expanded by the workflow itself, for
+# the Linux Cargo argv. A lost matrix output retains the whole crate.
+linux_commands() { # WORKFLOW RESULT SELECTION CRATE
+  local wf="$1" ctx matrix cell expr body step crate targets field value
+  ctx="$(context_json merge_group "$2" "$3" "$TMP/published-map")" || return 1
+  expr="$(matrix_expr "$wf" matrix cargo-linux)" || return 1
+  matrix="$(gh_eval value "$ctx" "$expr")" || return 1
+  cell="$(jq -ce --arg crate "$4" '
+    if has("include") then .include[]
+    else .crate[] | {crate: .} end | select(.crate == $crate)
+  ' <<<"$matrix")" || return 1
+  ctx="$(jq -c --argjson matrix "$cell" '.matrix = $matrix' <<<"$ctx")" || return 1
+  for field in CRATE CARGO_TEST_TARGETS; do
+    expr="$(step_field "$wf" cargo-linux '' "$field")" || return 1
+    value="$(gh_eval value "$ctx" "$expr" | jq -er 'select(type == "string")')" || return 1
+    case "$field" in CRATE) crate=$value ;; CARGO_TEST_TARGETS) targets=$value ;; esac
+  done
+  for step in compile test; do
+    body="$(step_field "$wf" cargo-linux "$step" run)" || return 1
+    [ -n "$body" ] || return 1
+    (env -i "PATH=$PATH" "CRATE=$crate" "CARGO_TEST_TARGETS=$targets" "$BASH" --noprofile --norc -e -c '
+      cargo() { printf "cargo"; printf "|%s" "$@"; printf "\n"; }
+      eval "$1"
+    ' _ "$body") || return 1
+  done
+}
+linux_args="|--test|catalog_render_lint|--test|integration"
+check "Linux compile and test receive the selected CLI targets" \
+  "cargo|test|-p|kendex-cli|--locked|--no-run$linux_args
+cargo|test|-p|kendex-cli|--locked|--no-fail-fast$linux_args" \
+  "$(linux_commands "$WORKFLOW" success "$one_skill" kendex-cli)"
+check "Linux compile and test retain the whole fallback crate" \
+  "cargo|test|-p|kendex-cli|--locked|--no-run
+cargo|test|-p|kendex-cli|--locked|--no-fail-fast" \
+  "$(linux_commands "$WORKFLOW" failure '' kendex-cli)"
 
 # The orch-state Linux leg stages the runtime builds the changes job owes
 # on a merge group, so a key is published before main moves, and on a push

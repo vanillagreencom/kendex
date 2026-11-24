@@ -20,11 +20,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cargo_rows() {
   local selected reads
   selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false $'skills/orch/SKILL.md\n.agents/skills/orch/SKILL.md')"
-  reads="$(field cargo_linux_matrix <<<"$selected" | jq -c '
-    [.include[] | select(.crate == "kendex-core" or .crate == "kendex-app") | .crate, .targets]
-  ')"
-  check "skill Markdown keeps the core readers and omits the app" \
-    '["kendex-core",["--lib","--test","integration"]]' "$reads"
+  reads="$(field cargo_linux_matrix <<<"$selected")"
+  check "skill Markdown keeps the CLI and core readers and omits the app" \
+    '{"include":[{"crate":"kendex-cli","targets":["--test","catalog_render_lint","--test","integration"]},{"crate":"kendex-core","targets":["--lib","--test","integration"]}]}' "$reads"
   check "orch SKILL.md names in prompts reach no runtime target" '[]' "$(field rust_targets <<<"$selected")"
   selected="$(SELECT_EVENT=merge_group selection trivial true $'skills/orch/references/watch-delivery.md\n.agents/skills/orch/references/watch-delivery.md')"
   check "orch watch delivery reference reaches its reading runtime target" \
@@ -36,6 +34,41 @@ if [ "${1-}" = --cargo-reads ]; then
   [ "$FAIL" -eq 0 ]
   exit
 fi
+
+# Real workspace contracts use helper paths, constants, and the workflow
+# setup pin. They must keep the reader without selecting compiler checks.
+while IFS='|' read -r path package flag name; do
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$path")"
+  matrix="$(field cargo_linux_matrix <<<"$selected")"
+  check "$path reaches $package $flag $name" true \
+    "$(jq --arg p "$package" --arg flag "$flag" --arg name "$name" '
+      any(.include[]; .crate == $p and (.targets | (index($flag) != null and ($name == "" or index($name) != null))))
+    ' <<<"$matrix")"
+  check "$path keeps compiler-only lanes off" 'false false' \
+    "$(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected")"
+done <<'ROWS'
+kendex.settings.toml|kendex-core|--test|integration
+kendex-local.toml|kendex-core|--lib|
+.kendex-lock.json|kendex-core|--lib|
+packaging/homebrew/kendex-cli.rb|kendex-cli|--test|integration
+packaging/arch/kendex/PKGBUILD|kendex-cli|--test|integration
+.bun-version|kendex-core|--test|integration
+ROWS
+selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false docs/authoring/README.md)"
+check "the embedded app guide reaches workspace lint, the app, and no unrelated build" 'true false true' \
+  "$(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected") $(field cargo_linux_matrix <<<"$selected" |
+    jq 'any(.include[]; .crate == "kendex-app" and .targets == ["--lib"])')"
+check "the embedded app guide does not add checkout-only shards" true \
+  "$(field shards <<<"$selected" | jq 'all(.[]; . != "refresh" and . != "jarvis" and . != "orch-rest")')"
+
+# The neutral fixture has no top-level path readers. A change to the real
+# setup step's version file selects just its crate even in that world.
+mkdir -p "$READ_WORLD/.github/workflows"
+cp "$ROOT/.github/workflows/skill-tests.yml" "$READ_WORLD/.github/workflows/skill-tests.yml"
+selected="$(SELECT_IN="$READ_WORLD" SELECT_CARGO_MATRIX=true selection micro false .bun-version)"
+check "workflow setup selects its crate even when no source reads the pin" \
+  '{"include":[{"crate":"kendex-core","targets":["--lib"]}]}' "$(field cargo_linux_matrix <<<"$selected")"
+
 # A copy of ci-job-set with no guard beside it, whose reach cannot be read:
 # every shard runs whole.
 cp "$JOB_SET" "$TMP/rule/tools/ci-job-set"
