@@ -142,7 +142,7 @@ The overseer judges the same marks between turn ends, and for a lane whose hook 
    - A record whose `harness` or `session_id` differs from the lane record's is another session's.
    - A reading older than an hour is stale while `session-rows.jsonl` beside it holds a later Stop row.
 2. Judge a current reading with the hook's own judge, `orch-runtime marks --item [ITEM] --context [TOKENS]:[WINDOW]`.
-   - A lane reaches its context mark at `ORCH_HANDOFF_CONTEXT_TOKENS` tokens used, or past `ORCH_HANDOFF_CONTEXT_PCT` of its window; [settings.md](settings.md) owns the defaults.
+   - A lane reaches its context mark at `ORCH_HANDOFF_CONTEXT_TOKENS` tokens used, or past `ORCH_HANDOFF_CONTEXT_PCT` of its window. For the defaults, see `load` in [the orch runtime settings](../runtime/src/settings.rs).
    - A reading with no window and fewer tokens than that count has unknown capacity: direct the lane to write its handoff record.
 3. Read the account mark with `.agents/skills/orch/scripts/orch-runtime lane pick --fleet --lane [ACCOUNT] --harness [HARNESS] --min-headroom-pct [ORCH_HANDOFF_HEADROOM_PCT]`, with `[ACCOUNT]` the lane record's `account`.
    - A Claude or Pi lane adds `--native-model [MODEL]`, the lane record's `model`.

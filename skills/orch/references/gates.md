@@ -32,7 +32,7 @@ Record the gate not applicable only on `off`.
 - Under `approval`, an unresolved thread holds the call at `comments` even beside an approval, as gate 3 of [publication.md § Merge gates](publication.md#merge-gates) and merge-pr's thread read ([thread-read.md](thread-read.md)) refuse an open thread.
 - A base rule that requires thread resolution also refuses one.
 
-The call reads its settings at its start, in the order of [settings.md § Where a setting is set](settings.md#where-a-setting-is-set). `PR_REVIEW_ON_TIMEOUT` and `ORCH_COPILOT_HOLD_SECS` are in [settings.md](settings.md). The two settings below belong to this gate alone; their defaults are in [settings.md § Review and CI](settings.md#review-and-ci):
+The call reads its settings at its start, in the order of [settings.md § Where a setting is set](settings.md#where-a-setting-is-set). [settings.md § Review and CI](settings.md#review-and-ci) describes `PR_REVIEW_ON_TIMEOUT` and `ORCH_COPILOT_HOLD_SECS`. For the defaults of the two gate settings below, see `load` in [the orch runtime settings](../runtime/src/settings.rs).
 
 | Setting | Meaning |
 |---------|---------|

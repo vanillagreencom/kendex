@@ -8,7 +8,7 @@ Read when review-pr.md § 4 or its § Bounded Re-Review applies the cap, or when
 
 `REVIEW_MAX_CYCLES` bounds the fix rounds of ordinary items.
 
-- [settings.md § Review and CI](settings.md#review-and-ci) states what `0` and `1` allow, and the default.
+- [settings.md § Review and CI](settings.md#review-and-ci) states what `0` and `1` allow. For the default, see `load` in [the orch runtime settings](../runtime/src/settings.rs).
 - A project setting raises it for a standard item.
 - [small.md](../workflows/small.md) holds a small item to 1, and micro runs none.
 

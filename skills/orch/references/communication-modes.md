@@ -13,7 +13,7 @@ Read when an orch session decides whether a question reaches the owner, asks the
 | `ceo` | The session owns every technical decision. The user states intent and outcomes. Only a question in § Ask set reaches the user |
 | `engineer` | Each composed key asks ([§ Composition](#composition)), with the same ask set |
 
-The default and any other value: [settings.md](settings.md).
+The overseer runs this command in [oversee.md § 3. Launch](../workflows/oversee.md#3-launch). For the unset and unrecognized cases, see `user_mode_effective` in [`orch-env`](../scripts/orch-env).
 
 ## Ask set
 
