@@ -1471,9 +1471,9 @@ for close in close merged; do
   else bad "current route close=$close" "$OUT"; fi
   rm -f -- "${TMP:?}/state/prepush-state.json"
 done
-# A revert on kendex main reaches the consumer as one more render, which
-# lands by the same route: a render back to the bytes the landed one
-# replaced lands on top of it.
+# A revert on kendex main that drops no emitted position reaches the
+# consumer as one more render, which lands by the same route: a render back
+# to the bytes the landed one replaced lands on top of it.
 reset_default
 cp "$TMP/land-runner" "$runner"
 printf '0\n' >"$TMP/state/queue-entries"
