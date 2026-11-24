@@ -211,10 +211,10 @@ enum Route {
         /// account, unchanged).
         home: Option<Kept>,
     },
-    /// The destination home's session store could not be read, or the bound
-    /// session belongs to another directory: the launch refuses before any
-    /// window rather than resuming a session it cannot prove its own or
-    /// starting fresh over one that may stand.
+    /// On the same account, the destination home's session store could not
+    /// be read, or the bound session belongs to another directory: the
+    /// launch refuses before any window rather than resuming a session it
+    /// cannot prove its own or starting fresh over one that may stand.
     Refuse {
         cause: &'static str,
     },
@@ -246,35 +246,40 @@ type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathB
 /// session, or whose harness word differs, or whose item holds a standing
 /// handoff that says `fresh`, starts fresh; a bound session under the same
 /// harness and account resumes. Pi resumes by session file, which the
-/// record does not carry, so a Pi lane starts fresh and says so. A relaunch
-/// on another account than the one the bound session was recorded under
-/// starts fresh with `account-switched`, and one whose bound session the
-/// destination home does not hold by its fixed id (its file absent, or a
-/// Copilot session that holds no event) with `session-absent`: the context
-/// continues through the handoff record, never a transcript another
-/// account cannot read.
-/// The destination is the home the lane's last confirmed launch recorded,
-/// where its bound session was written (a private Codex home links the
-/// account's store), in the mode it ran in; a lane that recorded none reads
-/// its account. A record with neither relaunches under the home a fresh
-/// launch picks (`served`, the fleet server's, else the inherited home or
-/// the default). A resume runs under the home its session was
-/// found under.
+/// record does not carry, so a Pi lane starts fresh and says so. A Claude
+/// Code relaunch on another account resumes where the request's account's
+/// home holds the session for the lane's directory; any other relaunch on
+/// another account starts fresh with `account-switched`. A same-account
+/// relaunch whose bound session the destination home does not hold by its
+/// fixed id (its file absent, or a Copilot session that holds no event)
+/// starts fresh with `session-absent`: the context continues through the
+/// handoff record, never a transcript the launch's home cannot read.
+/// On an account switch the destination is the request's account alone:
+/// the record's home is the account being left, and an accountless launch
+/// would run under it. Otherwise it is the home the lane's last confirmed
+/// launch recorded, where its bound session was written (a private Codex
+/// home links the account's store), in the mode it ran in; a lane that
+/// recorded none reads its account. A record with neither relaunches under
+/// the home a fresh launch picks (`served`, the fleet server's, else the
+/// inherited home or the default). A resume runs under the home its
+/// session was found under.
 fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane, served: Option<&Path>) -> Result<Route> {
     let handoff = standing_handoff(run, &lane.item)?;
-    let destination = match (&lane.home, &r.account, Harness::parse(&r.harness)) {
-        (Some(home), _, _) => Some(Kept {
-            home: PathBuf::from(home),
-            named: !lane.home_implicit,
-        }),
-        (None, Some(account), _) => Some(Kept {
+    let switched = lane.account != r.account;
+    let destination = match (switched, &lane.home, &r.account, Harness::parse(&r.harness)) {
+        (true, _, Some(account), _) | (false, None, Some(account), _) => Some(Kept {
             home: PathBuf::from(account),
             named: true,
         }),
-        (None, None, Some(harness)) => {
+        (true, _, None, _) => None,
+        (false, Some(home), _, _) => Some(Kept {
+            home: PathBuf::from(home),
+            named: !lane.home_implicit,
+        }),
+        (false, None, None, Some(harness)) => {
             accountless_kept(&run.settings.inherited(), harness, None, served)
         }
-        (None, None, None) => None,
+        (false, None, None, None) => None,
     };
     let route = route_of(
         lane,
@@ -296,10 +301,11 @@ fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane, served: Option<&Path>)
 /// handoff route, `destination` the home the relaunch reads its sessions
 /// under through `owner`, the session owner's fixed-id lookup, which
 /// answers the directory the session's file records. A file recording
-/// another directory than the lane's is another lane's session, refused:
-/// the Codex and Copilot stores are keyed by id alone, so nothing else
-/// tells one directory's transcript from another's. The working directory
-/// reaches the Claude arm alone, whose store is keyed by it.
+/// another directory than the lane's is another lane's session, refused on
+/// the same account and passed over on a switch: the Codex and Copilot
+/// stores are keyed by id alone, so nothing else tells one directory's
+/// transcript from another's. The working directory reaches the Claude arm
+/// alone, whose store is keyed by it.
 fn route_of(
     lane: &Lane,
     r: &LaunchLane,
@@ -325,7 +331,17 @@ fn route_of(
             cause: Some("resume-file-unknown"),
         };
     }
-    if lane.account != r.account {
+    let switched = lane.account != r.account;
+    // Claude Code alone resumes across accounts. No cross-account resume of
+    // a Codex or Copilot session has been observed, a Codex balance lifts
+    // most of its walls, and this fleet has one Copilot account; the lookup
+    // below would decide for them too. A switch with no account named, or
+    // no directory to key the Claude store by, has no store to ask.
+    let resumable_switch = match harness {
+        Harness::Claude => r.account.is_some() && lane.mail_root.is_some(),
+        Harness::Codex | Harness::Copilot | Harness::Pi => false,
+    };
+    if switched && !(resumable_switch && destination.is_some()) {
         return Route::Fresh {
             cause: Some("account-switched"),
         };
@@ -341,12 +357,22 @@ fn route_of(
     if let (Some(home), Some(cwd)) = (destination, cwd) {
         match owner(harness, home, cwd, &session_id) {
             Reading::Live(None) => {}
-            Reading::Live(Some(recorded)) => {
-                if !same_directory(&recorded, Path::new(&r.mail_root)) {
-                    return Route::Refuse {
-                        cause: "session-owned-elsewhere",
-                    };
-                }
+            Reading::Live(Some(recorded)) if same_directory(&recorded, Path::new(&r.mail_root)) => {
+            }
+            // On a switch today's answer was always a fresh start, and a
+            // fresh start on a new id overwrites nothing: every answer that
+            // does not prove this lane's session under the request's account
+            // starts fresh. The refusals stay on the same account, where a
+            // fresh start could run beside a session that may stand.
+            Reading::Live(Some(_)) | Reading::Gone | Reading::Unreadable { .. } if switched => {
+                return Route::Fresh {
+                    cause: Some("account-switched"),
+                };
+            }
+            Reading::Live(Some(_)) => {
+                return Route::Refuse {
+                    cause: "session-owned-elsewhere",
+                };
             }
             Reading::Gone => {
                 return Route::Fresh {
@@ -2637,8 +2663,9 @@ mod tests {
 
     /// The relaunch router. A bound session resumes under the same harness
     /// and account when the destination home holds its file; a request on
-    /// another account starts fresh with `account-switched`, a destination
-    /// with no file for the fixed id with `session-absent`; a standing
+    /// another account whose home lacks the file starts fresh with
+    /// `account-switched`, a same-account destination with no file for the
+    /// fixed id with `session-absent`; a standing
     /// handoff that says `fresh` and a changed harness keep their causes.
     #[test]
     fn a_relaunch_on_another_account_or_without_its_session_file_starts_fresh() {
@@ -2815,6 +2842,124 @@ mod tests {
             ),
             "an unreadable store refuses before any window"
         );
+    }
+
+    /// A Claude Code relaunch on another account resumes the bound session
+    /// where the request's account's home proves it this lane's, and starts
+    /// fresh `account-switched` on every other store answer, never refusing;
+    /// the same account keeps its refusals. A switch the store cannot
+    /// decide, or one of another harness, starts fresh without asking it.
+    #[test]
+    fn a_claude_relaunch_on_another_account_resumes_where_that_home_holds_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("w");
+        let other = dir.path().join("other");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        let id = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
+        let lane = bound_lane(&a.display().to_string(), Some(&cwd));
+        let same = request(&a.display().to_string(), &cwd);
+        let switch = request(&b.display().to_string(), &cwd);
+        let resume = ("resume", None);
+        let switched = ("fresh", Some("account-switched"));
+        let said = |route: Route| -> (&'static str, Option<&'static str>) {
+            if let Route::Resume { session_id, .. } = &route {
+                assert_eq!(session_id, id);
+            }
+            (route.word(), route.cause())
+        };
+        // The store's answer, and the route on the same account and on a
+        // switch to `b` with `b` as the destination.
+        let rows: [(Reading<Option<PathBuf>>, _, _); 5] = [
+            (Reading::Live(Some(cwd.clone())), resume, resume),
+            (Reading::Live(None), resume, resume),
+            (Reading::Gone, ("fresh", Some("session-absent")), switched),
+            (
+                Reading::Unreadable {
+                    cause: "store-unreadable",
+                },
+                ("refuse", Some("store-unreadable")),
+                switched,
+            ),
+            (
+                Reading::Live(Some(other.clone())),
+                ("refuse", Some("session-owned-elsewhere")),
+                switched,
+            ),
+        ];
+        for (answer, on_same, on_switch) in rows {
+            let asked: std::cell::RefCell<Vec<PathBuf>> = Default::default();
+            let owner = |_: Harness, home: &Path, _: &Path, _: &str| {
+                asked.borrow_mut().push(home.to_path_buf());
+                answer.clone()
+            };
+            assert_eq!(
+                said(route_of(&lane, &same, None, Some(&a), &owner)),
+                on_same
+            );
+            assert_eq!(
+                said(route_of(&lane, &switch, None, Some(&b), &owner)),
+                on_switch
+            );
+            assert_eq!(asked.borrow().clone(), vec![a.clone(), b.clone()]);
+        }
+        // A switch whose destination holds the session keeps the standing
+        // handoff's word.
+        let holds = |_: Harness, _: &Path, _: &Path, _: &str| Reading::Live(Some(cwd.clone()));
+        assert_eq!(
+            said(route_of(
+                &lane,
+                &switch,
+                Some(Relaunch::Fresh),
+                Some(&b),
+                &holds
+            )),
+            ("fresh", Some("session-retired"))
+        );
+        assert_eq!(
+            said(route_of(
+                &lane,
+                &switch,
+                Some(Relaunch::Resume),
+                Some(&b),
+                &holds
+            )),
+            resume
+        );
+        // Switches the store is never asked about: no account named (the
+        // record's home handed in), no destination, another harness.
+        let unasked = |_: Harness, _: &Path, _: &Path, _: &str| -> Reading<Option<PathBuf>> {
+            panic!("a switch the store cannot decide asked it")
+        };
+        let mut accountless = switch.clone();
+        accountless.account = None;
+        assert_eq!(
+            said(route_of(&lane, &accountless, None, Some(&a), &unasked)),
+            switched
+        );
+        assert_eq!(
+            said(route_of(&lane, &switch, None, None, &unasked)),
+            switched
+        );
+        let mut unrooted = lane.clone();
+        unrooted.mail_root = None;
+        assert_eq!(
+            said(route_of(&unrooted, &switch, None, Some(&b), &unasked)),
+            switched
+        );
+        for harness in ["codex", "copilot"] {
+            let mut lane = lane.clone();
+            lane.harness = Some(harness.to_owned());
+            let mut r = switch.clone();
+            r.harness = harness.to_owned();
+            assert_eq!(
+                said(route_of(&lane, &r, None, Some(&b), &unasked)),
+                switched,
+                "{harness}"
+            );
+        }
     }
 
     #[test]
