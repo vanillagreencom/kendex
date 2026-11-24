@@ -807,12 +807,14 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
     }
     let declared = proof::Declaration::of(&settings.validate);
     let mut rows = stages(settings, &r.id.issue)?;
-    let recorded = r
-        .validate_run_dir
-        .as_ref()
-        .and_then(|dir| rows.iter().find(|s| s.run_dir.as_deref() == dir.to_str()))
-        .is_some_and(|s| s.proof.is_some());
-    if !recorded {
+    let recorded = r.validate_run_dir.as_ref().and_then(|dir| {
+        rows.iter()
+            .position(|s| s.run_dir.as_deref() == dir.to_str())
+            .filter(|&index| rows[index].proof.is_some())
+    });
+    let bound_run = if let Some(index) = recorded {
+        index
+    } else {
         let mut stage = match &r.validate_run_dir {
             // An unrecorded run directory is the proof row its run file
             // reads as, the row the validation entry's own proof reads.
@@ -848,7 +850,8 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
             proof.base = base.to_owned();
         }
         rows.insert(0, stage);
-    }
+        0
+    };
     let request = proof::ReadProof {
         need: proof::Need::Round,
         tree: tree.clone(),
@@ -858,14 +861,26 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run, commit: &str) -> Re
         exception: None,
     };
     let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
-    let answer = proof::read(&rows, &[], &request, &declared, &mut tree_of);
+    let (answer, unproved_range_base) = proof::read_with_bound_run(
+        &rows,
+        &[],
+        &request,
+        &declared,
+        &mut tree_of,
+        Some(bound_run),
+    );
     match (r.validate.as_str(), answer.proof) {
         ("pass", proof::Verdict::Complete | proof::Verdict::Pending) => Ok(tree),
         ("no-verdict", _) if run.verdict == "no-verdict" => Ok(tree),
-        _ => Err(refuse(
-            "run-off-round",
-            "Need::Round has no applicable proof of the tree",
-        )),
+        _ => {
+            let cause = match unproved_range_base {
+                Some(from) => format!(
+                    "the range base differs from the round base and its tree has no applicable proof. range-base={from} round-base={base}"
+                ),
+                None => "Need::Round has no applicable proof of the tree".to_owned(),
+            };
+            Err(refuse("run-off-round", cause))
+        }
     }
 }
 

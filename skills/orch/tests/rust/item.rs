@@ -3094,6 +3094,85 @@ mod dev_artifacts {
         refused(&bound("before-map", &main), "run-off-round");
     }
 
+    #[test]
+    fn fix_receipt_names_the_unproved_range_base() {
+        let w = World::new();
+        let range_base = w.head();
+        w.commit("app.txt");
+        let round_base = w.head();
+        w.stamp("r1");
+        // From main the app.txt edit cancels out. It is still in this round's diff.
+        fs::write(w.wt.join("app.txt"), "base\n").unwrap();
+        git(&w.wt, &["commit", "-qam", "restore app.txt"]);
+        w.commit("second.txt");
+        let head = w.head();
+        let cmd = "printf 'validate: lanes=unit selection=all\\n'";
+        let run = w.finished_run("range", "range");
+        fs::write(run.join("cmd"), cmd).unwrap();
+        fs::write(run.join("log"), "validate: lanes=unit selection=all\n").unwrap();
+        w.record_start(&run, &format!("tree={}", w.tree()));
+        w.record_start(&run, &format!("validate-base={range_base}"));
+        let write = |declared: &str| {
+            w.command()
+                .env("DEV_VALIDATE_RANGE_CMD", declared)
+                .args(["dev-return", "--text", "write"])
+                .args(w.identity("r1"))
+                .args([
+                    "--kind",
+                    "fix",
+                    "--branch",
+                    "work",
+                    "--commit",
+                    &head,
+                    "--validate",
+                    "pass",
+                    "--validate-run-dir",
+                    run.to_str().unwrap(),
+                    "--item",
+                    "1",
+                    "Applied",
+                    "x",
+                ])
+                .output()
+                .unwrap()
+        };
+        let initial = w.doc();
+        let mut admitted = initial.clone();
+        let stage = orch_runtime::validate::files::RunFile::read(&run)
+            .unwrap()
+            .stage()
+            .unwrap();
+        admitted["stages"].as_array_mut().unwrap().push(json!({
+            "kind": "validate", "round_id": "r1", "start": stage.start, "end": stage.end,
+            "outcome": "pass", "run_dir": run, "proof": stage.proof,
+        }));
+
+        let fields = [
+            format!("range-base={range_base}"),
+            format!("round-base={round_base}"),
+        ];
+        for ledger in [&admitted, &initial] {
+            fs::write(w.item(), ledger.to_string()).unwrap();
+            for (declared, expect_off_base) in [(cmd, true), ("another command", false)] {
+                let out = write(declared);
+                let err = stderr(&out);
+                assert_eq!(out.status.code(), Some(2), "{err}");
+                assert!(err.starts_with("dev-return: run-off-round "), "{err}");
+                for field in &fields {
+                    assert_eq!(
+                        err.split_whitespace().any(|s| s == field),
+                        expect_off_base,
+                        "{err}"
+                    );
+                }
+            }
+            assert!(!w.receipt_path("r1").exists());
+        }
+        w.record_start(&run, &format!("validate-base={round_base}"));
+        let out = write(cmd);
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+
     /// A fix round's red run over staged work keeps its result against the
     /// tree that ran, with no commit between, while a pass still proves only
     /// the committed tree.
