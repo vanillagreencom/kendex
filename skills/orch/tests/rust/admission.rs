@@ -2358,6 +2358,77 @@ fn a_launch_records_its_checkouts_common_git_folder_once_and_never_one_under_its
     );
 }
 
+/// A completed phase keeps its anchor. The next phase can reuse its path
+/// after Git registers the worktree in a different clone of the repository.
+#[test]
+fn a_new_phase_replaces_a_populated_anchor_at_the_same_worktree_path() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let repo = fleet.state_dir();
+    let origin = "git@github.com:o/fleet.git";
+    git(&repo, &["init", "-q", "-b", "main", "."]);
+    git(&repo, &["config", "gc.auto", "0"]);
+    git(&repo, &["config", "maintenance.auto", "false"]);
+    git(&repo, &["remote", "add", "origin", origin]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+    );
+    let wt = fleet.dir.path().join("worktree");
+    let wt_path = wt.to_str().unwrap();
+    git(&repo, &["worktree", "add", "-q", "-b", "lane", wt_path]);
+    let mut request = launch("KEN-1", &wt);
+    request.as_object_mut().unwrap().remove("tracker");
+    let launch_here = || {
+        let out = fleet.op(&request);
+        assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    };
+    launch_here();
+    let mut done = fleet.lane("KEN-1");
+    assert_eq!(
+        done["checkout_common"],
+        json!(repo.join(".git").canonicalize().unwrap())
+    );
+    done["status"] = json!("done");
+    fleet.write_lanes(vec![done]);
+
+    let next = fleet.dir.path().join("clone");
+    git(
+        &repo,
+        &[
+            "clone",
+            "-q",
+            "--no-hardlinks",
+            "-c",
+            "gc.auto=0",
+            "-c",
+            "maintenance.auto=false",
+            repo.to_str().unwrap(),
+            next.to_str().unwrap(),
+        ],
+    );
+    git(&next, &["remote", "set-url", "origin", origin]);
+    git(&repo, &["worktree", "remove", wt_path]);
+    git(&next, &["worktree", "add", "-q", "-b", "lane", wt_path]);
+
+    launch_here();
+    assert_eq!(
+        fleet.lane("KEN-1")["checkout_common"],
+        json!(next.join(".git").canonicalize().unwrap()),
+        "the new phase at the same path replaces its prior anchor"
+    );
+}
+
 /// A `github` item whose repository is not the one its checkout's origin
 /// names, and a `linear` item of another team than the fleet's
 /// `LINEAR_TEAM` (read through the linear package's real team formatter
