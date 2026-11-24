@@ -167,7 +167,18 @@ pub(super) fn check_scope(
     };
     ctx.skill_lines(declared, record_view, &occupied, lock.is_ok(), sections);
     ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
-    ctx.snapshot_lines(manifest.current(), sections, oldest_age);
+    // The verdicts are told apart by the record as it stands after the
+    // check recorded the copies it proved, which only an occupied position
+    // can make it do. An unreadable record has its own could-not-check
+    // line, and tells no verdict apart from another.
+    let settled =
+        (!occupied.is_empty()).then(|| crate::lock::load_file(&crate::lock::lock_path(env, scope)));
+    let recorded = match settled.as_ref().unwrap_or(&lock) {
+        Ok(crate::lock::LockFile::Current(lock)) => Some(lock),
+        Ok(crate::lock::LockFile::Absent) => Some(&empty),
+        Err(_) => None,
+    };
+    ctx.snapshot_lines(manifest.current(), recorded, sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);
     ScopeOutcome {
         scan,
@@ -1492,6 +1503,7 @@ impl ScopeCheck<'_> {
     fn snapshot_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
+        lock: Option<&crate::lock::Lock>,
         sections: &mut Sections,
         oldest_age: &mut Option<u64>,
     ) {
@@ -1525,18 +1537,7 @@ impl ScopeCheck<'_> {
         };
         let age = self.now.saturating_sub(snapshot.taken_at);
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
-        let mut unreadable: BTreeMap<_, Vec<_>> = BTreeMap::new();
-        for note in &snapshot.unreadable {
-            if note.kind == ItemKind::PiExtension {
-                continue;
-            }
-            let notes = unreadable
-                .entry((note.kind, note.name.as_str(), note.repo.as_str()))
-                .or_default();
-            if !notes.contains(&note) {
-                notes.push(note);
-            }
-        }
+        let unreadable = notes_by_package(&snapshot);
         let stale = self.stale_remedy(&snapshot.packages);
         let mut compared = BTreeSet::new();
         for package in &snapshot.packages {
@@ -1545,6 +1546,18 @@ impl ScopeCheck<'_> {
                 continue;
             }
             let key = (package.kind, package.name.as_str(), package.repo.as_str());
+            // The verdict and its notes are about a record no longer here:
+            // after a pull, a newer version read from the old record would
+            // offer the refresh the pull just made unneeded.
+            if lock.is_some_and(|lock| package.record_moved(lock)) {
+                sections.deep_pass_owed = true;
+                if compared.insert(key) {
+                    sections
+                        .unevaluated
+                        .push(self.record_moved_line(package, age));
+                }
+                continue;
+            }
             let notes = unreadable.get(&key).map_or(&[][..], Vec::as_slice);
             if let Some(line) = self.comparison_line(
                 manifest,
@@ -1693,23 +1706,43 @@ impl ScopeCheck<'_> {
         })
     }
 
-    /// The note's own fix rides in its text: it is the producer's wording,
-    /// never a template, so it takes no command position.
-    fn unreadable_line(&self, note: &crate::drift::snapshot::UnreadableSnapshot) -> Line {
-        let mut text = format!(
-            "{}{} '{}': {}",
-            self.prefix,
-            note.kind.name(),
-            shown(&note.name),
-            shown(&note.message)
-        );
-        if let Some(remediation) = note.remediation.as_deref() {
-            text.push_str(&format!("; {}", shown(remediation)));
+    /// A verdict derived from another record than the lock holds now. The
+    /// deep pass the check requests derives it again, so the line names no
+    /// fix of its own.
+    fn record_moved_line(
+        &self,
+        package: &crate::drift::snapshot::PackageSnapshot,
+        age: u64,
+    ) -> Line {
+        Line {
+            class: Class::Settling,
+            text: format!(
+                "{}{} '{}': its install record changed since evaluation; comparison pending (evaluation: {} ago)",
+                self.prefix,
+                package.kind.name(),
+                shown(&package.name),
+                super::render::age_word(age)
+            )
+            .into(),
+            remedy: None,
+            detail: None,
         }
+    }
+
+    fn unreadable_line(&self, note: &crate::drift::snapshot::UnreadableSnapshot) -> Line {
         Line {
             class: Class::Unknown,
-            text: text.into(),
-            remedy: None,
+            text: format!(
+                "{}{} '{}': {}",
+                self.prefix,
+                note.kind.name(),
+                shown(&note.name),
+                shown(&note.message)
+            )
+            .into(),
+            remedy: note.unfetched.then_some(Remedy::SourceRefresh {
+                global: self.global,
+            }),
             detail: note.detail.as_deref().map(verbatim),
         }
     }
@@ -1819,4 +1852,24 @@ impl ScopeCheck<'_> {
             }
         }
     }
+}
+
+/// The snapshot's notes by the package they are about, each once. A Pi
+/// package's notes are never read here ([`ScopeCheck::snapshot_lines`]).
+fn notes_by_package(
+    snapshot: &crate::drift::snapshot::ScopeSnapshot,
+) -> BTreeMap<(ItemKind, &str, &str), Vec<&crate::drift::snapshot::UnreadableSnapshot>> {
+    let mut unreadable: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for note in &snapshot.unreadable {
+        if note.kind == ItemKind::PiExtension {
+            continue;
+        }
+        let notes = unreadable
+            .entry((note.kind, note.name.as_str(), note.repo.as_str()))
+            .or_default();
+        if !notes.contains(&note) {
+            notes.push(note);
+        }
+    }
+    unreadable
 }

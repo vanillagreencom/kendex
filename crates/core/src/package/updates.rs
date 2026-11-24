@@ -124,6 +124,19 @@ pub struct UpdateRow {
     /// refused is a second account of a rule that lives in
     /// [`crate::engine::plans_per_package`].
     pub no_per_package_update: Option<String>,
+    /// The commits the lock recorded for this package when the standing
+    /// was computed. The drift snapshot keeps them, so a check after the
+    /// record moved under it, as a pull of another clone's lock moves it,
+    /// reads the verdict as owed rather than current. No surface shows it.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub recorded: Vec<String>,
+    /// The installed commit is one the source's copy has not fetched: the
+    /// warning the standing carries for it is settled by a source refresh,
+    /// which the drift snapshot's note names from this.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub unfetched: bool,
 }
 
 /// The refusal a row carries for its kind, when the planner has one.
@@ -235,6 +248,10 @@ pub fn updates(env: &Env, scope: &Scope) -> Result<UpdatesReport> {
     };
     for planned in crate::engine::planned_declarations(env, scope, &manifest) {
         eval.standing(&planned, &mut report);
+    }
+    // The record every row was judged against, read once above.
+    for row in &mut report.rows {
+        row.recorded = crate::lock::recorded_commits(&lock, row.kind, &row.name);
     }
     Ok(report)
 }
@@ -382,6 +399,8 @@ fn unversioned_row(
         mixed: false,
         removed_upstream: false,
         no_per_package_update: no_per_package_update(kind),
+        recorded: Vec::new(),
+        unfetched: false,
     }
 }
 

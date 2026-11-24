@@ -2,7 +2,8 @@
 //! the default branch, the one `refs/remotes/origin/HEAD` names or `main`
 //! where the clone records none, and a project outside Git. Every other
 //! checkout of a Git repository, a detached HEAD and a linked worktree on
-//! a branch among them, leaves the record as its branch holds it.
+//! a branch among them, leaves the record as its branch holds it, and
+//! only a checkout on the default branch reads as behind origin's copy.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -11,7 +12,7 @@ use test_util::rooted;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kendex_core::lock::branch::{OffBranch, Recording, recording};
+use kendex_core::lock::branch::{OffBranch, Recording, behind_default, recording};
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 
@@ -160,6 +161,55 @@ fn each_checkout_shape_answers_where_the_record_is_written() {
         let (_tmp, root) = repository();
         let at = arrange(&root);
         assert_eq!(recording(&project(&at)).unwrap(), expected, "{shape}");
+    }
+}
+
+/// Only the default branch itself follows origin's copy by a pull, so a
+/// lane branch or a detached HEAD at a commit origin's `main` is ahead of
+/// is never told `git pull --ff-only`, which would move the branch it is
+/// on or refuse. Each row starts from `main` one commit behind
+/// `origin/main` with nothing of its own.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn only_the_default_branch_reads_behind_origin() {
+    type Shape = fn(&Path);
+    let rows: [(&str, Shape, bool); 3] = [
+        ("the default branch", |_| {}, true),
+        (
+            "another branch at the same commit",
+            |root| git(root, &["switch", "--quiet", "-c", "lane"]),
+            false,
+        ),
+        (
+            "a detached HEAD at the same commit",
+            |root| git(root, &["switch", "--quiet", "--detach"]),
+            false,
+        ),
+    ];
+    for (shape, arrange, expected) in rows {
+        let (_tmp, root) = repository();
+        git(
+            &root,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "two",
+            ],
+        );
+        git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&root, &["reset", "--quiet", "--hard", "HEAD~1"]);
+        arrange(&root);
+        assert_eq!(
+            behind_default(&project(&root)).unwrap(),
+            expected,
+            "{shape}"
+        );
     }
 }
 

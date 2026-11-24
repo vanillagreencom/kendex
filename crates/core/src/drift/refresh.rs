@@ -94,7 +94,9 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
         }
         // The deep work is legal here: after fetching, re-derive the
         // snapshot so the next session check reads verdicts. Also derived
-        // when another lane fetched or the scope has never been evaluated.
+        // when another lane fetched, the record moved under its verdicts,
+        // or the scope has never been evaluated. A record that will not
+        // read fails the derivation too, so it moves nothing here.
         // A scope with no remote source has no verdict a fetch could move, and the check
         // reads its absent snapshot as nothing to say.
         if remotes
@@ -102,6 +104,8 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
                 || match super::snapshot::load(env, scope) {
                     super::snapshot::SnapshotFile::Current(snapshot) => {
                         snapshot.sources_changed(env)
+                            || crate::lock::load(&crate::lock::lock_path(env, scope))
+                                .is_ok_and(|lock| snapshot.record_moved(&lock))
                     }
                     super::snapshot::SnapshotFile::Absent
                     | super::snapshot::SnapshotFile::Unreadable(_) => true,

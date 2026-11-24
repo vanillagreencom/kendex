@@ -421,8 +421,16 @@ fn a_foreground_fetch_retires_missing_commit_evidence() {
                 usize::from(fetch),
                 "{case}, fetch={fetch}"
             );
+            // The fetch is the one fix a missing commit takes, and a
+            // superseded comparison is already owed one.
             assert!(
-                lines.iter().all(|line| line.remedy.is_none()),
+                lines.iter().all(|line| match line.class {
+                    Class::Settling => line.remedy.is_none(),
+                    _ => matches!(
+                        line.remedy,
+                        None | Some(drift::report::Remedy::SourceRefresh { global: false })
+                    ),
+                }),
                 "{case}, fetch={fetch}"
             );
             assert_eq!(
@@ -556,6 +564,58 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
         drift::report::render_plain(&checked, kendex_core::drift::report::Verbosity::Verbose),
         ""
     );
+}
+
+/// A pull of another clone's record moves the lock under a verdict made
+/// from the old one: the next check reads the package again instead of
+/// offering the refresh that verdict called for, and the background job
+/// it requests derives the verdict for the record now there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pulled_record_makes_the_next_check_read_again() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    write_skill(&w.upstream, "gh", "Two.");
+    let second = commit(&w.upstream, "two");
+    remote::sync(&w.env, REPO, None).unwrap();
+    drift::snapshot::record(&w.env, &w.scope).unwrap();
+    let scopes = std::slice::from_ref(&w.scope);
+    let verbs = |checked: &drift::report::CheckReport| -> Vec<(drift::report::Class, Option<drift::report::Remedy>)> {
+        checked
+            .sections
+            .iter()
+            .flat_map(|section| &section.lines)
+            .filter(|line| line.text.to_string().contains("'gh'"))
+            .map(|line| (line.class, line.remedy.clone()))
+            .collect()
+    };
+    let before = drift::report::check(&w.env, scopes, drift::copies::CheckMode::ReportOnly);
+    assert_eq!(
+        verbs(&before),
+        [(
+            drift::report::Class::Drift,
+            Some(drift::report::Remedy::Refresh { global: false })
+        )]
+    );
+
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+    for entry in lock.entries.values_mut() {
+        entry.source_commit = Some(second.clone());
+    }
+    kendex_core::lock::save(&lock_path, &lock).unwrap();
+
+    let after = drift::report::check(&w.env, scopes, drift::copies::CheckMode::ReportOnly);
+    assert_eq!(verbs(&after), [(drift::report::Class::Settling, None)]);
+    assert!(drift::report::wants_background_refresh(
+        &w.env, scopes, &after
+    ));
+    assert!(drift::refresh::refresh_stale(&w.env, scopes).is_empty());
+    let settled = drift::report::check(&w.env, scopes, drift::copies::CheckMode::ReportOnly);
+    assert!(verbs(&settled).is_empty(), "{settled:?}");
 }
 
 #[test]

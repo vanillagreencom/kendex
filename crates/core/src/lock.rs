@@ -556,6 +556,17 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// The source commit each installation of a package recorded, in the
+/// lock's entry order: what an update standing compares from, and what
+/// the drift snapshot keeps to tell a verdict made from another record.
+pub fn recorded_commits(lock: &Lock, kind: ItemKind, name: &str) -> Vec<String> {
+    lock.entries
+        .values()
+        .filter(|entry| entry.kind == kind && entry.name == name)
+        .filter_map(|entry| entry.source_commit.clone())
+        .collect()
+}
+
 /// Whether the scope carries this skill only because other installed items
 /// require it. A request or a bundle membership on any row is the scope's
 /// own choice. A row with no recorded reason predates reasons, so it is

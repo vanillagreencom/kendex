@@ -40,7 +40,7 @@ fn failed_comparison(home: &Path, fetched_ago: u64, superseded: bool) -> PathBuf
                 kind: ItemKind::Skill,
                 name: "gh".into(),
                 message: "kendex could not find the installed version in its source".into(),
-                remediation: Some("fetch its source again with kendex source refresh".into()),
+                unfetched: true,
                 detail: Some(format!(
                     "git log --first-parent --format=%H {HASH} -- :(literal)skills/gh failed: fatal: bad object {HASH}"
                 )),
@@ -88,11 +88,10 @@ fn a_failed_comparison_says_only_what_the_person_needs() {
             assert_eq!(code, Some(expected_code));
             assert_eq!(technical(&text), Vec::<&str>::new());
             assert!(!text.is_empty());
-            assert!(!text.contains("tries again"), "{text}");
             // A clone that must not commit is told the step that writes
             // nothing in it; a superseded comparison names its own.
             assert_eq!(
-                text.contains("kendex source refresh"),
+                text.contains("fix: kendex source refresh"),
                 !superseded,
                 "{text}"
             );
@@ -114,7 +113,10 @@ fn a_failed_comparison_says_only_what_the_person_needs() {
             if superseded { "drift" } else { "unknown" }
         );
         assert!(line["detail"].as_str().unwrap().contains(HASH));
-        assert!(line["remedy"].is_null());
+        match superseded {
+            true => assert!(line["remedy"].is_null(), "{line}"),
+            false => assert_eq!(line["remedy"]["verb"], "source-refresh", "{line}"),
+        }
         assert_eq!(
             technical(line["text"].as_str().unwrap()),
             Vec::<&str>::new()
@@ -209,6 +211,7 @@ fn behind_checkout(home: &Path, origin: Option<&str>) -> PathBuf {
                 edited: false,
                 mixed: false,
                 forked: false,
+                recorded: Vec::new(),
             }],
             unreadable: vec![],
         },

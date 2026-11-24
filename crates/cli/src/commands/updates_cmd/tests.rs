@@ -40,6 +40,8 @@ fn row() -> UpdateRow {
         mixed: false,
         removed_upstream: false,
         no_per_package_update: None,
+        recorded: vec![],
+        unfetched: false,
     }
 }
 
@@ -111,6 +113,7 @@ fn listing_evaluates_once_and_records_the_supplied_report() -> super::CliResult 
             edited: true,
             mixed: true,
             forked: true,
+            recorded: vec![],
         }]
     );
     let [warning] = snapshot.unreadable.as_slice() else {

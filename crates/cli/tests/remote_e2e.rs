@@ -1133,16 +1133,19 @@ fn a_pulled_record_past_the_local_source_copy_settles_with_a_source_refresh() {
 
     let (code, report) = checked(&home, &project);
     assert_eq!(code, Some(2), "{report}");
-    let lines: Vec<&str> = report["sections"]
+    let verbs: Vec<&str> = report["sections"]
         .as_array()
         .unwrap()
         .iter()
         .flat_map(|section| section["lines"].as_array().unwrap())
-        .filter_map(|line| line["text"].as_str())
-        .filter(|text| text.contains("skill 'gh': kendex could not find the installed version"))
+        .filter(|line| {
+            line["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("'gh'"))
+        })
+        .filter_map(|line| line["remedy"]["verb"].as_str())
         .collect();
-    assert_eq!(lines.len(), 1, "{report}");
-    assert!(lines[0].contains("kendex source refresh"), "{}", lines[0]);
+    assert_eq!(verbs, ["source-refresh"], "{report}");
 
     let before = test_util::lane::snapshot(&project);
     let refreshed = kendex(

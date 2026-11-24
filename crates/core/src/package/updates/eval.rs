@@ -279,6 +279,8 @@ impl Eval<'_> {
                     repo_identity: crate::source_ref::repo_identity(&repo),
                     repo,
                     no_per_package_update: super::no_per_package_update(kind),
+                    recorded: Vec::new(),
+                    unfetched: false,
                 });
             }
             _ => report.warnings.push(warn(
@@ -289,20 +291,26 @@ impl Eval<'_> {
         }
     }
 
-    /// The fix for an installed commit the history could not place. A lock
-    /// pulled from another clone can name a commit this machine's copy of
-    /// the source has not fetched yet. A source refresh fetches it and
-    /// writes nothing in the project, which matters in a clone that must not
-    /// commit; `kendex refresh` would rewrite the lock. A commit the copy
-    /// holds failed for another reason, which a fetch does not repair.
-    fn unfetched_fix(&self, package: &crate::package::PackageRef, commit: &str) -> Option<String> {
-        if crate::remote::store::has_commit(&package.mirror, commit) {
-            return None;
+    /// The fix for an installed commit the source's copy has not fetched,
+    /// as a lock pulled from another clone can name. A source refresh
+    /// fetches it and writes nothing in the project, which matters in a
+    /// clone that must not commit; `kendex refresh` would rewrite the lock.
+    ///
+    /// A command in a warning's text is an exception to engine.md rule 18:
+    /// `kendex updates` and the app's Updates page show a warning's own text
+    /// and no template remedy, so the command would reach neither. The
+    /// spelling is the drift report's template's, and the check line names
+    /// it as that template from the row's `unfetched`, never from this text.
+    fn source_refresh_fix(&self) -> Option<String> {
+        let remedy = crate::drift::report::Remedy::SourceRefresh {
+            global: matches!(self.scope, Scope::Global),
+        };
+        match remedy.render(None)? {
+            crate::drift::report::Fix::Here(command)
+            | crate::drift::report::Fix::Elsewhere(command) => {
+                Some(format!("fetch its source again with {command}"))
+            }
         }
-        Some(match self.scope {
-            Scope::Global => "fetch its source again with kendex source refresh --global".into(),
-            Scope::Project { .. } => "fetch its source again with kendex source refresh".into(),
-        })
     }
 
     /// The bound package's standing, from its mirror's history. A history
@@ -355,23 +363,21 @@ impl Eval<'_> {
         let latest = newest
             .as_ref()
             .map(|row| version_ref(&row.commit, Some(row)));
-        let commits: Vec<String> = self
-            .lock
-            .entries
-            .values()
-            .filter(|entry| entry.kind == kind && &entry.name == name)
-            .filter_map(|entry| entry.source_commit.clone())
-            .collect();
+        let commits = crate::lock::recorded_commits(self.lock, kind, name);
         let mixed = commits.windows(2).any(|pair| pair[0] != pair[1]);
+        // A commit the copy holds whose history still failed has another
+        // cause, which a fetch does not repair, so it names no step.
+        let mut unfetched = false;
         let current = match (latest.is_some(), commits.last()) {
             (false, _) | (_, None) => None,
             (true, Some(commit)) => match installed_version(package, commit, newest.as_ref()) {
                 Ok(current) => current,
                 Err(error) => {
+                    unfetched = !crate::remote::store::has_commit(&package.mirror, commit);
                     warn(
                         report,
                         "kendex could not find the installed version in its source",
-                        self.unfetched_fix(package, commit),
+                        unfetched.then(|| self.source_refresh_fix()).flatten(),
                         &error,
                     );
                     None
@@ -424,6 +430,8 @@ impl Eval<'_> {
             mixed,
             removed_upstream: false,
             no_per_package_update: super::no_per_package_update(kind),
+            recorded: Vec::new(),
+            unfetched,
         });
     }
 
