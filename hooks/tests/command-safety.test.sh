@@ -2277,7 +2277,7 @@ transfer_rows() { # HOOK [LABEL...]
       # after a refusal's text would stand below them.
       late=""
       if [ "$status" -eq 2 ] && grep -q '^command-safety: report=' "$scratch/stderr"; then late=" late-report"; fi
-      if [ "$label" = push-inline-credential-helper ] && ! grep -Fqx "for GitHub authentication, use the github skill's git-https-auth push origin HEAD to keep push authority in the credential-helper child" "$scratch/stderr"; then
+      if [ "$label" = push-inline-credential-helper ] && ! grep -Fqx "for GitHub authentication, use the github skill's git-https-auth push origin HEAD so the credential helper selects the push credential and ordinary gh calls in pre-push retain the read selection" "$scratch/stderr"; then
         late="$late missing-credential-helper-remedy"
       fi
       if [ "$status" -eq "$expected" ] && [ "${got:--}" = "$keyed" ] && [ -z "$late" ]; then
@@ -2415,7 +2415,14 @@ push-assigned-shell|claude|-|2|refused=push-remote;assignment=ORCH_GH_PUSH_TOKEN
 push-assigned-export|claude|-|2|refused=push-remote;assignment=GH_TOKEN;reason=unresolved-remote|export GH_TOKEN=x; git push origin HEAD
 push-assigned-declare|claude|-|2|refused=push-remote;assignment=GH_CONFIG_DIR;reason=unresolved-remote|declare -x GH_CONFIG_DIR=/f; git push
 push-assigned-typeset|claude|-|2|refused=push-remote;assignment=XDG_CONFIG_HOME;reason=unresolved-remote|typeset -x XDG_CONFIG_HOME=/f; bash -c 'git push origin HEAD'
+push-after-or-list-export|claude|-|2|refused=push-remote;assignment=TEST_MODE;reason=unresolved-remote|export TEST_MODE=sample || :; git push origin HEAD
+push-after-eval-export|claude|-|2|refused=push-remote;assignment=TEST_MODE;reason=unresolved-remote|eval 'export TEST_MODE=sample'; git push origin HEAD
+push-after-source-export|claude|-|2|refused=push-remote;assignment=TEST_MODE;reason=unresolved-remote|source /dev/stdin <<< 'export TEST_MODE=sample'; git push origin HEAD
+push-after-builtin-export|claude|-|2|refused=push-remote;assignment=TEST_MODE;reason=unresolved-remote|builtin export TEST_MODE=sample; git push origin HEAD
+push-after-export-with-substitution|claude|-|2|refused=push-remote;assignment=TEST_MODE;reason=unresolved-remote|export TEST_MODE="$(printf sample)"; git push origin HEAD
 push-after-child-export|claude|-|0|-|(export GH_CONFIG_DIR=/f); git push origin HEAD
+push-after-child-shell-export|claude|-|0|-|bash -c 'export TEST_MODE=sample'; git push origin HEAD
+push-after-pipeline-export|claude|-|0|-|export TEST_MODE=sample | :; git push origin HEAD
 push-inline-credential-helper|claude|-|2|refused=push-remote;reason=unresolved-remote|git -c credential.helper= push origin HEAD
 git-config-file-variable|claude|-|0|-|GIT_CONFIG_GLOBAL=/dev/null git commit -m x
 push-unreadable-repository|claude|-|2|refused=push-remote;reason=unreadable-repository|git -C @BROKEN@ push origin HEAD

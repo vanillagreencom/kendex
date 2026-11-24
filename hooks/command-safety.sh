@@ -759,6 +759,7 @@ reader_environment_arguments() {
 environment_producer() { # command kind
     local env_chdir env_chdir_word xargs_launch="" builtin_head=$pos assigned_name declared_assignments
     local exec_option_re='^-[cl]*(a.*)?$' exec_name_needed exec_word
+    declared_exports=""
     split_reader_chdir=$reader_chdir; split_reader_chdir_unresolved=$reader_chdir_unresolved
     shell_forwarder=""; shell_forwarded_pos=""
     # Other is unresolved. An existing arm's proof must establish clean.
@@ -982,7 +983,7 @@ environment_producer() { # command kind
           if [ "$1" = shell ] && [ "$program_pos" = "$builtin_head" ]; then
             case "$program:$flags" in
               export:*n* | *:*f* | *:*p*) ;;
-              export:* | *:*x*) stage_exports=$declared_assignments ;;
+              export:* | *:*x*) declared_exports=$declared_assignments ;;
             esac
           fi
         fi ;;
@@ -1321,6 +1322,8 @@ environment_queue() { # source text, word kind, optional forwarded tag or split-
   executable_source_kinds[code]=shell; executable_prefix_counts[code]=0
   executable_same_shell[code]=""
   [ "$#" -ne 2 ] || ! runs_in_shell || executable_same_shell[code]=1
+  executable_exports[code]=${executable_same_shell[$code]:+$export_dispatch}
+  [ -z "${executable_exports[$code]}" ] || stage_has_exports_source[stage]=1
   if [ "$#" -eq 3 ] && [ "$3" != forwarded ]; then
     # The inner decode replays this env command's options. Its context starts
     # before that command applies its own chdir.
@@ -1604,8 +1607,8 @@ transfer_resolve() {
         case "${kinds[$j]}:${tokens[$j]}" in literal:push | dollar-literal:push) git_at=push; break ;; esac
       done
     fi
-    uploads_end=${stage_uploads_from[$((stage + 1))]:-${#upload_programs[@]}}
-    pushes_end=${stage_pushes_from[$((stage + 1))]:-${#push_remotes[@]}}
+    uploads_end=${stage_uploads_to[$stage]}
+    pushes_end=${stage_pushes_to[$stage]}
     stage_upload_records[stage]=$((uploads_end - stage_uploads_from[stage]))
     stage_unresolved[stage]=""
     [ -n "$held" ] || [ "$git_at" = push ] || continue
@@ -2031,24 +2034,75 @@ esac_reserved() { # PREVIOUS IN
   done
 }
 
+# Drain selected same-shell source in stage order so its exports reach later
+# commands. Drain child and conservative source after collecting the outer stages.
+environment_stage_source() { # [1 means retain exports in this shell]
+  local data_source command_text code doc tail_start tail_count same_shell_exports
+  local input_bodies=() escaped_input source_reader_dirs=() source_reader_dirs_unresolved
+  local command_tail_args=() command_tail_kinds=() command_tail_unquoted=() command_prefix_count=0
+  data_source="${stage_sources[$stage]} $incoming_sources"; escaped_input=""
+  for doc in $data_source; do
+    input_bodies[${#input_bodies[@]}]=${literal_inputs[$doc]}
+    [ "${literal_kinds[$doc]}" != ansi-escaped ] || escaped_input=1
+  done
+  # A command string can start a shell that reads the same stdin. This
+  # check has no ANSI-C decoder, so an escaped source, or escaped input
+  # handed to one, refuses here, whichever writer queued it.
+  for ((code=0; code<${#executable_texts[@]}; code++)); do
+    [ "${executable_stages[$code]}" -eq "$stage" ] && [ "${executable_exports[$code]}" = "$1" ] || continue
+    if [ "${executable_kinds[$code]}" = ansi-escaped ] || [ -n "$escaped_input" ]; then
+      dump_reason=undecoded-ansi-escape; return 0
+    fi
+    command_text=${executable_texts[$code]}
+    tail_start=${executable_tail_starts[$code]:-0}; tail_count=${executable_tail_counts[$code]:-0}
+    command_tail_args=("${executable_tail_args[@]:tail_start:tail_count}")
+    command_tail_kinds=("${executable_tail_kinds[@]:tail_start:tail_count}")
+    command_tail_unquoted=("${executable_tail_unquoted[@]:tail_start:tail_count}")
+    command_prefix_count=${executable_prefix_counts[$code]:-0}
+    load_reader_context "${executable_reader_context[$code]}"
+    same_shell_exports=""
+    if inherited_assignments=${executable_assignments[$code]} queued_same_shell=${executable_same_shell[$code]:-} environment_dump "${executable_source_kinds[$code]:-shell}" "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
+    [ -z "$1" ] || stage_exports="$stage_exports$same_shell_exports"
+  done
+  command_tail_args=(); command_tail_kinds=(); command_tail_unquoted=(); command_prefix_count=0
+  [ "${stage_input_exports[$stage]}" = "$1" ] || return 1
+  # A stdin shell runs every body; an unknown receiver may run the ones
+  # no data class admitted. These identifiers come only from the proved
+  # registry. Keep bodies independent: quotes in one program cannot hide
+  # another program.
+  local fallback_only=${transfer_ignored:-}
+  [ -n "${stage_stdin[$stage]}" ] || { data_source=${stage_fallback[$stage]}; fallback_only=1; }
+  for doc in $data_source; do
+    [ "${literal_kinds[$doc]}" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
+    command_text=${literal_inputs[$doc]}
+    load_reader_context "${stage_reader_context[$stage]}"
+    same_shell_exports=""
+    if inherited_assignments=${stage_launches[$stage]} queued_same_shell=${stage_input_same_shell[$stage]:-} transfer_ignored=$fallback_only environment_dump shell conservative; then return 0; fi
+    [ -z "$1" ] || stage_exports="$stage_exports$same_shell_exports"
+  done
+  return 1
+}
+
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted="" fields_unknown=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local reader_dirs=(${source_reader_dirs[@]+"${source_reader_dirs[@]}"}) reader_dirs_unresolved=${source_reader_dirs_unresolved:-}
   [ "${#reader_dirs[@]}" -gt 0 ] || reader_dirs=("${cwd:-$PWD}")
-  local source_reader_dirs=("${reader_dirs[@]}") source_reader_dirs_unresolved=$reader_dirs_unresolved
   local reader_chdir reader_chdir_unresolved split_reader_chdir split_reader_chdir_unresolved cd_operand cd_destination
   local shell_forwarder shell_forwarded_pos selected_forwarder selected_operand next_candidate
   local stage_chdir stage_chdir_unresolved reader_context_id
   local reader_context_paths=() reader_context_starts=() reader_context_counts=() reader_context_uncertain=()
   local stage_reader_context=() executable_reader_context=() executable_assignments=() stage_launches=() launch_names
-  local exported_assignments=${exported_assignments:-} stage_exports stage_exported_assignments=() previous_separator=""
-  local exports_at_depth=("$exported_assignments")
+  local inherited_exports=${exported_assignments:-} exported_assignments stage_exports declared_exports export_dispatch
+  local exports_at_depth=("$inherited_exports") stage_exported_assignments=() pending_exports=() previous_separator="" part
+  local executable_exports=() stage_input_exports=() stage_has_exports_source=()
+  local stage_source_directory_unknown=() stage_source_relative_passed=() stage_source_compound_passed=()
+  local outer_directory_unknown outer_relative_passed outer_compound_passed
   # Whether this frame's text runs in the shell of the frame that queued it.
   local same_shell=${queued_same_shell:-} queued_same_shell="" executable_same_shell=() stage_input_same_shell=()
   local mode stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
-  local candidate limit producer_end code incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
+  local candidate limit producer_end incoming_sources="" file_output file_body head_start script_pos script_string forwarded_argument=""
   local heredoc_op="" heredoc_origin delimiter line remaining doc body found math_depth=0 needs_target=""
   local name_re='^[A-Za-z_][A-Za-z0-9_]*(=.*)?$' declared_re='^[A-Za-z_][A-Za-z0-9_]*(\+?=.*)?$'
   # What follows a $ in double quotes for one word: the closing quote, which
@@ -2062,13 +2116,13 @@ environment_dump() { # command kind; arguments are already decoded data
   # Per source: split text with an escape, expansion or comment this hook
   # does not decode.
   local split_undecoded=""
-  local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() executable_contexts=()
+  local starts=() ends=() separators=() decisions=() literal_inputs=() executable_contexts=()
   local targeting_eligible="" target_effects=() target_files=() target_operands=() target_redirects=()
   # The transfer facts each stage records, related once every stage is read.
   local nesting=() continued=() compound_depth=0 nesting_depth=0 input_program program_word last_arg substitution_input
   local stage_unplain=() stage_unresolved=() stage_downloads=() stage_input_programs=()
   local stage_receivers=() stage_program_words=() stage_substitutions=()
-  local stage_uploads_from=() stage_pushes_from=() stage_upload_records=()
+  local stage_uploads_from=() stage_pushes_from=() stage_uploads_to=() stage_pushes_to=() stage_upload_records=()
   local tail_args=() tail_kinds=() tail_unquoted=() tail_glued=""
   # The case statements open at each substitution depth, for case_word.
   local case_depths=() case_states=() case_ins=()
@@ -2355,7 +2409,7 @@ environment_dump() { # command kind; arguments are already decoded data
   done
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=()
-    stage_exports=""
+    stage_exports=${pending_exports[$stage]:-}; export_dispatch=1
     exported_assignments=${exports_at_depth[$nesting_depth]:-}
     stage_exported_assignments[stage]=$exported_assignments
     target_files[stage]=""; target_operands[stage]=""; target_redirects[stage]=""; target_effects[stage]=ordinary
@@ -2428,15 +2482,7 @@ environment_dump() { # command kind; arguments are already decoded data
       program=opaque
     fi
     environment_producer "$1"
-    # An export affects later stages in this shell. A pipeline or a
-    # background stage cannot change its parent, and a nested shell
-    # inherits the exports in scope before it starts.
-    case "${nesting[$end]:-}:${separators[$stage]}:$previous_separator" in
-      open*:*) exports_at_depth[nesting_depth]=$exported_assignments ;;
-      close:* | *:'|'* | *:'&':* | *:'|') ;;
-      *) exports_at_depth[nesting_depth]="$exported_assignments$stage_exports" ;;
-    esac
-    previous_separator=${separators[$stage]}
+    stage_exports="$stage_exports$declared_exports"
     launch_assignments "${program_pos:-0}"; stage_launches[stage]=$launch_names
     [ -n "${transfer_ignored:-}" ] || owner_word
     # A shell can set CDPATH in more ways than a reader can list, so any
@@ -2468,7 +2514,9 @@ environment_dump() { # command kind; arguments are already decoded data
     environment_program_text
     stage_input_programs[stage]=${input_program:+$program}
     stage_input_same_shell[stage]=""
+    stage_input_exports[stage]=""
     [ -z "$stdin_program" ] || ! runs_in_shell || stage_input_same_shell[stage]=1
+    [ -z "${stage_input_same_shell[$stage]}" ] || stage_input_exports[stage]=$input_program
     stage_receivers[stage]=""
     case "$receiver" in shell | interpreter) stage_receivers[stage]=$program ;; esac
     stage_program_words[stage]=$program_word
@@ -2548,10 +2596,16 @@ environment_dump() { # command kind; arguments are already decoded data
         program=""; pos=0; mode=other; producer_end=0; program_pos=""
         reader_chdir=$stage_chdir; reader_chdir_unresolved=$stage_chdir_unresolved
         inherited_assignments=${stage_launches[$stage]} environment_producer shell
+        export_dispatch=""
+        if [ "$candidate" = "$selected_operand" ] && [ "$selected_forwarder" = builtin ]; then
+          export_dispatch=1
+          stage_exports="$stage_exports$declared_exports"
+        fi
         inherited_assignments=${stage_launches[$stage]} environment_program_text
         directory_change
         [ -z "$stdin_program" ] || stage_stdin[stage]=1
         [ -z "$stdin_program" ] || ! runs_in_shell || stage_input_same_shell[stage]=1
+        [ -z "$export_dispatch" ] || [ -z "$input_program" ] || ! runs_in_shell || stage_input_exports[stage]=1
         [ -z "$input_program" ] || stage_input_programs[stage]=$program
         if [ "$candidate" = "$selected_operand" ]; then
           selected_operand=""
@@ -2595,6 +2649,41 @@ environment_dump() { # command kind; arguments are already decoded data
     fi
     case "$mode" in dump-*) [ -z "$output" ] || mode=unrouted ;; esac
     decisions[stage]=$mode
+    # The resolver's stage ranges contain only that stage's transfers.
+    stage_uploads_to[stage]=${#upload_programs[@]}; stage_pushes_to[stage]=${#push_remotes[@]}
+    if [ -n "${stage_has_exports_source[$stage]:-}${stage_input_exports[$stage]}" ]; then
+      # Apply directory evidence at the original source-drain point so
+      # the outer first pass can still request a second directory walk.
+      outer_directory_unknown=$directory_unknown
+      outer_relative_passed=$reader_relative_passed
+      outer_compound_passed=$reader_compound_passed
+      if environment_stage_source 1; then return 0; fi
+      stage_source_directory_unknown[stage]=$directory_unknown
+      stage_source_relative_passed[stage]=$reader_relative_passed
+      stage_source_compound_passed[stage]=$reader_compound_passed
+      directory_unknown=$outer_directory_unknown
+      reader_relative_passed=$outer_relative_passed
+      reader_compound_passed=$outer_compound_passed
+    fi
+    # A substitution child inherits the previous export state. An assignment
+    # whose value contains the substitution takes effect at the outer
+    # command's final stage, after the child has returned.
+    case "${nesting[$end]:-}" in
+      open*) exports_at_depth[nesting_depth]=$exported_assignments ;;
+    esac
+    if [ -n "$stage_exports" ]; then
+      stage_last_part "$stage"
+      case "$previous_separator:${separators[$part]}:${nesting[${ends[$part]}]:-}" in
+        '|':* | *:'|':* | *:'&':* | *:close) ;;
+        *)
+          if [ "$part" -eq "$stage" ]; then
+            exports_at_depth[nesting_depth]="$exported_assignments$stage_exports"
+          else
+            pending_exports[part]=$stage_exports
+          fi ;;
+      esac
+    fi
+    previous_separator=${separators[$stage]}
     case "${separators[$stage]}" in
       '|' | '&') ;;
       *) [ -z "$cd_destination" ] || remember_reader_directory "$cd_destination" ;;
@@ -2622,43 +2711,10 @@ environment_dump() { # command kind; arguments are already decoded data
   [ -n "${transfer_ignored:-}" ] || transfer_resolve
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
     exported_assignments=${stage_exported_assignments[$stage]}
-    data_source=${stage_sources[$stage]}
-    data_source="$data_source $incoming_sources"
-    input_bodies=(); escaped_input=""
-    for doc in $data_source; do
-      input_bodies[${#input_bodies[@]}]=${literal_inputs[$doc]}
-      [ "${literal_kinds[$doc]}" != ansi-escaped ] || escaped_input=1
-    done
-    # A command string can start a shell that reads the same stdin. This
-    # check has no ANSI-C decoder, so an escaped source, or escaped input
-    # handed to one, refuses here, whichever writer queued it.
-    for ((code=0; code<${#executable_texts[@]}; code++)); do
-      [ "${executable_stages[$code]}" -eq "$stage" ] || continue
-      if [ "${executable_kinds[$code]}" = ansi-escaped ] || [ -n "$escaped_input" ]; then
-        dump_reason=undecoded-ansi-escape; return 0
-      fi
-      local command_text=${executable_texts[$code]}
-      local tail_start=${executable_tail_starts[$code]:-0} tail_count=${executable_tail_counts[$code]:-0}
-      command_tail_args=("${executable_tail_args[@]:tail_start:tail_count}")
-      command_tail_kinds=("${executable_tail_kinds[@]:tail_start:tail_count}")
-      command_tail_unquoted=("${executable_tail_unquoted[@]:tail_start:tail_count}")
-      command_prefix_count=${executable_prefix_counts[$code]:-0}
-      load_reader_context "${executable_reader_context[$code]}"
-      if inherited_assignments=${executable_assignments[$code]} queued_same_shell=${executable_same_shell[$code]:-} environment_dump "${executable_source_kinds[$code]:-shell}" "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
-    done
-    command_tail_args=(); command_tail_kinds=(); command_tail_unquoted=(); command_prefix_count=0
-    # A stdin shell runs every body; an unknown receiver may run the ones
-    # no data class admitted. These identifiers come only from the proved
-    # registry. Keep bodies independent: quotes in one program cannot hide
-    # another program.
-    local fallback_only=${transfer_ignored:-}
-    [ -n "${stage_stdin[$stage]}" ] || { data_source=${stage_fallback[$stage]}; fallback_only=1; }
-    for doc in $data_source; do
-      [ "${literal_kinds[$doc]}" != ansi-escaped ] || { dump_reason=undecoded-ansi-escape; return 0; }
-      local command_text=${literal_inputs[$doc]}
-      load_reader_context "${stage_reader_context[$stage]}"
-      if inherited_assignments=${stage_launches[$stage]} queued_same_shell=${stage_input_same_shell[$stage]:-} transfer_ignored=$fallback_only environment_dump shell conservative; then return 0; fi
-    done
+    directory_unknown=${directory_unknown:-${stage_source_directory_unknown[$stage]:-}}
+    reader_relative_passed=${reader_relative_passed:-${stage_source_relative_passed[$stage]:-}}
+    reader_compound_passed=${reader_compound_passed:-${stage_source_compound_passed[$stage]:-}}
+    if environment_stage_source ""; then return 0; fi
   done
   for ((stage=0; stage<${#decisions[@]}; stage++)); do
     case "${decisions[$stage]}" in
@@ -2675,6 +2731,7 @@ environment_dump() { # command kind; arguments are already decoded data
   done
   [ -n "$owner_command${transfer_ignored:-}" ] || download_judge
   if relative_targeting judge; then refuse refused relative-target; fi
+  [ -z "$same_shell" ] || same_shell_exports=${exports_at_depth[0]#"$inherited_exports"}
   return 1
 }
 
@@ -2795,7 +2852,7 @@ refuse() { # KEY VALUE [CAUSE]
         else
           echo "push to a remote the repository already has, by its name, in a plain pipeline from a directory named literally, for example: git push origin HEAD"
         fi
-        echo "for GitHub authentication, use the github skill's git-https-auth push origin HEAD to keep push authority in the credential-helper child"
+        echo "for GitHub authentication, use the github skill's git-https-auth push origin HEAD so the credential helper selects the push credential and ordinary gh calls in pre-push retain the read selection"
         echo "a new destination is the owner's choice: the owner adds the remote, or starts the session with COMMAND_SAFETY_OWNER_COMMAND set to this exact command" ;;
       report=plain-stage)
         for line in ${transfer_reports[@]+"${transfer_reports[@]}"}; do printf 'command-safety: %s\n' "$line"; done
