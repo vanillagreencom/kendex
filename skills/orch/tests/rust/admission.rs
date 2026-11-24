@@ -1547,17 +1547,9 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
     assert!(inbox(&root, "KEN-H").is_empty());
 }
 
-/// A running hosted holder of a shared path refuses `join-unreachable`
-/// whatever its branch shows, since edits it has not committed are on its
-/// host alone; the refusal says whether its head commit, as GitHub compares
-/// it with the default branch, changes a shared path. A shared change, a
-/// rename's old path among them, refuses as an unjudged holder did. A head
-/// that changes none refuses `worktree-unproved` naming the head. A failed
-/// comparison, a head GitHub does not hold and a comparison at GitHub's
-/// file cap each refuse naming the branch and the cause. Each refusal writes
-/// nothing.
-#[test]
-fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
+/// The candidate shares a path with a running hosted holder. GitHub and the
+/// provider stand in for their remote services. The gate and lane-mail are real.
+fn hosted_overlap() -> (Fleet, Value, Value) {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
     let world = fleet.dir.path().join("host");
@@ -1587,19 +1579,33 @@ fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
     hosted["kind"] = json!("ssh");
     hosted["repo"] = json!("o/r");
     hosted["mail_root"] = json!("/w/ken-r");
-    fleet.write_lanes(vec![hosted]);
+    hosted["running_at"] = json!("2026-01-29T15:01:00Z");
+    fleet.write_lanes(vec![hosted.clone()]);
     fleet.item("KEN-S", "`src/r.sh`", 0, &[]);
     let mut request = launch("KEN-S", &fleet.checkout("s", None));
     request["repo"] = json!("o/r");
-    const COMPARE: &str = "repos/o/r/compare/main...h1";
-    let compared = |files: Value| {
-        let mut map = gh_map(&[]);
-        map["repos/o/r"] = json!({"body": {"default_branch": "main"}});
-        map[COMPARE] = files;
-        map
-    };
+    fleet.gh_api(&hosted_comparison(json!({"body": {"files": [
+        {"filename": "docs/other.md"},
+    ]}})));
+    (fleet, hosted, request)
+}
+
+const HOSTED_COMPARE: &str = "repos/o/r/compare/main...h1";
+
+fn hosted_comparison(files: Value) -> Value {
+    let mut map = gh_map(&[]);
+    map["repos/o/r"] = json!({"body": {"default_branch": "main"}});
+    map[HOSTED_COMPARE] = files;
+    map
+}
+
+/// A shared change, including the old path of a rename, holds the path.
+/// Failed and capped comparisons name the branch and cause. Refusals write nothing.
+#[test]
+fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
+    let (mut fleet, _, request) = hosted_overlap();
     let changing = |files: &[&str]| {
-        compared(json!({"body": {
+        hosted_comparison(json!({"body": {
             "files": files.iter().map(|f| json!({"filename": f})).collect::<Vec<_>>(),
         }}))
     };
@@ -1628,19 +1634,19 @@ fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
 
     fleet.gh_api(&changing(&["src/r.sh"]));
     assert_eq!(refused(&fleet), held);
-    fleet.gh_api(&compared(json!({"body": {"files": [
+    fleet.gh_api(&hosted_comparison(json!({"body": {"files": [
         {"filename": "src/s.sh", "previous_filename": "src/r.sh"},
     ]}})));
     assert_eq!(refused(&fleet), held, "a rename away holds the old path");
 
     fleet.gh_api(&changing(&["docs/other.md"]));
     unread(&fleet, "worktree-unproved head=h1");
-    fleet.gh_api(&compared(
+    fleet.gh_api(&hosted_comparison(
         json!({"exit": 1, "stderr": "gh: HTTP 500: boom"}),
     ));
     unread(&fleet, "compare-unread ");
     let mut map = changing(&[]);
-    map.as_object_mut().unwrap().remove(COMPARE);
+    map.as_object_mut().unwrap().remove(HOSTED_COMPARE);
     fleet.gh_api(&map);
     unread(&fleet, "head-unpushed head=h1");
     // GitHub lists at most 300 changed files for a comparison, so a list
@@ -1650,6 +1656,165 @@ fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
         &many.iter().map(String::as_str).collect::<Vec<_>>(),
     ));
     unread(&fleet, "files-capped files=300");
+}
+
+/// The park reading follows the current start and the outstanding ask. The
+/// branch has an unmerged change elsewhere. Launching writes a separate lane.
+#[test]
+fn a_held_hosted_lane_yields_a_shared_path_during_an_unbroken_wait() {
+    let (fleet, _, request) = hosted_overlap();
+    plant_held_hosted_wait(&fleet, None, None, &[]);
+    let out = fleet.op(&request);
+    let reply = reply(&out);
+    assert_eq!(reply["ok"], true, "{}\n{reply:#}", stderr(&out));
+    assert_eq!(fleet.lane("KEN-S")["touched"], json!(["src/r.sh"]));
+}
+
+fn plant_held_hosted_wait(
+    fleet: &Fleet,
+    unread: Option<&str>,
+    incoming: Option<Value>,
+    other_asks: &[Value],
+) {
+    let world = fleet.dir.path().join("host");
+    let disk = world.join("disk/w/ken-r/tmp");
+    let mailbox = disk.join("lane-mail/KEN-R");
+    std::fs::create_dir_all(&mailbox).unwrap();
+    let write = |path: &Path, rows: &[Value]| {
+        let mut text = String::new();
+        for row in rows {
+            text.push_str(&row.to_string());
+            text.push('\n');
+        }
+        std::fs::write(path, text).unwrap();
+    };
+    write(
+        &disk.join("park-status.json"),
+        &[json!({
+            "head": "h1", "branch": "ken-r", "porcelain": "", "at": "2026-01-29T16:00:00Z",
+        })],
+    );
+    let asks: Vec<_> = std::iter::once(json!({
+        "kind": "ask", "id": "ask-1", "at": "2026-01-29T15:30:00Z",
+    }))
+    .chain(other_asks.iter().cloned())
+    .collect();
+    write(&mailbox.join("to-overseer.jsonl"), &asks);
+    write(&mailbox.join("to-lane.jsonl"), incoming.as_slice());
+    let mut provider = json!({});
+    if let Some(path) = unread {
+        provider[format!("cat --item KEN-R /w/ken-r/tmp/{path}")] = json!({"exit": 3});
+    }
+    std::fs::write(world.join("provider.json"), provider.to_string()).unwrap();
+}
+
+/// A restart, new ask, delivered mail or an unread proof holds the shared
+/// path. Keep the oldest ask beside a newer ask or an unrelated answer.
+#[test]
+fn a_held_hosted_lane_holds_a_shared_path_when_its_wait_cannot_be_proved() {
+    let (fleet, hosted, request) = hosted_overlap();
+    let newer_ask = json!({
+        "kind": "ask", "id": "ask-2", "at": "2026-01-29T16:00:01Z",
+    });
+    let mail = |kind: &str, at: &str| json!({"kind": kind, "id": "in-1", "re": "ask-1", "at": at});
+    let late = "2026-01-29T16:00:01Z";
+    let mut halt = mail("data", late);
+    halt["halt"] = json!(true);
+    let assert_held = |cause: &str| {
+        let before = fleet.fleet();
+        let (key, fields) = refusal(&fleet.op(&request));
+        assert_eq!(key, "join-unreachable", "{cause}: {fields:?}");
+        assert!(
+            fields.iter().any(|(name, value)| {
+                name == "cause" && value.split_whitespace().next() == Some(cause)
+            }),
+            "{cause}: {fields:?}",
+        );
+        assert_eq!(fleet.fleet(), before, "{cause} wrote the fleet record");
+    };
+    for (cause, unread, incoming, asks, restarted) in [
+        (
+            "mail-wake-unproved",
+            None,
+            Some(mail("answer", late)),
+            &[][..],
+            None,
+        ),
+        (
+            "mail-wake-unproved",
+            None,
+            Some(mail("directive", late)),
+            &[],
+            None,
+        ),
+        ("mail-wake-unproved", None, Some(halt), &[], None),
+        (
+            "mail-wake-unproved",
+            None,
+            Some(mail("directive", "2026-01-29T15:20:00Z")),
+            &[],
+            None,
+        ),
+        (
+            "ask-time-unproved",
+            None,
+            None,
+            std::slice::from_ref(&newer_ask),
+            None,
+        ),
+        ("clean-status-before-start", None, None, &[], Some(late)),
+        (
+            "clean-status-before-start",
+            None,
+            None,
+            &[],
+            Some("2026-01-29T16:00:00Z"),
+        ),
+        (
+            "clean-status-unread",
+            Some("park-status.json"),
+            None,
+            &[],
+            None,
+        ),
+        (
+            "mail-read-failed",
+            Some("lane-mail/KEN-R/to-lane.jsonl"),
+            None,
+            &[],
+            None,
+        ),
+    ] {
+        let mut lane = hosted.clone();
+        if let Some(at) = restarted {
+            lane["session_since"] = json!(at);
+            lane["running_at"] = json!(at);
+        }
+        fleet.write_lanes(vec![lane]);
+        plant_held_hosted_wait(&fleet, unread, incoming, asks);
+        assert_held(cause);
+    }
+
+    let mailbox = fleet
+        .dir
+        .path()
+        .join("host/disk/w/ken-r/tmp/lane-mail/KEN-R");
+    plant_held_hosted_wait(&fleet, None, None, &[]);
+    std::fs::write(
+        mailbox.join("to-lane.jsonl.numbering"),
+        r#"{"dropped":1,"first":"in-1","lines":[]}"#,
+    )
+    .unwrap();
+    assert_held("mail-wake-unproved");
+    std::fs::remove_file(mailbox.join("to-lane.jsonl.numbering")).unwrap();
+    std::fs::write(mailbox.join("to-overseer.jsonl"), "").unwrap();
+    assert_held("open-ask-unproved");
+
+    let mut waiting_on_pr = hosted;
+    waiting_on_pr["pending_pr"] = json!({"pr": 70, "until_pr": 65});
+    fleet.write_lanes(vec![waiting_on_pr]);
+    plant_held_hosted_wait(&fleet, None, None, &[]);
+    assert_held("worktree-unproved");
 }
 
 /// A lane whose confinement binds its checkout read-only touches no path.

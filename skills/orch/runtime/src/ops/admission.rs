@@ -12,7 +12,7 @@
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
-//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's); a first launch reads its branch ([`branch_judged`]) |
+//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` holds; a first launch can pass a proved clean wait ([`branch_judged`]) |
 //! | `done` | no holder |
 //!
 //! A holder is a record of the item's repository: a path is relative to
@@ -874,23 +874,18 @@ fn unreachable(lane: &Lane) -> Option<&'static str> {
     }
 }
 
-/// An unreachable holder judged by its head commit's unmerged change. A
-/// lane whose stage and mailbox are on its host takes no join, and edits it
-/// has not committed are on its host alone, so it holds every path it names
-/// whatever its branch shows. Where its head changes a path of `touched`
-/// that the scope leaves in, it is judged on as any live holder. Otherwise
-/// it refuses `join-unreachable` naming the branch and the cause: a head
-/// that changes none of them is `worktree-unproved`, and a read that failed
-/// names its own cause. A cloud session's head is on its cloud, which no
-/// verb reads.
+/// Whether an unreachable holder can yield a shared path. It takes no join.
+/// Its head must leave the path untouched and its worktree must have a
+/// proved clean wait. A cloud session has no readable head.
 fn branch_judged(
     lane: &Lane,
     route: &str,
     touched: &[String],
     in_scope: &[String],
     item: &str,
+    env: &Env,
     host: &Host,
-) -> Result<()> {
+) -> Result<bool> {
     let refused = |unread: BranchUnread| {
         Error::from(agent_runtime::Error::refused(
             "join-unreachable",
@@ -915,13 +910,119 @@ fn branch_judged(
         .as_ref()
         .ok_or_else(|| refused(unread("admission-reads-unavailable")))?;
     let change = (reads.branch)(&reads.clis, lane).map_err(refused)?;
-    if shared(touched, &change.files, in_scope).is_empty() {
-        return Err(refused(BranchUnread {
-            cause: format!("worktree-unproved head={}", change.head),
-            branch: Some(change.branch),
-        }));
+    if !shared(touched, &change.files, in_scope).is_empty() {
+        return Ok(false);
     }
-    Ok(())
+    let prove = || {
+        let settings = host
+            .accounts
+            .ok_or_else(|| "admission-reads-unavailable".to_owned())?;
+        let scripts = &reads.clis.scripts;
+        let mail = &settings.lane_mail_cli;
+        read_held_clean(scripts, mail, lane, &change, env.now_secs)
+    };
+    prove().map(|()| true).map_err(|cause| {
+        refused(BranchUnread {
+            branch: Some(change.branch),
+            cause,
+        })
+    })
+}
+
+/// The inbox snapshot is the end of the proof. Senders stamp before
+/// appending, and queued mail can reach the lane later, so an old stamp
+/// cannot clear an inbound row.
+fn read_held_clean(
+    scripts: &Path,
+    mail_cli: &Path,
+    lane: &Lane,
+    change: &BranchChange,
+    now: u64,
+) -> std::result::Result<(), String> {
+    use crate::mailbox::{Cursor, Drain, Mailbox};
+    use crate::watch::hosted::{Answer as HostAnswer, clean_status};
+    use agent_runtime::clock;
+
+    let unproved = || format!("worktree-unproved head={}", change.head);
+    let host = lane.mail_host().ok_or_else(unproved)?;
+    if lane.status != LaneStatus::Running
+        || lane
+            .extra
+            .get("pending_pr")
+            .and_then(|pr| pr.get("until_pr"))
+            .is_some_and(|wait| !wait.is_null())
+    {
+        return Err(unproved());
+    }
+    let root = lane.mail_root.as_deref().ok_or_else(unproved)?;
+    let stamp = match clean_status(
+        scripts,
+        host,
+        &lane.item,
+        root,
+        &change.head,
+        &change.branch,
+    ) {
+        HostAnswer::Live(Some(stamp)) => stamp,
+        HostAnswer::Live(None) => return Err("clean-status-invalid".to_owned()),
+        HostAnswer::Gone => return Err(unproved()),
+        HostAnswer::Unreadable { cause } => return Err(format!("clean-status-unread {cause}")),
+    };
+    let epoch = |stamp: &str| clock::epoch_secs(stamp).filter(|&at| clock::iso_utc(at) == stamp);
+    let at = epoch(&stamp)
+        .filter(|&at| at < now)
+        .ok_or_else(|| format!("clean-status-time-unproved at={stamp}"))?;
+    // Only a running confirmation can distinguish a relaunch from the
+    // original launched_at. Equal seconds cannot order the two readings.
+    let started = lane.running_at.as_deref().and_then(epoch);
+    let since = lane.session_since.as_deref().and_then(epoch);
+    let started = started
+        .zip(since)
+        .map(|(running, since)| running.max(since))
+        .ok_or_else(|| "holder-start-unread".to_owned())?;
+    if at <= started {
+        return Err(format!("clean-status-before-start at={stamp}"));
+    }
+
+    let drain = Drain {
+        item: lane.item.clone(),
+        after: 0,
+        root: PathBuf::from(root),
+    };
+    let mail = Mailbox::new(mail_cli.to_path_buf())
+        .drain(&drain, Some(host), None)
+        .map_err(|error| format!("mail-read-failed {error}"))?;
+    if mail.receipts.count != 0 {
+        return Err(format!("mail-wake-unproved count={}", mail.receipts.count));
+    }
+    if mail.receipts.cursor != Cursor::Read(0) {
+        return Err("mail-read-failed cursor=missed".to_owned());
+    }
+    // The logical count includes compacted and malformed rows. The drain
+    // filters closed asks, but with no inbound rows no ask could be closed.
+    if mail.count != mail.envelopes.len() as u64
+        || mail.envelopes.iter().any(|e| e.kind().is_empty())
+    {
+        return Err("mail-history-incomplete".to_owned());
+    }
+    let mut waiting = false;
+    for ask in mail.envelopes.iter().filter(|e| e.kind() == "ask") {
+        let asked = ask
+            .at
+            .as_deref()
+            .and_then(epoch)
+            .filter(|_| !ask.id().is_empty())
+            .ok_or_else(|| "ask-time-unread".to_owned())?;
+        if asked >= at {
+            return Err(format!("ask-time-unproved ask={}", ask.id()));
+        }
+        waiting |= asked > started;
+    }
+    if waiting {
+        Ok(())
+    } else {
+        Err("open-ask-unproved".to_owned())
+    }
 }
 
 /// Whether the fleet delivers straight onto its base (`ORCH_DELIVERY`), the
@@ -1229,8 +1330,11 @@ pub(super) fn judge(
             // lanes.
             Holding::Live => {
                 let first = a.checkout.is_some();
-                if first && let Some(route) = unreachable(lane) {
-                    branch_judged(lane, route, &touched, &in_scope, a.item, host)?;
+                if first
+                    && let Some(route) = unreachable(lane)
+                    && branch_judged(lane, route, &touched, &in_scope, a.item, env, host)?
+                {
+                    continue;
                 }
                 let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
                 let direct = first && direct(host)?;

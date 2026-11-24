@@ -1550,29 +1550,15 @@ impl Close<'_> {
     /// through the provider's `cat`.
     fn clean_status(&self, head: &str, branch: &str, source: &str) -> Result<()> {
         let root = self.lane.mail_root.as_deref().unwrap_or("");
-        let clean = match hosted::fetch(
-            self.scripts,
-            self.host,
-            self.item(),
-            &format!("{root}/tmp/park-status.json"),
-        ) {
-            HostAnswer::Live(text) => text,
+        match hosted::clean_status(self.scripts, self.host, self.item(), root, head, branch) {
+            HostAnswer::Live(Some(_)) => Ok(()),
             HostAnswer::Gone | HostAnswer::Unreadable { .. } => {
-                return Err(self.park_refused("clean-status-unread", &[]));
+                Err(self.park_refused("clean-status-unread", &[]))
             }
-        };
-        let clean: Value = serde_json::from_str(&clean).unwrap_or(Value::Null);
-        let bound = clean.get("head").and_then(Value::as_str) == Some(head)
-            && clean.get("branch").and_then(Value::as_str) == Some(branch)
-            && clean.get("porcelain").and_then(Value::as_str) == Some("")
-            && clean
-                .get("at")
-                .and_then(Value::as_str)
-                .is_some_and(|at| !at.is_empty());
-        if !bound {
-            return Err(self.park_refused("clean-status-invalid", &[("branch-source", source)]));
+            HostAnswer::Live(None) => {
+                Err(self.park_refused("clean-status-invalid", &[("branch-source", source)]))
+            }
         }
-        Ok(())
     }
 
     /// The judged head of the park this record owes for `wait`, the one

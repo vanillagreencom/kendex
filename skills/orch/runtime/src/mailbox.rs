@@ -210,6 +210,9 @@ pub struct Envelope {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// The mailbox clock's UTC stamp, to the second.
+    #[serde(default, skip_serializing)]
+    pub at: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -762,9 +765,11 @@ impl Mailbox {
             args.push("--host");
             env.push(("ORCH_LANE_HOST", std::ffi::OsStr::new(host)));
         }
-        if let Some(dir) = snapshot {
-            env.push(("LANE_HOST_READ_DIR", dir.as_os_str()));
-        }
+        // Only an explicitly supplied snapshot may replace a live read.
+        env.push((
+            "LANE_HOST_READ_DIR",
+            snapshot.map(Path::as_os_str).unwrap_or_default(),
+        ));
         let stdout = self.call_in(VERB, &args, &env, None)?.ok(VERB)?;
         let mut lines = stdout.lines().peekable();
         let drained = Drained::parse(VERB, &mut lines)?;

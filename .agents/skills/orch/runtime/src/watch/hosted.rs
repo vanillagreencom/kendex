@@ -433,6 +433,30 @@ pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<Strin
     }
 }
 
+/// The time of the lane's clean reading, bound to the worktree's head and
+/// branch. `Live(None)` is a file that could not establish cleanliness.
+pub(crate) fn clean_status(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    root: &str,
+    head: &str,
+    branch: &str,
+) -> Answer<Option<String>> {
+    match fetch(scripts, host, item, &format!("{root}/tmp/park-status.json")) {
+        Answer::Live(text) => {
+            let status: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+            let bound = status["head"].as_str() == Some(head)
+                && status["branch"].as_str() == Some(branch)
+                && status["porcelain"].as_str() == Some("");
+            let at = status["at"].as_str().filter(|at| bound && !at.is_empty());
+            Answer::Live(at.map(str::to_owned))
+        }
+        Answer::Gone => Answer::Gone,
+        Answer::Unreadable { cause } => Answer::Unreadable { cause },
+    }
+}
+
 /// A hosted lane's worktree as its sandbox's disk reads it: the checked-out
 /// head, its branch, and the commit the sandbox's `origin` remote-tracking
 /// ref names for that branch, `None` where the sandbox holds no such ref.
