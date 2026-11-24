@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Surface: Jarvis event acquisition, batching, retry and settings.
 # Inputs: skills/jarvis/scripts/, skills/jarvis/tests/watch_test.py, skills/jarvis/tests/mail_world.py,
+# skills/jarvis/tests/fixtures/runtime_cache.py,
 # skills/mailbox/scripts/, skills/orch/scripts/, skills/slack/scripts/,
 # skills/orch/runtime/, skills/agent-runtime/scripts/.
 set -euo pipefail

@@ -18,6 +18,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from desktop_world import SCRIPTS, World, load, run_case
+from fixtures.runtime_cache import AGENT_RUNTIME_CACHE
 
 # Records each call. Sign-in needs a terminal, as op's does. Record verbs print
 # their arguments and exit 2 when asked. A call fails when HOME/expired existed
@@ -117,11 +118,10 @@ class Broker(World):
         if sys.platform == "linux":
             # What the broker's controller read runs: the runtime wrappers under bash, which digest their sources
             # with find, sort, sha256sum, cut, wc and awk; git, which places the record; and ps, which reads an
-            # lstart start. The runtimes' cache stays the caller's, whatever HOME is.
+            # lstart start.
             for tool in ("bash", "find", "sort", "sha256sum", "cut", "wc", "awk", "git", "ps"):
                 (self.bin / tool).symlink_to(shutil.which(tool))
-            cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "kendex/agent-runtime"
-            self.env["AGENT_RUNTIME_CACHE"] = os.environ.get("AGENT_RUNTIME_CACHE") or str(cache)
+            self.env["AGENT_RUNTIME_CACHE"] = AGENT_RUNTIME_CACHE
 
     def allow(self, grants, caller=None):
         """Write the allow list with one entry, for the caller end-to-end clients are unless caller names another."""

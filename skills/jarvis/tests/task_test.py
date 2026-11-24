@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from fixtures.runtime_cache import AGENT_RUNTIME_CACHE
 from fixtures.tmux_scope import isolate, reached_through_path
 isolate()
 
@@ -79,13 +80,10 @@ class TaskContract(unittest.TestCase):
                         CLAUDE_CODE_SESSION_ID="parent", CODEX_THREAD_ID="parent",
                         PI_SUBAGENT_PARENT_SESSION_ID="parent", JARVIS_BROWSER_PROFILE="/parent/browser",
                         JARVIS_BROWSER_PORT="9222", WAYLAND_DISPLAY="fixture-wayland", DISPLAY=":fixture",
-                        JARVIS_TEST_REAL_KENDEX=REAL_KENDEX or "")
-        # The account judge reads no account of the caller's own login; the
-        # runtimes' cache stays the caller's.
+                        JARVIS_TEST_REAL_KENDEX=REAL_KENDEX or "", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE)
+        # The account judge reads no account of the caller's own login.
         login = self.root / "login"
         login.mkdir()
-        cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "kendex/agent-runtime"
-        self.env.setdefault("AGENT_RUNTIME_CACHE", str(cache))
         # A task window's shell is the suite's own Bash, which reads nothing
         # of the caller's login.
         self.env.update(HOME=str(login), XDG_CONFIG_HOME=str(login / ".config"), SHELL=os.environ["JARVIS_TEST_BASH"])

@@ -4,6 +4,7 @@
 # skills/jarvis/scripts/lib/op_fifo.py, skills/orch/scripts/, skills/orch/runtime/,
 # skills/agent-runtime/scripts/, skills/agent-runtime/runtime/, skills/mailbox/scripts/,
 # skills/jarvis/tests/op_broker_test.py, skills/jarvis/tests/fixtures/fifo_broker/,
+# skills/jarvis/tests/fixtures/runtime_cache.py,
 # skills/jarvis/tests/desktop_world.py.
 set -euo pipefail
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"

@@ -13,6 +13,7 @@ import struct
 import termios
 import threading
 from fixtures.harness import native_launcher
+from fixtures.runtime_cache import AGENT_RUNTIME_CACHE
 import shlex
 import subprocess
 import sys
@@ -753,17 +754,12 @@ class SessionContract(unittest.TestCase):
         login.mkdir()
         # This fixture changes account identity: inherit control transport only.
         self.env = {key: value for key, value in os.environ.items()
-                    if key in {"PATH", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "AGENT_RUNTIME_CACHE"}
+                    if key in {"PATH", "USER", "LOGNAME", "SHELL", "LANG", "TERM"}
                     or key.startswith("LC_")} | {
                         "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"], "HOME": str(login),
                         "XDG_STATE_HOME": str(self.root / "state"), "XDG_CONFIG_HOME": str(login / ".config"),
                         "XDG_SESSION_ID": "fixture-login", "WAYLAND_DISPLAY": "fixture-wayland", "DISPLAY": ":fixture",
-                        "JARVIS_TEST_BASH": os.environ["JARVIS_TEST_BASH"]}
-        if "AGENT_RUNTIME_CACHE" not in self.env:
-            # The runtime wrappers resolve their cache under HOME, which is
-            # the login's here: the caller's own cache stays the one read.
-            cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-            self.env["AGENT_RUNTIME_CACHE"] = str(cache / "kendex/agent-runtime")
+                        "JARVIS_TEST_BASH": os.environ["JARVIS_TEST_BASH"], "AGENT_RUNTIME_CACHE": AGENT_RUNTIME_CACHE}
         self.account_state = self.root / "account-state"
         self.accounts = []
         self.account = self.plant_account("claude-a", 10)

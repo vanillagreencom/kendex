@@ -20,6 +20,7 @@ import time
 import unittest
 from unittest.mock import patch
 import uuid
+from fixtures.runtime_cache import AGENT_RUNTIME_CACHE
 from mail_world import control_account, make_project
 
 REPO = Path(__file__).resolve().parents[3]
@@ -60,10 +61,7 @@ class Producer(unittest.TestCase):
                     if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "XDG_STATE_HOME")
                     and not key.startswith(("JARVIS_", "ORCH_", "KENDEX_", "SLACK_"))}
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HOME=str(self.root),
-                        REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1")
-        # The runtime wrappers' binary cache stays the caller's, whatever HOME is.
-        cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "kendex/agent-runtime"
-        self.env["AGENT_RUNTIME_CACHE"] = os.environ.get("AGENT_RUNTIME_CACHE") or str(cache)
+                        REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE)
         self.executable("kendex", '#!/bin/sh\ncat "$REGISTRY"\n')
         self.module = load(self.scripts / "lib/watch.py")
         self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_MAIN_HOST="", JARVIS_LOG_DIR=str(self.root / "log"),
