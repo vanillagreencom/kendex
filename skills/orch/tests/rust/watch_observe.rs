@@ -518,7 +518,7 @@ fn walled_claude(server: &Server, dir: &Path, name: &str, banner: &str) -> (Stri
     let line = format!("cat {}; exec {} 600", screen.display(), claude.display());
     let pane = server.open_window(name, dir, &format!("bash -c \"{line}\""));
     let identity = await_named(server, &pane, "claude");
-    await_drawn(server, &pane, "weekly limit");
+    await_drawn(server, &pane, banner.trim_start());
     (pane, identity)
 }
 
@@ -687,6 +687,66 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
         closed["lanes"][0]["pauses"],
         json!([{"from": NOW_ISO, "to": "2027-01-15T08:08:00Z", "cause": "walled"}])
     );
+}
+
+/// The five-hour banner from KEN-5416's resume reading 2 dates a wall
+/// only when the inferred reset fits the five-hour window.
+#[test]
+fn the_captured_claude_five_hour_banner_writes_a_dated_session_wall() {
+    const CAPTURED: &str =
+        "  ⎿ \u{a0}You've hit your 5-hour limit · resets 9:30pm (America/Los_Angeles)";
+    for (seen, expected_reset) in [
+        // At midnight in the banner's zone, the next 9:30 pm is 21h30m away.
+        ("2027-01-15T08:00:00Z", None),
+        ("2027-01-16T00:30:00Z", Some("2027-01-16T05:30:00Z")),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", CAPTURED);
+        fleet.set_lanes(vec![lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        )]);
+        let now = clock::epoch_secs(seen).unwrap();
+        let started = |_: &Identity| Reading::Live(now - 1);
+        lane_driver!(server, fleet, readers, driver);
+        driver.now = now;
+        driver.readers.start_epoch = &started;
+        let produced = driver.pass(&fleet.read());
+        let path = account_wall::session_wall_path(
+            &driver.settings.account_state.get().unwrap(),
+            "/home/me/.eclaude",
+        );
+        if let Some(reset) = expected_reset {
+            let recorded: AccountWall =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            assert_eq!(
+                clock::iso_utc(recorded.resets_at),
+                reset,
+                "sighting at {seen}"
+            );
+        } else {
+            assert!(
+                !path.try_exists().unwrap(),
+                "sighting at {seen} must leave no dated account wall"
+            );
+        }
+        let reset_clause =
+            expected_reset.map_or_else(String::new, |reset| format!(" resets={reset}"));
+        assert_eq!(
+            event_lines(&produced),
+            [format!(
+                "EVENT usage-limit gh-4 /home/me/.eclaude{reset_clause}"
+            )]
+        );
+        assert_eq!(wall_record(&driver.settings), None);
+    }
 }
 
 /// The reset is pinned to the first sighting; once the clock passes it the
@@ -6439,6 +6499,8 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
 /// no second relaunch, no wall recorded for the new account and no first
 /// sighting left to mask a later wall, both as the route leaves the lane's
 /// row and after the gone window's read once the relaunch settled.
+/// The predecessor's failure row is still last at both reads. An
+/// identical failure appended by the replacement is its own wall.
 #[test]
 fn a_resumed_relaunch_whose_screen_redraws_its_wall_is_no_wall_on_the_new_account() {
     let dir = tempfile::tempdir().unwrap();
@@ -6515,6 +6577,28 @@ fn a_resumed_relaunch_whose_screen_redraws_its_wall_is_no_wall_on_the_new_accoun
         lines(&produced)
     );
     let relaunch = driver.relaunches.borrow()[0].clone();
+    let mailbox = checkout.join("tmp/lane-mail/KEN-4");
+    std::fs::create_dir_all(&mailbox).unwrap();
+    let append_limit = || {
+        assert!(
+            rows::write_lane(
+                &mailbox,
+                &rows::LaneRow {
+                    event: rows::TurnEvent::StopFailure {
+                        error: Some("rate_limit")
+                    },
+                    harness: "claude",
+                    at: FIRST_PASS,
+                    transcript: None,
+                    working_agents: None,
+                },
+                rows::WAIT,
+            )
+            .unwrap()
+        );
+    };
+    // The predecessor appends after the watch has composed the relaunch.
+    append_limit();
     let out = run_relaunch(&fleet, &relaunch);
     assert!(
         out.status.success(),
@@ -6538,6 +6622,8 @@ fn a_resumed_relaunch_whose_screen_redraws_its_wall_is_no_wall_on_the_new_accoun
     assert_eq!(lane["window"], name, "{lane}");
     let replacement = lane["launch"]["pane"].as_str().unwrap().to_owned();
     await_drawn(&server, &replacement, "weekly limit");
+    let next_account = seats.path().join("next-account");
+    driver.pick = Pick::Lane(next_account.display().to_string());
     let wall = account_wall::account_wall_path(
         &driver.settings.account_state.get().unwrap(),
         &new_account.display().to_string(),
@@ -6548,12 +6634,17 @@ fn a_resumed_relaunch_whose_screen_redraws_its_wall_is_no_wall_on_the_new_accoun
             assert!(
                 !event_lines(&produced)
                     .iter()
-                    .any(|l| l.starts_with("EVENT usage-limit")),
-                "{sub_row}: {:?}",
+                    .any(|l| l.starts_with("EVENT usage-limit")
+                        || l.starts_with("EVENT lane-relaunched")),
+                "predecessor failure must leave the resumed lane clear ({sub_row}): {:?}",
                 lines(&produced)
             );
         }
         assert_eq!(driver.relaunches.borrow().len(), 1, "{sub_row}");
+        assert!(
+            driver.baseline.get("lane-idle", name).is_some(),
+            "{sub_row}: the resumed composer is idle"
+        );
         assert!(
             !wall.exists(),
             "{sub_row}: a wall recorded on the new account"
@@ -6575,6 +6666,17 @@ fn a_resumed_relaunch_whose_screen_redraws_its_wall_is_no_wall_on_the_new_accoun
     assert!(!relaunch.marker.exists(), "the settled marker leaves");
     driver.pass(&state);
     quiet(&mut driver, "after the gone window's read");
+    append_limit();
+    driver.pass(&fleet.read());
+    driver.pass(&fleet.read());
+    let requests = driver.relaunches.borrow();
+    assert_eq!(
+        requests.len(),
+        2,
+        "one relaunch for the new account's failure"
+    );
+    assert_eq!(requests[1].spent, new_account.display().to_string());
+    assert_eq!(requests[1].to, next_account.display().to_string());
     effect_report(&fleet.runner.op_fleet(&json!({
         "op": "close-owned-resources",
         "item": "KEN-4",

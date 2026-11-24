@@ -1593,6 +1593,7 @@ pub(super) fn launch_lane(
                 record::set(lane, "tier_inputs", tier.inputs());
             }
             record::set(lane, "launch", Value::Null);
+            record::delete(lane, "session_rows_at_launch");
             record::delete(lane, "prepare");
             record::delete(lane, "reservation");
             close_capacity_wait(path, lane, &at)?;
@@ -2199,6 +2200,9 @@ pub struct LaneOutcome {
     /// `viewer`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub viewer: bool,
+    /// The local Claude lane's row boundary recorded before the window opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_rows_at_launch: Option<usize>,
 }
 
 impl LaneOutcome {
@@ -2215,7 +2219,7 @@ impl LaneOutcome {
     pub fn members(&self) -> Map<String, Value> {
         match serde_json::to_value(self) {
             Ok(Value::Object(members)) => members,
-            Ok(_) | Err(_) => unreachable!("a struct of strings and a flag is a JSON object"),
+            Ok(_) | Err(_) => unreachable!("the lane outcome is a JSON object"),
         }
     }
 }
@@ -2271,6 +2275,11 @@ pub(super) fn record_launch_outcome(
             sandbox_ended(lane);
             record::set(lane, "running_at", at);
             record::set(lane, "launch", serde_json::to_value(&r.launch)?);
+            if let Some(position) = members.session_rows_at_launch {
+                record::set(lane, "session_rows_at_launch", position);
+            } else {
+                record::delete(lane, "session_rows_at_launch");
+            }
             if members.viewer {
                 record::set(lane, "viewer", true);
             } else {
@@ -3703,6 +3712,7 @@ mod tests {
             server_process_start: Some("ticks:7".into()),
             socket: "/tmp/tmux-1000/default".into(),
             since_ms: 1,
+            session_rows_at_launch: None,
             brief: Some("/h/handoff.md".into()),
             session_id: Some("0f6e".into()),
             baseline: Vec::new(),

@@ -137,8 +137,18 @@ pub enum LaneVerdict {
 /// file is absent or holds no row, `Unreadable` where it, or the row, could
 /// not be read.
 pub fn last_row(file: &Path) -> Reading<Row> {
+    read_file(file, last_row_in)
+}
+
+/// The launch boundary, in the same one-based line positions as [`Row`].
+/// Count even an unfinished line: an append closes it before adding a row.
+pub fn last_position(file: &Path) -> Reading<usize> {
+    read_file(file, |text| Reading::Live(text.lines().count()))
+}
+
+fn read_file<T>(file: &Path, read: impl FnOnce(&str) -> Reading<T>) -> Reading<T> {
     match fs::read_to_string(file) {
-        Ok(text) => last_row_in(&text),
+        Ok(text) => read(&text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
         Err(_) => Reading::Unreadable {
             cause: "rows-file-unreadable",

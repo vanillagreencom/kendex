@@ -69,9 +69,10 @@ const DRAWN: &str = "  \u{23bf} \u{a0}";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitReport {
     Weekly,
-    /// The 5-hour window: no wall for a running lane, but no session
-    /// starts on the account until its reset.
+    /// The legacy session-limit wording for the five-hour window.
     Session,
+    /// A limit that explicitly names its five-hour window.
+    FiveHour,
 }
 
 /// The harness's own limit report a line of `banner` makes on `channel`,
@@ -87,6 +88,8 @@ pub fn harness_own_limit(banner: &str, channel: WallChannel) -> Option<LimitRepo
             Some(LimitReport::Weekly)
         } else if rest.contains("ve hit your session limit") {
             Some(LimitReport::Session)
+        } else if rest.contains("ve hit your 5-hour limit") {
+            Some(LimitReport::FiveHour)
         } else {
             None
         }
@@ -133,7 +136,9 @@ pub fn record_account_wall(
     }
     let path = match harness_own_limit(&write.banner, write.channel) {
         Some(LimitReport::Weekly) => account_wall_path(account_state, &write.config_dir),
-        Some(LimitReport::Session) => session_wall_path(account_state, &write.config_dir),
+        Some(LimitReport::Session | LimitReport::FiveHour) => {
+            session_wall_path(account_state, &write.config_dir)
+        }
         None => return Ok(None),
     };
     let dir = path.parent().unwrap_or(&path);

@@ -273,7 +273,7 @@ static RATE_LIMIT_SWITCH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*Switch to .+ for lower credit usage\?\s*$").unwrap());
 static DIALOG_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(❯|›) [0-9]+\. ").unwrap());
 static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
+    Regex::new(r"You.(ve|re) (hit|reached) your (?:[a-z ]*|5-hour )limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
 static AUTH_FAILURE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[\s\u{a0}]*(⎿[\s\u{a0}]*|■\s*|✗\s*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages\. Please run /login)").unwrap()

@@ -175,6 +175,9 @@ pub struct Opening {
     pub server_process_start: Option<String>,
     pub socket: String,
     pub since_ms: u64,
+    /// The last line position in the local Claude lane's rows at launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_rows_at_launch: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -230,6 +233,7 @@ impl Opening {
             server_process_start: self.server_process_start.clone(),
             socket: self.socket.clone(),
             since_ms: self.since_ms,
+            session_rows_at_launch: self.session_rows_at_launch,
             brief: self.brief.clone(),
             session_id: self.session_id.clone(),
             baseline: self.baseline.clone(),
@@ -262,6 +266,9 @@ pub struct OpenedPane {
     /// Milliseconds since the epoch just before the window opened: the
     /// floor a native session must be created above to be this launch's.
     pub since_ms: u64,
+    /// The lane rows boundary carried forward from [`Opening`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_rows_at_launch: Option<usize>,
     /// The handoff a succession holds for the runner, delivered after
     /// retirement; a launch spells its brief into the command and holds
     /// none.

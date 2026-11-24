@@ -1608,6 +1608,7 @@ mod tests {
             server_process_start: None,
             socket: "/tmp/tmux-1000/default".into(),
             since_ms: 1,
+            session_rows_at_launch: None,
             brief: None,
             session_id: None,
             baseline: Vec::new(),

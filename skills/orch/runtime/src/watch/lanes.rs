@@ -16,7 +16,8 @@
 //! that process's scrollback, not its wall; the `usage-limit` row is keyed to
 //! the identity the wall was judged for, so a replayed screen from an earlier
 //! process never promotes. A Pi lane's rows wall is the harness's own current
-//! record and needs no comparison.
+//! record and needs no comparison. A local Claude rate-limit row must be
+//! newer than the launch's recorded row position.
 //!
 //! The wall's record and route: the reset the banner names is read by the
 //! grammar ([`reset`] below) and the line is `usage-limit-passed` once
@@ -690,15 +691,26 @@ fn read_lane<'a>(
             .then_some(lane.mail_root.as_deref())
             .flatten()
             .map(|root| {
-                (readers.rows)(
-                    &Path::new(root)
-                        .join("tmp/lane-mail")
-                        .join(&lane.item)
-                        .join("session-rows.jsonl"),
-                )
+                let file =
+                    crate::marker::mailbox_path(Path::new(root), &lane.item).join(rows::LANE_FILE);
+                (readers.rows)(&file)
             }),
     };
     let rows_reading = row_reading.as_ref().map(|row| match row {
+        // Without a launch position (including older records), the pane
+        // is the local Claude lane's evidence of a current rate limit.
+        Reading::Live(row)
+            if harness == Some(Harness::Claude)
+                && hosted::host_of(lane) == "local"
+                && row.harness.as_deref() == Some("claude")
+                && row.event.as_deref() == Some("StopFailure")
+                && row.error.as_deref() == Some("rate_limit")
+                && lane
+                    .session_rows_at_launch
+                    .is_none_or(|at| row.position <= at) =>
+        {
+            Reading::Gone
+        }
         Reading::Live(row) => rows::judge_lane(row),
         Reading::Gone => Reading::Gone,
         Reading::Unreadable { cause } => Reading::Unreadable { cause },
@@ -1704,12 +1716,23 @@ fn wall(
     // The reset the banner states decides which event this is: pinned to the
     // first sighting, never to this pass, so a dayless clause names the day
     // the wall was seen on; a login wall has no reset.
+    let channel = match source {
+        WallSource::Pane => WallChannel::Pane,
+        WallSource::Rows => WallChannel::Row,
+    };
     let reset_at = if auth {
         None
     } else {
         reset::key(&text).and_then(|key| {
             let zone = (pass.readers.zone)(key.zone.as_deref())?;
-            reset::epoch(&key, first_seen, &zone)
+            let at = reset::epoch(&key, first_seen, &zone)?;
+            // After the printed clock has passed, its next occurrence can
+            // be tomorrow. A reset beyond the named window is unproven.
+            let five_hour = account_wall::harness_own_limit(&text, channel)
+                == Some(account_wall::LimitReport::FiveHour);
+            (!five_hour
+                || at.saturating_sub(first_seen) <= agent_runtime::accounts::usage::FIVE_HOURS_S)
+                .then_some(at)
         })
     };
     let passed = reset_at.is_some_and(|at| at <= pass.now);
@@ -1746,10 +1769,7 @@ fn wall(
                     now: pass.now,
                     first_seen,
                     banner: text.clone(),
-                    channel: match source {
-                        WallSource::Pane => WallChannel::Pane,
-                        WallSource::Rows => WallChannel::Row,
-                    },
+                    channel,
                 },
             )
             .map_err(crate::Error::from)
