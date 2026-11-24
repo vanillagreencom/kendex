@@ -49,6 +49,10 @@ ACTIONS = r"vanillagreencom/kendex/\.github/actions/change-class@[^\s]+"
 LANE_ID = r"[a-z0-9][a-z0-9_-]*"
 RENDER = (".agents/", ".claude/", ".codex/", ".pi/")
 MODULE = re.compile(r"\.(?:[cm]?[jt]s|[jt]sx)$")
+JS_TRIVIA = r"(?:\s|/\*[\s\S]*?\*/|//[^\n]*(?:\n|$))*"
+JS_REFERENCE = re.compile(r"\b(?:import\b" + JS_TRIVIA + r"(\(" + JS_TRIVIA +
+                          r")?|from\b" + JS_TRIVIA + r")")
+JS_SPECIFIER = re.compile(r"""(['"])([^'"\\\r\n]+)\1""")
 CHECKOUT = r"actions/checkout@[^\s]+"
 UNAVAILABLE = (Unreadable, OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired)
 
@@ -170,6 +174,9 @@ class Evidence:
 
     def resolve(self, directory, path):
         require(literal(path) and not path.startswith("-"), "computed-path")
+        return self.checkout_path(directory, path)
+
+    def checkout_path(self, directory, path):
         result = os.path.normpath(os.path.join(directory, path))
         require(result not in {"..", "."} and not result.startswith("../"), "path-outside-repo")
         for parent in (Path(result), *Path(result).parents):
@@ -283,10 +290,10 @@ class Evidence:
                     re.sub(includes, "", rust),
                 ), "cargo-opaque-source")
             reads.update(path for path in self.changed | self.files.keys() if under(path, scope))
-        placed = {path for path in self.changed if any(
+        covered = {path for path in self.changed if any(
             under(path, Path(manifest).parent.as_posix()) for manifest in manifests
         )}
-        return reads, placed | reads
+        return reads, covered | reads
 
     def vitest_reads(self, directory):
         require(self.trusted and command(["git", "rev-parse", "HEAD"], self.trusted)
@@ -297,21 +304,41 @@ class Evidence:
             require(not name.startswith(("vitest.config.", "vite.config.", "vitest.workspace.",
                                          "tsconfig", "jsconfig", ".env")) and
                     self.files[path] in {"100644", "100755"}, "vitest-opaque-config")
-            if MODULE.search(path):
-                source = self.blob(path)
-                require(not re.search(
-                    r"\b(?:require|eval|Function|fetch|process|globalThis|vi\.(?:mock|stub\w*))\b"
-                    r"|\bimport\s*\(\s*[^'\"\s]|\bimport\.meta|\b(?:node:|new\s+URL)"
-                    r"|Snapshot\b", source,
-                ), "vitest-opaque-source")
-                for specifier in re.findall(
-                    r"\b(?:from\s+|import\s*(?:\(\s*)?)['\"]([^'\"]+)['\"]", source,
-                ):
-                    if specifier == "vitest":
-                        continue
-                    require(specifier.startswith(("./", "../")) and
-                            under(self.resolve(Path(path).parent.as_posix(), specifier), directory),
-                            "vitest-import-outside-project")
+        pending = {path for path in members if MODULE.search(path)}
+        scanned = set()
+        config_dirs = {Path(directory), *Path(directory).parents}
+        while pending:
+            path = pending.pop()
+            if path in scanned:
+                continue
+            scanned.add(path)
+            parent = Path(path).parent
+            config_dirs.update((parent, *parent.parents))
+            source = self.blob(path)
+            require(not re.search(
+                r"\b(?:require|eval|Function|fetch|process|globalThis|vi\.(?:mock|stub\w*))\b"
+                r"|\bimport\.meta|\b(?:node:|new\s+URL)|Snapshot\b", source,
+            ), "vitest-opaque-source")
+            for reference in JS_REFERENCE.finditer(source):
+                start = reference.end()
+                if not reference[1] and source[start:start + 1] not in {"'", '"'}:
+                    continue
+                specifier = JS_SPECIFIER.match(source, start)
+                require(specifier, "vitest-computed-import")
+                target = specifier[2]
+                if target == "vitest":
+                    continue
+                require(target.startswith(("./", "../")) and not re.search(r"[?#]", target),
+                        "vitest-opaque-import")
+                imported = self.checkout_path(parent.as_posix(), target)
+                require(imported in self.files and MODULE.search(imported), "vitest-module-unresolved")
+                pending.add(imported)
+        # TypeScript and package resolution can read an ancestor outside
+        # the Vitest root, including an ancestor of an imported module.
+        require(not any(
+            Path(path).parent in config_dirs and Path(path).name in {"tsconfig.json", "jsconfig.json"}
+            for path in self.files
+        ), "vitest-inherited-config")
         cwd = self.checkout / directory
         upstream = self.trusted / directory / "node_modules"
         binary = upstream / ".bin/vitest"
@@ -320,12 +347,17 @@ class Evidence:
             (cwd / "node_modules").symlink_to(upstream, target_is_directory=True)
         paths = {path for path in self.changed if self.files.get(path) in {"100644", "100755"}}
         reads = (self.changed - paths) | {
-            path for path in paths if under(path, directory) and not MODULE.search(path)
+            path for path in paths if (
+                under(path, directory) and not MODULE.search(path)
+            ) or (
+                Path(path).parent in config_dirs and Path(path).name in {
+                    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+                }
+            )
         }
         paths -= reads
-        placed = {path for path in self.changed if under(path, directory)}
         if not paths:
-            return reads, placed
+            return reads, self.changed
 
         def listing(options, env=None):
             rows = json.loads(command([str(binary), "list", "--filesOnly", "--json", *options],
@@ -351,7 +383,7 @@ class Evidence:
                 "vitest-changed-paths-unread")
         selected = listing(["--changed"], env)
         require(selected <= full and (paths & full) <= selected, "vitest-incomplete-related")
-        return reads | (paths if selected else set()), placed
+        return reads | (paths if selected else set()), self.changed
 
 
 def workflow_document(source):
@@ -498,7 +530,13 @@ def job_reads(evidence, job):
 def derived(evidence, exceptions, settings):
     path, document, classifiers = workflow(evidence)
     jobs = document["jobs"]
-    if not classifiers or not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
+    if not classifiers:
+        raise SystemExit(3)
+    advertised = any(
+        output.startswith("lane_")
+        for name, _ in classifiers for output in jobs[name].get("outputs", {})
+    )
+    if not advertised and not any(reads_lane_gate(job.get("if", "")) for job in jobs.values()):
         raise SystemExit(3)
     require(not ({"defaults", "env"} & document.keys()), "opaque-workflow-defaults")
     require(len(classifiers) == 1, "workflow-classifier-ambiguous")
@@ -527,15 +565,13 @@ def derived(evidence, exceptions, settings):
         return outcomes
 
     job_evidence = {}
-    placed = set()
     for name in lane_by_job:
         try:
             ordinary, readers = job_reads(evidence, jobs[name])
             reads = ordinary | set().union(*(read for read, _ in readers))
             packages = {evidence.owner(path) for path in reads if path.startswith(RENDER)} - {None}
-            job_evidence[name] = (reads, packages, bool(readers))
-            placed.update(ordinary)
-            placed.update(set().union(*(known for _, known in readers)))
+            unresolved = any(evidence.changed - covered for _, covered in readers)
+            job_evidence[name] = (reads, packages, unresolved)
         except UNAVAILABLE as error:
             print(f"lane-reach: job={name} cause={str(error).splitlines()[0]}", file=sys.stderr)
 
@@ -545,7 +581,6 @@ def derived(evidence, exceptions, settings):
         installed.update(evidence.proved_head_ownership[name] for name in owners
                          if name in evidence.proved_head_ownership)
     unowned = {name for name, owner in owners.items() if owner is None}
-    unknown = evidence.changed - placed - owners.keys()
     selected = set()
     outcomes = dict.fromkeys(lane_by_job.values(), "miss")
     for name, lane in lane_by_job.items():
@@ -553,8 +588,8 @@ def derived(evidence, exceptions, settings):
             outcomes[lane] = "unread"
             selected.add(name)
             continue
-        reads, packages, graph = job_evidence[name]
-        if graph and unknown:
+        reads, packages, unresolved = job_evidence[name]
+        if unresolved:
             outcomes[lane] = "unread"
             selected.add(name)
         elif lane in exceptions or evidence.changed & reads or packages & installed:

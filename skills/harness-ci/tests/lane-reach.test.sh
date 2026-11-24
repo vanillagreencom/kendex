@@ -119,18 +119,19 @@ printf '\n[dependencies]\nleaf = { path = "../leaf" }\n' >>"$repo/cargo/bridge/C
 (cd "$repo/cargo" && cargo generate-lockfile --offline)
 
 printf '%s\n' '{"type":"module","devDependencies":{"vitest":"4.1.11"}}' >"$repo/web/package.json"
-printf '%s\n' 'export { value } from /* test input */ "./café.mjs"' >"$repo/web/bridge.mjs"
+printf '%s\n' 'export { value } from "./café.mjs"' >"$repo/web/bridge.mjs"
 printf '%s\n' 'export const value = 42' >"$repo/web/café.mjs"
 printf '%s\n' 'export const spare = 42' >"$repo/web/spare-é.mjs"
 printf '%s\n' 'export const shared = 42' >"$repo/shared.mjs"
 cat >"$repo/web/check.test.mjs" <<'JS'
 import { expect, test } from 'vitest'
 import { value } from './bridge.mjs'
-import { shared } from /* shared input */ '../shared.mjs'
+import { shared } from '../shared.mjs'
 test('module', () => expect(value + shared).toBe(84))
 JS
 printf '%s\n' 'shell external.settings # reason: the external runner reads the setting' \
   >"$repo/.github/ci-lanes.conf"
+printf 'node_modules\n' >"$repo/.gitignore"
 
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'queue default'
@@ -139,6 +140,53 @@ printf '[env]\nHARNESS_CI_PER_PUSH_REASON = "direct render landings"\n' >"$repo/
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'per-push opt-back'
 opted_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-shell "$opted_base"
+printf '%s\n' 'input=./shared.mjs' 'cat "$input"' >"$repo/tools/check.sh"
+git -C "$repo" commit -qam 'shell command with a computed input'
+shell_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-import "$opted_base"
+cat >"$repo/web/opaque.test.mjs" <<'JS'
+import { basename } from /* Node built-in */ 'path'
+import { expect, test } from 'vitest'
+test('base name', () => expect(basename('/root/item')).toBe('item'))
+JS
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'Vitest command with a commented nonlocal import'
+import_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-config "$opted_base"
+printf '{"compilerOptions":{"experimentalDecorators":true}}\n' >"$repo/tsconfig.json"
+printf '%s\n' 'cat ./tsconfig.json' >"$repo/tools/check.sh"
+cat >"$repo/web/check.test.mjs" <<'JS'
+import { expect, test } from 'vitest'
+test('module', () => expect(42).toBe(42))
+JS
+printf 'export const value = 42\n' >"$repo/web/bridge.mjs"
+cat >"$repo/web/decorators.test.ts" <<'TS'
+import { expect, test } from 'vitest'
+function tag(_target: unknown, _name: string, _index: number) {}
+class Subject {
+  value(@tag input: number) { return input }
+}
+test('parameter decorator', () => expect(new Subject().value(42)).toBe(42))
+TS
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'Vitest inherits decorators from the root config'
+config_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-indexed "$opted_base"
+python3 - "$repo/.github/workflows/ci.yml" <<'PY'
+from pathlib import Path
+import re
+import sys
+path = Path(sys.argv[1])
+updated, gates = re.subn(r"needs\.changes\.outputs\.lane_([a-z_]+)",
+                        r"needs.changes.outputs[format('lane{0}\1', '_')]",
+                        path.read_text())
+assert gates > 0
+path.write_text(updated)
+PY
+git -C "$repo" commit -qam 'equivalent lane lookups with computed output keys'
+indexed_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-aggregate "$opted_base"
 cat >"$repo/.github/workflows/ci.yml" <<'YAML'
 name: CI
 on: merge_group
@@ -168,6 +216,7 @@ else
   modules="$(cd "$(dirname "$binary")/.." && pwd -P)"
 fi
 ln -s "$modules" "$trusted/web/node_modules"
+ln -s "$modules" "$repo/web/node_modules"
 
 # The verifier supplies the established render proof. Lane selection still
 # reads the committed inventory and lock through the ordinary classifier.
@@ -189,6 +238,10 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
   push_ref=refs/heads/main
   case "$label" in
     aggregate-render) base="$aggregate_base" ;;
+    indexed-render) base="$indexed_base" ;;
+    shell-unresolved) base="$shell_base" ;;
+    vitest-unresolved-import) base="$import_base" ;;
+    vitest-inherited|push-unresolved) base="$config_base" ;;
     queued-render-push) base="$queue_base" ;;
     feature-render-push) push_ref=refs/heads/feature ;;
   esac
@@ -200,10 +253,22 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     checkout-attributes|nested-attributes) printf '*.sh eol=crlf\n' >"$repo/$path" ;;
     vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     vitest-external) printf 'export const shared = 43\n' >"$repo/$path" ;;
+    vitest-inherited|push-unresolved)
+      printf '{"compilerOptions":{"experimentalDecorators":false}}\n' >"$repo/$path" ;;
     *) printf '\n' >>"$repo/$path" ;;
   esac
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$label"
+  if [ "$label" = vitest-inherited ]; then
+    [ -x "$trusted/web/node_modules/.bin/vitest" ] && [ -x "$repo/web/node_modules/.bin/vitest" ]
+    base_status=0 head_status=0
+    (cd "$trusted/web" && ./node_modules/.bin/vitest run) >"$SANDBOX/base-vitest-log" 2>&1 || base_status=$?
+    (cd "$repo/web" && ./node_modules/.bin/vitest run) >"$SANDBOX/head-vitest-log" 2>&1 || head_status=$?
+    [ "$base_status" = 0 ] || cat "$SANDBOX/base-vitest-log" >&2
+    [ "$head_status" = 1 ] || cat "$SANDBOX/head-vitest-log" >&2
+    assert_eq "inherited config accepts the base" 0 "$base_status"
+    assert_eq "the changed config breaks actual Vitest" 1 "$head_status"
+  fi
   : >"$SANDBOX/action"
   : >"$SANDBOX/local"
   head="$(git -C "$repo" rev-parse HEAD)"
@@ -236,20 +301,25 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
       "$(sed -n '/^lanes=/s/^lanes=//p; /^lanes_cause=/s/^lanes_cause=//p' "$SANDBOX/local" | paste -sd, -)"
   fi
 done <<'ROWS'
-source|tools/input.sh|true|false|false|false
-removed-source|tools/input.sh|true|false|false|false
-shared-gate|tools/peer.sh|true|false|false|false
-shell-workdir|tools/other/context.sh|true|false|false|false
+source|tools/input.sh|true|true|false|false
+removed-source|tools/input.sh|true|true|false|false
+shared-gate|tools/peer.sh|true|true|false|false
+shell-workdir|tools/other/context.sh|true|true|false|false
+shell-unresolved|shared.mjs|true|true|true|false
 cargo-path-dependency|cargo/leaf/src/lib.rs|false|true|false|false
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
-vitest-import|web/café.mjs|false|false|true|false
-vitest-unread|web/spare-é.mjs|false|false|false|false
-vitest-external|shared.mjs|true|false|true|false
-installed|.codex/skills/math/SKILL.md|true|false|false|true|merge_group|true,derived-reach
-installed-push|.codex/skills/math/SKILL.md|true|false|false|true|push|true,derived-reach
+vitest-import|web/café.mjs|false|true|true|false
+cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
+vitest-external|shared.mjs|true|true|true|false
+vitest-inherited|tsconfig.json|true|true|true|false
+vitest-unresolved-import|tools/input.sh|true|true|true|false
+installed|.codex/skills/math/SKILL.md|true|true|false|true|merge_group|true,derived-reach
+installed-push|.codex/skills/math/SKILL.md|true|true|false|true|push|true,derived-reach
+push-unresolved|tsconfig.json|true|true|true|false|push
 queued-render-push|.codex/skills/math/SKILL.md|false|false|false|false|push|false,queue-only
 feature-render-push|.codex/skills/math/SKILL.md|false||||push|false,render
 aggregate-render|.codex/skills/math/SKILL.md|false||||merge_group|false,render
+indexed-render|.codex/skills/math/SKILL.md|||||merge_group|true,lane-reach-unreadable
 unplaced-addition|unplaced.txt|false|true|true|false
 reasoned-exception|external.settings|true|true|true|false
 checkout-attributes|.gitattributes|true|true|true|true
