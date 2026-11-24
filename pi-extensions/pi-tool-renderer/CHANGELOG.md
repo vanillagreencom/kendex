@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.0.14
+
+- When you read an image with a model that cannot see images, the read row now tells you that the model saw a placeholder, not the image, as Pi's own row does. The warning shows collapsed and expanded, in every `readOutputMode` (`hidden` included), in stacked read rows and in `tool_batch` read rows. This needs Pi 1.6.0 or later; on earlier Pi, the expanded row shows Pi's own note.
+
 ### 2.0.13
 
 - With tool chrome on, the first render of a long transcript takes less CPU. A drawn tool row that already fits the terminal is no longer wrapped again; rows look the same. Thanks to @eaxeax.

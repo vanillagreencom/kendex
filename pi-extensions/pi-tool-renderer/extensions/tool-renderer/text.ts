@@ -136,6 +136,19 @@ export function readResultSummary(result: any, args: any, theme: any): string {
 	return summary;
 }
 
+/** Pi's `read` (1.6.0 and later) names in `details.imageUnsupportedByModel`
+ *  the model that got a placeholder in place of the image it read. */
+export function imageUnsupportedModel(details: any): string | undefined {
+	const model = details?.imageUnsupportedByModel;
+	return typeof model === "string" && model ? model : undefined;
+}
+
+/** The warning every read view draws, whatever else the person hid: without
+ *  it a person trusts an answer about an image the model never saw. */
+export function imageUnsupportedLine(model: string | undefined, theme: any, prefix: string): string {
+	return model ? `\n${prefix}${theme.fg("warning", `${model} cannot see images; it saw a placeholder`)}` : "";
+}
+
 /** A row Pi has drawn as pending and not yet given its final render. */
 interface PendingRow {
 	/** Redraws the row each blink period while its status animates. */

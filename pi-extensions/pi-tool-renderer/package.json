@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-tool-renderer",
-  "version": "2.0.13",
+  "version": "2.0.14",
   "description": "Compact Claude/opencode-style renderers for Pi tools with rich diffs, apply_patch, generic/MCP rendering, and optional global chrome.",
   "license": "MIT",
   "keywords": [
@@ -322,7 +322,7 @@
         {
           "key": "readOutputMode",
           "label": "Read output mode",
-          "description": "Read renderer output: preview shows expanded file heads, summary hides previews, hidden hides read result rows.",
+          "description": "Read renderer output: preview shows expanded file heads, summary hides previews, hidden hides read result rows except a warning that the model cannot see an image.",
           "type": "enum",
           "enumValues": [
             "hidden",

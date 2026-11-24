@@ -209,7 +209,7 @@ async function mapBatchWithConcurrency<TIn, TOut>(items: TIn[], concurrency: num
 
 function batchStackItem(item: BatchToolItem): StackItem {
 	const stackItem = newStackItem(item.toolName, `tool-batch:${item.index}`, item.args, "tool-batch");
-	setStackItemResultText(stackItem, item.resultText, item.isError, item.truncated);
+	setStackItemResultText(stackItem, item.resultText, item.isError, item.truncated, item.details);
 	return stackItem;
 }
 
