@@ -254,6 +254,29 @@ nothing and reports no map.
 EOF
 }
 
+print_squash_follow_up_help() {
+  cat <<'EOF'
+
+Follow-up after a squash merge
+
+  Once you have confirmed the squash merge and the worktree is gone, remove
+  can succeed while leaving a local branch behind. If that branch is the
+  only claim, run these commands from the main checkout on the default
+  branch. Use the exact local branch from create's Branch line. Choose an
+  unused archive name outside the issue branch's ref hierarchy and the
+  candidate branch names listed in create --help. For issue 'topic' with
+  branch 'topic', use these commands.
+
+    git branch -m topic topic-archive
+    worktree create topic
+
+  An archive named 'topic/archive' would prevent Git from recreating 'topic'.
+  The archive keeps the original tip. Create starts at the fetched
+  origin/<default> and still checks for other claims, including remote
+  branches and open pull requests.
+EOF
+}
+
 print_create_help() {
   worktree_message help create
   cat <<'EOF'
@@ -427,6 +450,7 @@ Policy-blocked rebase (cherry-pick replay fallback):
   containing a merge commit.
 
 EOF
+  print_squash_follow_up_help
 }
 
 print_remove_help() {
@@ -493,6 +517,7 @@ Lane mailboxes:
   one that cannot join the main checkout's is kept beside it, named by
   worktree-lane-mail-kept, and the exit is non-zero. cleanup does the same.
 EOF
+  print_squash_follow_up_help
 }
 
 print_cleanup_help() {

@@ -545,6 +545,35 @@ git -C "$MAIN" switch -q topic
 assert_eq "$(run "create topic --transfer topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@other branches=topic dirty=-" \
   "the main-checkout route from the not-on-origin advice ends in a worktree on the branch"
 
+# The help delivers copyable commands for a verified squash merge whose
+# worktree and remote branch are gone but whose local branch is still a claim.
+echo "=== follow-up after a squash merge ==="
+for verb in create remove; do
+  help_output="$("$WORKTREE_SCRIPT" "$verb" --help)"
+  assert_eq "$(sed -n '/^    git branch /p; /^    worktree create /p' <<<"$help_output")" \
+    $'    git branch -m topic topic-archive\n    worktree create topic' "$verb help gives the squash follow-up commands"
+done
+
+build squash-follow-up wt push
+remote_clone main
+git -C "$ROOT/remote-work" merge --squash origin/topic >/dev/null
+git -C "$ROOT/remote-work" commit -qm 'squash topic'
+squash_tip="$(git -C "$ROOT/remote-work" rev-parse HEAD)"
+squash_ancestry_rc=0
+git -C "$ROOT/remote-work" merge-base --is-ancestor "$PRE" "$squash_tip" || squash_ancestry_rc=$?
+[[ "$squash_ancestry_rc" == 1 ]] || { echo 'FIXTURE: expected a squash commit with no ancestry to topic' >&2; exit 2; }
+git -C "$ROOT/remote-work" push -q origin main :topic
+git -C "$MAIN" worktree remove "$WT"
+assert_eq "$(run 'remove topic' | sed 's/ out=.*//') $(git -C "$MAIN" rev-parse refs/heads/topic)" \
+  "rc=0 $PRE" 'remove leaves the local tip when the worktree is already gone'
+assert_eq "$(run 'create topic')" "rc=75 out= err=$(err_text dup:topic:local) main=main@end/clean cfg=true trees= branches=topic dirty=-" \
+  'the squash-merged local branch still claims the issue before the rename'
+git -C "$MAIN" branch -m topic topic-archive
+assert_eq "$(run 'create topic')" 'rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@other branches=topic,topic-archive dirty=-' \
+  'the help route creates a fresh worktree for the same issue'
+assert_eq "$(git -C "$WT" rev-parse HEAD) $(git -C "$MAIN" rev-parse refs/heads/topic-archive)" \
+  "$squash_tip $PRE" 'the fresh worktree starts at the remote squash commit and the archive retains the old tip'
+
 # A checkout-free create is a new tree, not a destructive conversion of
 # existing work. The cloud launcher produces this option on a fresh claim.
 echo "=== checkout-free create ==="
