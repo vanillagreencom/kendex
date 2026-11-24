@@ -545,12 +545,14 @@ class OwnerAsks:
             page = result(end)
         if end == offset and offset < len(selected) or len(encoded(page).encode()) + 1 > PAGE_BYTES:
             raise Unavailable("An individual owner ask exceeds the page byte limit.")
-        if cursor is None and (not page["complete"] or view in snapshots):
-            if page["complete"]:
-                del snapshots[view]
-            else:
-                snapshots[view] = snapshot
-            self.session.write(state)
+        if cursor is None:
+            retained = {name: previous for name, previous in snapshots.items()
+                        if name != view and previous["revision"] == snapshot["revision"]}
+            if not page["complete"]:
+                retained[view] = snapshot
+            if retained != snapshots:
+                state["pageSnapshots"] = retained
+                self.session.write(state)
         return page
 
     def receipt(self, request, kind, state, cause=""):

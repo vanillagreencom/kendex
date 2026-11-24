@@ -35,7 +35,7 @@ Cross-source suppression requires confirmed tracker posting and equality of the 
 
 The main requires two identical complete canonical evidence collections on a request without a cursor. It computes the counts and public revision from that evidence and its own action deltas. It saves the rows and metadata needed for the view's remaining pages. Those pages use that observation time and counts without reading the sources again. A changed or incomplete read, an unread configured source, the command deadline or an oversized individual row returns structured unavailability with no counts. There is no added backlog cardinality cutoff or guarantee that an unrestricted backlog completes before the caller's existing deadline.
 
-Rows sort by original asked-at time, then identity. A cursor binds the home, view, refresh revision and next position. A successful refresh of that view or an accepted Done or Later invalidates its earlier cursors.
+Rows sort by original asked-at time, then identity. A cursor binds the home, view, refresh revision and next position. A successful refresh invalidates earlier cursors for its view and cursors in either view with a different public revision. An accepted Done or Later invalidates cursors in both views.
 
 - Refresh from the first pages after a stale-cursor result.
 

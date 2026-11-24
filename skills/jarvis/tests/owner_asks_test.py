@@ -301,19 +301,24 @@ class OwnerAsksContract(unittest.TestCase):
             self.page(cursor=first["nextCursor"])
         self.assertEqual(self.source.collections, 6)
 
-        self.source.data["tracker"]["requests"][0]["comment"]["body"] += " changed"
-        updated = self.page()
-        self.assertNotEqual(updated["revision"], refreshed["revision"])
+        self.source.data["tracker"]["requests"].pop()
+        other_view = self.page("snoozed")
+        self.assertEqual(other_view["activeCount"], 69)
+        self.assertNotEqual(other_view["revision"], refreshed["revision"])
         self.assertEqual(self.source.collections, 8)
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=refreshed["nextCursor"])
+        self.assertEqual(self.source.collections, 8)
 
+        updated = self.page()
+        self.assertEqual(updated["revision"], other_view["revision"])
+        self.assertEqual(self.source.collections, 10)
         snooze = self.later(updated["rows"][0], "hide-row", until=owner_asks.iso(self.now + 3600))
         self.assertEqual(snooze["kind"], "accepted")
-        self.assertEqual(self.source.collections, 10)
+        self.assertEqual(self.source.collections, 12)
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=updated["nextCursor"])
-        self.assertEqual(self.source.collections, 10)
+        self.assertEqual(self.source.collections, 12)
 
         self.source.data = projection(str(self.home))
         self.source.data["tracker"]["requests"][0]["comment"]["body"] = "x" * (16 * 1024)
