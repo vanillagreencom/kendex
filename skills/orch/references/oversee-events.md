@@ -890,8 +890,9 @@ A refused `write`:
 
    Leave an existing project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. Where the read or update fails, write no `triaged` record for that item.
 
-9. Apply each valid verdict before recording it.
-   - Read the verifier's answer to question 3 as prose. If it names a source the item does not fix, decide go, change or drop under the project-management skill's `references/filing.md` § Judge the approach before the item enters `launch_queue`. Apply that decision in the routing below and record it in the item's triage reason in your own words.
+9. Route each item in this triage pass before recording its final verdict.
+   - Read the verifier's answer to question 3 as prose. If it names a source the item does not fix, decide go, change or drop under the project-management skill's `references/filing.md` § Judge the approach before this triage pass advances the item to `launch_queue`. Record the decision in the item's triage reason in your own words.
+   - Use the verifier's verdict when no new decision is needed. On go, route the item as kept. On change, revise the item into the fix at the source before routing it as kept. On drop, route the item as canceled.
    - For a kept verdict, read the item's live `state_type` with `linear.sh issues get [ID]`. Leave its state alone if the type is readable and already outside `triage`.
    - If the type is `triage`, read the issue team's live states with `linear.sh statuses list --team "[TEAM]"`. Choose a state of type `unstarted` (Todo), falling back to type `backlog` if the team has no `unstarted` state. Run `linear.sh issues update [ID] --state "[STATE_NAME]" --format compact` with the chosen state name. Require the response to show that state and type.
    - For a canceled verdict, cancel the item.
