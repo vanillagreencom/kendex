@@ -59,7 +59,7 @@ Set these as environment variables, in the project's `.env` or `.env.local`, or 
 - `OPENAI_API_KEY`
 - `JINA_API_KEY`, optional; Jina Reader works anonymously without it.
 
-`EXA_API_KEY` may also live in the computer's private key file: set `KENDEX_KEY_FILE` in your user environment to the file's absolute path. The file holds literal `KEY=value` lines.
+`EXA_API_KEY` may also live in the computer's private key file. Set `KENDEX_KEY_FILE` in your user environment to the file's absolute path. Use `EXA_API_KEY=value` with optional `export` and single or double quotes around the value.
 
 - The tools read the file whenever `KENDEX_KEY_FILE` is set and keep only its `EXA_API_KEY` line. They use that key only when none of the places above holds one.
 - The key stays inside Pi's process and is passed to no process Pi starts.

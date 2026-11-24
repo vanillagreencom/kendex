@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const script = new URL("../scripts/deep-research", import.meta.url).pathname;
+const keyFileCases = JSON.parse(readFileSync(new URL("../../../pi-extensions/pi-web-tools/tests/key-file-cases.json", import.meta.url), "utf8"));
 // Rows that copy this environment and drop EXA_API_KEY would otherwise reach
 // the host's real key file, and through it the network.
 delete process.env.KENDEX_KEY_FILE;
@@ -816,7 +817,7 @@ test("resolves EXA_API_KEY op:// references with op CLI", () => {
 // The key file sits outside the project, as a computer's does. The fetch stub
 // runs inside the client and records the key it sends and whether the
 // client's own environment, which every process it starts inherits, holds it.
-test("KENDEX_KEY_FILE supplies EXA_API_KEY to the client alone, and refuses naming the file", () => {
+test("KENDEX_KEY_FILE supplies EXA_API_KEY to the client alone, and refuses naming the file", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "deep-research-key-file-"));
   const project = join(root, "project");
   mkdirSync(project);
@@ -826,13 +827,32 @@ test("KENDEX_KEY_FILE supplies EXA_API_KEY to the client alone, and refuses nami
   writeFileSync(stub, `import { writeFileSync } from "node:fs";\nglobalThis.fetch = async (url, init) => { writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ key: init.headers["x-api-key"], env: process.env.EXA_API_KEY ?? null })); return { ok: true, json: async () => ({ answer: "Answer", results: [] }) }; };\n`);
   const env = { ...process.env, NODE_OPTIONS: `--import=${stub}` };
   for (const name of ["EXA_API_KEY", "EXA_MOCK_RESPONSE_FILE", "KENDEX_ENV_FILE", "KENDEX_KEY_FILE"]) delete env[name];
-  const run = (extra) => spawnSync(process.execPath, [script, "report", "q"], { encoding: "utf8", cwd: project, env: { ...env, ...extra } });
+  const run = (extra, command = ["report", "q"]) => spawnSync(process.execPath, [script, ...command], { encoding: "utf8", cwd: project, env: { ...env, ...extra } });
 
-  writeFileSync(keyFile, "OTHER_KEY=other\nEXA_API_KEY=from-key-file\n");
-  const read = run({ KENDEX_KEY_FILE: keyFile });
-  assert.equal(read.status, 0, read.stderr);
-  assert.deepEqual(JSON.parse(readFileSync(seen, "utf8")), { key: "from-key-file", env: null });
-  assert.equal("EXA_API_KEY" in env, false);
+  for (const row of keyFileCases) {
+    await t.test(row.name, () => {
+      writeFileSync(keyFile, `OTHER_KEY=other\n${row.contents}`);
+      writeFileSync(seen, "{}");
+      const result = run({ KENDEX_KEY_FILE: keyFile });
+      if (row.key === null) {
+        assert.equal(diagnostic(result).key, "key-file-key-missing");
+        assert.deepEqual(JSON.parse(readFileSync(seen, "utf8")), {});
+        const doctor = run({ KENDEX_KEY_FILE: keyFile }, ["doctor"]);
+        assert.equal(doctor.status, 0, doctor.stderr);
+        assert.equal(JSON.parse(doctor.stdout).exaApiKey, false);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(readFileSync(seen, "utf8")), { key: row.key, env: null });
+      }
+    });
+  }
+
+  await t.test("doctor reports the key-file key", () => {
+    writeFileSync(keyFile, "EXA_API_KEY=k\n");
+    const doctor = run({ KENDEX_KEY_FILE: keyFile }, ["doctor"]);
+    assert.equal(doctor.status, 0, doctor.stderr);
+    assert.equal(JSON.parse(doctor.stdout).exaApiKey, true);
+  });
 
   // A key the project holds wins over the key file, and a key file with no
   // key line does not refuse a project that holds one.

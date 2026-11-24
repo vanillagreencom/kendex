@@ -27,11 +27,11 @@ Requires Node 18 or newer and `EXA_API_KEY`.
 - Or set the key by hand in that file.
 - Keep the key out of committed configuration.
 - The value may be a 1Password `op://vault/item/field` reference when the `op` CLI is installed and signed in.
-- Or keep the key in the computer's private key file: set `KENDEX_KEY_FILE` in your user environment to the file's absolute path. The file holds literal `KEY=value` lines.
+- Or keep the key in the computer's private key file. Set `KENDEX_KEY_FILE` in your user environment to the file's absolute path. Use `EXA_API_KEY=value` with optional `export` and single or double quotes around the value.
   - The CLI reads the file's `EXA_API_KEY` line only when the environment and the project's private env file hold no key.
   - The CLI keeps the key to itself and passes it to no process it starts.
   - A project file cannot name the key file.
-- Check the setup from the project root: `.agents/skills/deep-research/scripts/deep-research doctor` prints `"exaApiKey":true` when the environment or the project's private env file holds a key. It does not read the key file.
+- Run `.agents/skills/deep-research/scripts/deep-research doctor` from the project root. The command prints `"exaApiKey":true` when the environment, the project's private env file or the computer's private key file supplies a key.
 
 Domain, date, result-count and context flags are per call. `.agents/skills/deep-research/scripts/deep-research help` lists them.
 
