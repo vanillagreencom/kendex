@@ -1048,6 +1048,13 @@ Each `verifying [ITEM] box=[N] ...` line names an open post-merge box on a merge
 
 The watch itself completes a box that reads `met`, with its Evidence line. It comments once on a box that reads `failed` or `inconclusive`.
 
+A GitHub item's line names it `[OWNER/REPO]#[N]`: an open issue whose own merged pull request left it open with a post-merge box. The watch judges it by the same rule, and writes on the issue itself, which no `linear.sh` step reaches:
+
+- It ticks a `met` box in the issue body with its Evidence line, and comments on the issue for a `failed` or `inconclusive` one.
+- It closes the issue as completed once no post-merge box stays open, a box a person ticked by hand included.
+- Its open branch boxes hold nothing: no completion ticks them in a GitHub body.
+- A box a person proves is ticked in the issue body with its indented `Evidence:` line (`gh issue edit [N] --repo [OWNER/REPO] --body-file [FILE]`), in place of the completion steps below.
+
 - For each due or overdue box the watch leaves open, run [verify.md](../workflows/verify.md).
 - Acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), and a failed check takes that section's route.
 - Evidence still unreadable at its deadline takes [verify.md § 2](../workflows/verify.md#2-resolve-missing-evidence).

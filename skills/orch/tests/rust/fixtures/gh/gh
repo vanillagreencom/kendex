@@ -62,8 +62,11 @@
 # as gh v2.103.3 `pkg/cmd/pr/ready` writes it; the entry's `signal` kills
 # the call, after the mark reached GitHub where its `landed` is true, else
 # before. `gh api PATH --method POST
-# -f F` answers from `POST PATH`; an entry's `signal` kills the call by
-# that signal, a call that ended with no exit status. What an act left on
+# -f F` answers from `POST PATH`, and `--method PATCH` from `PATCH PATH`;
+# an entry's `signal` kills the call by that signal, a call that ended with
+# no exit status. A write's `--input -` JSON is appended to
+# `$GH_FAKE_LOG.input` as `{call, input}`, one line each, so a row reads
+# what it sent. What an act left on
 # GitHub outlives the map a row rewrites between calls: it is kept in
 # `<map>.acts.json` beside the map and laid over every later answer, a
 # ready mark making `pr view N` and `pulls/N` read ready (and `pr view N`
@@ -241,8 +244,11 @@ elif [ "${2:-}" = graphql ]; then
       then .exit = 1 | .stderr = ("gh: " + ([.body.errors[] | .message // ""] | join("\n")))
       else . end' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   fi
-elif [ "$#" -ge 4 ] && [ "${3:-}" = --method ] && [ "${4:-}" = POST ]; then
-  reply=$(jq -c --arg k "POST $2" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+elif [ "$#" -ge 4 ] && [ "${3:-}" = --method ] && { [ "${4:-}" = POST ] || [ "${4:-}" = PATCH ]; }; then
+  reply=$(jq -c --arg k "$4 $2" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  if [ "${5:-}" = --input ] && [ "${6:-}" = - ]; then
+    jq -c --arg call "$4 $2" '{call: $call, input: .}' >> "$GH_FAKE_LOG.input" || { echo "gh-fake: input-unreadable" >&2; exit 65; }
+  fi
   signal=$(jq -r '.signal // empty' <<<"${reply:-null}")
   [ -z "$signal" ] || kill -s "$signal" "$$"
   case "$2" in

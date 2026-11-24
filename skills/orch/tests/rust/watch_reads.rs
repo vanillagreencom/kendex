@@ -3162,7 +3162,7 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
     let head_b = "b".repeat(40);
     let pull = |number: u64, login: &str, kind: &str, association: &str, head: &str| json!({"number": number, "state": "open", "title": "a contribution", "body": null, "merged_at": null, "merge_commit_sha": null, "user": {"login": login, "type": kind}, "author_association": association, "head": {"sha": head, "ref": "contribution", "repo": null}, "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}});
     let issue = |number: u64, login: &str, kind: &str, association: &str, pr: bool| {
-        let mut v = json!({"number": number, "state": "open", "user": {"login": login, "type": kind}, "author_association": association});
+        let mut v = json!({"number": number, "state": "open", "created_at": "2026-08-15T09:00:00Z", "user": {"login": login, "type": kind}, "author_association": association});
         if pr {
             v["pull_request"] = json!({"url": "x"});
         }
@@ -3187,7 +3187,7 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
             issue(3129, "teammate", "User", "MEMBER", false),
             issue(3128, "founder", "User", "OWNER", false),
             issue(3127, "private-member", "User", "CONTRIBUTOR", false),
-            {"number": 5, "state": "open", "user": null, "author_association": "NONE"}
+            {"number": 5, "state": "open", "created_at": "2026-08-15T09:00:00Z", "user": null, "author_association": "NONE"}
         ]}),
     );
     world.gh(
@@ -4413,6 +4413,182 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             "{reading}: one job read per pass"
         );
     }
+}
+
+/// A GitHub item a `Refs` merge left open is judged by the Linear rule
+/// from its own merged pull request: its merge-triggered box is due and,
+/// read met, ticked in the issue body with its Evidence line while its
+/// release-triggered box waits, also on a later release that does not
+/// contain the merge; a release that does is met, ticked, and the issue
+/// closes as completed with it. Its branch box, which nothing on GitHub
+/// ticks, holds nothing, and no write reaches the tracker CLI.
+#[test]
+fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last() {
+    const NOW: u64 = 1_790_899_201; // 2026-10-02T00:00:01Z
+    const LATER: u64 = 1_791_007_200; // 2026-10-03T06:00:00Z
+    const MERGE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const BODY: &str = "## Done when\n- [ ] Branch work lands\n- [ ] Post-merge: job time <= 600 s; Where: https://github.com/owner/repo/actions/runs/5/job/77; Why after merge: runs on main; Deadline: +48h\n- [ ] Post-merge: releases >= 1 release; Where: https://github.com/owner/repo/releases; Why after merge: ships in a release; Trigger: release owner/repo v*; Deadline: +24h\n";
+    let mut world = World::new();
+    quiet_github(&mut world);
+    let plant_issue = |world: &mut World, body: &str| {
+        let issue = json!({"number": 7, "state": "open", "title": "the item", "body": body,
+            "created_at": "2026-09-20T00:00:00Z", "user": null, "author_association": "OWNER"});
+        world.gh(
+            "repos/owner/repo/issues?state=open&per_page=100&page=1",
+            json!({ "body": [issue.clone()] }),
+        );
+        world.gh("repos/owner/repo/issues/7", json!({ "body": issue }));
+    };
+    plant_issue(&mut world, BODY);
+    world.gh(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20T00%3A00%3A00Z%20%28%28head%3Aissue-7%20OR%20%22issue-7%22%29%29%20in%3Atitle%2Cbody&per_page=100&page=1",
+        json!({"body": {"total_count": 1, "incomplete_results": false, "items": [{"number": 12, "pull_request": {}}]}}),
+    );
+    world.gh(
+        "repos/owner/repo/pulls/12",
+        json!({"body": {"number": 12, "state": "closed", "title": "fix(issue-7): the item", "body": "Refs #7",
+            "merged_at": "2026-10-01T00:00:00Z", "merge_commit_sha": MERGE, "author_association": "OWNER",
+            "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
+            "head": {"sha": "0000000000000000000000000000000000000000", "ref": "issue-7",
+                "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}}}),
+    );
+    world.gh(
+        "repos/owner/repo/actions/jobs/77",
+        json!({"body": {"id": 77, "run_id": 5, "name": "perf",
+            "head_sha": "0000000000000000000000000000000000000000", "status": "completed",
+            "conclusion": "success", "started_at": "2026-10-01T10:00:00Z",
+            "completed_at": "2026-10-01T10:06:52Z",
+            "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/77"}}),
+    );
+    let release =
+        |tag: &str, at: &str| json!({"tag_name": tag, "published_at": at, "draft": false});
+    world.gh(
+        "repos/owner/repo/releases?per_page=100&page=1",
+        json!({ "body": [release("v0.9", "2026-09-25T00:00:00Z")] }),
+    );
+    world.gh("PATCH repos/owner/repo/issues/7", json!({"body": {}}));
+    let clock = FakeClock::new();
+    let settings = world.settings(&[]);
+    let shared = Shared::default();
+    let mut github =
+        github::body(world.github_context(settings.clone(), None, &["owner/repo"], shared.clone()));
+    let lines_slot = verifying::Lines::default();
+    let mut verification = verifying::body(verifying::Context {
+        settings,
+        gh: world.dir.path().join("gh"),
+        shared,
+        lines: lines_slot.clone(),
+    });
+    let mut baseline = Baseline::default();
+    let writes = |world: &World| -> Vec<Value> {
+        std::fs::read_to_string(world.dir.path().join("gh.log.input"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    };
+    let status = |n: u64| -> String {
+        let lines = lines_slot.lock().unwrap().clone();
+        let prefix = format!("verifying owner/repo#7 box={n} ");
+        let line = lines
+            .iter()
+            .find(|l| l.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("box {n}: {lines:?}"));
+        line.split(' ')
+            .find_map(|field| field.strip_prefix("status="))
+            .unwrap()
+            .to_owned()
+    };
+
+    pass_as(Duty::GitHub, &mut github, &mut baseline, &clock, NOW).unwrap();
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        (status(2), status(3)),
+        ("due".to_owned(), "waiting".to_owned())
+    );
+    let written = writes(&world);
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert_eq!(written[0]["call"], "PATCH repos/owner/repo/issues/7");
+    assert_eq!(written[0]["input"].get("state"), None, "{written:?}");
+    let ticked = written[0]["input"]["body"].as_str().unwrap().to_owned();
+    let ticked_lines: Vec<&str> = ticked.lines().collect();
+    assert_eq!(ticked_lines[1], "- [ ] Branch work lands");
+    assert!(
+        ticked_lines[2].starts_with("- [x] Post-merge: job time"),
+        "{ticked}"
+    );
+    assert!(
+        ticked_lines[3].starts_with("  Evidence: 412 s "),
+        "{ticked}"
+    );
+    assert!(
+        ticked_lines[4].starts_with("- [ ] Post-merge: releases"),
+        "{ticked}"
+    );
+
+    // GitHub now holds the ticked body; a release after the merge that
+    // does not contain it leaves the release box waiting.
+    plant_issue(&mut world, &ticked);
+    world.gh(
+        "repos/owner/repo/releases?per_page=100&page=1",
+        json!({ "body": [release("v0.9", "2026-09-25T00:00:00Z"), release("v1.0", "2026-10-03T00:00:00Z")] }),
+    );
+    world.gh(
+        &format!("repos/owner/repo/compare/{MERGE}...v1.0"),
+        json!({"body": {"status": "behind"}}),
+    );
+    pass_as(Duty::GitHub, &mut github, &mut baseline, &clock, LATER).unwrap();
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER,
+    )
+    .unwrap();
+    assert_eq!(status(3), "waiting");
+    assert_eq!(writes(&world).len(), 1);
+
+    world.gh(
+        &format!("repos/owner/repo/compare/{MERGE}...v1.0"),
+        json!({"body": {"status": "ahead"}}),
+    );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 60,
+    )
+    .unwrap();
+    assert_eq!(status(3), "due");
+    let written = writes(&world);
+    assert_eq!(written.len(), 2, "{written:?}");
+    assert_eq!(written[1]["call"], "PATCH repos/owner/repo/issues/7");
+    assert_eq!(
+        (
+            &written[1]["input"]["state"],
+            &written[1]["input"]["state_reason"]
+        ),
+        (&json!("closed"), &json!("completed"))
+    );
+    let closed = written[1]["input"]["body"].as_str().unwrap();
+    assert!(closed.contains("\n- [x] Post-merge: releases"), "{closed}");
+    assert!(
+        world
+            .linear_calls()
+            .iter()
+            .all(|c| !c.starts_with("issues complete") && !c.starts_with("comments create")),
+        "{:?}",
+        world.linear_calls()
+    );
 }
 
 /// A Verifying item left with an open branch-provable box, as a merge

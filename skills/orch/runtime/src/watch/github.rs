@@ -4,7 +4,8 @@
 //! dependency's state, the
 //! refresh workflow's last runs, the main branch's push and nightly runs
 //! and their budget warnings, the reducer pass (`pr_watch`), the outside
-//! contributions (`outside`) and the security alerts (`security`), each
+//! contributions (`outside`), the security alerts (`security`) and the
+//! GitHub items the verification judges (`issue_items`), each
 //! read once per pass through `gh api` via the one runner, decoded at the
 //! boundary in the verify module's wire forms (`T`, `Optional<T>`,
 //! `Nullable<T>`), and paginated with the page set's
@@ -43,7 +44,8 @@ use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus};
 use crate::verify::wire::{
-    Issue, Job, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun, WorkflowsPage,
+    Issue, IssueText, Job, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun,
+    WorkflowsPage,
 };
 use crate::verify::{
     self, ACTIONS_SEARCH_CAP, Answer, Failed, Gh, MAX_PAGES, PER_PAGE, Page, Unrun,
@@ -118,6 +120,18 @@ pub struct Inventory {
     /// its open alerts or `none` (the `bot-fix` rows the heartbeat marks
     /// its open list with).
     pub bot_fix: BTreeMap<String, String>,
+    /// The GitHub-tracked items the verification judges ([`issue_items`]).
+    pub verifying: Vec<IssueItem>,
+}
+
+/// An open GitHub issue its own merged pull request left open with a
+/// post-merge box in its body: the item the verification judges, `item.id`
+/// `<repo>#<n>`, its key in [`Inventory::merged`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IssueItem {
+    pub repo: String,
+    pub number: u64,
+    pub item: VerifyingItem,
 }
 
 /// What the reads of one pass produced.
@@ -1014,6 +1028,7 @@ fn pass_reads(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
         tick.baseline,
         &mut produced,
     )?;
+    issue_items(&gh, &audits, &mut inventory)?;
     ctx.shared.lock().unwrap_or_else(|p| p.into_inner()).github = Some(inventory);
     Ok(produced)
 }
@@ -1381,6 +1396,64 @@ fn merged(
             produced.changes.push(Change::Clear {
                 kind: PARKED_UNTIL_ROW.to_owned(),
                 identity,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The text every post-merge box opens with (the linear package's
+/// `done_when_parse`).
+const POST_MERGE: &str = "Post-merge:";
+
+/// The GitHub-tracked items of the repositories the audits read: each open
+/// issue whose body names a post-merge box and whose own merged pull
+/// request ([`landings`] of `issue-<n>`, its branch) landed since it was
+/// opened. A merge with `Refs` leaves such an issue open (orch `SKILL.md`
+/// § Tracker Resolution). The body text only narrows the issues the box
+/// parser reads: it is in every box, and the parser judges what it opens.
+fn issue_items(gh: &Gh, repos: &[String], inventory: &mut Inventory) -> Result<()> {
+    for repo in repos {
+        let path = format!("repos/{repo}/issues?state=open");
+        let Some(issues) = gh.list::<IssueText>("verifying-issues", &path)? else {
+            return Err(refused(
+                "github-read-failed",
+                &[("read", "verifying-issues"), ("path", &path)],
+            ));
+        };
+        let open: Vec<(String, IssueText)> = issues
+            .into_iter()
+            .filter(|i| i.pull_request.present().is_none())
+            .filter(|i| matches!(&i.body, Nullable::Present(body) if body.contains(POST_MERGE)))
+            .map(|i| (format!("issue-{}", i.number), i))
+            .collect();
+        let searched: Vec<Landing> = open
+            .iter()
+            .map(|(key, issue)| Landing {
+                item: key,
+                floor: super::tracker::stamp_epoch(&issue.created_at),
+                recorded: None,
+            })
+            .collect();
+        let mut landed = landings(gh, std::slice::from_ref(repo), &searched)?;
+        for (key, issue) in open {
+            let (Some(merged), Nullable::Present(description)) = (landed.remove(&key), issue.body)
+            else {
+                continue;
+            };
+            let id = format!("{repo}#{}", issue.number);
+            inventory.merged.insert(id.clone(), merged);
+            inventory.verifying.push(IssueItem {
+                repo: repo.clone(),
+                number: issue.number,
+                item: VerifyingItem {
+                    id,
+                    created_at: issue.created_at,
+                    description,
+                    priority: "-".to_owned(),
+                    container: false,
+                    blocked_by_open: Vec::new(),
+                },
             });
         }
     }
