@@ -270,8 +270,8 @@ KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$PI_PROJECT" \
     "$(pi_edit "$PI_PROJECT/Panel.qml" pi-project)" 'ui-copy-note: path=Panel.qml'
 
 # A relative registration from engine::targets::direct_command cannot
-# establish an install identity, even with a Codex project path suffix.
-for relative_home in rel-codex ./rel-codex/.codex; do
+# establish an install identity, even when its path matches a project layout.
+for relative_home in rel-codex ./rel-codex/.codex ./rel-codex/.claude; do
   install_skills "$REPO/$relative_home/skills"
   printf -v command 'bash %q' "$relative_home/hooks/ui-copy-note.sh"
   CODEX_HOME="$relative_home" FIXTURE_INSTALL="$REPO" FIXTURE_COMMAND="$command" \
