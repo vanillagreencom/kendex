@@ -1495,25 +1495,15 @@ fn write_run_dir(
         &start_record(worktree, &resolved.proof, start, memory),
     )?;
     record::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
-        let mut names = Vec::new();
-        for entry in
-            fs::read_dir(worktree.join("tmp")).map_err(|e| files::unreadable("run-index", e))?
-        {
-            let entry = entry.map_err(|e| files::unreadable("run-index", e))?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str().filter(|n| n.starts_with(RUN_DIR_PREFIX)) else {
-                continue;
-            };
-            match fs::metadata(entry.path().join("start")) {
-                Ok(_) => names.push(name.to_owned()),
-                Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(e) => return Err(files::unreadable("run-index", e)),
-            }
-        }
+        let dirs = files::run_dirs(worktree)?;
+        let mut names: Vec<_> = dirs
+            .iter()
+            .filter_map(|dir| dir.file_name()?.to_str())
+            .collect();
         names.sort();
         let mut index = String::from("dev-validate-runs-v1\n");
         for name in names {
-            index.push_str(&name);
+            index.push_str(name);
             index.push('\n');
         }
         let scratch = worktree

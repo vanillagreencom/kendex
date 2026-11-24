@@ -961,6 +961,40 @@ mod push {
     const RANGE: &str = "DEV_VALIDATE_RANGE_CMD = \"true\"\nDEV_VALIDATE_CMD = \"true\"\n";
 
     #[test]
+    fn a_legacy_validation_file_allows_worktree_reuse_and_a_new_run() {
+        let repo = Repo::new("KEN-1", RANGE);
+        // Released orch left help and log files beside its run directories.
+        let legacy = repo.wt.join("tmp/dev-validate-help.txt");
+        fs::write(&legacy, "legacy help\n").unwrap();
+        let live = isolated()
+            .args(["validate", "entry", "--live", "--worktree"])
+            .arg(&repo.wt)
+            .current_dir(&repo.wt)
+            .output()
+            .unwrap();
+        assert_eq!(live.status.code(), Some(1), "{}", stderr(&live));
+        assert_eq!(live.stdout, b"live=none\n");
+
+        let base = repo.advance("moved");
+        let reuse = program(worktree_cli())
+            .args(["create", &repo.item, "--reuse"])
+            .env("ORCH_RUNTIME_BINARY", support::binary())
+            .env("PATH", tool_path(&[&repo.root.join("bin")]))
+            .current_dir(&repo.main)
+            .output()
+            .unwrap();
+        assert!(reuse.status.success(), "{}", stderr(&reuse));
+        git(&repo.wt, &["merge-base", "--is-ancestor", &base, "HEAD"]);
+
+        support::install_orch_scripts(&repo.wt);
+        let run = range_run(&repo, &base);
+        let name = Path::new(&run).file_name().unwrap().to_str().unwrap();
+        let index = fs::read_to_string(repo.wt.join("tmp/validation-runs")).unwrap();
+        assert_eq!(index, format!("dev-validate-runs-v1\n{name}\n"));
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), "legacy help\n");
+    }
+
+    #[test]
     fn the_restack_stage_records_the_newest_finished_run_for_its_head_once() {
         let repo = Repo::new("KEN-1", RANGE);
         repo.link_agents();

@@ -278,28 +278,44 @@ impl RunFile {
     }
 }
 
-pub fn runs(worktree: &Path) -> Result<Vec<RunFile>> {
+pub(super) fn run_dirs(worktree: &Path) -> Result<Vec<PathBuf>> {
     let entries = match fs::read_dir(worktree.join("tmp")) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(unreadable("runs", e)),
     };
-    let mut runs = Vec::new();
+    let mut dirs = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| unreadable("runs", e))?;
         if !entry
             .file_name()
             .to_string_lossy()
-            .starts_with("dev-validate-")
+            .starts_with(super::RUN_DIR_PREFIX)
         {
             continue;
         }
-        match fs::metadata(entry.path().join("start")) {
-            Ok(_) => runs.push(RunFile::read(&entry.path())?),
+        // Released orch left plain files with this prefix beside run directories.
+        let dir = entry.path();
+        match fs::metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(unreadable("runs", e)),
+        }
+        match fs::metadata(dir.join("start")) {
+            Ok(_) => dirs.push(dir),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(unreadable("start", e)),
         }
     }
+    Ok(dirs)
+}
+
+pub fn runs(worktree: &Path) -> Result<Vec<RunFile>> {
+    let mut runs = run_dirs(worktree)?
+        .iter()
+        .map(|dir| RunFile::read(dir))
+        .collect::<Result<Vec<_>>>()?;
     runs.sort_by(|a, b| {
         a.get("start")
             .parse::<u64>()
