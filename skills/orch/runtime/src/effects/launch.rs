@@ -2281,6 +2281,15 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     if created {
         outcome.annotate(SANDBOX, json!(STANDING));
     }
+    // The window read replaces the intent's observation, but it cannot
+    // re-read the confinement the launcher established for this pane.
+    if let Some(confinement) = intent
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.get("confinement"))
+    {
+        outcome.annotate("confinement", confinement.clone());
+    }
     Ok(outcome)
 }
 

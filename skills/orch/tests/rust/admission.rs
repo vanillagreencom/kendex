@@ -1813,7 +1813,7 @@ fn two_candidates_of_one_pass_ride_the_first_ones_lane() {
     );
 }
 
-/// A cross-worktree join needs the current launch's unconfined answer.
+/// Joining two linked worktrees needs the current launch's unconfined answer.
 /// A confined holder may still carry work in its own checkout. Both ties
 /// are judged before the holder's record or mailbox changes.
 #[test]
@@ -1847,13 +1847,36 @@ fn a_join_respects_the_current_holders_confinement() {
     ] {
         let fleet = Fleet::new();
         fleet.init_fleet();
-        let root = fleet.checkout("holder", None);
+        let source = fleet.checkout("source", None);
+        for args in [
+            &["config", "gc.auto", "0"][..],
+            &["config", "maintenance.auto", "false"],
+            &["commit", "-q", "--allow-empty", "-m", "base"],
+        ] {
+            git(&source, args);
+        }
+        let linked = |name: &str| {
+            let checkout = fleet.dir.path().join(name);
+            git(
+                &source,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    checkout.to_str().unwrap(),
+                    "-b",
+                    name,
+                ],
+            );
+            checkout
+        };
+        let root = linked("holder");
         let checkout = if same_checkout {
             let alias = fleet.dir.path().join("holder-alias");
             std::os::unix::fs::symlink(&root, &alias).unwrap();
             alias
         } else {
-            fleet.checkout("candidate", None)
+            linked("candidate")
         };
         let harness = Owned::sleep();
         let status = if answer.is_some() {

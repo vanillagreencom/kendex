@@ -12646,8 +12646,9 @@ fn a_lane_on_a_seat_whose_projects_is_a_link_writes_its_transcript_where_it_lead
 /// folder no grant names, as every operator Codex seat's are, cannot hold a
 /// confined lane: Codex writes through the links into the read-only tree.
 /// The lane on it launches unconfined under the cause `linked-seat`, which
-/// its record names, and writes through the links. A seat whose one link is
-/// its settings file, read-only by design, keeps its lane confined.
+/// its record names even after reconciliation, and writes through the links.
+/// A seat whose one link is its settings file, read-only by design, keeps its
+/// lane confined.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_codex_lane_on_a_seat_linked_outside_its_grants_runs_unconfined_by_name() {
@@ -12696,6 +12697,16 @@ fn a_codex_lane_on_a_seat_linked_outside_its_grants_runs_unconfined_by_name() {
             report["intent"]["observation"]["confinement"], confinement,
             "{item}: {report}"
         );
+        if seat == &linked {
+            assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+            let replay = world.runner.reconcile_one();
+            assert_eq!(replay["intent"]["id"], report["intent"]["id"], "{replay}");
+            assert_eq!(
+                world.runner.fleet()["intents"][0]["observation"]["confinement"],
+                confinement,
+                "{replay}"
+            );
+        }
         let probe = world.probe(item, 1);
         assert!(
             probe.contains("file=state_5.sqlite written"),
