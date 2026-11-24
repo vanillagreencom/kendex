@@ -1145,6 +1145,12 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             "owner/repo/KEN-23",
             Some(json!({"unreadable": "fleet.stopped=half a label"}))
         ),
+        // Another repository's lane of the same item key, stopped.
+        row(
+            "owner/other/KEN-28",
+            Some(json!({"at": "2026-10-02T00:00:00Z", "why": "harness-ended"}))
+        ),
+        row("owner/repo/KEN-28", None),
     ]);
     let mut hosts = std::collections::BTreeMap::new();
     for name in ["provider-w", "provider-x", "provider-y", "provider-z"] {
@@ -1268,7 +1274,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         (
             "KEN-12",
             "running",
-            json!({"host": "provider-x"}),
+            json!({"host": "provider-x", "repo": "owner/repo"}),
             ItemRead::Open { blocked: false },
             stop("2026-10-02T00:00:00Z"),
             Some("lane=running waits=nothing stop=2026-10-02T00:00:00Z why=harness-ended"),
@@ -1346,7 +1352,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         (
             "KEN-21",
             "running",
-            json!({"host": "provider-x"}),
+            json!({"host": "provider-x", "repo": "owner/repo"}),
             ItemRead::Open { blocked: false },
             None,
             Some("lane=running waits=nothing stop=2026-09-20T00:00:00Z why=harness-ended"),
@@ -1355,7 +1361,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         (
             "KEN-22",
             "running",
-            json!({"host": "provider-x"}),
+            json!({"host": "provider-x", "repo": "owner/repo"}),
             ItemRead::Open { blocked: false },
             None,
             None,
@@ -1363,7 +1369,7 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
         (
             "KEN-23",
             "stopped",
-            json!({"host": "provider-x"}),
+            json!({"host": "provider-x", "repo": "owner/repo"}),
             ItemRead::Open { blocked: false },
             None,
             Some("lane=stopped waits=nothing stop=unreadable why=unreadable"),
@@ -1395,6 +1401,16 @@ fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
             ItemRead::Open { blocked: false },
             stop("2026-10-02T00:00:00Z"),
             Some("lane=running waits=nothing stop=2026-10-02T00:00:00Z why=harness-ended"),
+        ),
+        // The stop of another repository's lane of the same key is not this
+        // lane's.
+        (
+            "KEN-28",
+            "running",
+            json!({"host": "provider-x", "repo": "owner/repo"}),
+            ItemRead::Open { blocked: false },
+            None,
+            None,
         ),
         // A relaunch from a dependency park carries its wait with no pull
         // request of its own.

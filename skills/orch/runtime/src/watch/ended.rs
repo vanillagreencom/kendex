@@ -217,8 +217,11 @@ pub struct Listed {
 /// One `list --json` per `park=verb` host of the latest `running` or
 /// `stopped` provider record of each item whose item no read answered
 /// ended: a host of any other kind stops no sandbox with its disk kept. A
-/// row names its item by its `label`, `OWNER/REPO/ITEM` in any case, as the
-/// protocol's `list` row does. A host answering exit `2` lists no stop.
+/// row names its lane by its whole `label`, `OWNER/REPO/ITEM` in any case,
+/// as the protocol's `list` row does, `OWNER/REPO` the record's `repo`: two
+/// repositories' lanes can share an item key on one host. A record naming
+/// no repository takes no listed stop; a hosted launch refuses a request
+/// naming none. A host answering exit `2` lists no stop.
 ///
 /// A `stopped` record's host is read here although [`Hosts`] serves the
 /// lane duty's in-flight lanes: the heartbeat asks it once per heartbeat,
@@ -253,13 +256,16 @@ pub fn listed(scripts: &Path, fleet: &FleetState, items: &Items) -> Listed {
             }
         };
         for lane in lanes {
-            let suffix = format!("/{}", lane.item.to_ascii_lowercase());
+            let Some(repo) = lane.repo.as_deref().filter(|r| !r.is_empty()) else {
+                continue;
+            };
+            let label = format!("{repo}/{}", lane.item);
             let member = rows
                 .iter()
                 .filter(|row| {
                     row.get("label")
                         .and_then(Value::as_str)
-                        .is_some_and(|l| l.to_ascii_lowercase().ends_with(&suffix))
+                        .is_some_and(|l| l.eq_ignore_ascii_case(&label))
                 })
                 .find_map(|row| row.get("stop"));
             if let Some(member) = member {
