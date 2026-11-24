@@ -358,7 +358,9 @@ assert_settings_ranges() {
       assert_eq "standalone consumer CI refuses an absent checker" \
         "change_class=standard cause=bot-instructions-unread side=base detail=checker-absent" "$ci_class $ci_note"
     fi
-  done <<'SETTINGS'
+  done
+}
+assert_settings_ranges <<'SETTINGS'
 ordinary|kendex.settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "new"|micro cause=settings-only
 uncomment|kendex.settings.toml|[env]\n# ORCH_LANE_OUTPUT = "quiet"|[env]\nORCH_LANE_OUTPUT = "normal"|micro cause=settings-only
 local|.kendex/settings.toml|[env]\nORDINARY = "old"|[env]\nORDINARY = "HARNESS_CI_STANDARD_PATHS"|micro cause=settings-only
@@ -376,8 +378,24 @@ claude|.claude/settings.json|{"permissions": {}}|{"permissions": {"allow": []}}|
 gemini|.gemini/settings.json|{"mcpServers": {}}|{"mcpServers": {"tool": {}}}|standard cause=configuration-source
 standard-path|kendex.settings.toml|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "old"|[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.settings.toml"\nORDINARY = "new"|standard cause=configuration-source
 SETTINGS
-}
-assert_settings_ranges
+
+assert_settings_ranges <<'MANIFEST'
+basic-heading|kendex-local.toml|instructions = """\n### React\n[section]\n"""|instructions = """\n### Shell\n[section]\n"""|standard cause=configuration-source
+basic-bracket|kendex-local.toml|instructions = """\n[shared]\n### Heading\n"""|instructions = """\n[other]\n### Heading\n"""|standard cause=configuration-source
+literal-heading|kendex-local.toml|instructions = '''\n# Before\n### React\n[section]\n'''|instructions = '''\n# Before\n### Shell\n[section]\n'''|standard cause=configuration-source
+literal-assignment|kendex-local.toml|instructions = '''\nmode = "old"\n'''|instructions = '''\nmode = "new"\n'''|standard cause=configuration-source
+basic-escaped-delimiter|kendex-local.toml|instructions = """\nEmbedded \134""" stays in the string.\nmode = "old"\n"""|instructions = """\nEmbedded \134""" stays in the string.\nmode = "new"\n"""|standard cause=configuration-source
+beside-basic|kendex-local.toml|instructions = """\nEmbedded \134""" stays in the string.\n# Heading\n[section]\nclosing """" # comment '''\nmode = "old"|instructions = """\nEmbedded \134""" stays in the string.\n# Heading\n[section]\nclosing """" # comment '''\nmode = "new"|micro cause=settings-only
+beside-literal|kendex-local.toml|instructions = '''\n# Heading\n[section]\nclosing ''''' # comment """\nmode = 'old # literal'|instructions = '''\n# Heading\n[section]\nclosing ''''' # comment """\nmode = 'new # literal'|micro cause=settings-only
+single-line-comments|kendex-local.toml|mode = "old \134"quote\134" # literal" # comment """|mode = "new \134"quote\134" # literal" # comment '''|micro cause=settings-only
+array-comment|kendex-local.toml|tags = [\n  # old\n  "tag",\n]\nname = "one"|tags = [\n  # new\n  "tag",\n]\nname = "one"|standard cause=configuration-source
+beside-array|kendex-local.toml|tags = [\n  "] # literal", # } comment\n]\nname = "old"|tags = [\n  "] # literal", # } comment\n]\nname = "new"|micro cause=settings-only
+inline-table-comment|kendex-local.toml|metadata = { tags = [\n  # old\n  "tag",\n] }|metadata = { tags = [\n  # new\n  "tag",\n] }|standard cause=configuration-source
+beside-inline-table|kendex-local.toml|metadata = { tags = [\n  "{}[]", # """ comment\n] }\nname = "old"|metadata = { tags = [\n  "{}[]", # """ comment\n] }\nname = "new"|micro cause=settings-only
+unclosed-string|kendex-local.toml|instruction = """\nmode = "old"|instruction = """\nmode = "new"|standard cause=configuration-source
+mismatched-delimiter|kendex-local.toml|metadata = { tags = [\n  "one",\n} ]\nname = "old"|metadata = { tags = [\n  "one",\n} ]\nname = "new"|standard cause=configuration-source
+missing-value|kendex-local.toml|name = "old"|name = # absent|standard cause=configuration-source
+MANIFEST
 
 assert_unread_settings_ranges() {
   local kind partial path head base want

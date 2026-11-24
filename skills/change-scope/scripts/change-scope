@@ -436,13 +436,68 @@ launch_key_admitted() { # KEY KIND
   [[ "$key" =~ $grammar ]]
 }
 
+# Track the lexical boundaries of manifest values. An assignment can leave the
+# residue only when it occupies its own line outside a multiline value.
+manifest_place_line() { # LINE
+  local text="$1" prefix quote
+  manifest_opaque=false
+  [ -z "$manifest_quote$manifest_brackets" ] || manifest_opaque=true
+  while :; do
+    case "$manifest_quote" in
+      '') prefix="${text%%[\"\'\[\]\{\}\#\\]*}" ;;
+      \" | '"""') prefix="${text%%[\"\\]*}" ;;
+      \' | "'''") prefix="${text%%\'*}" ;;
+    esac
+    text="${text#"$prefix"}"
+    [ -n "$text" ] || break
+    if [ -n "$manifest_quote" ]; then
+      case "$text" in
+        \\*) text="${text:2}" ;;
+        "$manifest_quote"*)
+          text="${text:${#manifest_quote}}"
+          if [ "${#manifest_quote}" -eq 3 ]; then
+            # A closing run may carry up to two quotes as string content.
+            quote="${manifest_quote:0:1}"
+            case "$text" in
+              "$manifest_quote"*) return 1 ;;
+              "$quote$quote"*) text="${text:2}" ;;
+              "$quote"*) text="${text:1}" ;;
+            esac
+          fi
+          manifest_quote="" ;;
+        *) text="${text:1}" ;;
+      esac
+      continue
+    fi
+    case "$text" in
+      \#*) break ;;
+      '"""'* | "'''"*)
+        manifest_quote="${text:0:3}"
+        manifest_opaque=true
+        text="${text:3}"
+        continue ;;
+      \"* | \'*) manifest_quote="${text:0:1}" ;;
+      \[*) manifest_brackets="]$manifest_brackets" ;;
+      \{*) manifest_brackets="}$manifest_brackets" ;;
+      \]* | \}*)
+        [ "${text:0:1}" = "${manifest_brackets:0:1}" ] || return 1
+        manifest_brackets="${manifest_brackets:1}" ;;
+      *) return 1 ;;
+    esac
+    text="${text:1}"
+  done
+  [ "${#manifest_quote}" -ne 1 ] || return 1
+  [ -z "$manifest_brackets" ] || manifest_opaque=true
+}
+
 # FILE without its comment lines, blank lines and admitted assignments at
 # RESIDUE, and each admitted key on stdout. The settings value reader
-# validates headers on the same bytes. A manifest keeps other syntax in
-# the residue and compares its assignment values as opaque data.
+# validates headers on the same bytes. A manifest keeps multiline values
+# and other ineligible syntax in the residue.
 # Returns 2 where the lines this loop read are not FILE's bytes: Bash's read
 # drops a NUL, as the reader's own loop does, and git counts a file holding
-# one as binary, so its lines escape the trivial ceiling.
+# one as binary, so its lines escape the trivial ceiling. Returns 3 where
+# manifest value boundaries could not be established.
 settings_scan() { # FILE RESIDUE [settings|manifest]
   (
     exec 3>&1 1>&2
@@ -450,21 +505,28 @@ settings_scan() { # FILE RESIDUE [settings|manifest]
     . "$SCRIPT_DIR/lib/kendex-env.sh" || exit 1
     : >"$2" && : >"$2.read" || exit 1
     section=""
+    manifest_quote="" manifest_brackets=""
     while :; do
       newline=$'\n'
       IFS= read -r line || { [ -n "$line" ] || break; newline=""; }
       printf '%s%s' "$line" "$newline" >>"$2.read" || exit 1
       kendex_trim trimmed "${line%$'\r'}"
       if [ "${3:-}" = manifest ]; then
-        case "$trimmed" in
-          *'"""'* | *"'''"*) printf '%s\n' "$line" >>"$2" || exit 1; continue ;;
-        esac
+        manifest_place_line "$trimmed" || exit 3
+        if [ "$manifest_opaque" = true ]; then
+          printf '%s%s' "$line" "$newline" >>"$2" || exit 1
+          continue
+        fi
       fi
       case "$trimmed" in
         '' | '#'*) continue ;;
         '['*) section="${trimmed#\[}" section="${section%\]}" ;;
         *=*)
           kendex_trim key "${trimmed%%=*}"
+          if [ "${3:-}" = manifest ]; then
+            kendex_trim value "${trimmed#*=}"
+            case "$value" in '' | '#'*) exit 3 ;; esac
+          fi
           if { [ "$#" -eq 2 ] && [ "$section" = env ] && settings_key_admitted "$key"; } ||
             { [ "$#" -gt 2 ] && { [ "$3" = manifest ] || [ "$section" = env ]; } && launch_key_admitted "$key" "$3"; }; then
             printf '%s\n' "$key" >&3
@@ -473,6 +535,7 @@ settings_scan() { # FILE RESIDUE [settings|manifest]
       esac
       printf '%s\n' "$line" >>"$2" || exit 1
     done <"$1"
+    [ -z "$manifest_quote$manifest_brackets" ] || exit 3
     status=0
     cmp -s -- "$1" "$2.read" || status=$?
     case "$status" in
@@ -501,9 +564,8 @@ settings_values() { # FILE KEY...
 
 # The keys whose value differs between the range's endpoints of PATH, as
 # SETTINGS_FILE_KEYS. Returns 1, with the admission line, where admission
-# refuses the file. The line scan cannot tell a comment from a line inside a
-# multiline string, so a multiline string delimiter at either endpoint
-# refuses the file.
+# refuses the file. A settings file with a multiline string delimiter is
+# outside the settings reader's grammar.
 settings_file_admitted() { # PATH [settings|manifest]
   local side rev status keys base_values head_values key line base_value head_value mode=""
   if ! : >"$work/settings-keys"; then
@@ -549,6 +611,9 @@ settings_file_admitted() { # PATH [settings|manifest]
       2)
         settings_note "cause=settings-bytes-dropped path=$1 side=$side" unreadable
         return 1 ;;
+      3)
+        settings_note "cause=manifest-placement path=$1 side=$side"
+        return 1 ;;
       *)
         settings_note "cause=settings-unreadable path=$1 side=$side" unreadable
         return 1 ;;
@@ -559,8 +624,8 @@ settings_file_admitted() { # PATH [settings|manifest]
   else
     status=$?
   fi
-  # Manifest assignment values stay opaque. The residue keeps table lines,
-  # multiline delimiters, and keys the proof cannot admit.
+  # The manifest residue keeps table lines, complete multiline values, and
+  # keys the proof cannot admit.
   if [ "${2:-}" = manifest ]; then
     case "$status" in
       0 | 1) return "$status" ;;
