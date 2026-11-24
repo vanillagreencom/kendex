@@ -63,9 +63,6 @@ ORCH_OVERSEER_LANES = "20"
 # skills/orch/references/lane-directive.md § Launch gate.
 ORCH_CONNECTED_REPOS = "vanillagreencom/kendex-web"
 
-# The account folders the account reading lists, each relative to the home folder.
-AGENT_RUNTIME_ACCOUNT_DIRS = ".claude:.1claude:.2claude:.3claude:.4claude:.5claude:.6claude:.7claude:.codex:.3codex:.1copilot"
-
 # The owner approved spending Codex credits: a Codex account with any
 # positive credit balance qualifies for a lane pick, below the package's
 # 5000-credit reserve (KEN-4091).
@@ -73,7 +70,7 @@ AGENT_RUNTIME_CODEX_CREDIT_FLOOR = "0"
 
 # The owner's overseer policy: medium effort for launch, restart, recovery
 # and succession.
-AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium,codex:standard:medium"
+AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:medium,copilot:claude-opus-5.5:medium,codex:gpt-6.2-sol:medium"
 
 # This repository runs the read-only GitHub ruleset and CI report.
 GITHUB_STANDARD_PLATFORM_CHECKS = "true"
