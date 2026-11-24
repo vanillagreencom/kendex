@@ -104,6 +104,9 @@ pub struct TrackerInventory {
     /// The team's open items no blocker holds (`OpenItem::blocked`) that no
     /// lane holds and the launch queue does not name, sorted.
     pub open_unblocked: Vec<String>,
+    /// Every open item of the team, with whether a blocker holds it, for
+    /// the heartbeat's ended lanes (`watch::ended`).
+    pub open: BTreeMap<String, bool>,
 }
 
 /// The latest results of the read duties; `None` until the first
@@ -1336,6 +1339,7 @@ fn inventory_of(
         owed,
         verifying,
         open_unblocked,
+        open: items.iter().map(|i| (i.id.clone(), i.blocked())).collect(),
     }
 }
 

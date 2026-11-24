@@ -23,6 +23,18 @@ Read from [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-
 
 The watch's wake duty types one line into a positively idle running lane and confirms it ([oversee-events.md § Wake outcomes](oversee-events.md#wake-delivered-wake-unconfirmed-wake-limit)). A record that is not `running` is never woken: relaunch it.
 
+## Ended lanes
+
+A [`lane-ended`](oversee-events.md#lane-ended) line names a lane whose harness ended while its item is open. Handle it in the heartbeat pass that prints it, by its `waits=`:
+
+- `nothing`: nothing holds the lane.
+  1. Relaunch it in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
+  2. Where the relaunch refuses, close it in this pass through § Lane close, and tell the owner the relaunch's refusal.
+- `merge`: the lane waits on a pull request. Its `merged` or `parked-merged` line resumes it.
+- `owner`: the lane waits on the owner's answer to its ask. Relaunch it once the answer arrives ([oversee-lanes.md § What ends a park](oversee-lanes.md#what-ends-a-park)).
+- `blocker`: a hold park or a blocking item holds it. Relaunch it once the blocker ends. Only a hand relaunch ends a hold park.
+- `unread`: the record's wait did not parse. Correct the record against [workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state), and judge the lane again at the next line.
+
 ## Mail the wake cannot deliver
 
 Every running lane the wake does not reach takes this route, whatever its harness: a `working` or `unjudged` lane, a `wake-limit` lane, and a lane on a host the wake does not reach. The mail waits by default. The lane reads it at the next point [skill-rules.md § Lane mail](skill-rules.md#lane-mail) names. A lane idle at its prompt reads nothing until its next turn starts.

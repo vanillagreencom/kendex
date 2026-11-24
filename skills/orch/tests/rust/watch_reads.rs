@@ -2009,6 +2009,14 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
         vec!["KEN-4".to_owned()],
         "KEN-1 joined to KEN-3's lane, KEN-2 blocked, KEN-3 held by a lane, KEN-5 queued; a done lane holds nothing"
     );
+    assert_eq!(
+        inventory.open,
+        ["KEN-1", "KEN-2", "KEN-3", "KEN-4", "KEN-5"]
+            .into_iter()
+            .map(|id| (id.to_owned(), id == "KEN-2"))
+            .collect::<BTreeMap<_, _>>(),
+        "every open item, whatever lane or queue holds it, with KEN-2 held by its blocker"
+    );
     assert!(
         inventory.owed.iter().all(|row| row.id != "KEN-2"),
         "KEN-2, in progress, is joined to a running lane: not owed: {:?}",
@@ -4066,6 +4074,7 @@ fn a_failed_verification_read_neither_repeats_nor_forgets_a_told_box() {
             blocked_by_open: Vec::new(),
         }],
         open_unblocked: Vec::new(),
+        open: Default::default(),
     });
     let job = json!({"body": {"id": 77, "run_id": 5, "name": "perf",
         "head_sha": "0000000000000000000000000000000000000000", "status": "completed",

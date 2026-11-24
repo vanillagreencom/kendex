@@ -36,6 +36,10 @@
 //! `watch-step-failed step=mail count=N` in the log with each refused
 //! target and its cause on stderr. No box is ever read as empty.
 //!
+//! A provider's `sandbox-stopped` notice in the overseer's box is kept as
+//! its item's stop row (`watch::ended`) when it is announced, and a full
+//! turn clears the row once no record of the item stands short of `done`.
+//!
 //! Between full turns the body asks to run each second and reads the
 //! overseer box alone when its byte size moved, so
 //! an owner's note waits a second rather than the mail interval.
@@ -51,6 +55,7 @@ use crate::ops::mail::MailCursor;
 use crate::schedule::Duty;
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus, Record};
+use crate::watch::ended;
 use crate::watch::wake::{OVERSEER_TARGET, UNREAD_KIND};
 use crate::watch::{Baseline, Change, Event, Paths, Produced, Runner, Tick};
 
@@ -692,6 +697,8 @@ impl MailDuty {
     /// named and left for the next turn.
     fn lanes_turn(&self, tick: &Tick, turn: &mut Turn) -> Result<()> {
         let fleet = fleet(&self.config.fleet)?;
+        turn.changes
+            .extend(ended::stale_stops(tick.baseline, &fleet));
         let mut local = Vec::new();
         let mut hosted = Vec::new();
         for lane in &fleet.lanes {
@@ -995,6 +1002,7 @@ impl MailDuty {
         }
         let past = |line: Option<u64>, n: u64| line.is_some_and(|l| l > n);
         let mut lines = Vec::new();
+        let mut stops = Vec::new();
         for envelope in events.envelopes.iter().filter(|e| past(e.line, announced)) {
             match classify(OVERSEER, envelope) {
                 Ok(Some(event)) => {
@@ -1004,7 +1012,11 @@ impl MailDuty {
                 Ok(None) => {}
                 Err(e) => return turn.refuse(OVERSEER_TARGET, e),
             }
+            if let Some((item, stop)) = envelope.text.as_deref().and_then(ended::notice) {
+                stops.push(ended::stop_change(&item, &stop));
+            }
         }
+        turn.changes.extend(stops);
         turn.events.extend(lines);
         // A first start's cursor past the box's lines still records the
         // count, or a line landing below that cursor would never be news.

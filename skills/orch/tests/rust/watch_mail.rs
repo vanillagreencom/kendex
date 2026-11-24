@@ -955,6 +955,79 @@ fn a_first_start_continues_from_the_lead_s_read_cursor_instead_of_replaying_its_
     }
 }
 
+/// The fleet provider's notice of a sandbox it stopped because its harness
+/// ended (fleet FLT-1791's `sandbox-stopped item= why= at= ...` line, sent
+/// as a directive to the lane's overseer) is kept per item for the
+/// heartbeat's `lane-ended` line, whatever class the box gives it; the
+/// `stop-sandbox` verb's own `sandbox-stopped item=ID` and a notice whose
+/// `at` names no time keep nothing; a full turn clears the row of an item
+/// no record still holds.
+#[test]
+fn a_sandbox_stopped_notice_is_kept_for_its_item_and_its_row_leaves_with_the_item() {
+    let w = world_of(&hold(), 20, &["KEN-1"]);
+    let at = "2026-01-29T15:10:00Z";
+    let fleet_notice = |id: &str, text: &str| json!({"id": id, "kind": "directive", "at": at, "from": "fleet", "text": text});
+    w.plant(
+        "overseer",
+        "to-lane.jsonl",
+        &fleet_notice(
+            "s-1",
+            &format!("sandbox-stopped item=KEN-1 why=harness-ended at={at} last_work={at} dirty=0 unpushed=1 disk=kept"),
+        ),
+    );
+    w.plant(
+        "overseer",
+        "to-lane.jsonl",
+        &note("s-2", "sandbox-stopped item=KEN-2"),
+    );
+    w.plant(
+        "overseer",
+        "to-lane.jsonl",
+        &note(
+            "s-3",
+            "sandbox-stopped item=KEN-3 why=harness-ended at=yesterday",
+        ),
+    );
+    let clock = FakeClock::new();
+    let mut duty = w.duty();
+    let mut baseline = Baseline::default();
+    baseline.apply(Change::Set {
+        kind: "sandbox-stopped".into(),
+        identity: "KEN-9".into(),
+        value: format!("{at}|harness-ended"),
+    });
+    let tick = Tick {
+        duty: Duty::Mail,
+        now: Instant::now(),
+        wall: WALL,
+        baseline: &baseline,
+        clock: &clock,
+    };
+    let produced = duty.run(&tick).unwrap();
+    let stops: Vec<&Change> = produced
+        .changes
+        .iter()
+        .filter(|c| match c {
+            Change::Set { kind, .. } | Change::Clear { kind, .. } => kind == "sandbox-stopped",
+            Change::Pass { .. } => false,
+        })
+        .collect();
+    assert_eq!(
+        stops,
+        [
+            &Change::Clear {
+                kind: "sandbox-stopped".into(),
+                identity: "KEN-9".into(),
+            },
+            &Change::Set {
+                kind: "sandbox-stopped".into(),
+                identity: "KEN-1".into(),
+                value: format!("{at}|harness-ended"),
+            },
+        ]
+    );
+}
+
 /// The owner channel on the real program: a due owner ask is closed with
 /// its recommendation before the box is read, and the close is announced
 /// from the box as the handler will read it; a reserved ask is left open.

@@ -22,6 +22,8 @@ use agent_runtime::settings::{Roots, Succession};
 use orch_runtime::error::Error;
 use orch_runtime::schedule::Duty;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
+use orch_runtime::state::LaneStatus;
+use orch_runtime::watch::ended::{Stop, Wait};
 use orch_runtime::watch::events::OverseerCase;
 use orch_runtime::watch::{self, Change, Event, Flags, Paths, Produced, Recorded, Runner, Tick};
 use serde_json::{Value, json};
@@ -985,6 +987,27 @@ fn every_event_renders_to_its_recorded_bytes() {
                 item: s("KEN-4687"),
             },
             "EVENT lane-closed KEN-4687",
+        ),
+        (
+            Event::LaneEnded {
+                item: s("KEN-4831"),
+                lane: LaneStatus::Running,
+                waits: Wait::Nothing,
+                stop: Some(Stop {
+                    at: s("2026-11-22T20:00:00Z"),
+                    why: s("harness-ended"),
+                }),
+            },
+            "EVENT lane-ended KEN-4831 lane=running waits=nothing stop=2026-11-22T20:00:00Z why=harness-ended",
+        ),
+        (
+            Event::LaneEnded {
+                item: s("KEN-4831"),
+                lane: LaneStatus::Parked,
+                waits: Wait::Merge,
+                stop: None,
+            },
+            "EVENT lane-ended KEN-4831 lane=parked waits=merge",
         ),
         (
             Event::LaneCloseRefused {

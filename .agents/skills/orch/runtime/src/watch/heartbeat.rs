@@ -6,7 +6,10 @@
 //! last pass; the `owed` lines of the tracker duty's last pass with their
 //! wall verdicts through the accounts judge's chooser; the standing
 //! tracker quota receipt; the reducer's standing attention; and one line
-//! naming the open unblocked items no lane holds. The body reads no
+//! naming the open unblocked items no lane holds. Ahead of the line stand
+//! the `lane-ended` lines of the lanes whose harness ended while their item
+//! is open (`watch::ended`), over the tracker duty's open items and
+//! terminal reads. The body reads no
 //! inventory itself: the tracker, GitHub and verification duties' slots are
 //! its inputs, and it hands back `next_due: None`, so nothing it does moves
 //! its own due time.
@@ -44,6 +47,7 @@ use crate::verify::wire::Pull;
 use crate::ops::Host;
 use crate::ops::accounts;
 use crate::settings::Settings;
+use crate::watch::ended;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
@@ -375,13 +379,17 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // through, as the overseer duty's walk and the `lane pick` verb
     // build it.
     let host = Host::kernel();
-    let (owed, quota, open, github) = {
+    let (owed, quota, open, github, items) = {
         let latest = ctx.shared.lock().unwrap_or_else(|p| p.into_inner());
         (
             latest.tracker.as_ref().map(|t| t.owed.clone()),
             latest.quota.as_ref().map(|q| q.line(tick.wall)),
             latest.tracker.as_ref().map(|t| t.open_unblocked.clone()),
             latest.github.clone(),
+            latest
+                .tracker
+                .as_ref()
+                .map(|t| (t.open.clone(), latest.terminal.clone())),
         )
     };
     // The roster, the listing under the fleet's own host (the provider
@@ -405,6 +413,20 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             )),
         ),
     };
+    // The ended lanes, ahead of the heartbeat line as the account events
+    // are, once the tracker duty has read the items they are judged by.
+    if let Some((open, terminal)) = &items {
+        match crate::watch::lanes::read_fleet(&ctx.path) {
+            Ok(fleet) => events.extend(ended::events(
+                &fleet,
+                &ended::Items { open, terminal },
+                tick.baseline,
+            )),
+            Err(e) => {
+                failed.get_or_insert(format!("ended-lanes-unread cause={e}"));
+            }
+        }
+    }
     events.push(Event::Heartbeat {
         loops: ctx.max_loops,
         interval: ctx.interval,

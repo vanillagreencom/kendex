@@ -313,6 +313,7 @@ fn shared_with(items: Vec<VerifyingItem>) -> Shared {
         owed: Vec::new(),
         verifying: items,
         open_unblocked: Vec::new(),
+        open: Default::default(),
     });
     shared
 }
@@ -963,6 +964,7 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
             ],
             verifying: Vec::new(),
             open_unblocked: vec!["KEN-6".to_owned(), "KEN-8".to_owned()],
+            open: Default::default(),
         });
         latest.quota = Some(Quota {
             limit: QuotaLimit::Requests,
@@ -1085,6 +1087,291 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
             .iter()
             .all(|h| h.starts_with("ORCH_LANE_HOST=provider-x ")),
         "the provider is asked under its host alone: {hosts:?}"
+    );
+}
+
+/// What one row plants of the tracker's read of its item.
+enum ItemRead {
+    /// Among the team's open items, with whether a blocker holds it.
+    Open { blocked: bool },
+    /// Outside the team's list, the terminal read answering for it.
+    Terminal(tracker::TerminalState),
+    /// No read answered for it.
+    Unread,
+}
+
+/// A lane whose harness ended while its item is open sat unnamed for
+/// weeks (KEN-4831's sandbox, 18 days). One row per case of the judge
+/// (`watch::ended`): the record's status, the evidence its harness ended,
+/// the tracker's read of its item and the wait its record names. Each row
+/// is one item's latest record; the heartbeat says one `lane-ended` line
+/// per row that names one, in item order, ahead of its own line.
+#[test]
+fn the_heartbeat_names_each_lane_whose_harness_ended_while_its_item_is_open() {
+    use orch_runtime::watch::ended::STOP_ROW;
+    use tracker::TerminalState::{Completed, Open};
+    const SINCE: &str = "2026-10-01T00:00:00Z";
+    let park = |wait: Value| {
+        let mut park = json!({"head": "abc", "repo": "owner/repo", "at": SINCE});
+        park.as_object_mut()
+            .unwrap()
+            .extend(wait.as_object().unwrap().clone());
+        park
+    };
+    let reported = Some(("lane-exited", "%1|reported".to_owned()));
+    let stop = |at: &str| Some((STOP_ROW, format!("{at}|harness-ended")));
+    /// Item, status, record members, the tracker's read, a baseline row
+    /// and the line's fields after the item.
+    type Row<'a> = (
+        &'a str,
+        &'a str,
+        Value,
+        ItemRead,
+        Option<(&'a str, String)>,
+        Option<&'a str>,
+    );
+    let rows: Vec<Row> = vec![
+        (
+            "KEN-01",
+            "parked",
+            json!({"parked": park(json!({"pr": 5}))}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=parked waits=merge"),
+        ),
+        (
+            "KEN-02",
+            "parked",
+            json!({"parked": park(json!({"until_pr": 6, "until_repo": "owner/other"}))}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=parked waits=merge"),
+        ),
+        (
+            "KEN-03",
+            "parked",
+            json!({"parked": park(json!({"ask": "a-1"}))}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=parked waits=owner"),
+        ),
+        (
+            "KEN-04",
+            "parked",
+            json!({"parked": park(json!({"hold": true}))}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=parked waits=blocker"),
+        ),
+        (
+            "KEN-05",
+            "parked",
+            json!({"parked": {"pr": "five"}}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=parked waits=unread"),
+        ),
+        (
+            "KEN-06",
+            "parked",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=parked waits=unread"),
+        ),
+        (
+            "KEN-07",
+            "stopped",
+            json!({}),
+            ItemRead::Open { blocked: true },
+            None,
+            Some("lane=stopped waits=blocker"),
+        ),
+        (
+            "KEN-08",
+            "stopped",
+            json!({}),
+            ItemRead::Terminal(Open),
+            None,
+            Some("lane=stopped waits=nothing"),
+        ),
+        (
+            "KEN-09",
+            "stopped",
+            json!({"park_owed": {"pr": 9, "head": "abc"}, "sandbox": "standing"}),
+            ItemRead::Open { blocked: false },
+            None,
+            Some("lane=stopped waits=merge"),
+        ),
+        (
+            "KEN-10",
+            "running",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            reported.clone(),
+            Some("lane=running waits=nothing"),
+        ),
+        (
+            "KEN-11",
+            "running",
+            json!({"pending_pr": {"pr": 11, "repo": "owner/repo", "head": "abc"}}),
+            ItemRead::Open { blocked: false },
+            reported.clone(),
+            Some("lane=running waits=merge"),
+        ),
+        (
+            "KEN-12",
+            "running",
+            json!({"host": "provider-x"}),
+            ItemRead::Open { blocked: false },
+            stop("2026-10-02T00:00:00Z"),
+            Some("lane=running waits=nothing stop=2026-10-02T00:00:00Z why=harness-ended"),
+        ),
+        (
+            "KEN-13",
+            "stopped",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            stop("2026-10-02T00:00:00.250Z"),
+            Some("lane=stopped waits=nothing stop=2026-10-02T00:00:00.250Z why=harness-ended"),
+        ),
+        // A stop before the current session began ended an earlier one.
+        (
+            "KEN-14",
+            "running",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            stop("2026-09-30T00:00:00Z"),
+            None,
+        ),
+        // The lane duty's first exited pass, not yet reported.
+        (
+            "KEN-15",
+            "running",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            Some(("lane-exited", "%1".to_owned())),
+            None,
+        ),
+        (
+            "KEN-16",
+            "running",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            None,
+            None,
+        ),
+        (
+            "KEN-17",
+            "preparing",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            None,
+            None,
+        ),
+        (
+            "KEN-18",
+            "done",
+            json!({}),
+            ItemRead::Open { blocked: false },
+            None,
+            None,
+        ),
+        (
+            "KEN-19",
+            "stopped",
+            json!({}),
+            ItemRead::Terminal(Completed),
+            None,
+            None,
+        ),
+        ("KEN-20", "stopped", json!({}), ItemRead::Unread, None, None),
+    ];
+    let mut lanes = vec![
+        // An earlier stopped record of KEN-16 its running record replaced.
+        json!({"item": "KEN-16", "status": "stopped", "session_since": "2026-09-01T00:00:00Z"}),
+    ];
+    let mut open = std::collections::BTreeMap::new();
+    let mut terminal = std::collections::BTreeMap::new();
+    let mut baseline = Baseline::default();
+    let mut want = Vec::new();
+    for (item, status, members, read, row, line) in rows {
+        let mut lane = json!({"item": item, "status": status, "window": format!("@{item}"), "session_since": SINCE});
+        lane.as_object_mut()
+            .unwrap()
+            .extend(members.as_object().unwrap().clone());
+        lanes.push(lane);
+        match read {
+            ItemRead::Open { blocked } => {
+                open.insert(item.to_owned(), blocked);
+            }
+            ItemRead::Terminal(state) => {
+                terminal.insert(item.to_owned(), state);
+            }
+            ItemRead::Unread => {}
+        }
+        if let Some((kind, value)) = row {
+            let identity = if kind == STOP_ROW {
+                item.to_owned()
+            } else {
+                format!("@{item}")
+            };
+            baseline.apply(watch::Change::Set {
+                kind: kind.to_owned(),
+                identity,
+                value,
+            });
+        }
+        if let Some(line) = line {
+            want.push(format!("EVENT lane-ended {item} {line}"));
+        }
+    }
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "lanes": lanes}));
+    let shared = Shared::default();
+    {
+        let mut latest = shared.lock().unwrap();
+        latest.tracker = Some(TrackerInventory {
+            open,
+            ..TrackerInventory::default()
+        });
+        latest.terminal = terminal;
+    }
+    let clock = FakeClock::new();
+    let mut body = heartbeat::body(heartbeat::Context {
+        settings: world.settings.clone(),
+        path: world.fleet_path(),
+        max_loops: 25,
+        interval: secs(240),
+        since: None,
+        repos: Vec::new(),
+        gh: world.path().join("gh"),
+        shared,
+        verifying: Lines::default(),
+        locking: Locking::FLOCK,
+        nonce: 7,
+        owner: None,
+    });
+    let produced = pass(
+        Duty::Heartbeat,
+        &mut body,
+        &mut baseline,
+        &clock,
+        clock.wall_secs(),
+    )
+    .unwrap();
+    assert_eq!(produced.failed, None);
+    let lines = rendered(&produced);
+    let heartbeat = lines
+        .iter()
+        .position(|l| l.starts_with("EVENT heartbeat "))
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    assert_eq!(lines[..heartbeat], want[..], "{lines:?}");
+    assert!(
+        !lines[heartbeat..]
+            .iter()
+            .any(|l| l.starts_with("EVENT lane-ended ")),
+        "{lines:?}"
     );
 }
 
@@ -1680,6 +1967,7 @@ fn an_owed_local_item_under_a_fleet_provider_is_judged_on_the_local_listing() {
         ))],
         verifying: Vec::new(),
         open_unblocked: Vec::new(),
+        open: Default::default(),
     });
     let mut body = heartbeat::body(heartbeat::Context {
         settings: world.settings_with(&planted),
@@ -1745,6 +2033,7 @@ fn an_owed_local_item_is_judged_on_the_local_listing_while_the_fleet_provider_ca
         ))],
         verifying: Vec::new(),
         open_unblocked: Vec::new(),
+        open: Default::default(),
     });
     let mut body = heartbeat::body(heartbeat::Context {
         settings: world.settings_with(&planted),
@@ -1818,6 +2107,7 @@ fn an_owed_hosted_item_under_a_failed_accounts_read_is_unjudged() {
             ))],
             verifying: Vec::new(),
             open_unblocked: Vec::new(),
+            open: Default::default(),
         });
         let mut body = heartbeat::body(heartbeat::Context {
             settings: world.settings_with(&planted),

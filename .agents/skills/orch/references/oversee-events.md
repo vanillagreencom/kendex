@@ -421,6 +421,16 @@ Each answer:
 4. Tell the owner of a second death. Do not retry it.
 5. After the relaunched lane finishes, close it through the runtime close. Do not rebuild the pane, host and state steps by hand.
 
+### `lane-ended`
+
+`EVENT lane-ended [ITEM] lane=[STATUS] waits=[WAIT] [stop=[UTC] why=[WHY]]`: the item's latest lane record has no running harness while the tracker holds the item open. The watch prints it ahead of every `heartbeat` line while that holds.
+
+- `lane=` is the record's status: `running`, `stopped` or `parked`.
+- `waits=` is `merge`, `owner`, `blocker`, `nothing` or `unread`.
+- `stop=` and `why=` appear where the provider's `sandbox-stopped` notice reported stopping the lane's sandbox in its current session. That notice's own `owner-note`, `peer-note` or `data-note` line needs nothing beyond this line.
+
+Handle the line under [lane-reach.md § Ended lanes](lane-reach.md#ended-lanes) in the same heartbeat pass.
+
 ### `lane-unreadable`
 
 `EVENT lane-unreadable [LANE] cause=[WORD]`: the watch could not read the lane's pane, process or screen this pass. The line prints when the cause first appears or changes, and a pass that reads the lane clears it.
@@ -810,7 +820,7 @@ A refused `write`:
 
 ### `heartbeat`
 
-`EVENT heartbeat loops=[N] interval=[N]s since=[UTC|none]`, then its body. Take the body's lines in order.
+`EVENT heartbeat loops=[N] interval=[N]s since=[UTC|none]`, then its body. The `account` and `lane-ended` lines just above it are this pass's: handle them first. Take the body's lines in order.
 
 1. The open pull request lines carry no arm or queue state.
    - A parked record's pull request that the list shows open, with no reducer line on it, stays parked.
