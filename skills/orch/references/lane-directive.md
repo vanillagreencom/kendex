@@ -86,7 +86,11 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
 - `item-ineligible`: the item is a container; launch its unblocked children.
 - `launch-overlap`: launch once that lane stops, or name the file in `in_scope` where the brief adds to it append-only.
-- `join-unreachable`: the holder is hosted or a cloud session. Launch once that lane stops.
+- `join-unreachable`: the holder is hosted or a cloud session, which no join reaches. Launch once that lane stops.
+  - A hosted lane that carries the launch's blockers refuses with no branch read.
+  - A hosted lane that holds a shared path always refuses. The refusal says whether its head commit, read on its host and compared by GitHub with the repository's default branch, changes a shared path.
+  - A head that changes a shared path refuses with `item`, `holder` and `route`.
+  - Any other refusal adds `branch`, `unknown` where the head itself was unread, and `cause`. `worktree-unproved` is a head that changes none of the launch's paths. A cloud session's head is never read.
 - `read-only-unconfined`: this machine cannot confine the lane, as `cause` names. Launch it here on a harness the confinement holds. A first launch, or one over a `done` record, may instead leave out `read_only`; a relaunch keeps the record's (§ Recovery relaunch).
 - `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch once the holder stops.
 - `tier-narrower`: brief the judged cycle.

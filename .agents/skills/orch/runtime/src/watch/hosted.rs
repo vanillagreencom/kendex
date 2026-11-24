@@ -431,6 +431,66 @@ pub fn fetch(scripts: &Path, host: &str, item: &str, path: &str) -> Answer<Strin
     }
 }
 
+/// A hosted lane's worktree as its sandbox's disk reads it: the checked-out
+/// head, its branch, and the commit the sandbox's `origin` remote-tracking
+/// ref names for that branch, `None` where the sandbox holds no such ref.
+pub(crate) struct WorktreeHead {
+    pub head: String,
+    pub branch: String,
+    pub remote: Option<String>,
+}
+
+impl WorktreeHead {
+    /// Git moves the remote-tracking ref only on a push or fetch that
+    /// reached the remote, so its equality with the head proves the head
+    /// pushed.
+    pub fn pushed(&self) -> bool {
+        self.remote.as_deref() == Some(self.head.as_str())
+    }
+}
+
+/// The head of the linked worktree at `root` on `host`, read through the
+/// provider's `cat`: the worktree's `.git` file, its HEAD, then each ref,
+/// loose or packed. A read that fails, a detached head or a head ref absent
+/// is `Err`.
+pub(crate) fn worktree_head(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    root: &str,
+) -> Result<WorktreeHead, ()> {
+    let cat = |path: &str| match fetch(scripts, host, item, path) {
+        Answer::Live(text) => Ok(Some(text)),
+        Answer::Gone => Ok(None),
+        Answer::Unreadable { .. } => Err(()),
+    };
+    let gitfile = cat(&format!("{root}/.git"))?.ok_or(())?;
+    let line = gitfile.lines().next().ok_or(())?;
+    let (git_dir, common) = marker::git_dirs_of(line).ok_or(())?;
+    let head = cat(&format!("{}/HEAD", git_dir.display()))?.ok_or(())?;
+    let reference = head.trim().strip_prefix("ref: ").ok_or(())?;
+    let branch = reference.strip_prefix("refs/heads/").ok_or(())?.to_owned();
+    let commit_of = |name: &str| -> Result<Option<String>, ()> {
+        let sha = match cat(&format!("{}/{name}", common.display()))? {
+            Some(text) => Some(text.trim().to_owned()),
+            None => cat(&format!("{}/packed-refs", common.display()))?.and_then(|packed| {
+                packed.lines().find_map(|l| {
+                    let (sha, ref_name) = l.split_once(' ')?;
+                    (ref_name == name).then(|| sha.to_owned())
+                })
+            }),
+        };
+        Ok(sha.filter(|s| !s.is_empty()))
+    };
+    let head = commit_of(reference)?.ok_or(())?;
+    let remote = commit_of(&format!("refs/remotes/origin/{branch}"))?;
+    Ok(WorktreeHead {
+        head,
+        branch,
+        remote,
+    })
+}
+
 /// Probe a directory so the provider can report its transfer boundary
 /// without reading a settings file. Only the keyed refusal establishes
 /// confinement. Other provider answers leave preparation to its required

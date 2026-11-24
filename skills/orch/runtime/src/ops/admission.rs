@@ -12,7 +12,7 @@
 //! | `live`, `wake` or `preparing`, in its review | blocks: `launch-overlap holder=<item>`; under `ORCH_DELIVERY=push-base` a first launch passes, nothing recorded: the publication takes the order |
 //! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | `reservation`, or no charge: a stopped, parked or gone holder | yields: nothing is recorded |
-//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's) |
+//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's); a first launch reads its branch ([`branch_judged`]) |
 //! | `done` | no holder |
 //!
 //! A holder is a record of the item's repository: a path is relative to
@@ -124,6 +124,9 @@ pub struct Clis {
     pub scope_paths: PathBuf,
     /// The github package's repository resolver ([`crate::repo::resolver`]).
     pub resolver: PathBuf,
+    /// The orch package's scripts directory, which a provider read carries
+    /// ([`crate::watch::overseer::scripts_dir`]).
+    pub scripts: PathBuf,
 }
 
 /// Why a read answered nothing: the cause the refusal carries.
@@ -175,6 +178,28 @@ pub(super) type PullsReader<'a> = Box<
         + 'a,
 >;
 
+/// Why a hosted holder's branch could not be judged: the branch, where the
+/// read reached it, and the cause, a stable key first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BranchUnread {
+    pub branch: Option<String>,
+    pub cause: String,
+}
+
+/// A hosted holder's head as its host reads it, and the paths that commit
+/// changes that the repository's default branch does not hold: its
+/// unmerged change, both sides of a rename.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BranchChange {
+    pub branch: String,
+    pub head: String,
+    pub files: Vec<String>,
+}
+
+/// The hosted holder's unmerged change ([`BranchChange`]).
+pub(super) type BranchReader<'a> =
+    Box<dyn Fn(&Clis, &Lane) -> std::result::Result<BranchChange, BranchUnread> + 'a>;
+
 /// The repository a directory sits in, as git names it: its common
 /// directory, resolved, and the `owner/name` its `origin` names on
 /// github.com, where it names one.
@@ -213,6 +238,7 @@ pub(super) struct AdmissionReads<'a> {
     pub item: ItemReader<'a>,
     pub range_paths: RangeReader<'a>,
     pub pulls: PullsReader<'a>,
+    pub branch: BranchReader<'a>,
     pub checkout: CheckoutReader<'a>,
     pub team_key: TeamReader<'a>,
     pub tier: TierReader<'a>,
@@ -228,6 +254,7 @@ impl AdmissionReads<'static> {
                 read_range_paths(&clis.scope_paths, dir, range)
             }),
             pulls: Box::new(read_open_pulls),
+            branch: Box::new(read_branch_change),
             checkout: Box::new(read_checkout),
             team_key: Box::new(read_team_key),
             tier: Box::new(read_tier),
@@ -763,14 +790,7 @@ fn carrier(lanes: &[Lane], blockers: &[String], repo: Option<&str>) -> Option<us
 /// `join-unreachable`: its stage and its mailbox are on its host, and a
 /// join tells its lane itself.
 fn before_review(path: &Path, lane: &Lane, item: &str) -> Result<bool> {
-    let route = if lane.session_channel() {
-        Some("session")
-    } else if lane.host.is_some() {
-        Some("hosted")
-    } else {
-        None
-    };
-    if let Some(route) = route {
+    if let Some(route) = unreachable(lane) {
         return Err(Error::from(agent_runtime::Error::refused(
             "join-unreachable",
             &[("item", item), ("holder", &lane.item), ("route", route)],
@@ -795,6 +815,69 @@ fn before_review(path: &Path, lane: &Lane, item: &str) -> Result<bool> {
             cause,
         }),
     }
+}
+
+/// The route that keeps a holder's stage and mailbox off this host: `session`
+/// for a cloud session, `hosted` for a lane on a provider, `None` for a lane
+/// here.
+fn unreachable(lane: &Lane) -> Option<&'static str> {
+    if lane.session_channel() {
+        Some("session")
+    } else if lane.host.is_some() {
+        Some("hosted")
+    } else {
+        None
+    }
+}
+
+/// An unreachable holder judged by its head commit's unmerged change. A
+/// lane whose stage and mailbox are on its host takes no join, and edits it
+/// has not committed are on its host alone, so it holds every path it names
+/// whatever its branch shows. Where its head changes a path of `touched`
+/// that the scope leaves in, it is judged on as any live holder. Otherwise
+/// it refuses `join-unreachable` naming the branch and the cause: a head
+/// that changes none of them is `worktree-unproved`, and a read that failed
+/// names its own cause. A cloud session's head is on its cloud, which no
+/// verb reads.
+fn branch_judged(
+    lane: &Lane,
+    route: &str,
+    touched: &[String],
+    in_scope: &[String],
+    item: &str,
+    host: &Host,
+) -> Result<()> {
+    let refused = |unread: BranchUnread| {
+        Error::from(agent_runtime::Error::refused(
+            "join-unreachable",
+            &[
+                ("item", item),
+                ("holder", &lane.item),
+                ("route", route),
+                ("branch", unread.branch.as_deref().unwrap_or("unknown")),
+                ("cause", &unread.cause),
+            ],
+        ))
+    };
+    let unread = |cause: &str| BranchUnread {
+        branch: None,
+        cause: cause.to_owned(),
+    };
+    if route == "session" {
+        return Err(refused(unread("session-head-unread")));
+    }
+    let reads = host
+        .admission
+        .as_ref()
+        .ok_or_else(|| refused(unread("admission-reads-unavailable")))?;
+    let change = (reads.branch)(&reads.clis, lane).map_err(refused)?;
+    if shared(touched, &change.files, in_scope).is_empty() {
+        return Err(refused(BranchUnread {
+            cause: format!("worktree-unproved head={}", change.head),
+            branch: Some(change.branch),
+        }));
+    }
+    Ok(())
 }
 
 /// Whether the fleet delivers straight onto its base (`ORCH_DELIVERY`), the
@@ -1102,6 +1185,9 @@ pub(super) fn judge(
             // lanes.
             Holding::Live => {
                 let first = a.checkout.is_some();
+                if first && let Some(route) = unreachable(lane) {
+                    branch_judged(lane, route, &touched, &in_scope, a.item, host)?;
+                }
                 let joinable = first && join.as_ref().is_none_or(|j: &Join| j.holder == index);
                 let direct = first && direct(host)?;
                 let before = if joinable || direct {
@@ -1820,12 +1906,100 @@ fn read_pull_files(
     if files.len() as u64 != changed {
         return Err(format!("#{number}: {} of {changed} files", files.len()));
     }
+    Ok(both_sides(files))
+}
+
+/// Each file's path, and its earlier one where it was renamed.
+fn both_sides(files: Vec<PullFile>) -> Vec<String> {
     let mut paths = Vec::with_capacity(files.len());
     for file in files {
         paths.extend(file.previous_filename.present().cloned());
         paths.push(file.filename);
     }
-    Ok(paths)
+    paths
+}
+
+/// The label the branch reads carry in a `gh` refusal.
+const BRANCH_READ: &str = "holder-branch";
+
+/// The most changed files the compare endpoint lists, for the whole
+/// comparison (repos, "Compare two commits"): a list this long may be cut.
+const COMPARE_FILES_MAX: usize = 300;
+
+/// `GET /repos/{owner}/{repo}` (repos, `full-repository`): its default
+/// branch, required.
+#[derive(Deserialize)]
+struct RepoDefault {
+    default_branch: String,
+}
+
+/// `GET /repos/{owner}/{repo}/compare/{base}...{head}` (repos,
+/// `commit-comparison`): the changed files from the merge base to the head,
+/// `files` optional.
+#[derive(Deserialize)]
+struct Comparison {
+    #[serde(default)]
+    files: Option<Vec<PullFile>>,
+}
+
+/// The production branch read: the hosted lane's head, read on its host
+/// ([`crate::watch::hosted::worktree_head`]), then GitHub's comparison of
+/// that commit with the repository's default branch. GitHub compares commit
+/// SHAs it holds, so a 404 is a head the lane has not pushed, whose commits
+/// may change any path. A lane's fresh worktree stands on its base commit,
+/// which GitHub holds.
+fn read_branch_change(clis: &Clis, lane: &Lane) -> std::result::Result<BranchChange, BranchUnread> {
+    let unread = |branch: Option<&str>, cause: String| BranchUnread {
+        branch: branch.map(str::to_owned),
+        cause,
+    };
+    let root = lane
+        .mail_root
+        .as_deref()
+        .filter(|root| !root.is_empty())
+        .ok_or_else(|| unread(None, "worktree-unrecorded".to_owned()))?;
+    let head = crate::watch::hosted::worktree_head(
+        &clis.scripts,
+        crate::watch::hosted::host_of(lane),
+        &lane.item,
+        root,
+    )
+    .map_err(|()| unread(None, "head-unread".to_owned()))?;
+    let branch = Some(head.branch.as_str());
+    let repo = lane
+        .repo
+        .as_deref()
+        .ok_or_else(|| unread(branch, "repo-unnamed".to_owned()))?
+        .to_ascii_lowercase();
+    let gh = crate::watch::github::handle(&clis.gh);
+    let base: RepoDefault = gh
+        .object(BRANCH_READ, &format!("repos/{repo}"))
+        .map_err(|e| unread(branch, format!("repo-unread {e}")))?
+        .ok_or_else(|| unread(branch, "repo-absent".to_owned()))?;
+    let compared: Comparison = gh
+        .object(
+            BRANCH_READ,
+            &format!(
+                "repos/{repo}/compare/{}...{}",
+                base.default_branch, head.head
+            ),
+        )
+        .map_err(|e| unread(branch, format!("compare-unread {e}")))?
+        .ok_or_else(|| unread(branch, format!("head-unpushed head={}", head.head)))?;
+    let files = compared
+        .files
+        .ok_or_else(|| unread(branch, "files-absent".to_owned()))?;
+    if files.len() >= COMPARE_FILES_MAX {
+        return Err(unread(
+            branch,
+            format!("files-capped files={}", files.len()),
+        ));
+    }
+    Ok(BranchChange {
+        files: both_sides(files),
+        branch: head.branch,
+        head: head.head,
+    })
 }
 
 #[allow(
@@ -1875,6 +2049,7 @@ mod tests {
                     // No pull request: the process rows read them through
                     // the gh fixture.
                     pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
+                    branch: unplanted_branch(),
                     checkout: Box::new(|_: &Clis, _: &Path| Ok(None)),
                     team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
                     tier: as_requested(),

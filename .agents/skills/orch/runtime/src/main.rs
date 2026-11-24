@@ -3692,6 +3692,7 @@ fn kernel_host(settings: &Settings) -> ops::Host<'_> {
             gh: PathBuf::from("gh"),
             scope_paths: settings.scope_paths_cli.clone(),
             resolver: orch_runtime::repo::resolver(&settings.roots.project),
+            scripts: orch_runtime::watch::overseer::scripts_dir(&settings.roots.project),
         })
         .judging(settings)
 }
