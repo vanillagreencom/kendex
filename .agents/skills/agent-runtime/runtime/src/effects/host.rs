@@ -1569,16 +1569,13 @@ fn adopt_on(
             },
         }
     }
-    let recorded_process = same
-        && overseer
-            .as_ref()
-            .and_then(predecessor_identity)
-            .is_some_and(|recorded| recorded == identity);
     let posture = adopted_posture(
         stated_posture(harness, r),
         unnamed,
         || launched_posture(harness, identity.pid),
-        recorded_process,
+        same,
+        overseer.as_ref(),
+        &identity,
     );
     let adopted;
     let r = match posture {
@@ -1966,7 +1963,8 @@ fn launched_posture(harness: Harness, pid: u32) -> Option<(Permission, Vec<Strin
 /// The posture and words an adoption records, `None` keeping the record's:
 /// the pair its request states, else under [`Unnamed::Launched`] the pair
 /// `launched` reads off the harness's launch. Where those words cannot be
-/// read, a record already naming the pane and process (`recorded_process`)
+/// read, a `recorded` record that already names the pane (`same`) and
+/// whose harness pid and start are `identity`, the process read in it,
 /// keeps its posture, as a heal does, since nothing read contradicts it;
 /// any other takes the harness's native defaults with no words, since
 /// nobody chose the launch setting's posture, a full bypass by default, for
@@ -1975,14 +1973,21 @@ fn adopted_posture(
     stated: Option<(Permission, Vec<String>)>,
     unnamed: Unnamed,
     launched: impl FnOnce() -> Option<(Permission, Vec<String>)>,
-    recorded_process: bool,
+    same: bool,
+    recorded: Option<&Overseer>,
+    identity: &Identity,
 ) -> Option<(Permission, Vec<String>)> {
+    let recorded_process = || {
+        same && recorded
+            .and_then(predecessor_identity)
+            .is_some_and(|prior| prior == *identity)
+    };
     match (stated, unnamed) {
         (Some(pair), _) => Some(pair),
         (None, Unnamed::Kept) => None,
         (None, Unnamed::Launched) => match launched() {
             Some(pair) => Some(pair),
-            None if recorded_process => None,
+            None if recorded_process() => None,
             None => Some((Permission::Native, Vec::new())),
         },
     }
@@ -2212,18 +2217,66 @@ mod tests {
     /// An adoption naming no posture whose harness's launch words cannot be
     /// read keeps the posture recorded for that same pane and process,
     /// a full bypass included, and gives any other process its harness's
-    /// native defaults with no words.
+    /// native defaults with no words: a respawn in the pane, another pane,
+    /// a record with no harness identity.
     #[test]
     fn unreadable_launch_words_keep_the_recorded_process_posture_and_default_any_other() {
+        let read = Identity {
+            pid: 4242,
+            start: "ticks:100".to_owned(),
+        };
+        let record = |extra: Value| -> Overseer {
+            let mut fields = json!({
+                "generation": 1,
+                "permission": "bypass",
+                "extra_args": ["--dangerously-skip-permissions"],
+            });
+            fields
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value(fields).unwrap()
+        };
+        let native = Some((Permission::Native, Vec::new()));
         let rows = [
-            (true, None),
-            (false, Some((Permission::Native, Vec::new()))),
+            (
+                "same pane, pid and start",
+                true,
+                json!({"harness_pid": 4242, "harness_start": "ticks:100"}),
+                None,
+            ),
+            (
+                "same pane and pid, respawned start",
+                true,
+                json!({"harness_pid": 4242, "harness_start": "ticks:200"}),
+                native.clone(),
+            ),
+            (
+                "another pane, same pid and start",
+                false,
+                json!({"harness_pid": 4242, "harness_start": "ticks:100"}),
+                native.clone(),
+            ),
+            (
+                "same pane, no harness pid",
+                true,
+                json!({"harness_start": "ticks:100"}),
+                native.clone(),
+            ),
         ];
-        for (recorded_process, recorded) in rows {
+        for (case, same, extra, expected) in rows {
+            let recorded = record(extra);
             assert_eq!(
-                adopted_posture(None, Unnamed::Launched, || None, recorded_process),
-                recorded,
-                "recorded process: {recorded_process}"
+                adopted_posture(
+                    None,
+                    Unnamed::Launched,
+                    || None,
+                    same,
+                    Some(&recorded),
+                    &read,
+                ),
+                expected,
+                "{case}"
             );
         }
     }
