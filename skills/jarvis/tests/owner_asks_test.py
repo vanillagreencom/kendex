@@ -52,7 +52,8 @@ def mailbox_projection(home):
 # in TRACKER_DATABASE: {"issues": {IDENTIFIER: [comment rows]}, "assigned":
 # [the owner's labelled view]}. A .mode file beside it fails, truncates or
 # omits the assigned view. Each request appends its operation to a .log file
-# beside it; past TRACKER_REQUEST_LIMIT requests, the tracker refuses. A
+# beside it and each comment filter to .comment-ids. Past
+# TRACKER_REQUEST_LIMIT requests, the tracker refuses. A
 # create appends its input and Authorization header to a .writes file and,
 # while a .create file lists outcomes, takes the first: "lost" stores the
 # comment and answers HTTP 500, "failed" answers 500 alone. As Linear keeps a
@@ -68,7 +69,7 @@ database = json.loads(path.read_text())
 mode_path = path.with_suffix('.mode')
 mode = mode_path.read_text() if mode_path.exists() else 'present'
 operation = next(name for name in ('GetUserByEmail', 'TeamKeys', 'ListIssues', 'GetIssueWithBundle', 'ListComments',
-                                   'IssueRefs', 'CreateComment', 'OwnerReply') if name in query)
+                                   'IssueRefs', 'BulkGetComments', 'CreateComment', 'OwnerReply') if name in query)
 if operation == 'IssueRefs':
     operation += ' ' + variables['filter']['id']['in'][0].split('-')[0]
 with path.with_suffix('.log').open('a') as log:
@@ -142,6 +143,13 @@ elif 'GetIssueWithBundle' in query:
                            inverseRelations=connection([]), children=connection([]))}
 elif 'ListComments' in query:
     data = {'issue': issue(variables['issueId'], comments=comments(variables['issueId']))}
+elif operation == 'BulkGetComments':
+    ids = variables['filter']['id']['in']
+    with path.with_suffix('.comment-ids').open('a') as log:
+        log.write(json.dumps(ids) + '\n')
+    selected = set(ids)
+    data = {'comments': connection([comment(row) for rows in database['issues'].values()
+                                    for row in rows if row['id'] in selected])}
 elif 'IssueRefs' in query:
     # Linear's page of 50, the size the reader asks for.
     refs = variables['filter']['id']['in']
@@ -579,12 +587,12 @@ class OwnerAsksContract(unittest.TestCase):
                  "PublicOwnerAsks.test_each_registered_folder_answers_through_its_own_mailbox", "(folder='trailing\\n')"),
                 ("jarvis/scripts/lib/owner_asks.py", 'or link is not None and not http(link["url"]))', 'or False)',
                  "OwnerAsksContract.test_mailbox_ask_links_are_its_tracker_mirror_or_null", "(link='not-http')"),
-                # A tracker read per posted issue, each spending the call's
+                # A tracker read per mirrored comment, each spending the call's
                 # one deadline in turn.
                 ("jarvis/scripts/lib/owner_asks.py",
-                 'read = self.caller("linear", "linear.sh", ["comments", "bulk-list", "--format=safe", *issues])',
-                 'read = {issue.upper(): self.caller("linear", "linear.sh", ["comments", "list", issue, "--format=safe"])'
-                 ' for issue in issues}',
+                 'return self.caller("linear", "linear.sh", ["comments", "bulk-get", *comment_ids])',
+                 'return {key: value for comment_id in comment_ids for key, value in '
+                 'self.caller("linear", "linear.sh", ["comments", "bulk-get", comment_id]).items()}',
                  "PublicOwnerAsks.test_list_reads_this_homes_tracker_and_mailboxes_within_its_budget", "(view='active')"),
                 # One chain waits for a worker until another chain ends.
                 ("jarvis/scripts/lib/owner_asks.py", "max_workers=1 + len(targets)", "max_workers=2",
@@ -1196,7 +1204,11 @@ sys.exit(result.returncode)
                     for n in range(assigned)}
         issues = ["ASK-%d" % n for n in range(posted)]
         mirrors = {issue: [request_comment("mirror-" + issue, "Posted ask on " + issue)] for issue in issues}
+        for issue in issues[:mailboxes]:
+            mirrors[issue][:0] = [request_comment(f"unrelated-{issue}-{n}") for n in range(75)]
         log = self.tracker_api([], dict(requests, **mirrors), assigned=list(requests)).with_suffix(".log")
+        comment_reads = log.with_suffix(".comment-ids")
+        expected_ids = sorted("mirror-" + issue for issue in issues)
         self.env.update(TRACKER_REQUEST_LIMIT=str(limit))
         roots = [make_project(self.root / ("mailbox-%d" % n)) for n in range(mailboxes)]
         for number, root in enumerate(roots):
@@ -1215,10 +1227,10 @@ sys.exit(result.returncode)
                                "tracker_comment": "mirror-" + issue, "text": ""}]
             path.write_text("".join(json.dumps(record) + "\n" for record in rows))
         self.register(self.registry, self.home, *roots)
-        pages = -(-posted // 50) + -(-assigned // 50)
         for view in ("active", "snoozed"):
             with self.subTest(view=view), patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True):
                 log.write_text("")
+                comment_reads.write_text("")
                 session = Session(str(self.home))
                 session.path = session.path.with_name("owner-asks.json")
                 session.deadline = owner_asks.time.monotonic() + 600
@@ -1229,9 +1241,12 @@ sys.exit(result.returncode)
                 except owner_asks.Unavailable as error:
                     self.fail("unavailable after %d tracker requests: %s" % (len(log.read_text().splitlines()), error))
                 operations = log.read_text().splitlines()
-                # Two collects, each one bulk read per 50 issues and no read per issue.
+                # Each collect asks for all mirror ids once, with no reads of their issues.
                 self.assertLessEqual(len(operations), limit)
-                self.assertEqual(sum(operation.startswith("IssueRefs") for operation in operations), 2 * pages)
+                self.assertEqual([sorted(json.loads(line)) for line in comment_reads.read_text().splitlines()],
+                                 [expected_ids, expected_ids])
+                self.assertEqual([operation for operation in operations if operation.startswith("IssueRefs")],
+                                 ["IssueRefs OWN"] * (2 * -(-assigned // 50)))
                 self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
                 self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
                 self.assertEqual(bool(page["rows"]), view == "active")
