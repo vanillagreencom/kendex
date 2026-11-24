@@ -82,7 +82,8 @@ STATE_DIR="${XDG_STATE_HOME:-${HOME:-}/.local/state}/kendex/ui-copy-note"
 
 case "$TOOL" in Edit | MultiEdit | Write | apply_patch | Bash) ;; *) exit 0 ;; esac
 
-physical_dir() { (cd -P -- "$1" && pwd -P); }
+# Every caller captures this in a command substitution.
+physical_dir() { cd -P -- "$1" && pwd -P; }
 PAYLOAD=${PAYLOAD#*$'\n'}
 BASE=${PAYLOAD%%$'\n'*}
 BASE=${BASE:-$PWD}

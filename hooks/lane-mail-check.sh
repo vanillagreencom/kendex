@@ -59,13 +59,20 @@ scripts=${reader%/mailbox/scripts/lane-mail}/orch/scripts
 [ -x "$scripts/orch-runtime" ] ||
   { printf 'lane-mail-check: runtime=unlocatable path=%s\n' "$scripts/orch-runtime" >&2; exit 0; }
 
-# unbuilt: 0 where the program the wrapper runs for these sources is absent,
-# read as the wrapper reads it, through agent-runtime's lib/key.sh beside the
-# wrapper's physical directory. The wrapper builds an absent program in the
-# foreground where cargo is on PATH, past this hook's timeout, so an unbuilt
-# runtime is never handed to it here. A read that fails leaves the call to
-# the wrapper, which says why.
-unbuilt() (
+# A project hook can select an older home install. Only the selected
+# launcher can say that a cold hook call will return without building.
+launcher_detaches() {
+  local header
+  [ -f "$scripts/orch-runtime" ] || return 1
+  {
+    IFS= read -r header && IFS= read -r header &&
+      [ "$header" = '# orch-runtime: hook-entry-no-build' ]
+  } 2>/dev/null < "$scripts/orch-runtime"
+}
+
+# Older launchers build in the foreground. Probe their exact cache entry
+# as they do. If the probe cannot answer, the launcher owns the diagnostic.
+legacy_unbuilt() (
   here=$(cd -- "$scripts" 2>/dev/null && pwd -P) || exit 1
   key_lib=$here/../../agent-runtime/scripts/lib/key.sh
   [ -r "$key_lib" ] || exit 1
@@ -77,9 +84,9 @@ unbuilt() (
   [ ! -x "$(agent_runtime_cache)/bin/orch-runtime-$key" ]
 )
 
-# stdout passes straight through; stderr is held so that the wrapper's own
-# line for an unbuilt runtime never stands ahead of the answer given here.
-if ! unbuilt; then
+# The current launcher binds its sources once. Hold stderr so that a missing
+# binary (69) can take the detached setup path with setup's own answer.
+if launcher_detaches || ! legacy_unbuilt; then
   rc=0
   exec 3>&1
   err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?

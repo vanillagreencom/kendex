@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
+# orch-runtime: hook-entry-no-build
 # Run the orch-runtime binary that matches the shipped sources beside this
 # script. Every argument goes to the binary; its --help is the contract.
+# The mail hook's turn-end --hook-dir entry uses detached setup on exit 69.
 #
 # The binary is <cache>/bin/orch-runtime-<key>, the one scripts/setup placed
 # for these sources: the key and the cache layout are agent-runtime's
@@ -42,7 +44,7 @@ runtime="$(cd -- "$here/../runtime" 2>/dev/null && pwd -P)" || refuse runtime-mi
 cache="$(agent_runtime_cache)"
 key="$(agent_runtime_key "$runtime")"
 binary="$cache/bin/orch-runtime-$key"
-if [ ! -x "$binary" ] && command -v cargo >/dev/null 2>&1; then
+if [ ! -x "$binary" ] && [ "${1:-}:${2:-}" != turn-end:--hook-dir ] && command -v cargo >/dev/null 2>&1; then
   printf 'orch-runtime: setup-building key=%s run=%s\n' "$key" "$here/setup" >&2
   agent_runtime_run_setup "$here/setup" || exit 69
 fi

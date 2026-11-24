@@ -1418,14 +1418,12 @@ fn a_standing_refused_lane_is_said_on_the_mark_repeat_rule_across_polls() {
     assert_eq!(w.baseline().get("lane-mail", "KEN-2"), None);
 }
 
-/// A lane launched on another provider than the fleet's settings name (an
-/// `@host` preference entry) has its mail on that host. Two providers, the
-/// fleet's (`p1`, holding nothing for the lane) as the client's default and
-/// the record's (`p2`, holding the mailboxes of two lanes): each lane's
-/// notice is delivered, every read went to `p2`, and the pass read `p2`
-/// once, one `read-many` for both lanes' files and no read per file.
+/// The watch reads each recorded host once, then starts at most one cached
+/// reader per host plus one per host with a replaced box. The mailbox
+/// entry fixture logs each cached launch and execs the real reader, so it
+/// also counts the individual roots if the watch stops batching either pass.
 #[test]
-fn a_hosted_lanes_mail_is_drained_under_the_host_its_record_names() {
+fn hosted_mail_batches_reader_roots_by_host_including_replacement_reads() {
     let side = tempfile::tempdir().unwrap();
     let side = std::fs::canonicalize(side.path()).unwrap();
     let provider = |name: &str, holds: bool| -> PathBuf {
@@ -1463,41 +1461,60 @@ print(json.dumps([read(r) for r in rows]))' '{log}'"#,
         write_executable(&path, text);
         path
     };
-    let fleet_default = provider("p1", false);
-    let record_host = provider("p2", true);
+    let fleet_default = provider("default", false);
+    let first_host = provider("first", true);
+    let second_host = provider("second", true);
     // The client as the duty starts it, the fleet's provider its default.
+    let readers = side.join("readers.log");
     let client = side.join("lane-mail");
     write_executable(
         &client,
         format!(
-            "#!/bin/sh\n: \"${{ORCH_LANE_HOST:={}}}\"\nexport ORCH_LANE_HOST\nexec {} \"$@\"\n",
+            "#!/bin/sh\n: \"${{ORCH_LANE_HOST:={}}}\"\nexport ORCH_LANE_HOST\nif [ -n \"${{LANE_HOST_READ_DIR:-}}\" ]; then printf '%s\\n' \"$ORCH_LANE_HOST\" >> '{}'; fi\nexec {} \"$@\"\n",
             fleet_default.display(),
+            readers.display(),
             hold().display()
         ),
     );
-    let w = world_of(&client, 20, &[ITEM, "KEN-2"]);
+    let items = [ITEM, "KEN-2", "KEN-3", "KEN-4"];
+    let w = world_of(&client, 20, &items);
     let state = w.root.join(FLEET_FILE_NAME);
     let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
-    for (n, (item, id)) in [(ITEM, "n-1"), ("KEN-2", "n-2")].into_iter().enumerate() {
+    let mut baseline = Baseline::default();
+    for (n, (item, host)) in items
+        .into_iter()
+        .zip([&first_host, &second_host, &first_host, &second_host])
+        .enumerate()
+    {
         let remote = w.root.join("remote").join(item);
         let dir = remote.join("tmp").join("lane-mail").join(item);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("to-overseer.jsonl"),
-            format!("{}\n", notice(id, item, "Rebased.")),
+            format!("{}\n", notice(&format!("n-{}", n + 1), item, "Rebased.")),
         )
         .unwrap();
-        fleet["lanes"][n]["host"] = json!(record_host.display().to_string());
+        fleet["lanes"][n]["host"] = json!(host.display().to_string());
         fleet["lanes"][n]["kind"] = json!("ssh");
         fleet["lanes"][n]["mail_root"] = json!(remote.display().to_string());
+        if host == &first_host {
+            // Both mailboxes on this host have a different first id. The
+            // initial read starts after their last line, so the notices
+            // can reach the watch only if the whole-box reread runs.
+            baseline.apply(Change::Set {
+                kind: "lane-mail".into(),
+                identity: item.into(),
+                value: "1 before-replacement".into(),
+            });
+        }
     }
     std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
     let clock = FakeClock::new();
     let mut duty = w.duty();
-    let baseline = Baseline::default();
+    let now = Instant::now();
     let tick = Tick {
         duty: Duty::Mail,
-        now: Instant::now(),
+        now,
         wall: WALL,
         baseline: &baseline,
         clock: &clock,
@@ -1514,24 +1531,93 @@ print(json.dumps([read(r) for r in rows]))' '{log}'"#,
             "EVENT lane-notice KEN-1 n-1",
             "  Rebased.",
             "EVENT lane-notice KEN-2 n-2",
+            "  Rebased.",
+            "EVENT lane-notice KEN-3 n-3",
+            "  Rebased.",
+            "EVENT lane-notice KEN-4 n-4",
             "  Rebased."
         ]
     );
     let log =
         |name: &str| std::fs::read_to_string(side.join(format!("{name}.log"))).unwrap_or_default();
-    assert_eq!(log("p1"), "", "no read under the fleet's provider");
-    let p2 = log("p2");
-    let starts: Vec<&str> = p2
-        .lines()
-        .filter(|l| !l.starts_with("requested "))
-        .collect();
-    assert_eq!(starts, ["read-many"], "{p2}");
-    for item in [ITEM, "KEN-2"] {
+    assert_eq!(log("default"), "", "no read under the fleet's provider");
+    let readers = std::fs::read_to_string(readers).unwrap();
+    for (name, host, items, bound) in [
+        ("first", &first_host, [ITEM, "KEN-3"], 2),
+        ("second", &second_host, ["KEN-2", "KEN-4"], 1),
+    ] {
+        let roots = readers
+            .lines()
+            .filter(|l| *l == host.to_str().unwrap())
+            .count();
         assert!(
-            p2.contains(&format!("/{item}/tmp/lane-mail/{item}/to-overseer.jsonl")),
-            "{p2}"
+            (1..=bound).contains(&roots),
+            "{name} started {roots} cached reader roots, expected at most {bound}"
         );
+        let requests = log(name);
+        let starts: Vec<&str> = requests
+            .lines()
+            .filter(|l| !l.starts_with("requested "))
+            .collect();
+        assert_eq!(starts, ["read-many"], "{requests}");
+        for item in items {
+            assert!(
+                requests.contains(&format!("/{item}/tmp/lane-mail/{item}/to-overseer.jsonl")),
+                "{requests}"
+            );
+        }
     }
+    assert!(readers.lines().count() <= 3, "H + Q = 3: {readers}");
+
+    for change in produced.changes {
+        baseline.apply(change);
+    }
+    for (item, cursor) in [
+        (ITEM, "1 n-1"),
+        ("KEN-2", "1 n-2"),
+        ("KEN-3", "1 n-3"),
+        ("KEN-4", "1 n-4"),
+    ] {
+        assert_eq!(baseline.get("lane-mail", item), Some(cursor));
+    }
+
+    // A refused first box on one host must not stop the next box from
+    // delivering fresh mail or cause old notices to be announced again.
+    let remote_box = |item: &str| w.root.join(format!("remote/{item}/tmp/lane-mail/{item}"));
+    std::fs::write(remote_box(ITEM).join("to-lane.cursor"), "invalid\n").unwrap();
+    std::fs::write(
+        remote_box("KEN-3").join("to-overseer.jsonl"),
+        format!(
+            "{}\n{}\n",
+            notice("n-3", "KEN-3", "Rebased."),
+            notice("later", "KEN-3", "Ready.")
+        ),
+    )
+    .unwrap();
+    let tick = Tick {
+        duty: Duty::Mail,
+        now: now + secs(20),
+        wall: WALL + 20,
+        baseline: &baseline,
+        clock: &clock,
+    };
+    let (produced, refused) = duty.turn(&tick).unwrap();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert_eq!(refused[0].target, ITEM);
+    assert!(refused[0].cause.contains("cursor-invalid"), "{refused:?}");
+    assert_eq!(
+        produced
+            .events
+            .iter()
+            .map(Event::render)
+            .collect::<Vec<_>>(),
+        ["EVENT lane-notice KEN-3 later", "  Ready."]
+    );
+    for change in produced.changes {
+        baseline.apply(change);
+    }
+    assert_eq!(baseline.get("lane-mail", ITEM), Some("1 n-1"));
+    assert_eq!(baseline.get("lane-mail", "KEN-3"), Some("2 n-3"));
 }
 
 /// A pass whose snapshot of a host failed reads none of that host's lanes:

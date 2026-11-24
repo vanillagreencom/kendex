@@ -263,7 +263,7 @@ gg_settings_source() { # FILE — the path to actually read; nonzero + ::error o
 # LABEL is the path the refusal names: the configured source, never the
 # staged copy gg_settings_source materialized into a cache deleted on exit.
 gg_bom_guard() { # FILE [LABEL] — 0 = no leading BOM; 1 + ::error otherwise
-  if [ "$(head -c 3 < "$1" 2>/dev/null)" = "$(printf '\357\273\277')" ]; then
+  if [ "$(head -c 3 < "$1" 2>/dev/null)" = $'\357\273\277' ]; then
     gg_message settings-bom "${2:-$1}" "file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)" >&2
     return 1
   fi

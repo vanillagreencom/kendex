@@ -358,6 +358,13 @@ def envelope(raw):
     return value if isinstance(value, dict) else None
 
 
+def valid_first_id(value):
+    """Use the envelope ID alphabet. An empty mailbox may have no first ID."""
+    return isinstance(value, str) and all(
+        c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for c in value
+    )
+
+
 def read_box(fd, path, files=None):
     """Read bytes and numbering while the caller holds this file's lock."""
     os.lseek(fd, 0, os.SEEK_SET)
@@ -371,7 +378,7 @@ def read_box(fd, path, files=None):
         record = json.loads(record_path.read_text())
         lines = record["lines"]
         if (type(record["dropped"]) is not int or record["dropped"] < 0
-                or not isinstance(record["first"], str)
+                or not valid_first_id(record["first"])
                 or not isinstance(lines, list)
                 or any(type(n) is not int or n <= 0 for n in lines)
                 or lines != sorted(set(lines))
@@ -381,8 +388,7 @@ def read_box(fd, path, files=None):
     elif rows:
         first = envelope(rows[0])
         first_id = first.get("id", "") if first else ""
-        if isinstance(first_id, str) and first_id and all(
-                c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for c in first_id):
+        if valid_first_id(first_id):
             record["first"] = first_id
     numbers = record["lines"] + list(range(
         len(record["lines"]) + record["dropped"] + 1, len(rows) + record["dropped"] + 1))

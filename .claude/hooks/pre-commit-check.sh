@@ -420,16 +420,20 @@ read_call() {
 tokenize || [ "$READER_STATE" = incomplete ]
 # Consent is read from the repository before this tool command. A combined
 # config mutation and bypass commit must be split so Git can show real setup.
-ARMED=""; HOOKS_DIR=""
-if HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null); then
-  HOOKS_PATH_STATUS=0
-  git config --get core.hooksPath >/dev/null 2>&1 || HOOKS_PATH_STATUS=$?
-  if [ "$HOOKS_PATH_STATUS" -eq 1 ] && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ] \
-    && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
-    && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
-    ARMED=1
-  fi
-else HOOKS_DIR=""; fi
+ARMING_READ=""; ARMED=""; HOOKS_DIR=""
+read_arming() {
+  [ -z "$ARMING_READ" ] || return 0
+  ARMING_READ=1
+  local hooks_path_status=0
+  if HOOKS_DIR=$(git rev-parse --git-path hooks 2>/dev/null); then
+    git config --get core.hooksPath >/dev/null 2>&1 || hooks_path_status=$?
+    if [ "$hooks_path_status" -eq 1 ] && [ -x "$HOOKS_DIR/pre-commit" ] && [ -x "$HOOKS_DIR/commit-msg" ] \
+      && grep -qF -- "$MARKER" "$HOOKS_DIR/pre-commit" 2>/dev/null \
+      && grep -qF -- "$MARKER" "$HOOKS_DIR/commit-msg" 2>/dev/null; then
+      ARMED=1
+    fi
+  else HOOKS_DIR=""; fi
+}
 COMMIT=""; BYPASS=""; SAME_COMMAND=""; CONFIG_MUTATION=""; UNARMED=""; MOVES=""; UNAVAILABLE=""; ARGS=(); ORIGINAL=(); ARG_KINDS=(); target=""
 for ((index=0; index<${#TOKENS[@]}; index++)); do
   token=${TOKENS[$index]}
@@ -443,11 +447,15 @@ for ((index=0; index<${#TOKENS[@]}; index++)); do
           COMMIT=1
           if [ -n "$CONFIG_MUTATION" ] && [ -n "$CALL_FLAG" ]; then
             if [ -z "$BYPASS" ]; then BYPASS=$CALL_FLAG; SAME_COMMAND=1; fi
-          elif [ -n "$ARMED" ]; then
-            [ -n "$BYPASS" ] || BYPASS=$CALL_BYPASS
-          else UNARMED=1; fi ;;
+          else
+            read_arming
+            if [ -n "$ARMED" ]; then
+              [ -n "$BYPASS" ] || BYPASS=$CALL_BYPASS
+            else UNARMED=1; fi
+          fi ;;
         commit)
           COMMIT=1
+          read_arming
           [ -n "$ARMED" ] || UNARMED=1 ;;
         commit-unavailable) COMMIT=1; UNAVAILABLE=1 ;;
         config-change) CONFIG_MUTATION=1 ;;
