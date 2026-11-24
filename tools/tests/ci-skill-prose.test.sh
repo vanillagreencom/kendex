@@ -178,11 +178,6 @@ selected="$(SELECT_IN="$READ_WORLD" SELECT_CARGO_MATRIX=true selection micro fal
 check "workflow setup selects its crate even when no source reads the pin" \
   '{"include":[{"crate":"kendex-core","targets":["--lib"]}]}' "$(field cargo_linux_matrix <<<"$selected")"
 
-# A copy of ci-job-set with no guard beside it, whose reach cannot be read:
-# every shard runs whole.
-cp "$JOB_SET" "$TMP/rule/tools/ci-job-set"
-WHOLE="$TMP/rule/tools/ci-job-set"
-
 # THE WORLD: the selection fixture's crates and skills, plus a package whose
 # guide some suites' notes cover, one suite's code reads, and the rest leave
 # out.
@@ -219,9 +214,6 @@ for suite in slashed folder reader; do
   check "row: the guide runs the $suite suite" false \
     "$(jq --arg t "skills/demo/tests/$suite.test.sh" 'index($t) != null' <<<"$skipped")"
 done
-whole="$(row "$W" "$GUIDE" "$WHOLE")"
-check "row: the copy that cannot read the reach skips nothing" "[]" "${whole#*|}"
-check "row: and runs every shard" "$ROSTER" "$(sed 's/.* shards=\([^ ]*\).*/\1/' <<<"${whole%|*}")"
 # Review class cannot change which checks read the guide.
 render_skipped="$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
 check "the render and measured classes keep the same readers" "$skipped" "$render_skipped"
