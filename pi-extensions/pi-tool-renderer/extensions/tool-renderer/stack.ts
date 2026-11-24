@@ -9,6 +9,8 @@ import {
 } from "./settings.js";
 import { stackPrefix, toolLabel, treeConnector, treeStem, type TreeBranch } from "./theme.js";
 import {
+	imageUnsupportedLine,
+	imageUnsupportedModel,
 	joinPhrases,
 	lineCount,
 	makeEmpty,
@@ -32,6 +34,8 @@ export interface StackItem {
 	args: any;
 	batchId: string;
 	id: string;
+	/** The model that saw a placeholder in place of the image a read returned. */
+	imageUnsupportedModel?: string;
 	isError: boolean;
 	/** Line count of the whole result, taken before `resultText` is capped. */
 	resultLines: number;
@@ -159,10 +163,12 @@ function closeOpenStackBatches(): void {
 }
 
 /** Record a finished result's text on its item, capping the text it keeps.
- *  `truncated` is true when the producer already cut the text. */
-export function setStackItemResultText(item: StackItem, text: string, isError: boolean, truncated: boolean): void {
+ *  `truncated` is true when the producer already cut the text; `details` is
+ *  the result's, read for the image warning only. */
+export function setStackItemResultText(item: StackItem, text: string, isError: boolean, truncated: boolean, details?: unknown): void {
 	item.status = isError ? "error" : "done";
 	item.isError = isError;
+	item.imageUnsupportedModel = imageUnsupportedModel(details);
 	item.resultLines = lineCount(text);
 	item.truncated = truncated || text.length > STACK_RESULT_MAX_CHARS;
 	if (text.length <= STACK_RESULT_MAX_CHARS) item.resultText = text;
@@ -172,7 +178,7 @@ export function setStackItemResultText(item: StackItem, text: string, isError: b
 
 /** Record a finished tool result on its item. */
 function setStackItemResult(item: StackItem, result: any, isError: unknown): void {
-	setStackItemResultText(item, textContent(result), Boolean(isError), resultTruncated(result));
+	setStackItemResultText(item, textContent(result), Boolean(isError), resultTruncated(result), result?.details);
 }
 
 /** Release every stack collection: the items, their batches and invalidators
@@ -240,7 +246,7 @@ export function renderStackItemText(item: StackItem, theme: any, expanded: boole
 			text += `\n${lines.join("\n")}`;
 		}
 	}
-	return text;
+	return text + imageUnsupportedLine(item.imageUnsupportedModel, theme, treeStem(theme, typedBranch, cwd));
 }
 
 function stackBatchHeadline(items: StackItem[], theme: any, expanded: boolean, childDisplay: StackChildDisplay): string {
@@ -265,6 +271,14 @@ function renderStackBatch(items: StackItem[], theme: any, expanded: boolean, cwd
 	if (childDisplay === "anchor-list" || (childDisplay === "headline" && expanded)) {
 		items.forEach((item, index) => {
 			text += `\n${renderStackItemText(item, theme, expanded, cwd, index === items.length - 1 ? "└" : "├")}`;
+		});
+	} else {
+		// No item row is drawn here, so a warning names its read. In rows mode every item but the anchor draws its own row.
+		const unrowed = (childDisplay === "rows" ? items.slice(0, 1) : items).filter((item) => item.imageUnsupportedModel);
+		unrowed.forEach((item, index) => {
+			const branch: TreeBranch = index === unrowed.length - 1 && (childDisplay !== "rows" || items.length === 1) ? "└" : "├";
+			text += `\n${treeConnector(theme, branch, cwd)}${stackItemCallText(item, theme, cwd)}`;
+			text += imageUnsupportedLine(item.imageUnsupportedModel, theme, treeStem(theme, branch, cwd));
 		});
 	}
 	return makeTruncatedLines(text);

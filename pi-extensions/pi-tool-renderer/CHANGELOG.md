@@ -4,7 +4,7 @@
 
 ### 2.0.14
 
-- When you read an image with a model that cannot see images, the read row now tells you that the model saw a placeholder, not the image, as Pi's own row does. The warning shows collapsed and expanded, also with `readOutputMode` set to `hidden`. This needs Pi 1.6.0 or later; on earlier Pi, the expanded row shows Pi's own note.
+- When you read an image with a model that cannot see images, the read row now tells you that the model saw a placeholder, not the image, as Pi's own row does. The warning shows collapsed and expanded, in every `readOutputMode` (`hidden` included), in stacked read rows and in `tool_batch` read rows. This needs Pi 1.6.0 or later; on earlier Pi, the expanded row shows Pi's own note.
 
 ### 2.0.13
 

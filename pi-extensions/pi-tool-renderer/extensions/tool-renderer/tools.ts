@@ -38,7 +38,8 @@ import {
 	makeTruncatedLines,
 	preview,
 	readCallText,
-	readImageUnsupportedLine,
+	imageUnsupportedLine,
+	imageUnsupportedModel,
 	readOnlyCallText,
 	readResultSummary,
 	renderPathListPreview,
@@ -193,8 +194,7 @@ export function createReadRenderers(cwd: string): ToolRenderers {
 			const count = lineCount(content);
 			const summary = readResultSummary(result, context?.args ?? {}, theme);
 			const mode = readOutputMode(context?.cwd ?? cwd);
-			// The warning shows in every mode: without it a person trusts an answer about an image the model never saw.
-			const imageWarning = readImageUnsupportedLine(result, theme, context?.cwd ?? cwd);
+			const imageWarning = imageUnsupportedLine(imageUnsupportedModel(result?.details), theme, treeConnector(theme, "└", context?.cwd ?? cwd));
 			if (mode === "hidden") {
 				const row = imageWarning ? makeTruncatedLines(`${stackPrefix(theme)}${call}${imageWarning}`) : makeEmpty();
 				return renderReadImages(row, result, expanded, theme, context, cwd);

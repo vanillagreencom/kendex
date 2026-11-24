@@ -5,7 +5,9 @@ import { join } from "node:path";
 
 import { createReadToolDefinition, VERSION } from "@earendil-works/pi-coding-agent";
 
+import { registerToolBatch } from "../tool-renderer/batch.js";
 import { clearPackageConfigCache, recordProjectTrust } from "../tool-renderer/package-config.js";
+import { clearStackState } from "../tool-renderer/stack.js";
 import { createReadRenderers } from "../tool-renderer/tools.js";
 
 const createdDirs: string[] = [];
@@ -18,6 +20,7 @@ const piRecordsUnsupportedModel = Bun.semver.satisfies(VERSION, ">=1.6.0");
 const theme = { bold: (text: string) => text, fg: (token: string, text: string) => `<${token}>${text}</${token}>` };
 
 afterEach(() => {
+	clearStackState();
 	for (const dir of createdDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	clearPackageConfigCache();
 });
@@ -35,14 +38,29 @@ function tempCwd(config: Record<string, unknown> = {}): string {
 	return cwd;
 }
 
+/** One call per directory, so expanding redraws the same call as Pi does. */
 function draw(renderers: any, result: any, cwd: string, expanded: boolean): string[] {
-	const context = { args: { path: "image.png" }, cwd, invalidate() {}, showImages: false, state: {} };
+	const context = { args: { path: "image.png" }, cwd, invalidate() {}, showImages: false, state: {}, toolCallId: cwd };
 	return renderers.renderResult(result, { expanded, isPartial: false }, theme, context).render(300);
+}
+
+/** tool_batch's view of one read child whose result is `result`. */
+async function drawBatch(result: any, cwd: string, expanded: boolean): Promise<string[]> {
+	let batch: any;
+	registerToolBatch({ registerTool: (definition: unknown) => { batch = definition; } } as never, cwd);
+	const executeTool = async () => ({ result, isError: false });
+	const batchResult = await batch.execute("batch-1", { calls: [{ tool: "read", args: { path: "image.png" } }] }, undefined, undefined, { cwd, executeTool });
+	return batch.renderResult(batchResult, { expanded, isPartial: false }, theme, { cwd }).render(300);
 }
 
 function warnsAbout(lines: string[], model: string): boolean {
 	const warnings = lines.join("\n").match(/<warning>[^<]*<\/warning>/g) ?? [];
 	return warnings.some((part) => part.includes(model));
+}
+
+/** A row that warns about no model has no warning-colored part at all. */
+function warnsAtAll(lines: string[]): boolean {
+	return lines.join("\n").includes("<warning>");
 }
 
 async function piRead(cwd: string, model: typeof textOnlyModel): Promise<any> {
@@ -62,7 +80,7 @@ describe("a read image the model cannot see", () => {
 		for (const expanded of [false, true]) {
 			expect({ view: "pi", expanded, warns: warnsAbout(draw(pi, unsupported, cwd, expanded), textOnlyModel.id) }).toEqual({ view: "pi", expanded, warns: true });
 			expect({ view: "package", expanded, warns: warnsAbout(draw(pkg, unsupported, cwd, expanded), textOnlyModel.id) }).toEqual({ view: "package", expanded, warns: true });
-			expect({ view: "package", expanded, warns: warnsAbout(draw(pkg, supported, cwd, expanded), visionModel.id) }).toEqual({ view: "package", expanded, warns: false });
+			expect({ view: "package", expanded, warns: warnsAtAll(draw(pkg, supported, cwd, expanded)) }).toEqual({ view: "package", expanded, warns: false });
 		}
 	});
 
@@ -76,20 +94,23 @@ describe("a read image the model cannot see", () => {
 		details: { imageUnsupportedByModel: textOnlyModel.id },
 	};
 	const seen = { content: recorded.content };
-	const rows = [
-		{ mode: "preview", result: recorded, warns: true },
-		{ mode: "summary", result: recorded, warns: true },
-		{ mode: "hidden", result: recorded, warns: true },
-		{ mode: "preview", result: seen, warns: false },
-		{ mode: "summary", result: seen, warns: false },
-		{ mode: "hidden", result: seen, warns: false },
+	const views = [
+		{ name: "readOutputMode preview", view: "read", config: { readOutputMode: "preview" } },
+		{ name: "readOutputMode summary", view: "read", config: { readOutputMode: "summary" } },
+		{ name: "readOutputMode hidden", view: "read", config: { readOutputMode: "hidden" } },
+		{ name: "stacked rows", view: "read", config: { stackToolCalls: true, stackChildDisplay: "rows" } },
+		{ name: "stacked headline", view: "read", config: { stackToolCalls: true, stackChildDisplay: "headline" } },
+		{ name: "stacked anchor-list", view: "read", config: { stackToolCalls: true, stackChildDisplay: "anchor-list" } },
+		{ name: "tool_batch", view: "batch", config: {} },
 	];
-	for (const row of rows) {
-		test(`readOutputMode ${row.mode} ${row.warns ? "draws" : "draws no"} warning, collapsed and expanded`, () => {
-			const cwd = tempCwd({ readOutputMode: row.mode });
+	for (const row of views.flatMap((view) => [{ ...view, result: recorded, warns: true }, { ...view, result: seen, warns: false }])) {
+		test(`${row.name} ${row.warns ? "draws" : "draws no"} warning, collapsed and expanded`, async () => {
+			const cwd = tempCwd(row.config);
 			const pkg = createReadRenderers(cwd);
 			for (const expanded of [false, true]) {
-				expect({ expanded, warns: warnsAbout(draw(pkg, row.result, cwd, expanded), textOnlyModel.id) }).toEqual({ expanded, warns: row.warns });
+				const lines = row.view === "batch" ? await drawBatch(row.result, cwd, expanded) : draw(pkg, row.result, cwd, expanded);
+				const warns = row.warns ? warnsAbout(lines, textOnlyModel.id) : warnsAtAll(lines);
+				expect({ expanded, warns }).toEqual({ expanded, warns: row.warns });
 			}
 		});
 	}
