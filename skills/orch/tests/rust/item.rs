@@ -4639,17 +4639,22 @@ mod dev_artifacts {
                 "{expanded}"
             );
             assert_eq!(expanded["kept"]["reviewer-test"]["path"], path);
-            assert_eq!(expanded["kept"]["reviewer-test"]["review_round_id"], round);
-            assert_eq!(
-                expanded["kept"]["reviewer-test"]["delegated_at"],
-                delegated["value"]
-            );
             assert_eq!(plan(&base, "reviewer-test")["launch"], json!([]));
             assert_eq!(
                 plan(&head, "reviewer-test")["launch"],
                 json!(["reviewer-test"])
             );
             assert_eq!(w.doc()["json_paths"], json!([path]));
+            let current = w.begin_with(&json!({"op":"begin-round","kind":"review"}));
+            result(&w.op(
+                json!({"op":"record-round","step":"delegated","round":"review",
+                "review_range":{"base":base,"head":head}}),
+            ));
+            result(&w.op(json!({"op":"accept-result","round_id":current,"outcome":"pass"})));
+            assert_eq!(
+                plan(&base, "reviewer-test")["launch"],
+                json!(["reviewer-test"])
+            );
         }
     }
 

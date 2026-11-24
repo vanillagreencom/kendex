@@ -1044,7 +1044,6 @@ fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) 
     let Some((stage, range)) = item.stages.iter().rev().find_map(|stage| {
         let range = stage.review_range.as_ref()?;
         (stage.kind == state::StageKind::Review
-            && stage.tier.as_deref() == Some(previous)
             && stage.outcome.is_some()
             && stage.superseded != Some(true)
             && range.base == r.base
@@ -1053,6 +1052,9 @@ fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) 
     }) else {
         return Ok(());
     };
+    if stage.tier.as_deref() != Some(previous) {
+        return Ok(());
+    }
     let (Some(round), Some(boundary), Some(end)) =
         (stage.round_id.as_deref(), stage.delegated_at, stage.end)
     else {
@@ -1093,10 +1095,7 @@ fn kept_passes(r: &KeptReviews, dir: &Path, kept: &mut BTreeMap<String, Value>) 
                     read: Some(read),
                     missing: None,
                 };
-                let mut evidence = answer(outcome, Some(&declines)).value;
-                evidence["review_round_id"] = json!(round);
-                evidence["delegated_at"] = json!(boundary);
-                kept.insert(domain.to_owned(), evidence);
+                kept.insert(domain.to_owned(), answer(outcome, Some(&declines)).value);
                 break;
             }
         }
