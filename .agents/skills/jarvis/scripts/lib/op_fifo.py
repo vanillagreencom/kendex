@@ -16,7 +16,6 @@ import struct
 import subprocess
 import sys
 import time
-import uuid
 
 # The controller record's owners: orch names its path for a home, and agent-runtime reads its controller.
 SKILLS = Path(__file__).resolve().parents[3]
@@ -39,10 +38,6 @@ SOCKET = "requests.sock"
 SUN_PATH = 104
 # The only entries a broker leaves in its directory, with their file types.
 OWN_ENTRIES = {"lock": stat.S_ISREG, SOCKET: stat.S_ISSOCK}
-# The FIFO broker this one replaced can leave its request FIFO after a crash, and a killed client its reply FIFO.
-# A restart removes them. A refresh restarts no broker unit, so opq also speaks that broker's protocol while one
-# still serves (fifo_exchange). Drop both once every consumer's broker has restarted onto the socket transport.
-LEGACY_FIFOS = r"requests|[0-9a-f]{32}\.reply"
 # Each verb's request field, which its allow-list entry lists and its log line names as the reference.
 SUBJECTS = {"read": "reference", "op": "args", "script": "path"}
 # The characters systemd.unit(5) allows in a unit name, with @ for a template instance.
@@ -85,11 +80,6 @@ def open_directory(path):
     return private(fd, stat.S_ISDIR, 0o700, "directory=private-owner-required")
 
 
-def open_fifo(directory, name, flags):
-    fd = os.open(name, flags | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
-    return private(fd, stat.S_ISFIFO, 0o600, "fifo=private-owner-required")
-
-
 def check_socket(directory):
     """Refuse a request socket entry that is not this user's mode-600 socket."""
     if not owned(os.stat(SOCKET, dir_fd=directory, follow_symlinks=False), stat.S_ISSOCK, 0o600):
@@ -102,25 +92,12 @@ def open_script(path):
     return private(fd, stat.S_ISREG, 0o700, "script=private-owner-required")
 
 
-def entry_kind(name):
-    """Return the file type test of an entry a broker may leave by that name, or None."""
-    return stat.S_ISFIFO if re.fullmatch(LEGACY_FIFOS, name) else OWN_ENTRIES.get(name)
-
-
 def check_own_entries(directory):
     """Refuse a reused directory holding anything a broker did not leave."""
     for name in os.listdir(directory):
-        kind = entry_kind(name)
+        kind = OWN_ENTRIES.get(name)
         if kind is None or not kind(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode):
             raise Refusal("directory=foreign")
-
-
-def remove_legacy_fifos(directory):
-    """Behind the lock, remove the FIFOs the FIFO broker and its clients left."""
-    for name in os.listdir(directory):
-        if re.fullmatch(LEGACY_FIFOS, name) and stat.S_ISFIFO(os.stat(name, dir_fd=directory,
-                                                                        follow_symlinks=False).st_mode):
-            os.unlink(name, dir_fd=directory)
 
 
 def lock_directory(directory):
@@ -761,8 +738,6 @@ def broker(args):
         if reused:
             check_own_entries(directory)
         lock = lock_directory(directory)
-        if reused:
-            remove_legacy_fifos(directory)
         env, route = session(op, args.account or os.environ.get("OP_ACCOUNT"))
         if keepalive is not None and route == "app-integration":
             # Each app call leads its own terminal session, which needs its own native authorization.
@@ -831,35 +806,6 @@ def socket_exchange(directory, root, request, deadline):
         return json.loads(receive(connection.fileno(), deadline))
 
 
-def fifo_exchange(directory, root, request, deadline):
-    """Send one request through a running FIFO broker's request FIFO and return its reply (see LEGACY_FIFOS)."""
-    name = uuid.uuid4().hex + ".reply"
-    line = json.dumps(dict(request, reply=name)).encode() + b"\n"
-    # A single nonblocking write up to PIPE_BUF is atomic across clients.
-    if len(line) > os.fpathconf(directory, "PC_PIPE_BUF"):
-        raise Refusal("request=too-large")
-    # Held before the reply FIFO exists, so a directory with no FIFO broker gains no entry.
-    fifo = open_fifo(directory, "requests", os.O_WRONLY)
-    reply = None
-    try:
-        # Python builds without mkfifoat still support exclusive absolute creation.
-        if os.mkfifo in os.supports_dir_fd:
-            os.mkfifo(name, 0o600, dir_fd=directory)
-        else:
-            os.mkfifo(root / name, 0o600)
-        try:
-            reply = open_fifo(directory, name, os.O_RDWR)
-            if os.write(fifo, line) != len(line):
-                raise Refusal("request=incomplete")
-            return json.loads(receive(reply, deadline))
-        finally:
-            if reply is not None:
-                os.close(reply)
-            os.unlink(name, dir_fd=directory)
-    finally:
-        os.close(fifo)
-
-
 def client(args):
     directory = open_directory(args.directory)
     output = None
@@ -872,12 +818,9 @@ def client(args):
         output = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         created_output = True
         deadline = time.monotonic() + CLIENT_SECONDS
-        try:
-            check_socket(directory)
-            exchange = socket_exchange
-        except FileNotFoundError:
-            exchange = fifo_exchange
-        content = record(args.request["verb"], exchange(directory, args.directory, args.request, deadline))
+        check_socket(directory)
+        response = socket_exchange(directory, args.directory, args.request, deadline)
+        content = record(args.request["verb"], response)
         with os.fdopen(output, "wb") as stream:
             output = None
             stream.write(content)
@@ -928,7 +871,7 @@ def main(kind):
     parser.add_argument("--directory", type=Path,
                         help="absolute private directory dedicated to the broker, otherwise JARVIS_OP_DIRECTORY; "
                              "the broker reuses an existing one only when it holds nothing but its own lock and "
-                             "request socket, or the FIFOs a FIFO broker left, which it removes; on macOS the "
+                             "request socket. On macOS the "
                              "socket path must stay under " + str(SUN_PATH) + " bytes")
     if kind == "broker":
         parser.add_argument("--account", help="1Password account, otherwise OP_ACCOUNT")
@@ -959,7 +902,6 @@ def main(kind):
     if not args.directory.is_absolute() or (kind == "client" and not args.output.is_absolute()):
         parser.exit(2, "op-" + kind + ": path=absolute-required\n")
     if kind == "broker":
-        # Only the broker binds the socket. opq refuses nothing here: a running FIFO broker has no socket path to bound.
         if sys.platform != "linux" and len(os.fsencode(args.directory / SOCKET)) >= SUN_PATH:
             parser.exit(2, "op-broker: directory=path-too-long\n")
         if args.allow_list is None and os.environ.get("JARVIS_OP_ALLOW_LIST"):

@@ -139,7 +139,6 @@ Restart=on-failure
   - The unit cannot approve a sign-in.
 - A restart after the unit is killed reuses the leftover directory.
 - A refresh restarts no unit.
-  - A unit started before the refresh that brought `requests.sock` still runs the FIFO broker, which applies no allow list; `opq` sends it requests through its `requests` pipe.
   - Restart the unit with `systemctl --user restart` after you set `JARVIS_OP_ALLOW_LIST` and `JARVIS_OP_HOME`.
 - The `EnvironmentFile=` keeps a usable token until 1Password's idle expiry, and the unit does not remove it. When you stop the unit deliberately, remove that file under [Secret transfer](#secret-transfer).
 
