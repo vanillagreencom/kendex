@@ -119,6 +119,28 @@ For an internal design claim, ask the questions below in order. Stop at the firs
 2. Is it the approach one reader's task runs under, or a rule followed while doing it? An architecture doc: the approach, its why and its rules. It states the current actionable rule. It cites any decision it rests on by ID, without repeating its reasons or alternatives. Examples: [examples/architecture-plugins.md](examples/architecture-plugins.md), a surface goes in a plugin and never imports another; [examples/architecture-design-system.md](examples/architecture-design-system.md), every value a component draws comes from the token file.
 3. Neither. A feature's behaviour, what a page, key or button does, lives in the code, its tests and the tracker item that asked for it. Counter-example: [examples/behaviour-spec.md](examples/behaviour-spec.md), a window written up control by control, with where each line goes.
 
+### Rules
+
+Before writing an agent rule, state four things. A rule that cannot state all four is not written.
+
+- The moment: the step the agent is at when the case is in hand, named by what it does there, such as a command it runs, an event it receives, a template it fills or a message it writes. A subject is not a moment.
+- The carrier: what is already in front of the agent at that moment, such as the command's output, the event's line, the workflow step, the template or the brief. The rule's line lives there.
+- The act: what the agent does, in one sentence.
+- The harm: the real mistake it prevents, with one dated case. The case goes in the tracker item or commit that adds the rule, not in the file. § Per file type sets the bar.
+
+Fix a rule an agent broke at its moment, by the first of these that fits:
+
+1. The step that allows the mistake goes, or a tool does the act.
+2. The step's own tool prints the line as an advisory.
+3. The line moves from where it sits into the step.
+4. A rule that needs judgement becomes one question at the step.
+
+A second line for the same miss is not a fix.
+
+A rule that needs judgement is one question at its step. The agent answers it in one line of its own words, where its reader already looks. "Not applicable" with its reason is an answer. No tool counts, parses or refuses that line.
+
+A tool refuses only an exact case whose wrong pass cannot be undone. A new refusal also meets the code-quality skill's SKILL.md § Over-Engineering.
+
 ### Decision records
 
 Read by a reviewer or agent about to reverse a choice. The bar, the format and the workflows are the [decider](../decider/SKILL.md) skill's. This skill ships no second format. A principle doc states the current actionable rule. It cites the decision ID. It does not repeat the decision's reasons or alternatives. Example: [examples/decision.md](examples/decision.md).
@@ -160,4 +182,4 @@ A software implementation plan, research report, measurement or handoff is not r
 
 ## Writing
 
-A focused change edits the affected text. A focused change whose paragraph adds a fact first takes § One home per fact. Converting a document onto this convention, restructuring it, or cutting what its readers do not need follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for: one file, one folder or the repository. The workflow names each file's readers. It keeps only the rules they need. It checks the result on their tasks. Both verify each claim against its owning source. Both use code where code owns the claim. Both preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Both follow § Per file type. Both start from the example its table names for the file type.
+A focused change edits the affected text. A focused change whose paragraph adds a fact first takes § One home per fact. A focused change that adds or fixes an agent rule first takes § Rules. Converting a document onto this convention, restructuring it, or cutting what its readers do not need follows [workflows/rewrite.md](workflows/rewrite.md) at the scope asked for: one file, one folder or the repository. The workflow names each file's readers. It keeps only the rules they need. It checks the result on their tasks. Both verify each claim against its owning source. Both use code where code owns the claim. Both preserve the actor, scope, exceptions, required order, dates, attribution, supersession and evidence status. An unread source leaves verification unresolved; it does not establish or erase the claim. Both follow § Per file type. Both start from the example its table names for the file type.
