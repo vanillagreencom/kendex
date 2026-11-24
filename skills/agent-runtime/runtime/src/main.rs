@@ -702,7 +702,8 @@ enum AccountsOp {
         record: Option<PathBuf>,
         /// Print the launch prefix, `VAR=<config dir>`, and exit by the
         /// answer's exit in place of the reply: the room check a consumer's
-        /// `SECOND_OPINION_<NAME>_ROOM_CMD` runs.
+        /// `SECOND_OPINION_<NAME>_ROOM_CMD` runs. An inherited Claude OAuth
+        /// token leaves room unjudged and exits 1.
         #[arg(long)]
         env: bool,
     },
@@ -951,14 +952,30 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                 provider_key: None,
                 opens_here: false,
             };
-            let answer = accounts::here::pick(
-                &env,
-                &loaded.project,
-                record.as_deref(),
-                &request,
-                admit_unbilled.as_deref(),
-                now,
-            )?;
+            // The room check's prefix passes the caller's credentials through.
+            // Claude Code ranks this token ahead of stored OAuth, so a named
+            // home's usage cannot establish the review's room. Setup tokens
+            // can only make model requests:
+            // https://code.claude.com/docs/en/authentication#generate-a-long-lived-token
+            let unjudged_cause = (text
+                && named == Harness::Claude
+                && std::env::var_os(launch::CLAUDE_TOKEN_VAR)
+                    .is_some_and(|token| !token.is_empty()))
+            .then_some("claude-oauth-token-room-unmeasured");
+            let answer = if let Some(cause) = unjudged_cause {
+                accounts::PickAnswer::Unjudged {
+                    cause: cause.to_owned(),
+                }
+            } else {
+                accounts::here::pick(
+                    &env,
+                    &loaded.project,
+                    record.as_deref(),
+                    &request,
+                    admit_unbilled.as_deref(),
+                    now,
+                )?
+            };
             if text {
                 // The text form a room check reads: the variable the harness
                 // launches its account under and the directory, on stdout at
@@ -973,9 +990,12 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                     );
                 } else {
                     let reply = answer.reply();
+                    let cause_field = unjudged_cause
+                        .map(|cause| format!(" cause={cause}"))
+                        .unwrap_or_default();
                     let _ = writeln!(
                         std::io::stderr().lock(),
-                        "agent-runtime: account-{} harness={} exit={}",
+                        "agent-runtime: account-{} harness={} exit={}{cause_field}",
                         reply["answer"].as_str().unwrap_or("unjudged"),
                         request.harness,
                         answer.exit()
