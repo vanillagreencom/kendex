@@ -71,8 +71,9 @@ def host_args(destination, command):
 
 
 # One `kendex project list --json` entry; linked is whether the folder is a
-# linked worktree, which a person reaches through its main checkout.
-Listed = namedtuple("Listed", "folder state linked")
+# linked worktree, which a person reaches through its main checkout, and
+# cause is the Git error of a `git-unclassified` entry, else None.
+Listed = namedtuple("Listed", "folder state linked cause")
 
 
 def destination_projects(destination, timeout=60):
@@ -80,8 +81,9 @@ def destination_projects(destination, timeout=60):
 
     The rows `kendex project list` prints for a person cannot name a folder
     exactly: their escaping spells a newline as a backslash and an n, and a
-    folder may end in a note's text. kendex 1.21.0, the package's kendex
-    floor, first prints the document; an older kendex refuses --json."""
+    folder may end in a note's text. kendex 1.24.0, the package's kendex
+    floor, lists a folder Git cannot classify as its own `git-unclassified`
+    entry; an older kendex refuses the whole document for it."""
     if destination.host:
         argv = host_args(destination, "kendex project list --json")
     else:
@@ -91,18 +93,30 @@ def destination_projects(destination, timeout=60):
         entries = []
         for entry in json.loads(text):
             folder, state, worktree = entry["folder"], entry["state"], entry["worktree"]
-            if not isinstance(folder, str) or not isinstance(state, str) or not isinstance(worktree, (dict, type(None))):
+            cause = entry["cause"] if state == "git-unclassified" else None
+            if not isinstance(folder, str) or not isinstance(state, str) or not isinstance(worktree, (dict, type(None))) \
+                    or (state == "git-unclassified" and not isinstance(cause, str)):
                 raise TypeError("entry-field")
-            entries.append(Listed(folder, state, worktree is not None))
+            entries.append(Listed(folder, state, worktree is not None, cause))
     except (ValueError, TypeError, KeyError) as error:
         raise Failure("project-list", "malformed", type(error).__name__, error) from error
     return entries
 
 
 def destination_roots(destination):
-    """The registered folders a pass or a note may take: readable and not a linked worktree."""
-    return [entry.folder for entry in destination_projects(destination)
-            if entry.state == "ok" and not entry.linked]
+    """The registered folders a pass or a note may take, each with the Failure that stops it, else None.
+
+    A readable folder that is not a linked worktree is a root. A folder Git
+    cannot classify is a root that fails alone with kendex's cause, as it did
+    when the human rows listed it plainly; other unreadable entries are skipped."""
+    roots = []
+    for entry in destination_projects(destination):
+        if entry.state == "git-unclassified":
+            roots.append((entry.folder, Failure("project-list", "registration", entry.state,
+                                                entry.state + " " + entry.cause)))
+        elif entry.state == "ok" and not entry.linked:
+            roots.append((entry.folder, None))
+    return roots
 
 
 # lane-mail with every file it sources or runs for the overseer mailbox,
@@ -178,21 +192,29 @@ def note_routes(settings, repo, host=None, local=False):
     matches = []
     for target in selected:
         try:
-            roots = [root for root in destination_roots(target) if root.rstrip("/").rsplit("/", 1)[-1] in names]
+            roots = [(root, unread) for root, unread in destination_roots(target)
+                     if root.rstrip("/").rsplit("/", 1)[-1] in names]
         except Failure as error:
             side = "host" if legacy and target.host else target.key
             raise DestinationRefusal("project-list-failed", side, str(error)) from error
         if len(roots) > 1:
-            raise DestinationRefusal("repo-ambiguous", repo, "destination=%s roots=%s" % (target.key, " ".join(roots)))
+            raise DestinationRefusal("repo-ambiguous", repo, "destination=%s roots=%s" % (target.key, " ".join(root for root, _ in roots)))
         if legacy:
             if roots:
-                yield target, roots[0], True
+                yield selectable(target, *roots[0], True)
         else:
-            matches.extend((target, root) for root in roots)
+            matches.extend((target, *root) for root in roots)
     if not legacy:
         if len(matches) > 1:
-            raise DestinationRefusal("repo-ambiguous", repo, " ".join("%s:%s" % (target.key, root) for target, root in matches))
-        yield from ((target, root, False) for target, root in matches)
+            raise DestinationRefusal("repo-ambiguous", repo, " ".join("%s:%s" % (target.key, root) for target, root, _ in matches))
+        yield from (selectable(target, root, unread, False) for target, root, unread in matches)
+
+
+def selectable(target, root, unread, fallback):
+    """A matched root's route; a root its listing could not classify refuses, so no other side takes its note."""
+    if unread is not None:
+        raise DestinationRefusal("registration-unclassified", root, str(unread))
+    return target, root, fallback
 
 
 class Failure(RuntimeError):
@@ -395,18 +417,21 @@ def project_roots():
         roots = destination_roots(Destination("local", None, None))
     except Failure as error:
         # Only an absent executable takes the install remedy: a listing kendex
-        # refuses, such as one registration it cannot classify, names its own cause.
+        # refuses, such as one naming a folder with no UTF-8 form, names its own cause.
         if error.record["key"][1] != "FileNotFoundError":
             raise
         raise Failure(*error.record["key"], "kendex-missing fix=install-kendex-on-host-PATH " + str(error)) from error
-    return [Path(root).expanduser().resolve() for root in roots]
+    return [(Path(root).expanduser().resolve(), unread) for root, unread in roots]
 
 
 def presence_roots(permitted):
     if not permitted():
         return [(None, "skipped", None)]
     results = []
-    for root in project_roots():
+    for root, unread in project_roots():
+        if unread is not None:
+            results.append((str(root), "failed", unread.record))
+            continue
         try:
             results.append((str(root), hold(root, permitted), None))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
@@ -519,7 +544,7 @@ def mailbox_root(bash, root):
 
 
 def mailbox_readers(bash, roots):
-    """Each root as (root, mailbox checkout or read failure, the root that reads that mailbox).
+    """Each (root, listing failure or None) as (root, mailbox checkout or read failure, the root that reads that mailbox).
 
     A project registered inside another's git tree resolves to the outer
     mailbox. The mailbox's own checkout reads it, else the first listed
@@ -529,7 +554,10 @@ def mailbox_readers(bash, roots):
     which destination_roots skips.
     """
     resolved = []
-    for root in roots:
+    for root, unread in roots:
+        if unread is not None:
+            resolved.append((root, unread))
+            continue
         try:
             resolved.append((root, mailbox_root(bash, root)))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
@@ -576,16 +604,17 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
     state = json.loads(json.dumps(cursor))
     events = []
     now = epoch()
-    roots = [home] if satellite else project_roots()
+    listed = [(home, None)] if satellite else project_roots()
+    roots = [root for root, _ in listed]
     # A home the project list omits (unregistered, removed, unreadable or a
     # linked worktree) still receives owner mail. Its to-lane alone is read for
     # those rows: no mail event, no to-overseer mark-read, no receipts.
     alone = side == "local" and home not in roots
-    readers = mailbox_readers(bash, roots)
+    readers = mailbox_readers(bash, listed)
     if alone:
         # Its to-lane read takes owner rows alone, so it never replaces a
         # listed root's full read of a shared mailbox, nor takes its cursors.
-        readers += mailbox_readers(bash, [home])
+        readers += mailbox_readers(bash, [(home, None)])
     for root, common, reader in readers:
         if reader != root:
             continue

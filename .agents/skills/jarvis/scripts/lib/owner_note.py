@@ -82,7 +82,8 @@ def main():
         "liveness and cannot predict a later send's overseer-absent fallback. A satellite resolves only "
         "local roots; directive sending remains main-only."), epilog=(
         "A refusal prints `owner-note: KEY=VALUE` and its cause on stderr and exits 2. Keys: file-unreadable, "
-        "settings-unreadable, setting-invalid, destination-unknown, project-list-failed (VALUE is the destination), repo-ambiguous, mailbox-missing "
+        "settings-unreadable, setting-invalid, destination-unknown, project-list-failed (VALUE is the destination), repo-ambiguous, "
+        "registration-unclassified (VALUE is the root Git cannot classify; its cause is kendex's Git error), mailbox-missing "
         "(VALUE is the root), send-failed (VALUE is the side), no-overseer (no side lists a root named REPO whose "
         "lane-mail has an overseer; with --resolve, no matching registered root), role-satellite "
         "(VALUE is JARVIS_MAIN_HOST: a satellite instructs no "

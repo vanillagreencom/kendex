@@ -126,8 +126,8 @@ The selected root's own mailbox judges whether its overseer exists. Declaring a 
 
 On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list --json`, under that SSH user's registration.
 
-- Each declared host needs kendex 1.21.0 or later, the package's kendex floor. An older kendex refuses `--json`, so every listing, pass and owner-note selection on that host fails.
-- kendex refuses the whole listing when git cannot classify one registration, such as a linked worktree whose main checkout was moved or deleted. owner-note then refuses `project-list-failed` for that destination until the registration is repaired with `git worktree repair [FOLDER]` from its main checkout, or removed with `kendex project remove [FOLDER]`.
+- Each declared host needs kendex 1.24.0 or later, the package's kendex floor. An older kendex refuses `--json`, or refuses the whole listing for one folder git cannot classify, so every listing, pass and owner-note selection on that host fails.
+- A folder git cannot classify, such as a linked worktree whose main checkout was moved or deleted, is listed with `state` `git-unclassified` and the Git error as its `cause`. owner-note refuses `registration-unclassified` for a `REPO` that names it, with the folder and that cause, and no other machine takes the note. Every other `REPO` selects as before.
 - When the control host's overseers run as another account, set `JARVIS_CONTROL_USER` to it. Listing and sending on `JARVIS_CONTROL_HOST`, and the event source's passes there, then run as that account through `sudo -n`. The SSH user needs passwordless sudo to it.
 - A root qualifies only when its entry's `state` is `ok`, its `worktree` is null and its last path segment matches `REPO` or its declared alias target.
 - Starting or registering an overseer adds no project entry.
@@ -144,7 +144,7 @@ When a hosted overseer has no qualifying entry, the legacy bare route can delive
 2. Never run `kendex project discover --register` on a parent folder.
    - It registers every project it finds, and duplicate `REPO` basenames make owner-note refuse.
    - With approval, remove the extra entry on that machine with `kendex project remove [PATH]`.
-3. Verify that `ssh [HOST] kendex --version` prints 1.21.0 or later, then the main checkout's entry in `ssh [HOST] kendex project list --json`.
+3. Verify that `ssh [HOST] kendex --version` prints 1.24.0 or later, then the main checkout's entry in `ssh [HOST] kendex project list --json`.
 4. Then verify that the next owner-note receipt says `sent side=host`.
 
 - Repeat on each declared remote.

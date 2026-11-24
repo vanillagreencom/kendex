@@ -65,21 +65,23 @@ class OwnerNote(MailWorld):
                         'HOME="$REMOTE_HOME" REGISTRY="$REMOTE_REGISTRY" TMPDIR="$REMOTE_TMP" exec sh -c "$*"\n')
 
     def world(self, name, remote, local):
-        """Scratch roots per side, each (path, overseer recorded[, mailbox installed]); returns their paths."""
+        """Scratch roots per side, each (path, overseer recorded[, mailbox installed or a listed state]); returns their paths."""
         base = self.root / name
         base.mkdir()
-        sides = {}
+        sides, listed = {}, {}
         for side, rows in (("remote", remote), ("local", local)):
-            sides[side] = []
+            sides[side], listed[side] = [], []
             for path, overseer, *mailbox in rows:
                 root = make_project(base / side / path, overseer=overseer)
                 if mailbox == [False]:
                     shutil.rmtree(root / ".agents/skills/mailbox")
                 sides[side].append(root)
+                listed[side].append(entry(root, state=mailbox[0], cause="fatal:gitdir-moved")
+                                    if mailbox and isinstance(mailbox[0], str) else root)
         (base / "remote-home").mkdir()
         (base / "remote-tmp").mkdir()
-        (base / "remote-registry").write_text(listing(*sides["remote"]))
-        self.registry.write_text(listing(*sides["local"], entry(self.root / "elsewhere", state="folder-not-found")))
+        (base / "remote-registry").write_text(listing(*listed["remote"]))
+        self.registry.write_text(listing(*listed["local"], entry(self.root / "elsewhere", state="folder-not-found")))
         return base, sides
 
     def send(self, base, host, resolve=False):
@@ -107,6 +109,9 @@ class OwnerNote(MailWorld):
                 ("host absent", True, [("app", False)], [("app", True)], 0, None, "local", "remote"),
                 ("host lists none", True, [], [("app", True)], 0, None, "local", "local"),
                 ("host mailbox missing", True, [("app", True, False)], [("app", True)], 2, "send-failed=host", None, "remote"),
+                # A root Git cannot classify refuses its own note; no other side takes it.
+                ("host unclassified", True, [("app", True, "git-unclassified")], [("app", True)], 2,
+                 "registration-unclassified={remote}", None, None),
                 ("neither", True, [("app", False)], [("app", False)], 2, "no-overseer=app", None, "remote"),
                 ("unregistered", True, [], [], 2, "no-overseer=app", None, None),
                 ("ambiguous", False, [], [("a/app", True), ("b/app", True)], 2, "repo-ambiguous=app", None, None),
@@ -114,6 +119,8 @@ class OwnerNote(MailWorld):
         for name, host, remote, local, code, key, lands, resolved in rows:
             with self.subTest(row=name):
                 base, sides = self.world(name.replace(" ", "-"), remote, local)
+                if key is not None:
+                    key = key.format(remote=sides["remote"][0] if sides["remote"] else None)
                 roots = [root for side in sides.values() for root in side]
                 before = self.mailbox_snapshot(roots)
                 resolution = self.send(base, host, resolve=True)

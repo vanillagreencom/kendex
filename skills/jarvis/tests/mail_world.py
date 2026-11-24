@@ -17,10 +17,13 @@ LANE_MAIL = REPO / "skills/mailbox/scripts/lane-mail"
 KENDEX = '#!/bin/sh\n[ "$*" = "project list --json" ] || exit 97\ncat "$REGISTRY"\n'
 
 
-def entry(folder, state="ok", worktree=False, main=None):
+def entry(folder, state="ok", worktree=False, main=None, cause=None):
     """One `kendex project list --json` entry, in the fields `kendex project list --help` documents."""
     linked = {"main": str(main) if main else None} if worktree or main else None
-    return {"folder": str(folder), "state": state, "worktree": linked}
+    listed = {"folder": str(folder), "state": state, "worktree": linked}
+    if cause is not None:
+        listed["cause"] = cause
+    return listed
 
 
 def listing(*entries):

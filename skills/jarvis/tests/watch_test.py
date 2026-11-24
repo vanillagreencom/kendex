@@ -442,9 +442,9 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             case.doCleanups()
 
     def test_failed_listing_names_its_cause(self):
-        # kendex refuses the whole document for one registration git cannot
-        # classify; only an absent kendex takes the install remedy.
-        refusal = '#!/bin/sh\necho "Error: project-list-unread=/gone/linked" >&2\nexit 1\n'
+        # kendex refuses the whole document for a folder with no UTF-8 form;
+        # only an absent kendex takes the install remedy.
+        refusal = '#!/bin/sh\necho "Error: project-list-unread=/non-utf8" >&2\nexit 1\n'
         rows = (("refused", refusal, ["project-list", "exit", "1"], False),
                 ("absent", None, ["project-list", "FileNotFoundError", "2"], True))
         for name, shim, key, remedy in rows:
@@ -475,7 +475,11 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         named = self.project("named (worktree of ignored)")
         self.mail(named, "notice", "named folder notice", "--to", "owner")
         missing = self.root / "missing"
+        # A folder Git cannot classify fails alone, with kendex's cause.
+        unclassified = self.project("unclassified")
+        self.mail(unclassified, "notice", "unclassified stays unread", "--to", "owner")
         self.registry.write_text(listing(self.home, self.peer, entry(noted, worktree=True), named, missing,
+                                         entry(unclassified, state="git-unclassified", cause="fatal:gitdir-moved"),
                                          entry(self.root / "gone", state="folder-not-found")))
         output, cursor = self.read_pass()
         self.assertIn("EVENT mail repo=home file=to-overseer destination=local root="+str(self.home)+"\n", output)
@@ -485,6 +489,12 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         self.assertNotIn("must stay hidden", output)
         self.assertIn("named folder notice\n", output)
         self.assertIn("EVENT root-unreachable repo=missing", output)
+        failed = [line for line in output.splitlines() if line.startswith("EVENT root-unreachable repo=unclassified ")]
+        self.assertEqual(len(failed), 1, output)
+        self.assertIn(" cause=git-unclassified", failed[0])
+        self.assertIn("fatal:gitdir-moved", failed[0])
+        self.assertIn(" root=" + str(unclassified), failed[0])
+        self.assertNotIn("unclassified stays unread", output)
         # An entry kendex could not read is skipped, as its noted row was.
         self.assertNotIn("repo=gone", output)
         marker = self.home / "tmp/lane-mail/overseer/to-overseer.seen"
@@ -1079,11 +1089,15 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
             # The existing presence producers supply the finite target table.
             equal = self.project("another/home")
-            self.registry.write_text(listing(self.home, equal, self.peer))
+            unclassified = self.root / "unclassified"
+            self.registry.write_text(listing(self.home, equal, self.peer,
+                                             entry(unclassified, state="git-unclassified", cause="fatal:gitdir-moved")))
             for root in (self.home, equal, self.peer):
                 root.joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "missing/hold"\n')
             local = {root: (root, status, cause) for root, status, cause in self.module.presence_roots(lambda: True)}
             self.assertTrue(all(status == "failed" for _, status, _ in local.values()))
+            # A folder Git cannot classify fails its own hold, beside the others.
+            self.assertEqual(local[str(unclassified)][2]["key"], ["project-list", "registration", "git-unclassified"])
             self.executable("ssh", '#!/bin/sh\nexec '+BASH+' -s\n')
             self.settings["JARVIS_CONTROL_HOST"] = "host.example"
             probe = self.watch()
@@ -2531,7 +2545,7 @@ with open(sys.argv[1], "ab") as out:
         keep = 'if row["id"] not in checked_ids or row["id"] in listed]'
         window = '"--since", min(row["at"] for row in waiting)'
         unlisted = 'alone = side == "local" and home not in roots'
-        satellite = "roots = [home] if satellite else project_roots()"
+        satellite = "listed = [(home, None)] if satellite else project_roots()"
         shared = "reader[common][1] if isinstance(common, Path) else root) for"
         nested = "test_nested_project_reads_its_outer_mailbox_once"
         walled = "test_a_walled_controller_tells_the_owner_once_and_starts_one_succession"
@@ -2606,7 +2620,7 @@ with open(sys.argv[1], "ab") as out:
                 ("test_a_refused_status_read_denies_presence_without_a_report",
                  '\n                    and not error.record["detail"].startswith(RUNTIME_REFUSED + " ")):', "):"),
                 # A satellite reads no other root.
-                ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()"),
+                ("test_satellite_is_no_fleet_contact", satellite, "listed = project_roots()"),
                 # The control host's presence pass runs as JARVIS_CONTROL_USER.
                 ("test_control_user_passes", 'subprocess.Popen(host_args(destination, "bash -s"),',
                  'subprocess.Popen(["ssh", destination.host, "bash -s"],'),
