@@ -20,7 +20,8 @@
 # <cache>/build/<name>/<key>; setup and every wrapper read that layout here.
 #
 # Sourced by scripts/setup, scripts/agent-runtime and the wrappers of crates
-# that depend on this one, never executed. Bash 3.2-safe. The caller defines
+# that depend on this one, never executed. Wrappers also share the
+# foreground setup launch here. Bash 3.2-safe. The caller defines
 # `refuse KEY VALUE...` for the diagnostics: digest-tool-missing,
 # inputs-missing, inputs-unreadable, manifest-unreadable, digest-failed.
 #
@@ -49,6 +50,23 @@ fi
 
 agent_runtime_cache() {
   printf '%s\n' "${AGENT_RUNTIME_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/kendex/agent-runtime}"
+}
+
+# The setup job has its own process group, so it survives a caller's
+# group timeout. Relay both streams to the caller's stderr while it reads.
+# If that pipe closes, keep draining so setup never writes to a broken pipe.
+agent_runtime_run_setup() { # SETUP_PATH
+  set -m
+  (
+    trap '' HUP
+    "$1" </dev/null 2>&1 | (
+      # TOSTOP can stop this background writer at the caller's terminal.
+      trap '' TTOU
+      cat 2>/dev/null || cat >/dev/null
+    )
+  ) >&2 &
+  set +m
+  wait "$!"
 }
 
 # agent_runtime_path_dependencies RUNTIME_DIR prints the `path` of every

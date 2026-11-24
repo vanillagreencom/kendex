@@ -1035,6 +1035,99 @@ mod tests {
     }
 
     #[test]
+    fn setup_finishes_after_a_timed_out_caller_exits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const FIXTURE: &str = "KENDEX_TEST_TIMED_BUILD";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = Path::new(&root);
+            let search =
+                std::env::join_paths([root, Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+            let cache = root.join("cache");
+            let wrapper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/agent-runtime");
+            let caller = Caller {
+                program: "agent-runtime",
+                operation: "version",
+                tag: Some("timed-build"),
+            };
+            let place = Place {
+                cwd: Some(root),
+                env: &[
+                    ("PATH", &search),
+                    ("AGENT_RUNTIME_CACHE", cache.as_os_str()),
+                ],
+            };
+            let failed = start(
+                caller,
+                wrapper.as_os_str(),
+                &["--version"],
+                place,
+                None,
+                false,
+                Duration::from_secs(2),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&failed, Failed::Answer(cause) if cause.starts_with("no answer within 2s")),
+                "{failed:?}"
+            );
+            assert!(
+                root.join("started").is_file(),
+                "Cargo never reached the build"
+            );
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        stub(
+            &root,
+            "cargo",
+            r#"set -eu
+printf '%s\n' "${CARGO_TARGET_DIR##*/}" > "$KENDEX_TEST_TIMED_BUILD/started"
+attempts=0
+until [ -e "$KENDEX_TEST_TIMED_BUILD/release" ]; do
+    [ "$attempts" -lt 200 ] || exit 1
+    attempts=$((attempts + 1))
+    sleep 0.1
+done
+printf 'cargo finished\n' >&2
+mkdir -p "$CARGO_TARGET_DIR/release"
+printf '#!/bin/sh\nexit 0\n' > "$CARGO_TARGET_DIR/release/agent-runtime"
+"#,
+        );
+        // The caller's stderr reader thread keeps its pipe until the caller
+        // exits. Release Cargo after that exit so its write tests the closed pipe.
+        let caller = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "host::tests::setup_finishes_after_a_timed_out_caller_exits",
+            ])
+            .env(FIXTURE, &root)
+            .output()
+            .unwrap();
+        assert!(
+            caller.status.success(),
+            "{}",
+            String::from_utf8_lossy(&caller.stdout)
+        );
+        let key = std::fs::read_to_string(root.join("started")).unwrap();
+        let binary = root
+            .join("cache/bin")
+            .join(format!("agent-runtime-{}", key.trim()));
+        std::fs::write(root.join("release"), b"").unwrap();
+        let deadline = std::time::Instant::now() + BOUND;
+        while !binary.is_file() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "setup did not place the binary"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_ne!(binary.metadata().unwrap().permissions().mode() & 0o100, 0);
+    }
+
+    #[test]
     fn a_group_leader_past_its_bound_is_ended_with_what_it_started() {
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("grandchild");

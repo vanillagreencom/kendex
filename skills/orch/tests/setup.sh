@@ -3,7 +3,7 @@
 # scripts/setup, over agent-runtime's builder and key. Inputs:
 # skills/orch/scripts/{setup,orch-runtime}, skills/orch/runtime/Cargo.toml,
 # runtime/Cargo.lock, runtime/src/**, skills/agent-runtime/scripts/** and
-# agent-runtime's runtime inputs.
+# agent-runtime's runtime inputs, skills/agent-runtime/tests/setup/wrapper-timeout.py.
 #
 # The package under test is a copy of both skills in the sibling layout an
 # install produces, in scratch: <skills>/orch and <skills>/agent-runtime, each
@@ -79,6 +79,14 @@ key_of() { # OUT — the key the last success line, orch-runtime's, names
   line="${line#*key=}"
   printf '%s' "${line%% *}"
 }
+
+RC=0
+python3 -B "$ROOT/skills/agent-runtime/tests/setup/wrapper-timeout.py" "$WRAPPER" "$AGENT/scripts/lib/key.sh" "$TMP_ROOT" 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC" 0 'wrapper timeout during a build leaves the keyed binary ready' "$TMP_ROOT/err"
+if [ "${1:-}" = wrapper-timeout ]; then
+  exit "$((FAIL != 0))"
+fi
+: >"$FAKE_CARGO_LOG"
 
 CACHE="$TMP_ROOT/cache"
 
