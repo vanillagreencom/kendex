@@ -16,7 +16,7 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - Pi has no such word.
   - An adopted start, one with `--adopt-pane`, records the posture the adopted session was started under, read from its own launch words. Where those cannot be read, as on a host with no `/proc`, it records the harness's native defaults.
   - Its successor launches under that posture, or under the full bypass where the setting names its harness. A `succeed` retry carries the adopted session's recorded posture.
-  - Succession does not read the setting. A successor carries its predecessor's recorded posture.
+  - Succession does not read the setting. A `succeed` successor carries its predecessor's recorded posture.
   - After a bypass start, a successor on another harness launches under the full bypass. After a native start, succession's walk over `AGENT_RUNTIME_CONTROLLER_PREFERENCE` skips every entry of another harness.
   - After a bypass start, per-account setup, such as Claude Code bypass consent, applies to every account that preference's harnesses can pick.
   - The [settings example](../kendex.settings.toml.example) states its empty default.
