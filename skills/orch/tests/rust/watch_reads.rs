@@ -4937,6 +4937,9 @@ fn a_due_tracker_ask_closes_once_without_a_triage_team() {
     let (mut settings, events) = posted_owner_ask(&world);
     settings.linear_team = None;
     world.linear("issues list --assignee", json!({"body": []}));
+    // The open ask's item is off the owner list, and its question's comments
+    // are read all the same.
+    world.linear("comments bulk-list", comments(&["KEN-7"], &[]));
     world.linear("comments create", json!({"body": {"success": true}}));
     world.linear("issues update", json!({"body": {}}));
     world.linear(
@@ -5153,6 +5156,13 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
         let posting = json!({
             "users list": {"body": [{"id": "maya", "name": "Maya Owner", "email": "owner@example.com", "display_name": "maya"}]},
             "teams keys": {"body": {"urlKey": "test", "keys": ["KEN"]}},
+            // The tracker identity the ask reads of its item and of each
+            // open ask's item.
+            "issues bulk-get": {"body": [
+                {"id": "KEN-7", "uuid": "00000007-0000-4000-8000-000000000007"},
+                {"id": "KEN-8", "uuid": "00000008-0000-4000-8000-000000000008"},
+                {"id": "KEN-9", "uuid": "00000009-0000-4000-8000-000000000009"},
+                {"id": "KEN-10", "uuid": "00000010-0000-4000-8000-000000000010"}]},
             "graphql OwnerTracker": {"body": {"issue": {"description": body, "assignee": null,
                 "labels": {"pageInfo": {"hasNextPage": false}, "nodes": [{"name": "skills"}]}}}},
             "issues update": {"body": {}},
@@ -5212,8 +5222,8 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     world.linear(
         "issues list --assignee",
         json!({"body": [
-            {"id": "KEN-7", "labels": ["skills", "owner-gated"], "description": body, "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-7"},
-            {"id": "KEN-8", "labels": ["skills", "owner-gated"], "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-8"}
+            {"id": "KEN-7", "uuid": "00000007-0000-4000-8000-000000000007", "labels": ["skills", "owner-gated"], "description": body, "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-7"},
+            {"id": "KEN-8", "uuid": "00000008-0000-4000-8000-000000000008", "labels": ["skills", "owner-gated"], "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner", "url": "https://linear.app/test/issue/KEN-8"}
         ]}),
     );
     world.linear("issues update", json!({"body": {}}));
@@ -5381,7 +5391,7 @@ fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_who
     let quota_due = ask("KEN-10", "question-4");
     world.linear(
         "issues list --assignee",
-        json!({"body": [{"id": "KEN-10", "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner"}]}),
+        json!({"body": [{"id": "KEN-10", "uuid": "00000010-0000-4000-8000-000000000010", "description": format!("**Maya, what you do:** {action}\n\n{body}"), "assignee": "Maya Owner"}]}),
     );
     world.linear("comments bulk-list", json!({"exit": 1}));
     pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1600).unwrap();
@@ -5653,6 +5663,121 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
             baseline.get(tracker::OWNER_MARK_ROW, "ask-2"),
             Some("ruling=ok item=ok"),
             "the item mark completes after the reset"
+        );
+    }
+}
+
+/// Closing an owner ask recorded under another spelling of its item, as
+/// its replacement's close does, keeps the open replacement's label,
+/// assignee and action line: the two asks are on one item where the
+/// tracker gave them one UUID, the closed ask's own or the one the
+/// replacement's `replaces` entry recorded for it.
+#[test]
+fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item_state() {
+    const UUID: &str = "00000007-0000-4000-8000-000000000007";
+    let identity = json!({"identifier": "KEN-7", "uuid": UUID});
+    // The closed ask's item ref, and the identity its own envelope carries.
+    let rows = [("ken-7", Some(identity.clone())), (UUID, None)];
+    for (spelling, own) in rows {
+        let mut world = World::new();
+        let root = std::fs::canonicalize(world.dir.path()).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "gc.auto", "0"],
+            vec!["config", "maintenance.auto", "false"],
+        ] {
+            let out = program("git")
+                .arg("-C")
+                .arg(&root)
+                .args(&args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+        }
+        let mut predecessor = json!({"id": "ask-1", "kind": "ask", "at": "2026-10-01T00:00:00Z",
+            "from": "overseer:test", "to": "owner", "issue": spelling, "do": "Approve one.",
+            "text": "Approve?", "options": ["yes", "no"], "recommend": "yes", "wait": 120,
+            "deadline": "2099-01-01T00:00:00Z"});
+        if let Some(own) = &own {
+            predecessor["identity"] = own.clone();
+        }
+        let replacement = json!({"id": "ask-2", "kind": "ask", "at": "2026-10-01T00:01:00Z",
+            "from": "overseer:test", "to": "owner", "issue": "KEN-7", "do": "Do two.",
+            "text": "Approve, or hold?", "options": ["yes", "hold"], "recommend": "yes", "wait": 120,
+            "deadline": "2099-01-01T00:00:00Z", "identity": identity,
+            "replaces": [{"id": "ask-1", "tracker_comment": "question-1", "identity": identity}]});
+        let posted = |id: &str, issue: &str, comment: &str| {
+            json!({"id": format!("{id}-tracker"), "kind": "tracker-posted", "at": "2026-10-01T00:01:01Z",
+            "from": "overseer:test", "re": id, "issue": issue, "tracker_label": "owner-gated",
+            "tracker_comment": comment, "text": ""})
+        };
+        let mailbox = root.join("tmp/lane-mail/overseer");
+        std::fs::create_dir_all(&mailbox).unwrap();
+        let text: String = [
+            predecessor,
+            posted("ask-1", spelling, "question-1"),
+            replacement,
+            posted("ask-2", "KEN-7", "question-2"),
+        ]
+        .iter()
+        .map(|l| format!("{l}\n"))
+        .collect();
+        std::fs::write(mailbox.join("to-overseer.jsonl"), text).unwrap();
+        let body = "Body.\n\n";
+        world.linear("statuses list", statuses());
+        world.linear("issues list", json!({"body": []}));
+        world.linear(
+            "issues bulk-get",
+            json!({"body": {"issues": {"nodes": []}}}),
+        );
+        world.linear(
+            "issues list --assignee",
+            json!({"body": [{"id": "KEN-7", "uuid": UUID,
+                "description": format!("**Maya, what you do:** Approve one.\n\n{body}"), "assignee": "Maya Owner"}]}),
+        );
+        world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
+        world.linear(
+            "graphql OwnerAskItem",
+            json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
+                "assignee": {"name": "Maya Owner"},
+                "labels": {"pageInfo": {"hasNextPage": false},
+                    "nodes": [{"name": "skills"}, {"name": "owner-gated"}]}}}}),
+        );
+        world.linear("issues update", json!({"body": {}}));
+        world.linear("comments create", json!({"body": {"success": true}}));
+        let cli = isolated_program(&fixtures().join("lane-mail-hold/lane-mail"));
+        let cli = cli.display().to_string();
+        let settings = world.settings(&[
+            ("LANE_MAIL_CLI", &cli),
+            ("ORCH_OWNER_EMAIL", "owner@example.com"),
+            ("ORCH_OWNER_ASK_LABEL", "owner-gated"),
+        ]);
+        let clock = FakeClock::new();
+        let mut body_fn = tracker::body(world.context(settings, None));
+        let mut baseline = Baseline::default();
+        pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+        // The replacement closes its predecessor as `resolve --id` does.
+        let real = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../mailbox/scripts/lane-mail")
+            .canonicalize()
+            .unwrap();
+        let root_text = root.display().to_string();
+        let out = program(&real)
+            .args([
+                "resolve", "--item", "overseer", "--root", &root_text, "--id", "ask-1",
+            ])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "lane-mail resolve: {}", stderr(&out));
+        let closed = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+        assert_eq!(rendered(&closed), Vec::<String>::new(), "{spelling}");
+        let log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
+        assert!(
+            log.contains(&format!(
+                "issues update {spelling} --labels owner-gated,skills --description **Maya, what you do:** Do two.\n\n{body}"
+            )),
+            "the open replacement keeps its label, assignee and line, recorded as {spelling}: {log}"
         );
     }
 }

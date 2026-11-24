@@ -222,7 +222,7 @@ owner_tracker_unwritten() { # ISSUE CAUSE [ERROR FILE]
 # standing owner ask reserved as `--reserved` makes one at ask time, so every
 # reader of the folded ask judges the one `reserved` field.
 OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_private:
-  .kind == "tracker-posted" or .kind == "tracker-failed" or .kind == "reservation";
+  .kind == "tracker-posted" or .kind == "tracker-failed" or .kind == "reservation" or .kind == "replacement";
 def owner_tracker_public:
   select(owner_private | not);
 def owner_ask_reserved($private):
@@ -237,11 +237,43 @@ def owner_tracker_record($outcomes):
     | if $record.tracker_label != null then .tracker_label = $record.tracker_label else . end
     | if $record.tracker_comment != null then .tracker_comment = $record.tracker_comment else . end
     | if $record.kind == "tracker-failed" then .tracker_cause = $record.cause else . end
-  else . end;
+  else . end
+  | if .kind == "ask" and .to == "owner" then
+      . as $ask | ([$outcomes[] | select(.kind == "replacement" and .re == $ask.id)] | last) as $replacement
+      | if $replacement != null then .replacement = $replacement.outcome else . end
+    else . end;
 def owner_tracker_release_at:
   (.at | at_epoch) + 300;
 def owner_tracker_snapshot($now):
   select(.tracker_pending != true or owner_tracker_release_at <= $now) | del(.tracker_pending);'
+
+# An ask's `replaces` takes effect only where the ask reached the owner: an
+# ask with no item, or an item ask whose question posted. The ask's replace
+# step and owner-answers both judge an ask by this one rule.
+OWNER_REPLACING_JQ='def owner_replacing: .issue == null or .tracker_posted == true;'
+
+# Which question comments of this mailbox still stand open, and for which
+# ask: the one rule every reader of a question judges by. The input is the
+# open owner asks as `pending` folds them. Each row names a question comment
+# and the open ask a reply under it reaches: an open posted ask's own
+# question, and each question an open ask that reached the owner replaced,
+# the latest such ask where several did, `replaced` naming the ask the
+# question was asked for. A question no row names is no longer open: its ask
+# closed and no open ask replaced it. An own row's comment is null only on a
+# record from before posted asks kept their comment id. `item` is the item
+# whose comments hold the question: the identifier and UUID the ask recorded
+# as its identity, else the ref it was asked under with no UUID. A replaced
+# question's item can be one no open ask is on.
+OWNER_QUESTION_JQ="$OWNER_REPLACING_JQ"'def owner_questions:
+  map(select(.kind == "ask" and .to == "owner")) as $asks
+  | [$asks[] | select(.tracker_posted == true) | {comment: .tracker_comment, ask: .id, issue, replaced: null,
+      item: {ref: (.identity.identifier // .issue), uuid: .identity.uuid}}] as $own
+  | $own + ([$asks[] | select(owner_replacing) | . as $by | (.replaces // [])[]
+        | select((.tracker_comment | type) == "string")
+        | select(.tracker_comment as $comment | all($own[]; .comment != $comment))
+        | {comment: .tracker_comment, ask: $by.id, issue: null, replaced: .id,
+          item: (if .identity != null then {ref: .identity.identifier, uuid: .identity.uuid} else null end)}]
+      | group_by(.comment) | map(last));'
 
 # One description format serves the ask and the watch's read and close.
 # The Linear file reader trims trailing newlines. Use --description and keep
@@ -387,4 +419,140 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
     >"$work/tracker-rollback.out" 2>"$work/tracker-rollback.err" ||
     owner_tracker_unwritten "$issue" rollback-update "$work/tracker-rollback.err"
   return 0
+}
+
+# The refs among REF... that Linear answered it holds no issue for: the
+# `missing` list a refused `issues bulk-get` or `comments bulk-list` closes
+# its stderr with (comments --help), whose identifiers are in upper case
+# (linear_issue_refs), each printed as the caller gave it. Returns 1 where
+# the stderr in ERROR_FILE holds no such list, or one naming a ref not given:
+# the read failed some other way, and whether the issue exists is unknown.
+owner_tracker_missing() { # ERROR_FILE REF...
+  local error="$1"
+  shift
+  jq -Rrn --args '$ARGS.positional as $refs
+    | [inputs | fromjson? | objects | .missing | arrays] | last
+    | if . == null or length == 0 or any(.[]; type != "string") then error("unread") else . end
+    | . as $missing
+    | if all($missing[]; . as $name | any($refs[]; . == $name or ascii_upcase == $name)) then . else error("unread") end
+    | $refs[] | select(. as $ref | any($missing[]; . == $ref or . == ($ref | ascii_upcase)))' \
+    "$@" <"$error" 2>/dev/null
+}
+
+# The tracker identity of each item REF: the current identifier and UUID
+# Linear's `issues bulk-get` answers, which reads an identifier in any case, a
+# UUID and a moved issue's former identifier as the one issue
+# (linear_issue_refs_read). Prints one JSON object keyed by each ref, its value
+# {identifier, uuid}, or null where Linear answers it holds no such issue.
+# Returns 1 where a read fails any other way, its stderr in WORK/identity.err.
+# One read answers the refs; a ref no row names as it was given, a former
+# identifier or one in lower case, is then read alone, since the safe rows do
+# not say which ref each answers.
+owner_tracker_identity() { # TRACKER WORK REF...
+  local tracker="$1" work="$2" known='{}' missing ref rows unmatched="" remaining=()
+  shift 2
+  [[ "$#" -gt 0 ]] || { printf '{}\n'; return 0; }
+  if ! rows="$("$tracker" issues bulk-get "$@" --format=safe 2>"$work/identity.err")"; then
+    missing="$(owner_tracker_missing "$work/identity.err" "$@")" || return 1
+    for ref in "$@"; do
+      if grep -Fqx -- "$ref" <<<"$missing"; then
+        known="$(jq -c --arg ref "$ref" '.[$ref] = null' <<<"$known")" || return 1
+      else
+        remaining+=("$ref")
+      fi
+    done
+    rows='[]'
+    if [[ "${#remaining[@]}" -gt 0 ]]; then
+      rows="$("$tracker" issues bulk-get "${remaining[@]}" --format=safe 2>"$work/identity.err")" || return 1
+    fi
+  fi
+  jq -e 'type == "array" and all(.[]; type == "object" and (.id | type == "string") and (.uuid | type == "string"))' \
+    <<<"$rows" >/dev/null 2>"$work/identity.err" || return 1
+  known="$(jq -c --argjson rows "$rows" --args '. as $known | reduce ($ARGS.positional[] | select(. as $ref | $known | has($ref) | not)) as $ref
+    ($known; ([$rows[] | select(.uuid == $ref or .id == $ref)] | first) as $row
+      | if $row == null then . else .[$ref] = {identifier: $row.id, uuid: $row.uuid} end)' "$@" <<<"$known")" || return 1
+  unmatched="$(jq -r --args '. as $known | $ARGS.positional[] | select(. as $ref | $known | has($ref) | not)' "$@" <<<"$known")" ||
+    return 1
+  while IFS= read -r ref; do
+    [[ -n "$ref" ]] || continue
+    if ! rows="$("$tracker" issues bulk-get "$ref" --format=safe 2>"$work/identity.err")"; then
+      owner_tracker_missing "$work/identity.err" "$ref" >/dev/null || return 1
+      rows='null'
+    fi
+    known="$(jq -c --arg ref "$ref" --argjson rows "$rows" '.[$ref] = (if $rows == null then null
+      elif ($rows | type == "array" and length == 1 and (.[0].id | type == "string") and (.[0].uuid | type == "string"))
+      then {identifier: $rows[0].id, uuid: $rows[0].uuid} else error("rows") end)' <<<"$known" 2>"$work/identity.err")" || return 1
+  done <<<"$unmatched"
+  printf '%s\n' "$known"
+}
+
+# The acting identity a replaced question's mark compares each comment's
+# author with. A mark is a `comments update`, which the Linear package refuses
+# before any call where no LINEAR_TEAM is configured (its configured-team
+# gate, auth-check's writes_enabled). Sets OWNER_REPLACE_ACTOR, or sets
+# OWNER_REPLACE_CAUSE and returns 1: team-unset, team-unread where auth-check
+# does not say, actor-unread where it names no acting identity.
+owner_tracker_replace_actor() { # TRACKER WORK
+  local team
+  OWNER_REPLACE_ACTOR=""
+  OWNER_REPLACE_CAUSE=""
+  # auth-check prints its report when its API read fails too, with no actor.
+  "$1" auth-check </dev/null >"$2/replace-auth" 2>"$2/replace-auth.err" || :
+  team="$(jq -r 'if .writes_enabled == true then "set" elif .writes_enabled == false then "unset" else "unread" end' \
+    "$2/replace-auth" 2>/dev/null)" || team=unread
+  case "$team" in
+    set) ;;
+    unset) OWNER_REPLACE_CAUSE=team-unset; return 1 ;;
+    *) OWNER_REPLACE_CAUSE=team-unread; return 1 ;;
+  esac
+  OWNER_REPLACE_ACTOR="$(jq -r '.actor.id // "" | strings' "$2/replace-auth" 2>/dev/null)" || OWNER_REPLACE_ACTOR=""
+  [[ -n "$OWNER_REPLACE_ACTOR" ]] || { OWNER_REPLACE_CAUSE=actor-unread; return 1; }
+}
+
+# Where a replaced ask's question comment stands, read by its exact id, in
+# OWNER_REPLACE_STATE: absent where `comments bulk-get` answers no such
+# comment, foreign where an identity other than ACTOR wrote it, marked where
+# it already opens with the replaced line, ready otherwise, and unread where
+# a read fails. With `mark`, a ready comment is edited: its own lines struck
+# through under one line linking NEW_COMMENT, or saying a newer question
+# replaced it where the new ask has no comment, so the owner answers that one
+# only. The state is then marked, or unmarked where the edit did not land.
+# Only a comment ACTOR wrote is edited: after an account change, the earlier
+# account's comment is another author's text.
+owner_tracker_replaced_comment() { # TRACKER WORK ENTRY_JSON ACTOR check|mark [NEW_COMMENT]
+  local tracker="$1" work="$2" entry="$3" actor="$4" mode="$5" new="${6:-}" comment item urls rows row url
+  OWNER_REPLACE_STATE=unread
+  comment="$(jq -r '.tracker_comment' <<<"$entry")" || return 0
+  item="$(jq -r '.identity.uuid // ""' <<<"$entry")" || return 0
+  urls="$("$tracker" comments bulk-get "$comment" ${new:+"$new"} 2>"$work/replace.err")" || return 0
+  jq -e 'type == "object"' <<<"$urls" >/dev/null 2>&1 || return 0
+  if ! jq -e --arg id "$comment" 'has($id)' <<<"$urls" >/dev/null; then
+    OWNER_REPLACE_STATE=absent
+    return 0
+  fi
+  [[ -n "$item" ]] || return 0
+  rows="$("$tracker" comments list "$item" --format=safe 2>"$work/replace.err")" || return 0
+  row="$(jq -ce --arg id "$comment" 'map(select(.id == $id)) | first
+    | select(type == "object" and (.body | type == "string") and (.user_id | type == "string"))' <<<"$rows" 2>/dev/null)" ||
+    return 0
+  if [[ "$(jq -r --arg actor "$actor" '.user_id == $actor' <<<"$row")" != true ]]; then
+    OWNER_REPLACE_STATE=foreign
+    return 0
+  fi
+  if jq -e '.body | startswith("**Replaced** by ")' <<<"$row" >/dev/null; then
+    OWNER_REPLACE_STATE=marked
+    return 0
+  fi
+  OWNER_REPLACE_STATE=ready
+  [[ "$mode" == mark ]] || return 0
+  url="$(jq -r --arg id "$new" '.[$id].url // "" | strings' <<<"$urls")" || return 0
+  jq -r --arg url "$url" '(.body | gsub("\r"; "") | sub("\n+$"; "") | split("\n")) as $lines
+    | ("**Replaced** by " + (if $url == "" then "a newer question" else "[the newer question](" + $url + ")" end)
+      + ". Answer that one only."), "",
+      ($lines[] | if test("\\S") then "~~" + . + "~~" else . end)' <<<"$row" >"$work/replaced-comment" || return 0
+  OWNER_REPLACE_STATE=unmarked
+  if "$tracker" comments update "$comment" --body-file "$work/replaced-comment" >"$work/replace.out" 2>"$work/replace.err" &&
+     jq -e '.success == true' "$work/replace.out" >/dev/null 2>&1; then
+    OWNER_REPLACE_STATE=marked
+  fi
 }

@@ -3,6 +3,7 @@
 # Inputs: skills/mailbox/scripts/**, skills/linear/scripts/**, skills/slack/scripts/**, skills/orch/references/secret-value.ere,
 # skills/mailbox/tests/lib/owner-tracker.py,
 # skills/mailbox/tests/lib/owner-tracker-close.py,
+# skills/mailbox/tests/lib/owner-replace.py,
 # skills/orch/tests/lib/assertions.sh, skills/orch/tests/lib/growth-state.sh.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -55,6 +56,23 @@ assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes on
 assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
 assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
 assert_eq "$(jq '.comment_delete' <<<"$CLOSE_FACTS")" true 'a refused comment delete reports its key and retains the answer'
+# A new ask that replaces an open one, each row judged on its own tracker.
+REPLACE_FACTS="$(python3 "$ROOT/skills/mailbox/tests/lib/owner-replace.py" ask \
+  "${MAILBOX_UNDER_TEST:-$ROOT/skills/mailbox}" "$TMP_ROOT" "$BASH")"
+assert_eq "$(jq -c 'with_entries(select(.key | startswith("error:")))' <<<"$REPLACE_FACTS")" '{}' \
+  'every replacement case runs to its observation'
+while IFS='|' read -r fact contract; do
+  [[ -n "$fact" ]] || continue
+  assert_eq "$(jq --arg fact "$fact" '.[$fact]' <<<"$REPLACE_FACTS")" true "$contract"
+done <<'ROWS'
+same_item_replaces|a re-ask on the item strikes the earlier question under a link to the new one and closes its ask as resolve does, the item keeping its label and assignee
+spellings_replaced|an earlier ask kept under the item's lower-case ref, its UUID or a former identifier is replaced through the tracker identity
+refused_before_post|a replaced question with no acting identity or another author refuses the ask before anything is appended or posted
+incomplete_retried|an edit that fails after the post leaves the earlier ask open and incomplete until a pass retries the same comment and closes it, the replacing ask open or closed since
+absent_closes|a replaced question comment the tracker holds no longer closes its ask with no edit
+no_team_refused|a re-ask replacing a question comment where Linear has no team is refused whole, while an ask replacing none still posts
+explicit_replaces|--replaces closes a chat-only ask or an ask on another item, and an item ask leaves another item's open ask alone
+ROWS
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
 # were, while an ask without --issue still lands in chat.

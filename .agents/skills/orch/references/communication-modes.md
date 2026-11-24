@@ -71,6 +71,8 @@ The item write needs `ORCH_OWNER_ASK_LABEL` and `ORCH_OWNER_EMAIL` ([settings.md
 
 An item ask requires `--do [TEXT]`, worded as communication's [action requests](../../communication/references/questions.md#action-requests). An ask with no item stays in chat and creates no issue.
 
+To change a question already asked, send the new question as a new ask. What it replaces, and what becomes of the earlier question comment: [mailbox § Replacing an owner question](../../mailbox/SKILL.md#replacing-an-owner-question).
+
 ### Answers
 
 - The person answers with one comment on the issue and changes no state.
@@ -87,7 +89,7 @@ Record each chat answer with `send --re` before acting on it. `lane-mail resolve
 - Close the ask once you hold the ruling: `lane-mail resolve --item overseer --id [ASK_ID]`.
 - At the deadline the watch runs `resolve --default` on each ask `pending --due` lists. Where nobody answered, that closes the ask on its recommendation.
 - Record the ruling per § Recording. Then send `lane-mail notice --item overseer --to owner --ref [ASK_ID] --file [PATH]` naming it, so the relay posts the ruling where the question was asked.
-- After the close, send a later chat answer as `lane-mail send --item overseer --directive --file [PATH]`. A tracker comment is delivered only as the answer to an ask still open on its issue.
+- After the close, send a later chat answer as `lane-mail send --item overseer --directive --file [PATH]`. A tracker comment reaches only the open ask whose question it answers: [mailbox § Replacing an owner question](../../mailbox/SKILL.md#replacing-an-owner-question).
 
 For an owner request the relay delivered, `--ref [ENVELOPE_ID]` on the reply binds it to that request's delivery id. Answer it under [§ Owner delivery](#owner-delivery).
 

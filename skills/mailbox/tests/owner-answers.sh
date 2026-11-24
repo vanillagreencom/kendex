@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Surface: one-pass owner answer delivery.
-# Inputs: skills/mailbox/scripts/**, skills/orch/tests/lib/assertions.sh.
+# Inputs: skills/mailbox/scripts/**, skills/orch/tests/lib/assertions.sh,
+# skills/mailbox/tests/lib/owner-replace.py.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
@@ -55,7 +56,8 @@ case "$1:$2" in
   teams:keys) printf '{"urlKey":"workspace","keys":["KEN"]}\\n' ;;
   issues:list)
     if [[ -e "$FIXTURE/items" ]]; then cat "$FIXTURE/items"
-    else printf '[{"id":"KEN-7","description":"Body","assignee":"Owner"}]\\n'; fi ;;
+    else printf '[{"id":"KEN-7","uuid":"uuid-KEN-7","description":"Body","assignee":"Owner"}]\\n'; fi ;;
+  issues:bulk-get) printf '[{"id":"%s","uuid":"uuid-%s"}]\\n' "$3" "$3" ;;
   issues:update)
     if [[ "${4:-}" == --description ]]; then
       jq -cn --arg id "$3" --arg description "$5" '{issue:{identifier:$id,description:$description}}' > "$FIXTURE/repair"
@@ -110,9 +112,9 @@ esac
     assert sum(line.startswith('comments bulk-list ') for line in calls) == len(root_cases) + 1
     assert any(line.startswith('issues update KEN-7 --description **Owner, what you do:** Approve change') for line in calls)
     for name, malformed in [('non-string-id', [dict(id=42, description='Body', assignee='Owner')]),
-                             ('non-string-description', [dict(id='KEN-7', description=42, assignee='Owner')]),
-                             ('false-description', [dict(id='KEN-7', description=False, assignee='Owner')]),
-                             ('blank-assignee', [dict(id='KEN-7', description='Body', assignee='')])]:
+                             ('non-string-description', [dict(id='KEN-7', uuid='uuid-KEN-7', description=42, assignee='Owner')]),
+                             ('false-description', [dict(id='KEN-7', uuid='uuid-KEN-7', description=False, assignee='Owner')]),
+                             ('blank-assignee', [dict(id='KEN-7', uuid='uuid-KEN-7', description='Body', assignee='')])]:
         (root / 'items').write_text(json.dumps(malformed))
         unread = call('owner-answers', '--item', 'overseer')
         assert unread.stdout.splitlines()[-1] == 'owner-answers: read=unread', (name, unread)
@@ -168,20 +170,39 @@ esac
     print('PASS owner answer delivery, filtering, deduplication, repair, absent tracker and quota refusal')
 PY
 pass 'owner answer delivery, filtering, repair and quota contract'
+TMP_ROOT="$(mktemp -d "$ROOT/tmp/owner-answers.XXXXXX")" || { echo 'owner-answers: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'owner-answers: scratch=not-a-directory' >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'owner-answers: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+# Which open ask each owner comment reaches, each row judged on its own tracker.
+mkdir "$TMP_ROOT/replace"
+REPLACE_FACTS="$(python3 "$ROOT/skills/mailbox/tests/lib/owner-replace.py" answers \
+  "${MAILBOX_UNDER_TEST:-$ROOT/skills/mailbox}" "$TMP_ROOT/replace" "$BASH")"
+assert_eq "$(jq -c 'with_entries(select(.key | startswith("error:")))' <<<"$REPLACE_FACTS")" '{}' \
+  'every answer case runs to its observation'
+while IFS='|' read -r fact contract; do
+  [[ -n "$fact" ]] || continue
+  assert_eq "$(jq --arg fact "$fact" '.[$fact]' <<<"$REPLACE_FACTS")" true "$contract"
+done <<'ROWS'
+replaced_reply|a reply under a replaced question reaches the open replacement, opening with the line naming both asks
+chat_replaced|a reply under a question a chat ask replaced reaches that chat ask, after the watch cleared the item
+other_item_replaced|a reply under a question an ask on another item replaced reaches that ask, after the watch cleared the item
+chain_first_replaced|a reply under the first question of a three-ask chain, on another item, reaches the one open ask
+thread_chain|a reply under another mailbox's question is not delivered, while a nested reply whose thread ends at this mailbox's question is
+flat_comment|a top-level comment after the open question reaches its ask, after a re-ask the newest one's, and one with no open question before it is left out
+missing_item|an item Linear holds no issue for is named on stderr and the other items are read
+uuid_ref|an ask made by a UUID is read off the owner list by its recorded identifier, and one known by a UUID alone is named on stderr while the other items are read
+ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  TMP_ROOT="$(mktemp -d "$ROOT/tmp/owner-answers.XXXXXX")" || { echo 'owner-answers: scratch=mktemp-failed' >&2; exit 1; }
-  [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'owner-answers: scratch=not-a-directory' >&2; exit 1; }
-  TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'owner-answers: scratch=resolve-failed' >&2; exit 1; }
-  trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
   cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/scripts"
   python3 - "$TMP_ROOT/scripts/lane-mail" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 source = path.read_text()
-old = '.created_at > $posted.created_at'
+old = '.at < $row.created_at'
 assert source.count(old) == 1
-path.write_text(source.replace(old, '.created_at < $posted.created_at'))
+path.write_text(source.replace(old, '.at > $row.created_at'))
 PY
   rc=0
   MAILBOX_UNDER_TEST="$TMP_ROOT" "$BASH" "$ROOT/skills/mailbox/tests/owner-answers.sh" >"$TMP_ROOT/control.log" 2>&1 || rc=$?

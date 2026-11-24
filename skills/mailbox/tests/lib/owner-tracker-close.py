@@ -117,6 +117,8 @@ elif args[:2] == ["issues", "update"]:
         item["labels"] = []
     state.write_text(json.dumps(item))
     print("{}")
+elif args[:2] == ["issues", "bulk-get"]:
+    print(json.dumps([{"id": ref, "uuid": "uuid-" + ref} for ref in args[2:] if not ref.startswith("--")]))
 else:
     sys.exit(1)
 '''

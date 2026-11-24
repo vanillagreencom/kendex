@@ -90,6 +90,7 @@ case "$1:$2" in
     esac ;;
   issues:update) echo '{}' ;;
   comments:create) echo '{"success":true,"data":{"success":true,"comment":{"id":"question-id"}}}' ;;
+  issues:bulk-get) echo '[{"id":"KEN-1","uuid":"00000001-0000-4000-8000-000000000001"}]' ;;
   *) exit 1 ;;
 esac
 STUB

@@ -1894,11 +1894,7 @@ fn clear_owner_item(
             .clone()
             .unwrap_or_else(|| configured.to_owned())
     };
-    let remaining: Vec<&Envelope> = open
-        .iter()
-        .filter(|a| a.issue.as_deref() == Some(issue))
-        .copied()
-        .collect();
+    let remaining: Vec<&Envelope> = open.iter().filter(|a| a.on_item_of(ask)).copied().collect();
     let closing = label_of(ask);
     let labels: BTreeSet<String> = item
         .labels
