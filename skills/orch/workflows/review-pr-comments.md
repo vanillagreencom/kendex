@@ -200,7 +200,7 @@ Add the returned path and its token to the set.
    - `category: "issue"` suggestions go to § 6.2.
    - § 7 answers `questions[]`, except review-body items, which § 6.3 answers.
    - Show verified body declines under SKIPPING with their draft reason. These reply-only items never enter the fix set.
-4. **Recurrence before the cap.** [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) dispositions a finding that shares a root cause with one a prior pass patched. Check it here, before § 6.1's cap.
+4. **Recurrence.** Outside `--dry-run`, read the cap with § 6.1's command and reserve its same-part `at-cap` stops for that step. Apply [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) to the remaining findings before routing them through § 6.1.
    - When the dry-run history is unavailable, report that status in the triage output, and leave recurrence unverified.
    - Otherwise read both records, with the command that section states, before you disposition any item.
 5. Auto-fix every valid item, and never prompt for a selection. Skip an item only when it:
@@ -296,14 +296,15 @@ Every pass owes two things before it answers a thread, whether it fixes, replies
 
 **Skip the delegation and the push if** the fix set is empty. The pass still answers every thread at the `reply step`.
 
-**Round budget.** The cap decides before the fix round, never after:
+**Round budget.** Use the cap verdict § 5 read. On direct entry, run this command:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]
 ```
 
 - `below`: the fix set below is the items marked Fixing.
-- `at-cap`: ordinary fix rounds end on this pull request.
+- `at-cap` with another stop on the part the last permitted round addressed: take the open defect out of the fix set, including cap-exempt items, and run [review-pr.md § At The Cap](review-pr.md#at-the-cap)'s single filing. Use § 6.3 to reply and resolve with `Tracked: [ISSUE_ID]` for a created issue or duplicate target, or `Declined: [REASON]` for a candidate that fails the filing bar. Take the current head through the normal merge gates without another round or ruling for that defect.
+- `at-cap` for a stop on a new part: ordinary fix rounds end on this pull request.
   - The cap is a ruling point. No ordinary fix round starts past it until the overseer has ruled and recorded one `ruling` row for the item in the fleet log ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). The overseer judges with the reply's `count` and `limit`.
   - At the cap the disposition still runs in full, and only the fix stops. Every thread is analyzed and gets its reply and resolve, on this pass and every later one.
   - The fix set holds only the cap-exempt items: a defect this diff itself introduces or arms that Step 0 does not exclude.
@@ -386,6 +387,7 @@ Every pass owes two things before it answers a thread, whether it fixes, replies
 
 <delegation_format>
 Follow workflow: .agents/skills/dev/workflows/dev-fix.md
+Follow its § 2 Apply rule for the scope of this round.
 
 Source: pr-comments
 Finding occurrences: [UNCHANGED_QUERY_JSON]
@@ -628,11 +630,11 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 (Empty if all items were addressed.)
 
-Under `ask` only: awaiting your response to ask questions, override skipped items, or confirm done.
+Under `ask`, when this step awaits a choice: awaiting your response to ask questions, override skipped items, or confirm done.
 
 </output_format>
 
-- `auto-recommended` logs `Continue`, clears any stop, and goes to § 8 with no question.
+- When § 6.1 took the same-part `at-cap` route and no other finding is outstanding, or under `auto-recommended`, log `Continue`, clear any stop, and go to § 8 with no question.
 - `ask` stops here. A managed run returns the pending choice to its caller instead of continuing.
 - A request to fix a skipped item delegates that one item through § 6.1, pushes, and returns here.
 - A confirmation clears any stop and goes to § 8.

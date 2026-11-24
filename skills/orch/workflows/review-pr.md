@@ -479,7 +479,15 @@ Record every decline, from this section or any disposition step, in one write pe
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-disposition","into":"declined","drop":["declined"],"file":"[ARTIFACT_PATH]","element":"/[ARRAY]/[INDEX]","fields":{"reason":"[ONE_LINE_REASON]","source":"[SOURCE]"}}'
 ```
 
-**Recurrence before the cap.** [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) dispositions a finding that shares a root cause with one a prior round patched. No further patch round answers it. Check it here, before the cap. Each disposition owes one thing:
+### At The Cap
+
+Before routing recurrence, read the verdict from [review-cycle.md § Review cap](../references/review-cycle.md#review-cap).
+On `at-cap`, if review stops again on the part the last permitted round addressed, record the open defect once by [§ Escalation](../references/review-cycle.md#escalation), with `outcome` `skipped` and `reason` `same part at the review cap`. Leave it out of the fix set, including structural closes.
+File the defect as one related issue through the project-management skill's `audit-issues --single` route, including for a recurring defect the diff introduces. Apply Step 0, the creation bar and duplicate checks. Run § 6's `orch-env PM_CREATE_AUTONOMY ask` read with `PM_CREATE_AUTONOMY=auto` for this single filing and execute its Auto branch.
+In a lane, send the authorized single filing to the overseer by `lane-mail notice`. Carry back the created issue ID, the duplicate's `target` from TPM audit § 14, or the verified reason if the candidate fails the filing bar. Exclude this defect from § 8's audit and take the current head through the normal merge gates without another round or ruling for it.
+A stop on a new part takes the existing recurrence and cap routes below.
+
+**Recurrence before the cap.** [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) dispositions the remaining findings that share a root cause with one a prior round patched. No further patch round answers them. Each disposition owes one thing:
 
 - A cause this diff introduces or arms takes `structural-close`: one item that names the generating surface in place of the site. It reaches the fix round whatever `rereview_cycles` reads.
 - A cause this diff neither introduces nor arms takes the write of [review-cycle.md § Escalation](../references/review-cycle.md#escalation), its `reason` `recurrence outside this diff's authorship`, and § 8 files it.
@@ -492,7 +500,7 @@ Separate the work the item's goal needs from separable work of another concern:
 
 The **fix set** is what this section delegates: every item still standing after declines and tracking, plus every `structural-close`. At the cap it holds only those closes and the correction or cut the cap permits.
 
-1. Apply [review-cycle.md § Review cap](../references/review-cycle.md#review-cap) before routing.
+1. Apply [review-cycle.md § Review cap](../references/review-cycle.md#review-cap), including its correction and cut rules, to the remaining findings before routing.
 2. Report the outstanding items it escalated.
 3. A non-empty fix set goes to § Fix Delegation; an empty one goes to § 5.
 

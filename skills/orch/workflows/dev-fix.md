@@ -173,6 +173,7 @@ Before stamping any group's round, apply [Finding occurrences § Query and admis
 
    <delegation_format>
    Follow workflow: .agents/skills/dev/workflows/dev-fix.md
+   Follow its § 2 Apply rule for the scope of this round.
 
    Source: [SOURCE]
    Issue: [ISSUE_ID]
