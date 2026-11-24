@@ -105,6 +105,29 @@ trap 'rm -f -- "${note:?}"' EXIT
 cat >"$note"
 (cd -- "$root" && exec "$BASH" "$mail" send --item overseer --root "$root" --file "$note" "$@")
 """
+# Project the already-read item discussions through the mailbox question rule.
+TRACKER_QUESTIONS = r"""set -euo pipefail
+. "$1"
+exec jq -c --arg done "$2" "$OWNER_QUESTION_JQ"'
+  def close_mark: .opening as $line | [
+    "This question closed with no answer.",
+    "This question closed on your answer.",
+    "This question closed at its deadline with no answer, so its recommendation stands.",
+    "This question closed on its answer."
+  ] | index($line) != null;
+  .tracker as $tracker | .closed as $closed | .replaced as $replaced
+  | {workspace: $tracker.workspace, requests: [
+      $tracker.requests | group_by(.issueUuid)[] | . as $requests | .[0].issueUuid as $issue
+      | ($tracker.discussions[$issue] | INDEX(.id)) as $rows
+      | (INDEX($requests[]; .comment.id)) as $questions
+      | (reduce ($rows[] | select(close_mark or (.user_id == $tracker.owner and .opening != $done))
+                        | owner_question_parent($rows; $questions; false) | select(. != null)) as $id
+           ({}; .[$id] = true)) as $answers
+      | $requests[] | .comment.id as $id
+      | select(.comment | owner_question_settled($answers[$id]; ($closed | has($id)) and
+          ($closed[$id] == null or $closed[$id] == $issue); $replaced[$issue][$id]) | not)
+    ]}'
+"""
 # lane-mail's refusals of an answer to an ask closed, or compacted after closing.
 CLOSED = re.compile(r"lane-mail: (?:resolved-already|ask-unknown)=")
 # A reply comment by the identity the main minted for it. Linear's
@@ -331,6 +354,28 @@ class Sources:
                  "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
                  "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
 
+    def open_tracker(self, tracker, mailboxes):
+        if tracker is None:
+            return None
+        closed, replaced = {}, {}
+        # A retained closed ask still owns its exact mirror while the
+        # tracker label/assignee write catches up. The replacement outcome
+        # can name an earlier question even after that ask was compacted.
+        for mailbox in mailboxes:
+            pending = {ask["id"] for ask in mailbox["asks"]}
+            for ask in mailbox["outward"]["rows"]:
+                if mirrored(ask) and ask["id"] not in pending:
+                    closed[ask["tracker_comment"]] = (ask.get("identity") or {}).get("uuid")
+                if ask.get("replacement") == "in-force":
+                    for prior in ask.get("replaces", []):
+                        item = (prior.get("identity") or {}).get("uuid")
+                        if item and prior.get("tracker_comment"):
+                            replaced.setdefault(item, {})[prior["tracker_comment"]] = True
+        result = self.call(watch.Destination("local", None, None), self.session.home, "mailbox", "lib/mailbox-append.sh",
+                           [DONE_CLAIM], shell_args=["-c", TRACKER_QUESTIONS, "owner-asks"],
+                           data=encoded({"tracker": tracker, "closed": closed, "replaced": replaced}))
+        return json.loads(result.stdout)
+
     def collect(self):
         targets = watch.destinations(self.settings)
         # The tracker and each destination are read side by side, so the
@@ -339,8 +384,6 @@ class Sources:
             tracker = pool.submit(self.tracker)
             reads = [pool.submit(self.destination, target) for target in targets]
             mailboxes = [mailbox for read in reads for mailbox in read.result()]
-            # Retained closed asks still own their exact tracker mirror; a
-            # delayed label update must not resurrect that mirror.
             posted = self.posted(list(dict.fromkeys(ask["tracker_comment"] for mailbox in mailboxes
                                                     for ask in mailbox["outward"]["rows"] if mirrored(ask))))
             config, tracker = tracker.result()
@@ -351,7 +394,7 @@ class Sources:
                     comment = posted.get(ask["tracker_comment"])
                     if comment is not None:
                         mailbox["links"][ask["id"]] = comment
-        return {"config": config, "tracker": tracker, "mailboxes": mailboxes, "posted": posted}
+        return {"config": config, "tracker": self.open_tracker(tracker, mailboxes), "mailboxes": mailboxes, "posted": posted}
 
     def stable(self):
         first, second = self.collect(), self.collect()
@@ -421,7 +464,7 @@ def source_rows(source):
     # identifier of the entity", and every read runs the caller's one Linear
     # credential: a comment id alone names its mirror.
     mirrors = {ask["tracker_comment"] for mailbox in source["mailboxes"]
-               for ask in mailbox["outward"]["rows"] if mirrored(ask)}
+               for ask in mailbox["asks"] if mirrored(ask)}
 
     def add(identity, kind, what, author, at, link, thread, route):
         instant(at)

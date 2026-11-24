@@ -51,7 +51,8 @@ Owner Requests:
                         Jarvis's canonical request projection. Uses the
                         exact-email resolver, existing issues filters and
                         complete comment reader. Preserves every distinct
-                        request mentioning that user's canonical profile URL.
+                        request mentioning that user's canonical profile URL,
+                        with the owner's ID and the discussion on each item.
                         A successful complete read defines current view
                         membership; failed reads publish no partial result.
 
@@ -272,7 +273,9 @@ owner_requests() {
     jq -cs '
       .[0] as $owner | .[1] as $workspace | .[2] as $items | .[3] as $comments |
       def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
-      {workspace: $workspace.urlKey,
+      {workspace: $workspace.urlKey, owner: $owner.id,
+       discussions: ($items | map({key: .uuid, value: ($comments[.id] | map({id, parent_id, user_id,
+          opening: (.body | split("\n")[0] | rtrimstr("\r"))}))}) | from_entries),
        requests: [$items[] | . as $issue | $comments[.id][] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
           | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \

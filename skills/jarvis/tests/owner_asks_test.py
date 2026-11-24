@@ -1065,6 +1065,62 @@ print(json.dumps(owner._presence('ssh:fixture')))
         self.assertEqual(mirrored["activeCount"], 1)
         self.assertEqual((mirrored["rows"][0]["kind"], mirrored["rows"][0]["what"], mirrored["rows"][0]["link"]["url"]),
                          ("jarvis-ask", "Mirrored owner ask", original["url"]))
+        self.command([LIB.parents[2] / "mailbox/scripts/lane-mail", "resolve", "--item", "overseer", "--id", ask],
+                     self.home).check_returncode()
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual((page["activeCount"], page["rows"]), (0, []))
+
+    def test_tracker_asks_settle_by_exact_question_comment(self):
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
+        mention = "https://linear.app/example/profiles/owner "
+        answered = request_comment("answered", mention + "Answered through a reply chain")
+        closed = request_comment("closed", mention + "Closed by the runtime")
+        replaced = request_comment("replaced", "**Replaced** by a newer question. Answer that one only.\n\n~~" + mention + "Old question~~")
+        waiting = request_comment("waiting", mention + "Still needs an answer")
+        discussion = dict(request_comment("discussion", "Could you confirm?"), parent_id="answered")
+        owner = {"user_id": "owner-id", "user": "Owner", "user_email": "owner@example.test"}
+        reply = dict(request_comment("reply", "Proceed"), parent_id="discussion", **owner)
+        close_mark = dict(request_comment("close-mark", "This question closed with no answer.\n"), parent_id="closed")
+        nonowner_reply = dict(request_comment("nonowner", "I can help"), parent_id="waiting")
+        wrong_item_reply = dict(request_comment("wrong-item", "Proceed"), parent_id="waiting", **owner)
+        top_level_answer = dict(request_comment("top-level", "Proceed"), **owner)
+        done_claim = dict(request_comment("claim", owner_asks.DONE_CLAIM + "\n\nDone evidence"), parent_id="waiting", **owner)
+        self.tracker_api([answered, closed, replaced, waiting, discussion, reply, close_mark, nonowner_reply,
+                          top_level_answer, done_claim], {"KEN-2": [wrong_item_reply]}, assigned=["KEN-1", "KEN-2"])
+
+        result, page = self.run_cli()
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual([row["link"]["url"] for row in page["rows"]], [waiting["url"]])
+        self.assertEqual(page["activeCount"], 1)
+
+    def test_replacement_outcome_uses_the_predecessors_exact_comment_and_item(self):
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
+        mention = "https://linear.app/example/profiles/owner "
+        old = request_comment("earlier", mention + "Earlier question")
+        waiting = request_comment("waiting", mention + "Another question")
+        self.tracker_api([old, waiting])
+        ask = self.mail(self.home, "ask", "Replacement question", "--to", "owner", "--options", "a,b", "--reserved")
+        self.command([LIB.parents[2] / "mailbox/scripts/lane-mail", "resolve", "--item", "overseer", "--id", ask],
+                     self.home).check_returncode()
+        path = self.home / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        records = [json.loads(line) for line in path.read_text().split("\n") if line]
+        replacing = next(record for record in records if record["id"] == ask)
+        replacing["replaces"] = [
+            {"id": "old-ask", "tracker_comment": old["id"], "identity": {"identifier": "KEN-99", "uuid": "KEN-1-uuid"}},
+            {"id": "other-ask", "tracker_comment": waiting["id"], "identity": {"identifier": "KEN-1", "uuid": "KEN-2-uuid"}},
+        ]
+        outcome = {"kind": "replacement", "from": replacing["from"], "re": ask, "at": replacing["at"], "text": ""}
+        for status, expected in (("incomplete", [old, waiting]), ("in-force", [waiting])):
+            with self.subTest(outcome=status):
+                event = dict(outcome, id=ask + "-replacement-" + status, outcome=status)
+                path.write_text("".join(json.dumps(record) + "\n" for record in [*records, event]))
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual({row["link"]["url"] for row in page["rows"]}, {comment["url"] for comment in expected})
 
     def act_cli(self, action, row, request_id, **fields):
         payload = json.dumps(dict({"requestId": request_id, "expectedRevision": row["revision"]}, **fields))

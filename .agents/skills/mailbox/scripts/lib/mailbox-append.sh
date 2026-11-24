@@ -264,7 +264,8 @@ OWNER_REPLACING_JQ='def owner_replacing: .issue == null or .tracker_posted == tr
 # whose comments hold the question: the identifier and UUID the ask recorded
 # as its identity, else the ref it was asked under with no UUID. A replaced
 # question's item can be one no open ask is on.
-OWNER_QUESTION_JQ="$OWNER_REPLACING_JQ"'def owner_questions:
+OWNER_QUESTION_JQ="$OWNER_REPLACING_JQ"'
+def owner_questions:
   map(select(.kind == "ask" and .to == "owner")) as $asks
   | [$asks[] | select(.tracker_posted == true) | {comment: .tracker_comment, ask: .id, issue, replaced: null,
       item: {ref: (.identity.identifier // .issue), uuid: .identity.uuid}}] as $own
@@ -273,7 +274,24 @@ OWNER_QUESTION_JQ="$OWNER_REPLACING_JQ"'def owner_questions:
         | select(.tracker_comment as $comment | all($own[]; .comment != $comment))
         | {comment: .tracker_comment, ask: $by.id, issue: null, replaced: .id,
           item: (if .identity != null then {ref: .identity.identifier, uuid: .identity.uuid} else null end)}]
-      | group_by(.comment) | map(last));'
+      | group_by(.comment) | map(last));
+
+# The first question on a reply path in one item. The row count bounds a
+# broken parent chain. The mailbox delivery reader also keeps its existing
+# earlier-comment rule for intermediate replies.
+def owner_question_parent($rows; $questions; $earlier):
+  def follow($left):
+    . as $row | .parent_id as $parent
+    | if $parent == null or $parent == "" or $left == 0 then null
+      elif $questions | has($parent) then $parent
+      elif $rows[$parent] == null or ($earlier and $rows[$parent].created_at >= $row.created_at) then null
+      else $rows[$parent] | follow($left - 1) end;
+  follow($rows | length);
+
+# Each fact belongs to this exact question. The replacement writer uses
+# the same rule to recognize a mark that landed on a previous attempt.
+def owner_question_settled($answered; $closed; $replaced):
+  $answered or $closed or $replaced or (.body | startswith("**Replaced** by "));'
 
 # One description format serves the ask and the watch's read and close.
 # The Linear file reader trims trailing newlines. Use --description and keep
@@ -539,7 +557,7 @@ owner_tracker_replaced_comment() { # TRACKER WORK ENTRY_JSON ACTOR check|mark [N
     OWNER_REPLACE_STATE=foreign
     return 0
   fi
-  if jq -e '.body | startswith("**Replaced** by ")' <<<"$row" >/dev/null; then
+  if jq -e "$OWNER_QUESTION_JQ"' owner_question_settled(false; false; false)' <<<"$row" >/dev/null; then
     OWNER_REPLACE_STATE=marked
     return 0
   fi
