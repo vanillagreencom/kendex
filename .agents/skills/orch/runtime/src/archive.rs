@@ -98,38 +98,18 @@ pub fn resolve(path: &Path) -> PathBuf {
 
 /// The linked worktrees of `project`, the main checkout left out, in the
 /// listing's order. A listing git cannot give is the failure named.
-pub fn linked_worktrees(project: &Path) -> Result<Vec<Worktree>> {
-    let cwd = project.display().to_string();
-    read_linked_worktrees(&["-C", &cwd], &[])
-}
-
-/// Linked registrations in an already trusted common directory. Git does
-/// not discover the repository from the candidate worktree.
-pub(crate) fn registered_linked_worktrees(common: &Path) -> Result<Vec<Worktree>> {
-    let dir = common.display().to_string();
-    read_linked_worktrees(
-        &["--git-dir", &dir],
-        &[("GIT_COMMON_DIR", common.as_os_str())],
-    )
-}
-
 #[allow(
     clippy::disallowed_methods,
-    reason = "the archive and retained launch read Git's documented worktree registration list"
+    reason = "the one read of the checkout's worktree list, which the archive root check and the item-state judgement both take, through the one runner"
 )]
-fn read_linked_worktrees(
-    prefix: &[&str],
-    env: &[(&str, &std::ffi::OsStr)],
-) -> Result<Vec<Worktree>> {
-    let mut args = prefix.to_vec();
-    args.extend(["worktree", "list", "--porcelain", "-z"]);
-    let out = host::run_tagged_in(
+pub fn linked_worktrees(project: &Path) -> Result<Vec<Worktree>> {
+    let cwd = project.display().to_string();
+    let out = host::run_tagged(
         "archive",
         "git",
         Path::new("git"),
         "worktree-list",
-        &args,
-        host::Place { cwd: None, env },
+        &["-C", &cwd, "worktree", "list", "--porcelain", "-z"],
         GIT_BOUND,
     )?;
     if !out.status.success() {

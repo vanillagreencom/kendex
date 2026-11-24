@@ -87,84 +87,6 @@ pub fn checkout(worktree: &Path) -> Result<Checkout> {
     })
 }
 
-/// Corroborate a retained checkout before it can select Git grants or receive
-/// launch records. The fleet record anchors a linked checkout to its original
-/// repository. Older records can use the executor's own primary checkout.
-pub(crate) fn retained_checkout(
-    worktree: &Path,
-    recorded_common: Option<&Path>,
-    primary: &Path,
-    executor_root: &Path,
-) -> Result<Checkout> {
-    let refused_checkout = || {
-        refused(
-            "checkout-registration",
-            &[("path", &worktree.display().to_string())],
-        )
-    };
-    let resolved = |path: &Path| std::fs::canonicalize(path).map_err(|_| refused_checkout());
-    let live = checkout(worktree)?;
-    let root = resolved(&live.root)?;
-    let git_dir = resolved(&live.git_dir)?;
-    let common = resolved(&live.common)?;
-    if resolved(worktree)? != root || recorded_common.is_some_and(|expected| expected != common) {
-        return Err(refused_checkout());
-    }
-
-    let fallback = if recorded_common.is_none() {
-        match located(primary)? {
-            Ok(found) => {
-                let anchor = resolved(&found.common)?;
-                (resolved(&found.git_dir)? == anchor).then_some(anchor)
-            }
-            Err(words) if words.starts_with("fatal: not a git repository") => None,
-            Err(_) => return Err(refused_checkout()),
-        }
-    } else {
-        None
-    };
-    let anchor = recorded_common.or(fallback.as_deref());
-    if git_dir == common {
-        if common != root.join(".git")
-            && ![primary, executor_root]
-                .iter()
-                .any(|dir| std::fs::canonicalize(dir).ok().as_ref() == Some(&root))
-        {
-            return Err(refused_checkout());
-        }
-        // A linked checkout cannot switch to main-checkout treatment by
-        // changing what Git discovers in its own root.
-        if let Some(anchor) = anchor
-            && crate::archive::registered_linked_worktrees(anchor)?
-                .iter()
-                .any(|tree| std::fs::canonicalize(&tree.path).ok().as_ref() == Some(&root))
-        {
-            return Err(refused_checkout());
-        }
-    } else {
-        if anchor != Some(common.as_path())
-            || git_dir.parent() != Some(common.join("worktrees").as_path())
-        {
-            return Err(refused_checkout());
-        }
-        // Git records the reverse link from the registered admin directory
-        // to this checkout's .git file (gitrepository-layout(5)).
-        let back = git_dir.join("gitdir");
-        if !std::fs::symlink_metadata(&back).is_ok_and(|meta| meta.is_file()) {
-            return Err(refused_checkout());
-        }
-        let target = std::fs::read_to_string(&back).map_err(|_| refused_checkout())?;
-        if resolved(&git_dir.join(target.trim_end_matches(['\r', '\n'])))? != root.join(".git") {
-            return Err(refused_checkout());
-        }
-    }
-    Ok(Checkout {
-        root,
-        git_dir,
-        common,
-    })
-}
-
 /// The checkout `worktree` is in as git answers for it: its directories,
 /// or git's own words of refusal, read in the C locale so a reader can tell
 /// a directory outside any repository by them.
@@ -304,31 +226,21 @@ pub struct Resumed<'a> {
 /// reading kept only across the session `resumed` names. Every component
 /// is judged before anything is made, so a refusal leaves the tree as it
 /// was; `tmp` itself may be a link, since a worktree setup links it.
-pub fn write(worktree: &Path, item: &str, refresh: bool, resumed: Option<Resumed>) -> Result<()> {
-    item_name(item)?;
-    write_checkout(&checkout(worktree)?, item, refresh, resumed)
-}
-
 #[allow(
     clippy::disallowed_methods,
-    reason = "the writer uses the same checked Git paths the launch grants"
+    reason = "the launch record's writer: the marker, the mailbox directory and the refresh record, written before the window the hook will judge opens"
 )]
-pub(crate) fn write_checkout(
-    checkout: &Checkout,
-    item: &str,
-    refresh: bool,
-    resumed: Option<Resumed>,
-) -> Result<()> {
+pub fn write(worktree: &Path, item: &str, refresh: bool, resumed: Option<Resumed>) -> Result<()> {
     let item = item_name(item)?;
     let Checkout {
         root,
         git_dir,
         common,
-    } = checkout;
-    let marker = marker_path(common, item);
-    let launch = launch_path(common, item);
-    let refresh_record = refresh_path(git_dir);
-    let mailbox = mailbox_path(root, item);
+    } = checkout(worktree)?;
+    let marker = marker_path(&common, item);
+    let launch = launch_path(&common, item);
+    let refresh_record = refresh_path(&git_dir);
+    let mailbox = mailbox_path(&root, item);
     for dir in [
         common.join("lane-mail"),
         common.join("lane-launch"),

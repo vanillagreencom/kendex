@@ -2248,18 +2248,22 @@ fn a_launch_records_its_checkouts_common_git_folder_once_and_never_one_under_its
         "a first launch"
     );
     assert_eq!(fleet.lane("KEN-1")["status"], "stopped");
+    let mut done = fleet.lane("KEN-1");
+    done["status"] = json!("done");
+    done.as_object_mut().unwrap().remove("checkout_common");
+    fleet.write_lanes(vec![done]);
+    launch_from("KEN-1", &wt);
+    assert_eq!(
+        fleet.lane("KEN-1")["checkout_common"],
+        common(&other),
+        "a completed row at the same checkout records its new admission's anchor"
+    );
     redirect(&other, &wt, &fleet.dir.path().join("copy/.git"));
     launch_from("KEN-1", &wt);
     assert_eq!(
         fleet.lane("KEN-1")["checkout_common"],
         common(&other),
         "a relaunch over the same mail_root"
-    );
-    launch_from("KEN-1", &wt.join("."));
-    assert_eq!(
-        fleet.lane("KEN-1")["checkout_common"],
-        common(&other),
-        "an alias of the same mail_root keeps the original repository"
     );
     let (third, third_wt) = worktree_of("third");
     launch_from("KEN-1", &third_wt);

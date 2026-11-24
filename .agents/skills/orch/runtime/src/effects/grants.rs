@@ -283,7 +283,7 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// The grants of a local launch of `item` on `harness` from its `checkout`
+/// The grants of a local launch of `item` on `harness` from `mail_root`
 /// under `homes`: writable its checkout (the root, and the common git
 /// folder of a linked worktree with its hooks, its configuration, the main
 /// checkout's per-worktree configuration and the launch records every
@@ -318,7 +318,7 @@ fn seat_folder(path: PathBuf, made: &mut Vec<PathBuf>) -> Result<PathBuf> {
 pub(super) fn of(
     settings: &Settings,
     item: &str,
-    checkout: &crate::marker::Checkout,
+    mail_root: &Path,
     harness: Harness,
     account: Option<&Path>,
     homes: &LaunchHome,
@@ -332,6 +332,7 @@ pub(super) fn of(
         .get("desktop")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let checkout = crate::marker::checkout(mail_root)?;
     let root = resolved(&checkout.root).unwrap_or_else(|| checkout.root.clone());
     let answer = confine::answer(Host::this(), harness);
     let tmp = checkout.root.join("tmp");

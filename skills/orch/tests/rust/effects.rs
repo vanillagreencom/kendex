@@ -12555,68 +12555,53 @@ fn a_lane_is_refused_the_main_checkout_s_per_worktree_git_configuration() {
     assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
 }
 
-/// Retained linked worktrees can relaunch with either the recorded
-/// repository or the executor's applicable repository as the anchor.
-/// A checkout moved without repairing its Git registration is refused.
 #[test]
 #[cfg(target_os = "linux")]
-fn a_retained_linked_lane_requires_its_git_registration() {
-    for (name, recorded, moved) in [
-        ("recorded", true, false),
-        ("legacy", false, false),
-        ("moved", true, true),
-    ] {
-        let world = Confined::new();
-        let repo = world.runner.state_dir();
-        git(repo, &["config", "gc.auto", "0"]);
-        git(repo, &["config", "maintenance.auto", "false"]);
-        let mut wt = world.linked_worktree("ken-retained");
-        if moved {
-            let destination = world.dir.path().join("moved");
-            std::fs::rename(&wt, &destination).unwrap();
-            wt = destination;
-        }
-        let mut fleet = world.runner.fleet();
-        let mut stopped = lane("KEN-RETAINED", "stopped", &world.runner, Value::Null);
-        stopped["mail_root"] = json!(wt);
-        if recorded {
-            stopped["checkout_common"] = json!(repo.join(".git").canonicalize().unwrap());
-        }
-        fleet["lanes"] = json!([stopped]);
-        world.runner.write_fleet(&fleet);
-        let report = effect_report(&world.runner.op_fleet(&launch_request("KEN-RETAINED", &wt)));
-        let intent = &report["intent"];
-        if moved {
-            assert_eq!(intent["outcome"], "failed", "{name}: {report}");
-            assert_eq!(intent["observation"]["cause"], "checkout-registration");
-            assert!(!repo.join(".git/lane-mail/ken-retained").exists());
-        } else {
-            assert_eq!(intent["outcome"], "confirmed", "{name}: {report}");
-        }
-    }
-}
-
-/// The executor's primary checkout can have a separate Git directory.
-#[test]
-#[cfg(target_os = "linux")]
-fn a_retained_main_checkout_can_have_a_separate_git_directory() {
+fn a_connected_lane_relaunches_with_fleet_state_outside_git() {
     let world = Confined::new();
-    let root = world.runner.state_dir();
-    let common = world.dir.path().join("main.git");
+    let connected = world.runner.state_dir();
+    git(connected, &["config", "gc.auto", "0"]);
+    git(connected, &["config", "maintenance.auto", "false"]);
     git(
-        root,
-        &["init", "-q", "--separate-git-dir", common.to_str().unwrap()],
+        connected,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/o/connected.git",
+        ],
     );
-    let mut fleet = world.runner.fleet();
-    let mut stopped = lane("KEN-SEPARATE", "stopped", &world.runner, Value::Null);
-    stopped["checkout_common"] = json!(common.canonicalize().unwrap());
+    let wt = world.linked_worktree("ken-connected");
+    let executor = world.dir.path().join("executor");
+    git_checkout(&executor);
+    git(
+        &executor,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/o/executor.git",
+        ],
+    );
+    let runner = Runner {
+        tools: world.runner.tools.clone(),
+        env: world.runner.env.clone(),
+        ..Runner::new(&world.server, "stub-confirm")
+    };
+    let settings = [("ORCH_CONNECTED_REPOS", "o/connected")];
+    let init = runner.run_in(&executor, &["state", "init", "--fleet"], &settings);
+    assert!(init.status.success(), "{}", stderr(&init));
+    let mut fleet = runner.fleet();
+    let mut stopped = lane("KEN-CONNECTED", "stopped", &runner, Value::Null);
+    stopped["mail_root"] = json!(wt);
     fleet["lanes"] = json!([stopped]);
-    world.runner.write_fleet(&fleet);
-    let report = world.launch(&launch_request("KEN-SEPARATE", root));
-    assert_eq!(
-        report["intent"]["observation"]["confinement"]["state"],
-        "confined"
-    );
+    runner.write_fleet(&fleet);
+
+    let request = launch_request("KEN-CONNECTED", &wt);
+    let report = effect_report(&runner.op_fleet_in(&executor, &request, &settings));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["intent"]["selection"]["relaunch"], true);
+    assert!(report["lane"]["checkout_common"].is_null());
 }
 
 /// A Pi lane starts past Pi's "Trust project folder?", which Pi asks before
