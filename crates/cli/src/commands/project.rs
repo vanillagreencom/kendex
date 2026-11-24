@@ -50,9 +50,10 @@ pub enum ProjectCommand {
         /// `not-a-folder` or `unreadable`) and `worktree`, which is null
         /// unless the git repository holding the folder is checked out there
         /// as a linked worktree, and then holds `main`, the main checkout's
-        /// path, or null where git could not name it. A linked worktree
-        /// around a nested repository, such as a submodule, is not reported.
-        /// Where git cannot say, the command fails naming the folder
+        /// path, or null where git could not name it. Only the folder's own
+        /// repository counts, including when it is a submodule. Where git
+        /// cannot classify the folder, `state` is `git-unclassified`,
+        /// `cause` holds the Git error, and `worktree` is null
         #[arg(long)]
         json: bool,
     },
@@ -344,10 +345,7 @@ fn listed_row(style: &Style, project: &std::path::Path, state: &Listed) -> Vec<S
 
 /// One registered folder as `project list --json` prints it.
 ///
-/// `worktree` is asked only of a folder that could be read, as the row
-/// asks it. Where git cannot say whether the folder is a linked worktree
-/// the document refuses rather than print null, which a consumer reads as
-/// "not a worktree" and so routes to the folder itself.
+/// Only `ok` entries provide a Git result a consumer can route by.
 fn listed_entry(project: &std::path::Path) -> Result<serde_json::Value, Lines> {
     use kendex_core::scan::MissingWhy;
     let unread = |cause: String| {
@@ -365,6 +363,7 @@ fn listed_entry(project: &std::path::Path) -> Result<serde_json::Value, Lines> {
             ))
         })
     };
+    let folder = exact(project)?;
     let missing = kendex_core::scan::missing_why(project);
     let state = match &missing {
         None => "ok",
@@ -374,15 +373,23 @@ fn listed_entry(project: &std::path::Path) -> Result<serde_json::Value, Lines> {
     };
     let worktree = match missing {
         Some(_) => serde_json::Value::Null,
-        None => match linked_worktree(project).map_err(|e| unread(e.to_string()))? {
-            None => serde_json::Value::Null,
-            Some(Linked { main }) => serde_json::json!({
+        None => match linked_worktree(project) {
+            Ok(None) => serde_json::Value::Null,
+            Ok(Some(Linked { main })) => serde_json::json!({
                 "main": main.as_deref().map(exact).transpose()?,
             }),
+            Err(error) => {
+                return Ok(serde_json::json!({
+                    "folder": folder,
+                    "state": "git-unclassified",
+                    "cause": error.to_string(),
+                    "worktree": null,
+                }));
+            }
         },
     };
     Ok(serde_json::json!({
-        "folder": exact(project)?,
+        "folder": folder,
         "state": state,
         "worktree": worktree,
     }))

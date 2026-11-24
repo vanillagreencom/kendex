@@ -155,14 +155,11 @@ fn each_registered_folder_is_one_exact_entry() {
     assert_eq!(entries, expected);
 }
 
-/// Where git cannot say whether a registered folder is in a linked
-/// worktree, the document is refused naming that folder rather than
-/// printed with `worktree: null`, which a consumer would read as "not a
-/// worktree" and route a write to the folder itself. The key leads the
-/// refusal because a program reads it; the cause after it is git's.
+/// A Git failure leaves one entry with a cause and no checkout to route
+/// to. The other registration stays available to consumers such as Jarvis.
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
-fn a_folder_git_cannot_answer_for_refuses_the_document() {
+fn a_folder_git_cannot_answer_for_gets_its_own_entry() {
     type Break = fn(&Path);
     let cases: [(&str, Break); 2] = [
         ("malformed config", |folder| {
@@ -173,23 +170,47 @@ fn a_folder_git_cannot_answer_for_refuses_the_document() {
             fs::write(config, text).unwrap();
         }),
         ("worktree whose main checkout is gone", |folder| {
-            let gone = folder.parent().unwrap().join("moved/.git/worktrees/lane");
-            fs::write(folder.join(".git"), format!("gitdir: {}\n", gone.display())).unwrap();
+            let main = folder.with_file_name("main");
+            repository_with_worktree(&main, folder);
+            fs::rename(&main, main.with_file_name("moved")).unwrap();
         }),
     ];
     for (case, break_it) in cases {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let folder = home.join("dev/app");
+        let healthy = home.join("dev/healthy");
         fs::create_dir_all(&folder).unwrap();
+        fs::create_dir_all(&healthy).unwrap();
         register(&home, &folder);
+        register(&home, &healthy);
         break_it(&folder);
 
+        let plain = kendex(&home, &["project", "list"]);
+        assert!(plain.status.success(), "{case}");
+        assert_eq!(
+            String::from_utf8(plain.stdout).unwrap(),
+            format!("{}\n{}\n", folder.display(), healthy.display()),
+            "{case}"
+        );
+
         let listed = kendex(&home, &["project", "list", "--json"]);
-        let stderr = String::from_utf8_lossy(&listed.stderr);
-        assert!(!listed.status.success(), "{case}: {stderr}");
-        assert!(listed.stdout.is_empty(), "{case}: {listed:?}");
-        let key = format!("Error: project-list-unread={}\n", folder.display());
-        assert!(stderr.starts_with(&key), "{case}: {stderr}");
+        assert!(
+            listed.status.success(),
+            "{case}: {}",
+            String::from_utf8_lossy(&listed.stderr)
+        );
+        let entries: Vec<Value> = serde_json::from_slice(&listed.stdout).unwrap();
+        assert_eq!(entries.len(), 2, "{case}");
+        assert_eq!(entries[0]["folder"], folder.to_str().unwrap(), "{case}");
+        assert_eq!(entries[0]["state"], "git-unclassified", "{case}");
+        assert_eq!(entries[0].get("worktree"), Some(&Value::Null), "{case}");
+        let cause = entries[0]["cause"].as_str().unwrap();
+        assert!(cause.contains(".git/"), "{case}: {cause}");
+        assert_eq!(
+            entries[1],
+            json!({"folder": healthy.to_str().unwrap(), "state": "ok", "worktree": null}),
+            "{case}"
+        );
     }
 }
