@@ -185,6 +185,104 @@ fn a_pane_whose_foreground_is_a_shell_never_reads_idle_whatever_it_draws() {
     assert_eq!(runner.fleet()["lanes"][0]["status"], "preparing");
 }
 
+#[test]
+fn a_launch_never_confirms_when_its_harness_execs_a_shell_before_capture() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-survivor");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    runner.tools = Some(tools.clone());
+    let (request, env) = copilot_survivor(dir.path(), &runner, &tools, "KEN-CAPTURE");
+
+    // The harness stays foreground until the test releases it through the
+    // terminal. The shell that replaces it draws Copilot's framed composer.
+    write_executable(
+        &dir.path().join("copilot-bin/copilot"),
+        "#!/bin/bash\nread -r _ || exit 1\nPS1=$'❯\\n──────────' exec bash --noprofile --norc -i\n",
+    );
+    let fifo = dir.path().join("capture.fifo");
+    mkfifo(&fifo);
+    let mark = dir.path().join("capturing");
+    let opened = dir.path().join("opened");
+    // Only the capture under test waits. Later polls use tmux directly.
+    write_executable(
+        &dir.path().join("tmux"),
+        "#!/bin/bash\nif [ -e \"$TMUX_HOLD_MARK\" ]; then exec \"$TMUX_REAL\" \"$@\"; fi\nexec \"$TMUX_TEST_HOLD\" \"$@\"\n",
+    );
+    let real = which_tmux();
+    let shim = fixtures().join("tmux-hold/tmux");
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+    env.extend([
+        ("TMUX_REAL", real.as_str()),
+        ("TMUX_TEST_HOLD", shim.to_str().unwrap()),
+        ("TMUX_HOLD_FIFO", fifo.to_str().unwrap()),
+        ("TMUX_HOLD_MARK", mark.to_str().unwrap()),
+        ("TMUX_HOLD_VERB", "capture-pane"),
+        ("TMUX_HOLD_OPENED", opened.to_str().unwrap()),
+        ("TMUX_HOLD_READY_COMM", "copilot"),
+        ("HOLD_BOUND_SECS", "15"),
+    ]);
+    let mut child = Owned(runner.spawn_op_fleet(&request, &env, dir.path()));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !mark.exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "the launch ended before capture: {}",
+            runner.fleet()
+        );
+        assert!(
+            Instant::now() < deadline,
+            "the capture never reached its hold"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let fleet = runner.fleet();
+    let intent = &fleet["intents"][0];
+    assert!(
+        intent["obligations"]["standing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "process")
+    );
+    let pane = intent["phase"]["pane"].as_str().unwrap();
+    let pid = server.pane_pid(pane);
+    server.send_line(pane, "exec");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", pane]);
+        if String::from_utf8_lossy(&screen.stdout).contains("❯\n──────────") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the shell never drew the composer"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(server.pane_pid(pane), pid);
+    release_hold(&fifo, Duration::from_secs(5), || runner.fleet().to_string());
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the launch never returned");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        status.success(),
+        "the launch operation exited with {status}"
+    );
+    let fleet = runner.fleet();
+    assert_eq!(fleet["intents"][0]["outcome"], "unconfirmed", "{fleet}");
+    assert_eq!(fleet["lanes"][0]["status"], "preparing", "{fleet}");
+}
+
 /// A harness that exits before its first draw never confirms, whatever the
 /// pane's shell drew while typing the launch line.
 #[test]
