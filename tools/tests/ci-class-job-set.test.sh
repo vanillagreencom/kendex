@@ -106,6 +106,9 @@ check "the install record starts no shard" '[]' "$(field shards <<<"$lock")"
 leader="$(selection micro false skills/github/scripts/lib/group-leader.sh)"
 check "group-leader.sh runs the runtime target that runs it" true \
   "$(jq 'index("orch/validate") != null' <<<"$(field rust_targets <<<"$leader")")"
+evaluator="$(SELECT_EVENT=merge_group selection micro false skills/harness-ci/tests/lib/gh-eval.py)"
+check "an evaluator-only merge group selects the Pi package policy's node shard" true \
+  "$(field shards <<<"$evaluator" | jq 'index("node") != null')"
 # PATH|THE SUITES WHOSE NOTES NAME IT
 while IFS='|' read -r path suites; do
   skipped="$(selection micro false "$path" | field skipped_suites)"

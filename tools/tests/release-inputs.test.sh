@@ -53,12 +53,22 @@ base="$(git rev-parse HEAD)"
 
 selected() { # TOOL EVENT BEFORE AFTER
   local output steps published ctx
-  output="$("$BASH" "$1" "$2" "$3" "$4")"
+  output="$("$BASH" "$1" "$2" "$3" "$4")" || return
   case "$output" in build=true|build=false) ;; *) return 2 ;; esac
-  steps="$(jq -cn --arg id "$producer" --arg build "${output#build=}" '{steps: {($id): {outputs: {build: $build}}}}')"
-  published="$(gh_eval value "$steps" "$binding")" || return
+  steps="$(jq -cn --arg id "$producer" --arg build "${output#build=}" '{steps: {($id): {outputs: {build: $build}}}}')" || return
+  published="$(python3 "$GH_EVAL" value "$steps" "$binding")" || return
   ctx="$(jq -cn --argjson build "$published" '{needs: {prepare: {result: "success", outputs: {build: ($build // "")}}}}')" || return
-  printf 'build\t%s\t%s\n' "$needs" "$expr" | gh_eval jobs "$ctx"
+  printf 'build\t%s\t%s\n' "$needs" "$expr" | python3 "$GH_EVAL" jobs "$ctx"
+}
+
+assert_selected() { # CASE EXPECTED EVENT BEFORE AFTER
+  local actual status=0
+  actual="$(selected "$TOOL" "$3" "$4" "$5")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'FAIL %s: release selection exited %s\n' "$1" "$status" >&2
+    return "$status"
+  fi
+  assert_eq "$actual" "$2" "$1"
 }
 
 # Each path is a separate push; the multi-commit row below also catches a
@@ -69,7 +79,7 @@ while IFS='|' read -r path expected; do
   git add -- "$path"
   git -c core.hooksPath=/dev/null commit --quiet -m fixture
   head="$(git rev-parse HEAD)"
-  assert_eq "$(selected "$TOOL" push "$base" "$head")" "$expected" "$path"
+  assert_selected "$path" "$expected" push "$base" "$head"
   base=$head
 done <<'CASES'
 .kendex-lock.json|
@@ -95,14 +105,14 @@ git -c core.hooksPath=/dev/null commit --quiet -am release-input
 printf next >> .kendex-lock.json
 git -c core.hooksPath=/dev/null commit --quiet -am lock
 head="$(git rev-parse HEAD)"
-assert_eq "$(selected "$TOOL" push "$before" "$head")" build multi-commit
+assert_selected multi-commit build push "$before" "$head"
 before=$head
 git mv crates/core/src/lib.rs moved.rs
 git -c core.hooksPath=/dev/null commit --quiet -am move
 head="$(git rev-parse HEAD)"
-assert_eq "$(selected "$TOOL" push "$before" "$head")" build rename-out
-assert_eq "$(selected "$TOOL" push 0000000000000000000000000000000000000000 "$head" 2>/dev/null)" build unknown-base
-assert_eq "$(selected "$TOOL" workflow_dispatch '' "$head")" build dispatch
-assert_eq "$(selected "$TOOL" push "$head" "$head")" '' empty-diff
+assert_selected rename-out build push "$before" "$head"
+assert_selected unknown-base build push 0000000000000000000000000000000000000000 "$head"
+assert_selected dispatch build workflow_dispatch '' "$head"
+assert_selected empty-diff '' push "$head" "$head"
 
 printf 'pass: %s   fail: 0\n' "$PASS"
