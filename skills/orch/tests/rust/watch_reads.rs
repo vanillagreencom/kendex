@@ -4424,7 +4424,8 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
 /// later release that does not contain the merge; a release that does is
 /// met, ticked, and the issue closes as completed with it. A person's
 /// reopen of the closed issue stands, and a box the person adds and ticks
-/// by hand closes it again, a refused close asked again. An issue an
+/// by hand closes it again once it carries its Evidence line, a refused
+/// close asked again. An issue an
 /// outside author wrote is no item: its merge left it open, and it is said
 /// once for the overseer. A Linear item's row stands while the tracker is
 /// unread; no write reaches the tracker CLI.
@@ -4716,8 +4717,25 @@ fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last()
     )
     .unwrap();
     assert_eq!(status(4), "waiting");
-    let proved = added.replace("- [ ] Post-merge: health", "- [x] Post-merge: health")
-        + "  Evidence: read by the owner\n";
+    // Ticked by hand with no Evidence line, the box is not passed: the
+    // issue stays open.
+    let clicked = added.replace("- [ ] Post-merge: health", "- [x] Post-merge: health");
+    plant_issue(&mut world, Some(&clicked));
+    assert_eq!(read_github(&mut baseline, LATER + 270), 0);
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 270,
+    )
+    .unwrap();
+    assert_eq!(
+        writes(&world).len(),
+        4,
+        "an unproved hand tick closes nothing"
+    );
+    let proved = format!("{clicked}  Evidence: read by the owner\n");
     plant_issue(&mut world, Some(&proved));
     world.gh(
         "PATCH repos/owner/repo/issues/7",
