@@ -28,4 +28,4 @@
 8. Retain the command output with the audit evidence.
    - The report uses each revision's committed generated-file inventory. Pending files do not affect it.
 
-In a partial clone, Git can fetch selected Markdown blobs and their tree and commit metadata into its object cache. Checkout files, the index and refs remain unchanged. This cache effect requires network access when selected objects are absent.
+In a partial clone, Git can fetch tree and commit metadata, the committed generated-file inventories at both revisions, and selected Markdown blobs into its object cache. Checkout files, the index and refs remain unchanged. This cache effect requires network access when selected objects are absent.
