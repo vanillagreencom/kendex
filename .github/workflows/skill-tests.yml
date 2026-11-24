@@ -2643,12 +2643,18 @@ jobs:
         # probes catch launchers whose optional platform binaries failed to
         # install before the Rust tests start.
         run: |
-          # The Copilot launcher can reach npm before its Linux binary.
-          copilot_version="$(npm view @github/copilot-linux-x64@latest version)" || exit $?
-          if [[ -z $copilot_version ]]; then
-            echo 'npm returned no version for @github/copilot-linux-x64@latest' >&2
-            exit 1
-          fi
+          # The Copilot launcher and its Linux binary can reach npm in either order.
+          launcher_versions="$(npm view @github/copilot versions --json)" || exit $?
+          linux_versions="$(npm view @github/copilot-linux-x64 versions --json)" || exit $?
+          copilot_version="$(jq -ner \
+            --argjson launcher "${launcher_versions:-null}" \
+            --argjson linux "${linux_versions:-null}" '
+              ($linux | arrays // error("npm returned no version list for @github/copilot-linux-x64")) as $linux
+              | ($launcher | arrays // error("npm returned no version list for @github/copilot"))
+              | map(select(test("^[0-9]+[.][0-9]+[.][0-9]+$") and IN($linux[])))
+              | max_by(split(".") | map(tonumber))
+              // error("npm lists no common stable version for Copilot and its Linux x64 package")
+            ')" || exit $?
           printf 'Installing @github/copilot@%s\n' "$copilot_version"
           npm install -g \
             opencode-ai \
