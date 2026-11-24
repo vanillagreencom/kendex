@@ -1254,23 +1254,24 @@ fn merged(
     inventory: &mut Inventory,
 ) -> Result<()> {
     let items = merge_items(inputs.lanes);
-    let parked_merged = |entry: &MergeItem, key: &str, allow_unread, produced: &mut Produced| -> bool {
-        // A park can advance from the GitHub read when the fleet publishes
-        // no tracker verdict. An explicit terminal verdict owns the close.
-        match (inputs.terminal.get(&entry.item), allow_unread) {
-            (None, false) => false,
-            (Some(TerminalState::Completed | TerminalState::Canceled), _) => true,
-            (Some(TerminalState::Open), _) | (None, true) => {
-                let (repo, pr) = key.rsplit_once('#').unwrap_or((key, ""));
-                produced.events.push(Event::ParkedMerged {
-                    item: entry.item.clone(),
-                    pr: pr.to_owned(),
-                    repo: repo.to_owned(),
-                });
-                true
+    let parked_merged =
+        |entry: &MergeItem, key: &str, allow_unread, produced: &mut Produced| -> bool {
+            // A park can advance from the GitHub read when the fleet publishes
+            // no tracker verdict. An explicit terminal verdict owns the close.
+            match (inputs.terminal.get(&entry.item), allow_unread) {
+                (None, false) => false,
+                (Some(TerminalState::Completed | TerminalState::Canceled), _) => true,
+                (Some(TerminalState::Open), _) | (None, true) => {
+                    let (repo, pr) = key.rsplit_once('#').unwrap_or((key, ""));
+                    produced.events.push(Event::ParkedMerged {
+                        item: entry.item.clone(),
+                        pr: pr.to_owned(),
+                        repo: repo.to_owned(),
+                    });
+                    true
+                }
             }
-        }
-    };
+        };
     let mut parked_items = BTreeSet::new();
     for entry in &items {
         // An observed merge does not establish that a park was released.

@@ -975,14 +975,22 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
             {"item": "KEN-3", "status": "running", "pending_pr": {"until_pr": 8, "repo": "owner/repo", "head": "abc"}},
         ]}));
     quiet_github(&mut world);
-    let pull = |number, branch| json!({"number": number, "state": "closed", "title": "repair", "body": null,
+    let pull = |number, branch| {
+        json!({"number": number, "state": "closed", "title": "repair", "body": null,
         "merged_at": "2026-10-01T00:00:00Z", "merge_commit_sha": null, "author_association": "NONE", "user": null,
         "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"},
-        "head": {"ref": branch, "sha": "0000000000000000000000000000000000000000", "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}});
-    world.gh("repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1", json!({"body": [pull(7, "ken-1")]}));
+        "head": {"ref": branch, "sha": "0000000000000000000000000000000000000000", "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}})
+    };
+    world.gh(
+        "repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1",
+        json!({"body": [pull(7, "ken-1")]}),
+    );
     world.gh("search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody&per_page=100&page=1",
         json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}));
-    world.gh("repos/owner/repo/pulls/8", json!({"body": pull(8, "dependency")}));
+    world.gh(
+        "repos/owner/repo/pulls/8",
+        json!({"body": pull(8, "dependency")}),
+    );
     let both = [("KEN-1", "7", "owner/repo"), ("KEN-2", "8", "owner/repo")];
     for (team, verdict, expected) in [
         (Some("kendex"), None, &[][..]),
@@ -994,15 +1002,16 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
         assert_eq!(settings.linear_team.as_deref(), team);
         let shared = Shared::default();
         if let Some(verdict) = verdict {
-            shared.lock().unwrap().terminal = BTreeMap::from([
-                ("KEN-1".to_owned(), verdict),
-                ("KEN-2".to_owned(), verdict),
-            ]);
+            shared.lock().unwrap().terminal =
+                BTreeMap::from([("KEN-1".to_owned(), verdict), ("KEN-2".to_owned(), verdict)]);
         }
         let mut body = github::body(world.github_context(settings, None, &["owner/repo"], shared));
         let clock = FakeClock::new();
         let mut baseline = Baseline::default();
-        for (pass, wall) in [("first", SINCE_EPOCH + 1000), ("standing", SINCE_EPOCH + 1240)] {
+        for (pass, wall) in [
+            ("first", SINCE_EPOCH + 1000),
+            ("standing", SINCE_EPOCH + 1240),
+        ] {
             let produced = pass_as(Duty::GitHub, &mut body, &mut baseline, &clock, wall).unwrap();
             let parked: Vec<_> = produced
                 .events
@@ -1014,9 +1023,17 @@ fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(parked, expected, "pass={pass} team={team:?} verdict={verdict:?}");
+            assert_eq!(
+                parked, expected,
+                "pass={pass} team={team:?} verdict={verdict:?}"
+            );
             if pass == "standing" {
-                assert!(!produced.events.iter().any(|event| matches!(event, Event::Merged { .. })));
+                assert!(
+                    !produced
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, Event::Merged { .. }))
+                );
             }
         }
     }
