@@ -276,7 +276,7 @@ static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You.(ve|re) (hit|reached) your (?:[a-z ]*|5-hour )limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
 static AUTH_FAILURE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\s\u{a0}]*(⎿[\s\u{a0}]*|■\s*|✗\s*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages\. Please run /login)").unwrap()
+    Regex::new(r"^[\s\u{a0}]*(⎿[\s\u{a0}]*|■\s*|✗\s*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages\. Please run /login|Please run /login · API Error: 401 OAuth access token has expired\. Re-authenticate to continue\.\s*$)").unwrap()
 });
 /// A user-turn marker: Claude's and Copilot's `❯`, Codex's `›`. A submitted
 /// turn is echoed as the marker, a space and the text; the live composer is
@@ -667,6 +667,23 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn an_expired_oauth_token_banner_is_an_auth_wall() {
+        let banner = "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.";
+        let read = |line| {
+            let screen = format!("❯ work\n{line}\n❯\u{a0}");
+            judge(&screen, Harness::Claude, &ProcessReading::HarnessUp, None)
+        };
+        assert_eq!(
+            read(banner),
+            State::Walled {
+                kind: WallKind::Auth,
+                banner: banner.to_owned()
+            }
+        );
+        assert_eq!(read(&format!("\"{banner}\"")), State::Idle);
     }
 
     #[test]
