@@ -343,11 +343,9 @@ fn completions(
     now: u64,
 ) -> Result<Vec<super::github::Completion>> {
     let gh = super::github::handle(&ctx.gh);
-    let repos = ctx
-        .settings
-        .reads
-        .watched(ctx.repos.iter().map(String::as_str));
-    let mut rows = super::github::report_merges(&gh, &repos, &lanes(doc)?, since, now)?;
+    let lanes = lanes(doc)?;
+    let repos = super::github::repositories(&ctx.repos, &lanes, &ctx.settings);
+    let mut rows = super::github::report_merges(&gh, &repos, &lanes, since, now)?;
     for row in doc
         .get("fleet_log")
         .and_then(Value::as_array)

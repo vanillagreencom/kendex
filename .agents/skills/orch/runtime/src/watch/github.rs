@@ -1625,7 +1625,18 @@ pub(super) fn report_merges(
                 continue;
             };
             for lane in lanes {
-                let pr = recorded(lane)
+                let recorded_pr = recorded(lane);
+                if lane.tracker.as_deref() == Some("github") {
+                    let lane_repo = lane
+                        .repo
+                        .as_deref()
+                        .filter(|repo| !repo.is_empty())
+                        .or_else(|| recorded_pr.as_ref().map(|(repo, _)| repo.as_str()));
+                    if lane_repo.is_none_or(|lane_repo| !lane_repo.eq_ignore_ascii_case(repo)) {
+                        continue;
+                    }
+                }
+                let pr = recorded_pr
                     .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
                     .map(|(_, number)| number);
                 let row = Completion {
