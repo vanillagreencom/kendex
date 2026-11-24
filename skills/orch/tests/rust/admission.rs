@@ -1488,14 +1488,15 @@ fn a_holder_whose_stage_cannot_be_read_or_whose_mailbox_is_on_its_host_is_not_jo
 
 /// A running hosted holder of a shared path refuses `join-unreachable`
 /// whatever its branch shows, since edits it has not committed are on its
-/// host alone; the refusal names what its head commit changes against the
-/// default branch, as GitHub compares them. A shared change, a rename's old
-/// path among them, refuses as an unjudged holder did. A head that changes
-/// none refuses `worktree-unproved` naming the head. A failed comparison, a
-/// head GitHub does not hold and a comparison at GitHub's file cap each
-/// refuse naming the branch and the cause. Each refusal writes nothing.
+/// host alone; the refusal says whether its head commit, as GitHub compares
+/// it with the default branch, changes a shared path. A shared change, a
+/// rename's old path among them, refuses as an unjudged holder did. A head
+/// that changes none refuses `worktree-unproved` naming the head. A failed
+/// comparison, a head GitHub does not hold and a comparison at GitHub's
+/// file cap each refuse naming the branch and the cause. Each refusal writes
+/// nothing.
 #[test]
-fn a_hosted_holder_refuses_a_shared_path_naming_what_its_head_changes() {
+fn a_hosted_holder_refuses_a_shared_path_naming_its_head_verdict() {
     let mut fleet = Fleet::new();
     fleet.init_fleet();
     let world = fleet.dir.path().join("host");
