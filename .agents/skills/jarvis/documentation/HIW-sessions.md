@@ -23,7 +23,9 @@ Before a normal handover, Jarvis collects the attached agents it launched. An em
 
 Jarvis saves the handoff and starts the successor. The previous assistant stays in control until the successor confirms its identity and receives the start instructions. The successor reads the recovery context, checks open tracker work and messages, and loads further guidance for the action it selects.
 
-Old or incomplete notes widen the source checks. Unread evidence remains an unresolved next action. If a normal handover fails, Jarvis reports the cause and keeps the handoff while the previous assistant stays in control. If a successor fails its readiness check, Jarvis can try another eligible account.
+Old or incomplete notes widen the source checks. Unread evidence remains an unresolved next action.
+
+If a successor fails its readiness check before the previous assistant ends, the previous assistant stays in control and Jarvis can try another eligible account. If the transfer stalls or fails after the previous assistant ends, that assistant remains stopped. The saved handoff retains the recovery context, and the transfer status guides the next step.
 
 ## Current coverage
 
