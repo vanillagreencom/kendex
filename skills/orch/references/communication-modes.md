@@ -71,6 +71,8 @@ The item write needs `ORCH_OWNER_ASK_LABEL` and `ORCH_OWNER_EMAIL` ([settings.md
 
 An item ask requires `--do [TEXT]`, worded as communication's [action requests](../../communication/references/questions.md#action-requests). An ask with no item stays in chat and creates no issue.
 
+To change a question already asked, send the new question as a new ask. What it replaces, and what becomes of the earlier question comment: [mailbox § Replacing an owner question](../../mailbox/SKILL.md#replacing-an-owner-question).
+
 ### Answers
 
 - The person answers with one comment on the issue and changes no state.

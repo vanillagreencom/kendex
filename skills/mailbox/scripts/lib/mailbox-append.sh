@@ -285,9 +285,28 @@ owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
   return 2
 }
 
-owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
-  local tracker="$1" envelope="$2" work="$3" asker="$4" issue labels current owner description latest owns_description original_description
-  local added_label rollback_labels comment_error comment_id workspace mentioned
+# The question comment's first line, which Linear renders as a mention of the
+# owner, and the line a standing question is recognised by.
+owner_tracker_mention() { # WORKSPACE OWNER_JSON
+  jq -rn --arg workspace "$1" --argjson owner "$2" \
+    '"https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri)'
+}
+
+# The id of the newest question to the owner standing on the item, empty where
+# none stands: a top-level comment in the form owner_tracker_ask posts, not
+# marked replaced, with no close reply under it (the watch's ruling comment
+# opens `ask=<id> closed (`). Comments arrive in `comments list --format=safe`.
+OWNER_STANDING_JQ='. as $rows
+  | [$rows[] | select(.parent_id == null) | . as $question
+    | ($question.body | gsub("\r"; "") | split("\n")) as $lines
+    | select($lines[0] == $mention and any($lines[]; startswith("Reply to this comment")))
+    | select(any($rows[]; .parent_id == $question.id
+        and (.body | startswith("ask=")) and (.body | contains(" closed ("))) | not)]
+  | sort_by(.created_at) | last | .id // ""'
+
+owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER OWN_OPEN
+  local tracker="$1" envelope="$2" work="$3" asker="$4" own_open="$5" issue labels current owner description latest owns_description original_description
+  local added_label rollback_labels comment_error comment_id workspace mention standing mentioned
   local rollback_label_args=()
   OWNER_TRACKER_POSTED=0
   OWNER_TRACKER_COMMENT=""
@@ -304,11 +323,28 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   workspace="$("$tracker" teams keys 2>"$work/tracker.err" | jq -re '.urlKey | select(type == "string" and test("\\S"))')" || {
     OWNER_TRACKER_CAUSE=workspace-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
-  "$tracker" issues update "$issue" --assignee "$(jq -r '.id' <<<"$owner")" >"$work/tracker.out" 2>"$work/tracker.err" || {
-    OWNER_TRACKER_CAUSE=assign; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
-  }
+  mention="$(owner_tracker_mention "$workspace" "$owner")" || return 1
   current="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker.err")" || {
     OWNER_TRACKER_CAUSE=labels-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
+  }
+  # Another overseer's question can already stand on the item, such as the
+  # one a Jarvis session relays from its own mailbox: the owner reads one
+  # question, so this ask follows that comment and writes nothing. An open
+  # ask of this mailbox on the item is replaced instead (OWN_OPEN=1).
+  if [[ "$own_open" != 1 ]] && jq -e --arg label "$OWNER_TRACKER_LABEL" --argjson owner "$owner" \
+      '(.labels | index($label)) != null and .assignee == $owner.name' <<<"$current" >/dev/null; then
+    standing="$("$tracker" comments list "$issue" --format=safe 2>"$work/tracker.err" |
+      jq -er --arg mention "$mention" "$OWNER_STANDING_JQ")" || {
+      OWNER_TRACKER_CAUSE=comments-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"; return 0;
+    }
+    if [[ -n "$standing" ]]; then
+      OWNER_TRACKER_POSTED=1
+      OWNER_TRACKER_COMMENT="$standing"
+      return 0
+    fi
+  fi
+  "$tracker" issues update "$issue" --assignee "$(jq -r '.id' <<<"$owner")" >"$work/tracker.out" 2>"$work/tracker.err" || {
+    OWNER_TRACKER_CAUSE=assign; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
   labels="$(owner_tracker_labels "$current" ADD)" || return 1
   added_label="$(jq -r --arg label "$OWNER_TRACKER_LABEL" '.labels | index($label) == null' <<<"$current")" || return 1
@@ -317,8 +353,8 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   description="${description%.}"
   # The comment is a message to a person. Ids stay in the mailbox: the watch
   # finds this comment by the id the tracker-posted record keeps.
-  jq -r --arg workspace "$workspace" --argjson owner "$owner" --arg asker "$asker" '
-    "https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri), "",
+  jq -r --arg mention "$mention" --arg asker "$asker" '
+    $mention, "",
     .text, "", ("Options: " + (.options | join(", "))),
     (if .reserved == true then "No default. This action waits for your approval. Due " + .deadline
       else "Recommendation: " + .recommend + ". At " + .deadline + " it stands unless you answer." end),
@@ -387,4 +423,53 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
     >"$work/tracker-rollback.out" 2>"$work/tracker-rollback.err" ||
     owner_tracker_unwritten "$issue" rollback-update "$work/tracker-rollback.err"
   return 0
+}
+
+# A replaced ask's question comment struck through, under one line naming the
+# comment of the ask that replaced it, so the owner answers that one only.
+# Linear refuses an edit of another author's comment: a comment another
+# credential wrote, such as a question this mailbox's ask followed, stays as
+# it is and is reported `cause=other-author`. Every outcome but an edit made
+# is one `replace-unmarked` line on stderr; the close does not wait on it.
+owner_tracker_mark_replaced() { # TRACKER WORK REPLACED_JSON NEW_ISSUE NEW_COMMENT
+  local tracker="$1" work="$2" replaced="$3" new_issue="$4" new_comment="$5" id issue comment rows new_rows url="" cause=""
+  id="$(jq -r '.id' <<<"$replaced")" || return 1
+  issue="$(jq -r '.issue' <<<"$replaced")" || return 1
+  comment="$(jq -r '.tracker_comment' <<<"$replaced")" || return 1
+  if [[ -z "${OWNER_TRACKER_SELF:-}" ]]; then
+    OWNER_TRACKER_SELF="$("$tracker" users me --format=safe 2>"$work/replace.err" |
+      jq -re '.id | select(type == "string" and test("\\S"))')" || OWNER_TRACKER_SELF=""
+  fi
+  if [[ -z "$OWNER_TRACKER_SELF" ]]; then
+    cause=identity-read
+  elif ! rows="$("$tracker" comments list "$issue" --format=safe 2>"$work/replace.err")" ||
+     ! jq -e 'type == "array"' <<<"$rows" >/dev/null 2>&1; then
+    cause=comments-read
+  elif ! jq -e --arg id "$comment" 'any(.[]; .id == $id)' <<<"$rows" >/dev/null; then
+    cause=comment-missing
+  elif ! jq -e --arg id "$comment" --arg self "$OWNER_TRACKER_SELF" \
+      'any(.[]; .id == $id and .user_id == $self)' <<<"$rows" >/dev/null; then
+    cause=other-author
+  fi
+  # The newer comment's link, from the same read where it shares the item.
+  if [[ -z "$cause" && -n "$new_comment" ]]; then
+    new_rows="$rows"
+    [[ "$new_issue" == "$issue" ]] ||
+      new_rows="$("$tracker" comments list "$new_issue" --format=safe 2>"$work/replace.err")" || cause=comments-read
+    [[ -n "$cause" ]] ||
+      url="$(jq -r --arg id "$new_comment" 'map(select(.id == $id) | .url // "") | first // ""' <<<"$new_rows")" ||
+      cause=comments-read
+  fi
+  if [[ -z "$cause" ]]; then
+    jq -r --arg id "$comment" --arg url "$url" '
+      (map(select(.id == $id)) | first | .body | gsub("\r"; "") | sub("\n+$"; "") | split("\n")) as $lines
+      | ("**Replaced** by " + (if $url == "" then "a newer question" else "[the newer question](" + $url + ")" end)
+        + ". Answer that one only."), "",
+        ($lines[] | if test("\\S") then "~~" + . + "~~" else . end)' <<<"$rows" >"$work/replaced-comment" || return 1
+    if ! "$tracker" comments update "$comment" --body-file "$work/replaced-comment" >"$work/replace.out" 2>"$work/replace.err" ||
+       ! jq -e '.success == true' "$work/replace.out" >/dev/null 2>&1; then
+      cause=comment-update
+    fi
+  fi
+  [[ -z "$cause" ]] || printf 'lane-mail: replace-unmarked id=%s issue=%s cause=%s\n' "$id" "$issue" "$cause" >&2
 }

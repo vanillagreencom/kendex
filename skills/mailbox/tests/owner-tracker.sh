@@ -3,6 +3,7 @@
 # Inputs: skills/mailbox/scripts/**, skills/linear/scripts/**, skills/slack/scripts/**, skills/orch/references/secret-value.ere,
 # skills/mailbox/tests/lib/owner-tracker.py,
 # skills/mailbox/tests/lib/owner-tracker-close.py,
+# skills/mailbox/tests/lib/owner-tracker-replace.py,
 # skills/orch/tests/lib/assertions.sh, skills/orch/tests/lib/growth-state.sh.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -55,6 +56,16 @@ assert_eq "$(jq '.rollback_labels' <<<"$CLOSE_FACTS")" true 'rollback removes on
 assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
 assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
 assert_eq "$(jq '.comment_delete' <<<"$CLOSE_FACTS")" true 'a refused comment delete reports its key and retains the answer'
+REPLACE_FACTS="$(python3 "$ROOT/skills/mailbox/tests/lib/owner-tracker-replace.py" \
+  "${MAILBOX_UNDER_TEST:-$ROOT/skills/mailbox}" "$TMP_ROOT" "$BASH")"
+assert_eq "$(jq '.marked' <<<"$REPLACE_FACTS")" true 'a new ask on the item strikes the earlier question under a link to the new one'
+assert_eq "$(jq '.closed' <<<"$REPLACE_FACTS")" true 'replaced asks close as resolve closes them and the new question keeps the item'
+assert_eq "$(jq '.other_item' <<<"$REPLACE_FACTS")" true 'an open ask on another item is not replaced'
+assert_eq "$(jq '.replaces_field' <<<"$REPLACE_FACTS")" true 'the new ask names each ask it replaced and its question comment'
+assert_eq "$(jq '.replaces_refused' <<<"$REPLACE_FACTS")" true 'a --replaces naming no open owner ask appends nothing'
+assert_eq "$(jq '.replaced_reply' <<<"$REPLACE_FACTS")" true 'a reply under a replaced question reaches the open ask naming both'
+assert_eq "$(jq '.relay' <<<"$REPLACE_FACTS")" true 'a second overseer asking on the item follows the standing question in either order'
+assert_eq "$(jq '.own_author' <<<"$REPLACE_FACTS")" true 'the replace step edits no comment another credential wrote'
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they
 # were, while an ask without --issue still lands in chat.
@@ -99,7 +110,7 @@ owner account|ORCH_OWNER_ASK_LABEL=owner-gated|ORCH_OWNER_EMAIL
 both||ORCH_OWNER_ASK_LABEL,ORCH_OWNER_EMAIL
 ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
-  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
+  for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings replace adopt replaced-reply; do
     mkdir -p "$TMP_ROOT/control-$rule"
     cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/control-$rule/scripts"
     if [[ "$rule" == pending ]]; then
@@ -128,8 +139,7 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
         'OWNER_TRACKER_COMMENT="$comment_id"' ':'
       assertion='the folded ask names its failure cause or posted comment'
     elif [[ "$rule" == mention ]]; then
-      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        '"https://linear.app/" + ($workspace | @uri) + "/profiles/" + ($owner.display_name | @uri), "",' ''
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" '    $mention, "",' ''
       assertion='the question comment mentions the owner and carries no ask id'
     elif [[ "$rule" == attribution ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" ' --no-attribution --body-file' ' --body-file'
@@ -138,6 +148,18 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
         'owner_tracker_mentioned "$tracker" "$comment_id"' 'true "$tracker" "$comment_id"'
       assertion='a saved comment without the owner mention refuses by its key and records no post'
+    elif [[ "$rule" == replace ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
+        'done <<<"$(jq -c '"'"'.[]'"'"' <<<"$REPLACE_OPEN")"' 'done <<<""'
+      assertion='a new ask on the item strikes the earlier question under a link to the new one'
+    elif [[ "$rule" == adopt ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
+        'if [[ -n "$standing" ]]; then' 'if false && [[ -n "$standing" ]]; then'
+      assertion='a second overseer asking on the item follows the standing question in either order'
+    elif [[ "$rule" == replaced-reply ]]; then
+      mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
+        '| . as $row | select(any($replaced[]; .thread == ($row.parent_id // "")) | not)' ''
+      assertion='a reply under a replaced question reaches the open ask naming both'
     elif [[ "$rule" == close-untracked ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lane-mail" \
         'lm_resolved "$MSGID" "$BY" "$CLOSE_ID"' \
@@ -145,8 +167,8 @@ if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
       assertion='a close calls no tracker'
     elif [[ "$rule" == retained-error ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \
-        'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"' \
-        'owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"'
+        'OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" "$work/tracker.err"' \
+        'OWNER_TRACKER_CAUSE=label; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"'
       assertion='a refused label retains tracker error bytes after close'
     elif [[ "$rule" == rollback-owner ]]; then
       mutate_file "$TMP_ROOT/control-$rule/scripts/lib/mailbox-append.sh" \

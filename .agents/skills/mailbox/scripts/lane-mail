@@ -41,7 +41,10 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
 owner-answers reads posted owner asks once, repairs their action descriptions,
-and delivers later owner comments through the existing delivery-id check. With
+and delivers later owner comments through the existing delivery-id check. An
+owner reply under a question an open ask replaced is delivered to that open
+ask, its text opening with one line naming the replaced ask and the open one,
+and never to the ask whose question it sits under. With
 no optional Linear skill it exits 0 with `owner-answers: tracker=absent`.
 OVERSEE_WATCH_TRACKER selects an explicit tracker CLI. The pass prints JSON
 line and delivered receipts for tracker marks, then `owner-answers: read=STATE`
@@ -229,6 +232,7 @@ Overseer side:
 Owner channel, the overseer's own mailbox from any of its checkouts:
   ask --item overseer --to owner --file PATH --options a,b [--purpose memory]
               (--recommend a --effect none | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM --do TEXT]
+              [--replaces MSGID]
               --issue requires --do: plain words saying what the
               person does and what evidence closes it. It adds the configured
               Linear assignment, label, opening action line and comment.
@@ -236,6 +240,28 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               posted only once the saved comment's mention of the owner
               reads back; otherwise tracker-unwritten cause=mention, or
               cause=mention-read, deletes the comment and restores the item.
+              Where the item already carries that label and assignee and a
+              question to the owner stands there that this mailbox did not
+              ask, such as one another repository's overseer or a Jarvis
+              session asked, the ask writes nothing to the item and its
+              tracker-posted record names that comment, so the owner reads
+              one question and replies reach every ask that follows it.
+              An item ask replaces every open ask of this mailbox whose
+              question stands on the same item, and --replaces MSGID replaces
+              that open owner ask too, with or without a tracker comment; an
+              open ask on another item is not replaced. After the new ask and
+              its tracker outcome land, each replaced ask's question comment
+              is edited to open with one line naming the new question's
+              comment and to strike its own lines through, where this Linear
+              credential wrote it, and the ask is closed by `resolve` as
+              `resolve --id` closes it, its `lane-mail: resolved` line on
+              stderr. A comment left unedited prints `lane-mail:
+              replace-unmarked id=<id> issue=<item> cause=<cause>`, cause
+              other-author for another credential's comment, and a close
+              refused other than resolved-already prints `lane-mail:
+              replace-unclosed id=<id> cause=<key>`, both on stderr; the ask
+              stands either way. --replaces naming no owner ask is
+              `ask-unknown`, and a closed one `resolved-already`
               With ORCH_OWNER_ASK_LABEL or the owner account
               (ORCH_OWNER_EMAIL, else KENDEX_USER_EMAIL) unset, or the
               settings unreadable, it is refused `item-ask-unconfigured`
@@ -468,6 +494,8 @@ Options:
   --wait N      ask --to owner only: minutes until the ask's deadline
   --draft PATH  ask --to owner only: the message the owner approves
   --reserved    ask --to owner only: a decision no deadline closes
+  --replaces MSGID
+                ask --to owner only: an open owner ask this ask replaces
   --due         pending only: asks whose deadline has passed
   --text PATH   resolve only: the owner's answer, read as --file is
   --default     resolve only: close at deadline; recommend only if unanswered
@@ -499,6 +527,8 @@ answer_source (`send` or `resolve` on new owner answers; absent on older
 answers whose producing verb cannot be identified),
 draft (a draft ask only: recipient, medium, text and text_hash),
 reserved (true on a reserved ask only), issue (a configured item ask),
+replaces (an ask that replaced open asks: one {id, issue, tracker_comment}
+object per ask it replaced and per ask those had replaced),
 tracker_pending (true on the immutable ask while its tracker outcome is missing),
 tracker_posted (a boolean projected by mailbox reads after the complete tracker
 question is confirmed), tracker_label (the confirmed label used for close
@@ -827,6 +857,8 @@ SESSION_GIVEN=0
 ACCOUNT=""
 ISSUE=""
 OWNER_DO=""
+REPLACES=""
+REPLACES_FIELD='[]'
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -838,6 +870,7 @@ while [ "$#" -gt 0 ]; do
     --item) need_val "$@"; ITEM="$2"; shift 2 ;;
     --issue) need_val "$@"; ISSUE="$2"; shift 2 ;;
     --do) [ "$#" -ge 2 ] || refuse owner-action-missing --do; OWNER_DO="$2"; shift 2 ;;
+    --replaces) need_val "$@"; REPLACES="$2"; shift 2 ;;
     --file | --text)
       need_val "$@"; FILE_GIVEN="$2"; FILE="$2"
       case "$FILE" in
@@ -961,6 +994,7 @@ for given in $OPTS_GIVEN; do
       esac ;;
     --issue) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --issue ;;
     --do) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ] || refuse option-unknown --do ;;
+    --replaces) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --replaces ;;
     --ref) case "$VERB:$ITEM" in ask:overseer | notice:overseer) ;; *) refuse option-unknown --ref ;; esac ;;
     --progress)
       [ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress
@@ -1209,7 +1243,11 @@ owner_answers() {
   if ! "$LANE_MAIL" pending --item "$ITEM" --root "$ROOT" --to owner >"$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=asks' >&2; return 0
   fi
-  if ! asks="$(jq -s 'any(.[]; .tracker_posted == true)' "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
+  # An open ask's `replaces` names the question comments it replaced: a reply
+  # under one is delivered to that open ask, prefixed with both asks' ids,
+  # and never as an answer to the question it sits under.
+  if ! asks="$(jq -s 'any(.[]; .tracker_posted == true or any((.replaces // [])[]; .tracker_comment != null))' \
+      "$WORK_DIR/tracker-asks" 2>"$WORK_DIR/tracker.err")"; then
     echo 'KEN-3624-unread cause=asks-format' >&2; return 0
   fi
   [[ "$asks" == true ]] || { OWNER_TRACKER_READ=read; return 0; }
@@ -1220,6 +1258,7 @@ owner_answers() {
   fi
   : >"$WORK_DIR/tracker-item-lists"
   while IFS= read -r label; do
+    [[ -n "$label" ]] || continue
     if ! items="$("$TRACKER" issues list --assignee "$OWNER_TRACKER_EMAIL" --label "$label" --max --format=safe 2>"$WORK_DIR/tracker.err")"; then
       tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
       echo 'KEN-3624-unread cause=issues' >&2; return 0
@@ -1234,7 +1273,7 @@ owner_answers() {
       echo 'KEN-3624-unread cause=issues-format' >&2; return 0
     fi
   done <<<"$labels"
-  if ! items="$(jq -cs 'add | unique_by(.id)' "$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err")"; then
+  if ! items="$(jq -cs 'add // [] | unique_by(.id)' "$WORK_DIR/tracker-item-lists" 2>"$WORK_DIR/tracker.err")"; then
     echo 'KEN-3624-unread cause=issues-format' >&2; return 0
   fi
   if ! jq -c --slurpfile asks "$WORK_DIR/tracker-asks" "$OWNER_ACTION_JQ"'
@@ -1276,7 +1315,9 @@ owner_answers() {
     jq -cn --arg ask "$ask" --arg issue "$issue" --arg cause "$cause" \
       '{kind: "line", ask: $ask, issue: $issue, cause: (if $cause == "" then null else $cause end)}' || return 1
   done <"$WORK_DIR/tracker-repairs"
-  if ! items="$(jq -r '.[].id' <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
+  if ! items="$(jq -r --slurpfile asks "$WORK_DIR/tracker-asks" '
+      [.[].id, ($asks[] | (.replaces // [])[] | select(.tracker_comment != null) | .issue)] | unique[]' \
+      <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
     echo 'KEN-3624-unread cause=issues-format' >&2; return 0
   fi
   while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$items"
@@ -1293,22 +1334,30 @@ owner_answers() {
   fi
   if ! jq -cn --slurpfile comments "$WORK_DIR/tracker-comments" --arg email "$OWNER_TRACKER_EMAIL" \
     --slurpfile asks "$WORK_DIR/tracker-asks" '
-      $asks[] | select(.tracker_posted == true) | . as $ask
+      [$asks[] | .id as $open | (.replaces // [])[] | select(.tracker_comment != null)
+        | {open: $open, replaced: .id, issue, thread: .tracker_comment}] as $replaced
+      | def owned: (.user_email | ascii_downcase) == ($email | ascii_downcase);
+      ($asks[] | select(.tracker_posted == true) | . as $ask
       | ($comments[0][$ask.issue] // []) as $rows
       # A record without a comment id finds its question by the ask= line.
       | ([$rows[] | select(if $ask.tracker_comment != null then .id == $ask.tracker_comment
           else (.body | split("\n") | index("ask=" + $ask.id)) != null end)]
         | sort_by(.created_at) | first) as $posted
       | select($posted != null)
-      | ($rows | sort_by(.created_at))[] | select((.user_email | ascii_downcase) == ($email | ascii_downcase)
-          and .created_at > $posted.created_at and .id != $posted.id)
-      | {ask: $ask.id, issue: $ask.issue, comment: .}' >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
+      | ($rows | sort_by(.created_at))[] | select(owned and .created_at > $posted.created_at and .id != $posted.id)
+      | . as $row | select(any($replaced[]; .thread == ($row.parent_id // "")) | not)
+      | {ask: $ask.id, issue: $ask.issue, comment: .}),
+      ($replaced[] | . as $replaced_ask | ($comments[0][.issue] // []) | sort_by(.created_at)[]
+        | select(owned and .parent_id == $replaced_ask.thread)
+        | {ask: $replaced_ask.open, issue: $replaced_ask.issue, comment: ., replaced: $replaced_ask.replaced})' \
+    >"$WORK_DIR/tracker-answers" 2>"$WORK_DIR/tracker.err"; then
     echo 'KEN-3624-unread cause=comments-format' >&2; return 0
   fi
   while IFS= read -r comment; do
     ask="$(jq -r '.ask' <<<"$comment")" || return 1
     id="$(jq -r '.comment.id' <<<"$comment")" || return 1
-    jq -r '.comment.body' <<<"$comment" >"$WORK_DIR/tracker-answer" || return 1
+    jq -r 'if .replaced then "Reply under the replaced question of ask \(.replaced); the open question is ask \(.ask).", "" else empty end,
+      .comment.body' <<<"$comment" >"$WORK_DIR/tracker-answer" || return 1
     rc=0
     "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --re "$ask" --delivery-id "linear:$id" \
       --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
@@ -2019,6 +2068,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg purpose "$PURPOSE" --arg open "$OPEN" --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
     --arg thread "$THREAD_TS" --arg source "$DATA_SOURCE" --slurpfile parent "$WORK_DIR/parent.json" \
+    --argjson replaces "$REPLACES_FIELD" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
       $parent[0] as $parent |
       {id: $id, kind: $kind, at: ($now | todate), from: $from}
@@ -2028,6 +2078,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $to == "" then {} else {to: $to} end)
       + (if $issue == "" then {} else {issue: $issue} end)
       + (if $issue == "" then {} else {do: $action} end)
+      + (if $replaces == [] then {} else {replaces: $replaces} end)
       + (if $ref == "" then {} else {ref: $ref} end)
       + (if $progress == "1" then {progress: true} else {} end)
       + (if $attach == "" then {} else {attach: $attach} end)
@@ -2647,7 +2698,33 @@ case "$VERB" in
       # Named before the append, so a refused read leaves no ask pending.
       OWNER_TRACKER_ASKER="the $(lm_repository) overseer" || exit
     fi
+    # The open asks this one replaces: the one --replaces names, and for an
+    # item ask every open ask of this mailbox whose question stands on the
+    # same item. Read before the append, so the new ask is none of them and a
+    # refused --replaces appends nothing. The envelope's `replaces` keeps
+    # those asks' own `replaces` too, so a reply under any question in the
+    # chain reaches the one ask left open.
+    REPLACE_OPEN='[]'
+    if [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && { [ -n "$ISSUE" ] || [ -n "$REPLACES" ]; }; then
+      if [ -n "$REPLACES" ]; then
+        lm_ask "$REPLACES"
+        MSGID="$REPLACES"
+        lm_reserve_unclosed
+        MSGID=""
+      fi
+      "$SCRIPT_DIR/lane-mail" pending --item overseer --root "$ROOT" --to owner \
+        >"$WORK_DIR/replace-open" 2>"$WORK_DIR/replace.err" ||
+        refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/replace.err")"
+      REPLACE_OPEN="$(jq -cs --arg issue "$ISSUE" --arg id "$REPLACES" '
+        map(select(.kind == "ask" and (.id == $id
+          or ($issue != "" and .issue == $issue and .tracker_posted == true))))' \
+        "$WORK_DIR/replace-open")" || refuse file-unreadable "$WORK_DIR/replace-open"
+      REPLACES_FIELD="$(jq -c 'map({id} + (if .issue then {issue} else {} end)
+          + (if .tracker_comment then {tracker_comment} else {} end), (.replaces // [])[])
+        | unique_by(.id)' <<<"$REPLACE_OPEN")" || refuse file-unreadable "$WORK_DIR/replace-open"
+    fi
     LINE="$(lm_envelope "$VERB")"
+    ASK_ID="$(cat -- "$WORK_DIR/id")" || refuse file-unreadable "$WORK_DIR/id"
     if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
       LINE="$(jq -c '.tracker_pending = true' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
     fi
@@ -2670,7 +2747,9 @@ case "$VERB" in
       lm_append_local "$TO_OVERSEER" "$LINE"
     fi
     if [ "$OWNER_TRACKER_ACTIVE" -eq 1 ]; then
-      if ! owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR" "$OWNER_TRACKER_ASKER"; then
+      OWN_OPEN="$(jq -r --arg issue "$ISSUE" 'if any(.[]; .issue == $issue and .tracker_posted == true) then 1 else 0 end' \
+        <<<"$REPLACE_OPEN")" || refuse file-unreadable "$WORK_DIR/replace-open"
+      if ! owner_tracker_ask "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$LINE" "$WORK_DIR" "$OWNER_TRACKER_ASKER" "$OWN_OPEN"; then
         owner_tracker_unwritten "$ISSUE" "$OWNER_TRACKER_CAUSE"
       fi
       if [ "$OWNER_TRACKER_POSTED" -eq 1 ]; then
@@ -2684,8 +2763,31 @@ case "$VERB" in
       fi
       lm_append_local "$TO_OVERSEER" "$POSTED_LINE"
     fi
+    # Each replaced ask's question comment is marked, then the ask is closed
+    # as `resolve` closes it, by that verb itself; a close that landed first
+    # leaves nothing to do. Both outcomes print on stderr: stdout is the id.
+    while IFS= read -r replaced; do
+      [ -n "$replaced" ] || continue
+      if [ "$(jq -r '.tracker_comment // "" | . != ""' <<<"$replaced")" = true ]; then
+        owner_tracker_mark_replaced "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$WORK_DIR" \
+          "$(jq -c '{id, issue, tracker_comment}' <<<"$replaced")" "$ISSUE" "${OWNER_TRACKER_COMMENT:-}" </dev/null ||
+          printf 'lane-mail: replace-unmarked id=%s cause=prepare\n' "$(jq -r '.id' <<<"$replaced")" >&2
+      fi
+      replaced_id="$(jq -r '.id' <<<"$replaced")" || refuse file-unreadable "$WORK_DIR/replace-open"
+      rc=0
+      "$SCRIPT_DIR/lane-mail" resolve --item overseer --root "$ROOT" --id "$replaced_id" \
+        </dev/null >"$WORK_DIR/replace.out" 2>"$WORK_DIR/replace.err" || rc=$?
+      if [ "$rc" -eq 0 ]; then
+        cat -- "$WORK_DIR/replace.out" >&2
+      else
+        replace_refusal="$(head -n 1 -- "$WORK_DIR/replace.err")" || replace_refusal=""
+        replace_refusal="${replace_refusal#lane-mail: }"
+        [ "${replace_refusal%%=*}" = resolved-already ] ||
+          printf 'lane-mail: replace-unclosed id=%s cause=%s\n' "$replaced_id" "${replace_refusal%%=*}" >&2
+      fi
+    done <<<"$(jq -c '.[]' <<<"$REPLACE_OPEN")"
     if [ "$VERB" = ask ]; then
-      printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
+      printf 'id=%s\n' "$ASK_ID"
     else
       lm_sent
     fi
