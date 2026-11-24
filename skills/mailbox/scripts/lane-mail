@@ -54,7 +54,9 @@ of the latest open question on the item before it. Any other comment goes to
 no ask. An answer through a replaced question opens with one line naming the
 replaced ask and the open one. An item Linear answers it holds no issue for
 holds no comments: stderr names it as `owner-answers: item-missing
-issue=<item>`, and the other items are read. With
+issue=<item>`, and the other items are read. An item off the owner list that
+an ask names by no identifier, only a UUID, is not read: stderr names it as
+`owner-answers: item-unreadable issue=<ref> cause=ref-form`. With
 no optional Linear skill it exits 0 with `owner-answers: tracker=absent`.
 OVERSEE_WATCH_TRACKER selects an explicit tracker CLI. The pass prints JSON
 line and delivered receipts for tracker marks, then `owner-answers: read=STATE`
@@ -1391,13 +1393,23 @@ owner_answers() {
   # Every open question's item is read, listed or not: the watch clears the
   # label and assignee of a replaced ask's item where the replacing ask is in
   # chat or on another item, and the replaced question still takes replies.
-  # A question on a listed item, by its UUID or its ref, is read there.
+  # A question on a listed item, by its identifier or UUID, is read there.
+  # `comments bulk-list` takes identifiers alone and refuses the whole read
+  # for any other ref (linear_issue_refs), so an unlisted item known only by
+  # another ref, a UUID an ask recorded before asks carried an identity, is
+  # named on stderr and left unread, and the other items are read.
   if ! extra="$(jq -rn --argjson listed "$items" --argjson questions "$questions" '
       [$questions[].item | objects | select((.ref | type) == "string")
-        | . as $item | select(all($listed[]; .id != $item.ref and (($item.uuid | type) != "string" or .uuid != $item.uuid)))
-        | .ref] | unique[]' 2>"$WORK_DIR/tracker.err")"; then
+        | . as $item | select(all($listed[]; (.id | ascii_upcase) != ($item.ref | ascii_upcase) and .uuid != $item.ref
+            and (($item.uuid | type) != "string" or .uuid != $item.uuid)))
+        | .ref] | unique[]
+      | if test("\\A[A-Za-z0-9]+-[0-9]+\\z") then . else "skip " + . end' 2>"$WORK_DIR/tracker.err")"; then
     echo 'KEN-3624-unread cause=asks-format' >&2; return 0
   fi
+  while IFS= read -r issue; do
+    [[ "$issue" != skip\ * ]] || printf 'owner-answers: item-unreadable issue=%s cause=ref-form\n' "${issue#skip }" >&2
+  done <<<"$extra"
+  extra="$(grep -v '^skip ' <<<"$extra")" || extra=""
   if ! items="$(jq -r '.[].id' <<<"$items" 2>"$WORK_DIR/tracker.err")"; then
     echo 'KEN-3624-unread cause=issues-format' >&2; return 0
   fi

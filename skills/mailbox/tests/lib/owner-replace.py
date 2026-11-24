@@ -23,7 +23,9 @@ import tempfile
 # other ref, and names in `missing` a ref it holds no issue for, its
 # identifiers in upper case (linear_issue_refs_read); `comments bulk-get`
 # answers {id: {url}} with no entry for an absent comment; `comments
-# bulk-list` keys each identifier's comments and names a missing issue in
+# bulk-list` takes identifiers alone, refusing the whole read with no
+# `missing` for any other ref, a UUID included (linear_issue_refs
+# identifiers), keys each identifier's comments and names a missing issue in
 # `missing` (comments --help); `comments update` exits 1 with no LINEAR_TEAM
 # (its configured-team gate); auth-check reports writes_enabled and the actor.
 TRACKER = r'''#!/usr/bin/env python3
@@ -149,6 +151,9 @@ elif args[:2] == ["comments", "list"]:
     key = key_of(args[2])
     print(json.dumps([safe(row) for row in comments if row["issue"] == key]))
 elif args[:2] == ["comments", "bulk-list"]:
+    if not all(IDENTIFIER.fullmatch(ref) for ref in positional()):
+        print(json.dumps({"error": "Not an issue identifier (TEAM-123)"}), file=sys.stderr)
+        sys.exit(1)
     wanted = [ref.upper() for ref in positional()]
     missing = [key for key in wanted if key not in items or key in json.loads((state / "vanished.json").read_text())]
     if missing:
@@ -610,6 +615,25 @@ def missing_item(case, facts):
                              and read.result.stderr.splitlines() == ["owner-answers: item-missing issue=KEN-8"])
 
 
+def uuid_ref(case, facts):
+    """T14: an ask made by its item's UUID is read off the owner list by the
+    identifier its identity recorded; an older ask known by a UUID alone is
+    named and left unread, and the other items are read."""
+    overseer = case.checkout()
+    by_uuid, _ = overseer.item_ask(case.uuids["KEN-7"])
+    legacy, _ = overseer.item_ask("KEN-9")
+    overseer.legacy(legacy, case.uuids["KEN-9"])
+    listed, _ = overseer.item_ask("KEN-8")
+    for issue in ("KEN-7", "KEN-9"):
+        case.clear(issue)
+    under = case.reply("KEN-7", overseer.comment(by_uuid), "approve")
+    other = case.reply("KEN-8", None, "approve too")
+    read = overseer.owner_answers()
+    facts["uuid_ref"] = (read.plain(under, by_uuid, "approve") and read.plain(other, listed, "approve too")
+                         and read.result.stderr.splitlines()
+                         == ["owner-answers: item-unreadable issue=%s cause=ref-form" % case.uuids["KEN-9"]])
+
+
 # --- compact ----------------------------------------------------------------
 
 
@@ -643,7 +667,8 @@ GROUPS = {
             (explicit, ("KEN-7", "KEN-8", "KEN-9"))),
     "answers": tuple((replaced_route(fact, steps, cleared), sorted({issue for issue, _ in steps if issue}))
                      for fact, steps, cleared in REPLACED)
-               + ((threads, ("KEN-7",)), (flat, ("KEN-7",)), (missing_item, ("KEN-7", "KEN-8"))),
+               + ((threads, ("KEN-7",)), (flat, ("KEN-7",)), (missing_item, ("KEN-7", "KEN-8")),
+                  (uuid_ref, ("KEN-7", "KEN-8", "KEN-9"))),
     "compact": ((retention, ("KEN-7",)),),
 }
 

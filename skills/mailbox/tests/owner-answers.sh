@@ -191,6 +191,7 @@ chain_first_replaced|a reply under the first question of a three-ask chain, on a
 thread_chain|a reply under another mailbox's question is not delivered, while a nested reply whose thread ends at this mailbox's question is
 flat_comment|a top-level comment after the open question reaches its ask, after a re-ask the newest one's, and one with no open question before it is left out
 missing_item|an item Linear holds no issue for is named on stderr and the other items are read
+uuid_ref|an ask made by a UUID is read off the owner list by its recorded identifier, and one known by a UUID alone is named on stderr while the other items are read
 ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
   cp -R "$ROOT/skills/mailbox/scripts" "$TMP_ROOT/scripts"

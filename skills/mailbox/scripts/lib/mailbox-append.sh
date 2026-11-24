@@ -261,13 +261,13 @@ OWNER_REPLACING_JQ='def owner_replacing: .issue == null or .tracker_posted == tr
 # question was asked for. A question no row names is no longer open: its ask
 # closed and no open ask replaced it. An own row's comment is null only on a
 # record from before posted asks kept their comment id. `item` is the item
-# ref whose comments hold the question, with the UUID it was asked under
-# where the ask recorded one: a replaced question's item can be one no open
-# ask is on.
+# whose comments hold the question: the identifier and UUID the ask recorded
+# as its identity, else the ref it was asked under with no UUID. A replaced
+# question's item can be one no open ask is on.
 OWNER_QUESTION_JQ="$OWNER_REPLACING_JQ"'def owner_questions:
   map(select(.kind == "ask" and .to == "owner")) as $asks
   | [$asks[] | select(.tracker_posted == true) | {comment: .tracker_comment, ask: .id, issue, replaced: null,
-      item: {ref: .issue, uuid: .identity.uuid}}] as $own
+      item: {ref: (.identity.identifier // .issue), uuid: .identity.uuid}}] as $own
   | $own + ([$asks[] | select(owner_replacing) | . as $by | (.replaces // [])[]
         | select((.tracker_comment | type) == "string")
         | select(.tracker_comment as $comment | all($own[]; .comment != $comment))
