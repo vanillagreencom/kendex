@@ -880,7 +880,7 @@ A refused `write`:
    - On the terminal surface, call it from the overseer session.
    - On the managed-session surface, use that surface's own call.
    - In sequential mode, make the same call and wait for it.
-5. Send it the team project inventories and this task: `Verify only these Linear issues: [ISSUES]. For each issue, read its full body and source. If Reached by: in the Filing record names an owner or Jarvis decision that authorizes the work, check only for duplication, project and agent. If it names no such decision, apply the filing bar, including to items from a review, a worker's proposal or discovered work. Follow the Verifier returns contract in .agents/skills/orch/references/skill-rules.md under Coordination for evidence, project and agent selection, and the final return.` That contract ([skill-rules.md § Coordination](skill-rules.md#coordination)) governs the task and its acceptance.
+5. Send it the team project inventories and this task: `Verify only these Linear issues: [ISSUES]. For each issue, read its full body and source. Answer question 3 under Judge the approach in the project-management skill's references/filing.md in your one return line for every issue, including owner-authorized issues. If Reached by: in the Filing record names an owner or Jarvis decision that authorizes the work, also check for duplication, project and agent. If it names no such decision, apply the filing bar, including to items from a review, a worker's proposal or discovered work. Follow the Verifier returns contract in .agents/skills/orch/references/skill-rules.md under Coordination for evidence, project and agent selection, and the final return.` That contract ([skill-rules.md § Coordination](skill-rules.md#coordination)) governs the task and its acceptance.
 6. Capture only its single final return ([skill-rules.md § Single Return Message](skill-rules.md#single-return-message)).
    - Once it is captured, or on any failure after the launch, retire the verifier through the surface's own shut-down call before any further launch.
 7. Validate the return against that contract. On a launch, capture, parse or validation failure, stop without writing `triaged`.
@@ -890,8 +890,10 @@ A refused `write`:
 
    Leave an existing project and agent label alone. With an empty `LINEAR_AGENT_LABELS`, keep every current label. Where the read or update fails, write no `triaged` record for that item.
 
-9. Apply each valid verdict before recording it.
-   - For a kept verdict, read the item's live `state_type` with `linear.sh issues get [ID]`. Leave its state alone if the type is readable and already outside `triage`.
+9. Route each item in this triage pass before recording its final verdict.
+   - Read the verifier's answer to question 3 as prose. If it names a source the item does not fix, decide go, change or drop under the project-management skill's `references/filing.md` § Judge the approach before changing the item's tracker state or recording its verdict. Record the decision in the item's triage reason in your own words.
+   - Use the verifier's verdict when no new decision is needed. A verifier's canceled verdict stays canceled, including on go or change. For an item the verifier kept, go keeps it, change revises it into the fix at the source before keeping it, and drop uses the cancel action below.
+   - For a kept verdict, read the item's live `state_type` with `linear.sh issues get [ID]` after the project and agent placement in step 8. Leave its state alone if the type is readable and already outside `triage`.
    - If the type is `triage`, read the issue team's live states with `linear.sh statuses list --team "[TEAM]"`. Choose a state of type `unstarted` (Todo), falling back to type `backlog` if the team has no `unstarted` state. Run `linear.sh issues update [ID] --state "[STATE_NAME]" --format compact` with the chosen state name. Require the response to show that state and type.
    - For a canceled verdict, cancel the item.
    - Leave the verdict unrecorded if a required read or update fails, a required state is unreadable, or neither destination type is available for a kept item in `triage`.

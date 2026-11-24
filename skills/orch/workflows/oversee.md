@@ -210,6 +210,7 @@ Launch each item through [lane-launch.md](../references/lane-launch.md), in this
 
 1. Assign its tier under [§ Item Tier](../references/lane-launch.md#item-tier).
 2. Launch it under [§ Lane directive](../references/lane-launch.md#lane-directive). A first launch judges the files the item touches under [§ Shared files](../references/lane-launch.md#shared-files).
+   - Carry the answer to question 3 under the project-management skill's `references/filing.md` § Judge the approach in the launch ruling. If the item lacks that line or carries a different answer, post the current answer on the item before launch.
 3. Record it under [§ Lane record](../references/lane-launch.md#lane-record).
 
 ### Recovery relaunch

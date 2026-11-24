@@ -96,6 +96,7 @@ For an owner request the relay delivered, `--ref [ENVELOPE_ID]` on the reply bin
 A decision the owner's authority reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, anything sent as the owner, and an x.0 release of kendex or an app.
 
 - A send as the owner on Slack or by email is a draft ask, below. Every other send as the owner, such as a GitHub or Linear comment, is a reserved ask.
+- Send an ask with `--reserved` if its recommended option keeps a hand-written list, adds a guard for one, or narrows an item around a failed design.
 - No deadline closes a reserved ask: close it once you hold the owner's answer.
 
 ```bash
