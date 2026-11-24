@@ -71,7 +71,6 @@ Get the issue → dev implements → publication, review and fixes in the order 
   - Its scratch location is an empty subdirectory, `tmp/<run>/<agent-topic>/`.
   - Only that subagent removes its scratch location, and no background job of the overseer reads it.
   - Every control-host subagent brief carries these rules.
-  - The fleet's guards read [the command blocks](references/control-host-toolchain.conf).
   - Refresh follows the [consumer's owner](references/oversee-events.md). There is no `--refresh-only` exception.
 - **Acceptance is artifact-based.** A round closes on a validated on-disk artifact plus git and tracker state, never on a return message.
 - **Rules reload after a rebase.**
