@@ -70,7 +70,7 @@ pub mod usage;
 pub mod walk;
 pub mod wall;
 
-pub use listing::{Listing, Provider};
+pub use listing::{Listing, Provider, excluded};
 pub use renewal::step as renewal_step;
 
 /// The start-counter tag every read of this judge is counted under.

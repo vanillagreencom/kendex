@@ -195,18 +195,19 @@ done <<<"$CLAUDE_ROWS"
 
 # Fleet's login-shell exports give the inherited token an account identity
 # even without a config directory or on-disk credentials for that login.
-# label|measured account|host verdict|headroom|host max|local max|claude:extra calls|picker stderr
+# label|measured account|host verdict|headroom|host max|local max|excluded alias|claude:extra calls|picker stderr
 TOKEN_UNJUDGED='unjudged harness=claude exit=1 cause=claude-oauth-token-room-unmeasured'
 TOKEN_ROWS="
-the inherited token's room reading launches Claude|firstclaude|room|10.5|95|90|1:0|
-the host's room reaches the stricter local ceiling|firstclaude|room|10|95|90|0:1|walled harness=claude exit=3
-a host wall refuses above its ceiling even with a looser local ceiling|firstclaude|walled|4|95|100|0:1|walled harness=claude exit=3
-an unmeasured host reading refuses Claude|firstclaude|unmeasured|null|95|95|0:1|unmeasured harness=claude exit=5
-a different account's reading leaves the inherited token unjudged|secondclaude|room|50|95|95|0:1|$TOKEN_UNJUDGED
-the token alone leaves its room unjudged|-|-|-|-|95|0:1|$TOKEN_UNJUDGED
+the inherited token's room reading launches Claude|firstclaude|room|10.5|95|90||1:0|
+an excluded token's matching room reading leaves Claude unavailable|firstclaude|room|10.5|95|90|firstclaude|0:1|excluded harness=claude exit=3
+the host's room reaches the stricter local ceiling|firstclaude|room|10|95|90||0:1|walled harness=claude exit=3
+a host wall refuses above its ceiling even with a looser local ceiling|firstclaude|walled|4|95|100||0:1|walled harness=claude exit=3
+an unmeasured host reading refuses Claude|firstclaude|unmeasured|null|95|95||0:1|unmeasured harness=claude exit=5
+a different account's reading leaves the inherited token unjudged|secondclaude|room|50|95|95||0:1|$TOKEN_UNJUDGED
+the token alone leaves its room unjudged|-|-|-|-|95||0:1|$TOKEN_UNJUDGED
 "
 token_row=0
-while IFS='|' read -r label account verdict headroom host_max local_max calls diagnostic; do
+while IFS='|' read -r label account verdict headroom host_max local_max excluded calls diagnostic; do
   [[ -n "$label" ]] || continue
   token_row=$((token_row + 1))
   build "claude-token-$token_row" ps:none current:codex models:claude+codex+my-model count:1 \
@@ -226,6 +227,7 @@ SH
   W_ENV+=("CLAUDE_CODE_OAUTH_TOKEN=fixture-ambient-claude-login" "CLAUDE_TOKEN_FIRSTCLAUDE=fixture-ambient-claude-login"
     "CLAUDE_TOKEN_SECONDCLAUDE=fixture-other-claude-login" "AGENT_RUNTIME_ACCOUNT_MAX_PCT=$local_max"
     "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  [[ -z "$excluded" ]] || W_ENV+=("AGENT_RUNTIME_ACCOUNT_EXCLUDE=$excluded")
   if [[ "$account" != - ]]; then
     reading="$(jq -cn --arg account "$account" --arg verdict "$verdict" --argjson headroom "$headroom" --argjson max "$host_max" \
       '{account:$account, verdict:$verdict, headroom_pct:$headroom, max_pct:$max,

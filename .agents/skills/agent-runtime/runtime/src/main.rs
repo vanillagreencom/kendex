@@ -1017,12 +1017,13 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                         Some("claude-oauth-token-room-unmeasured"),
                     );
                 };
+                let settings = loaded.accounts.get()?;
+                if accounts::excluded(&settings, &reading.account, "") {
+                    account_env_refusal(named, "excluded", 3, None);
+                }
                 let verdict = match reading.verdict {
                     ClaudeTokenVerdict::Room => {
-                        let max_pct = match request.bound() {
-                            Some(bound) => bound,
-                            None => loaded.accounts.get()?.max_pct,
-                        };
+                        let max_pct = request.bound().unwrap_or(settings.max_pct);
                         accounts::wall_verdict(
                             reading
                                 .headroom_pct
