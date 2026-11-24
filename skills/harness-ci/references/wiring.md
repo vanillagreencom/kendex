@@ -384,14 +384,23 @@ This step names no `lanes-from` and passes no `queue-only-default`, so it declar
 
 ### Per-lane verdicts
 
-A workflow with more than one lane declares, in its default branch's `.github/ci-lanes.conf`, the paths each lane reads. The installed shared producer computes one verdict per lane. These rules need that producer; [§ Through the composite action](#through-the-composite-action) defines the older-classifier result:
+On pull requests and merge groups, the shared producer reads the workflow at the event's base commit. Keep the template's `changes` outputs, verdict publishing step and job-level gates. Jobs sharing an output share a verdict. A running job keeps its gated prerequisites. An unsupported gate or incomplete reader retains coverage. A derived hit opens the global `lanes` gate on eligible runs. The docs-only, trivial and event waivers still apply.
+
+**Command evidence**
+
+- Run a literal `cargo test`, `cargo check`, `cargo clippy` or `cargo build`. The reader supports `-p NAME`, `--workspace` and the literal flags in `lane-reach.py`. It asks Cargo for offline package metadata and follows local dependencies and literal Rust includes. A build script, proc macro, external dependency or opaque input keeps the lane.
+- Run a literal `vitest run`, `./node_modules/.bin/vitest run` or `npx --no-install vitest run` in a project using default discovery and static local imports. Provision the project's locked Vitest installation in `lanes-from` at the exact event base. Vitest lists tests against the actual changed module paths using a private index. Additions, non-module inputs and opaque projects keep coverage.
+- Use literal shell commands and paths. The shell reader follows `bash FILE`, `./FILE`, `source ./FILE` and `. ./FILE` through their literal reads. An installed package reader also runs when a file listed for that package changes under `.agents`, `.claude`, `.codex` or `.pi`. An unplaced path keeps graph readers eligible.
+
+Install Python 3.11 or later and PyYAML in the classifier job. Cargo and Vitest must be available there for their respective readers. A missing tool keeps the affected lanes eligible.
+
+**Exception and legacy declarations**
+
+Add `# reason: …` after each exception to name the input the command reader cannot see. The exception adds coverage. A reasonless claim keeps the legacy selection rules below active. [README § Lane file cut-over](../README.md#lane-file-cut-over) records the removal milestone and the acceptance checks.
 
 ```
 # <lane>[:queue][:nightly] <glob>...; `#` starts a comment.
-check         src/* tests/* Cargo.toml Cargo.lock
-tmux          tmux/*
-bench:queue   benches/*
-mac:nightly   macos/* src/platform/macos/*
+check         fixtures/* # reason: the binary reads fixture names at runtime
 ```
 
 - **A line is a lane name and one or more globs.** A name is lowercase letters, digits, `_` and `-`, starting with a letter or digit. A lane named on several lines reads every glob they give it. A glob is a shell pattern, as the classifier's own path lists are, so `*` also matches `/`: `src/*` claims every path under `src/`.
@@ -523,13 +532,13 @@ A render that the refresh run lands on the default branch, under the review-gate
 - **Adopt the package first.** Land `harness-ci` on the default branch before adopting `.github/workflows/ci.yml`. The aggregate needs the default branch's `aggregate-needs` helper on every event, per [§ Shape 3](#shape-3--merge-queues-where-the-required-context-must-report). A pull request that adds both fails `CI` because the default branch has no helper.
 - **Every lane goes in this workflow.** A job can wait only on jobs in its own workflow, so a lane left in another workflow is a lane no required context holds.
   - Replace the placeholder `test` job with the repository's lanes, one job each.
-  - Declare each in `.github/ci-lanes.conf`, marked `:nightly` where it is a platform lane.
+  - Use a supported command for derived selection. Keep a reasoned exception for any input the reader cannot see.
   - Publish its `lane_<name>` output from the `changes` job.
   - Give it the same `needs:`, and the condition and aggregate arguments [§ Per-lane verdicts](#per-lane-verdicts) sets out.
   - Name each lane in CI's `needs:`.
   - A lane that reads a file in the built-in docs set is the exception: it drops the `lanes` and verdict terms, runs on every diff and stays out of `--skippable` and `--lane`, per [§ Through the composite action](#through-the-composite-action).
   - Copied as it stands, the placeholder fails wherever it runs, and `CI` fails with it. Under the queue-only default it first runs in the merge group.
-- **The merge-queue run is the only proof of a head.** The classify step passes `queue-only-default: true`, so on `pull_request` the action stands every lane down on a repository with no `HARNESS_CI_PER_PUSH_REASON`, per [§ Per-lane verdicts](#per-lane-verdicts). A copy that drops the input runs its lanes on every pull request. The pull request run then reports `Classify the diff` and a passing `CI`, which GitHub needs before it admits the pull request to the queue, and no product lane. The merge group runs the lanes its own diff selects. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for. The declaration is read from the `classifier` checkout, the default branch. No line of the template reads the change class.
+- **The merge-queue run is the only proof of a head.** The classify step passes `queue-only-default: true`, so on `pull_request` the action stands every lane down on a repository with no `HARNESS_CI_PER_PUSH_REASON`, per [§ Per-lane verdicts](#per-lane-verdicts). A copy that drops the input runs its lanes on every pull request. The pull request run then reports `Classify the diff` and a passing `CI`, which GitHub needs before it admits the pull request to the queue, and no product lane. The merge group runs the lanes its own diff selects. A merge queue can batch several pull requests into one merge group, so the group classifies their combined diff, and a docs-only pull request batched with a code change runs every lane the group calls for. The derived reader uses the committed event base. No line of the template reads the change class.
 - **The default needs the merge-queue ruleset.** Without a queue no run proves the head, and `pr-merge` takes the plain route on the stub run. A repository with no merge queue sets `HARNESS_CI_PER_PUSH_REASON = "no merge queue"`, and its pull requests run their lanes.
 - **A push to the default branch runs no lane.** The template has no `push` trigger: the queue run already proved the merged head. A repository workflow that adds `push` gets the same stand-down; the opt-back is `HARNESS_CI_PER_PUSH_REASON`, which runs the lanes on both events.
 - **The nightly run.** The template's `schedule` trigger runs once a day on the default branch, and `workflow_dispatch` runs the same on demand. The action answers `lanes=true` with `lanes_cause=full-run` and every declared lane `true` there, so a platform lane marked `:nightly` runs across all paths. Mark macOS, Windows, GPU and larger-runner lanes `:nightly`, or `:queue` where they must prove each head.

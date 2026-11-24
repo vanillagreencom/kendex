@@ -65,9 +65,8 @@ jobs:
       # lane condition and CI's waiver read. The classify step's `lanes:`
       # log line says why.
       lanes: ${{ steps.classify.outputs.lanes }}
-      # One output per lane .github/ci-lanes.conf declares, its verdict as
-      # the action answered it. The classify step's `lane:` log lines say
-      # why.
+      # One output per lane, derived from its workflow commands. The
+      # classify step's `lane:` log lines explain its verdict.
       lane_test: ${{ steps.lanes.outputs.lane_test }}
     env:
       EVENT: ${{ github.event_name }}
@@ -137,8 +136,8 @@ jobs:
           # kendex.settings.toml, which a lane's own classifier run reads too.
         with:
           repo: subject
-          # The lane declaration is the default branch's: the pull request's
-          # own copy could stand its lanes down.
+          # The trusted checkout supplies legacy declarations and, when
+          # provisioned at the event base, the Vitest installation.
           lanes-from: classifier
           # The queue-only default: a pull request stands its lanes down and
           # the merge-group run proves the head. A copy without this line
@@ -156,11 +155,8 @@ jobs:
         run: printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
 
   # THE REPOSITORY'S LANES. Replace this job with the repository's own, one
-  # job per lane, each declared in .github/ci-lanes.conf, marked
-  # `:nightly` there where it is a platform lane (macOS, Windows, GPU or a
-  # larger runner) that runs per change only where its own paths change,
-  # and published as a
-  # `lane_<name>` output above, given this `needs:` and this `if:` with its
+  # job per lane. Publish its `lane_<name>` output above and give it this
+  # `needs:` and this `if:` with its
   # own output, named in CI's `needs:` and aggregate step as they name
   # `test`. A lane that reads a file under docs/ or changelog.d/, or a root
   # .md or .markdown file, is the exception

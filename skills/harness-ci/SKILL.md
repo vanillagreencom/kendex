@@ -34,7 +34,7 @@ Consumer setup and the workflow shapes to copy are in [references/wiring.md](ref
 - Declare exact product-text Markdown files through the trusted base's `HARNESS_CI_DOCS_PATHS`, by [references/wiring.md § Declared product text](references/wiring.md#declared-product-text).
 - Use `harness-only --mode render-candidate` only to gate the engine installation and the mirror refresh. It grants no CI skip. `change-class` must prove render before CI skips product checks.
 - `scripts/change-class` prints the change class: `render`, `trivial`, `micro`, `small` or `standard`. change-scope's `change-scope`, installed beside this package, decides the class. This package adds the queue-only class and the lane verdicts. Flags and the queue-only line: `change-class --help`. The classes, their settings, causes and refusals: `change-scope --help`.
-- Select lanes locally with `change-class --output FILE`. The lane verdicts print only with `--output`. `--lanes-from` names a separate checkout of the default branch, never the judged checkout. `--base` names the default branch's tip, as a pull request's base end does:
+- Select lanes locally with `change-class --output FILE`. `--base` names the committed event base used for workflow reads. `--lanes-from` names the separate trusted checkout used for legacy claims and a provisioned Vitest installation:
 
   ```bash
   .agents/skills/harness-ci/scripts/change-class --event pull_request \

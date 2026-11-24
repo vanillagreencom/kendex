@@ -288,6 +288,7 @@
   ".agents/skills/harness-ci/scripts/install-latest.sh",
   ".agents/skills/harness-ci/scripts/lib/change-class.sh",
   ".agents/skills/harness-ci/scripts/lib/ci-lanes.sh",
+  ".agents/skills/harness-ci/scripts/lib/lane-reach.py",
   ".agents/skills/harness-ci/templates/ci.yml",
   ".agents/skills/iced-rs/README.md",
   ".agents/skills/iced-rs/SKILL.md",
