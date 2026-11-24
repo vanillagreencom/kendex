@@ -1463,8 +1463,9 @@ pub enum Delivery {
 /// `overseer-unreadable`; one nothing
 /// resolves refuses `predecessor-unproven`. A request naming neither the
 /// permission nor its words records the posture that harness was launched
-/// under ([`launched_posture`]); one naming either records the pair it
-/// states ([`stated_posture`]). The one
+/// under ([`launched_posture`]), keeping the recorded one where those words
+/// cannot be read on the process the record names ([`adopted_posture`]);
+/// one naming either records the pair it states ([`stated_posture`]). The one
 /// read-then-record operation of the fleet: no intent, so no
 /// handle, and nothing it reads is an obligation.
 pub fn adopt_controller(
@@ -1568,11 +1569,17 @@ fn adopt_on(
             },
         }
     }
-    let posture = match (stated_posture(harness, r), unnamed) {
-        (Some(pair), _) => Some(pair),
-        (None, Unnamed::Launched) => Some(launched_posture(harness, identity.pid)),
-        (None, Unnamed::Kept) => None,
-    };
+    let recorded_process = same
+        && overseer
+            .as_ref()
+            .and_then(predecessor_identity)
+            .is_some_and(|recorded| recorded == identity);
+    let posture = adopted_posture(
+        stated_posture(harness, r),
+        unnamed,
+        || launched_posture(harness, identity.pid),
+        recorded_process,
+    );
     let adopted;
     let r = match posture {
         Some((permission, words)) => {
@@ -1948,17 +1955,36 @@ fn stated_posture(harness: Harness, r: &AdoptController) -> Option<(Permission, 
 }
 
 /// The posture the harness process `pid` was launched under and its own
-/// permission words, as its argument words spell them. Where they cannot be
-/// read, as on a host with no `/proc`, the harness's native defaults with no
-/// words: nobody chose the launch setting's posture, a full bypass by
-/// default, for a session they started by hand.
-fn launched_posture(harness: Harness, pid: u32) -> (Permission, Vec<String>) {
-    match proc_words(pid, "cmdline") {
-        Ok(argv) => {
-            let spelled = spelled(harness, &argv);
-            (spelled.permission, spelled.words)
-        }
-        Err(_) => (Permission::Native, Vec::new()),
+/// permission words, as its argument words spell them; `None` where they
+/// cannot be read, as on a host with no `/proc`.
+fn launched_posture(harness: Harness, pid: u32) -> Option<(Permission, Vec<String>)> {
+    let argv = proc_words(pid, "cmdline").ok()?;
+    let spelled = spelled(harness, &argv);
+    Some((spelled.permission, spelled.words))
+}
+
+/// The posture and words an adoption records, `None` keeping the record's:
+/// the pair its request states, else under [`Unnamed::Launched`] the pair
+/// `launched` reads off the harness's launch. Where those words cannot be
+/// read, a record already naming the pane and process (`recorded_process`)
+/// keeps its posture, as a heal does, since nothing read contradicts it;
+/// any other takes the harness's native defaults with no words, since
+/// nobody chose the launch setting's posture, a full bypass by default, for
+/// a session they started by hand.
+fn adopted_posture(
+    stated: Option<(Permission, Vec<String>)>,
+    unnamed: Unnamed,
+    launched: impl FnOnce() -> Option<(Permission, Vec<String>)>,
+    recorded_process: bool,
+) -> Option<(Permission, Vec<String>)> {
+    match (stated, unnamed) {
+        (Some(pair), _) => Some(pair),
+        (None, Unnamed::Kept) => None,
+        (None, Unnamed::Launched) => match launched() {
+            Some(pair) => Some(pair),
+            None if recorded_process => None,
+            None => Some((Permission::Native, Vec::new())),
+        },
     }
 }
 
@@ -2179,6 +2205,25 @@ mod tests {
                 stated_posture(Harness::Claude, &request),
                 stated.map(|(p, w)| (p, words(w))),
                 "{permission:?} {extra_args:?}"
+            );
+        }
+    }
+
+    /// An adoption naming no posture whose harness's launch words cannot be
+    /// read keeps the posture recorded for that same pane and process,
+    /// a full bypass included, and gives any other process its harness's
+    /// native defaults with no words.
+    #[test]
+    fn unreadable_launch_words_keep_the_recorded_process_posture_and_default_any_other() {
+        let rows = [
+            (true, None),
+            (false, Some((Permission::Native, Vec::new()))),
+        ];
+        for (recorded_process, recorded) in rows {
+            assert_eq!(
+                adopted_posture(None, Unnamed::Launched, || None, recorded_process),
+                recorded,
+                "recorded process: {recorded_process}"
             );
         }
     }
