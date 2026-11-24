@@ -28,9 +28,12 @@
 #   target   with --ci-targets, a test target's repository inputs. Cargo
 #            metadata supplies the target roots and packages. The source
 #            walk follows out-of-line modules and literal path attributes.
+#            Literal reads in shared files use the compiling target's
+#            package. A shared root constructor alone is not a file read.
 #            It resolves checkout_root() and literal path joins. An
 #            unresolved checkout root emits "." for its executable.
 #   target-root    the metadata roster, in target row format, for job setup.
+#   package-root   the manifest directory of a package in that roster.
 #   package-include  a compile-time include and its owning package.
 #   checkout-include  an include in the checkout CLI build scope.
 #
@@ -102,7 +105,10 @@ if [ -n "$targets" ]; then
       else [(.src_path | ltrimstr($root)), $package, $kind, .name] | @tsv end
   ' <<<"$metadata") || { echo 'rust-reads: unreadable=test-targets' >&2; exit 2; }
   package_roots=$(jq -er --arg root "$(pwd -P)/" '
-    .packages[] | [(.manifest_path | ltrimstr($root) | sub("/Cargo.toml$"; "")), .name] | @tsv
+    .packages[] | .name as $name | .manifest_path
+    | if startswith($root) then ltrimstr($root) | sub("(^|/)Cargo\\.toml$"; "")
+      else error("package outside checkout") end
+    | [(if . == "" then "." else . end), $name] | @tsv
   ' <<<"$metadata") || { echo 'rust-reads: unreadable=packages' >&2; exit 2; }
 fi
 if [ -n "$cli_scope" ]; then
@@ -154,7 +160,11 @@ if rows=$(find crates -type f -name '*.rs' |
     n = split(ENVIRON["RUST_READS_PACKAGES"], found, "\n")
     for (i = 1; i <= n; i++) {
       split(found[i], package, "\t")
-      if (package[1] != "") package_by_dir[package[1]] = package[2]
+      if (package[1] != "") {
+        package_by_dir[package[1]] = package[2]
+        manifest_by_package[package[2]] = package[1]
+        printf "package-root\t%s\t%s\n", package[1], package[2]
+      }
     }
   }
   # The repository path BASE/LIT names, or "" when it climbs out of the
@@ -217,7 +227,7 @@ if rows=$(find crates -type f -name '*.rs' |
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
-    if (owner == "") return
+    if (owner == "" && target_manifest == "") return
     rest = text
     while (match(rest, /env![ \t\n]*\([ \t\n]*"CARGO_MANIFEST_DIR"[ \t\n]*\)|checkout_root\(\)/)) {
       lit = substr(rest, RSTART, RLENGTH)
@@ -238,7 +248,8 @@ if rows=$(find crates -type f -name '*.rs' |
         }
         rest = substr(rest, RLENGTH + 1)
       }
-      emit("manifest", resolve(owner, chain), owner)
+      path = resolve(target == "" ? owner : target_manifest, chain)
+      if (owner != "" || path != ".") emit("manifest", path, owner)
       # An argument the chain could not read may lead anywhere from there.
       if (target == "" && match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
     }
@@ -246,6 +257,7 @@ if rows=$(find crates -type f -name '*.rs' |
   function visit(file, modules,   line, status, text, dir, path, name, attr, count, lines, i) {
     if (file == "" || visited[target, checkout, file]++) return
     if (target == "") printf "cli-build\t%s\n", file
+    else if (manifest_dir(file) == "") emit("source", file)
     if (file !~ /\.rs$/) return
     if (file in source) text = source[file]
     else {
@@ -314,6 +326,8 @@ if rows=$(find crates -type f -name '*.rs' |
       at = index(roots[i], "\t")
       if (!at) continue
       target = substr(roots[i], at + 1)
+      split(target, reader, "\t")
+      target_manifest = manifest_by_package[reader[1]]
       file = substr(roots[i], 1, at - 1)
       printf "target-root\t%s\t%s\n", file, target
       visit(file, "")

@@ -610,6 +610,7 @@ CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|
 # What selects every shell shard whole: the lane sources, the rest of
 # .github/ and the runners.
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
+UI_INPUTS='^ui/'
 
 # Job-owned inputs that source scanning cannot see: the Windows command
 # supplies its package roots and Linux Bun setup supplies its pin and crate.
@@ -638,15 +639,16 @@ cargo_job_reads() {
   ' "$PROOF_WORKFLOW"
 }
 
-# Project source reads onto compiler, smoke, and Linux test inputs. An
-# unresolved read keeps the scope of its executable across changed paths.
+# Project source reads onto compiler, smoke and Linux test inputs. An opaque
+# checkout read retains its executable but cannot place a changed path.
 reads() {
   local rows job_reads
   rows="$("$TOOLS_DIR/rust-reads" --cli-smoke --ci-targets .)" ||
     die "rust-reads-failed" "tools/rust-reads could not derive the paths the Rust source reads"
   job_reads="$(cargo_job_reads)" ||
     die "cargo-job-reads-failed" "the workflow Cargo build and setup inputs could not be read"
-  PROSE="$PROSE" CARGO_JOB_READS="$job_reads" PATHS="$paths" awk -F '\t' '
+  PROSE="$PROSE" CI_PACKAGES="$ALL_SHARDS|$UI_INPUTS" PLACED="$REACH_PLACED" \
+    CARGO_JOB_READS="$job_reads" PATHS="$paths" awk -F '\t' '
     BEGIN {
       n = split(ENVIRON["CARGO_JOB_READS"], inputs, "\n")
       for (i = 1; i <= n; i++) {
@@ -654,6 +656,8 @@ reads() {
         if (input[1] == "windows") windows_packages[input[2]] = 1
         if (input[1] == "setup") setup[input[2], input[3]] = 1
       }
+      n = split(ENVIRON["PLACED"], paths, "\n")
+      for (i = 1; i <= n; i++) placed[paths[i]] = 1
     }
     { kind[NR] = $1; read[NR] = $2; crate[NR] = $3; selector[NR] = $4; name[NR] = $5 }
     function select_target(r) {
@@ -663,10 +667,16 @@ reads() {
       n = split(ENVIRON["PATHS"], changed, "\n")
       for (p = 1; p <= n; p++) {
         path = changed[p]
+        if (path == "") continue
+        mapped = path in placed || path ~ ENVIRON["CI_PACKAGES"]
         for (r = 1; r <= NR; r++) {
-          if (path == "") continue
           if (kind[r] == "target-root") {
-            if ((path, crate[r]) in setup || (path, "") in setup) select_target(r)
+            if ((path, crate[r]) in setup || (path, "") in setup) { select_target(r); mapped = 1 }
+            if (path == read[r]) mapped = 1
+            continue
+          }
+          if (kind[r] == "package-root") {
+            if (read[r] == "." || index(path, read[r] "/") == 1) mapped = 1
             continue
           }
           if (read[r] == ".") {
@@ -678,10 +688,16 @@ reads() {
           if (kind[r] == "checkout-include") checkout = 1
           if (kind[r] == "cli-include" || (kind[r] == "cli-build" && path !~ ENVIRON["PROSE"])) compiled = 1
           if (kind[r] == "target") select_target(r)
+          if (read[r] != "." && (kind[r] != "build" || path !~ ENVIRON["PROSE"])) mapped = 1
           printf "ci-job-set: rust-read=%s kind=%s path=%s\n", read[r], kind[r], path > "/dev/stderr"
+        }
+        if (!mapped) {
+          unplaced = 1
+          printf "ci-job-set: cargo-test-input=unplaced path=%s\n", path > "/dev/stderr"
         }
       }
       printf "build=%d\nincluded=%d\ncompiled=%d\nwindows=%d\ncheckout=%d\n", build, included, compiled, windows, checkout
+      printf "unplaced=%d\n", unplaced
       for (test in selected) print "target " test
     }
   ' <<<"$rows"
@@ -781,17 +797,20 @@ fi
 # The reach, read once for every event's selection: tools/guard
 # --suite-reach over the changed paths. REACH_SUITES holds its suites and
 # Pi-package trees, one per line, and REACH_TARGETS its Rust targets as a
-# JSON list. REACH_READ stays false where the query failed: the selection
+# JSON list. REACH_PLACED records which paths it can place in a package.
+# REACH_READ stays false where the query failed: the selection
 # then runs every shard, suite and target. The query's notes that a tree ran
 # whole, and its findings, are forwarded on stderr as reach-note lines, and
 # its progress lines as they are, each as it arrives.
 REACH_READ=false
 REACH_SUITES=""
 REACH_TARGETS='[]'
+REACH_PLACED=""
 reach_notes() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
+      'guard-note: placed-path='*) printf 'placed %s\n' "${line#guard-note: placed-path=}" ;;
       'guard: '* | 'guard-note: suites=all '*) printf 'ci-job-set: reach-note: %s\n' "$line" >&2 ;;
       'guard-progress: '*) printf '%s\n' "$line" >&2 ;;
     esac
@@ -807,7 +826,8 @@ reach_read() {
     printf 'ci-job-set: reach=unread status=%s\n' "$status" >&2
     return 0
   fi
-  REACH_SUITES="$(printf '%s\n' "$out" | sed '/^target /d; /^$/d')"
+  REACH_PLACED="$(printf '%s\n' "$out" | sed -n 's/^placed //p')"
+  REACH_SUITES="$(printf '%s\n' "$out" | sed '/^placed /d; /^target /d; /^$/d')"
   while IFS= read -r target; do
     [ -z "$target" ] || list="$list,\"$target\""
   done <<<"$(printf '%s\n' "$out" | sed -n 's/^target //p')"
@@ -997,7 +1017,7 @@ select_row() { # CLASS DOCS PATHS EVENT
     return
   fi
   any "$CATALOG_INPUTS|$LANE_SOURCES" && catalog=true
-  any '^ui/' && uitree=true
+  any "$UI_INPUTS" && uitree=true
   case "$read_lines" in *compiled=1*) catalog=true smoke=true ;; esac
   case "$read_lines" in *included=1* | *build=1*) build=true ;; esac
   case "$read_lines" in *checkout=1* | *build=1*) checkout=true ;; esac
@@ -1011,8 +1031,8 @@ select_row() { # CLASS DOCS PATHS EVENT
     rust="$(all_targets)"
   fi
 
-  # A shared build input affects the workspace. Otherwise Cargo metadata
-  # and the source read of each executable supply its target arguments.
+  # A shared build input affects the workspace. Cargo source reads narrow
+  # the test matrix only when every changed path could be placed.
   if any "$LANE_SOURCES"; then
     uitree=true
     build=true
@@ -1032,6 +1052,10 @@ select_row() { # CLASS DOCS PATHS EVENT
     if [ "$matrix" != '{"include":[]}' ]; then
       linux=true
       any_outside "$PROSE" && platform=true
+    fi
+    if [[ $read_lines == *unplaced=1* ]]; then
+      linux=true
+      matrix=""
     fi
   fi
   printf '%s' "macos=$macos ui=$uitree bot_instructions=true cargo_linux=$linux cargo_macos=$platform cargo_lint=$build cargo_windows=$platform cargo_windows_check=$windows catalog=$catalog smoke=$smoke shards=$shards skipped_suites=$skipped rust_targets=$rust cargo_linux_matrix=${matrix:-null}"

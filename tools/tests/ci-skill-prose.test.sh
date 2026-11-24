@@ -18,8 +18,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Compiled workspace targets and skill runtime targets have separate owners.
 # Include the tracked render in each probe, as a merge-group diff does.
 cargo_rows() {
-  local selected reads
-  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false $'skills/orch/SKILL.md\n.agents/skills/orch/SKILL.md')"
+  local selected reads guide=$'skills/orch/SKILL.md\n.agents/skills/orch/SKILL.md'
+  local marker=.agents/skills/orch/scripts/lane-marker unplaced="test-fixtures/${TMP##*/}/orphaned.rs"
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$guide")"
   reads="$(field cargo_linux_matrix <<<"$selected")"
   check "skill Markdown keeps the CLI and core readers and omits the app" \
     '{"include":[{"crate":"kendex-cli","targets":["--test","catalog_render_lint","--test","integration"]},{"crate":"kendex-core","targets":["--lib","--test","integration"]}]}' "$reads"
@@ -27,6 +28,14 @@ cargo_rows() {
   selected="$(SELECT_EVENT=merge_group selection trivial true $'skills/orch/references/watch-delivery.md\n.agents/skills/orch/references/watch-delivery.md')"
   check "orch watch delivery reference reaches its reading runtime target" \
     '["orch/watch_core"]' "$(field rust_targets <<<"$selected")"
+
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$marker")"
+  check "the shared lane fixture keeps the CLI library in a narrowed matrix" true \
+    "$(field cargo_linux_matrix <<<"$selected" | jq 'type == "object" and any(.include[]; .crate == "kendex-cli" and (.targets | index("--lib") != null))')"
+
+  selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$guide"$'\n'"$unplaced")"
+  check "an unplaced test file keeps all workspace targets beside known Markdown" 'true null' \
+    "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected")"
 }
 cargo_rows
 if [ "${1-}" = --cargo-reads ]; then
@@ -35,8 +44,8 @@ if [ "${1-}" = --cargo-reads ]; then
   exit
 fi
 
-# Real workspace inputs include unresolved reads and a workflow setup pin.
-# They must keep the reader without selecting compiler checks.
+# Real workspace inputs with package placement can include unresolved
+# checkout reads. They must keep the reader without compiler checks.
 while IFS='|' read -r path package flag name; do
   selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false "$path")"
   matrix="$(field cargo_linux_matrix <<<"$selected")"
@@ -49,11 +58,13 @@ while IFS='|' read -r path package flag name; do
 done <<'ROWS'
 kendex.settings.toml|kendex-core|--test|integration
 kendex-local.toml|kendex-core|--lib|
-.kendex-lock.json|kendex-core|--lib|
 packaging/homebrew/kendex-cli.rb|kendex-cli|--test|integration
 packaging/arch/kendex/PKGBUILD|kendex-cli|--test|integration
 .bun-version|kendex-core|--test|integration
 ROWS
+selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false .kendex-lock.json)"
+check "the install record has no shell suite and retains the full Cargo matrix" '[] true null false false' \
+  "$(field shards <<<"$selected") $(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected")"
 selected="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false docs/authoring/README.md)"
 check "the embedded app guide reaches workspace lint, the app, and no unrelated build" 'true false true' \
   "$(field cargo_lint <<<"$selected") $(field cargo_windows_check <<<"$selected") $(field cargo_linux_matrix <<<"$selected" |

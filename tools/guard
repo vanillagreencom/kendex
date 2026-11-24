@@ -466,6 +466,8 @@ case "${1:-}" in
       '        they touch, as DIR/, then `target PACKAGE/NAME` for each skill' \
       '        runtime Rust target the reach holds, a whole set every target of' \
       '        its runtime; run nothing. The notes go to stderr.' \
+      '        A placed-path note identifies an owned path or a path with a' \
+      '        concrete suite or skill runtime reader.' \
       '        The reach misses a caller that runs a script through a variable' \
       '        path, or only through another script that runs it.'
     exit 0
@@ -2813,6 +2815,13 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       *.md | *.markdown) continue ;;
       *) tree=tools; rel="../$f" ;;
     esac
+    if [ "$MODE" = suite-reach ] && [[ $rel != ../* ]]; then
+      case "$tree" in
+        skills/*) [ -f "$tree/SKILL.md" ] || [ -d "$tree/tests" ] || [ -f "$tree/runtime/Cargo.toml" ] ;;
+        pi-extensions/*) [ -f "$tree/package.json" ] ;;
+        *) [ -d "$tree" ] ;;
+      esac && note placed-path "$f"
+    fi
     if [ -n "$release_version" ]; then
       [ "$tree" != tools ] || continue
       plan_rows+=("$tree	$rel	$f
@@ -2890,17 +2899,31 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         [ -f "$d/package.json" ] || continue
         # Another tree's path runs a Pi package's suites only where one of
         # its files names that path, whole or as `/<name>/<file>`.
-        if ! awk -F '\t' -v d="$d" '$1 == d && $2 !~ /^\.\.\// { own = 1 } END { exit !own }' <<<"$tree_rows"; then
-          # One search for every path's needles: a file names one of them
-          # exactly where it names some path's.
+        pi_own=false
+        if awk -F '\t' '$2 !~ /^\.\.\// { own = 1 } END { exit !own }' <<<"$tree_rows"; then pi_own=true; fi
+        if [ "$pi_own" = false ] || [ "$MODE" = suite-reach ]; then
           pi_needles=()
           while IFS='	' read -r tree rel f; do
-            [ "$tree" = "$d" ] || continue
+            [[ $rel == ../* ]] || continue
             pi_needles+=(-e "${rel#../}")
             case "$rel" in ../skills/*/*) pi_needles+=(-e "/${rel#../skills/}") ;; esac
           done <<<"$tree_rows"
-          [ "${#pi_needles[@]}" -gt 0 ] || continue
-          git -c core.quotePath=false grep -q -F "${pi_needles[@]}" -- "$d" || continue
+          if [ "${#pi_needles[@]}" -eq 0 ]; then
+            [ "$pi_own" = true ] || continue
+          elif [ "$MODE" = suite-reach ]; then
+            # One search returns the matching lines, so each external path
+            # gets credit for its own reader even in a mixed change.
+            pi_hits=$(git grep -F -h "${pi_needles[@]}" -- "$d") || { [ "$pi_own" = true ] || continue; }
+            while IFS='	' read -r _ rel f; do
+              [[ $rel == ../* ]] || continue
+              if [[ $pi_hits == *"${rel#../}"* ]] ||
+                { [[ $rel == ../skills/*/* ]] && [[ $pi_hits == *"/${rel#../skills/}"* ]]; }; then
+                note placed-path "$f"
+              fi
+            done <<<"$tree_rows"
+          else
+            git -c core.quotePath=false grep -q -F "${pi_needles[@]}" -- "$d" || continue
+          fi
         fi
         suite_selection=all
         preview_unmeasured=1
@@ -2934,6 +2957,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
             [ "$tree" = "$d" ] || continue
             tree_row=$((tree_row + 1))
             reach_tick tree "$((tree_row + 1))" "$rows_total" "$d"
+            if [ "$run" = all ] && [[ $rel != ../* ]]; then continue; fi
             if [ "$scoped_only" -eq 1 ]; then
               # mapped_suites' header states this set and why.
               if skill_markdown "$f" || [ "$f:$inventory_markdown_only" = .kendex-generated.json:1 ]; then
@@ -2947,12 +2971,22 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
               if [[ $rel != ../* ]] && path_role "$d" "$rel" && [ "$ROLE" = doc ]; then continue; fi
             fi
             map_status=0
+            targets_before=${#REACH_TARGETS}
+            # When its whole set is already kept, a tree still has to
+            # place external paths. The extra scan leaves its targets alone.
+            [ "$run" != all ] || prior_targets=$REACH_TARGETS
             mapped_suites "$d" "$rel" "$tree_row" || map_status=$?
             sel=$MAPPED
+            if [ "$MODE" = suite-reach ] && [[ $rel == ../* ]] &&
+              { [ -n "$sel" ] || [ "${#REACH_TARGETS}" -gt "$targets_before" ]; }; then
+              note placed-path "$f"
+            fi
+            [ "$run" != all ] || REACH_TARGETS=$prior_targets
             case "$map_status" in
               0) ;;
               1) if [ "$scoped_only" -eq 1 ]; then continue; fi
-                 note suites "all reason=unmapped path=$f"; run=all; break ;;
+                 if [ "$run" != all ]; then note suites "all reason=unmapped path=$f"; run=all; fi
+                 [ "$MODE" = suite-reach ] || break ;;
               2) if [ "$scoped_only" -eq 1 ]; then say mapped-suites "$map_status path=$f"; break 2; fi
                  note suites "all reason=unreadable path=$f"; run=all; break ;;
               4) note suites "all reason=unidentified path=$f"; run=all; break ;;
@@ -2960,6 +2994,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
                  if [ "$scoped_only" -eq 1 ]; then run=""; else run=all; fi
                  break ;;
             esac
+            [ "$run" != all ] || continue
             run="$run$sel
 "
           done <<<"$tree_rows"
