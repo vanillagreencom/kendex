@@ -962,6 +962,65 @@ fn the_owed_inventory_matches_the_released_recorded_lines() {
     );
 }
 
+#[test]
+fn parked_merges_fall_back_to_github_only_without_a_linear_team() {
+    if !isolated_row("parked_merges_fall_back_to_github_only_without_a_linear_team") {
+        return;
+    }
+    let mut world = World::new();
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [
+            {"item": "KEN-1", "status": "parked", "parked": {"pr": 7, "repo": "owner/repo", "head": "abc"}},
+            {"item": "KEN-2", "status": "parked", "parked": {"until_pr": 8, "repo": "owner/repo", "head": "abc"}},
+        ]}));
+    quiet_github(&mut world);
+    let pull = |number, branch| json!({"number": number, "state": "closed", "title": "repair", "body": null,
+        "merged_at": "2026-10-01T00:00:00Z", "merge_commit_sha": null, "author_association": "NONE", "user": null,
+        "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"},
+        "head": {"ref": branch, "sha": "0000000000000000000000000000000000000000", "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}});
+    world.gh("repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1", json!({"body": [pull(7, "ken-1")]}));
+    world.gh("search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+        json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}));
+    world.gh("repos/owner/repo/pulls/8", json!({"body": pull(8, "dependency")}));
+    let both = [("KEN-1", "7", "owner/repo"), ("KEN-2", "8", "owner/repo")];
+    for (team, verdict, expected) in [
+        (Some("kendex"), None, &[][..]),
+        (None, None, &both[..]),
+        (None, Some(TerminalState::Completed), &[][..]),
+        (None, Some(TerminalState::Canceled), &[][..]),
+    ] {
+        let settings = world.settings(&[("LINEAR_TEAM", team.unwrap_or_default())]);
+        assert_eq!(settings.linear_team.as_deref(), team);
+        let shared = Shared::default();
+        if let Some(verdict) = verdict {
+            shared.lock().unwrap().terminal = BTreeMap::from([
+                ("KEN-1".to_owned(), verdict),
+                ("KEN-2".to_owned(), verdict),
+            ]);
+        }
+        let mut body = github::body(world.github_context(settings, None, &["owner/repo"], shared));
+        let produced = pass_as(
+            Duty::GitHub,
+            &mut body,
+            &mut Baseline::default(),
+            &FakeClock::new(),
+            SINCE_EPOCH + 1000,
+        )
+        .unwrap();
+        let parked: Vec<_> = produced
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                Event::ParkedMerged { item, pr, repo } => {
+                    Some((item.as_str(), pr.as_str(), repo.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(parked, expected, "team={team:?} verdict={verdict:?}");
+    }
+}
+
 /// The recorded watch's answer on the merged fixture
 /// (`recorded/merged.lines`: #1 on the branch and #2 by title scope; #3 a
 /// fork, #4 a mention, #5 before the floor; nothing on the second pass).

@@ -644,6 +644,7 @@ fn merged_at(pull: &Pull, since: Option<u64>) -> Option<u64> {
 /// one stands, and the dependency it is parked until.
 struct MergeItem {
     item: String,
+    parked: bool,
     /// `<repo>#<n>` of the item's own parked pull request.
     parked_key: Option<String>,
     /// The dependency's `(repo, number)` the record is parked until.
@@ -687,6 +688,7 @@ fn merge_items(lanes: &[Lane]) -> Vec<MergeItem> {
         });
         out.push(MergeItem {
             item: lane.item.clone(),
+            parked: parked.is_some(),
             parked_key,
             until,
             own,
@@ -1241,8 +1243,8 @@ pub(super) fn merged_keys(
 /// after the floor, by head branch and by mention; a key not in the
 /// item's row is a `merged` line, the row then holds every key and merge epoch; a parked
 /// item's dependency is read by number and its state change is the
-/// parked-merged or parked-closed line, the hand deferred while the
-/// tracker's verdict is unknown.
+/// parked-merged or parked-closed line. A fleet with a Linear team
+/// defers the merged line while the tracker's verdict is unknown.
 fn merged(
     gh: &Gh,
     inputs: &Inputs,
@@ -1252,18 +1254,17 @@ fn merged(
     inventory: &mut Inventory,
 ) -> Result<()> {
     let items = merge_items(inputs.lanes);
-    let verdict_of = |item: &str| -> Option<TerminalState> { inputs.terminal.get(item).copied() };
-    let parked_merged = |item: &str, key: &str, produced: &mut Produced| -> bool {
-        // The parked line: deferred with no verdict, nothing on an
-        // ended item, the line on an open one. Returns whether the row
-        // may advance.
-        match verdict_of(item) {
-            None => false,
-            Some(TerminalState::Completed | TerminalState::Canceled) => true,
-            Some(TerminalState::Open) => {
+    let parked_merged = |entry: &MergeItem, key: &str, produced: &mut Produced| -> bool {
+        let allow_unread = entry.parked && inputs.settings.linear_team.is_none();
+        // A park can advance from the GitHub read when the fleet publishes
+        // no tracker verdict. An explicit terminal verdict owns the close.
+        match (inputs.terminal.get(&entry.item), allow_unread) {
+            (None, false) => false,
+            (Some(TerminalState::Completed | TerminalState::Canceled), _) => true,
+            (Some(TerminalState::Open), _) | (None, true) => {
                 let (repo, pr) = key.rsplit_once('#').unwrap_or((key, ""));
                 produced.events.push(Event::ParkedMerged {
-                    item: item.to_owned(),
+                    item: entry.item.clone(),
                     pr: pr.to_owned(),
                     repo: repo.to_owned(),
                 });
@@ -1302,7 +1303,9 @@ fn merged(
             let key = format!("{parked_key} {state}");
             if baseline.get(PARKED_UNTIL_ROW, &entry.item) != Some(key.as_str()) {
                 match state {
-                    "MERGED" => deferred = !parked_merged(&entry.item, &parked_key, produced),
+                    "MERGED" => {
+                        deferred = !parked_merged(entry, &format!("{repo}#{until}"), produced);
+                    }
                     "CLOSED" => produced.events.push(Event::ParkedClosed {
                         item: entry.item.clone(),
                         pr: until.to_string(),
@@ -1359,7 +1362,7 @@ fn merged(
         if let Some(parked_key) = &entry.parked_key
             && fresh.iter().any(|k| k == parked_key)
         {
-            parked_merged(&entry.item, parked_key, produced);
+            parked_merged(entry, parked_key, produced);
         }
     }
     // A Verifying item no live lane carries as its own has its landing in the
