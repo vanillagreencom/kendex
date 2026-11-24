@@ -1407,26 +1407,47 @@ fn merged(
 const POST_MERGE: &str = "Post-merge:";
 
 /// The GitHub-tracked items of the repositories the audits read: each open
-/// issue whose body names a post-merge box and whose own merged pull
-/// request ([`landings`] of `issue-<n>`, its branch) landed since it was
-/// opened. A merge with `Refs` leaves such an issue open (orch `SKILL.md`
-/// § Tracker Resolution). The body text only narrows the issues the box
-/// parser reads: it is in every box, and the parser judges what it opens.
+/// issue the fleet wrote whose body names a post-merge box and whose own
+/// merged pull request ([`landings`] of `issue-<n>`, its branch) landed
+/// since it was opened. A merge with `Refs` leaves such an issue open (orch
+/// `SKILL.md` § Tracker Resolution). The body steers the reads the watch
+/// makes under its own credential and the writes it publishes there, so
+/// an issue an outside author can rewrite is no item, by the fleet test
+/// the outside-contribution pass applies. The body text only narrows the
+/// issues the box parser reads: it is in every box, and the parser judges
+/// what it opens.
 fn issue_items(gh: &Gh, repos: &[String], inventory: &mut Inventory) -> Result<()> {
+    let mut verdicts = BTreeMap::new();
     for repo in repos {
         let path = format!("repos/{repo}/issues?state=open");
         let Some(issues) = gh.list::<IssueText>("verifying-issues", &path)? else {
             return Err(refused(
                 "github-read-failed",
-                &[("read", "verifying-issues"), ("path", &path)],
+                &[
+                    ("read", "verifying-issues"),
+                    ("path", &path),
+                    ("cause", "HTTP 404"),
+                ],
             ));
         };
-        let open: Vec<(String, IssueText)> = issues
-            .into_iter()
-            .filter(|i| i.pull_request.present().is_none())
-            .filter(|i| matches!(&i.body, Nullable::Present(body) if body.contains(POST_MERGE)))
-            .map(|i| (format!("issue-{}", i.number), i))
-            .collect();
+        let mut open: Vec<(String, IssueText)> = Vec::new();
+        for issue in issues {
+            if issue.pull_request.present().is_some()
+                || !matches!(&issue.body, Nullable::Present(body) if body.contains(POST_MERGE))
+            {
+                continue;
+            }
+            let fleet = outside::author_fleet(&issue.user, Some(&issue.author_association))
+                || outside::fleet_by_permission(
+                    gh,
+                    repo,
+                    &outside::login_of(&issue.user),
+                    &mut verdicts,
+                )?;
+            if fleet {
+                open.push((format!("issue-{}", issue.number), issue));
+            }
+        }
         let searched: Vec<Landing> = open
             .iter()
             .map(|(key, issue)| Landing {

@@ -50,7 +50,6 @@ The runner's header states every argument, CI's `--shard` among them. A set of f
 The suites run from the catalog checkout. A kendex render leaves out `tests/` and this file.
 
 - **Rust rows.** A row that runs the runtime's code in the test process starts with `support::isolated_row` (`tests/rust/support.rs`), so the runtime's git reads never see the operator's git configuration.
-- **Copies.** The rows run sibling packages' own scripts (github, mailbox, linear), so a disposable copy that runs a row, such as a must-fail control, holds the whole `skills/` tree.
 - **Shell suites.**
   - Each `tests/*.sh` builds its own sandbox with stubs on `PATH`, prints `pass: N fail: M`, and exits 0 only when every assertion passed.
   - `run-all.sh` finds the suites when it runs, so a new suite needs no registration.

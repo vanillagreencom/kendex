@@ -47,9 +47,12 @@ For every item:
 **Completion.**
 
 - Complete a proved box, a merged item and a container through the steps of [oversee-events.md § Verification](../references/oversee-events.md#verification): the evidence comment and file, `linear.sh issues complete` with the merge's `--post-merge-at`, `orch-runtime container-close` for a container, and the parent's close.
+- A GitHub item, `[OWNER/REPO]#[N]`, takes that section's GitHub form in their place.
 - Run them from the base checkout, outside any confined lane. In a confined lane `container-close` writes nothing; the overseer's route owns the close.
 
 ## 2. Resolve missing evidence
+
+A GitHub item's writes below take the form [oversee-events.md § Verification](../references/oversee-events.md#verification) gives them.
 
 When a box's deadline arrives with no evidence and no proved defect:
 

@@ -1300,13 +1300,18 @@ pub(crate) struct Issue {
 }
 
 /// An issue's text as the same reads answer it, for the verification of
-/// a GitHub item's post-merge boxes: its body is its checklist.
+/// a GitHub item's post-merge boxes: its body is its checklist, and its
+/// author whether the fleet wrote it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct IssueText {
     /// Required (issues/issues, `number`: integer).
     pub(crate) number: u64,
     /// Required (issues/issues, `state`: string).
     pub(crate) state: String,
+    /// Required, nullable (issues/issues, `user`: simple-user or null).
+    pub(crate) user: Nullable<User>,
+    /// Required (issues/issues, `author_association`: string).
+    pub(crate) author_association: String,
     /// Optional, nullable (issues/issues, `body`: string or null, not in
     /// the required list).
     #[serde(default)]
@@ -1873,10 +1878,12 @@ mod tests {
             ],
         );
         catalogue::<IssueText>(
-            json!({"number": 7, "state": "open", "body": "text", "created_at": "2026-10-01T00:00:00Z", "pull_request": {}}),
+            json!({"number": 7, "state": "open", "user": null, "author_association": "NONE", "body": "text", "created_at": "2026-10-01T00:00:00Z", "pull_request": {}}),
             &[
                 ("number", Required),
                 ("state", Required),
+                ("user", Nullable),
+                ("author_association", Required),
                 ("body", OptionalNullable),
                 ("created_at", Required),
                 ("pull_request", Optional),

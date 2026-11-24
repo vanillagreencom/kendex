@@ -470,7 +470,7 @@ fn gh_json(
 /// call's failure. A parser that never starts refuses `missing-linear`.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the verification duty's one call of the linear CLI's own Done-when parser per item through the one runner under its tag; it reads nothing"
+    reason = "the verification duty's calls of the linear CLI's own Done-when parser through the one runner under its tag, one per item and one per GitHub item's box it ticks; it reads nothing"
 )]
 fn parse(
     settings: &Settings,
@@ -767,17 +767,21 @@ fn github_locator(locator: &str) -> Option<(String, Vec<&str>)> {
 /// URL (the job's elapsed seconds) or a repository's releases page (1
 /// where a release after the merge holds it, else 0). Any other source, a
 /// check with no comparator and a unit the reader does not give answer
-/// unread: no reader is invented for them.
+/// unread: no reader is invented for them. A GitHub item's box, whose
+/// reading is published on `issue_repo`, reads only that repository.
 fn read_box(
     gh: &Path,
     b: &Judged,
+    issue_repo: Option<&str>,
     merged: Option<&Merge>,
     read: &mut BTreeMap<String, Value>,
 ) -> Reading {
     let Some(numeric) = &b.numeric else {
         return Reading::Unread("no-reader");
     };
-    let Some((repo, rest)) = github_locator(&b.where_) else {
+    let Some((repo, rest)) = github_locator(&b.where_)
+        .filter(|(repo, _)| issue_repo.is_none_or(|own| own.eq_ignore_ascii_case(repo)))
+    else {
         return Reading::Unread("no-reader");
     };
     let number = |word: &str| !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit());
@@ -944,11 +948,13 @@ pub(super) enum Item {
     Unparsed { cause: String },
 }
 
-/// `merge_proves_branch` for a GitHub item ([`judged_boxes`]).
+/// `issue_repo` is a GitHub item's repository: its merge proves its
+/// branch boxes ([`judged_boxes`]) and its boxes read it alone
+/// ([`read_box`]).
 pub(super) fn judge_item(
     ctx: &Context,
     item: &VerifyingItem,
-    merge_proves_branch: bool,
+    issue_repo: Option<&str>,
     merged_keys: Option<&[String]>,
     now: u64,
     read: &mut BTreeMap<String, Value>,
@@ -957,7 +963,7 @@ pub(super) fn judge_item(
         Ok(parsed) => parsed,
         Err(cause) => return Ok(Item::Unparsed { cause }),
     };
-    let Some(mut boxes) = judged_boxes(&parsed, item.container, merge_proves_branch) else {
+    let Some(mut boxes) = judged_boxes(&parsed, item.container, issue_repo.is_some()) else {
         return Ok(Item::Invalid { evidence });
     };
     let reads_releases = |b: &Judged| {
@@ -994,7 +1000,7 @@ pub(super) fn judge_item(
         .iter_mut()
         .filter(|b| b.status == "due" || b.status == "overdue")
     {
-        b.read = Some(read_box(&ctx.gh, b, merged.as_ref(), read));
+        b.read = Some(read_box(&ctx.gh, b, issue_repo, merged.as_ref(), read));
         let key = b.due_key();
         if let Some(write) = b.owed(&at, merged.as_ref()) {
             owed.insert(key.clone(), write);
@@ -1073,7 +1079,7 @@ fn write_owed(ctx: &Context, id: &str, issue: Option<&IssueItem>, judged: &str, 
             };
             format!(
                 "box={number} {}",
-                settle_issue(ctx, issue, judged, Some(&met))
+                settle_issue(ctx, issue, judged, Some(&met)).1
             )
         }
         (Owed::Comment { text }, Some(issue)) => {
@@ -1097,8 +1103,15 @@ struct Met<'a> {
 /// is the open body `judged` was: a body edited since may number its boxes
 /// otherwise, and the next pass judges it again. `met`'s box is ticked by
 /// the box parser, which writes its Evidence line; the issue closes as
-/// completed once no post-merge box stays open. The note names the write.
-fn settle_issue(ctx: &Context, issue: &IssueItem, judged: &str, met: Option<&Met<'_>>) -> String {
+/// completed once no post-merge box stays open. Whether GitHub took the
+/// write, and the note that names it.
+fn settle_issue(
+    ctx: &Context,
+    issue: &IssueItem,
+    judged: &str,
+    met: Option<&Met<'_>>,
+) -> (bool, String) {
+    let unwritten = |cause: &str| (false, format!("issue-unwritten cause={cause}"));
     let path = format!("repos/{}/issues/{}", issue.repo, issue.number);
     let live = gh_json(&ctx.gh, &path, &mut BTreeMap::new())
         .and_then(|v| serde_json::from_value::<IssueText>(v).map_err(|e| e.to_string()));
@@ -1108,8 +1121,8 @@ fn settle_issue(ctx: &Context, issue: &IssueItem, judged: &str, met: Option<&Met
             body: Nullable::Present(body),
             ..
         }) if state == "open" && body == judged => body,
-        Ok(_) => return "issue-unwritten cause=moved".to_owned(),
-        Err(_) => return "issue-unwritten cause=read-failed".to_owned(),
+        Ok(_) => return unwritten("moved"),
+        Err(e) => return unwritten(&format!("read-failed error={}", one_line(&e))),
     };
     let mut patch = serde_json::Map::new();
     let open_left = match met {
@@ -1122,7 +1135,12 @@ fn settle_issue(ctx: &Context, issue: &IssueItem, judged: &str, met: Option<&Met
             }
             let ticked = match parse(&ctx.settings, &body, &tick) {
                 Ok(Ok((parsed, _))) if parsed.ticked == 1 && parsed.errors.is_empty() => parsed,
-                Ok(_) | Err(_) => return "issue-unwritten cause=untickable".to_owned(),
+                Ok(Ok((parsed, _))) if parsed.ticked != 1 => return unwritten("box-not-open"),
+                Ok(Ok(_)) => return unwritten("checklist-invalid"),
+                Ok(Err(e)) => return unwritten(&format!("tick-unparsed error={}", one_line(&e))),
+                Err(e) => {
+                    return unwritten(&format!("tick-unrun error={}", one_line(&e.to_string())));
+                }
             };
             patch.insert("body".to_owned(), ticked.description.into());
             ticked.boxes.iter().any(|b| b.post_merge && !b.checked)
@@ -1133,12 +1151,16 @@ fn settle_issue(ctx: &Context, issue: &IssueItem, judged: &str, met: Option<&Met
         patch.insert("state_reason".to_owned(), "completed".into());
     }
     let written = issue_write(&ctx.gh, "PATCH", &path, &Value::Object(patch));
-    format!("issue={written} closed={}", !open_left)
+    (
+        written == "written",
+        format!("closed={} issue={written}", !open_left),
+    )
 }
 
-/// One GitHub write of `input` on `path`: `written`, `failed` where gh
-/// refused it or never ran, `unknown` where it started and gave no answer.
-fn issue_write(gh: &Path, method: &'static str, path: &str, input: &Value) -> &'static str {
+/// One GitHub write of `input` on `path`: `written`; `failed` where gh
+/// refused it or never ran, `unknown` where it started and gave no answer,
+/// each with what gh or the runner said.
+fn issue_write(gh: &Path, method: &'static str, path: &str, input: &Value) -> String {
     let input = input.to_string();
     let args = ["api", path, "--method", method, "--input", "-"];
     match super::github::handle(gh).tagged(TAG).bounded(BOUND).run(
@@ -1146,11 +1168,21 @@ fn issue_write(gh: &Path, method: &'static str, path: &str, input: &Value) -> &'
         &args,
         Some(input.as_bytes()),
     ) {
-        Ok(Answer::Printed { .. }) => "written",
-        Ok(Answer::Failed(failed)) if failed.exit.is_some() => "failed",
-        Err(crate::verify::Unrun::Runner(agent_runtime::Error::NotStarted { .. })) => "failed",
-        Ok(Answer::Failed(_)) | Err(_) => "unknown",
+        Ok(Answer::Printed { .. }) => "written".to_owned(),
+        Ok(Answer::Failed(failed)) if failed.exit.is_some() => {
+            format!("failed error={}", one_line(&failed.detail()))
+        }
+        Ok(Answer::Failed(failed)) => format!("unknown error={}", one_line(&failed.detail())),
+        Err(crate::verify::Unrun::Runner(e @ agent_runtime::Error::NotStarted { .. })) => {
+            format!("failed error={}", one_line(&e.to_string()))
+        }
+        Err(unrun) => format!("unknown error={}", one_line(&unrun.detail())),
     }
+}
+
+/// `text` on one line, as a note's last field carries it.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn reading_of(row: &str) -> (&str, &str) {
@@ -1207,7 +1239,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         let judged = judge_item(
             ctx,
             item,
-            issue.is_some(),
+            issue.as_ref().map(|i| i.repo.as_str()),
             merged_index.get(&item.id).map(Vec::as_slice),
             tick.wall,
             &mut read,
@@ -1256,20 +1288,28 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
             } => {
                 held.insert(item.id.clone());
                 all_lines.extend(lines.iter().cloned());
-                // An open issue with no open post-merge box is owed its
-                // close on every pass that reads it so.
+                // A GitHub item closes on the pass that reads its last open
+                // post-merge box gone, as one a person ticked by hand: an
+                // issue first read with none open may be one a person
+                // reopened. Its row moves only once the close is written,
+                // so a refused close is asked again.
                 if let Some(issue) = issue
                     && key == "boxes=0"
+                    && prior.is_some_and(|row| row != "boxes=0")
                 {
-                    let note = settle_issue(ctx, issue, &item.description, None);
+                    let (written, note) = settle_issue(ctx, issue, &item.description, None);
                     let _ = writeln!(
                         std::io::stderr(),
                         "verifying-write issue={} {note}",
                         item.id
                     );
+                    if !written {
+                        continue;
+                    }
                 }
                 if !due.is_empty() || prior != Some(key.as_str()) {
-                    if key == "boxes=0" {
+                    // The watch settles a GitHub item itself.
+                    if key == "boxes=0" && issue.is_none() {
                         produced.events.push(Event::VerifyingDeadline {
                             id: item.id.clone(),
                             row: "boxes=0".to_owned(),
@@ -1387,6 +1427,51 @@ mod tests {
         ];
         for (glob, tag, want) in rows {
             assert_eq!(glob_matches(glob, tag), want, "{glob} {tag}");
+        }
+    }
+
+    /// A GitHub item's box reads only its own repository, whose issue the
+    /// reading is published on; a Linear item's box reads any.
+    #[test]
+    fn a_github_items_box_reads_its_own_repository_alone() {
+        let gh = PathBuf::from("gh-never-run");
+        let judged = |where_: &str| Judged {
+            number: 1,
+            trigger: "merge".to_owned(),
+            trigger_kind: "merge".to_owned(),
+            trigger_epoch: None,
+            deadline_epoch: None,
+            deadline_hours: None,
+            deadline: None,
+            reading: String::new(),
+            where_: where_.to_owned(),
+            why: String::new(),
+            release: None,
+            merged: None,
+            status: "due",
+            numeric: Some(Numeric {
+                comparator: ">=".to_owned(),
+                value: 1.0,
+                unit: Some("release".to_owned()),
+            }),
+            read: None,
+        };
+        let rows = [
+            (
+                "https://github.com/other/private/releases",
+                Some("owner/repo"),
+                "no-reader",
+            ),
+            (
+                "https://github.com/Owner/Repo/releases",
+                Some("owner/repo"),
+                "merge",
+            ),
+            ("https://github.com/other/private/releases", None, "merge"),
+        ];
+        for (where_, issue_repo, want) in rows {
+            let reading = read_box(&gh, &judged(where_), issue_repo, None, &mut BTreeMap::new());
+            assert_eq!(reading, Reading::Unread(want), "{where_} {issue_repo:?}");
         }
     }
 

@@ -1048,12 +1048,16 @@ Each `verifying [ITEM] box=[N] ...` line names an open post-merge box on a merge
 
 The watch itself completes a box that reads `met`, with its Evidence line. It comments once on a box that reads `failed` or `inconclusive`.
 
-A GitHub item's line names it `[OWNER/REPO]#[N]`: an open issue whose own merged pull request left it open with a post-merge box. The watch judges it by the same rule, and writes on the issue itself, which no `linear.sh` step reaches:
+A GitHub item's line names it `[OWNER/REPO]#[N]`: an open issue the fleet wrote, whose own merged pull request left it open with a post-merge box. The watch judges it by the same rule and writes on the issue itself. No `linear.sh` tracker read or write runs on it ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)):
 
-- It ticks a `met` box in the issue body with its Evidence line, and comments on the issue for a `failed` or `inconclusive` one.
-- It closes the issue as completed once no post-merge box stays open, a box a person ticked by hand included.
+- The watch ticks a `met` box in the issue body with its Evidence line, and comments on the issue for a `failed` or `inconclusive` one.
+- It closes the issue as completed on the pass that reads its last open post-merge box gone, a box a person ticked by hand included. It raises no `boxes=0` event for the item, and its `boxes=0` line takes no completion step.
+- An issue it first reads with no open box, such as one a person reopened, stays open.
 - Its open branch boxes hold nothing: no completion ticks them in a GitHub body.
-- A box a person proves is ticked in the issue body with its indented `Evidence:` line (`gh issue edit [N] --repo [OWNER/REPO] --body-file [FILE]`), in place of the completion steps below.
+- A box whose `Where:` names another repository reads `unread`.
+- A box a person proves takes step 1's evidence comment, posted with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`. Its tick replaces steps 2 and 3: the box ticked in the issue body with an indented `Evidence:` line citing that comment.
+- Every body write, that tick and each of [verify.md § 2](../workflows/verify.md#2-resolve-missing-evidence), is `gh issue edit [N] --repo [OWNER/REPO] --body-file [FILE]` over the live body. A waiver replaces the box with `- Waived: [BOX TEXT]` and an indented `Reason: [AUTHORITY]: [REASON]` line under it.
+- The watch reads no blocker for a GitHub item, so waiting for an event takes a dated `Trigger:` instead.
 
 - For each due or overdue box the watch leaves open, run [verify.md](../workflows/verify.md).
 - Acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), and a failed check takes that section's route.
