@@ -91,15 +91,18 @@ closed_reply_after_later_question|a reply under a closed unreplaced question is 
 closed_chain_reported|replies under the questions of a closed chain are reported unmatched, not delivered to a later ask
 off_item_window|a comment on the item after a question an ask off the item replaced reaches that ask under the item header
 off_item_reply|a reply under a question an ask off the item replaced reaches that ask under the reply header
-own_item_plain|an ask on another item takes that item's comments plain and a comment before its question is reported
+own_item_plain|an ask on another item takes that item's comments plain and a comment from before its question is not judged
 third_bounds_window|a later question on the item bounds the replaced window and takes its own comments plain
 closed_later_question|after the later question closes, comments after it and replies under it are reported unmatched
 closed_between|a comment between a closed question and an open one is reported, and one after the open question is its ask's
 both_open|with two open asks posted on one item each comment reaches the ask of the question it belongs to
 refused_close_later|once an ask left open by a refused close closes, its question's comments reach the ask that replaced it
-before_first_question|a comment before the item's first question is reported unmatched once
+before_first_question|a comment from before the item's oldest question is neither delivered nor reported
 reply_under_comment|a reply under an owner comment goes where that comment goes
 report_unsent_retried|a report the mailbox refuses prints report-unsent, keeps the read and lands on the next pass
+compacted_kept|compaction keeps an item's closed questions and their records while an open ask replaces one there
+compacted_reask|once an item's records leave, a later question there judges only the comments after it
+missing_item|an item Linear holds no issue for counts as holding no comments, named once on stderr, and the pass reads
 ROWS
 # The item write's settings are judged before the append: each unset key
 # refuses an item ask by name and leaves the mailbox and the tracker as they

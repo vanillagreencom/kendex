@@ -88,6 +88,13 @@ elif args[:2] == ["comments", "list"]:
     print(json.dumps([safe(row) for row in comments if row["issue"] == args[2]]))
 elif args[:2] == ["comments", "bulk-list"]:
     wanted = [arg for arg in args[2:] if not arg.startswith("--")]
+    # comments --help: a ref Linear answers it has no issue for refuses the
+    # whole read, naming it in `missing` after the lookup's own error line.
+    missing = [key for key in wanted if key not in items]
+    if missing:
+        print(json.dumps({"error": "Entity not found: Issue"}), file=sys.stderr)
+        print(json.dumps({"error": "Issues not read: " + ", ".join(missing), "missing": missing}), file=sys.stderr)
+        sys.exit(1)
     print(json.dumps({key: [safe(row) for row in comments if row["issue"] == key] for key in wanted}))
 else:
     sys.exit(1)
@@ -151,6 +158,12 @@ class Case:
         next(row for row in comments if row["id"] == comment)["issue"] = "deleted"
         (self.state / "comments.json").write_text(json.dumps(comments))
 
+    def delete_item(self, issue):
+        """Gone from Linear, deleted or out of the token's reach."""
+        items = self.items()
+        del items[issue]
+        (self.state / "items.json").write_text(json.dumps(items))
+
     def body(self, comment):
         return next(row["body"] for row in self.comments() if row["id"] == comment)
 
@@ -206,6 +219,28 @@ class Overseer:
     def lines(self):
         return len(self.rows("to-overseer.jsonl")), len(self.rows("to-lane.jsonl"))
 
+    def compact(self):
+        """The watch's retention a month on, once the overseer has read its
+        mail: orch's settings answer their defaults and no archive root is
+        placed, so the dropped rows leave with no copy."""
+        orch = self.root / ".agents/skills/orch/scripts"
+        orch.mkdir(parents=True, exist_ok=True)
+        for name, script in (("orch-env", 'printf "%s\\n" "$2"'),
+                             ("orch-runtime", "printf '%s\\n' '{\"ok\":true,\"result\":{\"archive\":null}}'")):
+            (orch / name).write_text("#!/bin/sh\n" + script + "\n")
+            (orch / name).chmod(0o755)
+        later = self.root / "later"
+        later.mkdir(exist_ok=True)
+        date = shutil.which("date", path=self.env["PATH"])
+        (later / "date").write_text('#!/bin/sh\nif [ "$*" = "-u +%%s" ]; then echo $(( $("%s" -u +%%s) + 2592000 ))\n'
+                                    'else exec "%s" "$@"; fi\n' % (date, date))
+        (later / "date").chmod(0o755)
+        for args, env in ((("inbox", "--item", "overseer"), None),
+                          (("compact", "--item", "overseer"), dict(self.env, PATH=str(later) + os.pathsep + self.env["PATH"]))):
+            result = self.run(*args, env=env)
+            if result.returncode:
+                raise RuntimeError("%s exit=%d: %s" % (args[0], result.returncode, result.stderr))
+
     def owner_answers(self):
         env = dict(self.env, OVERSEE_WATCH_TRACKER=str(self.root / ".agents/skills/linear/scripts/linear.sh"))
         result = subprocess.run([*self.mail, "owner-answers", "--item", "overseer"], cwd=self.root, env=env,
@@ -249,6 +284,15 @@ class Pass:
         return (self.ok() and answer.get("re") == open_ask and bool(lines) and lines[0].split()[0] == form
                 and set(re.findall(r"\d+-\d+-\d+", lines[0])) == {replaced, open_ask} and lines[-1] == body
                 and self.counts.get(comment, 0) == 1 and comment not in self.reports)
+
+    def records(self, comments):
+        """The id of the answer or report each comment holds."""
+        return {comment: (self.answers.get(comment) or self.reports.get(comment) or {}).get("id")
+                for comment in comments}
+
+    def unjudged(self, comment):
+        """Neither delivered to an ask nor reported."""
+        return self.ok() and comment not in self.answers and comment not in self.reports
 
     def reported(self, comment, issue):
         """Reported to the overseer once, naming the item and the comment, and
@@ -404,7 +448,7 @@ def other_item(case, facts):
         and read.headed(after, "Comment", first, there, "approve after"))
     facts["off_item_reply"] &= read.headed(under, "Reply", first, there, "A")
     facts["own_item_plain"] &= (read.plain(own, there, "B") and read.plain(own_item, there, "C")
-        and read.reported(early, "KEN-8"))
+        and read.unjudged(early))
     # Once the replacing ask closes, nothing on either item reaches an ask.
     overseer.resolve(there)
     late = [case.owner_reply("KEN-7", None, "late"), case.owner_reply("KEN-7", first_comment, "late A"),
@@ -423,7 +467,7 @@ def closed_question(case, facts):
     top, under = case.owner_reply("KEN-7", None, "approve"), case.owner_reply("KEN-7", first_comment, "A")
     overseer.resolve(first)
     read = overseer.owner_answers()
-    facts["before_first_question"] &= read.reported(before_any, "KEN-7")
+    facts["before_first_question"] &= read.unjudged(before_any)
     facts["closed_question_reported"] &= read.reported(top, "KEN-7") and read.reported(under, "KEN-7")
     between = case.owner_reply("KEN-7", None, "after the close")
     before = case.body(first_comment)
@@ -438,7 +482,8 @@ def closed_question(case, facts):
         and read.plain(own, second, "B"))
     facts["closed_reply_after_later_question"] &= read.reported(old, "KEN-7")
     # Nothing reported earlier is reported again.
-    facts["before_first_question"] &= all(read.counts.get(comment, 0) == 1 for comment in (before_any, top, under))
+    facts["closed_question_reported"] &= all(read.counts.get(comment, 0) == 1 for comment in (top, under))
+    facts["before_first_question"] &= read.unjudged(before_any)
 
 
 def unmarked(case, facts):
@@ -603,6 +648,56 @@ def off_item(case, facts):
     facts["closed_between"] &= read.reported(gap, "KEN-7") and read.plain(newest, fourth, "ship tests")
 
 
+def compacted(case, facts):
+    """Row 27's world after retention while the chat ask replacing the first
+    question stays open, then once every ask on the item has closed."""
+    overseer = case.checkout("asker")
+    first, _ = overseer.item_ask("KEN-7")
+    chat, _ = overseer.ask("--replaces", first, text="Approve the whole change?\n")
+    third, _ = overseer.item_ask("KEN-7", text="Ship the docs too?\n")
+    third_comment = tracker_comment(overseer, third)
+    top, under = case.owner_reply("KEN-7", None, "ship"), case.owner_reply("KEN-7", third_comment, "B")
+    overseer.owner_answers()
+    overseer.resolve(third)
+    closed = case.owner_reply("KEN-7", None, "thanks")
+    held = overseer.owner_answers().records((top, under, closed))
+    overseer.compact()
+    late = case.owner_reply("KEN-7", None, "also rename the file")
+    read = overseer.owner_answers()
+    # The same records, not ones a later pass wrote again.
+    facts["compacted_kept"] &= (chat in overseer.pending() and None not in held.values()
+        and read.records(held) == held and read.plain(top, third, "ship") and read.plain(under, third, "B")
+        and read.reported(closed, "KEN-7") and read.reported(late, "KEN-7"))
+    # With nothing open on the item, its records leave together, and a later
+    # question judges only what follows it.
+    overseer.resolve(chat)
+    overseer.compact()
+    fourth, _ = overseer.item_ask("KEN-7", text="Ship the tests too?\n")
+    newest = case.owner_reply("KEN-7", None, "ship tests")
+    read = overseer.owner_answers()
+    facts["compacted_reask"] &= (not {first, third} & {row.get("id") for row in overseer.rows("to-overseer.jsonl")}
+        and read.plain(newest, fourth, "ship tests")
+        and all(read.unjudged(comment) for comment in (top, under, closed, late)))
+
+
+def missing_item(case, facts):
+    """An item that held a question of this mailbox is gone from Linear."""
+    overseer = case.checkout("asker")
+    gone, _ = overseer.item_ask("KEN-8")
+    overseer.resolve(gone)
+    first, _ = overseer.item_ask("KEN-7")
+    case.delete_item("KEN-8")
+    answer = case.owner_reply("KEN-7", None, "approve")
+    read = overseer.owner_answers()
+    notices = read.result.stderr.splitlines()
+    facts["missing_item"] &= (read.plain(answer, first, "approve")
+        and notices.count("owner-answers: item-missing issue=KEN-8") == 1)
+    case.delete_item("KEN-7")
+    read = overseer.owner_answers()
+    facts["missing_item"] &= read.ok() and {"owner-answers: item-missing issue=KEN-7",
+                                            "owner-answers: item-missing issue=KEN-8"} <= set(read.result.stderr.splitlines())
+
+
 def report_retry(case, facts):
     """A report the mailbox refuses, here for no registered overseer, holds
     neither the pass's read nor the comment: the next pass sends it."""
@@ -631,7 +726,7 @@ ROWS = ("same_item_replaces", "chat_replaces", "other_item_replaces", "other_ite
         "closed_question_reported", "closed_window_reported", "closed_reply_after_later_question",
         "closed_chain_reported", "off_item_window", "off_item_reply", "own_item_plain", "third_bounds_window",
         "closed_later_question", "closed_between", "both_open", "refused_close_later", "before_first_question",
-        "reply_under_comment", "report_unsent_retried")
+        "reply_under_comment", "report_unsent_retried", "compacted_kept", "compacted_reask", "missing_item")
 
 
 def run(source, scratch, bash):
@@ -643,7 +738,8 @@ def run(source, scratch, bash):
                  (lambda case, facts: refused_close(case, facts, True), ("KEN-7",)),
                  (lambda case, facts: refused_close(case, facts, False), ("KEN-7",)),
                  (item_chain, ("KEN-7",)), (chains, ("KEN-7", "KEN-8", "KEN-9")),
-                 (off_item, ("KEN-7",)), (report_retry, ("KEN-7",)))
+                 (off_item, ("KEN-7",)), (report_retry, ("KEN-7",)), (compacted, ("KEN-7",)),
+                 (missing_item, ("KEN-7", "KEN-8")))
 
     def judged(scenario, issues):
         facts = dict.fromkeys(ROWS, True)

@@ -413,6 +413,23 @@ def row_metadata(rows, jq_defs):
     return json.loads(result.stdout)
 
 
+def row_links(obj):
+    """The ids and items a row keeps or is kept by.
+
+    owner-answers judges each owner comment on an item against every question
+    of this mailbox there, and against the questions an open ask replaced, and
+    a delivery record keeps a comment from being judged twice. So the rows
+    naming one item (owner asks, their tracker records, the reports of
+    unmatched comments) leave together, and an ask keeps the asks it replaced.
+    """
+    replaced = obj.get("replaces") if isinstance(obj.get("replaces"), list) else []
+    replaced = [entry for entry in replaced if isinstance(entry, dict)]
+    ids = {obj[key] for key in ("id", "re", "ref") if isinstance(obj.get(key), str)}
+    ids.update(entry["id"] for entry in replaced if isinstance(entry.get("id"), str))
+    ids.update(("issue", entry["issue"]) for entry in [obj, *replaced] if isinstance(entry.get("issue"), str))
+    return ids
+
+
 def plan(box, dest, cutoff, seen, jq_defs):
     """Keep unread rows and each ask's complete, still-needed exchange."""
     boxes = [read_box(8, box / "to-overseer.jsonl"), read_box(9, box / "to-lane.jsonl")]
@@ -436,7 +453,7 @@ def plan(box, dest, cutoff, seen, jq_defs):
             retain = at is None or at >= cutoff or unread or open_ask
             selected.append(retain)
             if obj:
-                ids = {obj[key] for key in ("id", "re", "ref") if isinstance(obj.get(key), str)}
+                ids = row_links(obj)
                 links.append((b, i, ids))
                 if retain:
                     protected.update(ids)

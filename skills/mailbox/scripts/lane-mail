@@ -44,16 +44,19 @@ owner-answers reads posted owner asks once, repairs their action descriptions,
 and delivers later owner comments through the existing delivery-id check. An
 item's questions are the question comments of every ask of this mailbox posted
 there, open or closed, and each question an open ask's `replaces` names; the
-pass reads the owner's comments on each such item. A comment belongs to one
+pass reads the owner's comments on each such item made after its oldest such
+question. An item Linear answers it holds no issue for has no comments to read,
+and stderr names it as `owner-answers: item-missing issue=<item>`; any other
+failed read leaves the pass unread. A comment belongs to one
 question: a reply under a question to that question, a top-level comment to
 the latest question posted before it, and a reply under any other comment to
 the question that comment belongs to. It goes to that question's ask while the
 ask is open, as it stands. Where that ask is closed and an open ask that
 reached the owner (one with no item, or an item ask whose question posted)
 names it in `replaces`, it goes to that open ask, its text opening with one
-line naming the closed ask and the open one. Any other comment, one with no
-question before it included, goes to no ask: the overseer gets one data notice
-from source owner-answers, its first line naming the item and the comment id.
+line naming the closed ask and the open one. Any other comment goes to no
+ask: the overseer gets one data notice from source owner-answers, its first
+line naming the item and the comment id.
 An answer and a report carry the delivery id linear:<comment id>, so each
 comment is delivered or reported once, by the first pass that reads it. A
 report that does not land prints `owner-answers: report-unsent issue=<item>
@@ -125,7 +128,10 @@ Overseer side:
               mailbox inode locks. ORCH_RECORD_RETENTION_DAYS defaults to 5
               with SLACK_THREAD_DAYS (relay default 7) as its minimum.
               to-overseer.jsonl uses age alone because its readers own their
-              read records. Keep unread to-lane rows and open exchanges.
+              read records. Keep unread to-lane rows and open exchanges, the
+              asks a kept ask replaced, and every row naming an item (owner
+              asks, their tracker records, data notices with --issue) while
+              any row naming that item is kept.
               Each FILE.numbering records dropped, first and retained logical
               lines under the same lock. All readers keep logical numbers and
               the original first id, including after every row is removed.
@@ -379,7 +385,7 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               collapsed), and envelope only for a relay-posted parent.
               inbox prints both fields as part of the envelope. A top-level
               directive and an ask's answer carry neither
-  send --item overseer --data SOURCE --file PATH [--delivery-id KEY]
+  send --item overseer --data SOURCE --file PATH [--delivery-id KEY] [--issue ITEM]
               a data notice: text a program wrote into the overseer's own
               mailbox, such as a mail watch's summary of an email. Its kind
               is `data`, never `directive`, and SOURCE, the program or
@@ -391,7 +397,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               gives it mail_class `data`, and inbox, its cursor and --ack
               hand it over as any other envelope. It needs the overseer
               record a directive needs; --re, --directive and --halt beside
-              it are refused `option-conflict`
+              it are refused `option-conflict`. --issue names the tracker
+              item the text concerns, the envelope's `issue` field, so
+              compaction keeps the notice with that item's owner asks
   send --item overseer --re MSGID --file PATH [--delivery-id KEY]
               every answer to an open owner ask lands separately with by=text.
               An answer leaves the ask pending until resolve closes it.
@@ -1007,7 +1015,10 @@ for given in $OPTS_GIVEN; do
         ask:overseer:peer | notice:overseer:peer) refuse to-invalid "$TO" ;;
         *) refuse option-unknown --to ;;
       esac ;;
-    --issue) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --issue ;;
+    # A data notice names the item it concerns, so compaction keeps it with
+    # that item's owner asks.
+    --issue) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || [ "$VERB:$ITEM:${DATA_SOURCE:+data}" = send:overseer:data ] ||
+      refuse option-unknown --issue ;;
     --do) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ] || refuse option-unknown --do ;;
     --replaces) [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] || refuse option-unknown --replaces ;;
     --ref) case "$VERB:$ITEM" in ask:overseer | notice:overseer) ;; *) refuse option-unknown --ref ;; esac ;;
@@ -1254,7 +1265,7 @@ owner_answers() {
   OWNER_TRACKER_QUOTA=0
   owner_tracker_settings "$SCRIPT_DIR" || return 0
   OWNER_TRACKER_READ=unread
-  local items asks issue ask comment id rc refusal repair description labels label cause current variables ids=()
+  local items asks issue ask comment id rc refusal repair description labels label cause current variables missing ids=()
   # Every owner ask the mailbox holds, closed ones too, is read before the
   # open ones: an ask that lands between the reads is open, and one that
   # closes between them is closed.
@@ -1341,7 +1352,24 @@ owner_answers() {
   while IFS= read -r issue; do [[ -z "$issue" ]] || ids+=("$issue"); done <<<"$asks"
   if ! "$TRACKER" comments bulk-list "${ids[@]}" --format=safe >"$WORK_DIR/tracker-comments" 2>"$WORK_DIR/tracker.err"; then
     tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
-    echo 'KEN-3624-unread cause=comments' >&2; return 0
+    # Linear's answer that it holds no such issue, the read's `missing` list
+    # (comments --help), is definitive: that item holds no comment to read.
+    # The rest are read again; any other failure leaves the pass unread.
+    if ! missing="$(jq -Rrn --args '$ARGS.positional as $ids | [inputs | fromjson? | objects | .missing | arrays] | last
+        | select(. != null and length > 0 and all(.[]; type == "string" and IN($ids[] | ascii_upcase)))[]'         "${ids[@]}" <"$WORK_DIR/tracker.err")" || [[ -z "$missing" ]]; then
+      echo 'KEN-3624-unread cause=comments' >&2; return 0
+    fi
+    while IFS= read -r issue; do printf 'owner-answers: item-missing issue=%s\n' "$issue" >&2; done <<<"$missing"
+    ids=()
+    while IFS= read -r issue; do
+      [[ -z "$issue" ]] || grep -Fqxi -- "$issue" <<<"$missing" || ids+=("$issue")
+    done <<<"$asks"
+    if [[ "${#ids[@]}" -eq 0 ]]; then
+      printf '{}\n' >"$WORK_DIR/tracker-comments"
+    elif ! "$TRACKER" comments bulk-list "${ids[@]}" --format=safe >"$WORK_DIR/tracker-comments" 2>"$WORK_DIR/tracker.err"; then
+      tracker_quota_refusal "$WORK_DIR/tracker.err" && return 0
+      echo 'KEN-3624-unread cause=comments' >&2; return 0
+    fi
   fi
   if ! jq -se 'length == 1 and (.[0] | type == "object" and
       all(.[]; type == "array" and all(.[]; type == "object" and
@@ -1370,7 +1398,9 @@ owner_answers() {
       # A reply under a question belongs to it; a top-level comment belongs
       # to the latest question before it; a reply under any other
       # comment belongs where that comment does, and an earlier one only, so
-      # the walk ends.
+      # the walk ends. A comment from before the oldest question on the item
+      # is not judged: compaction drops the questions and delivery records of
+      # an item together, so one from before them may have been delivered.
       | def question($issue; $rows):
           . as $row | ($row.parent_id // "") as $parent
           | if $parent == "" then [$questions[] | select(.issue == $issue and .at < $row.created_at)] | max_by(.at)
@@ -1380,7 +1410,8 @@ owner_answers() {
               | if . == null then null else question($issue; $rows) end end end;
       [$questions | map(.issue) | unique[] as $issue
         | ($comments[0][$issue] // [] | sort_by(.created_at)) as $rows
-        | $rows[] | select(owned) | . as $row | select(any($questions[]; .id == $row.id) | not)
+        | ([$questions[] | select(.issue == $issue) | .at] | min) as $from
+        | $rows[] | select(owned and .created_at > $from) | . as $row | select(any($questions[]; .id == $row.id) | not)
         | question($issue; $rows) as $q
         | if $q != null and any($open[]; . == $q.ask) then {ask: $q.ask, issue: $issue, comment: $row}
           else (if $q == null then null
@@ -1409,7 +1440,7 @@ owner_answers() {
       "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --re "$ask" --delivery-id "linear:$id" \
         --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
     else
-      "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --data owner-answers --delivery-id "linear:$id" \
+      "$LANE_MAIL" send --item "$ITEM" --root "$ROOT" --data owner-answers --issue "$issue" --delivery-id "linear:$id" \
         --file "$WORK_DIR/tracker-answer" >"$WORK_DIR/tracker.out" 2>"$WORK_DIR/tracker.err" || rc=$?
     fi
     refusal="$(head -n 1 "$WORK_DIR/tracker.err")" || refusal=""
@@ -2135,7 +2166,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $halt == "1" then {halt: true} else {} end)
       + (if $to == "" then {} else {to: $to} end)
       + (if $issue == "" then {} else {issue: $issue} end)
-      + (if $issue == "" then {} else {do: $action} end)
+      + (if $action == "" then {} else {do: $action} end)
       + (if $replaces == [] then {} else {replaces: $replaces} end)
       + (if $ref == "" then {} else {ref: $ref} end)
       + (if $progress == "1" then {progress: true} else {} end)

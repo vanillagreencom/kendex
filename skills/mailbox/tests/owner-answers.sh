@@ -92,8 +92,8 @@ esac
          cwd=worktree / 'subdir')
     comments = [dict(id='question', body='Question', user_email='bot@example.test', created_at='2026-01-02T00:00:00Z')]
     # A single input table covers the author/time contract: the owner's
-    # comment after the question answers it, and one before any question is
-    # reported to the overseer instead.
+    # comment after the question answers it, and one from before the item's
+    # oldest question is neither delivered nor reported.
     for id, author, at in [('before', 'owner@example.test', '2026-01-01'),
                            ('other', 'other@example.test', '2026-01-03'),
                            ('answer', 'OWNER@example.test', '2026-01-03')]:
@@ -110,9 +110,8 @@ esac
         assert not result.stderr, result
         assert result.stdout.splitlines()[-1] == 'owner-answers: read=read', result
         rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek', cwd=cwd).stdout.splitlines() if line.startswith("{")]
-        assert [(row['kind'], row.get('delivery_id')) for row in rows] == [
-            ('answer', 'linear:answer'), ('data', 'linear:before')], rows
-        assert rows[0]['text'] == 'answer' and rows[1]['source'] == 'owner-answers', rows
+        assert [(row['kind'], row.get('delivery_id')) for row in rows] == [('answer', 'linear:answer')], rows
+        assert rows[0]['text'] == 'answer', rows
     call('owner-answers', '--item', 'overseer')
     again = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith("{")]
     assert again == rows, again
@@ -165,7 +164,7 @@ esac
         call('owner-answers', '--item', 'overseer')
         rows = [json.loads(line) for line in call('inbox', '--item', 'overseer', '--peek').stdout.splitlines() if line.startswith('{')]
         assert [(row['kind'], row.get('delivery_id')) for row in rows] == [
-            ('answer', 'linear:answer'), ('data', 'linear:before'), ('answer', 'linear:later-answer')], rows
+            ('answer', 'linear:answer'), ('answer', 'linear:later-answer')], rows
     message.write_text('Approve the explicit-root change?\n')
     call('ask', '--item', 'overseer', '--root', str(worktree), '--to', 'owner', '--issue', 'KEN-7',
          '--do', 'Approve explicit-root change', '--options', 'approve,hold', '--recommend', 'approve',
@@ -197,7 +196,7 @@ PY
   rc=0
   MAILBOX_UNDER_TEST="$TMP_ROOT" "$BASH" "$ROOT/skills/mailbox/tests/owner-answers.sh" >"$TMP_ROOT/control.log" 2>&1 || rc=$?
   assert_eq "$rc" 1 'inverted time selection fails the fixture'
-  assert_file_contains "$TMP_ROOT/control.log" "'text': 'before'" 'the control reaches the delivered-comment assertion'
+  assert_file_contains "$TMP_ROOT/control.log" "'kind': 'data'" 'the control reaches the delivered-comment assertion'
   cp "$ROOT/skills/mailbox/scripts/lane-mail" "$TMP_ROOT/scripts/lane-mail"
   python3 - "$TMP_ROOT/scripts/lane-mail" <<'PY'
 from pathlib import Path
