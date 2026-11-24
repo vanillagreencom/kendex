@@ -147,6 +147,22 @@ label|ORCH_OWNER_EMAIL=owner@example.test|ORCH_OWNER_ASK_LABEL
 owner account|ORCH_OWNER_ASK_LABEL=owner-gated|ORCH_OWNER_EMAIL
 both||ORCH_OWNER_ASK_LABEL,ORCH_OWNER_EMAIL
 ROWS
+# The item is judged before the append too: owner-answers reads it back
+# through `comments bulk-list`, which takes an upper-case identifier alone.
+while IFS='|' read -r row issue; do
+  [[ -n "$row" ]] || continue
+  before="$(cksum <"$SETTINGS_BOX")"
+  ask_rc=0
+  settings_ask ORCH_OWNER_EMAIL=owner@example.test ORCH_OWNER_ASK_LABEL=owner-gated -- \
+    --issue "$issue" --do 'Approve change' >"$SETTINGS_CASE/$row.out" 2>"$SETTINGS_CASE/$row.err" || ask_rc=$?
+  assert_eq "$ask_rc|$(sed -n 1p "$SETTINGS_CASE/$row.err")|$(cat "$SETTINGS_CASE/$row.out")" \
+    "2|lane-mail: issue-invalid=$issue|" "an item ask naming its item by $row refuses issue-invalid"
+  assert_eq "$(cksum <"$SETTINGS_BOX")|$([[ -e "$SETTINGS_CASE/tracker-calls" ]] && echo called)" "$before|" \
+    "an item ask naming its item by $row leaves the mailbox and the tracker untouched"
+done <<'ROWS'
+uuid|4029001b-0b88-4e0d-b5a8-3af25993f856
+lower-case identifier|ken-7
+ROWS
 if [[ -z "${MAILBOX_UNDER_TEST:-}" ]]; then
   for rule in pending failed bound private-failed cause comment-id mention attribution mention-check close-untracked retained-error rollback-owner comment-refused rollback-label settings; do
     mkdir -p "$TMP_ROOT/control-$rule"

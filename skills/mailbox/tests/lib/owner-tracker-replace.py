@@ -339,6 +339,8 @@ def replace(case, facts):
             and refused.stderr.split()[1].split("=")[0] == key and lines == overseer.lines()
             and first in overseer.pending())
     between = case.owner_reply("KEN-7", None, "approve")
+    # Replied under the first question before the re-ask, read after it.
+    early = case.owner_reply("KEN-7", first_comment, "A first")
     second, stderr = overseer.item_ask("KEN-7", "--replaces", chat)
     second_comment = tracker_comment(overseer, second)
     open_asks = overseer.pending()
@@ -360,7 +362,8 @@ def replace(case, facts):
     read = overseer.owner_answers()
     facts["replaced_window"] &= read.headed(between, "Comment", first, second, "approve")
     facts["replaced_reply"] &= (read.headed(under, "Reply", first, second, "A")
-        and {(second, under), (second, later), (second, own)} <= read.delivered)
+        and read.headed(early, "Reply", first, second, "A first")
+        and {(second, early), (second, under), (second, later), (second, own)} <= read.delivered)
     facts["open_question_plain"] &= read.plain(later, second, "B") and read.plain(own, second, "C")
 
 

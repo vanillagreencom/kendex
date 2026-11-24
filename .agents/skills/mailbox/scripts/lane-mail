@@ -254,8 +254,11 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               (--recommend a --effect none | --reserved) [--wait MINUTES] [--ref MSGID] [--issue ITEM --do TEXT]
               [--replaces MSGID]
               --issue requires --do: plain words saying what the
-              person does and what evidence closes it. It adds the configured
-              Linear assignment, label, opening action line and comment.
+              person does and what evidence closes it. ITEM is the item's
+              identifier in upper case, TEAM-123; any other form, its UUID
+              included, is refused `issue-invalid` before anything is
+              appended. It adds the configured Linear assignment, label,
+              opening action line and comment.
               The comment opens with the owner's mention, and the ask is
               posted only once the saved comment's mention of the owner
               reads back; otherwise tracker-unwritten cause=mention, or
@@ -659,7 +662,7 @@ seconds-invalid, minutes-invalid, to-invalid, ref-invalid, ref-unknown, progress
 recommend-invalid, recommend-missing, recommend-required, effect-required, ask-reserved-effect, draft-field,
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
-open-invalid, source-invalid, purpose-invalid, memory-too-long,
+open-invalid, source-invalid, purpose-invalid, memory-too-long, issue-invalid,
 overseer-only, not-owner-ask,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
@@ -735,6 +738,7 @@ lm_message() { # KEY VALUE
     missing-value) text='The option requires a value.' ;;
     option-required) text='The command requires this option.' ;;
     item-invalid) text='An item is one path segment of ASCII letters, digits, dot, underscore and hyphen, and never . or ..' ;;
+    issue-invalid) text='--issue on an owner ask takes the tracker item'"'"'s identifier in upper case, TEAM-123, the form owner-answers reads the item'"'"'s comments back by. Nothing was appended. Ask again with the identifier.' ;;
     after-invalid) text='--after and --ack take a non-negative integer, the count a previous drain or inbox printed.' ;;
     seconds-invalid) text='The option takes a non-negative integer number of seconds.' ;;
     command-missing) text='The required command is not on PATH.' ;;
@@ -1071,6 +1075,12 @@ done
 # An item ask supplies the short action the owner sees before the engineering body.
 if [ "$VERB:$ITEM:$TO" = ask:overseer:owner ] && [ -n "$ISSUE" ]; then
   jq -en --arg action "$OWNER_DO" '$action | test("\\S")' >/dev/null || refuse owner-action-missing --do
+  # owner-answers reads every asked item's comments in one `comments
+  # bulk-list`, which refuses the whole read for a ref that is not an
+  # identifier (a UUID among them) and answers under the upper-case form
+  # (linear's linear_issue_refs). Any other value would stall every pass, or
+  # find no comment for its item, until compaction drops the ask.
+  jq -en --arg issue "$ISSUE" '$issue | test("\\A[A-Z0-9]+-[0-9]+\\z")' >/dev/null || refuse issue-invalid "$ISSUE"
 fi
 
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
