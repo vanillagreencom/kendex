@@ -35,6 +35,9 @@ use specta::Type;
 use crate::env::Env;
 use crate::model::{ItemKind, Scope};
 
+// Errors without a scope use the same command before the report adds flags.
+pub(crate) const SOURCE_REFRESH_COMMAND: &str = "kendex source refresh";
+
 /// The check's whole contract: 0 clean, 1 drift, 2 could-not-check. A
 /// package awaiting re-evaluation is a state the check determined, so it
 /// exits 1 with the drift it sits alongside; only a line the check could
@@ -332,7 +335,7 @@ impl Remedy {
                 format!("kendex update-pi --scope project{place}")
             }
             Remedy::Refresh { .. } => format!("kendex refresh{place}"),
-            Remedy::SourceRefresh { .. } => format!("kendex source refresh{place}"),
+            Remedy::SourceRefresh { .. } => format!("{SOURCE_REFRESH_COMMAND}{place}"),
             Remedy::Updates { .. } => format!("kendex updates{place}"),
             Remedy::DriftHook { global } => format!(
                 "kendex drift-hook --yes --scope {}",
