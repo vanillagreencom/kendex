@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
 # `done-when parse` is the one Done-when read another package consumes (the
-# orch watch's terminal judgement): it prints the checklist `done_when_parse`
-# builds, from an inline description or a file, with no credential resolved
-# and no request made, and refuses a call that names neither or both inputs.
+# orch watch's terminal judgement and its GitHub item ticks): it prints the
+# checklist `done_when_parse` builds, from an inline description or a file,
+# with no credential resolved and no request made, and with `--met N
+# --evidence TEXT` the description with box N ticked. It refuses a call
+# that names neither or both inputs, or a `--met` without its `--evidence`
+# or its box number.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)" || exit 1
@@ -29,13 +32,21 @@ printf '%s' "$description" > "$TMP_ROOT/description.md"
 from_file="$(cd "$TMP_ROOT" && "$LINEAR" done-when parse --description-file "$TMP_ROOT/description.md")"
 assert_eq 'the file form parses the same' "$from_file" "$out"
 
+# A tick: box 2 checked with its Evidence line under it in the answered
+# description, the box read checked, and nothing else of the text moved.
+ticked="$("$LINEAR" done-when parse --description "$description" --met 2 --evidence 'v1.2 shipped')"
+assert_eq 'the ticked box reads checked' "$(jq -c '[.ticked, .boxes[1].checked]' <<<"$ticked")" '[1,true]'
+assert_eq 'the description carries the tick and its Evidence line' "$(jq -r '.description' <<<"$ticked")" \
+  "${description/'- [ ] Post-merge'/'- [x] Post-merge'}  Evidence: v1.2 shipped"
+
 # No section: no boxes, Done.
 none="$("$LINEAR" done-when parse --description $'Just text\n')"
 assert_eq 'a description with no section has no boxes' "$(jq -c '.boxes' <<<"$none")" '[]'
 
 # Refusals: another action, neither input, both inputs, an unknown option,
-# an unreadable file.
-for args in "render --description x" "parse" "parse --description x --description-file y" "parse --what" "parse --description-file $TMP_ROOT/absent"; do
+# an unreadable file, a `--met` without its `--evidence`, and one with no
+# box number.
+for args in "render --description x" "parse" "parse --description x --description-file y" "parse --what" "parse --description-file $TMP_ROOT/absent" "parse --description x --met 1" "parse --description x --met 0 --evidence y"; do
   rc=0
   # shellcheck disable=SC2086
   "$LINEAR" done-when $args >/dev/null 2>"$TMP_ROOT/err" || rc=$?

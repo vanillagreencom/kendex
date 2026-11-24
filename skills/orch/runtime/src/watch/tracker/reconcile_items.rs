@@ -371,7 +371,7 @@ pub fn run(
                 container,
                 blocked_by_open: item.blocked_by_open.clone(),
             };
-            match verifying::judge_item(&ctx, &verifying_item, keys, now, &mut read)? {
+            match verifying::judge_item(&ctx, &verifying_item, None, keys, now, &mut read)? {
                 Item::Invalid { evidence } => {
                     report.note("verifying-invalid", item, json!({"parser": evidence}));
                 }

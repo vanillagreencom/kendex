@@ -2418,7 +2418,8 @@ fn the_duty_owns_its_row_kinds() {
             "outside-contribution",
             "security-alert",
             "bot-fix",
-            "github-auth"
+            "github-auth",
+            "verifying-unjudged"
         ]
     );
     let _ = set("triage", "KEN-1", "Todo|-");
@@ -3162,7 +3163,7 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
     let head_b = "b".repeat(40);
     let pull = |number: u64, login: &str, kind: &str, association: &str, head: &str| json!({"number": number, "state": "open", "title": "a contribution", "body": null, "merged_at": null, "merge_commit_sha": null, "user": {"login": login, "type": kind}, "author_association": association, "head": {"sha": head, "ref": "contribution", "repo": null}, "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}});
     let issue = |number: u64, login: &str, kind: &str, association: &str, pr: bool| {
-        let mut v = json!({"number": number, "state": "open", "user": {"login": login, "type": kind}, "author_association": association});
+        let mut v = json!({"number": number, "state": "open", "created_at": "2026-08-15T09:00:00Z", "user": {"login": login, "type": kind}, "author_association": association});
         if pr {
             v["pull_request"] = json!({"url": "x"});
         }
@@ -3187,7 +3188,7 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
             issue(3129, "teammate", "User", "MEMBER", false),
             issue(3128, "founder", "User", "OWNER", false),
             issue(3127, "private-member", "User", "CONTRIBUTOR", false),
-            {"number": 5, "state": "open", "user": null, "author_association": "NONE"}
+            {"number": 5, "state": "open", "created_at": "2026-08-15T09:00:00Z", "user": null, "author_association": "NONE"}
         ]}),
     );
     world.gh(
@@ -4413,6 +4414,388 @@ fn a_due_check_is_read_through_its_job_and_only_a_met_reading_completes_its_box(
             "{reading}: one job read per pass"
         );
     }
+}
+
+/// A GitHub item a `Refs` merge left open is judged by the Linear rule
+/// from its own merged pull request, and written on its issue: its
+/// merge-triggered box, read failed, takes one comment on the issue; read
+/// met, it is ticked in the body with its Evidence line, the tick asked
+/// again after GitHub refused it. Its release-triggered box waits, also on a
+/// later release that does not contain the merge; a release that does is
+/// met, ticked, and the issue closes as completed with it. A person's
+/// reopen of the closed issue stands, and a box the person adds and ticks
+/// by hand closes it again once it carries its Evidence line, a refused
+/// close asked again. An issue an
+/// outside author wrote is no item: its merge left it open, and it is said
+/// once for the overseer. A Linear item's row stands while the tracker is
+/// unread; no write reaches the tracker CLI.
+#[test]
+fn a_github_items_post_merge_boxes_are_judged_and_its_issue_closes_at_the_last() {
+    const NOW: u64 = 1_790_899_201; // 2026-10-02T00:00:01Z
+    const LATER: u64 = 1_791_007_200; // 2026-10-03T06:00:00Z
+    const MERGE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const BODY: &str = "## Done when\n- [ ] Branch work lands\n- [ ] Post-merge: job time <= 600 s; Where: https://github.com/owner/repo/actions/runs/5/job/77; Why after merge: runs on main; Deadline: +48h\n- [ ] Post-merge: releases >= 1 release; Where: https://github.com/owner/repo/releases; Why after merge: ships in a release; Trigger: release owner/repo v*; Deadline: +24h\n";
+    const ADDED: &str = "- [ ] Post-merge: health reads green; Where: service; Why after merge: the regression; Trigger: 2026-10-05T00:00:00Z; Deadline: 2026-10-06T00:00:00Z\n";
+    let mut world = World::new();
+    quiet_github(&mut world);
+    let outside = json!({"number": 8, "state": "open", "title": "a report", "body": BODY,
+        "created_at": "2026-09-20T00:00:00Z", "user": {"login": "visitor", "type": "User"},
+        "author_association": "NONE"});
+    // `None` is the issue closed: GitHub lists the open ones alone.
+    let plant_issue = |world: &mut World, body: Option<&str>| {
+        let issue = |state: &str, body: &str| {
+            json!({"number": 7, "state": state, "title": "the item", "body": body,
+                "created_at": "2026-09-20T00:00:00Z", "user": null, "author_association": "OWNER"})
+        };
+        let (listed, got) = match body {
+            Some(body) => (
+                vec![issue("open", body), outside.clone()],
+                issue("open", body),
+            ),
+            None => (vec![outside.clone()], issue("closed", "")),
+        };
+        world.gh(
+            "repos/owner/repo/issues?state=open&per_page=100&page=1",
+            json!({ "body": listed }),
+        );
+        world.gh("repos/owner/repo/issues/7", json!({ "body": got }));
+    };
+    plant_issue(&mut world, Some(BODY));
+    let found = |numbers: &[u64]| {
+        let items: Vec<Value> = numbers
+            .iter()
+            .map(|n| json!({"number": n, "pull_request": {}}))
+            .collect();
+        json!({"body": {"total_count": items.len(), "incomplete_results": false, "items": items}})
+    };
+    // Both issues' landings are read, and the outside one's alone while the
+    // other is closed: it is said, not judged.
+    world.gh(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20T00%3A00%3A00Z%20%28%28head%3Aissue-8%20OR%20%22issue-8%22%29%29%20in%3Atitle%2Cbody&per_page=100&page=1",
+        found(&[13]),
+    );
+    world.gh(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20T00%3A00%3A00Z%20%28%28head%3Aissue-7%20OR%20%22issue-7%22%29%20OR%20%28head%3Aissue-8%20OR%20%22issue-8%22%29%29%20in%3Atitle%2Cbody&per_page=100&page=1",
+        found(&[12, 13]),
+    );
+    for (number, item) in [(12, 7), (13, 8)] {
+        world.gh(
+            &format!("repos/owner/repo/pulls/{number}"),
+            json!({"body": {"number": number, "state": "closed", "title": format!("fix(issue-{item}): the item"),
+                "body": format!("Refs #{item}"), "merged_at": "2026-10-01T00:00:00Z", "merge_commit_sha": MERGE,
+                "author_association": "OWNER",
+                "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
+                "head": {"sha": "0000000000000000000000000000000000000000", "ref": format!("issue-{item}"),
+                    "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}}}),
+        );
+    }
+    let job = |completed: &str| {
+        json!({"body": {"id": 77, "run_id": 5, "name": "perf",
+            "head_sha": "0000000000000000000000000000000000000000", "status": "completed",
+            "conclusion": "success", "started_at": "2026-10-01T10:00:00Z",
+            "completed_at": completed,
+            "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/77"}})
+    };
+    world.gh(
+        "repos/owner/repo/actions/jobs/77",
+        job("2026-10-01T10:15:00Z"),
+    );
+    world.gh(
+        "POST repos/owner/repo/issues/7/comments",
+        json!({"body": {}}),
+    );
+    let release =
+        |tag: &str, at: &str| json!({"tag_name": tag, "published_at": at, "draft": false});
+    world.gh(
+        "repos/owner/repo/releases?per_page=100&page=1",
+        json!({ "body": [release("v0.9", "2026-09-25T00:00:00Z")] }),
+    );
+    let clock = FakeClock::new();
+    let settings = world.settings(&[]);
+    let shared = Shared::default();
+    let mut github =
+        github::body(world.github_context(settings.clone(), None, &["owner/repo"], shared.clone()));
+    let lines_slot = verifying::Lines::default();
+    let mut verification = verifying::body(verifying::Context {
+        settings,
+        gh: world.dir.path().join("gh"),
+        shared,
+        lines: lines_slot.clone(),
+    });
+    // A Linear item's row from an earlier run; the tracker is never read here.
+    let mut baseline = Baseline::default();
+    baseline.apply(set(verifying::DEADLINE_ROW, "KEN-1", "-"));
+    let writes = |world: &World| -> Vec<Value> {
+        std::fs::read_to_string(world.dir.path().join("gh.log.input"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    };
+    let status = |n: u64| -> String {
+        let lines = lines_slot.lock().unwrap().clone();
+        let prefix = format!("verifying owner/repo#7 box={n} ");
+        let line = lines
+            .iter()
+            .find(|l| l.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("box {n}: {lines:?}"));
+        line.split(' ')
+            .find_map(|field| field.strip_prefix("status="))
+            .unwrap()
+            .to_owned()
+    };
+    let mut read_github = |baseline: &mut Baseline, at: u64| -> usize {
+        let said = rendered(&pass_as(Duty::GitHub, &mut github, baseline, &clock, at).unwrap());
+        said.iter()
+            .filter(|l| *l == "EVENT verifying-unjudged owner/repo#8")
+            .count()
+    };
+
+    assert_eq!(
+        read_github(&mut baseline, NOW),
+        1,
+        "the outside author's merged issue is said once"
+    );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        (status(2), status(3)),
+        ("due".to_owned(), "waiting".to_owned())
+    );
+    assert!(
+        lines_slot
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|l| !l.contains("owner/repo#8")),
+        "an outside author's issue is no item"
+    );
+    let written = writes(&world);
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert_eq!(
+        written[0]["call"],
+        "POST repos/owner/repo/issues/7/comments"
+    );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW + 10,
+    )
+    .unwrap();
+    assert_eq!(writes(&world).len(), 1, "a failed reading is said once");
+
+    // Read met: the tick GitHub refuses is asked again on the next pass.
+    world.gh(
+        "repos/owner/repo/actions/jobs/77",
+        job("2026-10-01T10:06:52Z"),
+    );
+    world.gh(
+        "PATCH repos/owner/repo/issues/7",
+        json!({"exit": 1, "stderr": "gh: HTTP 502"}),
+    );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW + 20,
+    )
+    .unwrap();
+    world.gh("PATCH repos/owner/repo/issues/7", json!({"body": {}}));
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        NOW + 30,
+    )
+    .unwrap();
+    let written = writes(&world);
+    assert_eq!(written.len(), 3, "{written:?}");
+    for tick in &written[1..] {
+        assert_eq!(tick["call"], "PATCH repos/owner/repo/issues/7");
+        assert_eq!(tick["input"].get("state"), None, "{tick}");
+        let lines: Vec<&str> = tick["input"]["body"].as_str().unwrap().lines().collect();
+        assert_eq!(lines[1], "- [ ] Branch work lands");
+        assert!(lines[2].starts_with("- [x] Post-merge: job time"), "{tick}");
+        assert!(lines[3].starts_with("  Evidence: 412 s "), "{tick}");
+        assert!(lines[4].starts_with("- [ ] Post-merge: releases"), "{tick}");
+    }
+    let ticked = written[2]["input"]["body"].as_str().unwrap().to_owned();
+
+    // GitHub now holds the ticked body; a release after the merge that
+    // does not contain it leaves the release box waiting.
+    plant_issue(&mut world, Some(&ticked));
+    world.gh(
+        "repos/owner/repo/releases?per_page=100&page=1",
+        json!({ "body": [release("v0.9", "2026-09-25T00:00:00Z"), release("v1.0", "2026-10-03T00:00:00Z")] }),
+    );
+    world.gh(
+        &format!("repos/owner/repo/compare/{MERGE}...v1.0"),
+        json!({"body": {"status": "behind"}}),
+    );
+    assert_eq!(read_github(&mut baseline, LATER), 0);
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER,
+    )
+    .unwrap();
+    assert_eq!(status(3), "waiting");
+    assert_eq!(writes(&world).len(), 3);
+
+    world.gh(
+        &format!("repos/owner/repo/compare/{MERGE}...v1.0"),
+        json!({"body": {"status": "ahead"}}),
+    );
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 60,
+    )
+    .unwrap();
+    assert_eq!(status(3), "due");
+    let written = writes(&world);
+    assert_eq!(written.len(), 4, "{written:?}");
+    assert_eq!(
+        (
+            &written[3]["input"]["state"],
+            &written[3]["input"]["state_reason"]
+        ),
+        (&json!("closed"), &json!("completed"))
+    );
+    let closed = written[3]["input"]["body"].as_str().unwrap().to_owned();
+    assert!(closed.contains("\n- [x] Post-merge: releases"), "{closed}");
+
+    // Closed, its row goes; reopened with every box ticked, it stays open.
+    plant_issue(&mut world, None);
+    assert_eq!(read_github(&mut baseline, LATER + 120), 0);
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 120,
+    )
+    .unwrap();
+    assert_eq!(baseline.get(verifying::DEADLINE_ROW, "owner/repo#7"), None);
+    plant_issue(&mut world, Some(&closed));
+    assert_eq!(read_github(&mut baseline, LATER + 180), 0);
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 180,
+    )
+    .unwrap();
+    assert_eq!(writes(&world).len(), 4, "a reopen stands");
+
+    // A box the person adds waits; ticked by hand, the issue closes, the
+    // close GitHub refuses asked again.
+    let added = format!("{closed}{ADDED}");
+    plant_issue(&mut world, Some(&added));
+    assert_eq!(read_github(&mut baseline, LATER + 240), 0);
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 240,
+    )
+    .unwrap();
+    assert_eq!(status(4), "waiting");
+    // Ticked by hand with no Evidence line, the box is not passed: the
+    // issue stays open.
+    let clicked = added.replace("- [ ] Post-merge: health", "- [x] Post-merge: health");
+    plant_issue(&mut world, Some(&clicked));
+    assert_eq!(read_github(&mut baseline, LATER + 270), 0);
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 270,
+    )
+    .unwrap();
+    assert_eq!(
+        writes(&world).len(),
+        4,
+        "an unproved hand tick closes nothing"
+    );
+    let proved = format!("{clicked}  Evidence: read by the owner\n");
+    plant_issue(&mut world, Some(&proved));
+    world.gh(
+        "PATCH repos/owner/repo/issues/7",
+        json!({"exit": 1, "stderr": "gh: HTTP 502"}),
+    );
+    assert_eq!(read_github(&mut baseline, LATER + 300), 0);
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 300,
+    )
+    .unwrap();
+    world.gh("PATCH repos/owner/repo/issues/7", json!({"body": {}}));
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 360,
+    )
+    .unwrap();
+    let written = writes(&world);
+    assert_eq!(written.len(), 6, "{written:?}");
+    for close in &written[4..] {
+        assert_eq!(
+            close["input"],
+            json!({"state": "closed", "state_reason": "completed"})
+        );
+    }
+    pass_as(
+        Duty::Verification,
+        &mut verification,
+        &mut baseline,
+        &clock,
+        LATER + 420,
+    )
+    .unwrap();
+    assert_eq!(
+        writes(&world).len(),
+        6,
+        "a written close is not asked again"
+    );
+
+    assert!(
+        writes(&world)
+            .iter()
+            .all(|w| !w["call"].as_str().unwrap().contains("issues/8")),
+        "nothing is written on the outside author's issue"
+    );
+    assert_eq!(baseline.get(verifying::DEADLINE_ROW, "KEN-1"), Some("-"));
+    assert!(
+        world
+            .linear_calls()
+            .iter()
+            .all(|c| !c.starts_with("issues complete") && !c.starts_with("comments create")),
+        "{:?}",
+        world.linear_calls()
+    );
 }
 
 /// A Verifying item left with an open branch-provable box, as a merge

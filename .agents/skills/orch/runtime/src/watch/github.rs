@@ -4,7 +4,8 @@
 //! dependency's state, the
 //! refresh workflow's last runs, the main branch's push and nightly runs
 //! and their budget warnings, the reducer pass (`pr_watch`), the outside
-//! contributions (`outside`) and the security alerts (`security`), each
+//! contributions (`outside`), the security alerts (`security`) and the
+//! GitHub items the verification judges (`issue_items`), each
 //! read once per pass through `gh api` via the one runner, decoded at the
 //! boundary in the verify module's wire forms (`T`, `Optional<T>`,
 //! `Nullable<T>`), and paginated with the page set's
@@ -43,7 +44,8 @@ use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus};
 use crate::verify::wire::{
-    Issue, Job, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun, WorkflowsPage,
+    Issue, IssueText, Job, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun,
+    WorkflowsPage,
 };
 use crate::verify::{
     self, ACTIONS_SEARCH_CAP, Answer, Failed, Gh, MAX_PAGES, PER_PAGE, Page, Unrun,
@@ -118,6 +120,18 @@ pub struct Inventory {
     /// its open alerts or `none` (the `bot-fix` rows the heartbeat marks
     /// its open list with).
     pub bot_fix: BTreeMap<String, String>,
+    /// The GitHub-tracked items the verification judges ([`issue_items`]).
+    pub verifying: Vec<IssueItem>,
+}
+
+/// An open GitHub issue its own merged pull request left open with a
+/// post-merge box in its body: the item the verification judges, `item.id`
+/// `<repo>#<n>`, its key in [`Inventory::merged`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IssueItem {
+    pub repo: String,
+    pub number: u64,
+    pub item: VerifyingItem,
 }
 
 /// What the reads of one pass produced.
@@ -1014,6 +1028,7 @@ fn pass_reads(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
         tick.baseline,
         &mut produced,
     )?;
+    issue_items(&gh, &audits, tick.baseline, &mut produced, &mut inventory)?;
     ctx.shared.lock().unwrap_or_else(|p| p.into_inner()).github = Some(inventory);
     Ok(produced)
 }
@@ -1380,6 +1395,117 @@ fn merged(
         if !parked_items.contains(&identity) {
             produced.changes.push(Change::Clear {
                 kind: PARKED_UNTIL_ROW.to_owned(),
+                identity,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The text every post-merge box opens with (the linear package's
+/// `done_when_parse`).
+const POST_MERGE: &str = "Post-merge:";
+
+/// Baseline row kind of each GitHub item an outside author wrote, reported
+/// once while it stays open ([`issue_items`]).
+pub const UNJUDGED_ROW: &str = "verifying-unjudged";
+
+/// The GitHub-tracked items of the repositories the audits read: each open
+/// issue the fleet wrote whose body names a post-merge box and whose own
+/// merged pull request ([`landings`] of `issue-<n>`, its branch) landed
+/// since it was opened. A merge with `Refs` leaves such an issue open (orch
+/// `SKILL.md` § Tracker Resolution). The body steers the reads the watch
+/// makes under its own credential and the writes it publishes there, so
+/// an issue an outside author can rewrite is no item, by the fleet test
+/// the outside-contribution pass applies: one its merge left open is
+/// reported once, `verifying-unjudged`, for the overseer to read by hand.
+/// The body text only narrows the issues the box parser reads: it is in
+/// every box, and the parser judges what it opens.
+fn issue_items(
+    gh: &Gh,
+    repos: &[String],
+    baseline: &Baseline,
+    produced: &mut Produced,
+    inventory: &mut Inventory,
+) -> Result<()> {
+    let mut verdicts = BTreeMap::new();
+    let mut unjudged = BTreeSet::new();
+    for repo in repos {
+        let path = format!("repos/{repo}/issues?state=open");
+        let Some(issues) = gh.list::<IssueText>("verifying-issues", &path)? else {
+            return Err(refused(
+                "github-read-failed",
+                &[
+                    ("read", "verifying-issues"),
+                    ("path", &path),
+                    ("cause", "HTTP 404"),
+                ],
+            ));
+        };
+        let mut open: Vec<(String, bool, IssueText)> = Vec::new();
+        for issue in issues {
+            if issue.pull_request.present().is_some()
+                || !matches!(&issue.body, Nullable::Present(body) if body.contains(POST_MERGE))
+            {
+                continue;
+            }
+            let fleet = outside::author_fleet(&issue.user, Some(&issue.author_association))
+                || outside::fleet_by_permission(
+                    gh,
+                    repo,
+                    &outside::login_of(&issue.user),
+                    &mut verdicts,
+                )?;
+            open.push((format!("issue-{}", issue.number), fleet, issue));
+        }
+        let searched: Vec<Landing> = open
+            .iter()
+            .map(|(key, _, issue)| Landing {
+                item: key,
+                floor: super::tracker::stamp_epoch(&issue.created_at),
+                recorded: None,
+            })
+            .collect();
+        let mut landed = landings(gh, std::slice::from_ref(repo), &searched)?;
+        for (key, fleet, issue) in open {
+            let (Some(merged), Nullable::Present(description)) = (landed.remove(&key), issue.body)
+            else {
+                continue;
+            };
+            let id = format!("{repo}#{}", issue.number);
+            if !fleet {
+                if baseline.get(UNJUDGED_ROW, &id).is_none() {
+                    produced
+                        .events
+                        .push(Event::VerifyingUnjudged { id: id.clone() });
+                    produced.changes.push(Change::Set {
+                        kind: UNJUDGED_ROW.to_owned(),
+                        identity: id.clone(),
+                        value: "outside".to_owned(),
+                    });
+                }
+                unjudged.insert(id);
+                continue;
+            }
+            inventory.merged.insert(id.clone(), merged);
+            inventory.verifying.push(IssueItem {
+                repo: repo.clone(),
+                number: issue.number,
+                item: VerifyingItem {
+                    id,
+                    created_at: issue.created_at,
+                    description,
+                    priority: "-".to_owned(),
+                    container: false,
+                    blocked_by_open: Vec::new(),
+                },
+            });
+        }
+    }
+    for identity in baseline.identities(UNJUDGED_ROW) {
+        if !unjudged.contains(&identity) {
+            produced.changes.push(Change::Clear {
+                kind: UNJUDGED_ROW.to_owned(),
                 identity,
             });
         }
@@ -2758,7 +2884,7 @@ pub fn pr_watch_context(rc: i32, out: &str, err: &str) -> pr_watch::Context {
     }
 }
 
-pub fn row_kinds() -> [&'static str; 12] {
+pub fn row_kinds() -> [&'static str; 13] {
     [
         MERGED_ROW,
         PARKED_UNTIL_ROW,
@@ -2772,6 +2898,7 @@ pub fn row_kinds() -> [&'static str; 12] {
         security::ALERT_ROW,
         security::BOT_FIX_ROW,
         SIGN_IN_ROW,
+        UNJUDGED_ROW,
     ]
 }
 

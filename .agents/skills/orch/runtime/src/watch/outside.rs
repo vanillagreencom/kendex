@@ -41,7 +41,7 @@ struct Listed {
 
 /// Whether the author's own fields read fleet (`OUTSIDE_AUTHOR_JQ`): a Bot
 /// account, or an OWNER, MEMBER or COLLABORATOR association.
-fn author_fleet(user: &Nullable<User>, association: Option<&str>) -> bool {
+pub(super) fn author_fleet(user: &Nullable<User>, association: Option<&str>) -> bool {
     if let Nullable::Present(user) = user
         && user.kind == "Bot"
     {
@@ -50,7 +50,7 @@ fn author_fleet(user: &Nullable<User>, association: Option<&str>) -> bool {
     association.is_some_and(|a| matches!(a, "OWNER" | "MEMBER" | "COLLABORATOR"))
 }
 
-fn login_of(user: &Nullable<User>) -> String {
+pub(super) fn login_of(user: &Nullable<User>) -> String {
     match user {
         Nullable::Present(user) => user.login.clone(),
         Nullable::Absent | Nullable::Null => "ghost".to_owned(),
@@ -81,7 +81,7 @@ fn valid(item: &Listed) -> bool {
 /// `outside_author_is_fleet`: GitHub's collaborator permission for `login`
 /// on `repo`, once per pass per pair; admin, maintain or write is fleet,
 /// a 404 is none and so outside, any other failure is the pass's refusal.
-fn fleet_by_permission(
+pub(super) fn fleet_by_permission(
     gh: &Gh,
     repo: &str,
     login: &str,

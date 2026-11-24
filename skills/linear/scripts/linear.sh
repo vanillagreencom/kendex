@@ -134,23 +134,28 @@ case "$resource" in
     # no parser of its own): the checklist JSON `done_when_parse` builds for
     # a description given inline or by file, with no credential and no
     # request. `--merged-at` is the merge stamp the post-merge rules judge
-    # against, as `issues complete --post-merge-at` passes it.
+    # against, as `issues complete --post-merge-at` passes it. `--met N` with
+    # `--evidence TEXT` answers `.description` with box N ticked and its
+    # Evidence line written as `issues complete` writes them, for a tracker
+    # the package does not write (orch's watch on a GitHub item's body).
     done-when)
         action="${1:-}"
         shift || true
         [[ "$action" == parse ]] || {
-            echo "linear: done-when takes one action, parse: linear.sh done-when parse (--description TEXT | --description-file PATH) [--merged-at UTC]" >&2
+            echo "linear: done-when takes one action, parse: linear.sh done-when parse (--description TEXT | --description-file PATH) [--merged-at UTC] [--met N --evidence TEXT]" >&2
             exit 1
         }
-        dw_description="" dw_file="" dw_merged="" dw_given=0
+        dw_description="" dw_file="" dw_merged="" dw_given=0 dw_met="" dw_evidence=""
         while [[ $# -gt 0 ]]; do
             case "$1" in
-                --description | --description-file | --merged-at)
+                --description | --description-file | --merged-at | --met | --evidence)
                     [[ $# -ge 2 ]] || { echo "linear: done-when parse: $1 needs a value" >&2; exit 1; }
                     case "$1" in
                         --description) dw_description="$2"; dw_given=$((dw_given + 1)) ;;
                         --description-file) dw_file="$2"; dw_given=$((dw_given + 1)) ;;
                         --merged-at) dw_merged="$2" ;;
+                        --met) dw_met="$2" ;;
+                        --evidence) dw_evidence="$2" ;;
                     esac
                     shift 2
                     ;;
@@ -158,6 +163,12 @@ case "$resource" in
             esac
         done
         [[ "$dw_given" -eq 1 ]] || { echo "linear: done-when parse takes exactly one of --description and --description-file" >&2; exit 1; }
+        dw_met_json='[]' dw_evidence_json='{}'
+        if [[ -n "$dw_met$dw_evidence" ]]; then
+            [[ "$dw_met" =~ ^[1-9][0-9]*$ && -n "$dw_evidence" ]] || { echo "linear: done-when parse: --met takes one box number and --evidence its text, both or neither" >&2; exit 1; }
+            dw_met_json="[$dw_met]"
+            dw_evidence_json="$(jq -cn --arg box "$dw_met" --arg text "$dw_evidence" '{($box): $text}')" || exit 1
+        fi
         if [[ -n "$dw_file" ]]; then
             # The sentinel keeps the file's trailing newlines through the
             # substitution, as the lib's own callers keep them.
@@ -165,7 +176,7 @@ case "$resource" in
             dw_description="${dw_description%.}"
         fi
         source "$SCRIPT_DIR/lib/issue-validation.sh"
-        done_when_parse "$dw_description" '[]' "$dw_merged"
+        done_when_parse "$dw_description" "$dw_met_json" "$dw_merged" "$dw_evidence_json"
         ;;
     # The local store is gone. Each removed verb answers with one line naming
     # what to run instead and exits nonzero, so a caller still running it fails

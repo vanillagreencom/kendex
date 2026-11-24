@@ -416,6 +416,11 @@ pub enum Event {
     VerifyingInvalid {
         id: String,
     },
+    /// A GitHub item an outside author wrote, `<repo>#<n>`, which the
+    /// watch neither judges nor writes.
+    VerifyingUnjudged {
+        id: String,
+    },
     // The observation duty's lines.
     /// `usage-limit` or `usage-limit-passed`, then the body composed from
     /// its optional parts, the lane, the
@@ -807,6 +812,7 @@ impl Event {
             } => format!("EVENT account {fields} change={change} was={was_status}/{was_verdict}"),
             Event::VerifyingDeadline { id, row } => format!("EVENT verifying-deadline {id} {row}"),
             Event::VerifyingInvalid { id } => format!("EVENT verifying-invalid {id}"),
+            Event::VerifyingUnjudged { id } => format!("EVENT verifying-unjudged {id}"),
             // The observation duty's render arms.
             Event::UsageLimit { passed, line } => {
                 let event = if *passed {

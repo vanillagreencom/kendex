@@ -1045,13 +1045,36 @@ The merge route stays the lane's (§ Lanes merge their own pull requests).
 
 ### `verifying-invalid`
 
-`EVENT verifying-invalid [ITEM]`: the item's checklist cannot be judged. Either a branch-provable box is still open on a Verifying item, or the parser refuses its post-merge metadata. Every pass, the watch's stderr carries the parser's rule and the box under `verifying-invalid issue=[ITEM]`. The event prints once while the item stays invalid. Correct the checklist in the tracker; the next pass judges it again.
+`EVENT verifying-invalid [ITEM]`: the item's checklist cannot be judged. Every pass, the watch's stderr carries the cause under `verifying-invalid issue=[ITEM]`. The event prints once while the item stays invalid. Correct the checklist in the tracker; the next pass judges it again. The causes:
+
+- A branch-provable box is still open on a Verifying item.
+- The parser refuses its post-merge metadata, and stderr carries its rule and the box.
+- On a GitHub item, a post-merge box is ticked with no Evidence line, and stderr carries the parser's whole reply. Add the box's `Evidence:` line through § Verification's GitHub form, or untick the box.
+- On a GitHub item, a release trigger names another repository, and stderr carries `rule=release-trigger-repository` with the box. Name the issue's own repository in the trigger.
+
+### `verifying-unjudged`
+
+`EVENT verifying-unjudged [OWNER/REPO]#[N]`: an open issue an outside author wrote, whose own merged pull request left it open with a post-merge box. The watch neither judges nor writes it, since the author can rewrite the body that would steer its reads and writes. The event prints once while the issue stays open.
+
+- Read its post-merge boxes by hand under § Verification's GitHub form.
+- Once every post-merge box passes, close it: `gh issue close [N] --repo [OWNER/REPO] --reason completed`.
 
 ### Verification
 
 Each `verifying [ITEM] box=[N] ...` line names an open post-merge box on a merged item, or an unproved box beside a container's "Every child Done or cancelled" box; a container's line has `trigger="outcome"`. `verifying-deadline` prints a box only when its due or overdue key changes; the heartbeat and `orch-runtime reconcile-items` (`result.lines`) print every box.
 
 The watch itself completes a box that reads `met`, with its Evidence line. It comments once on a box that reads `failed` or `inconclusive`.
+
+A GitHub item's line names it `[OWNER/REPO]#[N]`: an open issue the fleet wrote, whose own merged pull request left it open with a post-merge box. One an outside author wrote takes [`verifying-unjudged`](#verifying-unjudged) instead. The watch judges a GitHub item by the same rule and writes on the issue itself. No `linear.sh` tracker read or write runs on it ([SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution)):
+
+- The watch ticks a `met` box in the issue body with its Evidence line, and comments on the issue for a `failed` or `inconclusive` one.
+- It closes the issue as completed on the pass that reads its last open post-merge box gone, a box a person ticked by hand included. It raises no `boxes=0` event for the item, and its `boxes=0` line takes no completion step.
+- An issue it first reads with no open box, such as one a person reopened, stays open.
+- Its open branch boxes hold nothing: no completion ticks them in a GitHub body.
+- A box whose `Where:` names another repository reads `unread`. A box whose release trigger names another repository makes the item `verifying-invalid`, its cause `rule=release-trigger-repository`: a trigger the watch never reads cannot fire.
+- A box a person proves takes step 1's evidence comment, posted with `gh issue comment [N] --repo [OWNER/REPO] --body-file [FILE]`. Its tick replaces steps 2 and 3: the box ticked in the issue body with an indented `Evidence:` line citing that comment.
+- Every body write, that tick and each of [verify.md § 2](../workflows/verify.md#2-resolve-missing-evidence), is `gh issue edit [N] --repo [OWNER/REPO] --body-file [FILE]` over the live body. A waiver replaces the box with `- Waived: [BOX TEXT]` and an indented `Reason: [AUTHORITY]: [REASON]` line under it.
+- The watch reads no blocker for a GitHub item, so waiting for an event takes a dated `Trigger:` instead.
 
 - For each due or overdue box the watch leaves open, run [verify.md](../workflows/verify.md).
 - Acceptance follows [SKILL.md § The Cycle](../SKILL.md#the-cycle), and a failed check takes that section's route.
