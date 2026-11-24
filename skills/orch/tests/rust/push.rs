@@ -1356,21 +1356,37 @@ mod push {
 
     #[test]
     fn publication_reuses_a_range_pass_covering_the_rebased_scope() {
-        let cmd = "DEV_VALIDATE_RANGE_CMD = \"cat tmp/scope\"\nDEV_VALIDATE_CMD = \"true\"\n";
-        for (same_point, covers_paths) in [(true, true), (false, true), (true, false)] {
-            let covering = same_point && covers_paths;
+        let cmd = "DEV_VALIDATE_RANGE_CMD = \"git diff --check $DEV_VALIDATE_BASE -- && cat tmp/scope\"\nDEV_VALIDATE_CMD = \"true\"\n";
+        for (old_text, covering) in [("retained trailing space \n", false), ("clean\n", true)] {
             let repo = Repo::new("KEN-1", &format!("{BASE}{cmd}"));
             repo.link_agents();
             repo.record(json!({}));
+            fs::write(repo.wt.join("tmp/scope"), "").unwrap();
+            fs::write(repo.wt.join("feature"), format!("{old_text}before\n")).unwrap();
+            git(&repo.wt, &["add", "feature"]);
+            git(&repo.wt, &["commit", "--amend", "--no-edit", "-q"]);
             let old_head = repo.head();
-            let old_point = repo.remote("main");
-            if !same_point {
-                repo.advance("incoming");
-            }
-            let file = if covers_paths { "feature" } else { "other" };
-            commit(&repo.wt, file, "fixed\n", "fix(KEN-1): fix feature");
+            let base = repo.remote("main");
+            let record_run = |run: &str| {
+                let recorded = result(&repo.op(json!({
+                    "op": "record-push", "mode": "record-restack-validation", "worktree": repo.wt,
+                    "run_dir": run,
+                })));
+                assert_eq!(recorded["stage"], run);
+            };
+            let previous = covering.then(|| {
+                let run = range_run(&repo, &base);
+                record_run(&run);
+                run
+            });
+            commit(
+                &repo.wt,
+                "feature",
+                &format!("{old_text}after\n"),
+                "fix(KEN-1): fix feature",
+            );
             let receipt = prepared(&repo);
-            let base = receipt["before"].as_str().unwrap();
+            assert_eq!(receipt["before"], base);
             let head = receipt["commit"].as_str().unwrap();
             let tree = git(&repo.wt, &["rev-parse", "HEAD^{tree}"]);
             assert!(
@@ -1378,19 +1394,21 @@ mod push {
                     .lines()
                     .any(|sha| sha == old_head)
             );
-            // The validator's native scope row names the range invocation
-            // and the branch points before and after preparation folded it.
+            for from in [&base, &old_head] {
+                assert_eq!(
+                    git(&repo.wt, &["diff", "--name-only", from, head, "--"]),
+                    "feature"
+                );
+            }
+            // Selection can report the same branch points while a check
+            // still reads the original comparison base.
             fs::write(
                 repo.wt.join("tmp/scope"),
-                format!("validate: scope=rebased base={old_head} old-point={old_point} point={base}\nvalidate: lanes=all selection=all\n"),
+                format!("validate: scope=rebased base={old_head} old-point={base} point={base}\nvalidate: lanes=all selection=all\n"),
             )
             .unwrap();
             let run = range_run(&repo, &old_head);
-            let recorded = result(&repo.op(json!({
-                "op": "record-push", "mode": "record-restack-validation", "worktree": repo.wt,
-                "run_dir": run,
-            })));
-            assert_eq!(recorded["stage"], run);
+            record_run(&run);
 
             let proof = isolated()
                 .args(["--state-dir", repo.state.to_str().unwrap()])
@@ -1405,7 +1423,7 @@ mod push {
                     "--head",
                     head,
                     "--base",
-                    base,
+                    &base,
                 ])
                 .envs(repo.env.iter().map(|(key, value)| (key, value)))
                 .current_dir(&repo.main)
@@ -1415,31 +1433,28 @@ mod push {
             assert_eq!(
                 proof["proof"],
                 if covering { "complete" } else { "missing" },
-                "same_point={same_point} covers_paths={covers_paths}"
+                "prior proof: {previous:?}"
             );
-            if covering {
+            if let Some(previous) = previous {
                 assert_eq!(proof["rows"][0]["run_dir"], run);
+                assert_eq!(proof["rows"][1]["run_dir"], previous);
             }
-
-            read_only_slot_queue(&repo);
-            let out = repo.op_env(
-                &repo.item,
-                &json!({"op": "record-push", "mode": "publish", "worktree": repo.wt,
-                    "base": base, "head": head}),
-                &[(agent_runtime::confine::CONFINED_VAR, "1")],
-            );
+            let out = repo.op(json!({
+                "op": "record-push", "mode": "publish", "worktree": repo.wt,
+                "base": base, "head": head,
+            }));
+            let runs = orch_runtime::validate::files::runs(&repo.wt).unwrap();
+            assert_eq!(runs.len(), 2);
             if covering {
                 assert_eq!(result(&out)["delivery"]["commit"], head);
                 assert_eq!(repo.remote("main"), head);
             } else {
-                assert!(
-                    refusal(&out).starts_with("orch-runtime: delivery-validate cause=confined")
-                );
+                assert!(refusal(&out).starts_with("orch-runtime: delivery-validate"));
                 assert_eq!(repo.remote("main"), base);
+                let fallback = runs.iter().find(|row| row.dir != Path::new(&run)).unwrap();
+                assert_eq!(fallback.get("validate-base"), base);
+                assert_eq!(fallback.verdict().unwrap(), "FAILING");
             }
-            let runs = orch_runtime::validate::files::runs(&repo.wt).unwrap();
-            assert_eq!(runs.len(), 1);
-            assert_eq!(runs[0].dir, Path::new(&run));
         }
     }
 

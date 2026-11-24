@@ -2,8 +2,7 @@
 //! and recorded restack skips read through `ops::proof`, the one reader,
 //! under the project's declaration from the settings. The read records
 //! nothing. It reads committed bases and an open round's current HEAD tree
-//! with `git rev-parse`. Rebased scope also reads `git diff-tree`.
-//! An unreadable tree or diff supplies no coverage.
+//! with `git rev-parse`. An unreadable tree supplies no coverage.
 use agent_runtime::record;
 use std::path::Path;
 use std::time::Duration;
