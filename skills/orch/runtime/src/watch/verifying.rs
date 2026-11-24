@@ -538,15 +538,16 @@ struct Merge {
 
 /// The merge an item's boxes count from: the latest
 /// `merged_at` among the merged index's keys for it, and the merge commit
-/// per repository. `None` where the index names no key: unread for a box
-/// that needs it.
+/// of each repository's latest merge. `None` where the index names no key:
+/// unread for a box that needs it.
 fn merge_of(
     gh: &Path,
     keys: &[String],
     read: &mut BTreeMap<String, Value>,
 ) -> std::result::Result<Option<Merge>, String> {
-    let mut merged: Option<u64> = None;
-    let mut oids: BTreeMap<String, Option<String>> = BTreeMap::new();
+    // Each repository's commit is its latest merge's, whatever order the
+    // keys arrive in: a search answers best match first.
+    let mut latest: BTreeMap<String, (u64, Option<String>)> = BTreeMap::new();
     for key in keys {
         let Some((repo, number)) = key.split_once('#') else {
             return Err(format!("merged key {key}: no number"));
@@ -560,8 +561,9 @@ fn merge_of(
             }
             Nullable::Absent | Nullable::Null => continue,
         };
-        if merged.is_none_or(|m| at > m) {
-            merged = Some(at);
+        let repo = repo.to_ascii_lowercase();
+        if latest.get(&repo).is_some_and(|(stored, _)| *stored >= at) {
+            continue;
         }
         let oid = match &pull.merge_commit_sha {
             Nullable::Present(oid)
@@ -571,9 +573,14 @@ fn merge_of(
             }
             Nullable::Present(_) | Nullable::Absent | Nullable::Null => None,
         };
-        oids.insert(repo.to_ascii_lowercase(), oid);
+        latest.insert(repo, (at, oid));
     }
-    Ok(merged.map(|at| Merge { at, oids }))
+    let at = latest.values().map(|(at, _)| *at).max();
+    let oids = latest
+        .into_iter()
+        .map(|(repo, (_, oid))| (repo, oid))
+        .collect();
+    Ok(at.map(|at| Merge { at, oids }))
 }
 
 /// A bash pattern (`[[ $tag == $glob ]]`): `*`, `?`, a bracket expression
@@ -1427,6 +1434,58 @@ mod tests {
         ];
         for (glob, tag, want) in rows {
             assert_eq!(glob_matches(glob, tag), want, "{glob} {tag}");
+        }
+    }
+
+    /// Two merges in one repository, in either key order: a release is
+    /// judged from the later merge, its time and its commit, so a tag that
+    /// holds the earlier delivery alone contains nothing.
+    #[test]
+    fn a_release_is_judged_from_the_latest_merge_in_either_key_order() {
+        let gh = PathBuf::from("gh-never-run");
+        let pull = |number: u64, at: &str, sha: &str| {
+            serde_json::json!({"number": number, "state": "closed", "title": "t", "body": null,
+                "merged_at": at, "merge_commit_sha": sha, "author_association": "OWNER",
+                "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
+                "head": {"sha": "0000000000000000000000000000000000000000", "ref": "issue-7", "repo": null}})
+        };
+        let (older, newer) = ("a".repeat(40), "b".repeat(40));
+        let answers = BTreeMap::from([
+            (
+                "repos/o/r/pulls/1".to_owned(),
+                pull(1, "2026-10-01T00:00:00Z", &older),
+            ),
+            (
+                "repos/o/r/pulls/2".to_owned(),
+                pull(2, "2026-10-02T00:00:00Z", &newer),
+            ),
+            (
+                "repos/o/r/releases?per_page=100&page=1".to_owned(),
+                serde_json::json!([{"tag_name": "v2", "published_at": "2026-10-03T00:00:00Z", "draft": false}]),
+            ),
+            (
+                format!("repos/o/r/compare/{older}...v2"),
+                serde_json::json!({"status": "ahead"}),
+            ),
+            (
+                format!("repos/o/r/compare/{newer}...v2"),
+                serde_json::json!({"status": "behind"}),
+            ),
+        ]);
+        for keys in [["o/r#1", "o/r#2"], ["o/r#2", "o/r#1"]] {
+            let mut read = answers.clone();
+            let keys = keys.map(str::to_owned);
+            let merge = merge_of(&gh, &keys, &mut read).unwrap().unwrap();
+            assert_eq!(
+                merge.at,
+                clock::epoch_secs("2026-10-02T00:00:00Z").unwrap(),
+                "{keys:?}"
+            );
+            assert_eq!(
+                release_after(&gh, "o/r", "v*", &merge, &mut read),
+                Ok(None),
+                "{keys:?}"
+            );
         }
     }
 
