@@ -5,9 +5,12 @@
 # published head, it merges directly where the base has no rules or protection,
 # or requests auto-merge. review-gate references/adoption.md, Publication, defines the arm outcomes. A render this
 # run committed first goes to the default branch itself where the landing
-# token, KENDEX_LAND_TOKEN, is set, every project takes its packages from
-# the default catalog at main alone, and that branch's merge queue holds no
-# entry: the run pushes its one commit with that token, and where GitHub's
+# token, KENDEX_LAND_TOKEN, is set, the run is not held, the classifier
+# measures the commit as class render, every path the commit removes or
+# renames against the base the run fetched lies at or below a path the
+# commit's root .kendex-lock.json still emits, every project takes its
+# packages from the default catalog at main alone, and that branch's merge
+# queue holds no entry: the run pushes its one commit with that token, and where GitHub's
 # rulesets let the push through, no pull request, merge group or approval
 # follows.
 # Output records: refresh-state=current pr=none class=none, or
@@ -26,12 +29,15 @@
 # landing name, also print one landing line ahead of the pull request
 # route's record:
 # refresh-land=refused value=STATUS (GitHub refused the push),
-# refresh-land=unavailable value=token|sources-read|queue-read (no landing
-# token reached the run, or the project sources or the merge queue could not
-# be read), or refresh-land=skipped value=verify|class|sources-uncovered|queued
-# (the run is held, the class is not render, a project takes packages from
-# another catalog or revision, or the merge queue holds an entry). An unread
-# source answer also writes refresh-sources=unread value=PROJECT to stderr.
+# refresh-land=unavailable value=token|lock-read|sources-read|queue-read (no
+# landing token reached the run, or the root lock, the project sources or
+# the merge queue could not be read), or
+# refresh-land=skipped value=verify|class|path-removed|sources-uncovered|queued
+# (the run is held, the class is not render, the render removes or renames
+# a path no emitted path of the root lock covers, a project takes packages
+# from another catalog or revision, or the merge queue holds an entry). An
+# unread source answer also writes refresh-sources=unread value=PROJECT to
+# stderr, and an unread lock the md-refs lock reader's refresh-lock line.
 # A consumer whose render did not run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
 set -euo pipefail
@@ -676,6 +682,20 @@ if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then
   [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
   exit 0
 fi
+# Writes the emitted paths of the root .kendex-lock.json to FILE, one per
+# line, through md-refs' own reader, so the landing check and the consumer's
+# next md-refs run agree on what is rendered. That reader reads the index,
+# which the commit above left at head; it prints its own cause and fails on
+# a lock it cannot read.
+refresh_emitted_paths() { # FILE
+  # shellcheck disable=SC2034 # the sourced library reads GG_CHECK and GG_TMP
+  (
+    GG_CHECK=refresh-lock
+    source "$SCRIPT_DIR/../skills/commit-guards/scripts/lib/common.sh" &&
+      source "$SCRIPT_DIR/../skills/commit-guards/scripts/lib/md-scope.sh" &&
+      GG_TMP="$TMP" && gg_md_lock_paths "$1"
+  )
+}
 # Only a commit this run made lands on the default branch: the retained head
 # above may be one a failed merge group left, and this run proved only its
 # own commit, on the base it fetched. land_token is the landing app's
@@ -684,8 +704,13 @@ fi
 # nothing about them first. The render proof covers a package's bytes, and
 # kendex's merge queue proved only the default catalog's content, so a
 # project that takes packages from any other catalog or revision keeps the
-# pull request, where the consumer reviews them. No token, a class other
-# than render, that coverage, and a merge queue that holds an entry or
+# pull request, where the consumer reviews them. A render that takes a
+# path out of every emitted position of the root lock, such as a pruned
+# package or a removed or renamed per-file agent, can break a file the
+# consumer still cites, which the render proof does not read, so it keeps
+# the pull request too; a removal inside a position the lock still emits
+# lands. No token, a held run, a class other than render, such a removal,
+# an unread lock, that coverage, and a merge queue that holds an entry or
 # could not be read keep the pull request route.
 # Sets land_check to try, to unconfigured where the caller set neither
 # landing name, or to unavailable:CAUSE or skipped:CAUSE for the first
@@ -693,7 +718,7 @@ fi
 # CAUSE, and refuses an answer it does not know, so no precondition keeps
 # the pull request route unsaid.
 refresh_land_check() {
-  local queued
+  local queued path position
   land_check=""
   if [ -z "$land_token" ]; then
     # A half pair, or a mint that failed, leaves the token empty.
@@ -702,6 +727,24 @@ refresh_land_check() {
   fi
   if [ -n "$verify_report" ]; then land_check=skipped:verify; return 0; fi
   if [ "$class" != render ]; then land_check=skipped:class; return 0; fi
+  # --no-renames reports a renamed path as removed.
+  if ! git diff -z --no-renames --diff-filter=D --name-only "$base" "$head" >"$TMP/removed-paths"; then
+    printf 'refresh-error=read value=removed-paths\n' >&2
+    exit 1
+  fi
+  if [ -s "$TMP/removed-paths" ]; then
+    # md-refs reads only the head lock, so it cannot skip a citation into a position the render dropped.
+    if ! refresh_emitted_paths "$TMP/emitted-paths"; then land_check=unavailable:lock-read; return 0; fi
+    while IFS= read -r -d '' path; do
+      position="$path"
+      until grep -qxF -- "$position" "$TMP/emitted-paths"; do
+        case "$position" in
+          */*) position="${position%/*}" ;;
+          *) land_check=skipped:path-removed; return 0 ;;
+        esac
+      done
+    done <"$TMP/removed-paths"
+  fi
   case "$(refresh_source_coverage)" in
     sources=covered) ;;
     sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;

@@ -71,8 +71,9 @@ usage: md-refs [--staged | --base REF | --against REF | --all] [--strict] [--ver
 A citing file listed under emitted.paths in the indexed .kendex-lock.json,
 including files below a listed directory, warns instead of blocking. A link
 or citation from any other file into a listed path is not judged, neither
-its path nor its heading: the update that renders the target moves it. A
-citation between the repository's own files is judged in full. --strict
+its path nor its heading, while the indexed lock lists it; a target the
+lock no longer lists is judged like any other. A citation between the
+repository's own files is judged in full. --strict
 reads no lock, so it judges every reference and blocks for rendered files
 too, for the catalog install check.
 
