@@ -6,6 +6,31 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-11-24
+
+### Changed
+
+- `kendex project list --json` includes every registration when Git cannot classify a folder. The affected folder has a `git-unclassified` state and a `cause` field with the Git error.
+
+### Deprecated
+
+- The opt-in GitHub platform report moves to github-repository-settings. The old review-gate path and settings warn through the 1.23 release window and remain supported until 2.0. The retired app, environment and secrets keys are ignored. review-gate now installs github-repository-settings; whether it or bot-instructions renders the review files depends on whether a project receives it only through review-gate or lists it directly or through a bundle, as the migration guide's table sets out.
+
+  You do: Update the report command and settings using the [GitHub platform checks migration guide](https://github.com/vanillagreencom/kendex/blob/main/skills/github-repository-settings/references/platform-checks.md#migration-from-review-gate).
+
+### Removed
+
+- Consumer refresh drops the compatibility it kept for consumers moving to the shared refresh workflow. The review-gate refresh template and writer template, the `workflows/retire-consumer-writer.md` removal guide, `refresh/adopt-refresh.sh --retire-writer` and its `refresh-warning=legacy-writer` warning are removed, and adoption no longer writes an inventory record for `.github/workflows/kendex-refresh.yml`. Every consumer runs the shared caller and no consumer run prints the warning, so this lands one minor release after the last consumer moved, under the consumer refresh exception in the release standard. `.agents/skills/review-gate/scripts/install-latest.sh` still warns and forwards until 2.0.
+
+  You do: nothing if `.github/workflows/kendex-refresh.yml` calls `vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@v1`; otherwise run `refresh/adopt-refresh.sh` from a kendex release checkout in the consumer root and commit the workflow it writes.
+
+### Fixed
+
+- A consumer refresh whose `kendex verify` fails only on declarations the consumer's own manifest withholds, such as a hook whose required companion a `harnesses` line leaves out, now opens or updates its rolling pull request as a draft that names each finding and the manifest line it comes from, and arms and lands nothing until verify passes; the next refresh after the fix marks it ready. Any other verify failure still stops the run with no pull request.
+- `kendex add --harness` no longer narrows a package another installed package that is switched on requires below the tools that requirer runs on: the added pin keeps those tools, and the add says so, so the next refresh keeps the requirer and every hook that needs it, such as the lane-mail hooks after `kendex add --hook lane-mail-prompt --harness copilot`.
+- `kendex check` and `kendex updates` now name the fix when a pulled install record names a catalog version this machine has not fetched: `kendex source refresh`, which fetches the catalog and writes nothing in the project. Before, the line only said that the next source refresh would try again. After a pull changes the install record, the next check reads the package again instead of offering the refresh the old record called for, also where the pulled manifest has no enabled source left. In `kendex check --json`, this fix carries the remedy verb `source-refresh`. `kendex updates` now prints every warning's fix under it, as `kendex refresh` does.
+- A consumer refresh whose render drops a path from the lock's emitted paths, such as a pruned package or a removed or renamed per-file agent, hook or command, no longer lands on the default branch directly. It keeps the rolling pull request instead, which merges under the consumer's own rules, and the run prints `refresh-land=skipped value=path-removed`. A render that removes a file inside a package the lock still emits lands as before.
+
 ## [1.23.0] - 2026-11-20
 
 ### Added
@@ -3146,7 +3171,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.23.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.24.0..HEAD
+[1.24.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.24.0
 [1.23.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.23.0
 [1.22.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.2
 [1.22.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.1

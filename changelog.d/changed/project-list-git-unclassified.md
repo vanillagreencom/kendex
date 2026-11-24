@@ -1,1 +1,0 @@
-- `kendex project list --json` includes every registration when Git cannot classify a folder. The affected folder has a `git-unclassified` state and a `cause` field with the Git error.
