@@ -219,8 +219,11 @@ class Task(Session):
         pick = ["accounts", "pick", "--harness", chosen["harness"], "--record", fleet]
         if chosen["model"]:
             pick += ["--native-model", chosen["model"]]
+        self.env = environment(chosen["harness"], policy=True)
         if args.account:
-            # A named Pi root on a provider nothing measures, paid by its own
+            pick += ["--account", args.account]
+        if args.account or chosen["harness"] == "pi":
+            # A Pi root on a provider nothing measures, paid by its own
             # key, is a task's to spend: the judge takes it where Pi reads
             # the key ready, and the task records its reading unmeasured.
             # The check reads the window's names, which hold no provider
@@ -230,8 +233,8 @@ class Task(Session):
             # inside that server, and may differ when it is launched from
             # elsewhere.
             window = scratch / "window-env.json"
-            window.write_text(json.dumps(environment(chosen["harness"], policy=True)))
-            pick += ["--account", args.account, "--admit-unbilled", window]
+            window.write_text(json.dumps(self.env))
+            pick += ["--admit-unbilled", window]
         # A short task admits an account's room up to its wall, and on a named
         # account is judged on its projected wall, as the chooser judges every
         # account; a full task on a named account is judged on its reading.
