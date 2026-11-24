@@ -663,11 +663,26 @@ impl Mailbox {
     /// The lanes printed whole before a refusal stand; a lane the reply
     /// stops short of, names out of order or cuts is answered for by the
     /// refusal, never read as empty.
+    pub fn drain_many(&self, request: &Path, lanes: &[Drain]) -> Batch {
+        self.drain_batch(request, lanes, None)
+    }
+
+    /// The same batched read using the named host's snapshot for this turn.
+    pub(crate) fn drain_cached(
+        &self,
+        request: &Path,
+        lanes: &[Drain],
+        host: &str,
+        snapshot: &Path,
+    ) -> Batch {
+        self.drain_batch(request, lanes, Some((host, snapshot)))
+    }
+
     #[allow(
         clippy::disallowed_methods,
         reason = "the mail duty's one request file, written whole beside the watch's own records for the one batched read"
     )]
-    pub fn drain_many(&self, request: &Path, lanes: &[Drain]) -> Batch {
+    fn drain_batch(&self, request: &Path, lanes: &[Drain], hosted: Option<(&str, &Path)>) -> Batch {
         const VERB: &str = "drain-many";
         let mut text = String::new();
         for lane in lanes {
@@ -688,7 +703,21 @@ impl Mailbox {
                 verb: VERB,
                 cause: format!("request {}: {e}", request.display()),
             })
-            .and_then(|()| self.call(VERB, &["--file", &request.display().to_string()]));
+            .and_then(|()| {
+                let request = request.display().to_string();
+                match hosted {
+                    Some((host, snapshot)) => self.call_in(
+                        VERB,
+                        &["--file", &request, "--host"],
+                        &[
+                            ("ORCH_LANE_HOST", std::ffi::OsStr::new(host)),
+                            ("LANE_HOST_READ_DIR", snapshot.as_os_str()),
+                        ],
+                        None,
+                    ),
+                    None => self.call(VERB, &["--file", &request]),
+                }
+            });
         let answer = match answer {
             Ok(answer) => answer,
             Err(refusal) => {

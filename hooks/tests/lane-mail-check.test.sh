@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # lane-mail-check, the turn-end entry: it finds its install's mailbox reader
 # by walking up from its own directory, runs that install's `orch-runtime
-# turn-end` through the shipped wrapper, and where the runtime is not built
-# for its sources, read through agent-runtime's lib/key.sh, starts the build
-# through the install's `scripts/setup --detach` without calling the wrapper,
-# holding a turn end while the build runs in a checkout with a mailbox
+# turn-end` through the shipped wrapper, which checks the key for its
+# sources once. When the key is unbuilt the entry starts the build with
+# the install's `scripts/setup --detach`, holding a turn end while the
+# build runs in a checkout with a mailbox
 # directory, though cargo is on PATH. Every row runs the real entry and the real wrapper over
 # a lane the real `lane-marker` launched and the real `lane-mail` wrote to;
 # with the runtime built, the binary scripts/setup placed in
@@ -300,7 +300,34 @@ row_boxless() {
   builds_done "$CACHE"
 }
 
-ROWS="mail arm copilot global unlocatable launcherless building failed boxless"
+row_key() {
+  lane key plain
+  local hook_dir="$TMP_ROOT/observed/.claude/hooks"
+  local install="$TMP_ROOT/observed/.claude/skills"
+  local log="$TMP_ROOT/key.log" arm
+  local -a ROW_ENV
+  mkdir -p "$hook_dir" "$install/orch/scripts" "$install/agent-runtime/scripts/lib"
+  cp -- "$HOOK" "$hook_dir/lane-mail-check.sh"
+  cp -- "$HOOKS/lane-mail-halt.sh" "$HOOKS/lane-mail-deliver.sh" "$hook_dir/"
+  cp -p -- "$REPO_ROOT/skills/orch/scripts/orch-runtime" "$install/orch/scripts/"
+  ln -s -- "$REPO_ROOT/skills/orch/runtime" "$install/orch/runtime"
+  ln -s -- "$REPO_ROOT/skills/mailbox" "$install/mailbox"
+  # Observe the production key function at its entry in a private install.
+  awk '
+    { print }
+    /^agent_runtime_key\(\) \{/ { hits++; print "  printf \"key\\n\" >> \"$KEY_LOG\"" }
+    END { if (hits != 1) exit 1 }
+  ' "$KEY_LIB" > "$install/agent-runtime/scripts/lib/key.sh"
+  for arm in halt deliver; do
+    : >"$log"
+    ROW_ENV=("KEY_LOG=$log")
+    run "$hook_dir/lane-mail-$arm.sh" "$LANE" "$BUILT_CACHE"
+    assert_eq "RC=$RC stderr=$(first_line) calls=$(cat "$log")" "RC=0 stderr=- calls=key" \
+      "$arm computes the cached runtime key once"
+  done
+}
+
+ROWS="mail arm copilot global unlocatable launcherless building failed boxless key"
 for name in ${ENTRY_ROW:-$ROWS}; do "row_$name"; done
 
 # The must-fail controls, each a copy of the entry with one whole line
@@ -318,17 +345,18 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     ! grep -q '^  FAIL  ' "$TMP_ROOT/$1.log" || red=yes
     assert_eq "status=$status red=$red" "status=1 red=yes" "control $1: the $2 row turns red"
   }
-  control exit-passed mail '    exit "$rc"' '    exit 0'
+  control exit-passed mail '  exit "$rc"' '  exit 0'
   control arm-dropped arm \
-    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
-    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" 2>&1 1>&3 3>&-) || rc=$?'
+    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" 2>&1 1>&3 3>&-) || rc=$?'
   control dir-resolved copilot \
-    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
-    '  err=$("$scripts/orch-runtime" turn-end --hook-dir "$hook" "$@" 2>&1 1>&3 3>&-) || rc=$?'
-  # A hook that hands an unbuilt runtime to the wrapper has it build in the
-  # foreground: the wrapper prints its own setup-building line and answers
-  # in place of the silent pass.
-  control built-on-call boxless 'if ! unbuilt; then' 'if true; then'
+    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$hook" "$@" 2>&1 1>&3 3>&-) || rc=$?'
+  # A normal launcher call would build in the foreground and print its
+  # setup-building line in place of the silent pass.
+  control built-on-call boxless \
+    'err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?' \
+    'err=$("$scripts/orch-runtime" --no-private-env turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?'
   control reader-unexported global 'export LANE_MAIL_CLI=$reader' 'LANE_MAIL_READER=$reader'
   control unlocatable-held unlocatable \
     "  printf 'lane-mail-check: reader=unlocatable hook=%s\\n' \"\$dir\" >&2" \

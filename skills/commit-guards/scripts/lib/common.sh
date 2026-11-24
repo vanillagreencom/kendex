@@ -17,21 +17,21 @@ set -euo pipefail
 # not-a-path: this IS the bootstrap that loads the idiom, so it cannot use
 # it. A library directory whose name ends in a newline fails here loudly,
 # with the source unfound, rather than quietly resolving somewhere else.
+gg_common_lib="$(dirname -- "${BASH_SOURCE[0]}")"
 # shellcheck source=paths.sh
-source "$(dirname -- "${BASH_SOURCE[0]}")/paths.sh"
-# not-a-path: bootstrap for the shared message emitter.
+source "$gg_common_lib/paths.sh"
 # shellcheck source=messages.sh
-source "$(dirname -- "${BASH_SOURCE[0]}")/messages.sh"
+source "$gg_common_lib/messages.sh"
 # The glob-list concept, whole: the configured list, the excludes list, the
 # matcher both answer through, the walk, and what a lane may measure at a
 # matched path. Its helpers call back into this file, which is why it is
 # sourced here rather than by each lane — resolution is at call time, so the
 # order of the two is free.
-# not-a-path: same bootstrap as above; the idiom it loads is not available yet.
 # shellcheck source=configured-paths.sh
-source "$(dirname -- "${BASH_SOURCE[0]}")/configured-paths.sh"
+source "$gg_common_lib/configured-paths.sh"
+unset gg_common_lib
 
-GG_TAB="$(printf '\t')"
+GG_TAB=$'\t'
 GG_VIOLATIONS=0
 # Cleanup state is per-process. An INHERITED value must never decide what a
 # guard deletes on exit: gg_settings_index_mode arms the same trap without

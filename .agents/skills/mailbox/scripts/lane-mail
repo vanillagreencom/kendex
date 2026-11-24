@@ -177,16 +177,17 @@ Overseer side:
               receipt: a directive on a line at or below N is one the lane
               has read. A directive whose id is outside the item alphabet is
               not listed
-  drain-many --file REQUEST
+  drain-many --file REQUEST [--host]
               one process draining every lane named in REQUEST, one line per
-              lane, `<item> <after> <root>` (the root, a local path, is the
+              lane, `<item> <after> <root>` (the root is the
               rest of the line). For each line in order, print `item=<item>`
               and then exactly what `drain --item <item> --root <root>
-              --after <after> --receipts` prints for a local mailbox. A lane
+              --after <after> --receipts` prints for that mailbox. A lane
               whose read refuses stops the whole call with that refusal and
               no `item=` line of its own, so a caller never reads a lane it
               was not told about as empty; nothing of the lanes before it is
-              retracted. Takes no --host: a hosted lane is drained on its own
+              retracted. --host requires LANE_HOST_READ_DIR, the snapshot
+              of one host in the current watch turn
   pending --item ITEM [--to owner|peer] [--due]
               print every open to-overseer.jsonl ask: for a lane
               item, what a restarted overseer owes a reply; for `--item
@@ -911,7 +912,11 @@ fi
 # The batch names its lanes and roots in its request file alone.
 if [ "$VERB" = drain-many ]; then
   for given in $OPTS_GIVEN; do
-    case "$given" in --file) ;; *) refuse option-unknown "$given" ;; esac
+    case "$given" in
+      --file) ;;
+      --host) [ -n "${LANE_HOST_READ_DIR:-}" ] || refuse option-unknown "$given" ;;
+      *) refuse option-unknown "$given" ;;
+    esac
   done
 fi
 
@@ -1565,7 +1570,7 @@ if [ "$VERB" = peer ]; then
     # says what a peer target may be at all.
     [ "$ROOT" != "$OWN_ROOT" ] || refuse repo-self "$ROOT"
   fi
-elif [ "$HOST" -eq 1 ] && [ -z "$ROOT" ]; then
+elif [ "$HOST" -eq 1 ] && [ -z "$ROOT" ] && [ "$VERB" != drain-many ]; then
   refuse option-required --root
 fi
 # A batch resolves no root of its own: each request line carries its lane's.
@@ -2504,7 +2509,8 @@ lm_fast_read() {
   [ -z "$READ_OUT" ] || printf '%s\n' "$READ_OUT"
 }
 # Every lane of the request, in its order, each read as `drain --receipts`
-# reads it under its own mailbox locks and printed under its `item=` line. A
+# reads it, under its mailbox locks locally or from this host's snapshot,
+# and printed under its `item=` line. A
 # line short of its three fields, an item outside the alphabet or a cursor
 # that is no count refuses as the single verb refuses it, naming the lane;
 # the lanes already printed stand.
@@ -2522,6 +2528,7 @@ lm_drain_many() {
       . | .. | *[!A-Za-z0-9._-]*) refuse item-invalid "$item" ;;
     esac
     case "$after" in '' | *[!0-9]*) REFUSE_EXTRA="item=$item"; refuse after-invalid "$after" ;; esac
+    [ "$HOST" -eq 0 ] || [ -n "$root" ] || refuse missing-value --root
     ITEM="$item"
     AFTER="$after"
     lm_box "$root"

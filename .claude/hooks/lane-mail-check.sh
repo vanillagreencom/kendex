@@ -59,35 +59,16 @@ scripts=${reader%/mailbox/scripts/lane-mail}/orch/scripts
 [ -x "$scripts/orch-runtime" ] ||
   { printf 'lane-mail-check: runtime=unlocatable path=%s\n' "$scripts/orch-runtime" >&2; exit 0; }
 
-# unbuilt: 0 where the program the wrapper runs for these sources is absent,
-# read as the wrapper reads it, through agent-runtime's lib/key.sh beside the
-# wrapper's physical directory. The wrapper builds an absent program in the
-# foreground where cargo is on PATH, past this hook's timeout, so an unbuilt
-# runtime is never handed to it here. A read that fails leaves the call to
-# the wrapper, which says why.
-unbuilt() (
-  here=$(cd -- "$scripts" 2>/dev/null && pwd -P) || exit 1
-  key_lib=$here/../../agent-runtime/scripts/lib/key.sh
-  [ -r "$key_lib" ] || exit 1
-  refuse() { exit 1; }
-  # shellcheck source=/dev/null
-  . "$key_lib"
-  runtime=$(cd -- "$here/../runtime" 2>/dev/null && pwd -P) || exit 1
-  key=$(agent_runtime_key "$runtime" 2>/dev/null) || exit 1
-  [ ! -x "$(agent_runtime_cache)/bin/orch-runtime-$key" ]
-)
-
-# stdout passes straight through; stderr is held so that the wrapper's own
-# line for an unbuilt runtime never stands ahead of the answer given here.
-if ! unbuilt; then
-  rc=0
-  exec 3>&1
-  err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?
-  exec 3>&-
-  if [ "$rc" -ne 69 ]; then
-    [ -z "$err" ] || printf '%s\n' "$err" >&2
-    exit "$rc"
-  fi
+# The launcher binds the current sources to the binary once. Stdout passes
+# through. A missing binary (69) takes the detached setup path below, so
+# hold the launcher's stderr and use setup's answer for that case.
+rc=0
+exec 3>&1
+err=$("$scripts/orch-runtime" turn-end --hook-dir "$dir" "$@" 2>&1 1>&3 3>&-) || rc=$?
+exec 3>&-
+if [ "$rc" -ne 69 ]; then
+  [ -z "$err" ] || printf '%s\n' "$err" >&2
+  exit "$rc"
 fi
 
 # The runtime is not built for these sources: start its build, holding this

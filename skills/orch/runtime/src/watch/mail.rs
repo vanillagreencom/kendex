@@ -693,8 +693,62 @@ impl MailDuty {
         out
     }
 
-    /// Every lane box: the local lanes batched, each hosted lane on its
-    /// own, a replaced box read whole once; a lane whose read refuses is
+    /// The cached lanes batched per host. Keep the individual cached route
+    /// for boxes the batch could not answer, so a refusal or timeout holding
+    /// one box cannot hold the others, and a client without hosted batching
+    /// can still read the same snapshot.
+    fn drain_hosted<'a>(
+        &self,
+        lanes: &'a [(Drain, String)],
+        snapshots: &BTreeMap<String, PathBuf>,
+        turn: &mut Turn,
+    ) -> Vec<(&'a Drain, &'a str, Drained)> {
+        let mut groups = BTreeMap::<&str, Vec<usize>>::new();
+        for (index, (_, host)) in lanes.iter().enumerate() {
+            if snapshots.contains_key(host) {
+                groups.entry(host).or_default().push(index);
+            }
+        }
+        let mut read: Vec<Option<_>> = (0..lanes.len()).map(|_| None).collect();
+        for (host, indices) in groups {
+            let snapshot = &snapshots[host];
+            let mut answered = 0;
+            if indices.len() > 1 {
+                let batch_lanes: Vec<_> = indices.iter().map(|&i| lanes[i].0.clone()).collect();
+                let batch =
+                    self.mailbox
+                        .drain_cached(&self.config.request, &batch_lanes, host, snapshot);
+                // A refusal after the last section invalidates the whole
+                // reply. Otherwise the complete prefix still stands.
+                if batch.refused.is_none() || batch.read.len() < indices.len() {
+                    answered = batch.read.len();
+                    for (&index, drained) in indices.iter().zip(batch.read) {
+                        read[index] = Some(Ok(drained));
+                    }
+                }
+            }
+            for &index in &indices[answered..] {
+                read[index] = Some(
+                    self.mailbox
+                        .drain(&lanes[index].0, Some(host), Some(snapshot)),
+                );
+            }
+        }
+        lanes
+            .iter()
+            .zip(read)
+            .filter_map(|((lane, host), drained)| match drained? {
+                Ok(drained) => Some((lane, host.as_str(), drained)),
+                Err(refusal) => {
+                    turn.refuse(&lane.item, refusal);
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Every lane box: the local lanes batched, hosted lanes batched per
+    /// host, a replaced box read whole once; a lane whose read refuses is
     /// named and left for the next turn.
     fn lanes_turn(&self, tick: &Tick, turn: &mut Turn) -> Result<()> {
         let fleet = fleet(&self.config.fleet)?;
@@ -722,19 +776,11 @@ impl MailDuty {
             .map(|(lane, drained)| (lane, drained, None))
             .collect();
         let snapshots = self.snapshots(&hosted, turn);
-        let hosted: Vec<(Drain, String)> = hosted
-            .into_iter()
-            .filter(|(_, host)| snapshots.contains_key(host))
-            .collect();
-        for (lane, host) in &hosted {
-            match self
-                .mailbox
-                .drain(lane, Some(host), snapshots.get(host).map(PathBuf::as_path))
-            {
-                Ok(drained) => read.push((lane.clone(), drained, Some(host.clone()))),
-                Err(refusal) => turn.refuse(&lane.item, refusal),
-            }
-        }
+        read.extend(
+            self.drain_hosted(&hosted, &snapshots, turn)
+                .into_iter()
+                .map(|(lane, host, drained)| (lane.clone(), drained, Some(host.to_owned()))),
+        );
         // A replacement is read whole, once: a second mismatch would not end.
         let mut again_local = Vec::new();
         let mut again_hosted = Vec::new();
@@ -766,17 +812,11 @@ impl MailDuty {
             .into_iter()
             .map(|(lane, drained)| (lane.item, drained))
             .collect();
-        for (lane, host) in &again_hosted {
-            match self
-                .mailbox
-                .drain(lane, Some(host), snapshots.get(host).map(PathBuf::as_path))
-            {
-                Ok(drained) => {
-                    reread.insert(lane.item.clone(), drained);
-                }
-                Err(refusal) => turn.refuse(&lane.item, refusal),
-            }
-        }
+        reread.extend(
+            self.drain_hosted(&again_hosted, &snapshots, turn)
+                .into_iter()
+                .map(|(lane, _, drained)| (lane.item.clone(), drained)),
+        );
         for (lane, drained, _) in &read {
             // The row read before this turn's read, and `prior` 0 for a
             // replaced box read from its start.
