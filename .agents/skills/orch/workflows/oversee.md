@@ -115,9 +115,16 @@ On every surface the watch reports a lane's questions as `lane-question` and new
 
 8. A start over a recorded controller refuses while that controller may still run. On `predecessor-unproven`, adopt the session from its pane instead (step 3).
 
-9. To resume a recorded native session after its pane ends, submit `start-controller` with the recorded controller's typed launch fields and `resume` set to its native `session_id`.
-   - Run the state check and `sync-base` first, and pass the watch words of a first start.
-   - A resume the runtime cannot open fails before any pane opens, its `observation.note` naming why.
+9. To resume a recorded native session after its pane ends, as after a restart, run the state check and `sync-base` (step 5) first, then the resume from the checkout:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime resume-controller --fleet
+   ```
+
+   - It starts the record's own launch with `resume` set to its `session_id`, on the record's `server_socket`, with the watch flags `oversee-watch.flags` records.
+   - A gone server is started again as [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) states.
+   - It prints one line: `controller-resumed ...` at exit 0, `controller-resume-failed ... note=[NOTE] cause=[CAUSE]` at exit 3, `controller-resume-unconfirmed intent=[ID]` at exit 75.
+   - A record with no native id refuses `session-unrecorded field=session_id`. A fleet whose watch recorded no flags refuses `watch-flags-unrecorded`.
    - A resume keeps the recorded account.
 
 **Refusals.**

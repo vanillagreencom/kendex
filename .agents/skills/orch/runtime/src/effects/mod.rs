@@ -63,6 +63,7 @@ pub mod lane_model;
 )]
 mod lane_operation;
 mod launch;
+pub mod relaunch;
 mod stop;
 
 pub use close::{Closed, Word as CloseWord, close_lane};

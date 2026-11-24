@@ -783,6 +783,7 @@
   ".agents/skills/orch/runtime/src/effects/launch.rs",
   ".agents/skills/orch/runtime/src/effects/mod.rs",
   ".agents/skills/orch/runtime/src/effects/pi-session-env.txt",
+  ".agents/skills/orch/runtime/src/effects/relaunch.rs",
   ".agents/skills/orch/runtime/src/effects/stop.rs",
   ".agents/skills/orch/runtime/src/error.rs",
   ".agents/skills/orch/runtime/src/job_end.rs",

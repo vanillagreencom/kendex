@@ -29,6 +29,10 @@ use crate::error::{Error, Result};
 use crate::intent::Intent;
 use crate::intent::{BoundSession, Obligation, OpenedPane, Phase, Role};
 
+/// The job record of the tmux server a fleet start made, beside the fleet
+/// state: the server's lifetime owner.
+pub const SERVER_RECORD: &str = "tmux-server.runner";
+
 /// What a recorded pane reads as on its own server: present as `P` (the
 /// pane, or the standing token for it), gone with the cause (the pane by
 /// exact id, or its server gone or replaced with every pane it held), or
@@ -545,8 +549,12 @@ impl Operation<'_> {
     }
 
     /// The tmux server a window opens on and the session it opens in: the
-    /// socket the opener names, and the session [`fleet_session`] resolves,
-    /// which must stand: kendex creates no session.
+    /// socket the opener names, and the session [`fleet_session`] resolves.
+    /// Where no server listens on that socket, as after a restart, one is
+    /// started there with that session ([`Operation::started_server`]). A
+    /// server that stands must hold the session: one it lacks refuses
+    /// `tmux-session-missing`, since that server may hold another fleet's
+    /// sessions under names this one cannot judge.
     pub fn fleet_server(
         &self,
         named: Option<&str>,
@@ -554,7 +562,11 @@ impl Operation<'_> {
     ) -> Result<(Server, String)> {
         let socket = self.run.reach.socket()?.to_path_buf();
         let session = self.fleet_session(named, fallback)?;
-        let server = tmux::server(&socket)?;
+        let server = match tmux::server(&socket) {
+            Ok(server) => server,
+            Err(e) if tmux::server_absent(&e) => self.started_server(&socket, &session)?,
+            Err(e) => return Err(e),
+        };
         if !tmux::session_present(&server, &session)? {
             return Err(crate::Error::refused(
                 "tmux-session-missing",
@@ -565,6 +577,63 @@ impl Operation<'_> {
             ));
         }
         Ok((server, session))
+    }
+
+    /// A tmux server started on `socket` holding `session`: `tmux -D`, the
+    /// server in the foreground as the job's main process, run by the job
+    /// launcher as a user unit or a `setsid` group and recorded in
+    /// [`SERVER_RECORD`] beside the fleet state. The job stands outside the
+    /// caller's process group, and a unit outside its cgroup too, so
+    /// stopping the caller leaves the server standing. The start runs under
+    /// the record's lock with the socket read again once the lock is held,
+    /// so two starts of one fleet start one server; tmux's own lock beside
+    /// the socket holds a racing start from another fleet, whose second
+    /// `-D` exits on the first server. No intent records the server, so no
+    /// close ends it: it ends with its last session. A server that never
+    /// answers within the verify bound refuses `tmux-server-unstarted`.
+    fn started_server(&self, socket: &Path, session: &str) -> Result<Server> {
+        let record = self.run.state_dir.join(SERVER_RECORD);
+        crate::record::lock(&record)?.with(|| {
+            match tmux::server(socket) {
+                Ok(server) => return Ok(server),
+                Err(e) if !tmux::server_absent(&e) => return Err(e),
+                Err(_) => {}
+            }
+            let word = socket.display().to_string();
+            let launch = super::job::launch_recorded(
+                "tmux-server",
+                &format!("{}-{}", self.wall_secs(), std::process::id()),
+                &record,
+                &["tmux", "-S", &word, "-D"],
+                None,
+                super::job::Bounds::default(),
+                self.clock,
+            )
+            .answer();
+            let bound = self.run.settings.verify.get()?;
+            let Some(server) = poll_until(self.clock, bound, POLL, || tmux::server(socket).ok())
+            else {
+                let (launched, cause) = match launch {
+                    super::job::Launch::Started { line, .. } => ("started", line),
+                    super::job::Launch::Refused { cause } => ("refused", cause),
+                    super::job::Launch::Unanswered { cause } => ("unanswered", cause),
+                };
+                return Err(Error::refused(
+                    "tmux-server-unstarted",
+                    &[
+                        ("socket", &word),
+                        ("session", session),
+                        ("launch", launched),
+                        ("cause", &cause),
+                    ],
+                ));
+            };
+            // The session's first window opens in the fleet state's
+            // directory, which stands for every opener; a detached job's
+            // own directory is whatever started it.
+            tmux::new_session(&server, session, &self.run.state_dir)?;
+            Ok(server)
+        })
     }
 
     /// The server's own process identity, read live before a window opens on

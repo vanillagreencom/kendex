@@ -372,6 +372,145 @@ fn two_launch_processes_mint_distinct_intent_ids() {
     assert_eq!(second["intent"]["outcome"], "confirmed");
 }
 
+/// A local lane `KEN-1` confirmed on the state directory's account, whose
+/// usage reads `used` percent in both windows through the usage fixture,
+/// and a controller record naming the fleet's socket: the world a restart
+/// leaves once the server goes.
+fn relaunch_world(dir: &Path, server: &Server, used: u32) -> Runner {
+    let mut runner = Runner::new(server, "stub-confirm");
+    runner.init_fleet();
+    let bin = dir.join("usage-bin");
+    let usage = dir.join("usage-fixtures");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&usage).unwrap();
+    std::os::unix::fs::symlink(account_fixtures().join("usage-curl/curl"), bin.join("curl"))
+        .unwrap();
+    std::fs::write(
+        usage.join("planted.usage.json"),
+        json!({"five_hour": {"utilization": used, "resets_at": "2027-01-01T00:00:00Z"},
+            "seven_day": {"utilization": used, "resets_at": "2027-01-01T00:00:00Z"}})
+        .to_string(),
+    )
+    .unwrap();
+    runner.tools = Some(bin);
+    runner
+        .env
+        .push(("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()));
+    let launched = effect_report(&runner.op_fleet(&launch_request("KEN-1", runner.state_dir())));
+    assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+    let mut fleet = runner.fleet();
+    fleet["controller"] = json!({"server_socket": server.socket.display().to_string()});
+    runner.write_fleet(&fleet);
+    runner
+}
+
+/// `lane relaunch` for `item`, run from a pane of another server than the
+/// fleet's.
+fn relaunch(runner: &Runner, dir: &Path, item: &str) -> std::process::Output {
+    let decoy = format!("{},0,0", dir.join("decoy.sock").display());
+    runner.run_env(&["lane", "relaunch", "--fleet", item], &[("TMUX", &decoy)])
+}
+
+/// The key of the refusal a run printed, its exit 1.
+fn refused_by(out: &std::process::Output) -> String {
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(out));
+    reply(out)["refusal"]["key"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// After a restart a local lane's record stands with its session and the
+/// fleet's server gone, and the caller stands on another server: `lane
+/// relaunch` with the item alone closes the lane and launches it again from
+/// its record, on its own account and the start brief, on the controller
+/// record's socket, where a server is started again.
+#[test]
+fn lane_relaunch_brings_a_recorded_local_lane_back_from_its_record_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = relaunch_world(dir.path(), &server, 5);
+    let killed = tmux(&server.socket, &["kill-server"]);
+    assert!(killed.status.success(), "{}", stderr(&killed));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while live(server.pid) {
+        assert!(Instant::now() < deadline, "the fleet server never ended");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = relaunch(&runner, dir.path(), "KEN-1");
+    let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    assert_eq!(out.status.code(), Some(0), "{line} {}", stderr(&out));
+    let words: Vec<&str> = line.split(' ').collect();
+    assert_eq!(words[..2], ["resumed", "item=KEN-1"], "{line}");
+    assert!(words[2].starts_with("route="), "{line}");
+    assert_eq!(
+        words[3],
+        format!("account={}", runner.state_dir().display()),
+        "{line}"
+    );
+    let identity = tmux(&server.socket, &["display-message", "-p", "#{pid}"]);
+    let started: u64 = String::from_utf8_lossy(&identity.stdout)
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("no server answers: {}", stderr(&identity)));
+    let lane = runner.fleet()["lanes"][0].clone();
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane["launch"]["server"], started, "{lane}");
+    let request: Value = serde_json::from_str(
+        &std::fs::read_to_string(runner.state_dir().join("restart-relaunch-KEN-1.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        request["brief_file"],
+        runner
+            .state_dir()
+            .join("restart-relaunch-KEN-1.md")
+            .display()
+            .to_string(),
+        "{request}"
+    );
+}
+
+/// What `lane relaunch` refuses before it closes anything: an item with no
+/// lane, a hosted lane, whose server is its host's, and a lane whose own
+/// account the judge reads walled. The lane stands running after each.
+#[test]
+fn lane_relaunch_refuses_by_key_with_nothing_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = relaunch_world(dir.path(), &server, 99);
+    let fleet = runner.fleet();
+    let mut hosted = fleet.clone();
+    hosted["lanes"][0]["host"] = json!("/opt/provider");
+    let rows: [(&str, &Value, &str, Option<Value>); 3] = [
+        ("KEN-9", &fleet, "lane-missing", None),
+        ("KEN-1", &hosted, "lane-hosted", None),
+        (
+            "KEN-1",
+            &fleet,
+            "account-unready",
+            Some(json!(["answer", "walled"])),
+        ),
+    ];
+    for (item, record, key, field) in rows {
+        runner.write_fleet(record);
+        let out = relaunch(&runner, dir.path(), item);
+        assert_eq!(refused_by(&out), key, "{item}");
+        if let Some(field) = field {
+            let fields = reply(&out)["refusal"]["fields"].clone();
+            assert!(
+                fields.as_array().is_some_and(|f| f.contains(&field)),
+                "{fields}"
+            );
+        }
+        assert_eq!(
+            runner.fleet()["lanes"][0]["status"],
+            "running",
+            "{key}: nothing closed"
+        );
+    }
+}
+
 #[test]
 fn a_launch_with_no_tmux_session_records_failed() {
     // A refusal the effect knows before any window opens records `failed`,

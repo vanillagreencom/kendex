@@ -33,7 +33,8 @@ disallowed-methods = [
     { path = "agent_runtime::host::tmux::sole_idle_shell", reason = "a session's idle shell is read only by agent-runtime's controller launch" },
     { path = "agent_runtime::host::tmux::lone_idle_shell_pane", reason = "a session's idle shell is read only by agent-runtime's controller publication, before it closes" },
     { path = "agent_runtime::host::tmux::list_windows", reason = "the fleet session's windows are listed only by the lane observation duty's stray sweep, which reports and never adopts" },
-    { path = "agent_runtime::host::tmux::start_private_server", reason = "no effect starts a tmux server; the fixtures of the process tests do" },
+    { path = "agent_runtime::host::tmux::start_private_server", reason = "an effect starts a tmux server only through the operation handle's fleet server, as a recorded job; the fixtures of the process tests start private ones" },
+    { path = "agent_runtime::host::tmux::new_session", reason = "a tmux session is made only by the operation handle's fleet server, on the server it started" },
     # processes
     { path = "agent_runtime::process::identity", reason = "a process identity is read only through the operation handle, which records it before any wait, the command's own stamp and the watch claim" },
     { path = "agent_runtime::process::still_runs", reason = "a process is read only through the operation handle, the occupancy host or the watch claim's one read of the runner it refuses or takes over by" },

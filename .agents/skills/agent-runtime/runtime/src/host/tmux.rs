@@ -312,6 +312,55 @@ pub fn server(socket: &Path) -> Result<Server> {
     identity(&Client::Unnamed, socket)
 }
 
+/// Whether `error`, a refusal from a tmux call, says no server listens on
+/// its socket. tmux's `client.c` prints `no server running on PATH` where
+/// the connect was refused, and `error connecting to PATH (No such file or
+/// directory)` where no socket stands (tmux 3.8, measured). Any other
+/// refusal, such as a denied permission, a path too long or a client of
+/// another build, is no proof that the server is gone.
+pub fn server_absent(error: &Error) -> bool {
+    let Error::Refused {
+        key: "tmux-refused",
+        fields,
+    } = error
+    else {
+        return false;
+    };
+    fields.iter().any(|(name, cause)| {
+        name == "cause"
+            && (cause.starts_with("no server running on ")
+                || (cause.starts_with("error connecting to ")
+                    && cause.ends_with(" (No such file or directory)")))
+    })
+}
+
+/// Make `session` on `server`, one this process started with `tmux -D`,
+/// and set `exit-empty` on: `-D` turns it off, and a server tmux starts for
+/// a client ends with its last session.
+pub fn new_session(server: &Server, session: &str, cwd: &Path) -> Result<()> {
+    let client = confirm(server)?;
+    let cwd = cwd.display().to_string();
+    tmux(
+        &client,
+        &server.socket,
+        "new-session",
+        &[
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-c",
+            &cwd,
+            ";",
+            "set-option",
+            "-s",
+            "exit-empty",
+            "on",
+        ],
+    )?;
+    Ok(())
+}
+
 /// [`server`], asked through the program of the server a record names by
 /// `pid`, so a server a tmux update left behind still answers.
 pub fn recorded_server(socket: &Path, pid: u64) -> Result<Server> {
@@ -1346,6 +1395,54 @@ mod tests {
                 "{client:?} {stderr:?}"
             );
         }
+    }
+
+    /// Only tmux's two answers for a socket nothing listens on read as the
+    /// server gone; a denied socket, a refused path and a client of another
+    /// build stand for a server that may run. The stderr lines are tmux
+    /// 3.8's, measured.
+    #[test]
+    fn only_a_socket_nothing_listens_on_reads_as_no_server() {
+        let rows = [
+            (
+                Client::Unnamed,
+                "no server running on /tmp/tmux-1000/default",
+                true,
+            ),
+            (
+                Client::Unnamed,
+                "error connecting to /tmp/tmux-1000/default (No such file or directory)",
+                true,
+            ),
+            (
+                Client::Unnamed,
+                "error connecting to /tmp/tmux-1000/default (Permission denied)",
+                false,
+            ),
+            (
+                Client::Unnamed,
+                "error connecting to /tmp/tmux-1000/default (File name too long)",
+                false,
+            ),
+            (
+                Client::Fallback {
+                    unread: "exe-unreadable",
+                },
+                "protocol version mismatch (client 8, server 7)",
+                false,
+            ),
+        ];
+        for (client, stderr, absent) in rows {
+            assert_eq!(
+                server_absent(&refused(&client, "server-identity", stderr)),
+                absent,
+                "{stderr:?}"
+            );
+        }
+        assert!(!server_absent(&Error::refused(
+            "server-gone",
+            &[("cause", "no server running on /tmp/tmux-1000/default")]
+        )));
     }
 
     #[test]

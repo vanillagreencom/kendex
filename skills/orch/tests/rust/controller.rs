@@ -8520,6 +8520,126 @@ fn a_resume_after_a_restart_opens_in_the_standing_session_or_none() {
     }
 }
 
+/// After a restart the record names a controller whose session recorded
+/// its end and whose server is gone from the recorded socket, and the
+/// caller stands on another server: `resume-controller` alone resumes the
+/// record's own session on the recorded socket, with the watch flags the
+/// last runner recorded, and answers one keyed line. A record naming no
+/// native session id, or a fleet whose runner recorded no flags, refuses
+/// naming what is missing, with the record as it stood.
+#[test]
+fn resume_controller_resumes_the_recorded_session_on_its_own_server_and_watch() {
+    let id = "7c1e5a2b-3d4f-4a6b-9c8d-1e2f3a4b5c6d";
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-resume");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin);
+    let home = runner.state_dir().to_path_buf();
+    let file = plant_claude_session(&home, &home, id);
+    let state = home.join(agent_runtime::record::FLEET_FILE_NAME);
+    let mut gone = pending(&home);
+    gone["server"] = json!("1");
+    gone["server_start"] = json!(1);
+    gone["server_socket"] = json!(server.socket.display().to_string());
+    gone["pane"] = json!("%99");
+    gone["generation"] = json!(4);
+    gone["exit"] = json!({"run": {"generation": 4}});
+    let mut fleet = runner.fleet();
+    fleet["controller"] = gone.clone();
+    runner.write_fleet(&fleet);
+    let decoy = format!("{},0,0", dir.path().join("decoy.sock").display());
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    env.push(("TMUX", &decoy));
+    let resume = |runner: &Runner| runner.run_env(&["resume-controller", "--fleet"], &env);
+
+    let before = runner.fleet()["controller"].clone();
+    let out = resume(&runner);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(refusal_key(&out), "session-unrecorded");
+    assert_eq!(
+        reply(&out)["refusal"]["fields"],
+        json!([["field", "session_id"], ["pane", "%99"]])
+    );
+    assert_eq!(
+        runner.fleet()["controller"],
+        before,
+        "the record as it stood"
+    );
+
+    gone["session_id"] = json!(id);
+    fleet["controller"] = gone;
+    runner.write_fleet(&fleet);
+    let before = runner.fleet()["controller"].clone();
+    let out = resume(&runner);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(refusal_key(&out), "watch-flags-unrecorded");
+    assert_eq!(
+        runner.fleet()["controller"],
+        before,
+        "the record as it stood"
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+
+    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+    std::fs::write(
+        &paths.flags,
+        serde_json::to_vec(&orch_runtime::watch::claim::StartFlags {
+            interval: 240,
+            max_loops: 25,
+            since: Some("2026-01-01T00:00:00Z".to_owned()),
+            repos: vec!["acme/one".to_owned(), "acme/two".to_owned()],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let killed = tmux(&server.socket, &["kill-server"]);
+    assert!(killed.status.success(), "{}", stderr(&killed));
+    wait_until("the fleet server ended", secs(10), || !live(server.pid));
+    let out = resume(&runner);
+    let lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(out.status.code(), Some(0), "{lines:?} {}", stderr(&out));
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].starts_with("controller-resumed "), "{lines:?}");
+    let overseer = runner.fleet()["controller"].clone();
+    assert_eq!(overseer["session_id"], id, "{overseer}");
+    assert_ne!(overseer["pane"], "%99", "{overseer}");
+    assert_eq!(
+        overseer["server_socket"],
+        server.socket.display().to_string(),
+        "{overseer}"
+    );
+    assert_eq!(
+        file_turns(&file).len(),
+        1,
+        "the brief went into the session's own file"
+    );
+    let fleet = runner.fleet();
+    let watch: Vec<&str> = fleet["intents"]
+        .as_array()
+        .and_then(|intents| intents.iter().find(|i| i["op"] == "start-controller"))
+        .and_then(|intent| intent["watch"].as_array())
+        .map(|words| words.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    for pair in [
+        ["--since", "2026-01-01T00:00:00Z"],
+        ["--repo", "acme/one"],
+        ["--repo", "acme/two"],
+    ] {
+        assert!(watch.windows(2).any(|w| w == pair), "{pair:?}: {watch:?}");
+    }
+    let claim = orch_runtime::watch::claim::read(&paths)
+        .unwrap()
+        .expect("the resumed controller's watch claimed the fleet state");
+    let out = runner.run(&["watch", "stop", "--file", &state.display().to_string()]);
+    assert!(out.status.success(), "watch stop: {}", stderr(&out));
+    wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
+}
+
 /// The compare-and-swap set of `record`, with no pending standing.
 fn expected_of(record: &Value) -> Value {
     json!({
@@ -10598,6 +10718,122 @@ fn a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened() {
         "nothing published: {}",
         runner.fleet()
     );
+}
+
+/// The fleet's tmux server is gone, as after a restart: a start on its
+/// socket starts a server there as the fleet's own recorded job, a `setsid`
+/// group where no user manager lingers and a unit of the manager's where
+/// one does, makes the fleet's session in it and opens the controller
+/// there. The server stands outside the caller's process group, so killing
+/// that whole group once the start answered, as stopping the Jarvis
+/// controller that ran it does, leaves the session standing. A server that
+/// stands without the session still refuses
+/// (`a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened`).
+#[test]
+fn a_start_with_the_fleet_server_gone_starts_one_that_outlives_its_caller() {
+    use std::os::unix::process::CommandExt;
+    for route in ["setsid", "systemd"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        if route == "systemd" {
+            let bin = dir.path().join("manager-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            for fake in ["systemd-run", "systemctl", "loginctl"] {
+                write_executable(
+                    &bin.join(fake),
+                    std::fs::read_to_string(fixtures().join("cutover-fakes").join(fake)).unwrap(),
+                );
+            }
+            runner.tools = Some(bin);
+        }
+        let killed = tmux(&server.socket, &["kill-server"]);
+        assert!(killed.status.success(), "{route}: {}", stderr(&killed));
+        wait_until("the fleet server ended", secs(10), || !live(server.pid));
+        let request = runner.state_dir().join("request.json");
+        std::fs::write(
+            &request,
+            json!({"op": "start-controller", "controller": pending(runner.state_dir())})
+                .to_string(),
+        )
+        .unwrap();
+        let answer = runner.state_dir().join("answer.json");
+        let mut command = program("sh");
+        runner.apply_env(&mut command);
+        command
+            .args(["-c", "\"$@\" > \"$ANSWER\"; exec sleep 300", "caller"])
+            .arg(binary())
+            .args(["--no-private-env", "--state-dir"])
+            .arg(runner.state_dir())
+            .args(["op", "--fleet", "--request"])
+            .arg(&request)
+            .env("ANSWER", &answer)
+            .current_dir(runner.state_dir())
+            .process_group(0);
+        let caller = Owned(command.spawn().expect("the caller"));
+        let reply = wait_reply(&answer, SETTLE, String::new);
+        let report = &reply["result"]["effect"]["report"];
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{route}: {reply}");
+        let record = std::fs::read_to_string(runner.state_dir().join("tmux-server.runner"))
+            .unwrap_or_default();
+        assert!(
+            record.lines().any(|l| l == format!("runner={route}")),
+            "{route}: {record}"
+        );
+        if route == "systemd" {
+            assert!(
+                record
+                    .lines()
+                    .any(|l| l.starts_with("unit=orch-tmux-server-")),
+                "{record}"
+            );
+        }
+        let identity = tmux(&server.socket, &["display-message", "-p", "#{pid}"]);
+        let started: u32 = String::from_utf8_lossy(&identity.stdout)
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{route}: no server answers: {}", stderr(&identity)));
+        let recorded = runner.fleet()["controller"]["server"].clone();
+        assert_eq!(
+            recorded
+                .as_u64()
+                .map(|pid| pid.to_string())
+                .or_else(|| recorded.as_str().map(str::to_owned)),
+            Some(started.to_string()),
+            "{route}: the controller opened on the started server"
+        );
+        let group = |pid: u32| -> String {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+            let fields: Vec<&str> = stat
+                .rsplit_once(')')
+                .unwrap()
+                .1
+                .split_whitespace()
+                .collect();
+            fields[2].to_owned()
+        };
+        let caller_group = caller.pid().to_string();
+        assert_eq!(
+            group(caller.pid()),
+            caller_group,
+            "the caller leads its group"
+        );
+        assert_ne!(group(started), caller_group, "{route}");
+        let out = program("kill")
+            .args(["-KILL", "--", &format!("-{caller_group}")])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{route}: {}", stderr(&out));
+        drop(caller);
+        let session = tmux(&server.socket, &["has-session", "-t", "=fleet"]);
+        assert!(
+            session.status.success(),
+            "{route}: the session outlived its caller: {}",
+            stderr(&session)
+        );
+        assert!(live(started), "{route}");
+    }
 }
 
 /// Where neither the request nor `AGENT_RUNTIME_TMUX_SESSION` names a

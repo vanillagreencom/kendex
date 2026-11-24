@@ -323,7 +323,12 @@ pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
     let id = overseer
         .session_id
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| refused("session-unrecorded", &[("pane", &record.pane)]))?;
+        .ok_or_else(|| {
+            refused(
+                "session-unrecorded",
+                &[("field", "session_id"), ("pane", &record.pane)],
+            )
+        })?;
     if record.harness == Some(Harness::Pi) {
         // The Pi root the launch runs on: the account where its variable is
         // Pi's own (a model Pi's root bills), else the home the record keeps.
