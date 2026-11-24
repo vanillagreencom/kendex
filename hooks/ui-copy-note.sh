@@ -32,6 +32,31 @@ notice() { # KEY VALUE [DETAIL]
   context "ui-copy-note: $1=$2${detail:+$'\n'$detail}"
 }
 
+# The exclusive create lets just one competing call speak. Prints the marker
+# diagnostic the message carries, and fails once the session is marked.
+mark_session() {
+  if [ -z "$KEY" ]; then
+    printf '%s' 'ui-copy-note: marker=no-session-id'
+  elif (umask 077 && mkdir -p -- "$STATE_DIR" && set -C && : >"$STATE_DIR/$KEY") 2>/dev/null; then
+    find "$STATE_DIR" -type f -mtime +30 -delete 2>/dev/null || printf '%s' 'ui-copy-note: marker=prune-failed'
+  elif [ -e "$STATE_DIR/$KEY" ]; then
+    return 1
+  else
+    printf '%s' 'ui-copy-note: marker=unwritable'
+  fi
+}
+
+# An install that cannot deliver the note stays so for the session, as an old
+# pi-hooks carrier that sets no KENDEX_HOOK_SCOPE does: say it once, not on
+# every tool call.
+session_notice() { # KEY VALUE [DETAIL]
+  local mark detail=${3:-}
+  mark=$(mark_session) || exit 0
+  detail="$detail${mark:+${detail:+$'\n'}$mark}"
+  notice "$1" "$2" "$detail"
+  exit 0
+}
+
 trap 'status=$?; trap - EXIT; if [ "$status" -ne 0 ]; then notice reader unexpected; fi; exit 0' EXIT
 
 command -v jq >/dev/null 2>&1 || { notice missing-tool jq; exit 0; }
@@ -98,7 +123,7 @@ case "${KENDEX_HOOK_SCOPE-}" in
       NATIVE_ROOT=$HOOK_ROOT
     else
       PROJECT_INSTALL=$(physical_dir "$HOOK_ROOT" 2>&1) ||
-        { notice reader install-layout "$PROJECT_INSTALL"; exit 0; }
+        session_notice reader install-layout "$PROJECT_INSTALL"
       NATIVE_ROOT="${PROJECT_INSTALL%/}/.pi"
       SHARED_ROOT=$PROJECT_INSTALL
     fi
@@ -118,17 +143,16 @@ case "${KENDEX_HOOK_SCOPE-}" in
         */.claude/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.claude/hooks/ui-copy-note.sh}; HARNESS=claude ;;
         */.codex/hooks/ui-copy-note.sh) PROJECT_INSTALL=${HOOK_PATH%/.codex/hooks/ui-copy-note.sh}; HARNESS=codex ;;
         *)
-          notice reader install-layout "No Claude Code or Codex registration runs $HOOK_PATH, and no KENDEX_HOOK_SCOPE names the Pi registration that ran it. A Pi install needs the pi-hooks carrier that sets it."
-          exit 0
+          session_notice reader install-layout "No Claude Code or Codex registration runs $HOOK_PATH, and no KENDEX_HOOK_SCOPE names the Pi registration that ran it. A Pi install needs the pi-hooks carrier that sets it."
           ;;
       esac
       PROJECT_INSTALL=$(physical_dir "${PROJECT_INSTALL:-/}" 2>&1) ||
-        { notice reader install-layout "$PROJECT_INSTALL"; exit 0; }
+        session_notice reader install-layout "$PROJECT_INSTALL"
       NATIVE_ROOT="${PROJECT_INSTALL%/}/.$HARNESS"
       SHARED_ROOT=$PROJECT_INSTALL
     fi
     ;;
-  *) notice reader install-layout "KENDEX_HOOK_SCOPE=$KENDEX_HOOK_SCOPE names no scope"; exit 0 ;;
+  *) session_notice reader install-layout "KENDEX_HOOK_SCOPE=$KENDEX_HOOK_SCOPE names no scope" ;;
 esac
 
 installed() { # SKILL FILE — only this hook's native and shared skill roots
@@ -179,7 +203,7 @@ case "$TOOL" in
     ;;
   apply_patch)
     [ -n "$TARGETS" ] || { notice reader patch 'The apply_patch payload has no command.'; exit 0; }
-    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }
+    command -v awk >/dev/null 2>&1 || session_notice missing-tool awk
     TARGETS=$(awk '
       function flush() { if (update != "") print update; update = "" }
       /^\*\*\* Move to: / && update != "" { update = substr($0, 14); flush(); next }
@@ -193,7 +217,7 @@ case "$TOOL" in
     ;;
   Bash)
     [ "$HARNESS" = claude ] || exit 0
-    command -v git >/dev/null 2>&1 || { notice missing-tool git; exit 0; }
+    command -v git >/dev/null 2>&1 || session_notice missing-tool git
     GIT_ROOT=$(LC_ALL=C git -C "$BASE" rev-parse --show-toplevel 2>&1) || {
       case "$GIT_ROOT" in *'not a git repository'*) exit 0 ;; esac
       notice reader git-root "$GIT_ROOT"
@@ -269,15 +293,6 @@ fi
 
 REFERENCE=$(installed code-quality references/ui.md) || { notice reference missing "$ISSUES"; exit 0; }
 DETAIL="Read § UI copy in $REFERENCE and apply it to this edit."
-# The exclusive create lets just one competing edit print a reminder.
-if [ -z "$KEY" ]; then
-  DETAIL="$DETAIL"$'\n''ui-copy-note: marker=no-session-id'
-elif (umask 077 && mkdir -p -- "$STATE_DIR" && set -C && : >"$STATE_DIR/$KEY") 2>/dev/null; then
-  find "$STATE_DIR" -type f -mtime +30 -delete 2>/dev/null || DETAIL="$DETAIL"$'\n''ui-copy-note: marker=prune-failed'
-elif [ -e "$STATE_DIR/$KEY" ]; then
-  [ -z "$ISSUES" ] || context "$ISSUES"
-  exit 0
-else
-  DETAIL="$DETAIL"$'\n''ui-copy-note: marker=unwritable'
-fi
+MARK=$(mark_session) || { [ -z "$ISSUES" ] || context "$ISSUES"; exit 0; }
+DETAIL="$DETAIL${MARK:+$'\n'$MARK}"
 notice path "$MATCH" "$DETAIL${ISSUES:+$'\n'$ISSUES}"

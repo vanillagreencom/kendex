@@ -267,7 +267,15 @@ for harness in claude codex; do
     check "aliased project $harness registry" "$harness" \
       "$(edit Edit "$ALIASED" Panel.qml "aliased-$harness")" 'ui-copy-note: path=Panel.qml'
 done
-check 'unbound hook path' unbound "$(edit Edit "$REPO" shell/Panel.qml unbound)" 'ui-copy-note: reader=install-layout'
+# A Pi copy run by a carrier that sets no KENDEX_HOOK_SCOPE is unbound for its
+# whole session, on every tool call.
+unbound_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/unbound-state-${HOOK##*/}"
+  export XDG_STATE_HOME
+  check 'unbound hook path' unbound "$(edit Edit "$REPO" shell/Panel.qml unbound)" 'ui-copy-note: reader=install-layout'
+  check 'unbound hook path, same session' unbound "$(edit Bash "$REPO" '' unbound)" ''
+}
+unbound_rows
 
 ORCH="$CATALOG/skills/orch/scripts"
 parity_index=0
@@ -311,9 +319,9 @@ GLOBS
 # The second call must expose a copy that skipped creating a session mark.
 skill_load_control once "$HOOK" "DETAIL=\"Read § UI copy in \$REFERENCE and apply it to this edit.\"" \
   'STATE_DIR=/dev/null/unwritable' HOOK session_rows 'same session: keyed context'
-skill_load_control move "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }' \
+skill_load_control move "$HOOK" '    command -v awk >/dev/null 2>&1 || session_notice missing-tool awk' \
   '    TARGETS=${TARGETS//Move to:/Ignored:}' HOOK move_rows 'Codex matching destination: keyed context'
-skill_load_control add "$HOOK" '    command -v awk >/dev/null 2>&1 || { notice missing-tool awk; exit 0; }' \
+skill_load_control add "$HOOK" '    command -v awk >/dev/null 2>&1 || session_notice missing-tool awk' \
   '    TARGETS=${TARGETS//Add File:/Ignored:}' HOOK add_rows 'Codex ordinary addition: keyed context'
 # A Pi copy that reads its shared tree beside its own root, as one that
 # classified its path would, takes the planted project reader.

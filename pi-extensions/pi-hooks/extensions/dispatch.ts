@@ -84,8 +84,8 @@ const DEFAULT_BUDGET_MS = 60_000;
  * command, so the direct spawn would run the script with none of them.
  *
  * Every run carries the registration's scope and root as `KENDEX_HOOK_SCOPE`
- * and `KENDEX_HOOK_ROOT`, so the hook's own install is the one this carrier
- * read, never one the hook works out again from its path.
+ * and `KENDEX_HOOK_ROOT`, so a hook can take its own install from the registry
+ * this carrier read rather than work it out again from its path.
  */
 export async function runHook(hook: RegisteredHook, payload: string, ctx: ExtensionContext): Promise<HookOutcome> {
 	if (hook.missing && hook.script !== undefined) return { ran: false, missing: hook.script };

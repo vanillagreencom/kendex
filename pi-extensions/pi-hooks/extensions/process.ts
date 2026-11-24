@@ -65,9 +65,10 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 				detached,
 				// Name the live object, or a copy of it read at this spawn with
 				// `env` set over it, rather than let the runtime choose an env.
-				// Bun's async spawn reads process.env today, so this is a no-op
-				// here as it is under Node. It is the guarantee a test planting a
-				// binary on PATH rests on, not a runtime default.
+				// Bun's async spawn reads process.env today, so naming it is a
+				// no-op here as it is under Node, and the copy carries the same
+				// PATH. That PATH is the guarantee a test planting a binary on it
+				// rests on, not a runtime default.
 				env: env === undefined ? process.env : { ...process.env, ...env },
 				stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			});
