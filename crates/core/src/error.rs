@@ -316,7 +316,7 @@ pub enum CoreError {
     PlanStale { path: PathBuf },
 
     #[error(
-        "source '{name}' has not been downloaded yet — fetch it with `{}`",
+        "source '{name}' has not been downloaded yet — fetch it with `{}` (add `--global` for a global source)",
         crate::drift::report::SOURCE_REFRESH_COMMAND
     )]
     SourcePending { name: String },
