@@ -1691,6 +1691,19 @@ impl ScopeCheck<'_> {
         if let Some(error) = stamp.as_ref().and_then(|stamp| stamp.last_error.as_deref()) {
             details.push(verbatim(error));
         }
+        let remedy = if pending {
+            None
+        } else if superseded {
+            // Updates re-evaluates the current mirror without rewriting the
+            // project's install record.
+            Some(Remedy::Updates {
+                global: self.global,
+            })
+        } else {
+            Some(Remedy::Refresh {
+                global: self.global,
+            })
+        };
         Some(Line {
             class: if pending {
                 Class::Settling
@@ -1698,9 +1711,7 @@ impl ScopeCheck<'_> {
                 Class::Unevaluated
             },
             text: text.into(),
-            remedy: (!pending).then_some(Remedy::Refresh {
-                global: self.global,
-            }),
+            remedy,
             detail: (!details.is_empty()).then(|| details.join("; ")),
         })
     }

@@ -340,7 +340,11 @@ fn unreadable_evidence_due_a_fetch_keeps_its_cause() {
             );
             for line in &package_lines {
                 assert_eq!(line.class, class, "{declared}, {evaluated:?}, {current:?}");
-                assert_eq!(line.remedy.is_none(), class != Class::Unevaluated);
+                assert_eq!(
+                    line.remedy,
+                    (class == Class::Unevaluated).then_some(Remedy::Updates { global: false }),
+                    "{declared}, {evaluated:?}, {current:?}"
+                );
                 if failure.is_some() {
                     assert!(
                         line.detail

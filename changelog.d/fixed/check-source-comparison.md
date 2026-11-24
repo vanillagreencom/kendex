@@ -1,0 +1,1 @@
+- When a source changed since its last comparison, `kendex check` points to `kendex updates` if the comparison needs a manual rerun. This leaves the project’s install record untouched.
