@@ -1308,14 +1308,14 @@ mod tests {
         std::fs::write(&path, &text).unwrap();
         assert_eq!(
             read_file(&path, |t| claude(t, false)),
-            Ok(measured(1000, None, "claude-opus-5-5"))
+            Ok(measured(1000, Some(967_000), "claude-opus-5-5"))
         );
         text.push('\n');
         text.push_str(&claude_line("claude-opus-5-5", 5000));
         std::fs::write(&path, &text).unwrap();
         assert_eq!(
             read_file(&path, |t| claude(t, false)),
-            Ok(measured(5000, None, "claude-opus-5-5"))
+            Ok(measured(5000, Some(967_000), "claude-opus-5-5"))
         );
         assert!(read_file(&dir.join("absent"), |t| claude(t, false)).is_err());
     }

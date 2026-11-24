@@ -878,9 +878,9 @@ fn a_jarvis_session_whose_mark_cannot_be_judged_is_told_and_passed() {
     }
 }
 
-/// A Claude Haiku usage line summing to `tokens`.
+/// A Claude Haiku 4.5 usage line summing to `tokens`.
 fn haiku_usage(tokens: u64) -> Value {
-    json!({"type": "assistant", "message": {"model": "claude-haiku-5-5", "usage": {
+    json!({"type": "assistant", "message": {"model": "claude-haiku-4-5", "usage": {
         "input_tokens": 1, "cache_read_input_tokens": tokens - 8,
         "cache_creation_input_tokens": 0, "output_tokens": 7}}})
 }

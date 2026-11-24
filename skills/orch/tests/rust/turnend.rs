@@ -2390,7 +2390,7 @@ fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
     for (tokens, env, code, first) in rows {
         let row = format!("{tokens} {env:?}");
         world.untold();
-        let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", *tokens)]);
+        let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-4-5", *tokens)]);
         let payload = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
         let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], &payload, env);
         assert_eq!(out.code, *code, "{row}: {}", out.stderr);
@@ -2616,7 +2616,7 @@ fn an_attached_launch_keeps_the_reserve_only_while_an_agent_may_be_out() {
     for (tokens, agents, env, code, first) in rows {
         let row = format!("{tokens} {} {env:?}", agents.len());
         let mut lines = agents.to_vec();
-        lines.push(claude_usage("claude-haiku-5-5", *tokens));
+        lines.push(claude_usage("claude-haiku-4-5", *tokens));
         let transcript = world.transcript("t.jsonl", &lines);
         let payload = json!({"session_id": "s1", "transcript_path": transcript,
             "tool_name": "Agent", "tool_input": {}})
@@ -2790,7 +2790,7 @@ fn a_helper_from_another_session_keeps_the_reserve_unobserved() {
         ),
     ] {
         let mut lines = claude_launch("a1", Some(launched_in));
-        lines.push(claude_usage("claude-haiku-5-5", 30_000));
+        lines.push(claude_usage("claude-haiku-4-5", 30_000));
         let transcript = world.transcript("t.jsonl", &lines);
         let payload =
             json!({"session_id": "s1", "transcript_path": transcript, "tool_name": "Agent"})
@@ -3633,7 +3633,7 @@ fn the_admission_judges_the_session_its_own_tool_call_bound() {
     ];
     for (tokens, launch, setting, code, want) in rows {
         let row = format!("{tokens} {launch} {setting:?}");
-        world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", *tokens)]);
+        world.transcript("t.jsonl", &[claude_usage("claude-haiku-4-5", *tokens)]);
         let mut env = env.clone();
         env.extend(setting.iter().copied());
         let out = world.admission(launch, &env);

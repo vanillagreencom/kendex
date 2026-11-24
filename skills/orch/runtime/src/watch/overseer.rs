@@ -1382,10 +1382,9 @@ fn memory_cap(key: &str, pid: u32, pass: &Pass) -> Option<DeathCause> {
     }
 }
 
-/// The session's own reading read as wedged: the window full by the
-/// record's own figure or the harness's declared capacity, and
-/// no Stop row after the reading. A reading the judge cannot take is
-/// noted and settles nothing.
+/// The session's own reading fills its hard limit as judged by
+/// [`context::ContextRecord::window_full`], with no Stop row after the reading.
+/// A reading the judge cannot take is noted and settles nothing.
 fn wedged(r: &context::ContextRecord, record: &Record, pass: &Pass) -> bool {
     let Some(path) = pass.context_record else {
         return false;

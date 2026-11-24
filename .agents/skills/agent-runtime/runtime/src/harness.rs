@@ -451,9 +451,8 @@ impl Harness {
     }
 
     /// The context capacity a harness declares for a model, in tokens: the
-    /// one table of orch's context judge, read where a reading names no
-    /// window of its own (a provider row's or an adapter's measured
-    /// `window` wins where one is carried). Claude Code's is
+    /// model limit used by orch's full-window check. An adapter's measured
+    /// window can set an earlier handoff mark. Claude Code's table is
     /// `CLAUDE_CONTEXT_CAPACITY`, walked in order on the lowercased model,
     /// the first row that matches, the default for a model matching none:
     /// an exact id first, so a model with a measured window is read at it,
@@ -583,9 +582,10 @@ impl ModelMatch {
 /// Claude Code's declared capacity per model, in the order the walk reads
 /// them: the ids with a measured 1,000,000-token window before the family
 /// that would read them at 200,000.
-const CLAUDE_CONTEXT_CAPACITY: [(ModelMatch, u64); 6] = [
+const CLAUDE_CONTEXT_CAPACITY: [(ModelMatch, u64); 7] = [
     (ModelMatch::Id("claude-sonnet-5-5"), 1_000_000),
     (ModelMatch::Id("claude-sonnet-5"), 1_000_000),
+    (ModelMatch::Id("claude-haiku-5-5"), 1_000_000),
     (ModelMatch::Family("fable"), 1_000_000),
     (ModelMatch::Family("opus"), 1_000_000),
     (ModelMatch::Family("sonnet"), 200_000),
@@ -682,6 +682,8 @@ mod tests {
             ("sonnet", Some(200_000)),
             ("claude-sonnet-4-5", Some(200_000)),
             ("claude-sonnet-5-5[1m]", Some(200_000)),
+            ("claude-haiku-5-5", Some(1_000_000)),
+            ("claude-haiku-4-5", Some(200_000)),
             ("haiku", Some(200_000)),
             ("", Some(200_000)),
             ("some-other-model", Some(200_000)),
