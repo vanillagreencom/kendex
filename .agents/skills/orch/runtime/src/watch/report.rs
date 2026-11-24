@@ -1079,9 +1079,7 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     out.push_str("\n```\nIn progress\n```\n\n");
     let baseline = super::Baseline::load(&super::Paths::of(&ctx.fleet)?.baseline)?;
     let intents = intents(&doc)?;
-    // Read once, and only for a listed lane whose record names no pull
-    // request.
-    let mut open = None;
+    let mut listed = Vec::new();
     for lane in lanes.iter().filter(|l| l.status != LaneStatus::Done) {
         // A lane out of flight is listed only while the watch holds its
         // close.
@@ -1094,11 +1092,8 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         {
             continue;
         }
-        // The pull request the lane record names: its pending one, else the
-        // one its park judged, else the open ones GitHub lists as its own,
-        // each with its repository, since one number names a different pull
-        // request in each. Both records are written with their repository;
-        // a hand-written one without it keeps the bare number.
+        // The pending pull request takes precedence over the parked one.
+        // A hand-written record without a repository keeps the bare number.
         let recorded = ["pending_pr", "parked"].iter().find_map(|key| {
             let record = lane.extra.get(*key)?;
             let number = record.get("pr")?.as_u64()?;
@@ -1107,15 +1102,25 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
                 None => format!("#{number}"),
             })
         });
+        listed.push((lane, held, recorded));
+    }
+    let unrecorded: BTreeMap<_, _> = listed
+        .iter()
+        .filter(|(_, _, recorded)| recorded.is_none())
+        .map(|(lane, _, _)| (lane.item.as_str(), *lane))
+        .collect();
+    let pulls = if unrecorded.is_empty() {
+        Ok(BTreeMap::new())
+    } else {
+        let repos = super::github::repositories(&ctx.repos, &lanes, &ctx.settings);
+        super::github::report_pulls(&super::github::handle(&ctx.gh), &repos, &lanes, &unrecorded)
+    };
+    for (lane, held, recorded) in listed {
         let pull = match recorded {
             Some(pull) => pull,
-            None => match open.get_or_insert_with(|| {
-                let repos = super::github::repositories(&ctx.repos, &lanes, &ctx.settings);
-                super::github::report_open(&super::github::handle(&ctx.gh), &repos, &lanes)
-            }) {
-                Ok(own) => own
-                    .get(&lane.item)
-                    .map_or("no pull request".to_owned(), |keys| keys.join(", ")),
+            None => match pulls.as_ref().and_then(|own| own[&lane.item].as_ref()) {
+                Ok(keys) if keys.is_empty() => "no pull request".to_owned(),
+                Ok(keys) => keys.join(", "),
                 Err(e) => format!("pull request unread ({})", cell(&e.to_string())),
             },
         };

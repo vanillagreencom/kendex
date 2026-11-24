@@ -785,7 +785,7 @@ pub(crate) fn landings(
     Ok(out)
 }
 
-/// The repositories the lane inventories and the report's open read read:
+/// The repositories the lane inventories and the report's pull-request read:
 /// the caller's, the lanes' and the connected ones, lowercased, in that
 /// order, once each.
 pub(super) fn repositories(repos: &[String], lanes: &[Lane], settings: &Settings) -> Vec<String> {
@@ -1548,18 +1548,7 @@ fn search(gh: &Gh, path: &str, repo: &str, item: &str) -> Result<Vec<SearchItem>
 /// in title or body since the floor, through the search endpoint with its
 /// total checked and each hit not already in hand read by number.
 fn own_pulls(gh: &Gh, repo: &str, item: &str, since_iso: Option<&str>) -> Result<Vec<Pull>> {
-    let owner = repo.split('/').next().unwrap_or(repo);
-    let branch = item.to_ascii_lowercase();
-    let head_path = format!(
-        "repos/{repo}/pulls?state=closed&head={}",
-        verify::segment(&format!("{owner}:{branch}"))
-    );
-    let Some(mut pulls) = gh.list::<Pull>("merged", &head_path)? else {
-        return Err(refused(
-            "github-read-failed",
-            &[("read", "merged"), ("path", &head_path)],
-        ));
-    };
+    let mut pulls = branch_pulls(gh, repo, item, "closed", "merged")?;
     let floor = since_iso
         .map(|s| format!(" merged:>={s}"))
         .unwrap_or_default();
@@ -1582,6 +1571,25 @@ fn own_pulls(gh: &Gh, repo: &str, item: &str, since_iso: Option<&str>) -> Result
     Ok(pulls)
 }
 
+/// The pull requests on the item's branch through GitHub's [owner-qualified
+/// head filter](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests).
+fn branch_pulls(
+    gh: &Gh,
+    repo: &str,
+    item: &str,
+    state: &str,
+    read: &'static str,
+) -> Result<Vec<Pull>> {
+    let owner = repo.split('/').next().unwrap_or(repo);
+    let branch = item.to_ascii_lowercase();
+    let path = format!(
+        "repos/{repo}/pulls?state={state}&head={}",
+        verify::segment(&format!("{owner}:{branch}"))
+    );
+    gh.list::<Pull>(read, &path)?
+        .ok_or_else(|| refused("github-read-failed", &[("read", read), ("path", &path)]))
+}
+
 /// A lane item's own pull request merged inside a report's window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Completion {
@@ -1590,6 +1598,18 @@ pub(super) struct Completion {
     pub number: u64,
     pub at: u64,
     pub title: String,
+}
+
+/// GitHub issue numbers are scoped to the lane's repository. Linear issue
+/// keys can name pull requests across repositories.
+fn report_lane_in_repo(lane: &Lane, recorded_pr: Option<&(String, u64)>, repo: &str) -> bool {
+    lane.tracker.as_deref() != Some("github")
+        || lane
+            .repo
+            .as_deref()
+            .filter(|repo| !repo.is_empty())
+            .or_else(|| recorded_pr.map(|(repo, _)| repo.as_str()))
+            .is_some_and(|lane_repo| lane_repo.eq_ignore_ascii_case(repo))
 }
 
 /// The lane items' own pull requests merged at or after `since` and before
@@ -1626,15 +1646,8 @@ pub(super) fn report_merges(
             };
             for lane in lanes {
                 let recorded_pr = recorded(lane);
-                if lane.tracker.as_deref() == Some("github") {
-                    let lane_repo = lane
-                        .repo
-                        .as_deref()
-                        .filter(|repo| !repo.is_empty())
-                        .or_else(|| recorded_pr.as_ref().map(|(repo, _)| repo.as_str()));
-                    if lane_repo.is_none_or(|lane_repo| !lane_repo.eq_ignore_ascii_case(repo)) {
-                        continue;
-                    }
+                if !report_lane_in_repo(lane, recorded_pr.as_ref(), repo) {
+                    continue;
                 }
                 let pr = recorded_pr
                     .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
@@ -1656,42 +1669,66 @@ pub(super) fn report_merges(
     Ok(rows)
 }
 
-/// Each lane item's own open pull requests as `<repo>#<n>` keys, in
-/// repository order then number order: every repository's open list read
-/// whole and each member judged by the lane-own rule, since a running
-/// lane's record names no pull request until its park. The repository is
-/// kept because one number names a different pull request in each.
-pub(super) fn report_open(
+/// Each unrecorded item's own open or merged pull requests as `<repo>#<n>`
+/// keys, in repository order then number order. The open list also finds
+/// pull requests that name the item outside its head branch. The branch
+/// read finds open and merged pull requests together, without a time floor.
+/// An open list failure affects every item. A branch failure affects its item.
+pub(super) fn report_pulls(
     gh: &Gh,
     repos: &[String],
     lanes: &[Lane],
-) -> Result<BTreeMap<String, Vec<String>>> {
-    let mut own: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    items: &BTreeMap<&str, &Lane>,
+) -> Result<BTreeMap<String, Result<Vec<String>>>> {
+    let mut own: BTreeMap<_, _> = items
+        .keys()
+        .map(|&item| (item.to_owned(), Ok(Vec::new())))
+        .collect();
     for repo in repos {
         let owner = repo.split('/').next().unwrap_or(repo);
         let path = format!("repos/{repo}/pulls?state=open");
-        let Some(mut pulls) = gh.list::<Pull>("report-open", &path)? else {
+        let Some(pulls) = gh.list::<Pull>("report-open", &path)? else {
             return Err(refused(
                 "github-read-failed",
                 &[("read", "report-open"), ("path", &path)],
             ));
         };
-        pulls.sort_unstable_by_key(|pull| pull.number);
-        for pull in &pulls {
-            for lane in lanes {
-                let pr = recorded(lane)
-                    .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
-                    .map(|(_, number)| number);
-                if !lane_own(pull, &lane.item, owner, pr) {
-                    continue;
-                }
-                // An item relaunched has a record per launch.
-                let key = format!("{repo}#{}", pull.number);
-                let keys = own.entry(lane.item.clone()).or_default();
-                if !keys.contains(&key) {
-                    keys.push(key);
+        let mut numbers: BTreeMap<&str, BTreeSet<u64>> = BTreeMap::new();
+        for lane in lanes
+            .iter()
+            .filter(|lane| items.contains_key(lane.item.as_str()))
+        {
+            let pr = recorded(lane)
+                .filter(|(r, _)| r.eq_ignore_ascii_case(repo))
+                .map(|(_, number)| number);
+            for pull in &pulls {
+                if lane_own(pull, &lane.item, owner, pr) {
+                    numbers.entry(&lane.item).or_default().insert(pull.number);
                 }
             }
+        }
+        for (item, result) in &mut own {
+            let Ok(keys) = result else { continue };
+            let lane = items[item.as_str()];
+            if !report_lane_in_repo(lane, recorded(lane).as_ref(), repo) {
+                continue;
+            }
+            let pulls = match branch_pulls(gh, repo, item, "all", "report-head") {
+                Ok(pulls) => pulls,
+                Err(cause) => {
+                    *result = Err(cause);
+                    continue;
+                }
+            };
+            let mut numbers = numbers.remove(item.as_str()).unwrap_or_default();
+            for pull in pulls {
+                if (pull.state == "open" || merged_at(&pull, None).is_some())
+                    && lane_own(&pull, item, owner, None)
+                {
+                    numbers.insert(pull.number);
+                }
+            }
+            keys.extend(numbers.into_iter().map(|number| format!("{repo}#{number}")));
         }
     }
     Ok(own)

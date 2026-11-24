@@ -4862,7 +4862,9 @@ fn report_lists_a_lane_held_over_its_landing_or_close_with_its_cause() {
         &json!({
             "repos/owner/repo/pulls?state=closed&head=owner%3Aken-11&per_page=100&page=1":
                 {"exit": 1, "stderr": "HTTP 500"},
-            "repos/owner/repo/pulls?state=open&per_page=100&page=1": {"body": []}
+            "repos/owner/repo/pulls?state=open&per_page=100&page=1": {"body": []},
+            "repos/owner/repo/pulls?state=all&head=owner%3Aken-11&per_page=100&page=1": {"body": []},
+            "repos/owner/repo/pulls?state=all&head=owner%3Aken-12&per_page=100&page=1": {"body": []}
         }),
     );
     let lane = |item: &str, status: &str| json!({"item":item,"status":status,"launched_at":"2026-09-29T06:00:00Z"});
@@ -5000,16 +5002,8 @@ fn report_names_the_gap_a_lanes_context_record_carries() {
     );
 }
 
-/// A running lane whose record names no pull request is shown the open ones
-/// GitHub lists as its own, by its branch or its title's scope, in the
-/// report's, the lanes' and the connected repositories, each named with its
-/// repository and once however many records its item has, never a
-/// stranger's; a lane with none open says no pull request, one whose record
-/// names one keeps it, and an open list that cannot be read, refused or
-/// answered 404, in any repository read is said unread, never no pull
-/// request.
 #[test]
-fn report_in_progress_names_a_running_lanes_open_pull_request() {
+fn report_in_progress_names_open_and_merged_pull_requests() {
     let world = World::new();
     let root = world.path().display().to_string();
     let running = |item: &str, extra: Value| {
@@ -5026,7 +5020,10 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
         running("KEN-22", json!({})),
         running("KEN-23", json!({})),
         running("KEN-24", json!({"pending_pr": {"pr": 40, "repo": "owner/repo", "head": "abc"}})),
-        running("KEN-25", json!({"repo": "Lane/Repo"}))
+        running("KEN-25", json!({"repo": "Lane/Repo"})),
+        running("KEN-4933", json!({})),
+        running("KEN-5544", json!({})),
+        running("issue-42", json!({"tracker": "github", "repo": "Owner/Repo"}))
     ]}));
     let open = |repo: &str, number: u64, branch: &str, title: &str| {
         let owner = repo.split('/').next().unwrap();
@@ -5037,7 +5034,18 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
                 "repo":{"full_name":repo,"owner":{"login":owner,"type":"User"}}}})
     };
     let key = |repo: &str| format!("repos/{repo}/pulls?state=open&per_page=100&page=1");
+    let head = |repo: &str, branch: &str| {
+        let owner = repo.split('/').next().unwrap();
+        format!("repos/{repo}/pulls?state=all&head={owner}%3A{branch}&per_page=100&page=1")
+    };
     let mut planted = json!({});
+    for repo in ["owner/repo", "other/repo", "lane/repo"] {
+        for branch in [
+            "ken-21", "ken-22", "ken-23", "ken-25", "ken-4933", "ken-5544",
+        ] {
+            planted[head(repo, branch)] = json!({"body": []});
+        }
+    }
     planted[key("owner/repo")] = json!({"body": [
         open("owner/repo", 33, "ken-99", "fix(KEN-99): a stranger's work"),
         open("owner/repo", 32, "claude/side", "feat(KEN-22): the report rows"),
@@ -5046,6 +5054,24 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
     planted[key("other/repo")] =
         json!({"body": [open("other/repo", 31, "ken-21", "Ship the consumer")]});
     planted[key("lane/repo")] = json!({"body": [open("lane/repo", 51, "ken-25", "Wire the lane")]});
+    planted[head("owner/repo", "ken-21")] =
+        json!({"body": [open("owner/repo", 31, "ken-21", "Report the rows")]});
+    // KEN-4933 had no recorded pull request. Its #6793 was open at report
+    // time. A branch read must find it even when the open list omits it.
+    planted[head("owner/repo", "ken-4933")] =
+        json!({"body": [open("owner/repo", 6793, "ken-4933", "Ship the changes")]});
+    let mut closed = open("owner/repo", 6827, "ken-5544", "Abandoned attempt");
+    closed["state"] = json!("closed");
+    let mut merged = open("owner/repo", 6828, "ken-5544", "Ship the fixes");
+    merged["state"] = json!("closed");
+    merged["merged_at"] = json!("2026-09-29T20:02:00Z");
+    planted[head("owner/repo", "ken-5544")] = json!({"body": [closed, merged]});
+    planted[head("owner/repo", "issue-42")] =
+        json!({"body": [open("owner/repo", 42, "issue-42", "Own issue")]});
+    let mut other_issue = open("other/repo", 52, "issue-42", "Connected repo issue");
+    other_issue["state"] = json!("closed");
+    other_issue["merged_at"] = json!("2026-09-29T20:02:00Z");
+    planted[head("other/repo", "issue-42")] = json!({"body": [other_issue]});
     let mut ctx = world.report_context();
     ctx.settings.reads.connected_repos = vec!["other/repo".to_owned()];
     let now = epoch("2026-10-01T14:00:00Z");
@@ -5054,12 +5080,13 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
         let body = report::render(&ctx, now).unwrap();
         let rows = section(&body, "In progress")
             .lines()
-            .filter(|l| l.starts_with("- KEN-"))
+            .filter(|l| l.starts_with("- KEN-") || l.starts_with("- issue-"))
             .map(str::to_owned)
             .collect();
         (rows, body)
     };
     let (listed, body) = rows(&planted);
+    assert!(body.contains("window: 2026-09-30T06:00:00Z to"), "{body}");
     assert_eq!(
         listed,
         [
@@ -5067,7 +5094,10 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
             "- KEN-22: Running, owner/repo#32.",
             "- KEN-23: Running, no pull request.",
             "- KEN-24: Running, owner/repo#40.",
-            "- KEN-25: Running, lane/repo#51."
+            "- KEN-25: Running, lane/repo#51.",
+            "- KEN-4933: Running, owner/repo#6793.",
+            "- KEN-5544: Running, owner/repo#6828.",
+            "- issue-42: Running, owner/repo#42."
         ],
         "{body}"
     );
@@ -5079,8 +5109,8 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
     absent.as_object_mut().unwrap().remove(&key("lane/repo"));
     for unread in [refused, absent] {
         let (listed, body) = rows(&unread);
-        assert_eq!(listed.len(), 5, "{body}");
-        for row in [&listed[0], &listed[1], &listed[2], &listed[4]] {
+        assert_eq!(listed.len(), 8, "{body}");
+        for row in listed.iter().filter(|row| !row.starts_with("- KEN-24:")) {
             assert!(
                 row.contains(": Running, pull request unread (") && row.contains("report-open"),
                 "{body}"
@@ -5088,6 +5118,21 @@ fn report_in_progress_names_a_running_lanes_open_pull_request() {
         }
         assert_eq!(listed[3], "- KEN-24: Running, owner/repo#40.", "{body}");
     }
+    let mut refused_head = planted;
+    refused_head[head("owner/repo", "ken-4933")] = json!({"exit": 1, "stderr": "HTTP 500"});
+    let (after_refusal, body) = rows(&refused_head);
+    assert_eq!(after_refusal.len(), listed.len(), "{body}");
+    assert_eq!(
+        after_refusal[6], "- KEN-5544: Running, owner/repo#6828.",
+        "{body}"
+    );
+    assert_eq!(after_refusal[..5], listed[..5], "{body}");
+    assert!(
+        after_refusal[5].starts_with("- KEN-4933: Running, pull request unread (")
+            && after_refusal[5].contains("report-head"),
+        "{body}"
+    );
+    assert_eq!(after_refusal[7], listed[7], "{body}");
 }
 
 /// Blocked names each standing row that holds launches while its end has
@@ -5633,6 +5678,9 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
     planted["repos/other/repo/pulls/31"] = json!({"body":{"number":31,"state":"closed","title":"Ship the consumer","body":"","merged_at":"2026-10-01T10:00:00Z","merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":"ken-1","repo":{"full_name":"other/repo","owner":{"login":"other","type":"User"}}}}});
     for repo in ["owner/repo", "other/repo"] {
         planted[format!("repos/{repo}/pulls?state=open&per_page=100&page=1")] = json!({"body": []});
+        let owner = repo.split('/').next().unwrap();
+        planted[format!("repos/{repo}/pulls?state=all&head={owner}%3Aken-7&per_page=100&page=1")] =
+            json!({"body": []});
     }
     world.plant("gh.json", &planted);
     let mut ctx = world.report_context();
