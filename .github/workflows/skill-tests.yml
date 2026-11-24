@@ -983,9 +983,10 @@ jobs:
           [ "${#refresh[@]}" -gt 0 ] || exit 0
           bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
-      # The macOS guards-hooks and guards-tools legs run a Jarvis suite each.
+      # guards-hooks runs the Claude attention suite. On macOS, guards-hooks
+      # and guards-tools also run a Jarvis suite each.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (runner.os == 'macOS' && (matrix.shard == 'guards-hooks' || matrix.shard == 'guards-tools'))
+        if: matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (runner.os == 'macOS' && matrix.shard == 'guards-tools')
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux

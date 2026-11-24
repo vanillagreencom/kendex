@@ -59,6 +59,7 @@ bin_dir.mkdir()
 tmux = bin_dir / "tmux"
 tmux.write_text("#!" + bash + "\n" + '''
 set -euo pipefail
+if [ "$1" = -u ]; then shift; fi
 case "$1" in
   display-message) printf '%s\\t%s\\n' '%1' '$1' ;;
   list-clients) printf '%s\\t%s\\n' '$1' '%2' ;;

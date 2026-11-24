@@ -118,7 +118,8 @@ async function tmux(pi: QolNotificationExec, args: string[]): Promise<string | u
 async function sourceTmuxPaneState(pi: QolNotificationExec): Promise<TmuxPaneState | undefined> {
 	const pane = process.env.TMUX_PANE;
 	if (!pane) return undefined;
-	const stdout = await tmux(pi, ["display-message", "-p", "-t", pane, PANE_STATE_FORMAT]);
+	// tmux -u preserves the tabs and window name for a non-UTF-8 locale.
+	const stdout = await tmux(pi, ["-u", "display-message", "-p", "-t", pane, PANE_STATE_FORMAT]);
 	const [paneTty = "", windowActive = "", sessionId = "", windowId = "", ...name] = (stdout ?? "").replace(/\r?\n$/, "").split("\t");
 	if (!paneTty || !sessionId || !windowId) return undefined;
 	return { paneTty, windowActive: windowActive === "1", sessionId, windowId, windowName: name.join("\t") };

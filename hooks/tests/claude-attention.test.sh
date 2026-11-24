@@ -19,7 +19,9 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import pty
 import select
+import shutil
 import subprocess
 import sys
 
@@ -72,10 +74,10 @@ import json, os, sys
 args = sys.argv[1:]
 with open(os.environ["FIXTURE_CALLS"], "a") as calls:
     calls.write(json.dumps(args) + "\\n")
-if args == ["display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{pane_id}\\t#{session_id}"]:
+if args == ["-u", "display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{pane_id}\\t#{session_id}"]:
     sys.stdout.write(os.environ["FIXTURE_SOURCE"])
     sys.exit(int(os.environ.get("FIXTURE_SOURCE_EXIT", "0")))
-if args == ["list-clients", "-F", "#{session_id}\\t#{pane_id}"]:
+if args == ["-u", "list-clients", "-F", "#{session_id}\\t#{pane_id}"]:
     sys.stdout.write(os.environ["FIXTURE_CLIENTS"])
     sys.exit(int(os.environ.get("FIXTURE_CLIENTS_EXIT", "0")))
 sys.exit(99)
@@ -105,8 +107,8 @@ def fire(env, payload=permission):
 
 
 def emitted(result):
-    assert json.loads(result.stdout) == bell, repr(result.stdout)
     assert result.stderr == "", result.stderr
+    assert json.loads(result.stdout) == bell, repr(result.stdout)
 
 
 def quiet(result, key=None):
@@ -129,6 +131,52 @@ def active_row():
     env["FIXTURE_CLIENTS"] = "$1\t%2\n"
     env["FIXTURE_TIME"] = "101"
     emitted(fire(env))
+
+
+def c_locale_row():
+    real_tmux = shutil.which("tmux")
+    assert real_tmux, "tmux is required for the C locale row"
+    env = world("c-locale")
+    socket = root / "s"
+    outside = {"LC_ALL": "C", "TERM": "xterm", "PATH": os.defpath, "HOME": env["HOME"]}
+    base = [real_tmux, "-S", str(socket)]
+
+    def command(*args):
+        return subprocess.run(base + list(args), env=outside, capture_output=True,
+                              text=True, check=True, timeout=5).stdout.strip()
+
+    command("-f", "/dev/null", "new-session", "-d", "-s", "attention")
+    try:
+        pane = command("split-window", "-d", "-P", "-F", "#{pane_id}")
+        command("set-hook", "-g", "client-attached", "wait-for -S attached")
+        master, slave = pty.openpty()
+        try:
+            with subprocess.Popen(base + ["attach-session", "-t", "attention"], env=outside,
+                                  stdin=slave, stdout=slave, stderr=slave) as client:
+                try:
+                    command("wait-for", "attached")
+                    # The hook needs TMUX to admit the event. Route the actual command argv
+                    # to its private socket as an outside client, so TMUX does not imply UTF-8.
+                    transport = root / "transport"
+                    transport.mkdir()
+                    wrapper = transport / "tmux"
+                    wrapper.write_text('#!/bin/sh\nunset TMUX\nexec "$FIXTURE_TMUX" -S "$FIXTURE_SOCKET" "$@"\n')
+                    wrapper.chmod(0o755)
+                    env.update(outside, TMUX=f"{socket},1,0", TMUX_PANE=pane,
+                               PATH=str(transport) + os.pathsep + str(bin_dir),
+                               FIXTURE_TMUX=real_tmux, FIXTURE_SOCKET=str(socket))
+                    emitted(fire(env))
+                finally:
+                    client.terminate()
+                    try:
+                        client.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        client.kill()
+        finally:
+            os.close(master)
+            os.close(slave)
+    finally:
+        command("kill-server")
 
 
 def all_rows():
@@ -282,10 +330,14 @@ def all_rows():
 try:
     if selected == "--active-pane-row":
         active_row()
+    elif selected == "--c-locale-row":
+        c_locale_row()
     else:
         all_rows()
+        c_locale_row()
 except AssertionError as error:
-    print("FAIL active-pane-silence" if selected else "FAIL attention-contract", error, file=sys.stderr)
+    label = {"--active-pane-row": "active-pane-silence", "--c-locale-row": "c-locale"}.get(selected, "attention-contract")
+    print("FAIL " + label, error, file=sys.stderr)
     sys.exit(1)
 
 if not selected and not os.environ.get("HOOK_UNDER_TEST"):

@@ -337,7 +337,8 @@ async function processHasAncestor(pid: number, ancestorPid: number): Promise<boo
 }
 
 async function paneContainingProcess(pid: number): Promise<string | undefined> {
-	const result = await tmux(["list-panes", "-a", "-F", "#{pane_id}\t#{pane_pid}"]);
+	// tmux -u preserves the field separator even for a non-UTF-8 locale.
+	const result = await tmux(["-u", "list-panes", "-a", "-F", "#{pane_id}\t#{pane_pid}"]);
 	if (result.code !== 0) return undefined;
 	for (const line of result.stdout.split(/\r?\n/)) {
 		const [paneId, panePidText] = line.split("\t");
@@ -428,7 +429,7 @@ async function rebalanceColumns(registry: PaneRegistry, primaryPaneId: string): 
 	const measured: Array<{ paneId: string; left: number; windowWidth: number }> = [];
 	for (const column of columns) {
 		if (!(await paneExists(column.paneId))) continue;
-		const result = await tmux(["display-message", "-p", "-t", column.paneId, "#{pane_left}\t#{window_width}"]);
+		const result = await tmux(["-u", "display-message", "-p", "-t", column.paneId, "#{pane_left}\t#{window_width}"]);
 		const [leftText, windowWidthText] = result.stdout.trim().split("\t");
 		const left = Number.parseInt(leftText ?? "", 10);
 		const windowWidth = Number.parseInt(windowWidthText ?? "", 10);

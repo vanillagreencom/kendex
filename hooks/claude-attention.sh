@@ -40,7 +40,8 @@ def notice(key, value):
 
 def query(tmux, args):
     try:
-        result = subprocess.run([tmux] + args, capture_output=True, text=True,
+        # tmux rewrites tabs in output for clients it treats as non-UTF-8.
+        result = subprocess.run([tmux, "-u"] + args, capture_output=True, text=True,
                                 timeout=1, check=False)
     except subprocess.TimeoutExpired:
         notice("query", "timeout")

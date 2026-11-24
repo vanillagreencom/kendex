@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { closeSync, constants, mkdtempSync, openSync, readSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,7 +59,7 @@ function fakeTmux(clientTty: string | "stall", paneStates: TmuxAnswer[]) {
 	const exec = async (command: string, args: string[], options?: { timeout?: number }) => {
 		calls.push({ command, args, timeout: options?.timeout });
 		let answer: TmuxAnswer = { code: 0, killed: false, stdout: "" };
-		if (args[0] === "display-message" && args.at(-1) === PANE_STATE_FORMAT) answer = paneStates.shift() ?? { code: 1, killed: false, stdout: "" };
+		if (args.at(-1) === PANE_STATE_FORMAT) answer = paneStates.shift() ?? { code: 1, killed: false, stdout: "" };
 		else if (args[0] === "list-clients") answer = clientTty === "stall" ? "stall" : { code: 0, killed: false, stdout: `${clientTty}\n` };
 		if (answer === "stall") return new Promise<never>(() => {});
 		return { ...answer, stderr: "" };
@@ -194,6 +194,39 @@ test("the window mark renames the pane's window as tmux reports it at each notif
 		["rename-window", "-t", "@8", "! pi"],
 		["rename-window", "-t", "@8", "pi"],
 	]);
+});
+
+test("C locale notifications mark and restore the inactive window's UTF-8 name", async () => {
+	writeQolSettings({ "notification.tmuxWindowMark": true, "notification.bell": false, "notification.native": false });
+	const socket = join(root, "s");
+	// Connect through the private socket as an outside client. Inherited TMUX
+	// would make tmux assume UTF-8 even with LC_ALL=C.
+	const env = { PATH: process.env.PATH, HOME: root, LC_ALL: "C" };
+	const run = (args: string[]) => spawnSync("tmux", ["-S", socket, ...args], { env, encoding: "utf8", timeout: 3000 });
+	const query = (...args: string[]) => {
+		const result = run(args);
+		expect(result.status).toBe(0);
+		return result.stdout.trimEnd();
+	};
+	const name = "pi | café";
+	const pane = query("-f", "/dev/null", "new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "notifications", "-n", name);
+	const pi = { exec: async (_command: string, args: string[]) => {
+		const result = run(args);
+		return { code: result.status ?? 1, killed: Boolean(result.signal), stdout: result.stdout, stderr: result.stderr };
+	} };
+	try {
+		query("new-window", "-t", "notifications:", "-n", "active");
+		process.env.TMUX = `${socket},1,0`;
+		process.env.TMUX_PANE = pane;
+		const readName = () => query("-u", "display-message", "-p", "-t", pane, "#W");
+		await sendQolNotification(pi, undefined, "test", "body", "info", nextKey());
+		expect(readName()).toBe(`! ${name}`);
+		clearTmuxWindowMark(pi);
+		expect(readName()).toBe(name);
+	} finally {
+		clearTmuxWindowMark(pi);
+		query("kill-server");
+	}
 });
 
 test("a window mark cleared while its notification is in flight is not set", async () => {
