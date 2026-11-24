@@ -1049,6 +1049,49 @@ jobs:
           done
           bash skills/orch/tests/run-all.sh --battery skills/orch/tests --shard orch-rest "$@"
 
+      # The package runtimes' lockfiles, held by cargo-deny to the one policy
+      # skills/agent-runtime/runtime/deny.toml names: advisories, licenses,
+      # bans and sources. A package is checked where tools/ci-job-set's
+      # `rust_targets` names a target of it, which the reach selects for any
+      # change under its runtime/, the lockfile and the policy included; every
+      # runtime is checked where the changes job published no list. A merge
+      # group and a main push run it on the orch-rest Linux leg, and a night
+      # or a manual dispatch, which run no Linux shard, on the macOS orch-rest
+      # leg, so an advisory published against an unchanged lockfile still
+      # reaches the night. The action installs the pinned release's prebuilt
+      # binary, checked against the release's own SHA-256, with no fallback
+      # to a source build; the release runs on both runners.
+      - name: cargo-deny, the pinned release
+        id: cargo-deny
+        if: ${{ !cancelled() && matrix.shard == 'orch-rest' && needs.changes.outputs.rust_targets != '[]' && (runner.os == 'Linux' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: the package runtimes' lockfiles, held to their dependency policy
+        if: ${{ !cancelled() && steps.cargo-deny.outcome == 'success' }}
+        env:
+          RUST_TARGETS: ${{ needs.changes.result == 'success' && needs.changes.outputs.rust_targets || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RUST_TARGETS" ]; then
+            packages="$(jq -r '.[] | split("/")[0]' <<<"$RUST_TARGETS" | sort -u)"
+          else
+            packages="$(for manifest in skills/*/runtime/Cargo.toml; do
+              [ -f "$manifest" ] || continue
+              manifest="${manifest#skills/}"
+              echo "${manifest%%/*}"
+            done)"
+          fi
+          [ -n "$packages" ] || { echo "lockfile-policy: no-package targets=${RUST_TARGETS:-unpublished}" >&2; exit 1; }
+          failed=""
+          for package in $packages; do
+            echo "=== skills/$package/runtime/Cargo.lock"
+            cargo deny --manifest-path "skills/$package/runtime/Cargo.toml" --locked \
+              --config skills/agent-runtime/runtime/deny.toml check || failed="$failed $package"
+          done
+          [ -z "$failed" ] || { echo "lockfile-policy: failed packages=${failed# }" >&2; exit 1; }
+
       # The runtimes' Rust targets tools/ci-job-set's `rust_targets` list
       # names, on the orch-rest Linux leg (on a push, those its same-head
       # group left unproved), and every target of both runtimes where the
