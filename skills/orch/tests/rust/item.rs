@@ -3107,6 +3107,7 @@ mod dev_artifacts {
         w.commit("second.txt");
         let head = w.head();
         let cmd = "printf 'validate: lanes=unit selection=all\\n'";
+        let competing_cmd = "printf 'validate: lanes=other selection=all\\n'";
         let run = w.finished_run("range", "range");
         fs::write(run.join("cmd"), cmd).unwrap();
         fs::write(run.join("log"), "validate: lanes=unit selection=all\n").unwrap();
@@ -3136,24 +3137,33 @@ mod dev_artifacts {
                 .output()
                 .unwrap()
         };
-        let initial = w.doc();
-        let mut admitted = initial.clone();
         let stage = orch_runtime::validate::files::RunFile::read(&run)
             .unwrap()
             .stage()
             .unwrap();
-        admitted["stages"].as_array_mut().unwrap().push(json!({
+        let cited = json!({
             "kind": "validate", "round_id": "r1", "start": stage.start, "end": stage.end,
             "outcome": "pass", "run_dir": run, "proof": stage.proof,
-        }));
+        });
+        // Under the competing command only the uncited row reaches base coverage.
+        let mut competing = cited.clone();
+        competing["run_dir"] = json!(w.wt.join("tmp/dev-validate-competing"));
+        competing["proof"]["cmd"] = json!(competing_cmd);
+        let mut without_cited = w.doc();
+        without_cited["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(competing);
+        let mut with_cited = without_cited.clone();
+        with_cited["stages"].as_array_mut().unwrap().push(cited);
 
         let fields = [
             format!("range-base={range_base}"),
             format!("round-base={round_base}"),
         ];
-        for ledger in [&admitted, &initial] {
+        for ledger in [&with_cited, &without_cited] {
             fs::write(w.item(), ledger.to_string()).unwrap();
-            for (declared, expect_off_base) in [(cmd, true), ("another command", false)] {
+            for (declared, expect_off_base) in [(cmd, true), (competing_cmd, false)] {
                 let out = write(declared);
                 let err = stderr(&out);
                 assert_eq!(out.status.code(), Some(2), "{err}");
