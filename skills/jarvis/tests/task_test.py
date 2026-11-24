@@ -522,6 +522,7 @@ sys.exit(task.main())
             self.assertIn(record, self.saved_tasks())
 
     def test_automatic_pi_pick_uses_the_unmeasured_providers_key(self):
+        self.env.pop("PI_CODING_AGENT_DIR", None)
         root = Path(self.env["HOME"]) / ".pi/agent"
         root.mkdir(parents=True)
         launch = ("--name", "automatic-pi", "--harness", "pi", "--model", "openai/gpt-6.2-astra",
