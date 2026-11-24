@@ -109,11 +109,6 @@ HOME_DIR=$(physical_dir "$HOME_PATH" 2>/dev/null) || HOME_DIR=''
 SHARED_ROOT=$HOME_DIR
 PROJECT_INSTALL=''
 CODEX_ROOT=${CODEX_HOME-$HOME_PATH/.codex}
-# A relative CODEX_HOME renders a relative global registration, which the
-# harness opened from this hook's working directory: the skill paths the note
-# hands the session are spelled from there.
-[[ -z "$CODEX_ROOT" || "$CODEX_ROOT" == /* || "$CODEX_ROOT" =~ $absolute_root ]] ||
-  CODEX_ROOT="$PWD/$CODEX_ROOT"
 CLAUDE_ROOT="$HOME_PATH/.claude"
 
 # The Pi carrier names the registration it ran (the Hooks section of kendex's
@@ -136,7 +131,9 @@ case "${KENDEX_HOOK_SCOPE-}" in
     # Global identity takes precedence when aliases land both registrations
     # on the same script. Project ownership comes from the renderer's argv
     # spelling.
-    if [ -n "$CODEX_ROOT" ] && [ "$HOOK_PATH" -ef "$CODEX_ROOT/hooks/ui-copy-note.sh" ]; then
+    # A global Codex install must resolve independently of the edited checkout.
+    if [[ "$CODEX_ROOT" == /* || "$CODEX_ROOT" =~ $absolute_root ]] &&
+        [ "$HOOK_PATH" -ef "$CODEX_ROOT/hooks/ui-copy-note.sh" ]; then
       NATIVE_ROOT=$CODEX_ROOT
       HARNESS=codex
     elif [ "$HOOK_PATH" -ef "$CLAUDE_ROOT/hooks/ui-copy-note.sh" ]; then
