@@ -113,6 +113,7 @@ class Evidence:
             inventory = json.loads(self.blob(".kendex-generated.json", rev))
             entries = json.loads(self.blob(".kendex-lock.json", rev))["entries"]
             require(isinstance(inventory, list), "invalid-inventory")
+            require(isinstance(entries, dict), "invalid-install-record")
             inventory = {
                 row if isinstance(row, str) else row["path"] for row in inventory
             }
@@ -125,7 +126,7 @@ class Evidence:
                     continue
                 package = (entry["sourceRepo"], emitted["kind"], emitted["name"])
                 for path in inventory:
-                    if path.startswith(RENDER) and any(
+                    if (emitted["kind"] == "skill" or path.startswith(RENDER)) and any(
                         under(path, position) for position in emitted["paths"]
                     ):
                         owners[path].add(package)
@@ -140,6 +141,12 @@ class Evidence:
         if self.rendered:
             return self.proved_head_ownership.get(path)
         return None
+
+    def package_path(self, path):
+        # A skill's marker keeps it a candidate when its ownership is unreadable.
+        return path.startswith(RENDER) or self.owner(path) is not None or any(
+            (parent / "SKILL.md").as_posix() in self.files for parent in Path(path).parents
+        )
 
     def shell_reads(self, script, directory, reads, visited):
         invocation = (script, directory)
@@ -354,10 +361,10 @@ class Evidence:
                         "vitest-opaque-import")
                 imported = self.checkout_path(parent.as_posix(), target)
                 require(imported in self.files and MODULE.search(imported), "vitest-module-unresolved")
-                if imported.startswith(RENDER):
+                if self.package_path(imported):
                     package_imports.add(imported)
                 pending.add(imported)
-        if any(path.startswith(RENDER) for path in self.changed):
+        if any(self.package_path(path) for path in self.changed):
             require(all(self.owner(path) for path in package_imports), "vitest-import-owner-unresolved")
         # TypeScript and package resolution can read an ancestor outside
         # the Vitest root, including an ancestor of an imported module.
@@ -623,7 +630,7 @@ def derived(evidence, exceptions, settings):
                                           for name in evidence.changed):
         return keep_prerequisites(retain_all)
 
-    owners = {name: {evidence.owner(name)} for name in evidence.changed if name.startswith(RENDER)}
+    owners = {name: {evidence.owner(name)} for name in evidence.changed if evidence.package_path(name)}
     if any(None in packages for packages in owners.values()):
         return keep_prerequisites(retain_all)
     if evidence.rendered:
@@ -637,7 +644,7 @@ def derived(evidence, exceptions, settings):
         try:
             ordinary, readers = job_reads(evidence, jobs[name])
             reads = ordinary | set().union(*(read for read, _ in readers))
-            packages = {evidence.owner(path) for path in reads if path.startswith(RENDER)} - {None}
+            packages = {evidence.owner(path) for path in reads} - {None}
             hits = (reads & evidence.changed) | {
                 rendered_path for rendered_path, package_owners in owners.items()
                 if packages & package_owners

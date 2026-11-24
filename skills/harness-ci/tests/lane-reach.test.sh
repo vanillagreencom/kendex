@@ -172,6 +172,23 @@ JS
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'Vitest reads a module from an installed package'
 vitest_package_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-copilot "$vitest_package_base"
+mkdir -p "$repo/.github/skills"
+git -C "$repo" mv -- .codex/skills/math .github/skills/math
+python3 - "$repo" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for name in ('.kendex-generated.json', '.kendex-lock.json', 'web/check.test.mjs'):
+    path = root / name
+    source = path.read_text()
+    updated = source.replace('.codex/skills', '.github/skills').replace(
+        'skill:math:codex', 'skill:math:copilot')
+    assert updated != source
+    path.write_text(updated)
+PY
+git -C "$repo" commit -qam 'Vitest reads a module from a Copilot copy-mode skill'
+vitest_copilot_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-deleted-workdir "$static_base"
 write_workflow deleted-workdir >"$repo/.github/workflows/ci.yml"
 mkdir -p "$repo/check-cwd"
@@ -374,7 +391,9 @@ case "$*" in
   --version) printf 'kendex 0.0.0-stub\n' ;;
   'verify --help') printf '%s\n' '  --bot-instructions-from <DIR>' ;;
   *)
-    printf '%s\n' '{"version":1,"clean":true,"checked":2,"failed":0,"base_owned":[{"path":".codex/skills/math","owns":"tree"}],"rows":[{"kind":"skill","name":"math","state":"ok","positions":[{"path":".codex/skills/math","owns":"tree"}]},{"kind":"inventory","state":"ok","positions":[{"path":".kendex-generated.json","owns":"file"}]}]}'
+    skill=.codex/skills/math
+    [ ! -d .github/skills/math ] || skill=.github/skills/math
+    printf '{"version":1,"clean":true,"checked":2,"failed":0,"base_owned":[{"path":"%s","owns":"tree"}],"rows":[{"kind":"skill","name":"math","state":"ok","positions":[{"path":"%s","owns":"tree"}]},{"kind":"inventory","state":"ok","positions":[{"path":".kendex-generated.json","owns":"file"}]}]}\n' "$skill" "$skill"
     ;;
 esac
 VERIFY
@@ -388,6 +407,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate; 
     source|removed-source|shared-gate|shell-workdir|vitest-import|vitest-unread|vitest-external|installed|installed-push|shared-root-config)
       base="$static_base" ;;
     vitest-package-sibling) base="$vitest_package_base" ;;
+    vitest-copilot-sibling) base="$vitest_copilot_base" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
     deleted-workdir) base="$deleted_workdir_base" ;;
@@ -502,6 +522,7 @@ cargo-linked-child|cargo/spare/src/input.txt|false|true|false|false
 cargo-unread|cargo/spare/src/lib.rs|false|false|false|false
 vitest-import|web/café.mjs|false||true|false
 vitest-package-sibling|.codex/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
+vitest-copilot-sibling|.github/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
 vitest-unread|web/spare-é.mjs|false||false|false
 cargo-unresolved-vitest-unread|web/spare-é.mjs|false|true|false|false
 vitest-external|shared.mjs|true||true|true
