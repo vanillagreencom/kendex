@@ -197,6 +197,18 @@ install_skills "$RELOCATED/skills"
 CODEX_HOME="$RELOCATED" EXPECTED_GUIDE="$RELOCATED/skills/code-quality/references/ui.md" \
   check 'relocated Codex native copy ending in kendex' codex-global \
     "$(edit Edit "$REPO" shell/Panel.qml global-codex)" 'ui-copy-note: path=shell/Panel.qml'
+# Git Bash and Cygwin pass a native Windows CODEX_HOME on with its
+# backslashes; the hook runs as on that host, its OSTYPE included.
+codex_backslash_rows() {
+  local XDG_STATE_HOME="$TMP_ROOT/backslash-state-${HOOK##*/}" home="$TMP_ROOT/relocated/kendex" command
+  export XDG_STATE_HOME
+  printf -v command 'OSTYPE=msys CODEX_HOME=%q bash %q' "${home//\//\\}" "$home/hooks/ui-copy-note.sh"
+  CODEX_HOME="$home" FIXTURE_INSTALL="$home" FIXTURE_COMMAND="$command" \
+    EXPECTED_GUIDE="$home/skills/code-quality/references/ui.md" \
+    check 'relocated Codex native copy named by a backslash CODEX_HOME' codex-global \
+      "$(edit Edit "$REPO" shell/Panel.qml global-codex-backslash)" 'ui-copy-note: path=shell/Panel.qml'
+}
+codex_backslash_rows
 RELOCATED="$SIBLING/codex-global"
 mkdir -p "$SIBLING/.agents/skills/decider/scripts/lib"
 printf 'printf "fixture reader crossed scope\\n" >&2\nreturn 17\n' >"$SIBLING/.agents/skills/decider/scripts/lib/kendex-env.sh"
@@ -344,6 +356,9 @@ skill_load_control no-git "$HOOK" '    [ "$HARNESS" = claude ] || exit 0' \
 # classified its path would, takes the planted project reader.
 skill_load_control pi-scope "$HOOK" '      NATIVE_ROOT=$HOOK_ROOT' '      SHARED_ROOT=${HOOK_ROOT%/*}' \
   HOOK pi_rows 'relocated global Pi skips adjacent project reader: keyed context'
+skill_load_control backslash-codex "$HOOK" '    [ -z "${CODEX_HOME:-}" ] || CODEX_HOME=${CODEX_HOME//\\//}' \
+  '    CODEX_HOME=${CODEX_HOME//\//\\}' HOOK codex_backslash_rows \
+  'relocated Codex native copy named by a backslash CODEX_HOME: keyed context'
 skill_load_control relative-codex "$HOOK" 'CLAUDE_ROOT="$HOME_PATH/.claude"' \
   '[[ "$HOOK_PATH" == /* ]] || { notice reader install-layout; exit 0; }' HOOK codex_relative_rows \
   'relative Codex global registration: keyed context' \

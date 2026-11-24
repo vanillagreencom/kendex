@@ -98,6 +98,7 @@ case "$OSTYPE" in
     HOME_PATH=${HOME_PATH//\\//}
     HOOK_PATH=${HOOK_PATH//\\//}
     HOOK_ROOT=${HOOK_ROOT//\\//}
+    [ -z "${CODEX_HOME:-}" ] || CODEX_HOME=${CODEX_HOME//\\//}
     absolute_root='^([A-Za-z]:/|//[^/]+/[^/]+)'
     ;;
   *) absolute_root='^/' ;;
