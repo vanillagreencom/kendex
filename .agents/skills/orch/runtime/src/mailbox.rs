@@ -252,6 +252,14 @@ pub struct Envelope {
     pub tracker_comment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracker_label: Option<String>,
+    /// An item ask alone: its item's tracker identity when it was asked,
+    /// absent where the tracker held no such item and on an ask recorded
+    /// before asks carried one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<TrackerIdentity>,
+    /// An ask that replaced open asks: each ask it replaced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<Replaced>,
     /// A directive that halts the lane until it is read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub halt: Option<bool>,
@@ -269,6 +277,39 @@ impl Envelope {
     pub fn kind(&self) -> &str {
         self.kind.as_deref().unwrap_or("")
     }
+
+    /// Whether this open owner ask is on the item of the `closed` one. Two
+    /// refs name one item where the tracker gave them one UUID, whatever
+    /// spelling each was recorded under; the closed ask's identity is its
+    /// own, else the one this ask's `replaces` entry for it recorded. An
+    /// ask with no identity is compared by its item ref as written.
+    pub fn on_item_of(&self, closed: &Envelope) -> bool {
+        let closing = closed.identity.as_ref().or_else(|| {
+            self.replaces
+                .iter()
+                .find(|r| r.id == closed.id())
+                .and_then(|r| r.identity.as_ref())
+        });
+        match (closing, self.identity.as_ref()) {
+            (Some(closing), Some(open)) => closing.uuid == open.uuid,
+            _ => closed.issue.is_some() && closed.issue == self.issue,
+        }
+    }
+}
+
+/// A tracker item as the tracker identified it when an ask was made; the
+/// identifier it printed beside the UUID is not carried.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct TrackerIdentity {
+    pub uuid: String,
+}
+
+/// One entry of an ask's `replaces`, the fields the watch reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Replaced {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<TrackerIdentity>,
 }
 
 /// Where a lane's read stands, from `drain --receipts`: the count its

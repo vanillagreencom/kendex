@@ -5664,6 +5664,121 @@ fn a_closed_owner_ask_gets_its_marks_from_the_asking_watch_once_per_cause_until_
     }
 }
 
+/// Closing an owner ask recorded under another spelling of its item, as
+/// its replacement's close does, keeps the open replacement's label,
+/// assignee and action line: the two asks are on one item where the
+/// tracker gave them one UUID, the closed ask's own or the one the
+/// replacement's `replaces` entry recorded for it.
+#[test]
+fn closing_a_predecessor_under_another_spelling_keeps_the_open_replacements_item_state() {
+    const UUID: &str = "00000007-0000-4000-8000-000000000007";
+    let identity = json!({"identifier": "KEN-7", "uuid": UUID});
+    // The closed ask's item ref, and the identity its own envelope carries.
+    let rows = [("ken-7", Some(identity.clone())), (UUID, None)];
+    for (spelling, own) in rows {
+        let mut world = World::new();
+        let root = std::fs::canonicalize(world.dir.path()).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "gc.auto", "0"],
+            vec!["config", "maintenance.auto", "false"],
+        ] {
+            let out = program("git")
+                .arg("-C")
+                .arg(&root)
+                .args(&args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+        }
+        let mut predecessor = json!({"id": "ask-1", "kind": "ask", "at": "2026-10-01T00:00:00Z",
+            "from": "overseer:test", "to": "owner", "issue": spelling, "do": "Approve one.",
+            "text": "Approve?", "options": ["yes", "no"], "recommend": "yes", "wait": 120,
+            "deadline": "2099-01-01T00:00:00Z"});
+        if let Some(own) = &own {
+            predecessor["identity"] = own.clone();
+        }
+        let replacement = json!({"id": "ask-2", "kind": "ask", "at": "2026-10-01T00:01:00Z",
+            "from": "overseer:test", "to": "owner", "issue": "KEN-7", "do": "Do two.",
+            "text": "Approve, or hold?", "options": ["yes", "hold"], "recommend": "yes", "wait": 120,
+            "deadline": "2099-01-01T00:00:00Z", "identity": identity,
+            "replaces": [{"id": "ask-1", "tracker_comment": "question-1", "identity": identity}]});
+        let posted = |id: &str, issue: &str, comment: &str| {
+            json!({"id": format!("{id}-tracker"), "kind": "tracker-posted", "at": "2026-10-01T00:01:01Z",
+            "from": "overseer:test", "re": id, "issue": issue, "tracker_label": "owner-gated",
+            "tracker_comment": comment, "text": ""})
+        };
+        let mailbox = root.join("tmp/lane-mail/overseer");
+        std::fs::create_dir_all(&mailbox).unwrap();
+        let text: String = [
+            predecessor,
+            posted("ask-1", spelling, "question-1"),
+            replacement,
+            posted("ask-2", "KEN-7", "question-2"),
+        ]
+        .iter()
+        .map(|l| format!("{l}\n"))
+        .collect();
+        std::fs::write(mailbox.join("to-overseer.jsonl"), text).unwrap();
+        let body = "Body.\n\n";
+        world.linear("statuses list", statuses());
+        world.linear("issues list", json!({"body": []}));
+        world.linear(
+            "issues bulk-get",
+            json!({"body": {"issues": {"nodes": []}}}),
+        );
+        world.linear(
+            "issues list --assignee",
+            json!({"body": [{"id": "KEN-7", "uuid": UUID,
+                "description": format!("**Maya, what you do:** Approve one.\n\n{body}"), "assignee": "Maya Owner"}]}),
+        );
+        world.linear("comments bulk-list", json!({"body": {"KEN-7": []}}));
+        world.linear(
+            "graphql OwnerAskItem",
+            json!({"body": {"issue": {"description": format!("**Maya, what you do:** Approve one.\n\n{body}"),
+                "assignee": {"name": "Maya Owner"},
+                "labels": {"pageInfo": {"hasNextPage": false},
+                    "nodes": [{"name": "skills"}, {"name": "owner-gated"}]}}}}),
+        );
+        world.linear("issues update", json!({"body": {}}));
+        world.linear("comments create", json!({"body": {"success": true}}));
+        let cli = isolated_program(&fixtures().join("lane-mail-hold/lane-mail"));
+        let cli = cli.display().to_string();
+        let settings = world.settings(&[
+            ("LANE_MAIL_CLI", &cli),
+            ("ORCH_OWNER_EMAIL", "owner@example.com"),
+            ("ORCH_OWNER_ASK_LABEL", "owner-gated"),
+        ]);
+        let clock = FakeClock::new();
+        let mut body_fn = tracker::body(world.context(settings, None));
+        let mut baseline = Baseline::default();
+        pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+        // The replacement closes its predecessor as `resolve --id` does.
+        let real = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../mailbox/scripts/lane-mail")
+            .canonicalize()
+            .unwrap();
+        let root_text = root.display().to_string();
+        let out = program(&real)
+            .args([
+                "resolve", "--item", "overseer", "--root", &root_text, "--id", "ask-1",
+            ])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "lane-mail resolve: {}", stderr(&out));
+        let closed = pass(&mut body_fn, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+        assert_eq!(rendered(&closed), Vec::<String>::new(), "{spelling}");
+        let log = std::fs::read_to_string(world.dir.path().join("linear.log")).unwrap();
+        assert!(
+            log.contains(&format!(
+                "issues update {spelling} --labels owner-gated,skills --description **Maya, what you do:** Do two.\n\n{body}"
+            )),
+            "the open replacement keeps its label, assignee and line, recorded as {spelling}: {log}"
+        );
+    }
+}
+
 /// This test process's own identity, the one a runner in it claims with.
 fn me() -> Identity {
     let pid = std::process::id();
