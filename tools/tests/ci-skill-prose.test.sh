@@ -38,7 +38,7 @@ cargo_rows() {
     "true null $ROSTER $QUEUE_ALL [] $(cd "$ROOT" && "$JOB_SET" --all-rust-targets)" \
     "$(field cargo_linux <<<"$selected") $(field cargo_linux_matrix <<<"$selected") $(field shards <<<"$selected") $(field queue_macos_shards <<<"$selected") $(field skipped_suites <<<"$selected") $(field rust_targets <<<"$selected")"
 }
-cargo_rows
+[ "${1-}" = --inventory-proof ] || cargo_rows
 if [ "${1-}" = --cargo-reads ]; then
   printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
   [ "$FAIL" -eq 0 ]
@@ -49,7 +49,7 @@ fi
 # produce valid-looking partial output with a successful exit status.
 FAILING_TOOLS="$TMP/failing-reads"
 mkdir -p "$FAILING_TOOLS"
-for tool in git cargo awk grep; do
+for tool in git cargo awk sed; do
   location="$(command -v "$tool")"
   ln -s -- "$location" "$FAILING_TOOLS/real-$tool"
 done
@@ -66,15 +66,68 @@ case "$READ_FAILURE:$tool:${1-}:${2-}" in
   index:git:-c:core.quotePath=false)
     if [ "${3-}" = ls-files ]; then printf 'skills/orch/tests/direct.sh\n'; exit 128; fi ;;
   metadata:cargo:metadata:*) "$real" "$@" | jq -c '.packages |= .[1:]'; exit ;;
+  target:cargo:metadata:*)
+    "$real" "$@" | jq -c '(.packages[] | select(.name == "kendex-cli").targets) |= map(select(.name != "catalog_render_lint"))'
+    exit ;;
   suite:awk:*)
     if [[ $* == *'function scan_file('* ]]; then printf 'N\t0\t/partial\n'; exit 0; fi ;;
-  checkout:grep:-E:--)
-    if [[ ${3-} == *' shards?' ]]; then printf 'grep: incomplete checkout read\n' >&2; exit 2; fi ;;
+  projection:sed:-n:'s/^target //p') printf 'sed: could not project target rows\n' >&2; exit 2 ;;
 esac
 exec "$real" "$@"
 STUB
 chmod +x "$FAILING_TOOLS/wrapper"
-for tool in git cargo awk grep; do ln -s wrapper "$FAILING_TOOLS/$tool"; done
+for tool in git cargo awk sed; do ln -s wrapper "$FAILING_TOOLS/$tool"; done
+
+inventory_rows() {
+  local world="$TMP/inventory-checkout" got
+  git clone -q --shared "$ROOT" "$world"
+  # Use actual checkout permissions. Each fault leaves the other inventories readable.
+  (
+    local blocked="$world/skills/review-gate/tests"
+    trap 'chmod u+rwx -- "$blocked"' EXIT
+    chmod 000 -- "$blocked"
+    SELECT_IN="$world" SELECT_EVENT=merge_group selection small false refresh/kendex-refresh.yml
+  ) >"$TMP/unread-suite"
+  got="$(cat "$TMP/unread-suite")"
+  check "unread discovery keeps the tracked review-gate reader" 'true true' \
+    "$(field shards <<<"$got" | jq 'index("review-gate") != null') $(field skipped_suites <<<"$got" | jq 'index("skills/review-gate/tests/refresh-workflow.test.sh") == null')"
+
+  (
+    local blocked="$world/skills/agent-runtime/runtime"
+    trap 'chmod u+rwx -- "$blocked"' EXIT
+    chmod 000 -- "$blocked"
+    SELECT_IN="$world" SELECT_EVENT=merge_group selection small false skills/orch/SKILL.md
+  ) >"$TMP/unread-runtime"
+  got="$(cat "$TMP/unread-runtime")"
+  check "unread fallback discovery keeps both tracked runtimes" '["agent-runtime/*","orch/*"]' \
+    "$(field rust_targets <<<"$got")"
+
+  (
+    local blocked="$world/.github/workflows" pin css
+    trap 'chmod u+rwx -- "$blocked"' EXIT
+    chmod 000 -- "$blocked"
+    pin="$(SELECT_IN="$world" SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false .bun-version)"
+    css="$(SELECT_IN="$world" SELECT_EVENT=merge_group selection small false ui/src/index.css)"
+    printf '%s %s %s\n' "$(field cargo_linux <<<"$pin")" "$(field cargo_linux_matrix <<<"$pin")" "$(field cargo_windows_check <<<"$css")"
+  ) >"$TMP/unread-workflow"
+  check "unread workflow keeps the Bun tests and Windows check" 'true null true' "$(cat "$TMP/unread-workflow")"
+
+  got="$(PATH="$FAILING_TOOLS:$PATH" READ_FAILURE=target SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group \
+    selection small false $'skills/orch/SKILL.md\n.agents/skills/orch/SKILL.md')"
+  check "one omitted declared target cannot narrow the Cargo matrix" 'true null' \
+    "$(field cargo_linux <<<"$got") $(field cargo_linux_matrix <<<"$got")"
+
+  got="$(PATH="$FAILING_TOOLS:$PATH" READ_FAILURE=projection SELECT_EVENT=merge_group \
+    selection trivial true $'skills/orch/references/watch-delivery.md\n.agents/skills/orch/references/watch-delivery.md')"
+  check "a failed completed-reach projection keeps the watch-delivery reader" true \
+    "$(field rust_targets <<<"$got" | jq 'index("orch/watch_core") != null or index("orch/*") != null')"
+}
+inventory_rows
+if [ "${1-}" = --inventory-proof ]; then
+  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
 
 all_runtime="$(cd "$ROOT" && "$JOB_SET" --all-rust-targets)"
 while IFS='|' read -r fault path expected_cargo expected_runtime; do
@@ -84,10 +137,9 @@ while IFS='|' read -r fault path expected_cargo expected_runtime; do
     "$(field shards <<<"$got") $(field queue_macos_shards <<<"$got") $(field skipped_suites <<<"$got") $(field cargo_lint <<<"$got") $(field rust_targets <<<"$got")"
 done <<ROWS
 pi|kendex.toml|false|$all_runtime
-index|skills/orch/SKILL.md|false|[]
+index|skills/orch/SKILL.md|true|$all_runtime
 metadata|skills/orch/SKILL.md|true|$all_runtime
 suite|skills/orch/SKILL.md|false|$all_runtime
-checkout|skills/orch/SKILL.md|false|[]
 ROWS
 
 # Real workspace inputs with package placement can include unresolved

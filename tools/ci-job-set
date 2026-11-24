@@ -198,16 +198,28 @@ if [ "${1-}" = --suite-list ]; then
   exit 0
 fi
 
-# Every target of every skill runtime, as the workflow's Rust step reads a
-# whole manifest: `<package>/*`.
+# A full runtime roster comes from tracked declarations, even where a
+# manifest or its checkout directory cannot be opened. Standalone use in
+# an unversioned checkout can enumerate the directory only to completion.
+runtime_manifests() {
+  local files="${COMMITTED_FILES:-}"
+  [ "${CHECKOUT_READ:-false}" = false ] || files="$TRACKED_FILES"
+  if [ -z "$files" ]; then
+    if files="$(git -c core.quotePath=false ls-tree -r --name-only HEAD 2>/dev/null)"; then
+      :
+    elif [ -d skills ]; then
+      files="$(find skills -name Cargo.toml -print)" || return 1
+    fi
+  fi
+  awk '/^skills\/[^\/]+\/runtime\/Cargo\.toml$/' <<<"$files"
+}
+
+# Every target of every skill runtime, as the workflow reads a whole
+# manifest: `<package>/*`.
 all_targets() {
-  local manifest list="" package
-  for manifest in skills/*/runtime/Cargo.toml; do
-    [ -f "$manifest" ] || continue
-    package="${manifest#skills/}"
-    list="$list,\"${package%%/*}/*\""
-  done
-  printf '[%s]' "${list#,}"
+  local manifests
+  manifests="$(runtime_manifests)" || return 1
+  awk -F / 'NF { printf "%s\"%s/*\"", (n++ ? "," : "["), $2 } END { print (n ? "]" : "[]") }' <<<"$manifests"
 }
 
 # --all-rust-targets prints that list on one line. The orch-rest leg's
@@ -215,8 +227,7 @@ all_targets() {
 # rust_targets: a night, a manual dispatch or a failed changes job.
 if [ "${1-}" = --all-rust-targets ]; then
   [ "$#" -eq 1 ] || exit 2
-  all_targets
-  printf '\n'
+  all_targets || { printf 'ci-job-set: cause=runtime-inventory-unread\n' >&2; exit 2; }
   exit 0
 fi
 
@@ -431,9 +442,10 @@ suite_map() {
 # line: `lib` and each [[test]] name of skills/<package>/runtime/Cargo.toml,
 # the names tools/guard's reach gives targets.
 runtime_targets() {
-  local manifest package
-  for manifest in skills/*/runtime/Cargo.toml; do
-    [ -f "$manifest" ] || continue
+  local manifests manifest package
+  manifests="$(runtime_manifests)" || return 1
+  while IFS= read -r manifest; do
+    [ -n "$manifest" ] || continue
     package="${manifest#skills/}"
     package="${package%%/*}"
     printf '%s/lib\n' "$package"
@@ -441,7 +453,7 @@ runtime_targets() {
       /^\[/ { section = $0; next }
       section == "[[test]]" && /^name *=/ { name = $0; sub(/^[^"]*"/, "", name); sub(/".*/, "", name); print package "/" name }
     ' "$manifest" || return 1
-  done
+  done <<<"$manifests"
 }
 
 # A failed proof read subtracts nothing from the selected work.
@@ -449,7 +461,9 @@ main_proof() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause="" mark=main-proof
   local runs ids="" id page jobs="" sels="" listing artifact sel work owed replacements
   local linux macos skipped skipped_macos rust linux_n macos_n targets_n
-  if ! runs="$(api_list "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100" workflow_runs)"; then
+  if [ "$SUITE_INPUTS_READ" = false ]; then
+    state=unread cause=checkout-inventory-unread
+  elif ! runs="$(api_list "$api/workflows/${PROOF_WORKFLOW##*/}/runs?event=merge_group&head_sha=$sha&per_page=100" workflow_runs)"; then
     state=unread cause=runs-read-failed
   elif ! ids="$(jq -r --arg sha "$sha" --arg path "$PROOF_WORKFLOW" '
       [.[] | select(.event == "merge_group" and .head_sha == $sha and .path == $path) | .id]
@@ -632,10 +646,65 @@ CATALOG_INPUTS='^((agents|skills|hooks|commands|mcp|output-styles|pi-extensions|
 ALL_SHARDS="^\\.github/|$LANE_SOURCES|$RUNNERS"
 UI_INPUTS='^ui/'
 
+# The committed tree witnesses the inputs the index must cover. A missing
+# index can report an empty list successfully, and a shorter list cannot
+# authorize skips. An unborn repository has only its staged inventory.
+COMMITTED_FILES="" TRACKED_FILES=""
+CHECKOUT_READ=false
+checkout_inventory() {
+  local index unlisted refs
+  if ! COMMITTED_FILES="$(git -c core.quotePath=false ls-tree -r --full-tree --name-only HEAD 2>/dev/null)"; then
+    refs="$(git rev-list --all --count)" || return 1
+    [ "$refs" = 0 ] && git symbolic-ref -q HEAD >/dev/null || return 1
+  fi
+  index="$(git rev-parse --git-path index)" || return 1
+  [ -s "$index" ] && [ -r "$index" ] || return 1
+  TRACKED_FILES="$(git -c core.quotePath=false ls-files --cached -- | LC_ALL=C sort -u)" || return 1
+  [ -n "$TRACKED_FILES" ] || return 1
+  case $'\n'"$TRACKED_FILES" in *$'\n'\"*) return 1 ;; esac
+  unlisted="$(printf '%s\n' "$COMMITTED_FILES" | LC_ALL=C sort -u |
+    LC_ALL=C comm -23 - <(printf '%s\n' "$TRACKED_FILES"))" || return 1
+  [ -z "$COMMITTED_FILES" ] || [ -z "$unlisted" ] || return 1
+  CHECKOUT_READ=true
+}
+
+tracked_file() { # PATH
+  [[ $'\n'$TRACKED_FILES$'\n' == *$'\n'"$1"$'\n'* ]]
+}
+
+# Check inputs from the declared inventory before the reach discovers
+# consumers. A checkout glob alone cannot distinguish absent from unread.
+suite_inputs_readable() {
+  local file dir dirs=$'\n'
+  while IFS= read -r file; do
+    case "$file" in skills/* | hooks/* | refresh/* | tools/* | pi-extensions/*) ;; *) continue ;; esac
+    if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+      printf 'ci-job-set: checkout-input=unread path=%s\n' "$file" >&2
+      return 1
+    fi
+    dir=$file
+    while [[ $dir == */* ]]; do
+      dir=${dir%/*}
+      [[ $dirs != *$'\n'"$dir"$'\n'* ]] || break
+      if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
+        printf 'ci-job-set: checkout-input=unread path=%s\n' "$dir" >&2
+        return 1
+      fi
+      dirs+="$dir"$'\n'
+    done
+  done <<<"$TRACKED_FILES"
+}
+
 # Job-owned inputs that source scanning cannot see: the Windows command
 # supplies its package roots and Linux Bun setup supplies its pin and crate.
 cargo_job_reads() {
-  [ -f "$PROOF_WORKFLOW" ] || return 0
+  if [ ! -f "$PROOF_WORKFLOW" ] || [ ! -r "$PROOF_WORKFLOW" ]; then
+    if tracked_file "$PROOF_WORKFLOW" || [ -e "$PROOF_WORKFLOW" ]; then
+      printf 'ci-job-set: checkout-input=unread path=%s\n' "$PROOF_WORKFLOW" >&2
+      return 1
+    fi
+    return 0
+  fi
   awk '
     /^  [a-z][a-z0-9-]*:/ { job=$1; bun=0 }
     job == "cargo-check-windows:" { windows_job=1 }
@@ -838,6 +907,9 @@ REACH_TARGETS='[]'
 REACH_PLACED=""
 REACH_EXCLUDED=""
 CARGO_READ=false
+read_lines=""
+SUITE_INPUTS_READ=false
+FULL_RUNTIME_TARGETS='[]'
 reach_notes() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
@@ -851,7 +923,7 @@ reach_notes() {
   done
 }
 reach_read() {
-  local out status=0 list="" target
+  local out status=0 list="" target targets placed excluded suites
   # The query's answer reaches the substitution on fd 3; its stderr streams
   # through reach_notes.
   out="$( { printf '%s\n' "$paths" | "$TOOLS_DIR/guard" --suite-reach 2>&1 >&3 3>&- | reach_notes 3>&-; } 3>&1)" ||
@@ -867,14 +939,18 @@ reach_read() {
     END { exit !(completions == 1 && inputs + 0 == count && rows + 0 == read) }
   ' <<<"$out"; then
     printf 'ci-job-set: reach=unread status=%s\n' "$status" >&2
-    return 0
+    return 1
   fi
-  REACH_PLACED="$(printf '%s\n' "$out" | sed -n 's/^placed //p')"
-  REACH_EXCLUDED="$(printf '%s\n' "$out" | sed -n 's/^excluded //p')"
-  REACH_SUITES="$(printf '%s\n' "$out" | sed -E '/^(placed|excluded|complete|target) /d; /^$/d')"
+  placed="$(sed -n 's/^placed //p' <<<"$out")" &&
+    excluded="$(sed -n 's/^excluded //p' <<<"$out")" &&
+    suites="$(sed -E '/^(placed|excluded|complete|target) /d; /^$/d' <<<"$out")" &&
+    targets="$(sed -n 's/^target //p' <<<"$out")" || return 1
   while IFS= read -r target; do
     [ -z "$target" ] || list="$list,\"$target\""
-  done <<<"$(printf '%s\n' "$out" | sed -n 's/^target //p')"
+  done <<<"$targets"
+  REACH_PLACED=$placed
+  REACH_EXCLUDED=$excluded
+  REACH_SUITES=$suites
   REACH_TARGETS="[${list#,}]"
   REACH_READ=true
 }
@@ -883,7 +959,10 @@ reach_read() {
 # refused or stopped before completing its read authorizes no skips in its
 # roster. An unplaced path also keeps suites unless their owner excludes it.
 read_selection() {
-  reach_read
+  [ "$CHECKOUT_READ" = true ] || return 0
+  if [ "$SUITE_INPUTS_READ" = true ]; then
+    reach_read || printf 'ci-job-set: reach=unproved coverage=full\n' >&2
+  fi
   if read_lines="$(reads)"; then
     CARGO_READ=true
     if [[ $read_lines == *suites-unplaced=1* ]]; then REACH_READ=false; fi
@@ -896,13 +975,9 @@ read_selection() {
 
 # Every shell suite a shard step can hand --suite-list, one per line.
 universe() {
-  local listed
-  listed="$(git -c core.quotePath=false ls-files -- ':(glob)skills/*/tests/*.sh' ':(glob)skills/*/tests/*.test.mjs' \
-    ':(glob)tools/tests/*.sh' ':(glob)hooks/tests/*.sh' ':(glob)refresh/tests/*.sh')" || {
-    printf 'ci-job-set: universe=unread\n' >&2
-    return 1
-  }
-  printf '%s\n' "$listed" | awk 'NF && !/\/run-all\.sh$/'
+  [ "$SUITE_INPUTS_READ" = true ] || return 1
+  awk '/^skills\/[^\/]+\/tests\/[^\/]+\.(sh|test\.mjs)$/ ||
+    /^(tools|hooks|refresh)\/tests\/[^\/]+\.sh$/ { if ($0 !~ /\/run-all\.sh$/) print }' <<<"$TRACKED_FILES"
 }
 
 # The runner owes exactly one valid placement for each requested suite.
@@ -1054,6 +1129,9 @@ $replacements"
 
 choose_shards() { # CHECKOUT — set SHELL_SHARDS, SHELL_SKIPPED and SHELL_FULL
   local row status=0
+  SHELL_FULL=true
+  SHELL_SHARDS="[\"${SHARDS// /\",\"}\"]"
+  SHELL_SKIPPED='[]'
   if [ "$REACH_READ" = true ]; then
     row="$(select_shards "$1")" || status=$?
     case "$status" in
@@ -1062,9 +1140,7 @@ choose_shards() { # CHECKOUT — set SHELL_SHARDS, SHELL_SKIPPED and SHELL_FULL
       *) return "$status" ;;
     esac
   fi
-  SHELL_FULL=true
-  SHELL_SHARDS="[\"${SHARDS// /\",\"}\"]"
-  SHELL_SKIPPED='[]'
+  return 0
 }
 
 # Whether one shard of the JSON list SHARDS is one the matrix runs on macOS.
@@ -1118,9 +1194,9 @@ select_row() { # CLASS DOCS PATHS EVENT
   skipped=$SHELL_SKIPPED
   any_outside "$PROSE" && macos_shard "$shards" && macos=true
   [ "$SHELL_FULL" = false ] || macos=true
-  rust=$REACH_TARGETS
-  if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then
-    rust="$(all_targets)"
+  rust=$FULL_RUNTIME_TARGETS
+  if [ "$REACH_READ" = true ] && ! any "$LANE_SOURCES"; then
+    rust=$REACH_TARGETS
   fi
 
   # A shared build input affects the workspace. Cargo source reads narrow
@@ -1174,6 +1250,15 @@ if [ "${EVENT:-}" = schedule ]; then
   exit 0
 fi
 
+if [ "${EVENT:-}" = push ] || [ -n "$paths" ]; then
+  if checkout_inventory && suite_inputs_readable; then
+    SUITE_INPUTS_READ=true
+  else
+    printf 'ci-job-set: suite-inventory=unproved coverage=full\n' >&2
+  fi
+  FULL_RUNTIME_TARGETS="$(all_targets)" || die runtime-inventory-unread "the full skill-runtime roster could not be read"
+fi
+
 if [ "${EVENT:-}" = push ]; then
   [[ ${PUSH_BEFORE:-} =~ ^[0-9a-f]{40}$ && ${PUSH_AFTER:-} =~ ^[0-9a-f]{40}$ ]] ||
     die push-range-unread "the push event endpoints are missing or invalid"
@@ -1197,7 +1282,6 @@ if [ "${EVENT:-}" = push ]; then
   main_build=true
   main_checkout=true
   REACH_READ=false
-  REACH_TARGETS="$(all_targets)"
   if [ "$range_read" = true ]; then
     read_selection
     main_build=false
@@ -1215,8 +1299,8 @@ if [ "${EVENT:-}" = push ]; then
   choose_shards "$main_checkout"
   main_linux=$SHELL_SHARDS
   main_skipped=$SHELL_SKIPPED
-  main_targets="$REACH_TARGETS"
-  if [ "$REACH_READ" = false ] || any "$LANE_SOURCES"; then main_targets="$(all_targets)"; fi
+  main_targets=$FULL_RUNTIME_TARGETS
+  if [ "$REACH_READ" = true ] && ! any "$LANE_SOURCES"; then main_targets=$REACH_TARGETS; fi
   main_macos="$(jq -c --arg roster "$MACOS_SHARDS" '[.[] | select(. as $s | $roster | split(" ") | index($s))]' <<<"$main_linux")" || exit 2
   main_suites="$(jq -ce --argjson selected "$main_linux" '
     if type != "array" or length == 0 then error("missing main declarations") else
@@ -1247,7 +1331,6 @@ progress() { # STEP [DETAIL]
 }
 
 # Read each dependency set once, before comparing the event projections.
-read_lines=""
 if [ "$reach_steps" -eq 1 ]; then
   progress reach
   read_selection

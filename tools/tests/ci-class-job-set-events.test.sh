@@ -16,6 +16,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # selection, and a selection asked for one would stand lanes down on no
 # diff. The main push and the schedule take the proof routes below.
 # ARGUMENT|EVENT|EXPECTED
+if [ "${1-}" != --inventory-proof ]; then
 refused_rows=0
 while IFS='|' read -r arg event expected; do
   refused_rows=$((refused_rows + 1))
@@ -127,6 +128,7 @@ check "a class selection writes its skips and targets to CI_SELECTION" \
   "$(jq -cn --argjson s "$(sed -n 's/.* skipped_suites=\([^ ]*\).*/\1/p' <<<"$written")" \
     --argjson r "$(sed -n 's/.* rust_targets=\([^ ]*\).*/\1/p' <<<"$written")" '{skipped_suites: $s, rust_targets: $r}')" \
   "$(jq -c . "$TMP/written.json" 2>/dev/null || echo unwritten)"
+fi
 
 # THE PUSH ROUTE: a main push owes, on each runner, the suites and Rust
 # targets its same-head merge group did not prove. A stub on PATH answers
@@ -348,6 +350,18 @@ N_ORCH_REST="$(cd "$ROOT" && grep '^skills/orch/tests/' <<<"$UNIVERSE" | RUNNER_
 WHOLE="shards=$ROSTER queue_macos_shards=$QUEUE_ALL rust_targets=$EVERY_TARGET skips=0/0"
 UNREAD="main-proof=unread warned=yes"
 NO_RUN="main-proof=none warned=yes"
+push_world kept-subset
+index_group="$(GIT_INDEX_FILE="$TMP/unavailable-index" SELECT_IN="$PUSH_REPO" SELECT_EVENT=merge_group \
+  selection small false kendex.toml)"
+index_push="$(GIT_INDEX_FILE="$TMP/unavailable-index" push_select kept-subset)"
+case "$index_push" in exit=*) cat "$TMP/push-err" >&2 ;; esac
+check "a missing Git index keeps Node and prevents same-head subtraction" "true|$WHOLE $UNREAD" \
+  "$(field shards <<<"$(tr ' ' '\n' <<<"$index_group")" | jq 'index("node") != null')|$index_push"
+if [ "${1-}" = --inventory-proof ]; then
+  printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
 # The all-proved world first: its macOS count is every macOS-placed suite,
 # which each later row's expectation subtracts from.
 push_world all-proved

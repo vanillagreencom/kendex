@@ -94,6 +94,8 @@ const X: &str = include_str!("../../../assets/x.json");
 fn tool() { read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/x")); }
 fn legal(name: &str) -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/legal").join(name) }
 RS
+git -C "$READ_WORLD" init -q
+git -C "$READ_WORLD" add -A
 READ_PROSE_ROW="$(measured none false false false '[]' '[]' true)"
 SEL_WORLD="$TMP/sel-world"
 mkdir -p "$SEL_WORLD/tools/tests" "$SEL_WORLD/hooks/tests"

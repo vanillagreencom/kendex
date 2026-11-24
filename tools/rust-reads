@@ -103,6 +103,18 @@ if [ -n "$cli_scope$targets" ]; then
   ' <<<"$metadata") || { printf 'rust-reads: unreadable=%s operation=metadata-shape\n' "$metadata_reader" >&2; exit 2; }
 fi
 if [ -n "$targets" ]; then
+  # Workspace metadata can lose a target without losing its package ID.
+  # Read each requested manifest's own roster before accepting a subset.
+  roster='[.targets[] | [.name, .src_path, (.kind | sort), .test]] | sort'
+  requests=$(jq -er ".packages[] | [.manifest_path, ($roster | tojson)] | @tsv" <<<"$metadata") || exit 2
+  while IFS=$'\t' read -r manifest expected; do
+    if ! package=$(cargo read-manifest --manifest-path "$manifest") ||
+      ! actual=$(jq -ces "select(length == 1) | .[0] | $roster" <<<"$package") ||
+      [ "$actual" != "$expected" ]; then
+      printf 'rust-reads: unreadable=test-targets operation=manifest-roster manifest=%s\n' "$manifest" >&2
+      exit 2
+    fi
+  done <<<"$requests"
   target_roots=$(jq -er --arg root "$(pwd -P)/" '
     .packages[] | .name as $package | .targets[] | select(.test)
     | (if (.kind | index("bin")) then "bin"
