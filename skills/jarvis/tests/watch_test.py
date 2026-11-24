@@ -59,6 +59,7 @@ class Producer(unittest.TestCase):
         self.registry.write_text(str(self.home) + "\n" + str(self.peer) + "\n")
         self.env = {key: value for key, value in os.environ.items()
                     if key not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "XDG_STATE_HOME")
+                    and key != "COMMUNICATION_TECHNICAL"
                     and not key.startswith(("JARVIS_", "ORCH_", "KENDEX_", "SLACK_"))}
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ["PATH"], HOME=str(self.root),
                         REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1", AGENT_RUNTIME_CACHE=AGENT_RUNTIME_CACHE)

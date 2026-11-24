@@ -45,6 +45,7 @@ JARVIS_VOICE_REMIND_SECS = "0"
 JARVIS_UNATTENDED_HARNESSES = ""
 # Technical detail in messages. See the communication package's settings example.
 # COMMUNICATION_TECHNICAL = "off"
+
 # The writing style of Jarvis's messages to you. Friendly adds a short
 # greeting and closing line, concise gives the facts only and fun adds light
 # humor. The facts, actions and questions stay the same in every style.
