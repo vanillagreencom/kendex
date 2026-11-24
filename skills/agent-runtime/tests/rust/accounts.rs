@@ -1440,6 +1440,123 @@ fn the_billed_verb_names_the_account_a_pi_lane_spends_by_its_models_provider() {
     );
 }
 
+/// A named Pi root on a model whose provider nothing bills, judged on Pi's
+/// read of its key: a key read ready is the lane, its record `scope:
+/// unmeasured` and its claims the fleet's; a key Pi refuses is
+/// `unmeasured` with Pi's status and reason as the `provider-key` refusal;
+/// the owner's exclusion, the request's and a stated end refuse the root
+/// by their words whatever Pi read; and with no key read the launch is
+/// refused unread, as before any admission.
+#[test]
+fn a_named_pi_root_on_a_provider_nothing_bills_is_judged_on_pis_read_of_its_key() {
+    use accounts::ProviderKey;
+    let today = accounts::today(now());
+    let world = World::new(&[
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi-owned-out"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", &format!("pi-ended={today}")),
+    ]);
+    let settings = world.settings.accounts.get().unwrap();
+    let refused = |status: &str, reason: &str| ProviderKey::Refused {
+        status: status.to_owned(),
+        reason: reason.to_owned(),
+    };
+    let refusal = |status: &str, reason: &str| json!({"cause": "provider-key", "status": status, "reason": reason, "retry_at": null});
+    let rows = [
+        (
+            "ready",
+            ".pi-keyed",
+            Some(ProviderKey::Ready),
+            false,
+            ("lane", 0, json!("unmeasured"), Value::Null, json!(2)),
+        ),
+        (
+            "not ready",
+            ".pi-keyed",
+            Some(refused("not_ready", "credentials_not_configured")),
+            false,
+            (
+                "unmeasured",
+                5,
+                Value::Null,
+                refusal("not_ready", "credentials_not_configured"),
+                json!(2),
+            ),
+        ),
+        (
+            "invalid",
+            ".pi-keyed",
+            Some(refused("invalid", "credentials_invalid")),
+            false,
+            (
+                "unmeasured",
+                5,
+                Value::Null,
+                refusal("invalid", "credentials_invalid"),
+                json!(2),
+            ),
+        ),
+        (
+            "owner's exclusion",
+            ".pi-owned-out",
+            Some(ProviderKey::Ready),
+            false,
+            ("excluded", 3, Value::Null, Value::Null, json!(2)),
+        ),
+        (
+            "request's exclusion",
+            ".pi-keyed",
+            Some(ProviderKey::Ready),
+            true,
+            ("excluded", 3, Value::Null, Value::Null, json!(2)),
+        ),
+        (
+            "stated end",
+            ".pi-ended",
+            Some(ProviderKey::Ready),
+            false,
+            ("retired", 3, Value::Null, Value::Null, json!(2)),
+        ),
+        (
+            "no key read",
+            ".pi-keyed",
+            None,
+            false,
+            ("unmeasured", 5, Value::Null, Value::Null, Value::Null),
+        ),
+    ];
+    for (case, base, key, exclude, expected) in rows {
+        let dir = format!("/home/me/{base}");
+        let req = PickRequest {
+            model: Some("openai/gpt-5".to_owned()),
+            lane: Some(dir.clone()),
+            exclude: if exclude {
+                vec![dir.clone()]
+            } else {
+                Vec::new()
+            },
+            provider_key: key,
+            ..PickRequest::new(Harness::Pi)
+        };
+        let facts = FleetFacts {
+            charges: [(dir.clone(), 2)].into_iter().collect(),
+            ..FleetFacts::default()
+        };
+        let reply = accounts::pick(&[], &req, &facts, &settings, &no_tokens(), now()).reply();
+        let record = &reply["record"];
+        assert_eq!(
+            (
+                reply["answer"].as_str().unwrap(),
+                reply["exit"].as_i64().unwrap(),
+                record["scope"].clone(),
+                record["refusal"].clone(),
+                record["claims"].clone(),
+            ),
+            expected,
+            "{case}: {reply}"
+        );
+    }
+}
+
 /// `lanes --help` § pick's tier 0: a grant, the allowance that expires and
 /// does not refill, is spent before any plan window, the one that expires
 /// first first. Two cloud grants and a plan account with more room: the

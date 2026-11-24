@@ -155,17 +155,14 @@ impl Harness {
     /// except a Pi launch, which spends the account its model's provider
     /// bills. `pi-claude/` is pi-claude-bridge on a Claude seat, so the seat
     /// is `CLAUDE_CONFIG_DIR`; `github-copilot/` and `anthropic/` are Pi's
-    /// own root, and so is any other provider a Pi model names, since Pi
-    /// reads that provider's key from its root's `auth.json` (pi 1.6.0,
-    /// the package's `providers.md`); a Pi model naming none takes the Claude
-    /// variable.
+    /// own root; any other Pi provider, or a Pi model naming none, takes the
+    /// Claude variable too. Stored session records are read back through
+    /// this routing (a successor's home, an adopted pane's seat), so a
+    /// fresh launch's need routes where the launch is prepared instead.
     pub fn account_var(self, model: Option<&str>) -> &'static str {
-        let model = model.unwrap_or_default();
-        match self.billed(model) {
-            Some(billed) => billed.home_var(),
-            None if model.contains('/') => self.home_var(),
-            None => Harness::Claude.home_var(),
-        }
+        self.billed(model.unwrap_or_default())
+            .unwrap_or(Harness::Claude)
+            .home_var()
     }
 
     /// The kind of account a launch of this harness on `model` spends: its
@@ -184,6 +181,16 @@ impl Harness {
             }
             Harness::Pi => None,
         }
+    }
+
+    /// Whether a launch of this harness on `model` spends a key its own
+    /// root holds for a provider nothing bills: a Pi model naming a
+    /// provider other than those [`Harness::billed`] answers for, whose key
+    /// Pi reads from its root's `auth.json` (pi 1.6.0, the package's
+    /// `providers.md`). A Pi model naming none is not one: Pi resolves such
+    /// a word by pattern to a provider the launch never named.
+    pub fn names_unbilled_provider(self, model: &str) -> bool {
+        self.billed(model).is_none() && model.contains('/')
     }
 
     /// The pool a launch of this harness on `model` spends: a Pi
@@ -860,13 +867,33 @@ mod tests {
         );
         assert_eq!(
             Harness::Pi.account_var(Some("ollama/x")),
-            "PI_CODING_AGENT_DIR"
-        );
-        assert_eq!(
-            Harness::Pi.account_var(Some("sonnet:high")),
             "CLAUDE_CONFIG_DIR"
         );
         assert_eq!(Harness::Pi.account_var(None), "CLAUDE_CONFIG_DIR");
+    }
+
+    /// Only a Pi model naming a provider nothing bills spends a key its
+    /// root holds: a billed provider, a class word Pi resolves by pattern,
+    /// the native default and another harness's model are none.
+    #[test]
+    fn only_a_pi_model_naming_a_provider_nothing_bills_spends_its_roots_key() {
+        let rows = [
+            (Harness::Pi, "openai/gpt-5", true),
+            (Harness::Pi, "openai-codex/gpt-5.5", true),
+            (Harness::Pi, "pi-claude/claude-opus-5-5", false),
+            (Harness::Pi, "github-copilot/gpt-5", false),
+            (Harness::Pi, "anthropic/claude-opus-5-5", false),
+            (Harness::Pi, "sonnet", false),
+            (Harness::Pi, "", false),
+            (Harness::Codex, "openai/gpt-5", false),
+        ];
+        for (harness, model, expected) in rows {
+            assert_eq!(
+                harness.names_unbilled_provider(model),
+                expected,
+                "{harness} {model}"
+            );
+        }
     }
 
     /// The full-bypass spelling table: every supported spelling is

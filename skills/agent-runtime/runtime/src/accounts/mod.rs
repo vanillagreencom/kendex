@@ -860,9 +860,9 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
             "stated",
             "no lane host row and no AGENT_RUNTIME_COPILOT_POOL entry reads a Copilot pool for this account",
         ),
-        // The plan pool of a Pi model whose provider nothing bills
-        // ([`admitted_unbilled`]), the one other pool `Harness::pool`
-        // answers for Pi.
+        // The plan pool of a Pi model whose provider nothing bills, a
+        // root admitted on Pi's read of its key ([`PickRequest::provider_key`]),
+        // the one other pool `Harness::pool` answers for Pi.
         _ => ("local", "no reader measures this model's provider"),
     };
     let raw = json!({
@@ -907,15 +907,13 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
 /// in both forms before any row is read, since nothing measures what it
 /// spends and an unmeasured pool is never room. The chooser's answer
 /// carries the chooser's refusal; the named answer carries none
-/// ([`PickAnswer::Unbilled`]). A caller that admits what nothing measures
-/// asks the named form again with Pi's credential read
-/// ([`admitted_unbilled`]).
+/// ([`PickAnswer::Unbilled`]). A named root whose request carries Pi's read
+/// of the model's key ([`PickRequest::provider_key`]) is judged instead
+/// ([`pick`]).
 pub fn unbilled(req: &PickRequest) -> Option<PickAnswer> {
     let model = req.model.as_deref().unwrap_or("");
-    req.harness
-        .billed(model)
-        .is_none()
-        .then(|| unbilled_answer(req))
+    let keyed = req.lane.is_some() && req.provider_key.is_some();
+    (req.harness.billed(model).is_none() && !keyed).then(|| unbilled_answer(req))
 }
 
 fn unbilled_answer(req: &PickRequest) -> PickAnswer {
@@ -935,53 +933,6 @@ fn unbilled_answer(req: &PickRequest) -> PickAnswer {
 pub enum ProviderKey {
     Ready,
     Refused { status: String, reason: String },
-}
-
-/// The named Pi root a caller admits on a model whose provider nothing
-/// bills ([`PickRequest::admit_unbilled`]), judged on the row nothing
-/// measured ([`unmeasured_row`]), so the owner's exclusion and a stated
-/// end still refuse it by their words. Otherwise it is the account to
-/// spend where Pi reads the model's credential ready, its record's
-/// `scope` `unmeasured` as the walk's kept account carries it; and
-/// `unmeasured`, exit 5, where Pi does not, with Pi's status and reason as
-/// the record's `refusal` (`cause=provider-key`).
-pub fn admitted_unbilled(
-    dir: &str,
-    key: &ProviderKey,
-    req: &PickRequest,
-    settings: &AccountSettings,
-    now: u64,
-) -> PickAnswer {
-    let pool = req.harness.pool(req.model.as_deref().unwrap_or(""));
-    let judged = judge_one(
-        &unmeasured_row(dir, pool, settings),
-        req,
-        &FleetFacts::default(),
-        settings,
-        now,
-    );
-    if judged.verdict == EXCLUDED {
-        return PickAnswer::Excluded(judged);
-    }
-    let mut judged = match named_answer(judged, req, &today(now)) {
-        PickAnswer::Unmeasured(judged) => judged,
-        // A stated end or a reservation refuses it by its word.
-        refused => return refused,
-    };
-    let (field, value) = match key {
-        ProviderKey::Ready => ("scope", json!("unmeasured")),
-        ProviderKey::Refused { status, reason } => (
-            "refusal",
-            json!({"cause": "provider-key", "status": status, "reason": reason, "retry_at": Value::Null}),
-        ),
-    };
-    if let Value::Object(raw) = &mut judged.row.raw {
-        raw.insert(field.to_owned(), value);
-    }
-    match key {
-        ProviderKey::Ready => PickAnswer::Lane(judged),
-        ProviderKey::Refused { .. } => PickAnswer::Unmeasured(judged),
-    }
 }
 
 /// What a caller asks the judge: `agent-runtime accounts pick`'s own words.
@@ -1017,12 +968,14 @@ pub struct PickRequest {
     /// walk's question alone, where the account-wall succession covers the
     /// unread window. Otherwise that account is unmeasured for the model.
     pub admit_unread_scope: bool,
-    /// Admit the named Pi root on a model whose provider nothing bills
-    /// where Pi reads that provider's credential ready under it
-    /// (`--admit-unbilled`, [`admitted_unbilled`]): a Jarvis task's
-    /// question, whose caller records the launch as unmeasured. An orch
-    /// lane never asks it, since an unmeasured pool is never a lane's room.
-    pub admit_unbilled: bool,
+    /// Pi's read of the model's key under the named root, on a model whose
+    /// provider nothing bills (`--admit-unbilled`,
+    /// [`Harness::names_unbilled_provider`]): a Jarvis task's question,
+    /// whose caller records the launch as unmeasured. With it the root is
+    /// judged on the row nothing measured; without it the launch is
+    /// refused unread ([`unbilled`]). An orch lane never asks it, since an
+    /// unmeasured pool is never a lane's room.
+    pub provider_key: Option<ProviderKey>,
     /// The session the pick places opens on this machine (an overseer, a
     /// lane in a local window), so it signs in with this machine's stored
     /// login of the account and never with the token a provider measured
@@ -1045,7 +998,7 @@ impl PickRequest {
             min_headroom_pct: None,
             binding_floor: false,
             admit_unread_scope: false,
-            admit_unbilled: false,
+            provider_key: None,
             opens_here: false,
         }
     }
@@ -2147,7 +2100,9 @@ pub fn judge_one(
 /// row is judged alone: one the exclusion covers is refused by its word,
 /// `excluded`, as a retired one is, whatever was read of it; a Pi root on
 /// a grant pool that no row holds is judged on the row nothing measured
-/// ([`unmeasured_row`]), `unmeasured`; any other directory no row holds is
+/// ([`unmeasured_row`]), `unmeasured`, and so is one on a model whose
+/// provider nothing bills where the request carries Pi's read of its key
+/// ([`keyed`]); any other directory no row holds is
 /// no record: [`pick_fleet`] measures a named directory that exists, so it
 /// is one that does not.
 pub fn pick(
@@ -2161,7 +2116,19 @@ pub fn pick(
     let today = today(now);
     let model = req.model.as_deref().unwrap_or("");
     let Some(billed) = req.harness.billed(model) else {
-        return unbilled_answer(req);
+        return match (&req.lane, &req.provider_key) {
+            (Some(lane), Some(key)) => keyed(
+                named(
+                    &unmeasured_row(lane, req.harness.pool(model), settings),
+                    req,
+                    facts,
+                    settings,
+                    now,
+                ),
+                key,
+            ),
+            (Some(_), None) | (None, _) => unbilled_answer(req),
+        };
     };
     let pool = req.harness.pool(model);
     let api_credit = pool == "api-credit";
@@ -2190,21 +2157,17 @@ pub fn pick(
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {
         let canon = wall::canon(lane);
-        let judged = match rows.iter().find(|r| r.canon == canon && candidate(r)) {
-            Some(row) => judge_one(row, req, facts, settings, now),
-            None if grant_pool => judge_one(
+        return match rows.iter().find(|r| r.canon == canon && candidate(r)) {
+            Some(row) => named(row, req, facts, settings, now),
+            None if grant_pool => named(
                 &unmeasured_row(lane, pool, settings),
                 req,
                 facts,
                 settings,
                 now,
             ),
-            None => return PickAnswer::NoRecord,
+            None => PickAnswer::NoRecord,
         };
-        if judged.verdict == EXCLUDED {
-            return PickAnswer::Excluded(judged);
-        }
-        return named_answer(judged, req, &today);
     }
     let candidates = rows.iter().filter(|r| candidate(r)).count();
     let judged: Vec<Judged> = rows
@@ -2299,6 +2262,61 @@ fn fallback(judged: &[Judged], req: &PickRequest, now: u64) -> Option<Judged> {
         })
         .min_by_key(|j| j.claims)
         .cloned()
+}
+
+/// A `--lane` pick's answer for `row`: `excluded` where the request leaves
+/// it out by name, else [`named_answer`] on its one judgement.
+fn named(
+    row: &AccountRow,
+    req: &PickRequest,
+    facts: &FleetFacts,
+    settings: &AccountSettings,
+    now: u64,
+) -> PickAnswer {
+    let judged = judge_one(row, req, facts, settings, now);
+    if judged.verdict == EXCLUDED {
+        return PickAnswer::Excluded(judged);
+    }
+    named_answer(judged, req, &today(now))
+}
+
+/// A named Pi root's answer on a model whose provider nothing bills, from
+/// its named answer on the row nothing measured and Pi's read of the key:
+/// that row's `unmeasured` is the account to spend where Pi reads the key
+/// ready, its record's `scope` `unmeasured` as the walk's kept account
+/// carries it, and stays `unmeasured`, exit 5, where Pi does not, with
+/// Pi's status and reason as the record's `refusal` (`cause=provider-key`).
+/// Every other answer, the owner's exclusion and a stated end among them,
+/// refuses by its own word.
+fn keyed(answer: PickAnswer, key: &ProviderKey) -> PickAnswer {
+    let mut judged = match answer {
+        PickAnswer::Unmeasured(judged) => judged,
+        other @ (PickAnswer::Lane(_)
+        | PickAnswer::None { .. }
+        | PickAnswer::Walled(_)
+        | PickAnswer::Reserved(_)
+        | PickAnswer::Retired { .. }
+        | PickAnswer::Excluded(_)
+        | PickAnswer::ProviderUnmeasured { .. }
+        | PickAnswer::Unbilled { .. }
+        | PickAnswer::NoRecord
+        | PickAnswer::CloudRepoUnset(_)
+        | PickAnswer::Unjudged { .. }) => return other,
+    };
+    let (field, value) = match key {
+        ProviderKey::Ready => ("scope", json!("unmeasured")),
+        ProviderKey::Refused { status, reason } => (
+            "refusal",
+            json!({"cause": "provider-key", "status": status, "reason": reason, "retry_at": Value::Null}),
+        ),
+    };
+    if let Value::Object(raw) = &mut judged.row.raw {
+        raw.insert(field.to_owned(), value);
+    }
+    match key {
+        ProviderKey::Ready => PickAnswer::Lane(judged),
+        ProviderKey::Refused { .. } => PickAnswer::Unmeasured(judged),
+    }
 }
 
 /// A `--lane` pick's answer from its one judgement: the word's refusal

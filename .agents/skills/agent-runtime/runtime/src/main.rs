@@ -686,11 +686,12 @@ enum AccountsOp {
         /// model's window.
         #[arg(long)]
         binding_floor: bool,
-        /// Take the named Pi root on a model whose provider nothing bills
-        /// where `pi auth check` reads its credential ready, its record's
-        /// `scope` `unmeasured`; refused `unmeasured` with
-        /// `refusal.cause=provider-key` and Pi's `status` and `reason`
-        /// where it does not.
+        /// Take the named Pi root on a model naming a provider nothing
+        /// bills where `pi auth check` reads its credential ready in the
+        /// root, its record's `scope` `unmeasured`; refused `unmeasured`
+        /// with `refusal.cause=provider-key` and Pi's `status` and `reason`
+        /// where it does not. A model naming no provider stays refused
+        /// unread.
         #[arg(long, requires = "account")]
         admit_unbilled: bool,
         /// The fleet record whose controller member is a seat and whose
@@ -945,11 +946,17 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                 min_headroom_pct,
                 binding_floor,
                 admit_unread_scope: false,
-                admit_unbilled,
+                provider_key: None,
                 opens_here: false,
             };
-            let answer =
-                accounts::here::pick(&env, &loaded.project, record.as_deref(), &request, now)?;
+            let answer = accounts::here::pick(
+                &env,
+                &loaded.project,
+                record.as_deref(),
+                &request,
+                admit_unbilled,
+                now,
+            )?;
             if text {
                 // The text form a room check reads: the variable the harness
                 // launches its account under and the directory, on stdout at
@@ -2621,6 +2628,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
                     &project,
                     Some(&record),
                     request,
+                    false,
                     now,
                 ) {
                     Ok(answer) => answer,

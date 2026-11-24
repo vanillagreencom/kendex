@@ -26,8 +26,9 @@ use crate::process;
 pub const ORCH_ENTRY: &str = ".agents/skills/orch/scripts/orch-runtime";
 /// The count's own bound, its start included.
 const COUNT_BOUND: Duration = Duration::from_secs(60);
-/// Pi's credential check's bound, its start included: the check reads
-/// stored files and answers in under a second (pi 1.6.0).
+/// Pi's credential check's bound, its start included: a key stored in the
+/// root answers in under a second (pi 1.6.0), and an OAuth refresh or a
+/// `!command` key reaches past this machine.
 const KEY_BOUND: Duration = Duration::from_secs(30);
 
 /// The lanes' charges orch counted for one fleet record, as `orch-runtime
@@ -166,59 +167,103 @@ fn judge(settings: &Env, ground: &Beside, req: &PickRequest, now: u64) -> PickAn
 
 /// The pick here: the judge over this machine's listing, its seats with
 /// `record`'s controller's as the caller's own, and the lanes' charges of
-/// the project at `project`.
+/// the project at `project`. Where `admit_unbilled` asks it, a named Pi
+/// root on a model naming a provider nothing bills is judged on Pi's read
+/// of its key there ([`PickRequest::provider_key`]); a check that gave no
+/// answer judges nothing.
 pub fn pick(
     settings: &Env,
     project: &Path,
     record: Option<&Path>,
     req: &PickRequest,
+    admit_unbilled: bool,
     now: u64,
 ) -> Result<PickAnswer> {
-    if let Some(answer) = super::unbilled(req) {
-        return Ok(match (&answer, req.lane.as_deref()) {
-            (PickAnswer::Unbilled { .. }, Some(dir)) if req.admit_unbilled => {
-                admitted(settings, dir, req, now)
+    let model = req.model.as_deref().unwrap_or("");
+    let keyed;
+    let req = match req.lane.as_deref() {
+        Some(dir) if admit_unbilled && req.harness.names_unbilled_provider(model) => {
+            match provider_key(dir, model) {
+                Ok(key) => {
+                    keyed = PickRequest {
+                        provider_key: Some(key),
+                        ..req.clone()
+                    };
+                    &keyed
+                }
+                Err(cause) => return Ok(PickAnswer::Unjudged { cause }),
             }
-            _ => answer,
-        });
+        }
+        Some(_) | None => req,
+    };
+    if let Some(answer) = super::unbilled(req) {
+        return Ok(answer);
     }
     let ground = Beside::read(settings, project, record)?;
     Ok(judge(settings, &ground, req, now))
 }
 
-/// A named Pi root admitted on a model whose provider nothing bills,
-/// judged on Pi's own read of that model's credential under it. A check
-/// that gave no answer judges nothing.
-fn admitted(settings: &Env, dir: &str, req: &PickRequest, now: u64) -> PickAnswer {
-    let accounts = match settings.accounts.get() {
-        Ok(accounts) => accounts,
-        Err(e) => {
-            return PickAnswer::Unjudged {
-                cause: e.to_string(),
-            };
-        }
-    };
-    match provider_key(dir, req.model.as_deref().unwrap_or("")) {
-        Ok(key) => super::admitted_unbilled(dir, &key, req, &accounts, now),
-        Err(cause) => PickAnswer::Unjudged { cause },
-    }
-}
+/// The caller's variables Pi's credential check runs with, beside the
+/// root: those that find the user's programs, files and locale and reach
+/// the network, which a `!command` key or an OAuth refresh needs, and no
+/// credential. Pi also counts a provider's environment variables
+/// (pi 1.6.0, the package's `models.md` § Authenticate), and the window a
+/// launch opens takes its server's environment, never the caller's, so a
+/// key read from the caller's variables is no key the launch holds.
+const KEY_CHECK_ENV: [&str; 19] = [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "CURL_CA_BUNDLE",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
+/// The prefixes of the locale's and the user's directories' variables the
+/// check keeps beside [`KEY_CHECK_ENV`].
+const KEY_CHECK_PREFIXES: [&str; 2] = ["LC_", "XDG_"];
 
-/// `pi auth check --model MODEL --json` under the root `dir`, in the
-/// environment the pick inherits, which a launch from the same caller
-/// inherits too: Pi's documented readiness check over every source it
-/// signs in from, its root's `auth.json` and `models.json` and the
-/// provider's environment variables (pi 1.6.0, the package's `cli.md`
-/// § Credential commands, the package's `models.md` § Authenticate). Exit 0
-/// answers `ready`, 1 `not_ready` and 2 `invalid`, each with its JSON
-/// line; any other ending is no answer.
+/// `pi auth check --model MODEL --json` under the root `dir`, run in that
+/// root so no project's own `.pi` configuration is read, with the caller's
+/// [`KEY_CHECK_ENV`] alone: Pi's documented readiness check (pi 1.6.0, the
+/// package's `cli.md` § Credential commands) over the root's `auth.json`
+/// and `models.json` and the ambient credentials Pi finds under the
+/// user's home, the sources the launched Pi reads too. Like every Pi
+/// start on the root, the launch's own included, it refreshes an expired
+/// OAuth credential and writes it back to the root's `auth.json`, and a
+/// `!command` key runs its command. Exit 0 answers `ready`, 1 `not_ready`
+/// and 2 `invalid`, each with its JSON line; any other ending is no
+/// answer.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the one run of Pi's own credential check, `pi auth check` under the named root through the one runner under the accounts tag; it reads and writes nothing of the pick's"
+    reason = "the one run of Pi's own credential check, `pi auth check` under the named root through the one runner under the accounts tag; it writes nothing of the pick's"
 )]
 fn provider_key(dir: &str, model: &str) -> std::result::Result<ProviderKey, String> {
-    let home = [(Harness::Pi.home_var(), OsStr::new(dir))];
-    let out = host::run_tagged_in(
+    let inherited: Vec<(String, std::ffi::OsString)> = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value)))
+        .filter(|(name, _)| {
+            KEY_CHECK_ENV.contains(&name.as_str())
+                || KEY_CHECK_PREFIXES.iter().any(|p| name.starts_with(p))
+        })
+        .collect();
+    let env: Vec<(&str, &OsStr)> = inherited
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_os_str()))
+        .chain([(Harness::Pi.home_var(), OsStr::new(dir))])
+        .collect();
+    let out = host::run_tagged_alone(
         TAG,
         Harness::Pi.binary(),
         Path::new(Harness::Pi.binary()),
@@ -226,7 +271,7 @@ fn provider_key(dir: &str, model: &str) -> std::result::Result<ProviderKey, Stri
         &["auth", "check", "--model", model, "--json"],
         Place {
             cwd: Some(Path::new(dir)),
-            env: &home,
+            env: &env,
         },
         KEY_BOUND,
     )

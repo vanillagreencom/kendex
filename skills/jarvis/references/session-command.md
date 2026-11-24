@@ -71,7 +71,8 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - `MODEL` accepts the model class or native model spelling; Pi uses its provider/model spelling.
   - Add `--effort LEVEL` unless high is the intended effort.
   - The lane selector chooses the account. Add `--account DIR` to ask that selector about a named account.
-  - A Pi model whose provider no reader measures, such as an `openai/` model paid by its API key, takes `--account` naming the Pi root that holds the key.
+  - A Pi model naming a provider no reader measures, such as an `openai/` model paid by its API key, takes `--account` naming the Pi root that holds the key.
+    - The key counts only where the root holds it: a key exported in the caller's environment never reaches the task window.
     - The launch starts where `pi auth check` reads the key ready, and the task record's `reading` is `unmeasured`; on a measured account it is `measured`.
     - Without the key it refuses `account-unmeasured`, and the printed record's `refusal` carries `cause` `provider-key` with Pi's `status` and `reason`.
 - Add `--short` for a task of a few minutes when every account of the harness is past the launch limit.

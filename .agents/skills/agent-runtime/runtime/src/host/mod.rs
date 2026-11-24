@@ -356,16 +356,17 @@ pub fn run_tagged_fed_own_group(
     .map_err(|failed| failed.into_error(caller))
 }
 
-/// `run_tagged` with the child's whole environment `env`, nothing inherited:
-/// for a client whose answer the caller reads by its text, so no setting of
-/// the caller's own (a logging level, a locale) changes what it prints.
+/// `run_tagged_in` with the child's whole environment `place.env`, nothing
+/// inherited: for a client whose answer the caller reads by its text, so no
+/// setting of the caller's own (a logging level, a locale) changes what it
+/// prints, and for a check that must read only the sources it is handed.
 pub fn run_tagged_alone(
     tag: &'static str,
     program: &'static str,
     executable: &Path,
     operation: &'static str,
     args: &[&str],
-    env: &[(&str, &OsStr)],
+    place: Place,
     timeout: Duration,
 ) -> Result<Output> {
     let caller = Caller {
@@ -373,7 +374,6 @@ pub fn run_tagged_alone(
         operation,
         tag: Some(tag),
     };
-    let place = Place { cwd: None, env };
     spawn(
         caller,
         executable.as_os_str(),
