@@ -805,9 +805,9 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     );
     let created = created(ctx, since, now);
     // Linear dates a status entry, never a merge, so the Numbers have no
-    // merged row: Completed lists the merges GitHub reads. Verified is the
-    // entry into a completed status, which the completion route sets only
-    // once every Done-when box carries its evidence.
+    // merged row: Completed lists the merges GitHub reads. Verified counts
+    // every entry into a completed status, whoever set it, Linear's GitHub
+    // integration marking an issue Done on merge included.
     let verified = dated(
         ctx,
         ("verified", "--completed-since", "triage"),
