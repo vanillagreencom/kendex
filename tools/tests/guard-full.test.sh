@@ -1276,7 +1276,9 @@ lane_guard() { # [SED-EXPR] — the guard copy the rows run, edited when given
 }
 cat >"$LANE_BIN/cargo" <<'SH'
 #!/usr/bin/env bash
-if [ "${1:-}" = metadata ]; then exec "$REAL_CARGO" "$@"; fi
+case "${1:-}" in
+  metadata|read-manifest) exec "$REAL_CARGO" "$@" ;;
+esac
 printf '%s\n' "$*" >>"$CARGO_CALL_LOG"
 SH
 cat >"$LANE_BIN/npm" <<'SH'
@@ -1287,7 +1289,7 @@ chmod +x "$LANE_BIN/cargo" "$LANE_BIN/npm"
 NPM_CALL_LOG="$TMP/npm-calls"
 REAL_CARGO="$(command -v cargo)" || exit 2
 mkdir -p "$R/ui"
-# Selection reads real Cargo metadata; compilation stays logged by the stub.
+# Selection reads the workspace and package rosters from Cargo; the stub logs build lanes.
 mkdir -p "$R/crates/core/src" "$R/crates/cli/src" "$R/crates/cli/tests"
 printf '[workspace]\nmembers = ["crates/core", "crates/cli"]\nresolver = "2"\n[workspace.lints.rust]\n' >"$R/Cargo.toml"
 printf '[package]\nname = "kendex-core"\nversion = "0.1.0"\n[lints]\nworkspace = true\n' >"$R/crates/core/Cargo.toml"
@@ -1365,7 +1367,7 @@ LANE_ROWS=(
   "standard|false|$CODE ui/app.ts|$ALL"
   "standard|false|$CODE|suites parse lint apple windows test"
   "standard|false|$SKILL_TOOL|suites parse"
-  "standard|true|docs/guide.md|"
+  "standard|true|crates/core/README.md|"
   "render|false|$CODE|suites parse lint apple windows test"
   "||crates/core/src/lib.rs ui/app.ts|parse lint apple windows test ui|subset"
 )

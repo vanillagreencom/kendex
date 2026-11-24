@@ -84,8 +84,8 @@ inventory_rows() {
   # Use actual checkout permissions. Each fault leaves the other inventories readable.
   (
     local blocked="$world/skills/review-gate/tests"
-    trap 'chmod u+rwx -- "$blocked"' EXIT
-    chmod 000 -- "$blocked"
+    trap 'chmod u+rwx "$blocked"' EXIT
+    chmod 000 "$blocked"
     SELECT_IN="$world" SELECT_EVENT=merge_group selection small false refresh/kendex-refresh.yml
   ) >"$TMP/unread-suite"
   got="$(cat "$TMP/unread-suite")"
@@ -94,8 +94,8 @@ inventory_rows() {
 
   (
     local blocked="$world/skills/agent-runtime/runtime"
-    trap 'chmod u+rwx -- "$blocked"' EXIT
-    chmod 000 -- "$blocked"
+    trap 'chmod u+rwx "$blocked"' EXIT
+    chmod 000 "$blocked"
     SELECT_IN="$world" SELECT_EVENT=merge_group selection small false skills/orch/SKILL.md
   ) >"$TMP/unread-runtime"
   got="$(cat "$TMP/unread-runtime")"
@@ -104,8 +104,8 @@ inventory_rows() {
 
   (
     local blocked="$world/.github/workflows" pin css
-    trap 'chmod u+rwx -- "$blocked"' EXIT
-    chmod 000 -- "$blocked"
+    trap 'chmod u+rwx "$blocked"' EXIT
+    chmod 000 "$blocked"
     pin="$(SELECT_IN="$world" SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection small false .bun-version)"
     css="$(SELECT_IN="$world" SELECT_EVENT=merge_group selection small false ui/src/index.css)"
     printf '%s %s %s\n' "$(field cargo_linux <<<"$pin")" "$(field cargo_linux_matrix <<<"$pin")" "$(field cargo_windows_check <<<"$css")"
